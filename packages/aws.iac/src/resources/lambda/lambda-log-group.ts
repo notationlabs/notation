@@ -1,4 +1,4 @@
-import { resource } from "@notation/core";
+import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-cloudwatch-logs";
 import * as z from "zod";
 import { cloudWatchLogsClient } from "src/utils/aws-clients";
@@ -61,7 +61,7 @@ export const LambdaLogGroup = lambdaLogGroupSchema
     },
   })
   .requireDependencies<LambdaLogGroupDependencies>()
-  .setIntrinsicConfig(({ deps }) => ({
+  .deriveParams(({ deps }) => ({
     logGroupName: `/aws/lambda/${deps.lambda.output.FunctionName}`,
   }));
 

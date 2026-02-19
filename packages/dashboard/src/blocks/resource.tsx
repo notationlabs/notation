@@ -32,20 +32,18 @@ const getHeading = (resource: BaseResource) => {
 };
 
 const getSubHeading = (resource: BaseResource) => {
-  return `${resource.meta.serviceName}.${resource.meta.resourceName}`;
+  return resource.type;
 };
 
 const getConsoleUrl = (resource: BaseResource & { output: any }) => {
-  switch (resource.meta.serviceName) {
-    case "apiGateway":
-      return `https://us-west-2.console.aws.amazon.com/apigateway/main/develop/routes?api=${resource.output.ApiId}&region=us-west-2`;
-    default:
-      return "";
+  if (resource.type.includes("/apiGateway/")) {
+    return `https://us-west-2.console.aws.amazon.com/apigateway/main/develop/routes?api=${resource.output.ApiId}&region=us-west-2`;
   }
+  return "";
 };
 
 const getMeta = (resource: BaseResource & { output: any }) => {
-  if (resource.meta.serviceName === "apiGateway") {
+  if (resource.type.includes("/apiGateway/")) {
     return (
       <div>
         <a

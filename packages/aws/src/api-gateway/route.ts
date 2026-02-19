@@ -3,11 +3,13 @@ import type {
   JWTAuthorizedApiGatewayHandler,
 } from "src/shared";
 import * as aws from "@notation/aws.iac";
+import type { ResourceCollector } from "@notation/core";
 import { api } from "./api";
 import { AuthorizerConfig } from "./auth";
 import { mapAuthConfig, mapAuthType } from "./utils";
 
 export const route = (
+  collector: ResourceCollector,
   apiGroup: ReturnType<typeof api>,
   method: string, // todo: http methods only
   path: `/${string}`,
@@ -61,6 +63,7 @@ export const route = (
 
   const routeGroup = new aws.AwsResourceGroup("API Gateway/Route", {
     dependencies: { router: apiGroup.id, fn: lambdaGroup.id },
+    collector,
   });
 
   if (auth.type != "NONE") {

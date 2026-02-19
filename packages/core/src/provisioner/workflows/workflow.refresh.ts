@@ -1,7 +1,12 @@
 import { getResourceGraph } from "src/orchestrator/graph";
 import { deleteResource } from "../operations/operation.delete";
 import { State } from "../state";
-import { Resource } from "src/orchestrator/resource";
+import { BaseResource } from "src/orchestrator/resource";
+import {
+  createResourceRegistryFromGraph,
+  resolveResourceClass,
+  ResourceRegistry,
+} from "../resource-registry";
 
 /**
  * @description Destroy resources that are in state but not in the orchestration graph
@@ -9,6 +14,7 @@ import { Resource } from "src/orchestrator/resource";
 export async function refreshState(
   entryPoint: string,
   dryRun = false,
+  registry?: ResourceRegistry,
 ): Promise<void> {
   const log = (message: string) =>
     dryRun ? console.log(`[Dry Run]: ${message}`) : console.log(message);
@@ -17,19 +23,17 @@ export async function refreshState(
 
   const graph = await getResourceGraph(entryPoint);
   const state = new State();
+  const resourceRegistry = registry ?? createResourceRegistryFromGraph(graph.resources);
 
   for (const stateNode of (await state.values()).reverse()) {
     let resource = graph.resources.find((r) => r.id === stateNode.id);
 
     if (!resource) {
-      const { moduleName, serviceName, resourceName } = stateNode.meta;
-      const provider = await import(moduleName);
-      const Resource = provider[serviceName][resourceName];
-
+      const Resource = resolveResourceClass(resourceRegistry, stateNode.type);
       resource = new Resource({
         id: stateNode.id,
-        meta: stateNode.meta,
-      }) as Resource;
+        config: stateNode.config,
+      }) as BaseResource;
 
       resource.setOutput(stateNode.output);
 

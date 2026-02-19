@@ -1,4 +1,4 @@
-import { resource } from "@notation/core";
+import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-lambda";
 import * as z from "zod";
 import { lambdaClient } from "src/utils/aws-clients";
@@ -377,7 +377,7 @@ export const LambdaFunction = lambdaFunctionSchema
     ],
   })
   .requireDependencies<LambdaDependencies>()
-  .setIntrinsicConfig(async ({ deps }) => ({
+  .deriveParams(async ({ deps }) => ({
     PackageType: "Zip",
     Code: { ZipFile: deps.zipFile.output.file },
     CodeSha256: deps.zipFile.output.sourceSha256,

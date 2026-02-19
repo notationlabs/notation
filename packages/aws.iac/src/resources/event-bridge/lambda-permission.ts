@@ -2,7 +2,7 @@ import { AwsSchema } from "src/utils/types";
 import * as sdk from "@aws-sdk/client-lambda";
 import { LambdaFunctionInstance } from "../lambda";
 import { EventBridgeRuleInstance } from "./rule";
-import { resource } from "@notation/core";
+import { resource } from "@notation/resource";
 import z from "zod";
 import { lambdaClient } from "src/utils/aws-clients";
 
@@ -110,7 +110,7 @@ export const LambdaEventBridgeRulePermission =
     },
   })
     .requireDependencies<LambdaEventBridgeRulePermissionDependencies>()
-    .setIntrinsicConfig(async ({ deps }) => {
+    .deriveParams(async ({ deps }) => {
       return {
         FunctionName: deps.lambda.output.FunctionName,
         StatementId: `LambdaEventBridgeRulePermission-${deps.lambda.output.FunctionName}`,

@@ -1,19 +1,26 @@
+import type { ResourceCollector } from "@notation/core";
 import { EventBridgeHandler } from "src/shared/lambda.handler";
 import { Schedule } from "./schedule";
 import * as aws from "@notation/aws.iac";
 import { toAwsScheduleExpression } from "./aws-conversions";
 
-export const schedule = (config: {
-  name: string;
-  schedule: Schedule;
-  handler:
-    | EventBridgeHandler<"Scheduled Event", any>
-    // todo: narrow to lambda group
-    | aws.AwsResourceGroup;
-}): aws.AwsResourceGroup => {
+export const schedule = (
+  collector: ResourceCollector,
+  config: {
+    name: string;
+    schedule: Schedule;
+    handler:
+      | EventBridgeHandler<"Scheduled Event", any>
+      // todo: narrow to lambda group
+      | aws.AwsResourceGroup;
+  },
+): aws.AwsResourceGroup => {
   const eventBridgeScheduleGroup = new aws.AwsResourceGroup(
     "aws/eventBridge/schedule",
-    config,
+    {
+      ...config,
+      collector,
+    },
   );
 
   const lambdaGroup =

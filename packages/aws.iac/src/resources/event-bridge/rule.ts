@@ -1,4 +1,4 @@
-import { resource } from "@notation/core";
+import { resource } from "@notation/resource";
 import { AwsSchema } from "src/utils/types";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import z from "zod";
@@ -138,7 +138,7 @@ export const EventBridgeRule = eventBridgeRuleSchema
     },
   })
   .requireDependencies<EventBridgeRuleDependencies>()
-  .setIntrinsicConfig(async ({ deps }) => ({
+  .deriveParams(async ({ deps }) => ({
     Targets: [
       {
         Id: deps.lambda.output.FunctionName,

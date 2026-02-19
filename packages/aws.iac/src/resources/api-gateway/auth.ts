@@ -1,6 +1,6 @@
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { AwsSchema } from "src/utils/types";
-import { resource } from "@notation/core";
+import { resource } from "@notation/resource";
 import z from "zod";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { ApiInstance } from "./api";
@@ -86,7 +86,7 @@ export const RouteAuth = apiSchema
     },
   })
   .requireDependencies<AuthorizerDependencies>()
-  .setIntrinsicConfig(({ deps }) => ({
+  .deriveParams(({ deps }) => ({
     ApiId: deps.api.output.ApiId,
   }));
 

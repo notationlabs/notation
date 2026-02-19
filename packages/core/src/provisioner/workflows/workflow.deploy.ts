@@ -6,14 +6,21 @@ import { deleteResource } from "../operations/operation.delete";
 import { State } from "../state";
 import * as deepDiff from "deep-object-diff";
 import { BaseResource } from "src/orchestrator/resource";
+import {
+  createResourceRegistryFromGraph,
+  resolveResourceClass,
+  ResourceRegistry,
+} from "../resource-registry";
 
 export async function deployApp(
   entryPoint: string,
   driftDetection = true,
   dryRun = false,
+  registry?: ResourceRegistry,
 ): Promise<void> {
   const graph = await getResourceGraph(entryPoint);
   const state = new State();
+  const resourceRegistry = registry ?? createResourceRegistryFromGraph(graph.resources);
 
   for (const resource of graph.resources) {
     const stateNode = await state.get(resource.id);
@@ -92,11 +99,11 @@ export async function deployApp(
     let resource = graph.resources.find((r) => r.id === stateNode.id);
 
     if (!resource) {
-      const { moduleName, serviceName, resourceName } = stateNode.meta;
-      const provider = await import(moduleName);
-      const Resource = provider[serviceName][resourceName];
-      resource = new Resource({ config: stateNode.config }) as BaseResource;
-      resource.id = stateNode.id;
+      const Resource = resolveResourceClass(resourceRegistry, stateNode.type);
+      resource = new Resource({
+        id: stateNode.id,
+        config: stateNode.config,
+      }) as BaseResource;
       resource.setOutput(stateNode.output);
       await deleteResource({ resource, state, dryRun });
     }

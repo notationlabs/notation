@@ -29,7 +29,7 @@ async function create(
       id: resource.id,
       groupId: resource.groupId,
       groupType: resource.groupType,
-      meta: resource.meta,
+      type: resource.type,
       lastOperation: "create",
       lastOperationAt: new Date().toISOString(),
       config: resource.config,

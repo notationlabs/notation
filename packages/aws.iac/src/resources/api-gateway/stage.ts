@@ -1,4 +1,4 @@
-import { resource } from "@notation/core";
+import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import * as z from "zod";
 import { ApiInstance } from "./api";
@@ -119,7 +119,7 @@ export const Stage = stageSchema
     },
   })
   .requireDependencies<StageDependencies>()
-  .setIntrinsicConfig(({ deps }) => ({
+  .deriveParams(({ deps }) => ({
     ApiId: deps.api.output.ApiId!,
   }));
 

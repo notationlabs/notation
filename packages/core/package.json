@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@notation/resource": "workspace:*",
     "deep-object-diff": "^1.1.9",
     "fs-extra": "^11.3.0",
     "js-base64": "^3.7.7",

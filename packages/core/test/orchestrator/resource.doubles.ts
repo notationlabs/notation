@@ -74,7 +74,7 @@ export const testOperations = {
   async read() {
     return { primaryKey: "", optionalSecondaryKey: "", requiredParam: "" };
   },
-  setIntrinsicConfig() {
+  deriveParams() {
     return { intrinsicParam: true };
   },
 };

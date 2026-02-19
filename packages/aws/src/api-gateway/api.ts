@@ -1,7 +1,11 @@
 import * as aws from "@notation/aws.iac";
+import type { ResourceCollector } from "@notation/core";
 
-export const api = (rgConfig: { name: string }) => {
-  const apiGroup = new aws.AwsResourceGroup("API Gateway", rgConfig);
+export const api = (collector: ResourceCollector, rgConfig: { name: string }) => {
+  const apiGroup = new aws.AwsResourceGroup("API Gateway", {
+    ...rgConfig,
+    collector,
+  });
 
   const apiResource = apiGroup.add(
     new aws.apiGateway.Api({

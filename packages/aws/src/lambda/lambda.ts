@@ -2,6 +2,7 @@ import * as aws from "@notation/aws.iac";
 import * as std from "@notation/std.iac";
 import crypto from "crypto";
 import path from "path";
+import type { ResourceCollector } from "@notation/core";
 
 type LambdaConfig = {
   id?: string;
@@ -13,8 +14,14 @@ type LambdaConfig = {
   runtime?: aws.lambda.LambdaFunctionConfig["Runtime"];
 };
 
-export const lambda = (config: LambdaConfig): aws.AwsResourceGroup => {
-  const functionGroup = new aws.AwsResourceGroup("Lambda", { config });
+export const lambda = (
+  collector: ResourceCollector,
+  config: LambdaConfig,
+): aws.AwsResourceGroup => {
+  const functionGroup = new aws.AwsResourceGroup("Lambda", {
+    config,
+    collector,
+  });
   const filePath = config.code.path;
 
   let lambdaId = config.id;

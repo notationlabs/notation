@@ -1,6 +1,6 @@
+import { resource } from "@notation/resource";
 import * as z from "zod";
 import * as fs from "node:fs/promises";
-import { resource } from "@notation/core";
 import { zip } from "src/utils/zip";
 import { getSourceSha256 } from "src/utils/hash";
 
@@ -42,7 +42,7 @@ export const zipSchema = zipResource.defineSchema({
 } as const);
 
 export const Zip = zipSchema.defineOperations({
-  setIntrinsicConfig: async ({ config }) => {
+  deriveParams: async ({ config }) => {
     const sourceSha256 = await getSourceSha256(config.sourceFilePath!);
     const filePath = `${config.sourceFilePath}.zip`;
     return { sourceSha256, filePath };
