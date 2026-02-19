@@ -1,18 +1,24 @@
-import { ResourceGroup } from "@notation/core";
+import type { ResourceCollector, ResourceGroup } from "@notation/core";
 import { EventBridgeHandler } from "src/shared/lambda.handler";
 import { Schedule } from "./schedule";
 import { lambda } from "src/lambda";
 import * as aws from "@notation/aws.iac";
 import { toAwsScheduleExpression } from "./aws-conversions";
 
-export const schedule = (config: {
-  name: string;
-  schedule: Schedule;
-  handler: EventBridgeHandler<"Scheduled Event", any>;
-}): ResourceGroup => {
+export const schedule = (
+  collector: ResourceCollector,
+  config: {
+    name: string;
+    schedule: Schedule;
+    handler: EventBridgeHandler<"Scheduled Event", any>;
+  },
+): ResourceGroup => {
   const eventBridgeScheduleGroup = new aws.AwsResourceGroup(
     "aws/eventBridge/schedule",
-    config,
+    {
+      ...config,
+      collector,
+    },
   );
 
   // at compile time becomes infra module

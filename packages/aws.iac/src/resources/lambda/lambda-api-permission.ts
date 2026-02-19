@@ -1,4 +1,4 @@
-import { resource } from "@notation/core";
+import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-lambda";
 import * as z from "zod";
 import { lambdaClient } from "src/utils/aws-clients";
@@ -107,7 +107,7 @@ export const LambdaApiGatewayV2Permission = lambdaApiGatewayV2PermissionSchema
     },
   })
   .requireDependencies<LambdaApiGatewayV2PermissionDependencies>()
-  .setIntrinsicConfig(async ({ deps }) => ({
+  .deriveParams(async ({ deps }) => ({
     FunctionName: deps.lambda.output.FunctionName,
     StatementId: "lambda-api-gateway-v2-permission",
     Action: "lambda:InvokeFunction",

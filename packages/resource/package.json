@@ -1,7 +1,7 @@
 {
   "type": "module",
-  "name": "@notation/std.iac",
-  "version": "0.4.3",
+  "name": "@notation/resource",
+  "version": "0.0.0",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
@@ -11,10 +11,10 @@
     "build": "tsup --clean",
     "dev": "tsup --watch"
   },
-  "dependencies": {
-    "@notation/core": "workspace:*",
-    "@notation/resource": "workspace:*",
-    "fflate": "0.8.1",
+  "peerDependencies": {
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
     "zod": "^3.22.4"
   }
 }

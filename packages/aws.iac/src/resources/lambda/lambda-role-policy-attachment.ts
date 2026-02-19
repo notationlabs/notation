@@ -1,4 +1,4 @@
-import { resource } from "@notation/core";
+import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-iam";
 import * as z from "zod";
 import { iamClient } from "src/utils/aws-clients";
@@ -46,7 +46,7 @@ export const LambdaRolePolicyAttachment = lambdaRolePolicyAttachmentSchema
     },
   })
   .requireDependencies<LambdaRolePolicyAttachmentDependencies>()
-  .setIntrinsicConfig(({ deps }) => ({
+  .deriveParams(({ deps }) => ({
     RoleName: deps.role.output.RoleName,
     PolicyArn:
       "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",

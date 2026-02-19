@@ -1,4 +1,4 @@
-import { resource } from "@notation/core";
+import { resource } from "@notation/resource";
 import * as z from "zod";
 import * as sdk from "@aws-sdk/client-cloudfront";
 import { AwsSchema } from "src/utils/types";

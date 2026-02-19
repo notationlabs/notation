@@ -64,7 +64,7 @@ export const Distribution = distributionSchema
     },
   })
   .requireDependencies<DistributionDependencies>()
-  .setIntrinsicConfig(({ deps }) => ({
+  .deriveParams(({ deps }) => ({
     Origins: {
       Quantity: 1,
       Items: [

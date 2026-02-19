@@ -19,15 +19,6 @@ describe("resource basics", () => {
     expect(testResource.type).toBe("provider/service/resource");
   });
 
-  test("meta", () => {
-    const expectedMeta = {
-      moduleName: "@notation/provider.iac",
-      serviceName: "service",
-      resourceName: "resource",
-    };
-    expect(testResource.meta).toEqual(expectedMeta);
-  });
-
   test("setOutput", () => {
     testResource.setOutput({ a: 1 });
     expect(testResource.output).toEqual({ a: 1 });
@@ -89,12 +80,12 @@ describe("resource schema", () => {
 });
 
 describe("resource dependencies", () => {
-  it("passes dependencies to getIntrinsicConfig", async () => {
-    const getIntrinsicConfigMock = vi.fn();
+  it("passes dependencies to deriveParams", async () => {
+    const deriveParamsMock = vi.fn();
 
     const TestResourceWithDeps = TestResource.requireDependencies<{
       dep1: InstanceType<typeof TestResource>;
-    }>().setIntrinsicConfig(getIntrinsicConfigMock);
+    }>().deriveParams(deriveParamsMock);
 
     const childTestResource = new TestResource({
       id: "test-resource-1",
@@ -109,7 +100,7 @@ describe("resource dependencies", () => {
 
     await testResource.getParams();
 
-    expect(getIntrinsicConfigMock.mock.calls[0]).toEqual([
+    expect(deriveParamsMock.mock.calls[0]).toEqual([
       {
         id: "test-resource-1",
         config: testResourceConfig,
@@ -119,7 +110,7 @@ describe("resource dependencies", () => {
   });
 
   it("merges config and intrinsic config", async () => {
-    const getIntrinsicConfigMock = vi.fn(() => ({
+    const deriveParamsMock = vi.fn(() => ({
       requiredParam: "preset",
     }));
 
@@ -127,7 +118,7 @@ describe("resource dependencies", () => {
 
     const TestResourceWithDeps = TestResource.requireDependencies<{
       dep1: InstanceType<typeof TestResource>;
-    }>().setIntrinsicConfig(getIntrinsicConfigMock);
+    }>().deriveParams(deriveParamsMock);
 
     const childTestResource = new TestResource({
       id: "test-resource-1",

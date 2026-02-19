@@ -4,5 +4,4 @@ export * from "./utils/paths";
 export * from "./visualiser/chart";
 export * from "./orchestrator/resource";
 export * from "./orchestrator/resource-group";
-export * from "./orchestrator/state-getters";
-export { reset } from "./orchestrator/state";
+export * from "./orchestrator/resource-collector";

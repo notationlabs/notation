@@ -1,4 +1,4 @@
-import { resource } from "@notation/core";
+import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-iam";
 import * as z from "zod";
 import { iamClient } from "src/utils/aws-clients";
@@ -92,7 +92,7 @@ export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
     const command = new sdk.DeleteRoleCommand(key);
     await iamClient.send(command);
   },
-  setIntrinsicConfig: () => ({
+  deriveParams: () => ({
     AssumeRolePolicyDocument: JSON.stringify(lambdaTrustPolicy),
   }),
 });

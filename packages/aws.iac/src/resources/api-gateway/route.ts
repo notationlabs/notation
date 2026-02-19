@@ -1,4 +1,4 @@
-import { resource } from "@notation/core";
+import { resource } from "@notation/resource";
 import * as z from "zod";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/utils/aws-clients";
@@ -125,7 +125,7 @@ export const Route = routeSchema
     },
   })
   .requireDependencies<RouteDependencies>()
-  .setIntrinsicConfig(({ deps }) => {
+  .deriveParams(({ deps }) => {
     const authConfig = deps.auth
       ? { AuthorizerId: deps.auth.output.AuthorizerId }
       : {};

@@ -5,11 +5,15 @@ import type {
 import { route } from "./route";
 import { api } from "./api";
 import { AuthorizerConfig, JWTAuthorizerConfig, NO_AUTH } from "./auth";
+import type { ResourceCollector } from "@notation/core";
 
-export const router = (apiGroup: ReturnType<typeof api>) => {
+export const router = (
+  collector: ResourceCollector,
+  apiGroup: ReturnType<typeof api>,
+) => {
   const createRouteCallback =
     (method: string) => (path: `/${string}`, handler: ApiGatewayHandler) => {
-      return route(apiGroup, method, path, NO_AUTH, handler);
+      return route(collector, apiGroup, method, path, NO_AUTH, handler);
     };
 
   return {
@@ -19,7 +23,7 @@ export const router = (apiGroup: ReturnType<typeof api>) => {
     patch: createRouteCallback("PATCH"),
     delete: createRouteCallback("DELETE"),
     withJWTAuthorizer: <ClaimsType>(auth: JWTAuthorizerConfig) => {
-      const authorizer = new AuthorizedRouteBuilder(apiGroup);
+      const authorizer = new AuthorizedRouteBuilder(collector, apiGroup);
       return authorizer.withJWTAuthorizer<ClaimsType>(auth);
     },
   };
@@ -28,8 +32,10 @@ export const router = (apiGroup: ReturnType<typeof api>) => {
 class AuthorizedRouteBuilder {
   auth: AuthorizerConfig = NO_AUTH;
   apiGroup: ReturnType<typeof api>;
+  collector: ResourceCollector;
 
-  constructor(apiGroup: ReturnType<typeof api>) {
+  constructor(collector: ResourceCollector, apiGroup: ReturnType<typeof api>) {
+    this.collector = collector;
     this.apiGroup = apiGroup;
   }
 
@@ -39,7 +45,7 @@ class AuthorizedRouteBuilder {
       path: `/${string}`,
       handler: JWTAuthorizedApiGatewayHandler<ClaimsType>,
     ) => {
-      return route(this.apiGroup, method, path, authorizer, handler);
+      return route(this.collector, this.apiGroup, method, path, authorizer, handler);
     };
 
   withJWTAuthorizer<ClaimsType>(authorizer: JWTAuthorizerConfig) {

@@ -7,7 +7,6 @@ import {
   testOperations,
   testResourceOutput,
 } from "test/orchestrator/resource.doubles";
-import { reset } from "src/orchestrator/state";
 
 const stateMock = {
   get: vi.fn((id: number) => Promise.resolve({}) as any as StateNode),
@@ -17,7 +16,6 @@ const stateMock = {
 } as any as State;
 
 afterEach(() => {
-  reset();
   Object.values(stateMock).forEach((fn) => fn.mockClear());
 });
 

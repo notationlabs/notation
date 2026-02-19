@@ -1,12 +1,7 @@
-import { test, expect, beforeEach } from "vitest";
-import { reset } from "@notation/core";
+import { test, expect } from "vitest";
 import { handle, json } from "src/lambda.fn";
 import { APIGatewayProxyEventV2JWT } from "src/shared";
 import { Context } from "aws-lambda";
-
-beforeEach(() => {
-  reset();
-});
 
 test("handlers wrap user-provided handlers", async () => {
   const fn = async () => ({ body: "{}" });

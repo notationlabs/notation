@@ -1,20 +1,28 @@
 import path from "path";
-import {
-  getResources,
-  getResourceGroups,
-} from "src/orchestrator/state-getters";
 import { filePaths } from "src/utils/paths";
-import { reset } from "..";
+import { ResourceCollector } from "./resource-collector";
 
 export async function getResourceGraph(entryPoint: string) {
-  reset();
+  const collector = new ResourceCollector();
   const outFilePath = filePaths.dist.infra(entryPoint);
 
   // todo: move into worker thread. this will cause memory leaks
-  await import(path.join(process.cwd(), `${outFilePath}?${Date.now()}`));
+  const mod = await import(path.join(process.cwd(), `${outFilePath}?${Date.now()}`));
 
-  const resourceGroups = getResourceGroups();
-  const resources = getResources();
+  const register = (mod as any).register ?? (mod as any).default;
 
-  return { resourceGroups, resources };
+  if (typeof register !== "function") {
+    throw new Error(
+      `Infra entrypoint must export register(collector) (or a default function). Received exports: ${Object.keys(mod).join(
+        ", ",
+      )}`,
+    );
+  }
+
+  await register(collector);
+
+  return {
+    resourceGroups: collector.getResourceGroups(),
+    resources: collector.getResources(),
+  };
 }

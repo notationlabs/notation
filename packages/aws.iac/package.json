@@ -20,6 +20,7 @@
     "@aws-sdk/client-lambda": "^3.511.0",
     "@aws-sdk/client-sts": "^3.511.0",
     "@notation/core": "workspace:*",
+    "@notation/resource": "workspace:*",
     "@notation/std.iac": "workspace:*",
     "@types/aws-lambda": "^8.10.133",
     "zod": "^3.22.4"

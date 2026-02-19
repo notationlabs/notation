@@ -1,9 +1,13 @@
 import * as aws from "@notation/aws.iac";
 import * as std from "@notation/std.iac";
 import crypto from "crypto";
+import type { ResourceCollector } from "@notation/core";
 
-export const lambda = (config: { fileName: string; handler: string }) => {
-  const functionGroup = new aws.AwsResourceGroup("Lambda", { config });
+export const lambda = (
+  collector: ResourceCollector,
+  config: { fileName: string; handler: string },
+) => {
+  const functionGroup = new aws.AwsResourceGroup("Lambda", { config, collector });
   const filePathHash = crypto
     .createHash("BLAKE2s256")
     .update(config.fileName)
