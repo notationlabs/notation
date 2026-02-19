@@ -87,18 +87,20 @@ describe("operation workflows", () => {
     };
 
     let createAttempts = 0;
+    const createMock = vi.fn(async () => {
+      createAttempts += 1;
+      if (createAttempts === 1) {
+        const err = new Error("eventual consistency");
+        err.name = "RetryCreate";
+        throw err;
+      }
+      return { remoteId: "abc" };
+    });
+
     const TestResource = resource({ type: "test/service/create" })
       .defineSchema({})
       .defineOperations({
-        create: async () => {
-          createAttempts += 1;
-          if (createAttempts === 1) {
-            const err = new Error("eventual consistency");
-            err.name = "RetryCreate";
-            throw err;
-          }
-          return { remoteId: "abc" };
-        },
+        create: createMock,
         read: async () => ({ remoteId: "abc", status: "ready" }),
         delete: async () => undefined,
         retryLaterOnError: [{ name: "RetryCreate", reason: "retry create" }],
@@ -118,6 +120,7 @@ describe("operation workflows", () => {
 
     expect(createAttempts).toBe(2);
     expect(state.update).toHaveBeenCalledOnce();
+    expect(createMock).toHaveBeenCalledWith(await testResource.getParams());
     expect(testResource.output).toEqual({ remoteId: "abc", status: "ready" });
     expect(events.map((event) => `${event.operation}:${event.status}`)).toEqual([
       "create:start",
@@ -220,6 +223,45 @@ describe("operation workflows", () => {
       "skip",
       "success",
     ]);
+  });
+
+  it("delete rethrows when error does not match notFoundOnError", async () => {
+    const step = createStepRunnerDouble();
+    const state = {
+      get: vi.fn(async () => undefined),
+      update: vi.fn(async () => undefined),
+      delete: vi.fn(async () => undefined),
+    };
+
+    const TestResource = resource({ type: "test/service/delete-miss" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => ({}),
+        delete: async () => {
+          const err = new Error("still exists");
+          err.name = "DifferentError";
+          throw err;
+        },
+        notFoundOnError: [
+          {
+            name: "RemoteMissing",
+            reason: "already deleted remotely",
+          },
+        ],
+      });
+
+    const testResource = new TestResource({ id: "test-delete-miss" });
+
+    await expect(
+      runOperation(
+        deleteResourceOperation(step, {
+          resource: testResource,
+          state,
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "DifferentError", message: "still exists" });
+
+    expect(state.delete).not.toHaveBeenCalled();
   });
 
   it("emits structured error details on operation failure", async () => {

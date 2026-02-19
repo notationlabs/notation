@@ -1,61 +1,23 @@
-import type {
-  BaseResource,
-  ResourceClass,
-  ResourceType,
-} from "src/orchestrator/resource";
+import {
+  createMissingResourceRegistryMatchWarningEvent,
+  createResourceRegistry,
+  createResourceRegistryFromResources,
+  resolveResourceClass,
+  type MissingResourceRegistryMatchWarningEvent,
+  type ResourceRegistry,
+} from "@notation/reconciler";
+import type { BaseResource } from "src/orchestrator/resource";
 
-export type ResourceRegistry = Map<ResourceType, ResourceClass<any, any, any>>;
-
-export type MissingResourceRegistryMatchWarningEvent = {
-  level: "warn";
-  event: "reconciler.orphan-deletion.skipped";
-  reason: "resource-type-not-registered";
-  workflow: "deploy" | "refresh";
-  resourceId: string;
-  resourceType: ResourceType;
+export {
+  createMissingResourceRegistryMatchWarningEvent,
+  createResourceRegistry,
+  resolveResourceClass,
+  type MissingResourceRegistryMatchWarningEvent,
+  type ResourceRegistry,
 };
-
-export function createResourceRegistry(
-  entries: Iterable<ResourceClass<any, any, any>> = [],
-): ResourceRegistry {
-  const registry: ResourceRegistry = new Map();
-  for (const Resource of entries) {
-    registry.set(Resource.type, Resource);
-  }
-  return registry;
-}
 
 export function createResourceRegistryFromGraph(
   resources: BaseResource[],
 ): ResourceRegistry {
-  const registry: ResourceRegistry = new Map();
-  for (const resource of resources) {
-    registry.set(
-      resource.type,
-      resource.constructor as unknown as ResourceClass<any, any, any>,
-    );
-  }
-  return registry;
-}
-
-export function resolveResourceClass(
-  registry: ResourceRegistry,
-  type: ResourceType,
-): ResourceClass<any, any, any> | undefined {
-  return registry.get(type);
-}
-
-export function createMissingResourceRegistryMatchWarningEvent(opts: {
-  workflow: "deploy" | "refresh";
-  resourceId: string;
-  resourceType: ResourceType;
-}): MissingResourceRegistryMatchWarningEvent {
-  return {
-    level: "warn",
-    event: "reconciler.orphan-deletion.skipped",
-    reason: "resource-type-not-registered",
-    workflow: opts.workflow,
-    resourceId: opts.resourceId,
-    resourceType: opts.resourceType,
-  };
+  return createResourceRegistryFromResources(resources);
 }
