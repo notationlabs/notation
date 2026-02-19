@@ -119,7 +119,17 @@ describe("operation workflows", () => {
     expect(createAttempts).toBe(2);
     expect(state.update).toHaveBeenCalledOnce();
     expect(testResource.output).toEqual({ remoteId: "abc", status: "ready" });
-    expect(events.map((event) => event.status)).toEqual(["start", "success"]);
+    expect(events.map((event) => `${event.operation}:${event.status}`)).toEqual([
+      "create:start",
+      "read:start",
+      "read:success",
+      "create:success",
+    ]);
+    expect(events[0]).toMatchObject({
+      resourceId: "test-create",
+      resourceType: TestResource.type,
+      event: "reconciler.operation.lifecycle",
+    });
   });
 
   it("read uses durable polling semantics for retryReadOnCondition", async () => {
@@ -210,5 +220,50 @@ describe("operation workflows", () => {
       "skip",
       "success",
     ]);
+  });
+
+  it("emits structured error details on operation failure", async () => {
+    const step = createStepRunnerDouble();
+    const events: OperationLifecycleEvent[] = [];
+    const state = {
+      get: vi.fn(async () => undefined),
+      update: vi.fn(async () => undefined),
+      delete: vi.fn(async () => undefined),
+    };
+
+    const TestResource = resource({ type: "test/service/create-error" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => {
+          const err = new Error("boom");
+          err.name = "CreateFailed";
+          throw err;
+        },
+        delete: async () => undefined,
+      });
+
+    const testResource = new TestResource({ id: "test-create-error" });
+
+    await expect(
+      runOperation(
+        createResourceOperation(step, {
+          resource: testResource,
+          state,
+          emit: async (event) => {
+            events.push(event);
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "CreateFailed", message: "boom" });
+
+    expect(events.map((event) => event.status)).toEqual(["start", "error"]);
+    expect(events[1]).toMatchObject({
+      operation: "create",
+      status: "error",
+      resourceId: "test-create-error",
+      resourceType: TestResource.type,
+      errorName: "CreateFailed",
+      errorMessage: "boom",
+    });
   });
 });

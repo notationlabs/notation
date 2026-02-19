@@ -155,6 +155,7 @@ describe("reconciler deploy", () => {
 
   it("detects drift using live read output and converges with update", async () => {
     const updateSpy = vi.fn(async () => undefined);
+    const events: Array<Record<string, unknown>> = [];
     const TestResource = createTestResourceClass({
       type: "test/service/drift",
       read: async () => ({ name: "drifted" }),
@@ -175,13 +176,26 @@ describe("reconciler deploy", () => {
       },
     });
 
-    const reconciler = new Reconciler({ state, driftDetection: true });
+    const reconciler = new Reconciler({
+      state,
+      driftDetection: true,
+      emit: async (event) => {
+        events.push(event as unknown as Record<string, unknown>);
+      },
+    });
     await reconciler.deploy([
       new TestResource({ id: "resource", config: { name: "desired" } }),
     ]);
 
     expect(updateSpy).toHaveBeenCalledOnce();
     expect(updateSpy.mock.calls[0]?.[1]).toEqual({ name: "desired" });
+    expect(events).toContainEqual({
+      level: "info",
+      event: "reconciler.drift.detected",
+      resourceId: "resource",
+      resourceType: TestResource.type,
+      diff: { name: "desired" },
+    });
   });
 
   it("deletes orphaned state entries by reconstructing from registry", async () => {

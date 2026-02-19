@@ -21,7 +21,7 @@ import {
   type ResourceRegistry,
 } from "./resource-registry";
 
-type ReconcilerDeployEvent = {
+export type ReconcilerDeployEvent = {
   level: "info";
   event: "reconciler.deploy.decision";
   resourceId: string;
@@ -29,9 +29,18 @@ type ReconcilerDeployEvent = {
   decision: "create" | "update" | "drift-update" | "drift-recreate" | "noop";
 };
 
+export type ReconcilerDriftDetectedEvent = {
+  level: "info";
+  event: "reconciler.drift.detected";
+  resourceId: string;
+  resourceType: string;
+  diff: Record<string, unknown>;
+};
+
 export type ReconcilerEvent =
   | OperationLifecycleEvent
   | ReconcilerDeployEvent
+  | ReconcilerDriftDetectedEvent
   | MissingResourceRegistryMatchWarningEvent;
 
 export type ReconcilerEventEmitter = (
@@ -237,6 +246,14 @@ export class Reconciler {
       });
       return;
     }
+
+    await this.#emit?.({
+      level: "info",
+      event: "reconciler.drift.detected",
+      resourceId: resource.id,
+      resourceType: resource.type,
+      diff: remoteDiff,
+    });
 
     await this.#emit?.({
       level: "info",

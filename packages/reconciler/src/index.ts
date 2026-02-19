@@ -7,3 +7,4 @@ export * from "./resource-registry";
 export * from "./operations";
 export * from "./dependency-graph";
 export * from "./reconciler";
+export * from "./console-subscriber";

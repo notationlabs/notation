@@ -50,6 +50,7 @@ export async function* createResourceOperation(
     const readResult = yield* readResourceOperation(step, {
       resource: params.resource,
       state: params.state,
+      emit: params.emit,
       readPollOptions: params.readPollOptions,
     });
 
