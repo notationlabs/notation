@@ -58,7 +58,19 @@ export class MemoryStateBackend implements StateBackend {
 
   async values(): Promise<StateNode[]> {
     const state = await this.readState();
-    return Object.values(state);
+    return Object.entries(state)
+      .sort(([leftId], [rightId]) => {
+        if (leftId < rightId) {
+          return -1;
+        }
+
+        if (leftId > rightId) {
+          return 1;
+        }
+
+        return 0;
+      })
+      .map(([, value]) => value);
   }
 
   private async readState(): Promise<Record<string, StateNode>> {

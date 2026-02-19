@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createResourceOperation, createStepRunner, runOperation } from "@notation/reconciler";
+import { MemoryStateBackend } from "@notation/state";
 import {
   TestResourceSchema,
   testResourceConfig,
@@ -9,11 +10,7 @@ import {
 
 describe("resource creation", () => {
   it("passes computed input to resource.create", async () => {
-    const stateMock = {
-      get: vi.fn(async () => undefined),
-      update: vi.fn(async () => undefined),
-      delete: vi.fn(async () => undefined),
-    };
+    const stateBackend = new MemoryStateBackend();
     const readResult = { ...testResourceOutput, volatileComputed: "123" };
     const createMock = vi.fn(async () => ({ primaryKey: "" }));
     const readMock = vi.fn(async () => readResult);
@@ -33,13 +30,19 @@ describe("resource creation", () => {
     await runOperation(
       createResourceOperation(step, {
         resource: testResource,
-        state: stateMock,
+        state: stateBackend,
       }),
     );
 
     const params = await testResource.getParams();
+    const persistedOutput = testResource.toState(readResult);
+
     expect(createMock.mock.calls[0]).toEqual([params]);
-    expect(stateMock.update).toHaveBeenCalledOnce();
+    await expect(stateBackend.get(testResource.id)).resolves.toMatchObject({
+      id: testResource.id,
+      output: persistedOutput,
+      lastOperation: "create",
+    });
     expect(testResource.output).not.toEqual(testResourceOutput);
     expect(testResource.output).toEqual(readResult);
   });
