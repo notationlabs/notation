@@ -1,5 +1,5 @@
 import { diff, detailedDiff } from "deep-object-diff";
-import type { BaseResource } from "@notation/resource";
+import type { BaseResource, ResourceType } from "@notation/resource";
 import type { State, StateNode } from "@notation/state";
 import { RetryableError } from "yieldstar";
 import { buildResourceDepthLevels } from "./dependency-graph";
@@ -287,13 +287,15 @@ export class Reconciler {
     for (const stateNode of stateNodes) {
       if (resourceById.has(stateNode.id)) continue;
 
-      const Resource = resolveResourceClass(registry, stateNode.type);
+      const stateNodeResourceType = stateNode.type as ResourceType;
+
+      const Resource = resolveResourceClass(registry, stateNodeResourceType);
       if (!Resource) {
         await this.#emit?.(
           createMissingResourceRegistryMatchWarningEvent({
             workflow,
             resourceId: stateNode.id,
-            resourceType: stateNode.type,
+            resourceType: stateNodeResourceType,
           }),
         );
         continue;
