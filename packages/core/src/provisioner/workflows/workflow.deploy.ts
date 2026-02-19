@@ -7,6 +7,7 @@ import { State } from "../state";
 import * as deepDiff from "deep-object-diff";
 import { BaseResource } from "src/orchestrator/resource";
 import {
+  createMissingResourceRegistryMatchWarningEvent,
   createResourceRegistryFromGraph,
   resolveResourceClass,
   ResourceRegistry,
@@ -100,6 +101,20 @@ export async function deployApp(
 
     if (!resource) {
       const Resource = resolveResourceClass(resourceRegistry, stateNode.type);
+
+      if (!Resource) {
+        console.warn(
+          JSON.stringify(
+            createMissingResourceRegistryMatchWarningEvent({
+              workflow: "deploy",
+              resourceId: stateNode.id,
+              resourceType: stateNode.type,
+            }),
+          ),
+        );
+        continue;
+      }
+
       resource = new Resource({
         id: stateNode.id,
         config: stateNode.config,

@@ -6,6 +6,15 @@ import type {
 
 export type ResourceRegistry = Map<ResourceType, ResourceClass<any, any, any>>;
 
+export type MissingResourceRegistryMatchWarningEvent = {
+  level: "warn";
+  event: "reconciler.orphan-deletion.skipped";
+  reason: "resource-type-not-registered";
+  workflow: "deploy" | "refresh";
+  resourceId: string;
+  resourceType: ResourceType;
+};
+
 export function createResourceRegistry(
   entries: Iterable<ResourceClass<any, any, any>> = [],
 ): ResourceRegistry {
@@ -32,14 +41,21 @@ export function createResourceRegistryFromGraph(
 export function resolveResourceClass(
   registry: ResourceRegistry,
   type: ResourceType,
-): ResourceClass<any, any, any> {
-  const Resource = registry.get(type);
-  if (!Resource) {
-    throw new Error(
-      `No resource provider registered for type "${type}". ` +
-        `Provide a ResourceRegistry (type -> ResourceClass) to the deploy/refresh workflows ` +
-        `so resources can be reconstructed from state for orphan deletion.`,
-    );
-  }
-  return Resource;
+): ResourceClass<any, any, any> | undefined {
+  return registry.get(type);
+}
+
+export function createMissingResourceRegistryMatchWarningEvent(opts: {
+  workflow: "deploy" | "refresh";
+  resourceId: string;
+  resourceType: ResourceType;
+}): MissingResourceRegistryMatchWarningEvent {
+  return {
+    level: "warn",
+    event: "reconciler.orphan-deletion.skipped",
+    reason: "resource-type-not-registered",
+    workflow: opts.workflow,
+    resourceId: opts.resourceId,
+    resourceType: opts.resourceType,
+  };
 }

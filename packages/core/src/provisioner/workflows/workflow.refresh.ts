@@ -3,6 +3,7 @@ import { deleteResource } from "../operations/operation.delete";
 import { State } from "../state";
 import { BaseResource } from "src/orchestrator/resource";
 import {
+  createMissingResourceRegistryMatchWarningEvent,
   createResourceRegistryFromGraph,
   resolveResourceClass,
   ResourceRegistry,
@@ -30,6 +31,20 @@ export async function refreshState(
 
     if (!resource) {
       const Resource = resolveResourceClass(resourceRegistry, stateNode.type);
+
+      if (!Resource) {
+        console.warn(
+          JSON.stringify(
+            createMissingResourceRegistryMatchWarningEvent({
+              workflow: "refresh",
+              resourceId: stateNode.id,
+              resourceType: stateNode.type,
+            }),
+          ),
+        );
+        continue;
+      }
+
       resource = new Resource({
         id: stateNode.id,
         config: stateNode.config,
