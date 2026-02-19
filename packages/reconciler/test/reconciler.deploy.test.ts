@@ -270,3 +270,197 @@ describe("reconciler deploy", () => {
     expect(operationEvents).toContain("delete:dry-run:orphan");
   });
 });
+
+describe("reconciler destroy + refresh", () => {
+  it("destroys resources in reverse dependency order", async () => {
+    const destroyOrder: string[] = [];
+    const deleteA = vi.fn(async () => {
+      destroyOrder.push("a");
+    });
+    const deleteB = vi.fn(async () => {
+      destroyOrder.push("b");
+    });
+    const deleteC = vi.fn(async () => {
+      destroyOrder.push("c");
+    });
+
+    const AResource = createTestResourceClass({
+      type: "test/service/destroy-a",
+      delete: deleteA,
+    });
+    const BResource = createTestResourceClass({
+      type: "test/service/destroy-b",
+      delete: deleteB,
+    });
+    const CResource = createTestResourceClass({
+      type: "test/service/destroy-c",
+      delete: deleteC,
+    });
+
+    const resourceA = new AResource({ id: "a", config: { name: "a" } });
+    const resourceB = new BResource({
+      id: "b",
+      config: { name: "b" },
+      dependencies: { a: resourceA },
+    });
+    const resourceC = new CResource({
+      id: "c",
+      config: { name: "c" },
+      dependencies: { b: resourceB },
+    });
+
+    const state = createMemoryState({
+      a: {
+        id: "a",
+        groupId: -1,
+        groupType: "",
+        type: AResource.type,
+        config: { name: "a" },
+        params: { name: "a" },
+        output: { name: "a" },
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+      },
+      b: {
+        id: "b",
+        groupId: -1,
+        groupType: "",
+        type: BResource.type,
+        config: { name: "b" },
+        params: { name: "b" },
+        output: { name: "b" },
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+      },
+      c: {
+        id: "c",
+        groupId: -1,
+        groupType: "",
+        type: CResource.type,
+        config: { name: "c" },
+        params: { name: "c" },
+        output: { name: "c" },
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+      },
+    });
+
+    const reconciler = new Reconciler({ state });
+    await reconciler.destroy([resourceA, resourceB, resourceC]);
+
+    expect(destroyOrder).toEqual(["c", "b", "a"]);
+    expect(state.delete).toHaveBeenCalledWith("a");
+    expect(state.delete).toHaveBeenCalledWith("b");
+    expect(state.delete).toHaveBeenCalledWith("c");
+  });
+
+  it("refresh removes orphan state entries", async () => {
+    const deleteSpy = vi.fn(async () => undefined);
+    const OrphanResource = createTestResourceClass({
+      type: "test/service/refresh-orphan",
+      delete: deleteSpy,
+    });
+    const KeepResource = createTestResourceClass({
+      type: "test/service/refresh-keep",
+    });
+
+    const keep = new KeepResource({ id: "keep", config: { name: "keep" } });
+    const state = createMemoryState({
+      keep: {
+        id: "keep",
+        groupId: -1,
+        groupType: "",
+        type: KeepResource.type,
+        config: { name: "keep" },
+        params: { name: "keep" },
+        output: { name: "keep" },
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+      },
+      orphan: {
+        id: "orphan",
+        groupId: -1,
+        groupType: "",
+        type: OrphanResource.type,
+        config: { name: "orphan" },
+        params: { name: "orphan" },
+        output: { name: "orphan" },
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+      },
+    });
+
+    const reconciler = new Reconciler({
+      state,
+      registry: createResourceRegistry([OrphanResource]),
+    });
+
+    await reconciler.refresh([keep]);
+
+    expect(deleteSpy).toHaveBeenCalledOnce();
+    expect(state.delete).toHaveBeenCalledWith("orphan");
+    expect(state.delete).not.toHaveBeenCalledWith("keep");
+  });
+
+  it("destroy and refresh dryRun emit operation events without side effects", async () => {
+    const deleteSpy = vi.fn(async () => undefined);
+    const DestroyResource = createTestResourceClass({
+      type: "test/service/dry-run-destroy",
+      delete: deleteSpy,
+    });
+    const OrphanResource = createTestResourceClass({
+      type: "test/service/dry-run-refresh",
+      delete: deleteSpy,
+    });
+
+    const destroyResource = new DestroyResource({
+      id: "destroy-me",
+      config: { name: "destroy-me" },
+    });
+
+    const state = createMemoryState({
+      "destroy-me": {
+        id: "destroy-me",
+        groupId: -1,
+        groupType: "",
+        type: DestroyResource.type,
+        config: { name: "destroy-me" },
+        params: { name: "destroy-me" },
+        output: { name: "destroy-me" },
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+      },
+      orphan: {
+        id: "orphan",
+        groupId: -1,
+        groupType: "",
+        type: OrphanResource.type,
+        config: { name: "orphan" },
+        params: { name: "orphan" },
+        output: { name: "orphan" },
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+      },
+    });
+
+    const operationEvents: string[] = [];
+    const reconciler = new Reconciler({
+      state,
+      dryRun: true,
+      registry: createResourceRegistry([OrphanResource]),
+      emit: async (event) => {
+        if ("operation" in event) {
+          operationEvents.push(`${event.operation}:${event.status}:${event.resourceId}`);
+        }
+      },
+    });
+
+    await reconciler.destroy([destroyResource]);
+    await reconciler.refresh([destroyResource]);
+
+    expect(deleteSpy).not.toHaveBeenCalled();
+    expect(state.delete).not.toHaveBeenCalled();
+    expect(operationEvents).toContain("delete:dry-run:destroy-me");
+    expect(operationEvents).toContain("delete:dry-run:orphan");
+  });
+});

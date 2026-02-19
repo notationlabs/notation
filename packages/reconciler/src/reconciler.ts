@@ -55,6 +55,14 @@ export type DeployOptions = {
   driftDetection?: boolean;
 };
 
+export type DestroyOptions = {
+  dryRun?: boolean;
+};
+
+export type RefreshOptions = {
+  dryRun?: boolean;
+};
+
 export class Reconciler {
   readonly #state: ReconcilerState;
   readonly #registry?: ResourceRegistry;
@@ -88,7 +96,24 @@ export class Reconciler {
       );
     }
 
-    await this.#deleteOrphans(resources, resourceById, dryRun);
+    await this.#deleteOrphans(resources, resourceById, dryRun, "deploy");
+  }
+
+  async destroy(resources: BaseResource[], opts: DestroyOptions = {}): Promise<void> {
+    const dryRun = opts.dryRun ?? this.#defaultDryRun;
+    const dependencyLevels = buildResourceDepthLevels(resources);
+
+    for (let levelIndex = dependencyLevels.length - 1; levelIndex >= 0; levelIndex -= 1) {
+      const level = dependencyLevels[levelIndex]!;
+      await Promise.all(level.map((resource) => this.#destroyResource(resource, dryRun)));
+    }
+  }
+
+  async refresh(resources: BaseResource[], opts: RefreshOptions = {}): Promise<void> {
+    const dryRun = opts.dryRun ?? this.#defaultDryRun;
+    const resourceById = new Map(resources.map((resource) => [resource.id, resource]));
+
+    await this.#deleteOrphans(resources, resourceById, dryRun, "refresh");
   }
 
   async #deployResource(
@@ -237,6 +262,7 @@ export class Reconciler {
     resources: BaseResource[],
     resourceById: Map<string, BaseResource>,
     dryRun: boolean,
+    workflow: "deploy" | "refresh",
   ) {
     const stateNodes = await this.#state.values();
     const registry = this.#registry ?? createResourceRegistryFromResources(resources);
@@ -248,7 +274,7 @@ export class Reconciler {
       if (!Resource) {
         await this.#emit?.(
           createMissingResourceRegistryMatchWarningEvent({
-            workflow: "deploy",
+            workflow,
             resourceId: stateNode.id,
             resourceType: stateNode.type,
           }),
@@ -268,6 +294,25 @@ export class Reconciler {
         }),
       );
     }
+  }
+
+  async #destroyResource(resource: BaseResource, dryRun: boolean) {
+    const stateNode = await this.#state.get(resource.id);
+    if (!stateNode) {
+      return;
+    }
+
+    resource.setOutput(stateNode.output);
+
+    await runOperation(
+      deleteResourceOperation(this.#stepRunner, {
+        resource,
+        state: this.#state,
+        dryRun,
+        emit: this.#emit,
+        retryOptions: this.#retryOptions,
+      }),
+    );
   }
 }
 
