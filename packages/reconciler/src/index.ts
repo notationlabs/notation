@@ -4,6 +4,7 @@ export type DeepObjectDiffApi = typeof import("deep-object-diff");
 export type YieldstarApi = typeof import("yieldstar");
 
 export * from "./resource-registry";
+export * from "./operations";
 
 export interface ReconcilerInput<TCurrent = unknown, TDesired = unknown> {
   current: TCurrent;
