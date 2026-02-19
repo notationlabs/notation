@@ -1,0 +1,10 @@
+{
+  "extends": "tsconfig/base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@notation/resource": ["../resource/src/index.ts"],
+      "@notation/state": ["../state/src/index.ts"]
+    }
+  }
+}

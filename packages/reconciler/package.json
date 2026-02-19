@@ -1,0 +1,20 @@
+{
+  "type": "module",
+  "name": "@notation/reconciler",
+  "version": "0.0.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup --clean",
+    "dev": "tsup --watch"
+  },
+  "dependencies": {
+    "@notation/resource": "workspace:*",
+    "@notation/state": "workspace:*",
+    "deep-object-diff": "^1.1.9",
+    "yieldstar": "^0.4.6"
+  }
+}
