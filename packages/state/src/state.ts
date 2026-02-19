@@ -24,6 +24,52 @@ export interface StateBackend {
 
 export type State = StateBackend;
 
+export class MemoryStateBackend implements StateBackend {
+  #state: Record<string, StateNode>;
+
+  constructor(initialState: Record<string, StateNode> = {}) {
+    this.#state = cloneAsPersistedState(initialState);
+  }
+
+  async get(id: string): Promise<StateNode | undefined> {
+    const state = await this.readState();
+    return state[id];
+  }
+
+  async has(id: string): Promise<boolean> {
+    const state = await this.readState();
+    return id in state;
+  }
+
+  async update(id: string, patch: Partial<StateNode>): Promise<void> {
+    const state = await this.readState();
+    state[id] = {
+      ...state[id],
+      ...patch,
+    } as StateNode;
+    await this.writeState(state);
+  }
+
+  async delete(id: string): Promise<void> {
+    const state = await this.readState();
+    delete state[id];
+    await this.writeState(state);
+  }
+
+  async values(): Promise<StateNode[]> {
+    const state = await this.readState();
+    return Object.values(state);
+  }
+
+  private async readState(): Promise<Record<string, StateNode>> {
+    return cloneAsPersistedState(this.#state);
+  }
+
+  private async writeState(state: Record<string, StateNode>): Promise<void> {
+    this.#state = cloneAsPersistedState(state);
+  }
+}
+
 export class FileStateBackend implements StateBackend {
   constructor(private readonly stateFilePath: string) {}
 
@@ -99,4 +145,10 @@ function isFileMissingError(error: unknown): boolean {
     "code" in error &&
     error.code === "ENOENT"
   );
+}
+
+function cloneAsPersistedState(
+  state: Record<string, StateNode>,
+): Record<string, StateNode> {
+  return JSON.parse(JSON.stringify(state)) as Record<string, StateNode>;
 }
