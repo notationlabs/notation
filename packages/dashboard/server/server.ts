@@ -11,7 +11,8 @@ const __dirname = dirname(__filename);
 
 const fastify = Fastify({});
 
-const statePath = path.join(process.cwd(), "./.notation/state.json");
+const defaultStatePath = path.join(process.cwd(), ".notation", "state.json");
+const statePath = process.env.NOTATION_STATE_PATH ?? defaultStatePath;
 
 fastify.register(fastifyStatic, {
   root: path.join(__dirname, "./"),

@@ -1,13 +1,13 @@
 import { operation } from "./operation.base";
 import { BaseResource } from "src/orchestrator/resource";
-import { State } from "../state";
+import type { StateBackend } from "@notation/state";
 import { readResource } from ".";
 
 export const updateResource = operation("Updating", update);
 
 async function update(opts: {
   resource: BaseResource;
-  state: State;
+  state: StateBackend;
   patch: any;
 }): Promise<void> {
   const { resource, state, patch } = opts;

@@ -3,17 +3,23 @@ import {
   createConsoleReconcilerSubscriber,
   type ResourceRegistry,
 } from "@notation/reconciler";
+import type { StateBackend } from "@notation/state";
 import { getResourceGraph } from "src/orchestrator/graph";
-import { State } from "../state";
+import { createDefaultStateBackend } from "../state-backend";
 import { refreshState } from "./workflow.refresh";
 
-export async function destroyApp(entryPoint: string, registry?: ResourceRegistry) {
+export async function destroyApp(
+  entryPoint: string,
+  registry?: ResourceRegistry,
+  stateBackend?: StateBackend,
+) {
   console.log(`Destroying ${entryPoint}\n`);
 
-  await refreshState(entryPoint, false, registry);
+  const state = stateBackend ?? createDefaultStateBackend();
+
+  await refreshState(entryPoint, false, registry, state);
 
   const graph = await getResourceGraph(entryPoint);
-  const state = new State();
   const reconciler = new Reconciler({
     state,
     emit: createConsoleReconcilerSubscriber(),

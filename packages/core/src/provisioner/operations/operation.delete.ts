@@ -1,10 +1,10 @@
 import { operation } from "./operation.base";
 import { BaseResource } from "src/orchestrator/resource";
-import { State } from "../state";
+import type { StateBackend } from "@notation/state";
 
 export const deleteResource = operation("Destroying", delete_);
 
-async function delete_(opts: { resource: BaseResource; state: State }) {
+async function delete_(opts: { resource: BaseResource; state: StateBackend }) {
   const { resource, state } = opts;
 
   try {

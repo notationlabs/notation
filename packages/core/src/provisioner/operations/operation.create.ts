@@ -1,12 +1,12 @@
 import { operation } from "./operation.base";
 import { BaseResource } from "src/orchestrator/resource";
-import { State } from "../state";
+import type { StateBackend } from "@notation/state";
 import { readResource } from ".";
 
 export const createResource = operation("Creating", create);
 
 async function create(
-  opts: { resource: BaseResource; state: State },
+  opts: { resource: BaseResource; state: StateBackend },
   backoff = 1000,
 ) {
   const { resource, state } = opts;
