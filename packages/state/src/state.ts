@@ -3,8 +3,6 @@ import path from "node:path";
 
 export type StateNode = {
   id: string;
-  groupId: number;
-  groupType: string;
   type: string;
   config: Record<string, unknown>;
   params: Record<string, unknown>;
