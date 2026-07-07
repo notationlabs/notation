@@ -14,7 +14,10 @@ type BackendFixture = {
   cleanup: () => Promise<void>;
 };
 
-function createStateNode(id: string, overrides: Partial<StateNode> = {}): StateNode {
+function createStateNode(
+  id: string,
+  overrides: Partial<StateNode> = {},
+): StateNode {
   return {
     id,
     groupId: 1,
@@ -24,7 +27,7 @@ function createStateNode(id: string, overrides: Partial<StateNode> = {}): StateN
     params: { name: `${id}-params` },
     output: { name: `${id}-output` },
     lastOperation: "create",
-    lastOperationAt: "2024-01-01T00:00:00.000Z",
+    lastOperationAt: "2027-01-01T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -75,7 +78,9 @@ function runStateBackendContractTests(
         await fixture.backend.update(initialNode.id, initialNode);
         await fixture.backend.delete(initialNode.id);
 
-        await expect(fixture.backend.get(initialNode.id)).resolves.toBeUndefined();
+        await expect(
+          fixture.backend.get(initialNode.id),
+        ).resolves.toBeUndefined();
         await expect(fixture.backend.has(initialNode.id)).resolves.toBe(false);
         await expect(fixture.backend.values()).resolves.toEqual([]);
       } finally {
