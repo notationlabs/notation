@@ -3,6 +3,7 @@ import { program } from "commander";
 import { compile } from "./compile";
 import { deploy } from "./deploy";
 import { destroy } from "./destroy";
+import { plan } from "./plan";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
 import { startDashboardServer } from "@notation/dashboard";
@@ -36,6 +37,15 @@ program
   .description("Destroy Notation App")
   .action(async (entryPoint) => {
     await destroy(entryPoint);
+  });
+
+program
+  .command("plan")
+  .argument("<entryPoint>", "entryPoint")
+  .description("Plan Notation App")
+  .option("--json", "print the plan as JSON")
+  .action(async (entryPoint, options) => {
+    await plan(entryPoint, { json: options.json });
   });
 
 program
