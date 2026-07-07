@@ -1,5 +1,7 @@
 # @notation/dashboard
 
+## 0.12.0
+
 ## 0.11.1
 
 ### Patch Changes

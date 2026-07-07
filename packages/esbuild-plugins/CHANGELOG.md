@@ -1,5 +1,12 @@
 # @notation/esbuild-plugins
 
+## 0.12.0
+
+### Patch Changes
+
+- Updated dependencies
+  - @notation/core@0.12.0
+
 ## 0.11.1
 
 ### Patch Changes

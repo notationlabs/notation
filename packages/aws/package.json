@@ -1,7 +1,7 @@
 {
   "type": "module",
   "name": "@notation/aws",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "exports": {
     "./*": {
       "import": "./dist/*/index.js",
