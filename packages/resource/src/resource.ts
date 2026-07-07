@@ -2,6 +2,9 @@ import type {
   Schema,
   SchemaItem,
   SchemaFromApi,
+  ResolvedSchema,
+  ResolveSchema,
+  DefineResourceApiSchema,
   Params,
   Result,
   Output,
@@ -15,7 +18,7 @@ import type {
   NoInfer,
 } from "./types";
 
-export type { Schema, SchemaItem };
+export type { Schema, SchemaItem, DefineResourceApiSchema };
 
 export type ResourceType = `${string}/${string}/${string}`;
 
@@ -38,6 +41,33 @@ export type ResultConditions<T> = {
 export type ResourceOpts<C, D> = OptionalIfAllPropertiesOptional<"config", C> &
   OptionalIfAllPropertiesOptional<"dependencies", D> & { id: string };
 
+/**
+ * The object types a resource's schema gives rise to.
+ *
+ * These are derived from the schema exactly once, when `defineSchema` is
+ * called (see {@link InferResourceTypes}). Everything downstream — operation
+ * callbacks, instances, dependency inference — is generic over this small
+ * bag of plain object types, so the schema literal never re-enters type
+ * inference.
+ */
+export type ResourceTypes = {
+  params: any;
+  compoundKey: any;
+  primaryKey: any;
+  result: any;
+  state: any;
+  output: any;
+};
+
+export type InferResourceTypes<S extends ResolvedSchema> = {
+  params: Params<S>;
+  compoundKey: CompoundKey<S>;
+  primaryKey: ComputedPrimaryKey<S>;
+  result: Result<S>;
+  state: State<S>;
+  output: Output<S>;
+};
+
 export interface BaseResource {
   readonly type: ResourceType;
   readonly schema: Schema;
@@ -57,7 +87,7 @@ export interface BaseResource {
   readonly retryLaterOnError?: ErrorMatcher[];
   readonly key: {};
   create: (params: any) => Promise<{} | void>;
-  read?: (key: any) => Promise<Result<any>>;
+  read?: (key: any) => Promise<Record<string, any>>;
   update?: (key: any, patch: any, params: any, state: any) => Promise<void>;
   delete: (key: any, state: any) => Promise<void>;
   getParams(): Promise<{}>;
@@ -72,29 +102,29 @@ export interface BaseResource {
 }
 
 export abstract class Resource<
-  S extends Schema = any,
+  T extends ResourceTypes = ResourceTypes,
   D extends Record<string, BaseResource | void> = {},
-  C extends Record<string, any> = Params<S>,
+  C extends Record<string, any> = T["params"],
 > implements BaseResource
 {
   config: C;
   id: string;
   groupId = -1;
   groupType = "";
-  output = null as any as Output<S>;
+  output = null as any as T["output"];
   dependencies = {} as NoInfer<D>;
   abstract type: ResourceType;
-  abstract schema: S;
-  abstract create: (params: Params<S>) => Promise<ComputedPrimaryKey<S>>;
-  abstract read?: (key: CompoundKey<S>) => Promise<Result<S>>;
+  abstract schema: Schema;
+  abstract create: (params: T["params"]) => Promise<T["primaryKey"]>;
+  abstract read?: (key: T["compoundKey"]) => Promise<T["result"]>;
   abstract update?: (
-    key: CompoundKey<S>,
-    patch: Params<S>,
-    params: Params<S>,
-    state: State<S>,
+    key: T["compoundKey"],
+    patch: T["params"],
+    params: T["params"],
+    state: T["state"],
   ) => Promise<void>;
-  abstract delete: (key: CompoundKey<S>, state: State<S>) => Promise<void>;
-  abstract retryReadOnCondition?: ResultConditions<Output<S>>;
+  abstract delete: (key: T["compoundKey"], state: T["state"]) => Promise<void>;
+  abstract retryReadOnCondition?: ResultConditions<T["output"]>;
   abstract failOnError?: (ErrorMatcher & { reason: string })[];
   abstract notFoundOnError?: ErrorMatcher[];
   abstract retryLaterOnError?: ErrorMatcher[];
@@ -111,141 +141,128 @@ export abstract class Resource<
     return this;
   }
 
-  get key() {
-    const key = {} as CompoundKey<S>;
-    for (const [k, v] of Object.entries(this.schema)) {
-      const schemaItem = v as any;
-      if (schemaItem.primaryKey || schemaItem.secondaryKey) {
-        // @ts-expect-error - runtime mapping from schema
+  get key(): T["compoundKey"] {
+    const key = {} as Record<string, any>;
+    for (const [k, v] of Object.entries<
+      SchemaItem<any> & { primaryKey?: true; secondaryKey?: true }
+    >(this.schema)) {
+      if (v.primaryKey || v.secondaryKey) {
         key[k] = (this.output as any)[k];
       }
     }
     return key;
   }
 
-  setOutput(output: Output<S>) {
-    this.output = output as Output<S>;
+  setOutput(output: T["output"]) {
+    this.output = output;
   }
 
-  toComparable(output: Output<S>) {
-    const parsed = {} as Output<S>;
-    for (const [k] of Object.entries(this.schema)) {
-      if ((this.schema as any)[k].volatile) continue;
-      if ((this.schema as any)[k].hidden) continue;
-      if ((this.schema as any)[k].propertyType !== "param") continue;
+  toComparable(output: T["output"]): T["output"] {
+    const parsed = {} as Record<string, any>;
+    for (const [k, v] of Object.entries(this.schema)) {
+      if (v.volatile) continue;
+      if (v.hidden) continue;
+      if (v.propertyType !== "param") continue;
       if (k in (output as any)) {
-        // @ts-expect-error - runtime mapping from schema
         parsed[k] = (output as any)[k];
       }
     }
     return parsed;
   }
 
-  toState(output: Output<S>) {
-    const parsed = {} as Output<S>;
-    for (const [k] of Object.entries(this.schema)) {
-      if ((this.schema as any)[k].hidden) continue;
+  toState(output: T["output"]): T["state"] {
+    const parsed = {} as Record<string, any>;
+    for (const [k, v] of Object.entries(this.schema)) {
+      if (v.hidden) continue;
       if (k in (output as any)) {
-        // @ts-expect-error - runtime mapping from schema
         parsed[k] = (output as any)[k];
       }
     }
     return parsed;
   }
 
-  async getParams() {
+  async getParams(): Promise<T["params"]> {
     return {
-      ...(this.config as any as Params<S>),
+      ...this.config,
       ...(await this.deriveParams({
         id: this.id,
         config: this.config,
         deps: this.dependencies,
       })),
-    } as any as Params<S>;
+    };
   }
 }
 
 export type DefineResourceMeta = { type: ResourceType };
 
-export type DefineResourceApiSchema = {
-  Key: any;
-  CreateParams: any;
-  UpdateParams: any;
-  ReadResult: any;
-};
-
 export type ResourceOperationsOptions<
-  S extends Schema,
-  IntrinsicParams extends Partial<Params<S>>,
+  T extends ResourceTypes,
+  IntrinsicParams extends Partial<T["params"]>,
 > = {
-  create: (params: Params<S>) => Promise<ComputedPrimaryKey<S>>;
-  read?: (key: CompoundKey<S>) => Promise<Result<S>>;
+  create: (params: T["params"]) => Promise<T["primaryKey"]>;
+  read?: (key: T["compoundKey"]) => Promise<T["result"]>;
   update?: (
-    key: CompoundKey<S>,
-    patch: Params<S>,
-    params: Params<S>,
-    state: State<S>,
+    key: T["compoundKey"],
+    patch: T["params"],
+    params: T["params"],
+    state: T["state"],
   ) => Promise<void>;
-  delete: (key: CompoundKey<S>, state: State<S>) => Promise<void>;
-  retryReadOnCondition?: ResultConditions<Output<S>>;
+  delete: (key: T["compoundKey"], state: T["state"]) => Promise<void>;
+  retryReadOnCondition?: ResultConditions<T["output"]>;
   failOnError?: (ErrorMatcher & { reason: string })[];
   notFoundOnError?: ErrorMatcher[];
   retryLaterOnError?: ErrorMatcher[];
   deriveParams?: (opts: {
-    config: Partial<Params<S>>;
+    config: Partial<T["params"]>;
   }) => IntrinsicParams | Promise<IntrinsicParams>;
 };
 
 export type ResourceDependenciesBuilder<
-  S extends Schema,
-  IntrinsicParams extends Partial<Params<S>>,
+  T extends ResourceTypes,
+  IntrinsicParams extends Partial<T["params"]>,
   Dependencies extends Record<string, BaseResource | void>,
 > = {
-  deriveParams: <DepAwareParams extends Partial<Params<S>>>(
+  deriveParams: <DepAwareParams extends Partial<T["params"]>>(
     deriveParams: (opts: {
       id: string;
-      config: Params<S>;
+      config: T["params"];
       deps: Dependencies;
     }) => DepAwareParams | Promise<DepAwareParams>,
   ) => ResourceClass<
-    S,
+    T,
     Dependencies,
-    Omit<Params<S>, keyof IntrinsicParams | keyof DepAwareParams>
+    Omit<T["params"], keyof IntrinsicParams | keyof DepAwareParams>
   >;
 };
 
 export type ResourceClass<
-  S extends Schema,
+  T extends ResourceTypes,
   D extends Record<string, BaseResource | void> = {},
-  C extends Record<string, any> = Params<S>,
-  IntrinsicParams extends Partial<Params<S>> = {},
+  C extends Record<string, any> = T["params"],
+  IntrinsicParams extends Partial<T["params"]> = {},
 > = {
-  new (opts: ResourceOpts<C, D>): Resource<S, D, C>;
+  new (opts: ResourceOpts<C, D>): Resource<T, D, C>;
   readonly type: ResourceType;
   requireDependencies: <
     Dependencies extends Record<string, BaseResource | void>,
-  >() => ResourceDependenciesBuilder<S, IntrinsicParams, Dependencies>;
+  >() => ResourceDependenciesBuilder<T, IntrinsicParams, Dependencies>;
 };
 
-export type ResourceSchemaBuilder<
-  ApiSchema extends DefineResourceApiSchema,
-  S extends SchemaFromApi<
-    ApiSchema["Key"],
-    ApiSchema["CreateParams"],
-    Fallback<ApiSchema["UpdateParams"], ApiSchema["CreateParams"]>,
-    Fallback<ApiSchema["ReadResult"], {}>
-  >,
-> = {
-  defineOperations: <
-    IntrinsicParams extends Partial<Params<S>> = {},
-  >(
-    opts: ResourceOperationsOptions<S, IntrinsicParams>,
-  ) => ResourceClass<S, {}, Omit<Params<S>, keyof IntrinsicParams>, IntrinsicParams>;
+export type ResourceSchemaBuilder<T extends ResourceTypes> = {
+  defineOperations: <IntrinsicParams extends Partial<T["params"]> = {}>(
+    opts: ResourceOperationsOptions<T, IntrinsicParams>,
+  ) => ResourceClass<
+    T,
+    {},
+    Omit<T["params"], keyof IntrinsicParams>,
+    IntrinsicParams
+  >;
 };
 
 export type ResourceBuilder<ApiSchema extends DefineResourceApiSchema> = {
   defineSchema: <
-    S extends SchemaFromApi<
+    S extends Schema &
+      SchemaFromApi<
       ApiSchema["Key"],
       ApiSchema["CreateParams"],
       Fallback<ApiSchema["UpdateParams"], ApiSchema["CreateParams"]>,
@@ -253,7 +270,7 @@ export type ResourceBuilder<ApiSchema extends DefineResourceApiSchema> = {
     >,
   >(
     schema: S,
-  ) => ResourceSchemaBuilder<ApiSchema, S>;
+  ) => ResourceSchemaBuilder<InferResourceTypes<ResolveSchema<ApiSchema, S>>>;
 };
 
 export function defineResource<ApiSchema extends DefineResourceApiSchema>(
@@ -261,26 +278,37 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
 ): ResourceBuilder<ApiSchema> {
   return {
     defineSchema<
-      S extends SchemaFromApi<
-        ApiSchema["Key"],
-        ApiSchema["CreateParams"],
-        Fallback<ApiSchema["UpdateParams"], ApiSchema["CreateParams"]>,
-        Fallback<ApiSchema["ReadResult"], {}>
-      >,
-    >(schema: S): ResourceSchemaBuilder<ApiSchema, S> {
-      return {
-        defineOperations<IntrinsicParams extends Partial<Params<S>> = {}>(
-          opts: ResourceOperationsOptions<S, IntrinsicParams>,
+      S extends Schema &
+        SchemaFromApi<
+          ApiSchema["Key"],
+          ApiSchema["CreateParams"],
+          Fallback<ApiSchema["UpdateParams"], ApiSchema["CreateParams"]>,
+          Fallback<ApiSchema["ReadResult"], {}>
+        >,
+    >(
+      schema: S,
+    ): ResourceSchemaBuilder<InferResourceTypes<ResolveSchema<ApiSchema, S>>> {
+      type T = InferResourceTypes<ResolveSchema<ApiSchema, S>>;
+      // The cast skips re-relating this literal to ResourceSchemaBuilder:
+      // defineOperations restates the declared signature verbatim, and
+      // structurally verifying the deferred conditionals inside it costs
+      // ~350ms of check time in every program that includes this file.
+      const builder = {
+        defineOperations<IntrinsicParams extends Partial<T["params"]> = {}>(
+          opts: ResourceOperationsOptions<T, IntrinsicParams>,
         ): ResourceClass<
-          S,
+          T,
           {},
-          Omit<Params<S>, keyof IntrinsicParams>,
+          Omit<T["params"], keyof IntrinsicParams>,
           IntrinsicParams
         > {
           class SimpleResource<
             D extends Record<string, BaseResource | void> = {},
-            C extends Record<string, any> = Omit<Params<S>, keyof IntrinsicParams>,
-          > extends Resource<S, NoInfer<D>, NoInfer<C>> {
+            C extends Record<string, any> = Omit<
+              T["params"],
+              keyof IntrinsicParams
+            >,
+          > extends Resource<T, NoInfer<D>, NoInfer<C>> {
             static type = meta.type;
             type = meta.type;
             schema = schema;
@@ -296,7 +324,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             async deriveParams() {
               if (!opts.deriveParams) return {};
               return await opts.deriveParams({
-                config: this.config as any as Partial<Params<S>>,
+                config: this.config as any as Partial<T["params"]>,
               });
             }
 
@@ -304,17 +332,17 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
               Dependencies extends Record<string, BaseResource | void>,
             >() {
               return {
-                deriveParams<DepAwareParams extends Partial<Params<S>>>(
+                deriveParams<DepAwareParams extends Partial<T["params"]>>(
                   deriveParams: (opts: {
                     id: string;
-                    config: Params<S>;
+                    config: T["params"];
                     deps: Dependencies;
                   }) => DepAwareParams | Promise<DepAwareParams>,
                 ) {
                   return class DependencyAwareResource extends SimpleResource<
                     Dependencies,
                     Omit<
-                      Params<S>,
+                      T["params"],
                       keyof DepAwareParams | keyof IntrinsicParams
                     >
                   > {
@@ -324,7 +352,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
                         ...superParams,
                         ...(await deriveParams({
                           id: this.id,
-                          config: this.config as Params<S>,
+                          config: this.config as T["params"],
                           deps: this.dependencies,
                         })),
                       };
@@ -338,6 +366,9 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
           return SimpleResource as any;
         },
       };
+      return builder as ResourceSchemaBuilder<
+        InferResourceTypes<ResolveSchema<ApiSchema, S>>
+      >;
     },
   };
 }

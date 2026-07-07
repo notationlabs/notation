@@ -9,16 +9,15 @@ export type OptionalIfAllPropertiesOptional<K extends string, T> =
 
 export type Fallback<T, U> = T extends undefined ? U : T;
 
-export type FallbackIf<T, C, U> = C extends T ? U : T;
-
 export type NoInfer<T> = [T][T extends any ? 0 : never];
 
 /**
- * Unpack an intersection.
+ * Flattens an intersection into a single object type.
  *
- * Helps keep mapped types readable in IntelliSense.
+ * Keeps mapped types readable in IntelliSense without the assignability
+ * checks a conditional-based unwrap would cost.
  */
-export type Intersect<T, U> = [T] extends [U] ? T : [U] extends [T] ? U : T & U;
+export type Simplify<T> = { [K in keyof T]: T[K] } & {};
 
 /**
  * Deeply makes all properties optional.

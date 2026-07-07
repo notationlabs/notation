@@ -1,5 +1,4 @@
 import { resource } from "src";
-import { z } from "zod";
 
 export type TestSchema = {
   Key: {
@@ -31,37 +30,31 @@ export const testSchema = {
   primaryKey: {
     presence: "required",
     propertyType: "computed",
-    valueType: z.string(),
     primaryKey: true,
   },
   optionalSecondaryKey: {
     presence: "optional",
     propertyType: "param",
-    valueType: z.number(),
     secondaryKey: true,
     immutable: true,
   },
   requiredParam: {
     presence: "required",
     propertyType: "param",
-    valueType: z.string(),
   },
   volatileComputed: {
     presence: "required",
     propertyType: "computed",
-    valueType: z.string(),
     volatile: true,
   },
   hiddenParam: {
     presence: "required",
     propertyType: "param",
-    valueType: z.string(),
     hidden: true,
   },
   intrinsicParam: {
     presence: "required",
     propertyType: "param",
-    valueType: z.boolean(),
   },
 } as const;
 

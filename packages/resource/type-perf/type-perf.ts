@@ -3,6 +3,7 @@ import type {
   ComputedPrimaryKey,
   Output,
   Params,
+  ResolveSchema,
   Result,
   SchemaFromApi,
   State,
@@ -153,11 +154,56 @@ type V4Read = ApiReadResult & Prefixed<Omit<ApiReadResult, keyof ApiKey>, "v4_">
 type V5Create = ApiCreateParams & Prefixed<Omit<ApiCreateParams, keyof ApiKey>, "v5_">;
 type V5Read = ApiReadResult & Prefixed<Omit<ApiReadResult, keyof ApiKey>, "v5_">;
 
-type S1 = SchemaFromApi<ApiKey, V1Create, ApiUpdateParams, V1Read>;
-type S2 = SchemaFromApi<ApiKey, V2Create, ApiUpdateParams, V2Read>;
-type S3 = SchemaFromApi<ApiKey, V3Create, ApiUpdateParams, V3Read>;
-type S4 = SchemaFromApi<ApiKey, V4Create, ApiUpdateParams, V4Read>;
-type S5 = SchemaFromApi<ApiKey, V5Create, ApiUpdateParams, V5Read>;
+type Api1 = {
+  Key: ApiKey;
+  CreateParams: V1Create;
+  UpdateParams: ApiUpdateParams;
+  ReadResult: V1Read;
+};
+type S1 = ResolveSchema<
+  Api1,
+  SchemaFromApi<ApiKey, V1Create, ApiUpdateParams, V1Read>
+>;
+type Api2 = {
+  Key: ApiKey;
+  CreateParams: V2Create;
+  UpdateParams: ApiUpdateParams;
+  ReadResult: V2Read;
+};
+type S2 = ResolveSchema<
+  Api2,
+  SchemaFromApi<ApiKey, V2Create, ApiUpdateParams, V2Read>
+>;
+type Api3 = {
+  Key: ApiKey;
+  CreateParams: V3Create;
+  UpdateParams: ApiUpdateParams;
+  ReadResult: V3Read;
+};
+type S3 = ResolveSchema<
+  Api3,
+  SchemaFromApi<ApiKey, V3Create, ApiUpdateParams, V3Read>
+>;
+type Api4 = {
+  Key: ApiKey;
+  CreateParams: V4Create;
+  UpdateParams: ApiUpdateParams;
+  ReadResult: V4Read;
+};
+type S4 = ResolveSchema<
+  Api4,
+  SchemaFromApi<ApiKey, V4Create, ApiUpdateParams, V4Read>
+>;
+type Api5 = {
+  Key: ApiKey;
+  CreateParams: V5Create;
+  UpdateParams: ApiUpdateParams;
+  ReadResult: V5Read;
+};
+type S5 = ResolveSchema<
+  Api5,
+  SchemaFromApi<ApiKey, V5Create, ApiUpdateParams, V5Read>
+>;
 
 export type _Stress1 = {
   key: CompoundKey<S1>;

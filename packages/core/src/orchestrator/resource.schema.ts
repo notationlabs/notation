@@ -10,7 +10,8 @@ export type {
   SchemaFromApi,
   MapSchema,
   DeepPartial,
-  Intersect,
+  Simplify,
+  TypedValue,
   OmitOptional,
   PickOptional,
 } from "@notation/resource";
