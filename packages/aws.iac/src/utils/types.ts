@@ -6,10 +6,10 @@
 export type AwsSchema<S extends SdkSchema> = {
   Key: S["Key"];
   CreateParams: NonUndefined<S["CreateParams"]>;
-  UpdateParams: S["UpdateParams"] extends undefined
-    ? NonUndefined<S["UpdateParams"]>
-    : never;
-  ReadResult: S["ReadResult"] extends undefined ? {} : S["ReadResult"];
+  UpdateParams: S extends { UpdateParams: infer UpdateParams }
+    ? NonUndefined<UpdateParams>
+    : undefined;
+  ReadResult: S extends { ReadResult: infer ReadResult } ? ReadResult : {};
 };
 
 type NonUndefined<T> = {

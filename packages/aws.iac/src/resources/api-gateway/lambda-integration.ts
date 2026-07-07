@@ -1,6 +1,5 @@
 import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
-import * as z from "zod";
 import { ApiInstance } from "./api";
 import { LambdaFunctionInstance } from "../lambda";
 import { getLambdaInvocationUri } from "src/templates/arn";
@@ -25,109 +24,87 @@ const integration = resource<LambdaIntegrationSchema>({
 
 const integrationSchema = integration.defineSchema({
   IntegrationId: {
-    valueType: z.string(),
     propertyType: "computed",
     presence: "required",
     primaryKey: true,
   },
   ApiId: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "required",
     secondaryKey: true,
   },
   ApiGatewayManaged: {
-    valueType: z.boolean(),
     propertyType: "computed",
     presence: "optional",
   },
   ConnectionId: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
   },
   ConnectionType: {
-    valueType: z.enum(["INTERNET", "VPC_LINK"]),
     defaultValue: "INTERNET",
     propertyType: "param",
     presence: "optional",
   },
   ContentHandlingStrategy: {
-    valueType: z.enum(["CONVERT_TO_BINARY", "CONVERT_TO_TEXT"]),
     propertyType: "param",
     presence: "optional",
   },
   CredentialsArn: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
   },
   Description: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
   },
   IntegrationMethod: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
   },
   IntegrationSubtype: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
     immutable: true,
   },
   IntegrationType: {
-    valueType: z.enum(["AWS", "AWS_PROXY", "HTTP", "HTTP_PROXY", "MOCK"]),
     propertyType: "param",
     presence: "required",
     immutable: true,
   },
   IntegrationUri: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
   },
   PassthroughBehavior: {
-    valueType: z.enum(["NEVER", "WHEN_NO_MATCH", "WHEN_NO_TEMPLATES"]),
     propertyType: "param",
     presence: "optional",
   },
   PayloadFormatVersion: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
   },
   RequestParameters: {
-    valueType: z.record(z.string()),
     propertyType: "param",
     presence: "optional",
   },
   RequestTemplates: {
-    valueType: z.record(z.string()),
     propertyType: "param",
     presence: "optional",
   },
   ResponseParameters: {
-    valueType: z.record(z.record(z.string())),
     propertyType: "param",
     presence: "optional",
   },
   TemplateSelectionExpression: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
   },
   TimeoutInMillis: {
-    valueType: z.number(),
     propertyType: "param",
     presence: "optional",
   },
   TlsConfig: {
-    valueType: z.object({
-      ServerNameToVerify: z.string().optional(),
-    }),
     propertyType: "param",
     presence: "optional",
   },

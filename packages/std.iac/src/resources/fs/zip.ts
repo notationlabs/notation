@@ -1,14 +1,21 @@
 import { resource } from "@notation/resource";
-import * as z from "zod";
 import * as fs from "node:fs/promises";
 import { zip } from "src/utils/zip";
 import { getSourceSha256 } from "src/utils/hash";
 
 export type ZipSchema = {
   Key: { sourceFilePath: string };
-  CreateParams: { sourceFilePath: string };
-  UpdateParams: { sourceFilePath: string };
-  ReadResult: void;
+  CreateParams: {
+    sourceFilePath: string;
+    filePath: string;
+    sourceSha256: string;
+  };
+  UpdateParams: {
+    sourceFilePath: string;
+    filePath: string;
+    sourceSha256: string;
+  };
+  ReadResult: { file: Buffer };
 };
 
 const zipResource = resource<ZipSchema>({
@@ -17,24 +24,20 @@ const zipResource = resource<ZipSchema>({
 
 export const zipSchema = zipResource.defineSchema({
   sourceFilePath: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "required",
     primaryKey: true,
   },
   filePath: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "required",
     secondaryKey: true,
   },
   sourceSha256: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "required",
   },
   file: {
-    valueType: z.instanceof(Buffer),
     propertyType: "computed",
     presence: "required",
     hidden: true,

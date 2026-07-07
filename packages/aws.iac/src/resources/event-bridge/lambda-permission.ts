@@ -2,8 +2,7 @@ import { AwsSchema } from "src/utils/types";
 import * as sdk from "@aws-sdk/client-lambda";
 import { LambdaFunctionInstance } from "../lambda";
 import { EventBridgeRuleInstance } from "./rule";
-import { resource } from "@notation/resource";
-import z from "zod";
+import { resource, typed } from "@notation/resource";
 import { lambdaClient } from "src/utils/aws-clients";
 
 // TODO: much of the lambda permission types can be shared between event-bridge and api-gateway (other than the dependencies part):
@@ -27,71 +26,59 @@ const lambdaEventBridgeRulePermission =
 const LambdaEventBridgeRulePermissionSchema =
   lambdaEventBridgeRulePermission.defineSchema({
     FunctionName: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "required",
       primaryKey: true,
     },
     StatementId: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "required",
       secondaryKey: true,
     },
     Qualifier: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "optional",
       secondaryKey: true,
     },
     RevisionId: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "optional",
       secondaryKey: true,
     },
     Action: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "required",
     },
     Principal: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "required",
     },
     FunctionUrlAuthType: {
-      valueType: z.enum(["NONE", "AWS_IAM"]),
       propertyType: "param",
       presence: "optional",
     },
     InvocationType: {
-      valueType: z.enum(["Event", "RequestResponse", "DryRun"]),
       propertyType: "param",
       presence: "optional",
     },
     Policy: {
-      valueType: z.string(),
+      valueType: typed<string>(),
       propertyType: "computed",
       presence: "optional",
     },
     PrincipalOrgID: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "optional",
     },
     SourceArn: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "optional",
     },
     EventSourceToken: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "optional",
     },
     SourceAccount: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "optional",
     },

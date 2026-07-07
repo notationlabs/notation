@@ -1,6 +1,5 @@
 import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-iam";
-import * as z from "zod";
 import { iamClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
 import { LambdaIamRoleInstance } from ".";
@@ -21,13 +20,11 @@ const lambdaRolePolicyAttachment = resource<LambdaRolePolicyAttachmentSchema>({
 const lambdaRolePolicyAttachmentSchema =
   lambdaRolePolicyAttachment.defineSchema({
     RoleName: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "required",
       primaryKey: true,
     },
     PolicyArn: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "required",
       secondaryKey: true,

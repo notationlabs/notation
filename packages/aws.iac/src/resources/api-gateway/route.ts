@@ -1,5 +1,4 @@
 import { resource } from "@notation/resource";
-import * as z from "zod";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { ApiInstance, LambdaIntegrationInstance } from ".";
@@ -25,78 +24,60 @@ const route = resource<RouteSdkSchema>({
 
 export const routeSchema = route.defineSchema({
   RouteId: {
-    valueType: z.string(),
     propertyType: "computed",
     presence: "required",
     primaryKey: true,
   },
   ApiId: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "required",
     secondaryKey: true,
   },
   ApiKeyRequired: {
-    valueType: z.boolean(),
     propertyType: "param",
     presence: "optional",
   },
   ApiGatewayManaged: {
-    valueType: z.boolean(),
     propertyType: "computed",
     presence: "optional",
   },
   AuthorizationScopes: {
-    valueType: z.array(z.string()),
     propertyType: "param",
     presence: "optional",
   },
   AuthorizationType: {
-    valueType: z.enum(["NONE", "AWS_IAM", "CUSTOM", "JWT"]),
     propertyType: "param",
     presence: "optional",
   },
   AuthorizerId: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
   },
   ModelSelectionExpression: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
   },
   OperationName: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
   },
   RequestModels: {
-    valueType: z.record(z.string()),
     propertyType: "param",
     presence: "optional",
   },
   RequestParameters: {
-    valueType: z.record(
-      z.object({
-        Required: z.boolean().optional(),
-      }),
-    ),
     propertyType: "param",
     presence: "optional",
   },
   RouteKey: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "required",
   },
   RouteResponseSelectionExpression: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
   },
   Target: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
   },

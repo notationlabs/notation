@@ -1,7 +1,6 @@
 import { resource } from "@notation/resource";
 import { AwsSchema } from "src/utils/types";
 import * as sdk from "@aws-sdk/client-eventbridge";
-import z from "zod";
 import { eventBridgeClient } from "src/utils/aws-clients";
 import { LambdaFunctionInstance } from "../lambda";
 
@@ -26,46 +25,35 @@ const eventBridgeRule = resource<EventBridgeRuleSchema>({
   type: "aws/eventBridge/rule",
 });
 
-const targetSchema = z.object({
-  Id: z.string(),
-  Arn: z.string(),
-});
-
 const eventBridgeRuleSchema = eventBridgeRule.defineSchema({
   Name: {
-    valueType: z.string(),
     presence: "required",
     primaryKey: true,
     propertyType: "param",
   },
   EventBusName: {
-    valueType: z.string(),
     presence: "required",
     defaultValue: "default",
     propertyType: "param",
     secondaryKey: true,
   },
   ScheduleExpression: {
-    valueType: z.string().optional(),
     presence: "optional",
     propertyType: "param",
   },
   EventPattern: {
     // Note: this is a JSON string representation of an event pattern:
     // (https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns.html#eb-filtering-data-types)
-    valueType: z.string().optional(),
     presence: "optional",
     propertyType: "param",
   },
   Targets: {
     presence: "required",
     propertyType: "param",
-    valueType: z.array(targetSchema),
   },
   Arn: {
     presence: "required",
     propertyType: "computed",
-    valueType: z.string(),
   },
 });
 

@@ -1,6 +1,5 @@
 import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-lambda";
-import * as z from "zod";
 import { lambdaClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
 import { ApiInstance } from "src/resources/api-gateway/api";
@@ -25,71 +24,58 @@ const lambdaApiGatewayV2Permission =
 const lambdaApiGatewayV2PermissionSchema =
   lambdaApiGatewayV2Permission.defineSchema({
     FunctionName: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "required",
       primaryKey: true,
     },
     StatementId: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "required",
       secondaryKey: true,
     },
     Qualifier: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "optional",
       secondaryKey: true,
     },
     RevisionId: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "optional",
       secondaryKey: true,
     },
     Action: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "required",
     },
     Principal: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "required",
     },
     FunctionUrlAuthType: {
-      valueType: z.enum(["NONE", "AWS_IAM"]),
       propertyType: "param",
       presence: "optional",
     },
     InvocationType: {
-      valueType: z.enum(["Event", "RequestResponse", "DryRun"]),
       propertyType: "param",
       presence: "optional",
     },
     Policy: {
-      valueType: z.string(),
       propertyType: "computed",
       presence: "optional",
     },
     PrincipalOrgID: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "optional",
     },
     SourceArn: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "optional",
     },
     EventSourceToken: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "optional",
     },
     SourceAccount: {
-      valueType: z.string(),
       propertyType: "param",
       presence: "optional",
     },

@@ -1,6 +1,5 @@
 import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-cloudwatch-logs";
-import * as z from "zod";
 import { cloudWatchLogsClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
 import { LambdaFunctionInstance } from "../lambda";
@@ -18,23 +17,19 @@ const lambdaLogGroup = resource<LambdaLogGroupSchema>({
 
 const lambdaLogGroupSchema = lambdaLogGroup.defineSchema({
   logGroupName: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "required",
     primaryKey: true,
   },
   kmsKeyId: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
   },
   tags: {
-    valueType: z.record(z.string()),
     propertyType: "param",
     presence: "optional",
   },
   retentionInDays: {
-    valueType: z.number(),
     propertyType: "param",
     presence: "required",
   },

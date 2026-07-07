@@ -1,6 +1,5 @@
 import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-iam";
-import * as z from "zod";
 import { iamClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
 import { lambdaTrustPolicy } from "src/templates/iam.policy";
@@ -18,57 +17,47 @@ const lambdaIamRole = resource<LambdaIamRoleSchema>({
 
 const lambdaIamRoleSchema = lambdaIamRole.defineSchema({
   RoleName: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "required",
     primaryKey: true,
   },
   Arn: {
-    valueType: z.string(),
     propertyType: "computed",
     presence: "required",
   },
   AssumeRolePolicyDocument: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "required",
+    immutable: true,
   },
   CreateDate: {
-    valueType: z.date(),
     propertyType: "computed",
     presence: "required",
     volatile: true,
   },
   Description: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
   },
   MaxSessionDuration: {
-    valueType: z.number(),
     propertyType: "param",
     presence: "optional",
   },
   Path: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
+    immutable: true,
   },
   PermissionsBoundary: {
-    valueType: z.string(),
     propertyType: "param",
     presence: "optional",
+    immutable: true,
   },
   RoleId: {
-    valueType: z.string(),
     propertyType: "computed",
     presence: "required",
   },
   RoleLastUsed: {
-    valueType: z.object({
-      LastUsedDate: z.date().optional(),
-      Region: z.string().optional(),
-    }),
     propertyType: "computed",
     presence: "optional",
   },
