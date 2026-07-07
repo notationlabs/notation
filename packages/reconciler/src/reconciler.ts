@@ -1,8 +1,16 @@
-import { diff, detailedDiff } from "deep-object-diff";
 import type { BaseResource, ResourceType } from "@notation/resource";
 import type { State, StateNode } from "@notation/state";
 import { RetryableError } from "yieldstar";
 import { buildResourceDepthLevels } from "./dependency-graph";
+import {
+  decideAction,
+  getDependencyIds,
+  resolvePlanParams,
+  type DriftRead,
+  type Plan,
+  type PlanNode,
+  type ResourceAction,
+} from "./plan";
 import {
   createResourceOperation,
   deleteResourceOperation,
@@ -72,6 +80,10 @@ export type RefreshOptions = {
   dryRun?: boolean;
 };
 
+export type PlanOptions = {
+  driftDetection?: boolean;
+};
+
 export class Reconciler {
   readonly #state: ReconcilerState;
   readonly #registry?: ResourceRegistry;
@@ -108,6 +120,37 @@ export class Reconciler {
     await this.#deleteOrphans(resources, resourceById, dryRun, "deploy");
   }
 
+  async plan(resources: BaseResource[], opts: PlanOptions = {}): Promise<Plan> {
+    const driftDetection = opts.driftDetection ?? this.#defaultDriftDetection;
+    const resourceById = new Map(resources.map((resource) => [resource.id, resource]));
+    const nodes: PlanNode[] = [];
+
+    const dependencyLevels = buildResourceDepthLevels(resources);
+    for (const level of dependencyLevels) {
+      for (const resource of level) {
+        nodes.push(await this.#planResource(resource, driftDetection));
+      }
+    }
+
+    const stateNodes = await this.#state.values();
+    for (const stateNode of stateNodes) {
+      if (resourceById.has(stateNode.id)) continue;
+
+      nodes.push({
+        id: stateNode.id,
+        type: stateNode.type,
+        decision: "delete-orphan",
+        params: stateNode.params,
+        dependsOn: [],
+      });
+    }
+
+    return {
+      createdAt: new Date().toISOString(),
+      nodes,
+    };
+  }
+
   async destroy(resources: BaseResource[], opts: DestroyOptions = {}): Promise<void> {
     const dryRun = opts.dryRun ?? this.#defaultDryRun;
     const dependencyLevels = buildResourceDepthLevels(resources);
@@ -132,70 +175,101 @@ export class Reconciler {
   ) {
     const stateNode = await this.#state.get(resource.id);
 
+    let action: ResourceAction;
     if (!stateNode) {
-      await this.#emit?.({
-        level: "info",
-        event: "reconciler.deploy.decision",
-        resourceId: resource.id,
-        resourceType: resource.type,
-        decision: "create",
-      });
-      await runOperation(
-        createResourceOperation(this.#stepRunner, {
-          resource,
-          state: this.#state,
-          dryRun,
-          emit: this.#emit,
-          retryOptions: this.#retryOptions,
-          readPollOptions: this.#readPollOptions,
-        }),
-      );
-      return;
+      action = decideAction({ resource });
+    } else {
+      resource.setOutput(stateNode.output);
+      const params = await resource.getParams();
+      action = decideAction({ resource, stateNode, params });
+
+      if (action.decision === "noop" && driftDetection) {
+        const driftRead = await this.#readForDrift(resource);
+        action = decideAction({ resource, stateNode, params, driftRead });
+      }
     }
 
-    resource.setOutput(stateNode.output);
-    const params = await resource.getParams();
-    const localDiff = diff(
-      resource.toComparable(stateNode.params),
-      resource.toComparable(params),
-    ) as Record<string, unknown>;
-
-    if (Object.keys(localDiff).length > 0) {
+    if (action.decision === "drift-update") {
       await this.#emit?.({
         level: "info",
-        event: "reconciler.deploy.decision",
+        event: "reconciler.drift.detected",
         resourceId: resource.id,
         resourceType: resource.type,
-        decision: "update",
+        diff: action.patch,
       });
-      await runOperation(
-        updateResourceOperation(this.#stepRunner, {
-          resource,
-          state: this.#state,
-          patch: localDiff,
-          dryRun,
-          emit: this.#emit,
-          retryOptions: this.#retryOptions,
-          readPollOptions: this.#readPollOptions,
-        }),
-      );
-      return;
     }
 
-    if (!driftDetection) {
-      await this.#emit?.({
-        level: "info",
-        event: "reconciler.deploy.decision",
-        resourceId: resource.id,
-        resourceType: resource.type,
-        decision: "noop",
-      });
-      return;
+    await this.#emit?.({
+      level: "info",
+      event: "reconciler.deploy.decision",
+      resourceId: resource.id,
+      resourceType: resource.type,
+      decision: action.decision,
+    });
+
+    switch (action.decision) {
+      case "create":
+      case "drift-recreate":
+        await runOperation(
+          createResourceOperation(this.#stepRunner, {
+            resource,
+            state: this.#state,
+            dryRun,
+            emit: this.#emit,
+            retryOptions: this.#retryOptions,
+            readPollOptions: this.#readPollOptions,
+          }),
+        );
+        return;
+      case "update":
+      case "drift-update":
+        await runOperation(
+          updateResourceOperation(this.#stepRunner, {
+            resource,
+            state: this.#state,
+            patch: action.patch,
+            dryRun,
+            emit: this.#emit,
+            retryOptions: this.#retryOptions,
+            readPollOptions: this.#readPollOptions,
+          }),
+        );
+        return;
+      case "noop":
+        return;
+    }
+  }
+
+  async #planResource(
+    resource: BaseResource,
+    driftDetection: boolean,
+  ): Promise<PlanNode> {
+    const stateNode = await this.#state.get(resource.id);
+    if (stateNode) {
+      resource.setOutput(stateNode.output);
     }
 
-    let latestOutput: Record<string, unknown>;
+    const params = await resolvePlanParams(resource);
+    let action = decideAction({ resource, stateNode, params });
+
+    if (action.decision === "noop" && driftDetection) {
+      const driftRead = await this.#readForDrift(resource);
+      action = decideAction({ resource, stateNode, params, driftRead });
+    }
+
+    return {
+      id: resource.id,
+      type: resource.type,
+      decision: action.decision,
+      ...("diff" in action ? { diff: action.diff } : {}),
+      params,
+      dependsOn: getDependencyIds(resource),
+    };
+  }
+
+  async #readForDrift(resource: BaseResource): Promise<DriftRead> {
     try {
-      latestOutput = await runOperation(
+      const output = await runOperation(
         readResourceOperation(this.#stepRunner, {
           resource,
           state: this.#state,
@@ -203,76 +277,12 @@ export class Reconciler {
           readPollOptions: this.#readPollOptions,
         }),
       );
+      return { status: "found", output };
     } catch (err) {
       const matcher = matchError(err, resource.notFoundOnError);
       if (!matcher) throw err;
-
-      await this.#emit?.({
-        level: "info",
-        event: "reconciler.deploy.decision",
-        resourceId: resource.id,
-        resourceType: resource.type,
-        decision: "drift-recreate",
-      });
-      await runOperation(
-        createResourceOperation(this.#stepRunner, {
-          resource,
-          state: this.#state,
-          dryRun,
-          emit: this.#emit,
-          retryOptions: this.#retryOptions,
-          readPollOptions: this.#readPollOptions,
-        }),
-      );
-      return;
+      return { status: "not-found" };
     }
-
-    const remoteDetailedDiff = detailedDiff(
-      resource.toComparable(latestOutput),
-      resource.toComparable(stateNode.output),
-    );
-    const remoteDiff = {
-      ...remoteDetailedDiff.updated,
-      ...remoteDetailedDiff.added,
-    } as Record<string, unknown>;
-
-    if (Object.keys(remoteDiff).length === 0) {
-      await this.#emit?.({
-        level: "info",
-        event: "reconciler.deploy.decision",
-        resourceId: resource.id,
-        resourceType: resource.type,
-        decision: "noop",
-      });
-      return;
-    }
-
-    await this.#emit?.({
-      level: "info",
-      event: "reconciler.drift.detected",
-      resourceId: resource.id,
-      resourceType: resource.type,
-      diff: remoteDiff,
-    });
-
-    await this.#emit?.({
-      level: "info",
-      event: "reconciler.deploy.decision",
-      resourceId: resource.id,
-      resourceType: resource.type,
-      decision: "drift-update",
-    });
-    await runOperation(
-      updateResourceOperation(this.#stepRunner, {
-        resource,
-        state: this.#state,
-        patch: remoteDiff,
-        dryRun,
-        emit: this.#emit,
-        retryOptions: this.#retryOptions,
-        readPollOptions: this.#readPollOptions,
-      }),
-    );
   }
 
   async #deleteOrphans(
