@@ -10,11 +10,5 @@
   "scripts": {
     "build": "tsup --clean",
     "dev": "tsup --watch"
-  },
-  "peerDependencies": {
-    "zod": "^3.22.4"
-  },
-  "devDependencies": {
-    "zod": "^3.22.4"
   }
 }

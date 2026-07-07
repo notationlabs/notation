@@ -19,8 +19,7 @@
     "deep-object-diff": "^1.1.9",
     "js-base64": "^3.7.7",
     "lodash-es": "^4.17.21",
-    "pako": "^2.1.0",
-    "zod": "^3.24.2"
+    "pako": "^2.1.0"
   },
   "devDependencies": {
     "@types/common-tags": "^1.8.4",

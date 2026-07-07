@@ -22,7 +22,6 @@
     "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/std.iac": "workspace:*",
-    "@types/aws-lambda": "^8.10.147",
-    "zod": "^3.24.2"
+    "@types/aws-lambda": "^8.10.147"
   }
 }
