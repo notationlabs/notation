@@ -15,7 +15,7 @@
   "dependencies": {
     "@notation/core": "workspace:*",
     "esbuild": "^0.25.0",
-    "typescript": "^5.7.3"
+    "typescript": "^6.0.3"
   },
   "devDependencies": {
     "@types/common-tags": "^1.8.4",

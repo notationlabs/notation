@@ -16,5 +16,8 @@
     "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
     "fflate": "0.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4"
   }
 }

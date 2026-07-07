@@ -6,6 +6,10 @@
     "module": "esnext",
     "target": "esnext",
 
+    // baseUrl is deprecated in TS 6 (removed in TS 7) but is still
+    // load-bearing here: packages use src/-rooted absolute imports.
+    "ignoreDeprecations": "6.0",
+
     "moduleResolution": "bundler",
     "noEmit": true,
 
