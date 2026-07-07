@@ -2,7 +2,7 @@
   "name": "notation",
   "type": "module",
   "private": true,
-  "packageManager": "pnpm@10.4.0",
+  "packageManager": "pnpm@11.6.0",
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --concurrency=20",
@@ -38,19 +38,6 @@
     "tsup": "^8.5.1",
     "turbo": "^2.10.4",
     "typescript": "^6.0.3",
-    "vite-tsconfig-paths": "^6.1.1",
     "vitest": "^4.1.10"
-  },
-  "pnpm": {
-    "overrides": {
-      "lodash-es@<4.18.1": "^4.18.1",
-      "js-yaml@3": "3.15.0",
-      "tmp@<0.2.6": "^0.2.7",
-      "yaml@<2.8.3": "^2.8.3",
-      "@babel/runtime@<7.26.10": "^7.29.7",
-      "@babel/helpers@<7.26.10": "^7.29.7",
-      "@babel/core@<7.29.6": "^7.29.7",
-      "esbuild@>=0.27.3 <0.28.1": "0.28.1"
-    }
   }
 }
