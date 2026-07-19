@@ -1,6 +1,6 @@
 import {
   Reconciler,
-  createConsoleReconcilerSubscriber,
+  createLoggerReconcilerSubscriber,
   type ReconcilerEventEmitter,
   type ResourceRegistry,
 } from "@notation/reconciler";
@@ -14,7 +14,7 @@ export async function deployApp(
   dryRun = false,
   registry?: ResourceRegistry,
   stateBackend?: StateBackend,
-  emit: ReconcilerEventEmitter = createConsoleReconcilerSubscriber(),
+  emit: ReconcilerEventEmitter = createLoggerReconcilerSubscriber(),
 ): Promise<void> {
   const graph = await getResourceGraph(entryPoint);
   const state = stateBackend ?? createDefaultStateBackend();

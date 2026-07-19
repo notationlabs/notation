@@ -1,18 +1,26 @@
 import chokidar from "chokidar";
 import { glob } from "glob";
-import { log } from "console";
 import esbuild from "esbuild";
 import {
   functionInfraPlugin,
   functionRuntimePlugin,
 } from "@notation/esbuild-plugins";
 import { filePaths } from "@notation/core";
+import { defaultLogger, type Logger } from "./logger";
 
-export async function compile(entryPoint: string, watch: boolean = false) {
-  log(`${watch ? "Watching" : "Compiling"} infrastructure`, entryPoint);
+export type CompileOptions = {
+  watch?: boolean;
+  logger?: Logger;
+};
+
+export async function compile(entryPoint: string, opts: CompileOptions = {}) {
+  const watch = opts.watch ?? false;
+  const logger = opts.logger ?? defaultLogger;
+
+  logger.info(`${watch ? "Watching" : "Compiling"} infrastructure`, entryPoint);
   await compileInfra(entryPoint, watch);
 
-  log(`${watch ? "Watching" : "Compiling"} functions`);
+  logger.info(`${watch ? "Watching" : "Compiling"} functions`);
 
   // @todo: fnEntryPoints could be an output of compileInfra
   const fnEntryPoints = await glob("runtime/**/*.fn.ts");

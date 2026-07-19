@@ -1,9 +1,16 @@
-import { planApp, type Plan, type PlanNode } from "@notation/core";
+import {
+  createLoggerReconcilerSubscriber,
+  planApp,
+  type Plan,
+  type PlanNode,
+} from "@notation/core";
 import { compile } from "./compile";
+import { defaultLogger, type Logger } from "./logger";
 import { redirectStdoutToStderr } from "./stdio";
 
 export type PlanCommandOptions = {
   json?: boolean;
+  logger?: Logger;
 };
 
 const decisionSymbols: Record<PlanNode["decision"], string> = {
@@ -16,13 +23,21 @@ const decisionSymbols: Record<PlanNode["decision"], string> = {
 };
 
 export async function plan(entryPoint: string, opts: PlanCommandOptions = {}) {
+  const logger = opts.logger ?? defaultLogger;
+  const emit = createLoggerReconcilerSubscriber({ logger });
   try {
     if (opts.json) {
       let result: Plan;
       const { restore } = redirectStdoutToStderr();
       try {
-        await compile(entryPoint);
-        result = await planApp(entryPoint);
+        await compile(entryPoint, { logger });
+        result = await planApp(
+          entryPoint,
+          undefined,
+          undefined,
+          undefined,
+          emit,
+        );
       } finally {
         restore();
       }
@@ -30,13 +45,19 @@ export async function plan(entryPoint: string, opts: PlanCommandOptions = {}) {
       return;
     }
 
-    await compile(entryPoint);
-    console.log(`Planning ${entryPoint}\n`);
-    const result = await planApp(entryPoint);
-    printPlanSummary(result);
+    await compile(entryPoint, { logger });
+    logger.info(`Planning ${entryPoint}\n`);
+    const result = await planApp(
+      entryPoint,
+      undefined,
+      undefined,
+      undefined,
+      emit,
+    );
+    printPlanSummary(result, logger);
   } catch (err: any) {
     if (err.name === "CredentialsProviderError") {
-      console.log(
+      logger.error(
         "\nAWS credentials not found.",
         "\n\nEnsure you have a default profile set up in ~/.aws/credentials.",
         "\n\nIf using another profile run AWS_PROFILE=otherProfile notation plan.\n",
@@ -47,11 +68,11 @@ export async function plan(entryPoint: string, opts: PlanCommandOptions = {}) {
   }
 }
 
-function printPlanSummary(result: Plan) {
+function printPlanSummary(result: Plan, logger: Logger) {
   const changedNodes = result.nodes.filter((node) => node.decision !== "noop");
 
   for (const node of changedNodes) {
-    console.log(
+    logger.info(
       `${decisionSymbols[node.decision]} ${node.decision} ${node.type} ${node.id}`,
     );
   }
@@ -67,5 +88,5 @@ function printPlanSummary(result: Plan) {
     `${count("noop")} unchanged`,
   ].join(", ");
 
-  console.log(`${changedNodes.length > 0 ? "\n" : ""}Plan: ${summary}.`);
+  logger.info(`${changedNodes.length > 0 ? "\n" : ""}Plan: ${summary}.`);
 }

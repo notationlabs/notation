@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { createConsoleReconcilerSubscriber } from "../src";
+import { createLoggerReconcilerSubscriber } from "../src";
 
-describe("console reconciler subscriber", () => {
-  it("routes info, warning, and error events to matching console methods", async () => {
+describe("logger reconciler subscriber", () => {
+  it("routes info, warning, and error events to matching logger methods", async () => {
     const info = vi.fn();
     const warn = vi.fn();
     const error = vi.fn();
 
-    const emit = createConsoleReconcilerSubscriber({
-      console: { info, warn, error },
+    const emit = createLoggerReconcilerSubscriber({
+      logger: { info, warn, error },
     });
 
     await emit({

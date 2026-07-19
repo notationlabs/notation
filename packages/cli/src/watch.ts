@@ -1,11 +1,15 @@
 import chokidar from "chokidar";
-import { deployApp } from "@notation/core";
+import { createLoggerReconcilerSubscriber, deployApp } from "@notation/core";
 import { compile } from "./compile";
+import { defaultLogger, type Logger } from "./logger";
 
 const dotFilesRe = /(^|[\/\\])\../;
 
-export async function watch(entryPoint: string) {
-  await compile(entryPoint, true);
+export async function watch(
+  entryPoint: string,
+  logger: Logger = defaultLogger,
+) {
+  await compile(entryPoint, { watch: true, logger });
 
   const watcher = chokidar.watch("dist", {
     ignored: dotFilesRe,
@@ -36,7 +40,14 @@ export async function watch(entryPoint: string) {
 
     isDeploying = true;
 
-    deployApp(entryPoint, false)
+    deployApp(
+      entryPoint,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      createLoggerReconcilerSubscriber({ logger }),
+    )
       .then(() => {
         isDeploying = false;
         if (deployQueued) {
@@ -45,7 +56,7 @@ export async function watch(entryPoint: string) {
         }
       })
       .catch((err) => {
-        console.error(err);
+        logger.error(err);
         isDeploying = false;
       });
   }
