@@ -204,8 +204,8 @@ export class Reconciler {
     driftDetection: boolean,
   ) {
     await this.#withMutationLease(resource.id, () =>
-      this.#retryOnRevConflict(() =>
-        this.#deployResourceOnce(resource, dryRun, driftDetection),
+      this.#retryOnRevConflict((conflict) =>
+        this.#deployResourceOnce(resource, dryRun, driftDetection, conflict),
       ),
     );
   }
@@ -246,18 +246,18 @@ export class Reconciler {
     }
   }
 
-  /**
-   * A RevConflict means state moved between our read and our write. Each
-   * attempt re-reads state and re-decides, so the retried operation acts on
-   * the record as it now is (possibly deciding to do nothing).
-   */
-  async #retryOnRevConflict(fn: () => Promise<void>) {
+  async #retryOnRevConflict(fn: (conflict?: RevConflict) => Promise<void>) {
+    let conflict: RevConflict | undefined;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        await fn();
+        await fn(conflict);
         return;
       } catch (error) {
         if (!(error instanceof RevConflict) || attempt === 2) throw error;
+        // Re-throwing the conflict supplied for recovery means the resource
+        // cannot be recovered safely (for example, it has no read operation).
+        if (error === conflict) throw error;
+        conflict = error;
       }
     }
   }
@@ -266,7 +266,13 @@ export class Reconciler {
     resource: BaseResource,
     dryRun: boolean,
     driftDetection: boolean,
+    conflict?: RevConflict,
   ) {
+    if (conflict) {
+      await this.#recoverDeployResource(resource, dryRun, conflict);
+      return;
+    }
+
     const stateNode = await this.#state.get(resource.id);
 
     let action: ResourceAction;
@@ -333,6 +339,81 @@ export class Reconciler {
         );
         return;
       case "noop":
+        return;
+    }
+  }
+
+  async #recoverDeployResource(
+    resource: BaseResource,
+    dryRun: boolean,
+    conflict: RevConflict,
+  ) {
+    if (!resource.read) throw conflict;
+
+    const stateNode = await this.#state.get(resource.id);
+    if (stateNode) resource.setOutput(stateNode.output);
+
+    const params = await resource.getParams();
+    const remote = await this.#readForDrift(resource);
+    const action = decideAction({
+      resource,
+      stateNode,
+      params,
+      driftRead: remote,
+    });
+    if (remote.status === "found") resource.setOutput(remote.output);
+
+    await this.#emit?.({
+      level: "info",
+      event: "reconciler.deploy.decision",
+      resourceId: resource.id,
+      resourceType: resource.type,
+      decision: action.decision,
+    });
+
+    switch (action.decision) {
+      case "create":
+      case "drift-recreate":
+        await runOperation(
+          createResourceOperation(this.#stepRunner, {
+            resource,
+            state: this.#state,
+            dryRun,
+            emit: this.#emit,
+            retryOptions: this.#retryOptions,
+            readPollOptions: this.#readPollOptions,
+            expectedRev: stateNode?.rev ?? 0,
+          }),
+        );
+        return;
+      case "update":
+      case "drift-update":
+        await runOperation(
+          updateResourceOperation(this.#stepRunner, {
+            resource,
+            state: this.#state,
+            patch: action.patch,
+            dryRun,
+            emit: this.#emit,
+            retryOptions: this.#retryOptions,
+            readPollOptions: this.#readPollOptions,
+            expectedRev: stateNode?.rev ?? 0,
+          }),
+        );
+        return;
+      case "noop":
+        if (dryRun) return;
+        await this.#state.update(resource.id, stateNode?.rev ?? 0, {
+          id: resource.id,
+          groupId: resource.groupId,
+          groupType: resource.groupType,
+          type: resource.type,
+          lastOperation: "drift",
+          lastOperationAt: new Date().toISOString(),
+          config: resource.config,
+          params: resource.toState(params),
+          output: resource.toState(resource.output),
+        });
         return;
     }
   }
@@ -411,7 +492,7 @@ export class Reconciler {
         }
 
         await this.#withMutationLease(stateNode.id, () =>
-          this.#retryOnRevConflict(async () => {
+          this.#retryOnRevConflict(async (conflict) => {
             const currentNode = await this.#state.get(stateNode.id);
             if (!currentNode) return;
 
@@ -420,15 +501,11 @@ export class Reconciler {
               currentNode,
             );
 
-            await runOperation(
-              deleteResourceOperation(this.#stepRunner, {
-                resource: orphanResource,
-                state: this.#state,
-                dryRun,
-                emit: this.#emit,
-                retryOptions: this.#retryOptions,
-                expectedRev: currentNode.rev,
-              }),
+            await this.#deleteResourceOnce(
+              orphanResource,
+              currentNode,
+              dryRun,
+              conflict,
             );
           }),
         );
@@ -438,24 +515,43 @@ export class Reconciler {
 
   async #destroyResource(resource: BaseResource, dryRun: boolean) {
     await this.#withMutationLease(resource.id, () =>
-      this.#retryOnRevConflict(async () => {
+      this.#retryOnRevConflict(async (conflict) => {
         const stateNode = await this.#state.get(resource.id);
         if (!stateNode) {
           return;
         }
 
         resource.setOutput(stateNode.output);
+        await this.#deleteResourceOnce(resource, stateNode, dryRun, conflict);
+      }),
+    );
+  }
 
-        await runOperation(
-          deleteResourceOperation(this.#stepRunner, {
-            resource,
-            state: this.#state,
-            dryRun,
-            emit: this.#emit,
-            retryOptions: this.#retryOptions,
-            expectedRev: stateNode.rev,
-          }),
-        );
+  async #deleteResourceOnce(
+    resource: BaseResource,
+    stateNode: StateNode,
+    dryRun: boolean,
+    conflict?: RevConflict,
+  ) {
+    if (conflict) {
+      if (!resource.read) throw conflict;
+
+      const remote = await this.#readForDrift(resource);
+      if (remote.status === "not-found") {
+        if (!dryRun) await this.#state.delete(resource.id, stateNode.rev);
+        return;
+      }
+      resource.setOutput(remote.output);
+    }
+
+    await runOperation(
+      deleteResourceOperation(this.#stepRunner, {
+        resource,
+        state: this.#state,
+        dryRun,
+        emit: this.#emit,
+        retryOptions: this.#retryOptions,
+        expectedRev: stateNode.rev,
       }),
     );
   }

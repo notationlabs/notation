@@ -71,8 +71,13 @@ export async function* updateResourceOperation(
 
     yield* step.run("update:persist-state", async () => {
       await params.state.update(params.resource.id, params.expectedRev, {
+        id: params.resource.id,
+        groupId: params.resource.groupId,
+        groupType: params.resource.groupType,
+        type: params.resource.type,
         lastOperation: "update",
         lastOperationAt: new Date().toISOString(),
+        config: params.resource.config,
         params: params.resource.toState(resourceParams),
         output: params.resource.toState(params.resource.output),
       });
