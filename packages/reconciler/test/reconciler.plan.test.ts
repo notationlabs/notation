@@ -21,12 +21,22 @@ function createMemoryState(initial: Record<string, StateNode> = {}) {
       delete store[id];
     }),
     values: vi.fn(async () => Object.values(store)),
+    lease: vi.fn(async (scope: string, ttl: number) => ({
+      scope,
+      expiresAt: new Date(Date.now() + ttl).toISOString(),
+      renew: vi.fn(async (nextTtl: number) =>
+        new Date(Date.now() + nextTtl).toISOString(),
+      ),
+      release: vi.fn(async () => undefined),
+    })),
   };
 }
 
 function createTestResourceClass(opts: {
   type: `${string}/${string}/${string}`;
-  create?: (params: Record<string, unknown>) => Promise<Record<string, unknown> | void>;
+  create?: (
+    params: Record<string, unknown>,
+  ) => Promise<Record<string, unknown> | void>;
   read?: (key: Record<string, unknown>) => Promise<Record<string, unknown>>;
   update?: (
     key: Record<string, unknown>,
@@ -34,7 +44,10 @@ function createTestResourceClass(opts: {
     params: Record<string, unknown>,
     state: Record<string, unknown>,
   ) => Promise<void>;
-  delete?: (key: Record<string, unknown>, state: Record<string, unknown>) => Promise<void>;
+  delete?: (
+    key: Record<string, unknown>,
+    state: Record<string, unknown>,
+  ) => Promise<void>;
   notFoundOnError?: { name: string; reason: string }[];
 }) {
   return resource({ type: opts.type })
@@ -195,7 +208,9 @@ describe("reconciler plan", () => {
         err.name = "NotFoundException";
         throw err;
       },
-      notFoundOnError: [{ name: "NotFoundException", reason: "deleted remotely" }],
+      notFoundOnError: [
+        { name: "NotFoundException", reason: "deleted remotely" },
+      ],
     });
 
     const state = createMemoryState({
@@ -260,8 +275,12 @@ describe("reconciler plan", () => {
   });
 
   it("populates dependsOn from resource dependencies", async () => {
-    const AResource = createTestResourceClass({ type: "test/service/plan-dep-a" });
-    const BResource = createTestResourceClass({ type: "test/service/plan-dep-b" });
+    const AResource = createTestResourceClass({
+      type: "test/service/plan-dep-a",
+    });
+    const BResource = createTestResourceClass({
+      type: "test/service/plan-dep-b",
+    });
 
     const resourceA = new AResource({ id: "a", config: { name: "a" } });
     const resourceB = new BResource({
@@ -280,8 +299,12 @@ describe("reconciler plan", () => {
   });
 
   it("marks params derived from uncreated dependencies as unknown after apply", async () => {
-    const AResource = createTestResourceClass({ type: "test/service/plan-unknown-a" });
-    const BResource = createTestResourceClass({ type: "test/service/plan-unknown-b" })
+    const AResource = createTestResourceClass({
+      type: "test/service/plan-unknown-a",
+    });
+    const BResource = createTestResourceClass({
+      type: "test/service/plan-unknown-b",
+    })
       .requireDependencies<{ a: BaseResource }>()
       .deriveParams(({ deps }) => ({
         name: (deps.a.output as { name: string }).name,

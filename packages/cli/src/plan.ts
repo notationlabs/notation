@@ -1,5 +1,6 @@
 import { planApp, type Plan, type PlanNode } from "@notation/core";
 import { compile } from "./compile";
+import { redirectStdoutToStderr } from "./stdio";
 
 export type PlanCommandOptions = {
   json?: boolean;
@@ -18,12 +19,12 @@ export async function plan(entryPoint: string, opts: PlanCommandOptions = {}) {
   try {
     if (opts.json) {
       let result: Plan;
-      const restoreStdout = redirectStdoutToStderr();
+      const { restore } = redirectStdoutToStderr();
       try {
         await compile(entryPoint);
         result = await planApp(entryPoint);
       } finally {
-        restoreStdout();
+        restore();
       }
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return;
@@ -67,13 +68,4 @@ function printPlanSummary(result: Plan) {
   ].join(", ");
 
   console.log(`${changedNodes.length > 0 ? "\n" : ""}Plan: ${summary}.`);
-}
-
-function redirectStdoutToStderr() {
-  const originalWrite = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: any, ...args: any[]) =>
-    (process.stderr.write as any)(chunk, ...args)) as typeof process.stdout.write;
-  return () => {
-    process.stdout.write = originalWrite;
-  };
 }

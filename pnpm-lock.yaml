@@ -255,9 +255,9 @@ importers:
       '@fastify/static':
         specifier: ^9.1.3
         version: 9.1.3
-      chokidar:
-        specifier: ^4.0.3
-        version: 4.0.3
+      '@notation/state':
+        specifier: workspace:*
+        version: link:../state
       fastify:
         specifier: ^5.10.0
         version: 5.10.0

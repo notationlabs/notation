@@ -1,58 +1,82 @@
-import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
-import chokidar from "chokidar";
-import fs from "fs/promises";
-import path from "path";
-import { fileURLToPath } from "url";
-import { dirname } from "path";
+import type { StateBackend, StateNode } from "@notation/state";
+import Fastify from "fastify";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const serverDirectory = dirname(fileURLToPath(import.meta.url));
 
-const fastify = Fastify({});
+export type DashboardServerOptions = {
+  state: StateBackend;
+  pollInterval?: number;
+};
 
-const defaultStatePath = path.join(process.cwd(), ".notation", "state.json");
-const statePath = process.env.NOTATION_STATE_PATH ?? defaultStatePath;
+export type StartDashboardServerOptions = DashboardServerOptions & {
+  port?: number;
+};
 
-fastify.register(fastifyStatic, {
-  root: path.join(__dirname, "./"),
-  prefix: "/",
-});
+export async function readStateSnapshot(
+  state: StateBackend,
+): Promise<Record<string, StateNode>> {
+  const nodes = await state.values();
+  return Object.fromEntries(nodes.map((node) => [node.id, node]));
+}
 
-fastify.get("/state", (request, reply) => {
-  reply.raw.setHeader("Content-Type", "text/event-stream");
-  reply.raw.setHeader("Cache-Control", "no-cache");
-  reply.raw.setHeader("Connection", "keep-alive");
+export function createDashboardServer({
+  state,
+  pollInterval = 500,
+}: DashboardServerOptions) {
+  const server = Fastify({});
 
-  const sendState = async () => {
-    try {
-      const state = await fs.readFile(statePath, "utf8");
-      reply.raw.write(`data: ${JSON.stringify(JSON.parse(state))}\n\n`);
-    } catch (error) {
-      console.error("Error reading state.json:", error);
-    }
-  };
-
-  const watcher = chokidar.watch(statePath);
-
-  watcher.on("change", sendState);
-
-  sendState();
-
-  request.raw.on("close", () => {
-    watcher.close();
+  server.register(fastifyStatic, {
+    root: join(serverDirectory, "./"),
+    prefix: "/",
   });
 
-  reply.hijack();
-});
+  server.get("/state", (request, reply) => {
+    reply.raw.setHeader("Content-Type", "text/event-stream");
+    reply.raw.setHeader("Cache-Control", "no-cache");
+    reply.raw.setHeader("Connection", "keep-alive");
 
-export const startDashboardServer = async (port: number = 6682) => {
-  try {
-    await fastify.listen({ port });
-    console.log("\nNotation dashboard is running on:\n\n");
-    console.log(`➜ http://localhost:${port}`);
-  } catch (err) {
-    console.error(err);
-    process.exit(1);
-  }
-};
+    let lastSnapshot: string | undefined;
+    let reading = false;
+    let closed = false;
+    const sendState = async () => {
+      if (reading || closed) return;
+      reading = true;
+      try {
+        const snapshot = JSON.stringify(await readStateSnapshot(state));
+        if (closed || snapshot === lastSnapshot) return;
+        lastSnapshot = snapshot;
+        reply.raw.write(`data: ${snapshot}\n\n`);
+      } catch (error) {
+        request.log.error(error, "Unable to read state");
+      } finally {
+        reading = false;
+      }
+    };
+
+    const timer = setInterval(sendState, pollInterval);
+    timer.unref();
+    void sendState();
+
+    request.raw.on("close", () => {
+      closed = true;
+      clearInterval(timer);
+    });
+    reply.hijack();
+  });
+
+  return server;
+}
+
+export async function startDashboardServer({
+  port = 6682,
+  ...options
+}: StartDashboardServerOptions) {
+  const server = createDashboardServer(options);
+  await server.listen({ port });
+  console.log("\nNotation dashboard is running on:\n\n");
+  console.log(`➜ http://localhost:${port}`);
+  return server;
+}
