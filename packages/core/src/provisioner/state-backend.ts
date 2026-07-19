@@ -1,4 +1,5 @@
 import { FileStateBackend, type StateBackend } from "@notation/state";
+import { SqliteStateBackend } from "@notation/state-sqlite";
 
 export const DEFAULT_STATE_PATH = "./.notation/state.json";
 
@@ -7,5 +8,9 @@ export function resolveStatePath(): string {
 }
 
 export function createDefaultStateBackend(): StateBackend {
-  return new FileStateBackend(resolveStatePath());
+  const statePath = resolveStatePath();
+  if (statePath.endsWith(".db") || statePath.endsWith(".sqlite")) {
+    return new SqliteStateBackend(statePath);
+  }
+  return new FileStateBackend(statePath);
 }

@@ -43,7 +43,11 @@ export type ResourceAction =
   | { decision: "noop" }
   | { decision: "drift-recreate" }
   | { decision: "update"; patch: Record<string, unknown>; diff: PlanDiff }
-  | { decision: "drift-update"; patch: Record<string, unknown>; diff: PlanDiff };
+  | {
+      decision: "drift-update";
+      patch: Record<string, unknown>;
+      diff: PlanDiff;
+    };
 
 export function decideAction(opts: {
   resource: BaseResource;
@@ -52,17 +56,50 @@ export function decideAction(opts: {
   driftRead?: DriftRead;
 }): ResourceAction {
   const { resource, stateNode, params, driftRead } = opts;
-
-  if (!stateNode) {
-    return { decision: "create" };
-  }
-
-  const previousComparable = resource.toComparable(stateNode.params);
   const desiredComparable = resource.toComparable(params ?? {});
+  const previousComparable = resource.toComparable(stateNode?.params ?? {});
   const localPatch = diff(previousComparable, desiredComparable) as Record<
     string,
     unknown
   >;
+
+  if (driftRead) {
+    if (driftRead.status === "not-found") {
+      return { decision: stateNode ? "drift-recreate" : "create" };
+    }
+
+    const remoteComparable = resource.toComparable(driftRead.output);
+    const remotePatch = diff(remoteComparable, desiredComparable) as Record<
+      string,
+      unknown
+    >;
+
+    if (Object.keys(remotePatch).length === 0) {
+      return { decision: "noop" };
+    }
+
+    const remoteDetailedDiff = detailedDiff(
+      remoteComparable,
+      desiredComparable,
+    );
+    if (!stateNode || Object.keys(localPatch).length > 0) {
+      return {
+        decision: "update",
+        patch: remotePatch,
+        diff: toPlanDiff(remoteDetailedDiff),
+      };
+    }
+
+    return {
+      decision: "drift-update",
+      patch: remotePatch,
+      diff: toPlanDiff(remoteDetailedDiff),
+    };
+  }
+
+  if (!stateNode) {
+    return { decision: "create" };
+  }
 
   if (Object.keys(localPatch).length > 0) {
     return {
@@ -72,32 +109,7 @@ export function decideAction(opts: {
     };
   }
 
-  if (!driftRead) {
-    return { decision: "noop" };
-  }
-
-  if (driftRead.status === "not-found") {
-    return { decision: "drift-recreate" };
-  }
-
-  const remoteDetailedDiff = detailedDiff(
-    resource.toComparable(driftRead.output),
-    resource.toComparable(stateNode.output),
-  );
-  const remotePatch = {
-    ...remoteDetailedDiff.updated,
-    ...remoteDetailedDiff.added,
-  } as Record<string, unknown>;
-
-  if (Object.keys(remotePatch).length === 0) {
-    return { decision: "noop" };
-  }
-
-  return {
-    decision: "drift-update",
-    patch: remotePatch,
-    diff: toPlanDiff(remoteDetailedDiff),
-  };
+  return { decision: "noop" };
 }
 
 export async function resolvePlanParams(

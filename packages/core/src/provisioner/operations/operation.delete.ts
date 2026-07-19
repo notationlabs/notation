@@ -6,6 +6,10 @@ export const deleteResource = operation("Destroying", delete_);
 
 async function delete_(opts: { resource: BaseResource; state: StateBackend }) {
   const { resource, state } = opts;
+  const stateNode = await state.get(resource.id);
+  if (!stateNode) {
+    throw new Error(`Missing state for ${resource.type} ${resource.id}`);
+  }
 
   try {
     await resource.delete(resource.key, resource.toState(resource.output));
@@ -27,5 +31,5 @@ async function delete_(opts: { resource: BaseResource; state: StateBackend }) {
     }
   }
 
-  await state.delete(resource.id);
+  await state.delete(resource.id, stateNode.rev);
 }

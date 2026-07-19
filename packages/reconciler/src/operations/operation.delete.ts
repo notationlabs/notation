@@ -49,7 +49,7 @@ export async function* deleteResourceOperation(
     }
 
     yield* step.run("delete:persist-state", () =>
-      params.state.delete(params.resource.id),
+      params.state.delete(params.resource.id, params.expectedRev),
     );
 
     await emitLifecycleEvent(params, "delete", "success");

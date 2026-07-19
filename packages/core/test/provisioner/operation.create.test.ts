@@ -31,6 +31,7 @@ describe("resource creation", () => {
       createResourceOperation(step, {
         resource: testResource,
         state: stateBackend,
+        expectedRev: 0,
       }),
     );
 

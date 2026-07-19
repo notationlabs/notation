@@ -25,7 +25,7 @@ async function create(
 
     resource.setOutput({ ...resource.output, ...readResult });
 
-    await state.update(resource.id, {
+    await state.update(resource.id, 0, {
       id: resource.id,
       groupId: resource.groupId,
       groupType: resource.groupType,

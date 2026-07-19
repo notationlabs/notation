@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { resource } from "@notation/resource";
-import type { StateNode } from "@notation/state";
+import { resource, type ErrorMatcher } from "@notation/resource";
+import {
+  LeaseConflict,
+  MemoryStateBackend,
+  RevConflict,
+  type StateNode,
+} from "@notation/state";
 import { Reconciler, createResourceRegistry } from "../src";
 
 function createMemoryState(initial: Record<string, StateNode> = {}) {
@@ -9,22 +14,51 @@ function createMemoryState(initial: Record<string, StateNode> = {}) {
   return {
     store,
     get: vi.fn(async (id: string) => store[id]),
-    update: vi.fn(async (id: string, patch: Partial<StateNode>) => {
-      store[id] = {
-        ...(store[id] ?? {}),
-        ...patch,
-      } as StateNode;
-    }),
-    delete: vi.fn(async (id: string) => {
+    update: vi.fn(
+      async (id: string, expectedRev: number, patch: Partial<StateNode>) => {
+        const actualRev = store[id]?.rev ?? 0;
+        if (actualRev !== expectedRev) {
+          throw new RevConflict(id, expectedRev, store[id]?.rev);
+        }
+        const rev = actualRev + 1;
+        store[id] = {
+          ...(store[id] ?? {}),
+          ...patch,
+          rev,
+        } as StateNode;
+        return { rev };
+      },
+    ),
+    delete: vi.fn(async (id: string, expectedRev: number) => {
+      const actualRev = store[id]?.rev ?? 0;
+      if (actualRev !== expectedRev) {
+        throw new RevConflict(id, expectedRev, store[id]?.rev);
+      }
       delete store[id];
     }),
     values: vi.fn(async () => Object.values(store)),
+    lease: vi.fn(async (scope: string, ttl: number) => {
+      let expiresAt = new Date(Date.now() + ttl).toISOString();
+      return {
+        scope,
+        get expiresAt() {
+          return expiresAt;
+        },
+        renew: vi.fn(async (nextTtl: number) => {
+          expiresAt = new Date(Date.now() + nextTtl).toISOString();
+          return expiresAt;
+        }),
+        release: vi.fn(async () => undefined),
+      };
+    }),
   };
 }
 
 function createTestResourceClass(opts: {
   type: `${string}/${string}/${string}`;
-  create?: (params: Record<string, unknown>) => Promise<Record<string, unknown> | void>;
+  create?: (
+    params: Record<string, unknown>,
+  ) => Promise<Record<string, unknown> | void>;
   read?: (key: Record<string, unknown>) => Promise<Record<string, unknown>>;
   update?: (
     key: Record<string, unknown>,
@@ -32,7 +66,11 @@ function createTestResourceClass(opts: {
     params: Record<string, unknown>,
     state: Record<string, unknown>,
   ) => Promise<void>;
-  delete?: (key: Record<string, unknown>, state: Record<string, unknown>) => Promise<void>;
+  delete?: (
+    key: Record<string, unknown>,
+    state: Record<string, unknown>,
+  ) => Promise<void>;
+  notFoundOnError?: ErrorMatcher[];
 }) {
   return resource({ type: opts.type })
     .defineSchema({
@@ -47,6 +85,7 @@ function createTestResourceClass(opts: {
       read: opts.read,
       update: opts.update,
       delete: opts.delete ?? (async () => undefined),
+      notFoundOnError: opts.notFoundOnError,
     });
 }
 
@@ -70,6 +109,7 @@ describe("reconciler deploy", () => {
 
     const state = createMemoryState({
       existing: {
+        rev: 1,
         id: "existing",
         groupId: -1,
         groupType: "",
@@ -103,6 +143,210 @@ describe("reconciler deploy", () => {
     expect(updateSpy.mock.calls[0]?.[1]).toEqual({ name: "new" });
     expect(events).toContain("create:success:new");
     expect(events).toContain("update:success:existing");
+  });
+
+  it("persists first-time creates with an expect-absent revision", async () => {
+    const CreateResource = createTestResourceClass({
+      type: "test/service/first-create",
+      create: async () => ({ name: "new" }),
+      read: async () => ({ name: "new" }),
+    });
+    const state = createMemoryState();
+    const reconciler = new Reconciler({ state, driftDetection: false });
+
+    await reconciler.deploy([
+      new CreateResource({ id: "new", config: { name: "new" } }),
+    ]);
+
+    expect(state.update).toHaveBeenCalledWith("new", 0, expect.any(Object));
+  });
+
+  it("leases a resource before remote create so concurrent deploys cannot duplicate it", async () => {
+    let signalCreateStarted!: () => void;
+    const createStarted = new Promise<void>((resolve) => {
+      signalCreateStarted = resolve;
+    });
+    let allowCreateToFinish!: () => void;
+    const createCanFinish = new Promise<void>((resolve) => {
+      allowCreateToFinish = resolve;
+    });
+    const createSpy = vi.fn(async () => {
+      signalCreateStarted();
+      await createCanFinish;
+      return { name: "new" };
+    });
+    const CreateResource = createTestResourceClass({
+      type: "test/service/concurrent-create",
+      create: createSpy,
+      read: async () => ({ name: "new" }),
+    });
+    const state = new MemoryStateBackend();
+    const first = new Reconciler({ state, driftDetection: false });
+    const second = new Reconciler({ state, driftDetection: false });
+
+    const firstDeploy = first.deploy([
+      new CreateResource({ id: "new", config: { name: "new" } }),
+    ]);
+    await createStarted;
+
+    await expect(
+      second.deploy([
+        new CreateResource({ id: "new", config: { name: "new" } }),
+      ]),
+    ).rejects.toBeInstanceOf(LeaseConflict);
+
+    allowCreateToFinish();
+    await firstDeploy;
+    expect(createSpy).toHaveBeenCalledOnce();
+  });
+
+  it("reads remote state after an update conflict instead of repeating the update", async () => {
+    let remoteName = "old";
+    const readSpy = vi.fn(async () => ({ name: remoteName }));
+    const updateSpy = vi.fn(async (_key, _patch, params) => {
+      remoteName = params.name as string;
+    });
+    const UpdateResource = createTestResourceClass({
+      type: "test/service/update-conflict",
+      read: readSpy,
+      update: updateSpy,
+    });
+    const state = createMemoryState({
+      existing: {
+        rev: 1,
+        id: "existing",
+        groupId: -1,
+        groupType: "",
+        type: UpdateResource.type,
+        config: { name: "old" },
+        params: { name: "old" },
+        output: { name: "old" },
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+      },
+    });
+    const updateState = state.update.getMockImplementation()!;
+    state.update
+      .mockImplementationOnce(async () => {
+        state.store.existing = {
+          ...state.store.existing!,
+          rev: 2,
+          config: { name: "concurrent" },
+          params: { name: "concurrent" },
+          output: { name: "concurrent" },
+        };
+        throw new RevConflict("existing", 1, 2);
+      })
+      .mockImplementation(updateState);
+
+    const reconciler = new Reconciler({ state, driftDetection: false });
+    await reconciler.deploy([
+      new UpdateResource({ id: "existing", config: { name: "new" } }),
+    ]);
+
+    expect(updateSpy).toHaveBeenCalledOnce();
+    expect(readSpy).toHaveBeenCalledTimes(2);
+    expect(state.update).toHaveBeenLastCalledWith(
+      "existing",
+      2,
+      expect.objectContaining({
+        params: { name: "new" },
+        output: { name: "new" },
+        lastOperation: "drift",
+      }),
+    );
+    expect(state.store.existing).toMatchObject({
+      rev: 3,
+      params: { name: "new" },
+      output: { name: "new" },
+    });
+  });
+
+  it("reads remote state after a create conflict instead of creating twice", async () => {
+    let remoteName: string | undefined;
+    const createSpy = vi.fn(async (params) => {
+      remoteName = params.name as string;
+      return { name: remoteName };
+    });
+    const readSpy = vi.fn(async () => ({ name: remoteName! }));
+    const CreateResource = createTestResourceClass({
+      type: "test/service/create-conflict",
+      create: createSpy,
+      read: readSpy,
+    });
+    const state = createMemoryState();
+    const updateState = state.update.getMockImplementation()!;
+    state.update
+      .mockImplementationOnce(async () => {
+        state.store.new = {
+          rev: 1,
+          id: "new",
+          groupId: -1,
+          groupType: "",
+          type: CreateResource.type,
+          config: { name: "concurrent" },
+          params: { name: "concurrent" },
+          output: { name: "concurrent" },
+          lastOperation: "create",
+          lastOperationAt: new Date().toISOString(),
+        };
+        throw new RevConflict("new", 0, 1);
+      })
+      .mockImplementation(updateState);
+
+    const reconciler = new Reconciler({ state, driftDetection: false });
+    await reconciler.deploy([
+      new CreateResource({ id: "new", config: { name: "new" } }),
+    ]);
+
+    expect(createSpy).toHaveBeenCalledOnce();
+    expect(readSpy).toHaveBeenCalledTimes(2);
+    expect(state.store.new).toMatchObject({
+      rev: 2,
+      params: { name: "new" },
+      output: { name: "new" },
+      lastOperation: "drift",
+    });
+  });
+
+  it("does not blindly retry a conflicted mutation without a read operation", async () => {
+    const updateSpy = vi.fn(async () => undefined);
+    const UpdateResource = createTestResourceClass({
+      type: "test/service/unreadable-conflict",
+      update: updateSpy,
+    });
+    const state = createMemoryState({
+      existing: {
+        rev: 1,
+        id: "existing",
+        groupId: -1,
+        groupType: "",
+        type: UpdateResource.type,
+        config: { name: "old" },
+        params: { name: "old" },
+        output: { name: "old" },
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+      },
+    });
+    state.update.mockImplementationOnce(async () => {
+      state.store.existing = { ...state.store.existing!, rev: 2 };
+      throw new RevConflict("existing", 1, 2);
+    });
+
+    const reconciler = new Reconciler({ state, driftDetection: false });
+    await expect(
+      reconciler.deploy([
+        new UpdateResource({ id: "existing", config: { name: "new" } }),
+      ]),
+    ).rejects.toMatchObject({
+      id: "existing",
+      expectedRev: 1,
+      actualRev: 2,
+    });
+
+    expect(updateSpy).toHaveBeenCalledOnce();
+    expect(state.update).toHaveBeenCalledOnce();
   });
 
   it("runs independent resources concurrently per dependency depth", async () => {
@@ -164,6 +408,7 @@ describe("reconciler deploy", () => {
 
     const state = createMemoryState({
       resource: {
+        rev: 1,
         id: "resource",
         groupId: -1,
         groupType: "",
@@ -207,6 +452,7 @@ describe("reconciler deploy", () => {
 
     const state = createMemoryState({
       orphan: {
+        rev: 1,
         id: "orphan",
         groupId: -1,
         groupType: "",
@@ -228,7 +474,7 @@ describe("reconciler deploy", () => {
     await reconciler.deploy([]);
 
     expect(deleteSpy).toHaveBeenCalledOnce();
-    expect(state.delete).toHaveBeenCalledWith("orphan");
+    expect(state.delete).toHaveBeenCalledWith("orphan", 1);
   });
 
   it("dryRun emits operation intent without applying side effects", async () => {
@@ -247,6 +493,7 @@ describe("reconciler deploy", () => {
 
     const state = createMemoryState({
       orphan: {
+        rev: 1,
         id: "orphan",
         groupId: -1,
         groupType: "",
@@ -267,7 +514,9 @@ describe("reconciler deploy", () => {
       driftDetection: false,
       emit: async (event) => {
         if ("operation" in event) {
-          operationEvents.push(`${event.operation}:${event.status}:${event.resourceId}`);
+          operationEvents.push(
+            `${event.operation}:${event.status}:${event.resourceId}`,
+          );
         }
       },
     });
@@ -286,6 +535,79 @@ describe("reconciler deploy", () => {
 });
 
 describe("reconciler destroy + refresh", () => {
+  it("reads remote state after a delete conflict instead of deleting twice", async () => {
+    let remoteExists = true;
+    const deleteSpy = vi.fn(async () => {
+      remoteExists = false;
+    });
+    const readSpy = vi.fn(async () => {
+      if (!remoteExists) {
+        const error = new Error("gone");
+        error.name = "RemoteMissing";
+        throw error;
+      }
+      return { name: "doomed" };
+    });
+    const DestroyResource = createTestResourceClass({
+      type: "test/service/destroy-retry",
+      read: readSpy,
+      delete: deleteSpy,
+      notFoundOnError: [{ name: "RemoteMissing", reason: "deleted" }],
+    });
+    const state = createMemoryState({
+      doomed: {
+        rev: 1,
+        id: "doomed",
+        groupId: -1,
+        groupType: "",
+        type: DestroyResource.type,
+        config: { name: "doomed" },
+        params: { name: "doomed" },
+        output: { name: "doomed" },
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+      },
+    });
+    const deleteState = state.delete.getMockImplementation()!;
+    state.delete
+      .mockImplementationOnce(async () => {
+        state.store.doomed = { ...state.store.doomed!, rev: 2 };
+        throw new RevConflict("doomed", 1, 2);
+      })
+      .mockImplementation(deleteState);
+
+    const reconciler = new Reconciler({ state });
+    await reconciler.destroy([
+      new DestroyResource({ id: "doomed", config: { name: "doomed" } }),
+    ]);
+
+    expect(deleteSpy).toHaveBeenCalledOnce();
+    expect(readSpy).toHaveBeenCalledOnce();
+    expect(state.delete).toHaveBeenCalledTimes(2);
+    expect(state.store.doomed).toBeUndefined();
+  });
+
+  it("holds a backend lease for the orphan snapshot", async () => {
+    const state = createMemoryState();
+    const release = vi.fn(async () => undefined);
+    const lease = vi.fn(async () => ({
+      scope: "reconciler:orphan-deletion",
+      expiresAt: new Date(Date.now() + 10_000).toISOString(),
+      renew: vi.fn(async () => new Date(Date.now() + 10_000).toISOString()),
+      release,
+    }));
+    const reconciler = new Reconciler({
+      state: { ...state, lease },
+      mutationLeaseTtl: 10_000,
+    });
+
+    await reconciler.refresh([]);
+
+    expect(lease).toHaveBeenCalledWith("reconciler:orphan-deletion", 10_000);
+    expect(state.values).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it("destroys resources in reverse dependency order", async () => {
     const destroyOrder: string[] = [];
     const deleteA = vi.fn(async () => {
@@ -325,6 +647,7 @@ describe("reconciler destroy + refresh", () => {
 
     const state = createMemoryState({
       a: {
+        rev: 1,
         id: "a",
         groupId: -1,
         groupType: "",
@@ -336,6 +659,7 @@ describe("reconciler destroy + refresh", () => {
         lastOperationAt: new Date().toISOString(),
       },
       b: {
+        rev: 1,
         id: "b",
         groupId: -1,
         groupType: "",
@@ -347,6 +671,7 @@ describe("reconciler destroy + refresh", () => {
         lastOperationAt: new Date().toISOString(),
       },
       c: {
+        rev: 1,
         id: "c",
         groupId: -1,
         groupType: "",
@@ -363,9 +688,9 @@ describe("reconciler destroy + refresh", () => {
     await reconciler.destroy([resourceA, resourceB, resourceC]);
 
     expect(destroyOrder).toEqual(["c", "b", "a"]);
-    expect(state.delete).toHaveBeenCalledWith("a");
-    expect(state.delete).toHaveBeenCalledWith("b");
-    expect(state.delete).toHaveBeenCalledWith("c");
+    expect(state.delete).toHaveBeenCalledWith("a", 1);
+    expect(state.delete).toHaveBeenCalledWith("b", 1);
+    expect(state.delete).toHaveBeenCalledWith("c", 1);
   });
 
   it("refresh removes orphan state entries", async () => {
@@ -381,6 +706,7 @@ describe("reconciler destroy + refresh", () => {
     const keep = new KeepResource({ id: "keep", config: { name: "keep" } });
     const state = createMemoryState({
       keep: {
+        rev: 1,
         id: "keep",
         groupId: -1,
         groupType: "",
@@ -392,6 +718,7 @@ describe("reconciler destroy + refresh", () => {
         lastOperationAt: new Date().toISOString(),
       },
       orphan: {
+        rev: 1,
         id: "orphan",
         groupId: -1,
         groupType: "",
@@ -412,8 +739,8 @@ describe("reconciler destroy + refresh", () => {
     await reconciler.refresh([keep]);
 
     expect(deleteSpy).toHaveBeenCalledOnce();
-    expect(state.delete).toHaveBeenCalledWith("orphan");
-    expect(state.delete).not.toHaveBeenCalledWith("keep");
+    expect(state.delete).toHaveBeenCalledWith("orphan", 1);
+    expect(state.delete).not.toHaveBeenCalledWith("keep", expect.anything());
   });
 
   it("destroy and refresh dryRun emit operation events without side effects", async () => {
@@ -434,6 +761,7 @@ describe("reconciler destroy + refresh", () => {
 
     const state = createMemoryState({
       "destroy-me": {
+        rev: 1,
         id: "destroy-me",
         groupId: -1,
         groupType: "",
@@ -445,6 +773,7 @@ describe("reconciler destroy + refresh", () => {
         lastOperationAt: new Date().toISOString(),
       },
       orphan: {
+        rev: 1,
         id: "orphan",
         groupId: -1,
         groupType: "",
@@ -464,7 +793,9 @@ describe("reconciler destroy + refresh", () => {
       registry: createResourceRegistry([OrphanResource]),
       emit: async (event) => {
         if ("operation" in event) {
-          operationEvents.push(`${event.operation}:${event.status}:${event.resourceId}`);
+          operationEvents.push(
+            `${event.operation}:${event.status}:${event.resourceId}`,
+          );
         }
       },
     });

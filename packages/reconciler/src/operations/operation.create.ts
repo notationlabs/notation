@@ -60,7 +60,7 @@ export async function* createResourceOperation(
     });
 
     yield* step.run("create:persist-state", async () => {
-      await params.state.update(params.resource.id, {
+      await params.state.update(params.resource.id, params.expectedRev, {
         id: params.resource.id,
         groupId: params.resource.groupId,
         groupType: params.resource.groupType,

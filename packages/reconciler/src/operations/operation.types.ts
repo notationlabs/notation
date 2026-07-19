@@ -1,14 +1,14 @@
-import type { BaseResource, ErrorMatcher, ResourceType } from "@notation/resource";
+import type {
+  BaseResource,
+  ErrorMatcher,
+  ResourceType,
+} from "@notation/resource";
 import type { State } from "@notation/state";
 
 export type OperationName = "create" | "read" | "update" | "delete";
 
 export type OperationLifecycleStatus =
-  | "start"
-  | "success"
-  | "error"
-  | "skip"
-  | "dry-run";
+  "start" | "success" | "error" | "skip" | "dry-run";
 
 export type OperationLifecycleEvent = {
   level: "info" | "error";
@@ -59,15 +59,20 @@ export type ResourceOperationBaseParams = {
   readPollOptions?: PollOptions;
 };
 
-export type CreateResourceParams = ResourceOperationBaseParams;
+export type CreateResourceParams = ResourceOperationBaseParams & {
+  expectedRev: number;
+};
 
 export type ReadResourceParams = ResourceOperationBaseParams;
 
 export type UpdateResourceParams = ResourceOperationBaseParams & {
   patch: Record<string, unknown>;
+  expectedRev: number;
 };
 
-export type DeleteResourceParams = ResourceOperationBaseParams;
+export type DeleteResourceParams = ResourceOperationBaseParams & {
+  expectedRev: number;
+};
 
 export const DEFAULT_RETRY_OPTIONS: PollOptions = {
   maxAttempts: 10,
