@@ -105,8 +105,7 @@ export abstract class Resource<
   T extends ResourceTypes = ResourceTypes,
   D extends Record<string, BaseResource | void> = {},
   C extends Record<string, any> = T["params"],
-> implements BaseResource
-{
+> implements BaseResource {
   config: C;
   id: string;
   groupId = -1;
@@ -263,11 +262,11 @@ export type ResourceBuilder<ApiSchema extends DefineResourceApiSchema> = {
   defineSchema: <
     S extends Schema &
       SchemaFromApi<
-      ApiSchema["Key"],
-      ApiSchema["CreateParams"],
-      Fallback<ApiSchema["UpdateParams"], ApiSchema["CreateParams"]>,
-      Fallback<ApiSchema["ReadResult"], {}>
-    >,
+        ApiSchema["Key"],
+        ApiSchema["CreateParams"],
+        Fallback<ApiSchema["UpdateParams"], ApiSchema["CreateParams"]>,
+        Fallback<ApiSchema["ReadResult"], {}>
+      >,
   >(
     schema: S,
   ) => ResourceSchemaBuilder<InferResourceTypes<ResolveSchema<ApiSchema, S>>>;

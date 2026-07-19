@@ -1,6 +1,7 @@
 import {
   Reconciler,
   createConsoleReconcilerSubscriber,
+  type ReconcilerEventEmitter,
   type ResourceRegistry,
 } from "@notation/reconciler";
 import type { StateBackend } from "@notation/state";
@@ -15,6 +16,7 @@ export async function refreshState(
   dryRun = false,
   registry?: ResourceRegistry,
   stateBackend?: StateBackend,
+  emit: ReconcilerEventEmitter = createConsoleReconcilerSubscriber(),
 ): Promise<void> {
   console.log(`${dryRun ? "[Dry Run]: " : ""}Refreshing ${entryPoint} state\n`);
 
@@ -24,7 +26,7 @@ export async function refreshState(
   const reconciler = new Reconciler({
     state,
     registry,
-    emit: createConsoleReconcilerSubscriber(),
+    emit,
   });
 
   await reconciler.refresh(graph.resources, { dryRun });

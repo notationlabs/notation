@@ -1,11 +1,10 @@
-export type IfAllPropertiesOptional<T, Y, N> = T extends Partial<T>
-  ? Partial<T> extends T
-    ? Y
-    : N
-  : N;
+export type IfAllPropertiesOptional<T, Y, N> =
+  T extends Partial<T> ? (Partial<T> extends T ? Y : N) : N;
 
-export type OptionalIfAllPropertiesOptional<K extends string, T> =
-  IfAllPropertiesOptional<T, { [Key in K]?: T }, { [Key in K]: T }>;
+export type OptionalIfAllPropertiesOptional<
+  K extends string,
+  T,
+> = IfAllPropertiesOptional<T, { [Key in K]?: T }, { [Key in K]: T }>;
 
 export type Fallback<T, U> = T extends undefined ? U : T;
 

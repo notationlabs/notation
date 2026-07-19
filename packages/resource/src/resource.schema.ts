@@ -164,16 +164,16 @@ export type SchemaFromApi<
   [K in keyof ApiCompoundKey]: SchemaItem<ApiCompoundKey[K]> &
     ({ primaryKey: true } | { secondaryKey: true });
 } & {
-  [K in keyof OmitOptional<
-    Omit<ApiCreateParams, keyof ApiCompoundKey>
-  >]: SchemaItem<ApiCreateParams[K]> & {
+  [
+    K in keyof OmitOptional<Omit<ApiCreateParams, keyof ApiCompoundKey>>
+  ]: SchemaItem<ApiCreateParams[K]> & {
     propertyType: "param";
     presence: "required";
   };
 } & {
-  [K in keyof PickOptional<
-    Omit<ApiCreateParams, keyof ApiCompoundKey>
-  >]: SchemaItem<ApiCreateParams[K]> & {
+  [
+    K in keyof PickOptional<Omit<ApiCreateParams, keyof ApiCompoundKey>>
+  ]: SchemaItem<ApiCreateParams[K]> & {
     propertyType: "param";
     presence: "optional";
   };
@@ -185,10 +185,9 @@ export type SchemaFromApi<
     immutable: true;
   };
 } & {
-  [K in keyof Omit<
-    ApiReadResult,
-    keyof ApiCreateParams | keyof ApiCompoundKey
-  >]: SchemaItem<ApiReadResult[K]> & {
+  [
+    K in keyof Omit<ApiReadResult, keyof ApiCreateParams | keyof ApiCompoundKey>
+  ]: SchemaItem<ApiReadResult[K]> & {
     propertyType: "computed";
   };
 };
@@ -205,18 +204,22 @@ export type MapSchema<
   IncludeKey = any,
 > = Simplify<
   {
-    [K in keyof S as S[K] extends { presence: "optional" } | ExcludeConditions
-      ? never
-      : IncludeKey extends keyof S[K]
-        ? K
-        : never]: S[K]["valueType"]["_output"];
-  } & {
-    [K in keyof S as S[K] extends ExcludeConditions
-      ? never
-      : S[K] extends { presence: "optional" }
-        ? IncludeKey extends keyof S[K]
+    [
+      K in keyof S as S[K] extends { presence: "optional" } | ExcludeConditions
+        ? never
+        : IncludeKey extends keyof S[K]
           ? K
           : never
-        : never]?: S[K]["valueType"]["_output"];
+    ]: S[K]["valueType"]["_output"];
+  } & {
+    [
+      K in keyof S as S[K] extends ExcludeConditions
+        ? never
+        : S[K] extends { presence: "optional" }
+          ? IncludeKey extends keyof S[K]
+            ? K
+            : never
+          : never
+    ]?: S[K]["valueType"]["_output"];
   }
 >;

@@ -2,6 +2,7 @@ import {
   Reconciler,
   createConsoleReconcilerSubscriber,
   type Plan,
+  type ReconcilerEventEmitter,
   type ResourceRegistry,
 } from "@notation/reconciler";
 import type { StateBackend } from "@notation/state";
@@ -15,13 +16,14 @@ export async function planApp(
   driftDetection = true,
   registry?: ResourceRegistry,
   stateBackend?: StateBackend,
+  emit: ReconcilerEventEmitter = createConsoleReconcilerSubscriber(),
 ): Promise<Plan> {
   const graph = await getResourceGraph(entryPoint);
   const state = stateBackend ?? createDefaultStateBackend();
   const reconciler = new Reconciler({
     state,
     registry,
-    emit: createConsoleReconcilerSubscriber(),
+    emit,
   });
 
   return reconciler.plan(graph.resources, { driftDetection });

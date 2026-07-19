@@ -9,3 +9,4 @@ export * from "./dependency-graph";
 export * from "./plan";
 export * from "./reconciler";
 export * from "./console-subscriber";
+export * from "./protocol";

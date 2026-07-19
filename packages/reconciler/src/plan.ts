@@ -133,7 +133,7 @@ export async function resolvePlanParams(
 
   const config = resource.config as Record<string, unknown>;
   for (const [key, item] of Object.entries(resource.schema)) {
-    if (item.propertyType !== "param") continue;
+    if (item.propertyType === "computed") continue;
     params[key] =
       key in config && config[key] !== undefined
         ? config[key]

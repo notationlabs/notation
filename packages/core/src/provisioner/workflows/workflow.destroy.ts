@@ -1,6 +1,7 @@
 import {
   Reconciler,
   createConsoleReconcilerSubscriber,
+  type ReconcilerEventEmitter,
   type ResourceRegistry,
 } from "@notation/reconciler";
 import type { StateBackend } from "@notation/state";
@@ -12,17 +13,18 @@ export async function destroyApp(
   entryPoint: string,
   registry?: ResourceRegistry,
   stateBackend?: StateBackend,
+  emit: ReconcilerEventEmitter = createConsoleReconcilerSubscriber(),
 ) {
   console.log(`Destroying ${entryPoint}\n`);
 
   const state = stateBackend ?? createDefaultStateBackend();
 
-  await refreshState(entryPoint, false, registry, state);
+  await refreshState(entryPoint, false, registry, state, emit);
 
   const graph = await getResourceGraph(entryPoint);
   const reconciler = new Reconciler({
     state,
-    emit: createConsoleReconcilerSubscriber(),
+    emit,
   });
 
   await reconciler.destroy(graph.resources);

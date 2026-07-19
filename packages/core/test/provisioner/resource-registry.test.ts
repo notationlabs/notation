@@ -17,7 +17,9 @@ describe("provisioner resource registry", () => {
   it("returns undefined when a resource type is not registered", () => {
     const registry = createResourceRegistry([TestResource]);
 
-    expect(resolveResourceClass(registry, "test/service/unknown")).toBeUndefined();
+    expect(
+      resolveResourceClass(registry, "test/service/unknown"),
+    ).toBeUndefined();
   });
 
   it("creates a structured warning event for orphan skips", () => {

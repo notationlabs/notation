@@ -7,6 +7,7 @@ import { plan } from "./plan";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
 import { startDashboardServer } from "@notation/dashboard";
+import { createDefaultStateBackend } from "@notation/core";
 
 program
   .command("compile")
@@ -20,23 +21,25 @@ program
   .command("dashboard")
   .description("Start Notation Dashboard")
   .action(async () => {
-    await startDashboardServer();
+    await startDashboardServer({ state: createDefaultStateBackend() });
   });
 
 program
   .command("deploy")
   .argument("<entryPoint>", "entryPoint")
   .description("Deploy Notation App")
-  .action(async (entryPoint) => {
-    await deploy(entryPoint);
+  .option("--json", "stream reconciler events as NDJSON")
+  .action(async (entryPoint, options) => {
+    await deploy(entryPoint, { json: options.json });
   });
 
 program
   .command("destroy")
   .argument("<entryPoint>", "entryPoint")
   .description("Destroy Notation App")
-  .action(async (entryPoint) => {
-    await destroy(entryPoint);
+  .option("--json", "stream reconciler events as NDJSON")
+  .action(async (entryPoint, options) => {
+    await destroy(entryPoint, { json: options.json });
   });
 
 program
