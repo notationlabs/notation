@@ -44,7 +44,10 @@ export const config: LambdaConfig = {
 
 ```ts [dist/todos.fn.ts]
 export const getTodos = async () => {
-  return { body: JSON.stringify({ id: 1, text: "Build with Notation" }), statusCode: 200 };
+  return {
+    body: JSON.stringify({ id: 1, text: "Build with Notation" }),
+    statusCode: 200,
+  };
 };
 ```
 

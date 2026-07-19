@@ -12,6 +12,7 @@ export const categories: DocCategory[] = [
           { label: "Introduction", slug: "manual/introduction" },
           { label: "Installation", slug: "manual/installation" },
           { label: "Quick Start", slug: "manual/quickstart" },
+          { label: "Reconciler", slug: "manual/reconciler" },
         ],
       },
       {
@@ -42,6 +43,7 @@ export const categories: DocCategory[] = [
         links: [
           { label: "notation compile", slug: "cli/compile" },
           { label: "notation watch", slug: "cli/watch" },
+          { label: "notation plan", slug: "cli/plan" },
           { label: "notation deploy", slug: "cli/deploy" },
           { label: "notation destroy", slug: "cli/destroy" },
           { label: "notation dashboard", slug: "cli/dashboard" },

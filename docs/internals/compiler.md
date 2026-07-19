@@ -73,16 +73,10 @@ Each named export in a `.fn.ts` file becomes a Lambda function (or other serverl
 After compilation, the resource graph is built by dynamically importing the compiled infrastructure module:
 
 ```ts [packages/core/src/orchestrator/graph.ts]
-const mod = await import(outFilePath);
-const register = mod.register ?? mod.default;
-await register(collector);
-return {
-  resourceGroups: collector.getResourceGroups(),
-  resources: collector.getResources(),
-};
+return collectResourceGraph(() => import(outFilePath));
 ```
 
-The `collector` tracks resources as they're created during module execution. When `lambda({ ... })` is called, it registers the Lambda function and its associated resources (IAM role, log group, zip package) with the collector.
+While the compiled entry point is imported, calls such as `lambda({ ... })` add the Lambda function and its associated resources (IAM role, log group, zip package) to the graph.
 
 The reconciler uses the resulting `{ resources, resourceGroups }` object to plan deployments.
 

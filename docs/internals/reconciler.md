@@ -61,19 +61,16 @@ Properties marked as `volatile` in the schema (like `LastModified` timestamps) a
 
 The reconciler emits events at each step of an operation's lifecycle. The default `createConsoleReconcilerSubscriber()` logs these to the console with formatted output.
 
-| Event                         | When                                                |
-| ----------------------------- | --------------------------------------------------- |
-| `reconciler.deploy.decision`  | After deciding what action to take for a resource   |
-| `reconciler.drift.detected`   | When drift is found between stored and actual state |
-| `reconciler.create.started`   | Before creating a resource                          |
-| `reconciler.create.completed` | After successful creation                           |
-| `reconciler.update.started`   | Before updating a resource                          |
-| `reconciler.update.completed` | After successful update                             |
-| `reconciler.delete.started`   | Before deleting a resource                          |
-| `reconciler.delete.completed` | After successful deletion                           |
-| `reconciler.operation.failed` | When any operation fails                            |
+| Event                                | When                                                |
+| ------------------------------------ | --------------------------------------------------- |
+| `reconciler.deploy.decision`         | After deciding what action to take for a resource   |
+| `reconciler.drift.detected`          | When drift is found between stored and actual state |
+| `reconciler.operation.lifecycle`     | When an operation starts, finishes, skips, or fails |
+| `reconciler.orphan-deletion.skipped` | When no registered class can delete an orphan       |
 
-Events carry the resource ID, type, and relevant data (params, diff, error) so subscribers can build custom UIs or logging.
+Lifecycle events contain the operation (`create`, `read`, `update`, or `delete`) and its
+status (`start`, `success`, `error`, `skip`, or `dry-run`). Events carry the resource ID,
+type, and relevant diff or error details.
 
 ## Operations
 
@@ -107,4 +104,4 @@ Each operation follows the following pattern:
 4. Persist to state backend
 5. Emit `completed` event (or `failed` on error)
 
-State is updated after each step, so the workflow can be resumed if it stops prematurely.
+State is updated after the provider operation and read-back complete.
