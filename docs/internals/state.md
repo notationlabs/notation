@@ -13,6 +13,7 @@ Each resource entry records everything needed to diff, update, or delete the res
 ```json
 {
   "my-api-lambda-getTodos": {
+    "rev": 3,
     "id": "my-api-lambda-getTodos",
     "type": "aws/lambda/LambdaFunction",
     "config": {
@@ -40,6 +41,7 @@ Each resource entry records everything needed to diff, update, or delete the res
 Key fields:
 
 - **`id`** – unique identifier derived from the resource's position in the graph
+- **`rev`** – monotonically increasing revision used for compare-and-swap writes
 - **`type`** – the resource type string (e.g., `aws/lambda/LambdaFunction`)
 - **`config`** – user-facing configuration values
 - **`params`** – the full set of parameters sent to the cloud provider
@@ -49,7 +51,7 @@ Key fields:
 
 ## Backends
 
-Two built-in backends:
+Three built-in backends:
 
 ### `FileStateBackend` (default)
 
@@ -67,21 +69,39 @@ In-memory backend used for testing. Deep-clones on read and write to simulate pe
 const state = new MemoryStateBackend();
 ```
 
+### `SqliteStateBackend`
+
+Stores state and leases in SQLite. Select it in the CLI by setting
+`NOTATION_STATE_PATH` to a path ending in `.db` or `.sqlite`.
+
+```ts
+const state = new SqliteStateBackend(".notation/state.db");
+```
+
 ### `StateBackend` interface
 
-Both backends implement the same interface:
+All backends implement the same interface:
 
 ```ts [@notation/state/src/backend.ts]
 interface StateBackend {
   get(id: string): Promise<StateNode | undefined>;
   has(id: string): Promise<boolean>;
-  update(id: string, patch: Partial<StateNode>): Promise<void>;
-  delete(id: string): Promise<void>;
+  update(
+    id: string,
+    patch: Partial<StateNode>,
+    expectedRev?: number,
+  ): Promise<{ rev: number }>;
+  delete(id: string, expectedRev?: number): Promise<void>;
   values(): Promise<StateNode[]>;
+  lease(scope: string, ttl: number): Promise<Lease>;
 }
 ```
 
-The interface is deliberately minimal. There are no queries, transactions, or locking. Each operation targets a single resource by ID, which will make it straightforward to add new backends (e.g., Sqlite, S3).
+Every backend provides compare-and-swap writes and renewable exclusive leases. The
+reconciler holds a per-resource lease across the provider operation and state write, so
+concurrent deploys cannot both perform the same create or update. It renews long-running
+leases until the mutation finishes. Orphan deletion additionally holds a snapshot lease
+while it decides which state records no longer appear in the desired graph.
 
 ## How state is used
 

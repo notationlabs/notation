@@ -11,12 +11,15 @@ const todoRouter = router(todoApi);
 todoRouter.get("/todos", getTodos);
 ```
 
-Notation is a compiler, reconciler, and deployment engine. 
+Notation is a compiler, reconciler, and deployment engine.
 
-The compiler runs two passes over your codebase: 
+The reconciler is also available as an embedded library. A Node.js host can construct
+resources, choose a state backend, and run plan, deploy, or destroy without the CLI.
 
-1. An infrastructure pass that resolves resource declarations into a graph, 
-2. A function pass that bundles each `.fn.ts` module into a deployable Lambda artifact. 
+The compiler runs two passes over your codebase:
+
+1. An infrastructure pass that resolves resource declarations into a graph,
+2. A function pass that bundles each `.fn.ts` module into a deployable Lambda artifact.
 
 The reconciler diffs the compiled graph against persisted state and produces a plan. The deployment engine executes that plan, provisioning, updating, or destroying resources in the correct order.
 

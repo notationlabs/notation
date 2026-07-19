@@ -14,7 +14,12 @@ import { z } from "zod";
 
 const LambdaFunction = defineResource<{
   Key: { FunctionName: string };
-  CreateParams: { FunctionName: string; Runtime: string; Handler: string; Code: Buffer };
+  CreateParams: {
+    FunctionName: string;
+    Runtime: string;
+    Handler: string;
+    Code: Buffer;
+  };
   UpdateParams: { FunctionName: string };
   ReadResult: { FunctionArn: string };
 }>({ type: "aws/lambda/LambdaFunction" })
@@ -26,7 +31,11 @@ const LambdaFunction = defineResource<{
       presence: "required",
       immutable: true,
     },
-    Runtime: { propertyType: "param", valueType: z.string(), presence: "required" },
+    Runtime: {
+      propertyType: "param",
+      valueType: z.string(),
+      presence: "required",
+    },
     Handler: {
       propertyType: "param",
       valueType: z.string(),
@@ -178,12 +187,11 @@ abstract class ResourceGroup {
 }
 ```
 
-Construction accepts a `ResourceGroupOptions`:
+Construction accepts `ResourceGroupOptions` with:
 
-- `collector` – a `ResourceCollector` used during graph construction to allocate group IDs and register resources.
-- `id` – pre-assigned ID, used when no collector is provided.
+- `id` – an optional pre-assigned ID used outside graph collection.
 - `dependencies` – map of dependency names to group IDs.
 
-When a collector is provided, the group registers itself and each resource added via `add()` is registered into the collector. This is how a construct like `export const getTodos = lambda({ ... })` maps to the 4–6 actual AWS resources required to run it.
+During graph construction, the group and each resource added via `add()` become part of the active graph automatically. This is how a construct like `export const getTodos = lambda({ ... })` maps to the 4–6 actual AWS resources required to run it.
 
 Resource groups are collected during graph construction and used by the reconciler to determine the full set of resources to deploy or destroy.

@@ -9,3 +9,9 @@ Removes all resources in the stack. Tears down runs in reverse dependency order,
 ```sh
 notation destroy infra/api.ts
 ```
+
+`--json` writes versioned reconciler events to stdout as newline-delimited JSON:
+
+```sh
+notation destroy infra/api.ts --json > destroy.ndjson
+```
