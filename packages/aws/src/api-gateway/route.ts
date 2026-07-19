@@ -3,13 +3,11 @@ import type {
   JWTAuthorizedApiGatewayHandler,
 } from "src/shared";
 import * as aws from "@notation/aws.iac";
-import type { ResourceCollector } from "@notation/core";
 import { api } from "./api";
 import { AuthorizerConfig } from "./auth";
 import { mapAuthConfig, mapAuthType } from "./utils";
 
 export const route = (
-  collector: ResourceCollector,
   apiGroup: ReturnType<typeof api>,
   method: string, // todo: http methods only
   path: `/${string}`,
@@ -23,11 +21,8 @@ export const route = (
   const apiResource = apiGroup.findResource(aws.apiGateway.Api)!;
   const routeId = `${apiResource.id}-${method}-${path}`;
 
-  const lambdaGroup =
-    handler instanceof aws.AwsResourceGroup
-      ? handler
-      : // at compile time, runtime module becomes infra resource group
-        (handler as any as aws.AwsResourceGroup);
+  // at compile time, a runtime handler import becomes an infra resource group
+  const lambdaGroup = handler as aws.AwsResourceGroup;
 
   const lambdaResource = lambdaGroup.findResource(aws.lambda.LambdaFunction)!;
 
@@ -63,7 +58,6 @@ export const route = (
 
   const routeGroup = new aws.AwsResourceGroup("API Gateway/Route", {
     dependencies: { router: apiGroup.id, fn: lambdaGroup.id },
-    collector,
   });
 
   if (auth.type != "NONE") {

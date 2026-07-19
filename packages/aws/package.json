@@ -18,7 +18,6 @@
   },
   "dependencies": {
     "@notation/aws.iac": "workspace:*",
-    "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/std.iac": "workspace:*",
     "@types/aws-lambda": "^8.10.147",

@@ -1,22 +1,12 @@
 import type { BaseResource } from "./resource";
-
-export interface ResourceCollector {
-  allocateResourceGroupId(): number;
-  registerResourceGroup(group: ResourceGroup): void;
-  registerResource(resource: BaseResource): void;
-}
+import {
+  getActiveResourceCollection,
+  type ResourceGraph,
+} from "./resource-collection";
 
 export type ResourceGroupOptions = {
   /**
-   * Optional collector used by orchestration graph builders.
-   *
-   * When provided, the group ID is allocated by the collector and the group/resources
-   * are registered into it.
-   */
-  collector?: ResourceCollector;
-
-  /**
-   * Optional pre-assigned ID. Only used when no collector is provided.
+   * Optional pre-assigned ID. Used outside graph collection.
    */
   id?: number;
 
@@ -31,24 +21,30 @@ export abstract class ResourceGroup {
   config: Record<string, any>;
   resources: BaseResource[];
 
-  #collector?: ResourceCollector;
+  #graph?: ResourceGraph;
 
   constructor(type: string, opts: ResourceGroupOptions) {
-    const { dependencies, collector, id, ...config } = opts;
+    const { dependencies, id, ...config } = opts;
+    const collection = getActiveResourceCollection();
     this.type = type;
-    this.#collector = collector;
-    this.id = collector ? collector.allocateResourceGroupId() : (id ?? -1);
+    this.#graph = collection?.graph;
+    this.id = collection ? collection.nextResourceGroupId++ : (id ?? -1);
     this.dependencies = dependencies || {};
     this.config = config || {};
     this.resources = [];
 
-    if (collector) collector.registerResourceGroup(this);
+    collection?.graph.resourceGroups.push(this);
     return this;
   }
 
   add<T extends BaseResource>(resource: T) {
-    if (this.#collector) {
-      this.#collector.registerResource(resource);
+    if (this.#graph) {
+      if (this.#graph.resources.includes(resource)) {
+        throw new Error(
+          `Resource ${resource.type} has already been registered.`,
+        );
+      }
+      this.#graph.resources.push(resource);
     } else if (this.resources.includes(resource)) {
       throw new Error(`Resource ${resource.type} has already been registered.`);
     }
@@ -58,9 +54,10 @@ export abstract class ResourceGroup {
     return resource;
   }
 
-  findResource<T extends new (...opts: any[]) => BaseResource>(ResourceClass: T) {
+  findResource<T extends new (...opts: any[]) => BaseResource>(
+    ResourceClass: T,
+  ) {
     return this.resources.find((r) => r instanceof ResourceClass) as
-      | InstanceType<T>
-      | undefined;
+      InstanceType<T> | undefined;
   }
 }
