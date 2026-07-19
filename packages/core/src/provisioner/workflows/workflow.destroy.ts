@@ -1,6 +1,6 @@
 import {
   Reconciler,
-  createConsoleReconcilerSubscriber,
+  createLoggerReconcilerSubscriber,
   type ReconcilerEventEmitter,
   type ResourceRegistry,
 } from "@notation/reconciler";
@@ -13,10 +13,8 @@ export async function destroyApp(
   entryPoint: string,
   registry?: ResourceRegistry,
   stateBackend?: StateBackend,
-  emit: ReconcilerEventEmitter = createConsoleReconcilerSubscriber(),
+  emit: ReconcilerEventEmitter = createLoggerReconcilerSubscriber(),
 ) {
-  console.log(`Destroying ${entryPoint}\n`);
-
   const state = stateBackend ?? createDefaultStateBackend();
 
   await refreshState(entryPoint, false, registry, state, emit);

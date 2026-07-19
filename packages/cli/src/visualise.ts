@@ -3,21 +3,27 @@ import {
   createMermaidLiveUrl,
   getResourceGraph,
 } from "@notation/core";
-import { log } from "console";
 import { compileInfra } from "./compile";
+import { defaultLogger, type Logger } from "./logger";
 
-export async function visualise(entryPoint: string) {
+export async function visualise(
+  entryPoint: string,
+  logger: Logger = defaultLogger,
+) {
   await compileInfra(entryPoint);
-  await generateGraph(entryPoint);
+  await generateGraph(entryPoint, logger);
 }
 
-export async function generateGraph(entryPoint: string) {
-  log(`Generating graph for ${entryPoint}`);
+export async function generateGraph(
+  entryPoint: string,
+  logger: Logger = defaultLogger,
+) {
+  logger.info(`Generating graph for ${entryPoint}`);
 
   const graph = await getResourceGraph(entryPoint);
   const chart = createMermaidFlowChart(graph.resourceGroups, graph.resources);
   const chartUrl = createMermaidLiveUrl(chart);
 
-  log("\nGenerated infrastructure chart:\n");
-  log(chartUrl);
+  logger.info("\nGenerated infrastructure chart:\n");
+  logger.info(chartUrl);
 }

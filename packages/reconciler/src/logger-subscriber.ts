@@ -1,15 +1,15 @@
 import type { ReconcilerEvent, ReconcilerEventEmitter } from "./reconciler";
 
-export type ConsoleLike = Pick<Console, "info" | "warn" | "error">;
+export type Logger = Pick<Console, "info" | "warn" | "error">;
 
-export type ConsoleReconcilerSubscriberOptions = {
-  console?: ConsoleLike;
+export type LoggerReconcilerSubscriberOptions = {
+  logger?: Logger;
 };
 
-export function createConsoleReconcilerSubscriber(
-  opts: ConsoleReconcilerSubscriberOptions = {},
+export function createLoggerReconcilerSubscriber(
+  opts: LoggerReconcilerSubscriberOptions = {},
 ): ReconcilerEventEmitter {
-  const logger = opts.console ?? console;
+  const logger = opts.logger ?? console;
 
   return async (event: ReconcilerEvent) => {
     if (event.level === "error") {

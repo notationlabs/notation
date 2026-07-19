@@ -1,6 +1,6 @@
 import {
   Reconciler,
-  createConsoleReconcilerSubscriber,
+  createLoggerReconcilerSubscriber,
   type Plan,
   type ReconcilerEventEmitter,
   type ResourceRegistry,
@@ -16,7 +16,7 @@ export async function planApp(
   driftDetection = true,
   registry?: ResourceRegistry,
   stateBackend?: StateBackend,
-  emit: ReconcilerEventEmitter = createConsoleReconcilerSubscriber(),
+  emit: ReconcilerEventEmitter = createLoggerReconcilerSubscriber(),
 ): Promise<Plan> {
   const graph = await getResourceGraph(entryPoint);
   const state = stateBackend ?? createDefaultStateBackend();

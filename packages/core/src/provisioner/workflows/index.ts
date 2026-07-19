@@ -1,6 +1,7 @@
 export {
-  createConsoleReconcilerSubscriber,
+  createLoggerReconcilerSubscriber,
   createNdjsonEventEmitter,
+  type Logger,
   type ReconcilerEventEmitter,
 } from "@notation/reconciler";
 export * from "./workflow.deploy";
