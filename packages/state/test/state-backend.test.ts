@@ -19,6 +19,7 @@ function createStateNode(
   overrides: Partial<StateNode> = {},
 ): StateNode {
   return {
+    rev: 0,
     id,
     groupId: 1,
     groupType: "stack",
@@ -54,16 +55,66 @@ function runStateBackendContractTests(
       const initialNode = createStateNode("resource-a");
 
       try {
-        await fixture.backend.update(initialNode.id, initialNode);
-        await fixture.backend.update(initialNode.id, {
-          output: { status: "ready" },
-          lastOperation: "update",
-        });
+        await fixture.backend.update(initialNode.id, initialNode, 0);
+        await fixture.backend.update(
+          initialNode.id,
+          {
+            output: { status: "ready" },
+            lastOperation: "update",
+          },
+          1,
+        );
 
         await expect(fixture.backend.get(initialNode.id)).resolves.toEqual({
           ...initialNode,
+          rev: 2,
           output: { status: "ready" },
           lastOperation: "update",
+        });
+      } finally {
+        await fixture.cleanup();
+      }
+    });
+
+    it("rejects stale updates and deletes", async () => {
+      const fixture = await createBackend();
+      const initialNode = createStateNode("resource-a");
+
+      try {
+        await expect(
+          fixture.backend.update(initialNode.id, initialNode, 0),
+        ).resolves.toEqual({ rev: 1 });
+        await expect(
+          fixture.backend.update(initialNode.id, { output: {} }, 0),
+        ).rejects.toMatchObject({
+          name: "RevConflict",
+          expectedRev: 0,
+          actualRev: 1,
+        });
+        await expect(
+          fixture.backend.delete(initialNode.id, 0),
+        ).rejects.toMatchObject({
+          name: "RevConflict",
+        });
+      } finally {
+        await fixture.cleanup();
+      }
+    });
+
+    it("treats expectedRev 0 as an expect-absent assertion", async () => {
+      const fixture = await createBackend();
+      const initialNode = createStateNode("resource-a");
+
+      try {
+        await expect(
+          fixture.backend.update(initialNode.id, initialNode, 0),
+        ).resolves.toEqual({ rev: 1 });
+        await expect(
+          fixture.backend.update(initialNode.id, initialNode, 0),
+        ).rejects.toMatchObject({
+          name: "RevConflict",
+          expectedRev: 0,
+          actualRev: 1,
         });
       } finally {
         await fixture.cleanup();
@@ -75,8 +126,8 @@ function runStateBackendContractTests(
       const initialNode = createStateNode("resource-a");
 
       try {
-        await fixture.backend.update(initialNode.id, initialNode);
-        await fixture.backend.delete(initialNode.id);
+        await fixture.backend.update(initialNode.id, initialNode, 0);
+        await fixture.backend.delete(initialNode.id, 1);
 
         await expect(
           fixture.backend.get(initialNode.id),
@@ -94,13 +145,39 @@ function runStateBackendContractTests(
       const secondNode = createStateNode("resource-b");
 
       try {
-        await fixture.backend.update(firstNode.id, firstNode);
-        await fixture.backend.update(secondNode.id, secondNode);
+        await fixture.backend.update(firstNode.id, firstNode, 0);
+        await fixture.backend.update(secondNode.id, secondNode, 0);
 
         const values = await fixture.backend.values();
 
         expect(values).toHaveLength(2);
-        expect(values).toEqual(expect.arrayContaining([firstNode, secondNode]));
+        expect(values).toEqual(
+          expect.arrayContaining([
+            { ...firstNode, rev: 1 },
+            { ...secondNode, rev: 1 },
+          ]),
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    });
+
+    it("holds and renews an exclusive lease", async () => {
+      const fixture = await createBackend();
+
+      try {
+        const lease = await fixture.backend.lease("resource:a", 1_000);
+        const firstExpiry = lease.expiresAt;
+        await expect(
+          fixture.backend.lease("resource:a", 1_000),
+        ).rejects.toMatchObject({ name: "LeaseConflict" });
+
+        await lease.renew(2_000);
+        expect(lease.expiresAt).not.toBe(firstExpiry);
+        await lease.release();
+
+        const next = await fixture.backend.lease("resource:a", 1_000);
+        await next.release();
       } finally {
         await fixture.cleanup();
       }
@@ -121,15 +198,50 @@ runStateBackendContractTests("MemoryStateBackend", async () => ({
   cleanup: async () => undefined,
 }));
 
+describe("FileStateBackend", () => {
+  it("serialises concurrent CAS writers so only one wins", async () => {
+    const tempDirectory = await mkdtemp(path.join(tmpdir(), "notation-state-"));
+    const statePath = path.join(tempDirectory, "state.json");
+    const first = new FileStateBackend(statePath);
+    const second = new FileStateBackend(statePath);
+    const initialNode = createStateNode("resource-a");
+
+    try {
+      await first.update(initialNode.id, initialNode, 0);
+
+      const results = await Promise.allSettled([
+        first.update(initialNode.id, { output: { writer: "first" } }, 1),
+        second.update(initialNode.id, { output: { writer: "second" } }, 1),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === "fulfilled");
+      const rejected = results.filter((r) => r.status === "rejected");
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+        name: "RevConflict",
+      });
+      await expect(first.get(initialNode.id)).resolves.toMatchObject({
+        rev: 2,
+      });
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("MemoryStateBackend", () => {
   it("returns values in deterministic id order", async () => {
     const backend = new MemoryStateBackend();
     const laterNode = createStateNode("resource-z");
     const earlierNode = createStateNode("resource-a");
 
-    await backend.update(laterNode.id, laterNode);
-    await backend.update(earlierNode.id, earlierNode);
+    await backend.update(laterNode.id, laterNode, 0);
+    await backend.update(earlierNode.id, earlierNode, 0);
 
-    await expect(backend.values()).resolves.toEqual([earlierNode, laterNode]);
+    await expect(backend.values()).resolves.toEqual([
+      { ...earlierNode, rev: 1 },
+      { ...laterNode, rev: 1 },
+    ]);
   });
 });

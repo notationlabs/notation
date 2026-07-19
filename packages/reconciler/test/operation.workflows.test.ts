@@ -112,6 +112,7 @@ describe("operation workflows", () => {
       createResourceOperation(step, {
         resource: testResource,
         state,
+        expectedRev: 0,
         emit: async (event) => {
           events.push(event);
         },
@@ -211,13 +212,14 @@ describe("operation workflows", () => {
       deleteResourceOperation(step, {
         resource: testResource,
         state,
+        expectedRev: 1,
         emit: async (event) => {
           events.push(event);
         },
       }),
     );
 
-    expect(state.delete).toHaveBeenCalledWith("test-delete");
+    expect(state.delete).toHaveBeenCalledWith("test-delete", 1);
     expect(events.map((event) => event.status)).toEqual([
       "start",
       "skip",
@@ -257,6 +259,7 @@ describe("operation workflows", () => {
         deleteResourceOperation(step, {
           resource: testResource,
           state,
+          expectedRev: 1,
         }),
       ),
     ).rejects.toMatchObject({ name: "DifferentError", message: "still exists" });
@@ -291,6 +294,7 @@ describe("operation workflows", () => {
         createResourceOperation(step, {
           resource: testResource,
           state,
+          expectedRev: 0,
           emit: async (event) => {
             events.push(event);
           },

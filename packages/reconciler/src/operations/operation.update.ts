@@ -70,12 +70,16 @@ export async function* updateResourceOperation(
     });
 
     yield* step.run("update:persist-state", async () => {
-      await params.state.update(params.resource.id, {
-        lastOperation: "update",
-        lastOperationAt: new Date().toISOString(),
-        params: params.resource.toState(resourceParams),
-        output: params.resource.toState(params.resource.output),
-      });
+      await params.state.update(
+        params.resource.id,
+        {
+          lastOperation: "update",
+          lastOperationAt: new Date().toISOString(),
+          params: params.resource.toState(resourceParams),
+          output: params.resource.toState(params.resource.output),
+        },
+        params.expectedRev,
+      );
     });
 
     await emitLifecycleEvent(params, "update", "success");

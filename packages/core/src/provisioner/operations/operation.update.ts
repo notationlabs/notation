@@ -11,6 +11,10 @@ async function update(opts: {
   patch: any;
 }): Promise<void> {
   const { resource, state, patch } = opts;
+  const stateNode = await state.get(resource.id);
+  if (!stateNode) {
+    throw new Error(`Missing state for ${resource.type} ${resource.id}`);
+  }
 
   if (!resource.update) {
     throw new Error(
@@ -31,10 +35,14 @@ async function update(opts: {
   const result = await readResource({ resource, state, quiet: true });
   resource.setOutput({ ...resource.output, ...result });
 
-  await state.update(resource.id, {
-    lastOperation: "update",
-    lastOperationAt: new Date().toISOString(),
-    params: resource.toState(params),
-    output: resource.toState(resource.output),
-  });
+  await state.update(
+    resource.id,
+    {
+      lastOperation: "update",
+      lastOperationAt: new Date().toISOString(),
+      params: resource.toState(params),
+      output: resource.toState(resource.output),
+    },
+    stateNode.rev,
+  );
 }

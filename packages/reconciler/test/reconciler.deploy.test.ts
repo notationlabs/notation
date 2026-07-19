@@ -1,30 +1,71 @@
 import { describe, expect, it, vi } from "vitest";
 import { resource } from "@notation/resource";
-import type { StateNode } from "@notation/state";
+import {
+  LeaseConflict,
+  MemoryStateBackend,
+  RevConflict,
+  type StateNode,
+} from "@notation/state";
 import { Reconciler, createResourceRegistry } from "../src";
 
-function createMemoryState(initial: Record<string, StateNode> = {}) {
-  const store: Record<string, StateNode> = { ...initial };
+type InitialStateNode = Omit<StateNode, "rev"> & { rev?: number };
+
+function createMemoryState(initial: Record<string, InitialStateNode> = {}) {
+  const store = Object.fromEntries(
+    Object.entries(initial).map(([id, node]) => [
+      id,
+      { ...node, rev: node.rev ?? 1 },
+    ]),
+  ) as Record<string, StateNode>;
 
   return {
     store,
     get: vi.fn(async (id: string) => store[id]),
-    update: vi.fn(async (id: string, patch: Partial<StateNode>) => {
-      store[id] = {
-        ...(store[id] ?? {}),
-        ...patch,
-      } as StateNode;
-    }),
-    delete: vi.fn(async (id: string) => {
+    update: vi.fn(
+      async (id: string, patch: Partial<StateNode>, expectedRev: number) => {
+        const actualRev = store[id]?.rev ?? 0;
+        if (actualRev !== expectedRev) {
+          throw new RevConflict(id, expectedRev, store[id]?.rev);
+        }
+        const rev = actualRev + 1;
+        store[id] = {
+          ...(store[id] ?? {}),
+          ...patch,
+          rev,
+        } as StateNode;
+        return { rev };
+      },
+    ),
+    delete: vi.fn(async (id: string, expectedRev: number) => {
+      const actualRev = store[id]?.rev ?? 0;
+      if (actualRev !== expectedRev) {
+        throw new RevConflict(id, expectedRev, store[id]?.rev);
+      }
       delete store[id];
     }),
     values: vi.fn(async () => Object.values(store)),
+    lease: vi.fn(async (scope: string, ttl: number) => {
+      let expiresAt = new Date(Date.now() + ttl).toISOString();
+      return {
+        scope,
+        get expiresAt() {
+          return expiresAt;
+        },
+        renew: vi.fn(async (nextTtl: number) => {
+          expiresAt = new Date(Date.now() + nextTtl).toISOString();
+          return expiresAt;
+        }),
+        release: vi.fn(async () => undefined),
+      };
+    }),
   };
 }
 
 function createTestResourceClass(opts: {
   type: `${string}/${string}/${string}`;
-  create?: (params: Record<string, unknown>) => Promise<Record<string, unknown> | void>;
+  create?: (
+    params: Record<string, unknown>,
+  ) => Promise<Record<string, unknown> | void>;
   read?: (key: Record<string, unknown>) => Promise<Record<string, unknown>>;
   update?: (
     key: Record<string, unknown>,
@@ -32,7 +73,10 @@ function createTestResourceClass(opts: {
     params: Record<string, unknown>,
     state: Record<string, unknown>,
   ) => Promise<void>;
-  delete?: (key: Record<string, unknown>, state: Record<string, unknown>) => Promise<void>;
+  delete?: (
+    key: Record<string, unknown>,
+    state: Record<string, unknown>,
+  ) => Promise<void>;
 }) {
   return resource({ type: opts.type })
     .defineSchema({
@@ -103,6 +147,61 @@ describe("reconciler deploy", () => {
     expect(updateSpy.mock.calls[0]?.[1]).toEqual({ name: "new" });
     expect(events).toContain("create:success:new");
     expect(events).toContain("update:success:existing");
+  });
+
+  it("persists first-time creates with an expect-absent revision", async () => {
+    const CreateResource = createTestResourceClass({
+      type: "test/service/first-create",
+      create: async () => ({ name: "new" }),
+      read: async () => ({ name: "new" }),
+    });
+    const state = createMemoryState();
+    const reconciler = new Reconciler({ state, driftDetection: false });
+
+    await reconciler.deploy([
+      new CreateResource({ id: "new", config: { name: "new" } }),
+    ]);
+
+    expect(state.update).toHaveBeenCalledWith("new", expect.any(Object), 0);
+  });
+
+  it("leases a resource before remote create so concurrent deploys cannot duplicate it", async () => {
+    let signalCreateStarted!: () => void;
+    const createStarted = new Promise<void>((resolve) => {
+      signalCreateStarted = resolve;
+    });
+    let allowCreateToFinish!: () => void;
+    const createCanFinish = new Promise<void>((resolve) => {
+      allowCreateToFinish = resolve;
+    });
+    const createSpy = vi.fn(async () => {
+      signalCreateStarted();
+      await createCanFinish;
+      return { name: "new" };
+    });
+    const CreateResource = createTestResourceClass({
+      type: "test/service/concurrent-create",
+      create: createSpy,
+      read: async () => ({ name: "new" }),
+    });
+    const state = new MemoryStateBackend();
+    const first = new Reconciler({ state, driftDetection: false });
+    const second = new Reconciler({ state, driftDetection: false });
+
+    const firstDeploy = first.deploy([
+      new CreateResource({ id: "new", config: { name: "new" } }),
+    ]);
+    await createStarted;
+
+    await expect(
+      second.deploy([
+        new CreateResource({ id: "new", config: { name: "new" } }),
+      ]),
+    ).rejects.toBeInstanceOf(LeaseConflict);
+
+    allowCreateToFinish();
+    await firstDeploy;
+    expect(createSpy).toHaveBeenCalledOnce();
   });
 
   it("runs independent resources concurrently per dependency depth", async () => {
@@ -228,7 +327,7 @@ describe("reconciler deploy", () => {
     await reconciler.deploy([]);
 
     expect(deleteSpy).toHaveBeenCalledOnce();
-    expect(state.delete).toHaveBeenCalledWith("orphan");
+    expect(state.delete).toHaveBeenCalledWith("orphan", 1);
   });
 
   it("dryRun emits operation intent without applying side effects", async () => {
@@ -267,7 +366,9 @@ describe("reconciler deploy", () => {
       driftDetection: false,
       emit: async (event) => {
         if ("operation" in event) {
-          operationEvents.push(`${event.operation}:${event.status}:${event.resourceId}`);
+          operationEvents.push(
+            `${event.operation}:${event.status}:${event.resourceId}`,
+          );
         }
       },
     });
@@ -286,6 +387,62 @@ describe("reconciler deploy", () => {
 });
 
 describe("reconciler destroy + refresh", () => {
+  it("re-reads state and retries destroy on RevConflict", async () => {
+    const deleteSpy = vi.fn(async () => undefined);
+    const DestroyResource = createTestResourceClass({
+      type: "test/service/destroy-retry",
+      delete: deleteSpy,
+    });
+    const state = createMemoryState({
+      doomed: {
+        rev: 1,
+        id: "doomed",
+        groupId: -1,
+        groupType: "",
+        type: DestroyResource.type,
+        config: { name: "doomed" },
+        params: { name: "doomed" },
+        output: { name: "doomed" },
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+      },
+    });
+    state.delete
+      .mockRejectedValueOnce(new RevConflict("doomed", 1, 2))
+      .mockImplementation(async (id: string) => {
+        delete state.store[id];
+      });
+
+    const reconciler = new Reconciler({ state });
+    await reconciler.destroy([
+      new DestroyResource({ id: "doomed", config: { name: "doomed" } }),
+    ]);
+
+    expect(state.delete).toHaveBeenCalledTimes(2);
+    expect(state.store.doomed).toBeUndefined();
+  });
+
+  it("holds a backend lease for the orphan snapshot", async () => {
+    const state = createMemoryState();
+    const release = vi.fn(async () => undefined);
+    const lease = vi.fn(async () => ({
+      scope: "reconciler:orphan-deletion",
+      expiresAt: new Date(Date.now() + 10_000).toISOString(),
+      renew: vi.fn(async () => new Date(Date.now() + 10_000).toISOString()),
+      release,
+    }));
+    const reconciler = new Reconciler({
+      state: { ...state, lease },
+      mutationLeaseTtl: 10_000,
+    });
+
+    await reconciler.refresh([]);
+
+    expect(lease).toHaveBeenCalledWith("reconciler:orphan-deletion", 10_000);
+    expect(state.values).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it("destroys resources in reverse dependency order", async () => {
     const destroyOrder: string[] = [];
     const deleteA = vi.fn(async () => {
@@ -363,9 +520,9 @@ describe("reconciler destroy + refresh", () => {
     await reconciler.destroy([resourceA, resourceB, resourceC]);
 
     expect(destroyOrder).toEqual(["c", "b", "a"]);
-    expect(state.delete).toHaveBeenCalledWith("a");
-    expect(state.delete).toHaveBeenCalledWith("b");
-    expect(state.delete).toHaveBeenCalledWith("c");
+    expect(state.delete).toHaveBeenCalledWith("a", 1);
+    expect(state.delete).toHaveBeenCalledWith("b", 1);
+    expect(state.delete).toHaveBeenCalledWith("c", 1);
   });
 
   it("refresh removes orphan state entries", async () => {
@@ -412,8 +569,8 @@ describe("reconciler destroy + refresh", () => {
     await reconciler.refresh([keep]);
 
     expect(deleteSpy).toHaveBeenCalledOnce();
-    expect(state.delete).toHaveBeenCalledWith("orphan");
-    expect(state.delete).not.toHaveBeenCalledWith("keep");
+    expect(state.delete).toHaveBeenCalledWith("orphan", 1);
+    expect(state.delete).not.toHaveBeenCalledWith("keep", expect.anything());
   });
 
   it("destroy and refresh dryRun emit operation events without side effects", async () => {
@@ -464,7 +621,9 @@ describe("reconciler destroy + refresh", () => {
       registry: createResourceRegistry([OrphanResource]),
       emit: async (event) => {
         if ("operation" in event) {
-          operationEvents.push(`${event.operation}:${event.status}:${event.resourceId}`);
+          operationEvents.push(
+            `${event.operation}:${event.status}:${event.resourceId}`,
+          );
         }
       },
     });

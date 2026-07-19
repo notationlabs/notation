@@ -25,17 +25,21 @@ async function create(
 
     resource.setOutput({ ...resource.output, ...readResult });
 
-    await state.update(resource.id, {
-      id: resource.id,
-      groupId: resource.groupId,
-      groupType: resource.groupType,
-      type: resource.type,
-      lastOperation: "create",
-      lastOperationAt: new Date().toISOString(),
-      config: resource.config,
-      params: resource.toState(params),
-      output: resource.toState(resource.output),
-    });
+    await state.update(
+      resource.id,
+      {
+        id: resource.id,
+        groupId: resource.groupId,
+        groupType: resource.groupType,
+        type: resource.type,
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+        config: resource.config,
+        params: resource.toState(params),
+        output: resource.toState(resource.output),
+      },
+      0,
+    );
   } catch (err: any) {
     const retryCondition =
       resource.retryLaterOnError &&

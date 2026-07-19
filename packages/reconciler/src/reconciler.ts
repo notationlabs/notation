@@ -1,6 +1,7 @@
 import type { BaseResource, ResourceType } from "@notation/resource";
-import type { State, StateNode } from "@notation/state";
+import { RevConflict, type State, type StateNode } from "@notation/state";
 import { RetryableError } from "yieldstar";
+import { setTimeout as sleep } from "node:timers/promises";
 import { buildResourceDepthLevels } from "./dependency-graph";
 import {
   decideAction,
@@ -55,7 +56,10 @@ export type ReconcilerEventEmitter = (
   event: ReconcilerEvent,
 ) => void | Promise<void>;
 
-export type ReconcilerState = Pick<State, "get" | "update" | "delete" | "values">;
+export type ReconcilerState = Pick<
+  State,
+  "get" | "update" | "delete" | "values" | "lease"
+>;
 
 export type ReconcilerOptions = {
   state: ReconcilerState;
@@ -65,6 +69,7 @@ export type ReconcilerOptions = {
   emit?: ReconcilerEventEmitter;
   retryOptions?: PollOptions;
   readPollOptions?: PollOptions;
+  mutationLeaseTtl?: number;
 };
 
 export type DeployOptions = {
@@ -92,6 +97,7 @@ export class Reconciler {
   readonly #emit?: ReconcilerEventEmitter;
   readonly #retryOptions?: PollOptions;
   readonly #readPollOptions?: PollOptions;
+  readonly #mutationLeaseTtl: number;
   readonly #stepRunner: StepRunner;
 
   constructor(opts: ReconcilerOptions) {
@@ -102,18 +108,26 @@ export class Reconciler {
     this.#emit = opts.emit;
     this.#retryOptions = opts.retryOptions;
     this.#readPollOptions = opts.readPollOptions;
+    this.#mutationLeaseTtl = opts.mutationLeaseTtl ?? 30_000;
     this.#stepRunner = createStepRunner();
   }
 
-  async deploy(resources: BaseResource[], opts: DeployOptions = {}): Promise<void> {
+  async deploy(
+    resources: BaseResource[],
+    opts: DeployOptions = {},
+  ): Promise<void> {
     const dryRun = opts.dryRun ?? this.#defaultDryRun;
     const driftDetection = opts.driftDetection ?? this.#defaultDriftDetection;
-    const resourceById = new Map(resources.map((resource) => [resource.id, resource]));
+    const resourceById = new Map(
+      resources.map((resource) => [resource.id, resource]),
+    );
 
     const dependencyLevels = buildResourceDepthLevels(resources);
     for (const level of dependencyLevels) {
       await Promise.all(
-        level.map((resource) => this.#deployResource(resource, dryRun, driftDetection)),
+        level.map((resource) =>
+          this.#deployResource(resource, dryRun, driftDetection),
+        ),
       );
     }
 
@@ -122,7 +136,9 @@ export class Reconciler {
 
   async plan(resources: BaseResource[], opts: PlanOptions = {}): Promise<Plan> {
     const driftDetection = opts.driftDetection ?? this.#defaultDriftDetection;
-    const resourceById = new Map(resources.map((resource) => [resource.id, resource]));
+    const resourceById = new Map(
+      resources.map((resource) => [resource.id, resource]),
+    );
     const nodes: PlanNode[] = [];
 
     const dependencyLevels = buildResourceDepthLevels(resources);
@@ -151,24 +167,102 @@ export class Reconciler {
     };
   }
 
-  async destroy(resources: BaseResource[], opts: DestroyOptions = {}): Promise<void> {
+  async destroy(
+    resources: BaseResource[],
+    opts: DestroyOptions = {},
+  ): Promise<void> {
     const dryRun = opts.dryRun ?? this.#defaultDryRun;
     const dependencyLevels = buildResourceDepthLevels(resources);
 
-    for (let levelIndex = dependencyLevels.length - 1; levelIndex >= 0; levelIndex -= 1) {
+    for (
+      let levelIndex = dependencyLevels.length - 1;
+      levelIndex >= 0;
+      levelIndex -= 1
+    ) {
       const level = dependencyLevels[levelIndex]!;
-      await Promise.all(level.map((resource) => this.#destroyResource(resource, dryRun)));
+      await Promise.all(
+        level.map((resource) => this.#destroyResource(resource, dryRun)),
+      );
     }
   }
 
-  async refresh(resources: BaseResource[], opts: RefreshOptions = {}): Promise<void> {
+  async refresh(
+    resources: BaseResource[],
+    opts: RefreshOptions = {},
+  ): Promise<void> {
     const dryRun = opts.dryRun ?? this.#defaultDryRun;
-    const resourceById = new Map(resources.map((resource) => [resource.id, resource]));
+    const resourceById = new Map(
+      resources.map((resource) => [resource.id, resource]),
+    );
 
     await this.#deleteOrphans(resources, resourceById, dryRun, "refresh");
   }
 
   async #deployResource(
+    resource: BaseResource,
+    dryRun: boolean,
+    driftDetection: boolean,
+  ) {
+    await this.#withMutationLease(resource.id, () =>
+      this.#retryOnRevConflict(() =>
+        this.#deployResourceOnce(resource, dryRun, driftDetection),
+      ),
+    );
+  }
+
+  async #withMutationLease<T>(resourceId: string, fn: () => Promise<T>) {
+    return this.#withLease(`reconciler:resource:${resourceId}`, fn);
+  }
+
+  async #withLease<T>(scope: string, fn: () => Promise<T>): Promise<T> {
+    const lease = await this.#state.lease(scope, this.#mutationLeaseTtl);
+    const controller = new AbortController();
+    let renewalError: unknown;
+    const heartbeat = (async () => {
+      try {
+        while (!controller.signal.aborted) {
+          await sleep(
+            Math.max(1, Math.floor(this.#mutationLeaseTtl / 3)),
+            undefined,
+            {
+              signal: controller.signal,
+            },
+          );
+          await lease.renew(this.#mutationLeaseTtl);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) renewalError = error;
+      }
+    })();
+
+    try {
+      const result = await fn();
+      if (renewalError) throw renewalError;
+      return result;
+    } finally {
+      controller.abort();
+      await heartbeat;
+      await lease.release();
+    }
+  }
+
+  /**
+   * A RevConflict means state moved between our read and our write. Each
+   * attempt re-reads state and re-decides, so the retried operation acts on
+   * the record as it now is (possibly deciding to do nothing).
+   */
+  async #retryOnRevConflict(fn: () => Promise<void>) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await fn();
+        return;
+      } catch (error) {
+        if (!(error instanceof RevConflict) || attempt === 2) throw error;
+      }
+    }
+  }
+
+  async #deployResourceOnce(
     resource: BaseResource,
     dryRun: boolean,
     driftDetection: boolean,
@@ -218,11 +312,17 @@ export class Reconciler {
             emit: this.#emit,
             retryOptions: this.#retryOptions,
             readPollOptions: this.#readPollOptions,
+            expectedRev: stateNode?.rev ?? 0,
           }),
         );
         return;
       case "update":
       case "drift-update":
+        if (!stateNode) {
+          throw new Error(
+            `Cannot ${action.decision} ${resource.id} without state`,
+          );
+        }
         await runOperation(
           updateResourceOperation(this.#stepRunner, {
             resource,
@@ -232,6 +332,7 @@ export class Reconciler {
             emit: this.#emit,
             retryOptions: this.#retryOptions,
             readPollOptions: this.#readPollOptions,
+            expectedRev: stateNode.rev,
           }),
         );
         return;
@@ -291,61 +392,82 @@ export class Reconciler {
     dryRun: boolean,
     workflow: "deploy" | "refresh",
   ) {
-    const stateNodes = await this.#state.values();
-    const registry = this.#registry ?? createResourceRegistryFromResources(resources);
+    await this.#withLease("reconciler:orphan-deletion", async () => {
+      const stateNodes = await this.#state.values();
+      const registry =
+        this.#registry ?? createResourceRegistryFromResources(resources);
 
-    for (const stateNode of stateNodes) {
-      if (resourceById.has(stateNode.id)) continue;
+      for (const stateNode of stateNodes) {
+        if (resourceById.has(stateNode.id)) continue;
 
-      const stateNodeResourceType = stateNode.type as ResourceType;
+        const stateNodeResourceType = stateNode.type as ResourceType;
 
-      const Resource = resolveResourceClass(registry, stateNodeResourceType);
-      if (!Resource) {
-        await this.#emit?.(
-          createMissingResourceRegistryMatchWarningEvent({
-            workflow,
-            resourceId: stateNode.id,
-            resourceType: stateNodeResourceType,
+        const Resource = resolveResourceClass(registry, stateNodeResourceType);
+        if (!Resource) {
+          await this.#emit?.(
+            createMissingResourceRegistryMatchWarningEvent({
+              workflow,
+              resourceId: stateNode.id,
+              resourceType: stateNodeResourceType,
+            }),
+          );
+          continue;
+        }
+
+        await this.#withMutationLease(stateNode.id, () =>
+          this.#retryOnRevConflict(async () => {
+            const currentNode = await this.#state.get(stateNode.id);
+            if (!currentNode) return;
+
+            const orphanResource = hydrateResourceFromState(
+              Resource,
+              currentNode,
+            );
+
+            await runOperation(
+              deleteResourceOperation(this.#stepRunner, {
+                resource: orphanResource,
+                state: this.#state,
+                dryRun,
+                emit: this.#emit,
+                retryOptions: this.#retryOptions,
+                expectedRev: currentNode.rev,
+              }),
+            );
           }),
         );
-        continue;
       }
-
-      const orphanResource = hydrateResourceFromState(Resource, stateNode);
-
-      await runOperation(
-        deleteResourceOperation(this.#stepRunner, {
-          resource: orphanResource,
-          state: this.#state,
-          dryRun,
-          emit: this.#emit,
-          retryOptions: this.#retryOptions,
-        }),
-      );
-    }
+    });
   }
 
   async #destroyResource(resource: BaseResource, dryRun: boolean) {
-    const stateNode = await this.#state.get(resource.id);
-    if (!stateNode) {
-      return;
-    }
+    await this.#withMutationLease(resource.id, () =>
+      this.#retryOnRevConflict(async () => {
+        const stateNode = await this.#state.get(resource.id);
+        if (!stateNode) {
+          return;
+        }
 
-    resource.setOutput(stateNode.output);
+        resource.setOutput(stateNode.output);
 
-    await runOperation(
-      deleteResourceOperation(this.#stepRunner, {
-        resource,
-        state: this.#state,
-        dryRun,
-        emit: this.#emit,
-        retryOptions: this.#retryOptions,
+        await runOperation(
+          deleteResourceOperation(this.#stepRunner, {
+            resource,
+            state: this.#state,
+            dryRun,
+            emit: this.#emit,
+            retryOptions: this.#retryOptions,
+            expectedRev: stateNode.rev,
+          }),
+        );
       }),
     );
   }
 }
 
-export async function runOperation<T>(operation: AsyncGenerator<unknown, T, unknown>) {
+export async function runOperation<T>(
+  operation: AsyncGenerator<unknown, T, unknown>,
+) {
   let next = await operation.next();
   while (!next.done) {
     next = await operation.next();
@@ -354,7 +476,10 @@ export async function runOperation<T>(operation: AsyncGenerator<unknown, T, unkn
 }
 
 function hydrateResourceFromState(
-  Resource: new (opts: { id: string; config: Record<string, unknown> }) => BaseResource,
+  Resource: new (opts: {
+    id: string;
+    config: Record<string, unknown>;
+  }) => BaseResource,
   stateNode: StateNode,
 ): BaseResource {
   const resource = new Resource({
@@ -372,8 +497,7 @@ export function createStepRunner(): StepRunner {
       arg2?: () => T | Promise<T>,
     ): AsyncGenerator<unknown, T, unknown> {
       const fn = (typeof arg1 === "string" ? arg2 : arg1) as
-        | (() => T | Promise<T>)
-        | undefined;
+        (() => T | Promise<T>) | undefined;
 
       if (!fn) {
         throw new Error("Missing run function");
@@ -396,8 +520,7 @@ export function createStepRunner(): StepRunner {
     ): AsyncGenerator<unknown, void, unknown> {
       const opts = (typeof arg1 === "string" ? arg2 : arg1) as PollOptions;
       const predicate = (typeof arg1 === "string" ? arg3 : arg2) as
-        | (() => boolean | Promise<boolean>)
-        | undefined;
+        (() => boolean | Promise<boolean>) | undefined;
 
       if (!predicate) {
         throw new Error("Missing poll predicate");

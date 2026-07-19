@@ -60,17 +60,23 @@ export async function* createResourceOperation(
     });
 
     yield* step.run("create:persist-state", async () => {
-      await params.state.update(params.resource.id, {
-        id: params.resource.id,
-        groupId: params.resource.groupId,
-        groupType: params.resource.groupType,
-        type: params.resource.type,
-        lastOperation: "create",
-        lastOperationAt: new Date().toISOString(),
-        config: params.resource.config,
-        params: params.resource.toState(resourceParams),
-        output: params.resource.toState(params.resource.output),
-      });
+      // expectedRev 0 asserts the record is still absent, so two first-time
+      // deploys of the same resource cannot both persist.
+      await params.state.update(
+        params.resource.id,
+        {
+          id: params.resource.id,
+          groupId: params.resource.groupId,
+          groupType: params.resource.groupType,
+          type: params.resource.type,
+          lastOperation: "create",
+          lastOperationAt: new Date().toISOString(),
+          config: params.resource.config,
+          params: params.resource.toState(resourceParams),
+          output: params.resource.toState(params.resource.output),
+        },
+        params.expectedRev,
+      );
     });
 
     await emitLifecycleEvent(params, "create", "success");
