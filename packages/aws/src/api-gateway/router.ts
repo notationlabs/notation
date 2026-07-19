@@ -6,16 +6,12 @@ import * as aws from "@notation/aws.iac";
 import { route } from "./route";
 import { api } from "./api";
 import { AuthorizerConfig, JWTAuthorizerConfig, NO_AUTH } from "./auth";
-import type { ResourceCollector } from "@notation/core";
 
-export const router = (
-  collector: ResourceCollector,
-  apiGroup: ReturnType<typeof api>,
-) => {
+export const router = (apiGroup: ReturnType<typeof api>) => {
   const createRouteCallback =
     (method: string) =>
     (path: `/${string}`, handler: ApiGatewayHandler | aws.AwsResourceGroup) => {
-      return route(collector, apiGroup, method, path, NO_AUTH, handler);
+      return route(apiGroup, method, path, NO_AUTH, handler);
     };
 
   return {
@@ -25,7 +21,7 @@ export const router = (
     patch: createRouteCallback("PATCH"),
     delete: createRouteCallback("DELETE"),
     withJWTAuthorizer: <ClaimsType>(auth: JWTAuthorizerConfig) => {
-      const authorizer = new AuthorizedRouteBuilder(collector, apiGroup);
+      const authorizer = new AuthorizedRouteBuilder(apiGroup);
       return authorizer.withJWTAuthorizer<ClaimsType>(auth);
     },
   };
@@ -34,10 +30,8 @@ export const router = (
 class AuthorizedRouteBuilder {
   auth: AuthorizerConfig = NO_AUTH;
   apiGroup: ReturnType<typeof api>;
-  collector: ResourceCollector;
 
-  constructor(collector: ResourceCollector, apiGroup: ReturnType<typeof api>) {
-    this.collector = collector;
+  constructor(apiGroup: ReturnType<typeof api>) {
     this.apiGroup = apiGroup;
   }
 
@@ -47,7 +41,7 @@ class AuthorizedRouteBuilder {
       path: `/${string}`,
       handler: JWTAuthorizedApiGatewayHandler<ClaimsType>,
     ) => {
-      return route(this.collector, this.apiGroup, method, path, authorizer, handler);
+      return route(this.apiGroup, method, path, authorizer, handler);
     };
 
   withJWTAuthorizer<ClaimsType>(authorizer: JWTAuthorizerConfig) {

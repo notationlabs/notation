@@ -9,7 +9,7 @@ import {
 const TestResource = resource({ type: "test/service/resource" })
   .defineSchema({})
   .defineOperations({
-    create: async () => ({}),
+    create: async () => undefined,
     delete: async () => undefined,
   });
 
