@@ -25,22 +25,18 @@ describe("SqliteStateBackend", () => {
   it("persists revisions and enforces compare-and-swap", async () => {
     const backend = await createBackend();
     await expect(
-      backend.update(
-        "service",
-        {
-          id: "service",
-          type: "test/service/main",
-          config: {},
-          params: {},
-          output: {},
-          lastOperation: "create",
-          lastOperationAt: "2026-07-15T00:00:00.000Z",
-        },
-        0,
-      ),
+      backend.update("service", 0, {
+        id: "service",
+        type: "test/service/main",
+        config: {},
+        params: {},
+        output: {},
+        lastOperation: "create",
+        lastOperationAt: "2026-07-15T00:00:00.000Z",
+      }),
     ).resolves.toEqual({ rev: 1 });
     await expect(
-      backend.update("service", { output: { ready: true } }, 1),
+      backend.update("service", 1, { output: { ready: true } }),
     ).resolves.toEqual({
       rev: 2,
     });
@@ -111,19 +107,15 @@ describe("SqliteStateBackend", () => {
     await once(blocker.stdout!, "data");
 
     await expect(
-      backend.update(
-        "service",
-        {
-          id: "service",
-          type: "test/service/main",
-          config: {},
-          params: {},
-          output: {},
-          lastOperation: "create",
-          lastOperationAt: "2026-07-15T00:00:00.000Z",
-        },
-        0,
-      ),
+      backend.update("service", 0, {
+        id: "service",
+        type: "test/service/main",
+        config: {},
+        params: {},
+        output: {},
+        lastOperation: "create",
+        lastOperationAt: "2026-07-15T00:00:00.000Z",
+      }),
     ).resolves.toEqual({ rev: 1 });
     await blockerExited;
   });

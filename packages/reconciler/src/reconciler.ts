@@ -318,11 +318,7 @@ export class Reconciler {
         return;
       case "update":
       case "drift-update":
-        if (!stateNode) {
-          throw new Error(
-            `Cannot ${action.decision} ${resource.id} without state`,
-          );
-        }
+        // decideAction only returns update decisions for an existing stateNode
         await runOperation(
           updateResourceOperation(this.#stepRunner, {
             resource,
@@ -332,7 +328,7 @@ export class Reconciler {
             emit: this.#emit,
             retryOptions: this.#retryOptions,
             readPollOptions: this.#readPollOptions,
-            expectedRev: stateNode.rev,
+            expectedRev: stateNode!.rev,
           }),
         );
         return;

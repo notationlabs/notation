@@ -55,15 +55,11 @@ function runStateBackendContractTests(
       const initialNode = createStateNode("resource-a");
 
       try {
-        await fixture.backend.update(initialNode.id, initialNode, 0);
-        await fixture.backend.update(
-          initialNode.id,
-          {
-            output: { status: "ready" },
-            lastOperation: "update",
-          },
-          1,
-        );
+        await fixture.backend.update(initialNode.id, 0, initialNode);
+        await fixture.backend.update(initialNode.id, 1, {
+          output: { status: "ready" },
+          lastOperation: "update",
+        });
 
         await expect(fixture.backend.get(initialNode.id)).resolves.toEqual({
           ...initialNode,
@@ -82,10 +78,10 @@ function runStateBackendContractTests(
 
       try {
         await expect(
-          fixture.backend.update(initialNode.id, initialNode, 0),
+          fixture.backend.update(initialNode.id, 0, initialNode),
         ).resolves.toEqual({ rev: 1 });
         await expect(
-          fixture.backend.update(initialNode.id, { output: {} }, 0),
+          fixture.backend.update(initialNode.id, 0, { output: {} }),
         ).rejects.toMatchObject({
           name: "RevConflict",
           expectedRev: 0,
@@ -107,10 +103,10 @@ function runStateBackendContractTests(
 
       try {
         await expect(
-          fixture.backend.update(initialNode.id, initialNode, 0),
+          fixture.backend.update(initialNode.id, 0, initialNode),
         ).resolves.toEqual({ rev: 1 });
         await expect(
-          fixture.backend.update(initialNode.id, initialNode, 0),
+          fixture.backend.update(initialNode.id, 0, initialNode),
         ).rejects.toMatchObject({
           name: "RevConflict",
           expectedRev: 0,
@@ -126,7 +122,7 @@ function runStateBackendContractTests(
       const initialNode = createStateNode("resource-a");
 
       try {
-        await fixture.backend.update(initialNode.id, initialNode, 0);
+        await fixture.backend.update(initialNode.id, 0, initialNode);
         await fixture.backend.delete(initialNode.id, 1);
 
         await expect(
@@ -145,8 +141,8 @@ function runStateBackendContractTests(
       const secondNode = createStateNode("resource-b");
 
       try {
-        await fixture.backend.update(firstNode.id, firstNode, 0);
-        await fixture.backend.update(secondNode.id, secondNode, 0);
+        await fixture.backend.update(firstNode.id, 0, firstNode);
+        await fixture.backend.update(secondNode.id, 0, secondNode);
 
         const values = await fixture.backend.values();
 
@@ -207,11 +203,11 @@ describe("FileStateBackend", () => {
     const initialNode = createStateNode("resource-a");
 
     try {
-      await first.update(initialNode.id, initialNode, 0);
+      await first.update(initialNode.id, 0, initialNode);
 
       const results = await Promise.allSettled([
-        first.update(initialNode.id, { output: { writer: "first" } }, 1),
-        second.update(initialNode.id, { output: { writer: "second" } }, 1),
+        first.update(initialNode.id, 1, { output: { writer: "first" } }),
+        second.update(initialNode.id, 1, { output: { writer: "second" } }),
       ]);
 
       const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -236,8 +232,8 @@ describe("MemoryStateBackend", () => {
     const laterNode = createStateNode("resource-z");
     const earlierNode = createStateNode("resource-a");
 
-    await backend.update(laterNode.id, laterNode, 0);
-    await backend.update(earlierNode.id, earlierNode, 0);
+    await backend.update(laterNode.id, 0, laterNode);
+    await backend.update(earlierNode.id, 0, earlierNode);
 
     await expect(backend.values()).resolves.toEqual([
       { ...earlierNode, rev: 1 },

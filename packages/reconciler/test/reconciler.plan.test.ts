@@ -9,12 +9,14 @@ function createMemoryState(initial: Record<string, StateNode> = {}) {
   return {
     store,
     get: vi.fn(async (id: string) => store[id]),
-    update: vi.fn(async (id: string, patch: Partial<StateNode>) => {
-      store[id] = {
-        ...(store[id] ?? {}),
-        ...patch,
-      } as StateNode;
-    }),
+    update: vi.fn(
+      async (id: string, expectedRev: number, patch: Partial<StateNode>) => {
+        store[id] = {
+          ...(store[id] ?? {}),
+          ...patch,
+        } as StateNode;
+      },
+    ),
     delete: vi.fn(async (id: string) => {
       delete store[id];
     }),

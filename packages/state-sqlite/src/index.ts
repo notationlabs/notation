@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   LeaseConflict,
@@ -12,6 +14,7 @@ export class SqliteStateBackend implements StateBackend {
   readonly #database: DatabaseSync;
 
   constructor(path: string) {
+    mkdirSync(dirname(path), { recursive: true });
     this.#database = new DatabaseSync(path);
     this.#database.exec("PRAGMA busy_timeout = 5000");
     this.#database.exec(`
@@ -51,8 +54,8 @@ export class SqliteStateBackend implements StateBackend {
 
   async update(
     id: string,
-    patch: Partial<StateNode>,
     expectedRev: number,
+    patch: Partial<StateNode>,
   ): Promise<{ rev: number }> {
     this.#database.exec("BEGIN IMMEDIATE");
     try {

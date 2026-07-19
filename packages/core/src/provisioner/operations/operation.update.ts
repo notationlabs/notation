@@ -35,14 +35,10 @@ async function update(opts: {
   const result = await readResource({ resource, state, quiet: true });
   resource.setOutput({ ...resource.output, ...result });
 
-  await state.update(
-    resource.id,
-    {
-      lastOperation: "update",
-      lastOperationAt: new Date().toISOString(),
-      params: resource.toState(params),
-      output: resource.toState(resource.output),
-    },
-    stateNode.rev,
-  );
+  await state.update(resource.id, stateNode.rev, {
+    lastOperation: "update",
+    lastOperationAt: new Date().toISOString(),
+    params: resource.toState(params),
+    output: resource.toState(resource.output),
+  });
 }

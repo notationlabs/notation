@@ -32,8 +32,8 @@ export interface StateBackend {
    */
   update(
     id: string,
-    patch: Partial<StateNode>,
     expectedRev: number,
+    patch: Partial<StateNode>,
   ): Promise<{ rev: number }>;
   delete(id: string, expectedRev: number): Promise<void>;
   values(): Promise<StateNode[]>;
@@ -69,8 +69,8 @@ export class MemoryStateBackend implements StateBackend {
 
   async update(
     id: string,
-    patch: Partial<StateNode>,
     expectedRev: number,
+    patch: Partial<StateNode>,
   ): Promise<{ rev: number }> {
     const state = await this.readState();
     assertExpectedRev(id, state[id], expectedRev);
@@ -176,8 +176,8 @@ export class FileStateBackend implements StateBackend {
 
   async update(
     id: string,
-    patch: Partial<StateNode>,
     expectedRev: number,
+    patch: Partial<StateNode>,
   ): Promise<{ rev: number }> {
     return this.withLock(async () => {
       const state = await this.readState();

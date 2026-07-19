@@ -8,21 +8,14 @@ import {
 } from "@notation/state";
 import { Reconciler, createResourceRegistry } from "../src";
 
-type InitialStateNode = Omit<StateNode, "rev"> & { rev?: number };
-
-function createMemoryState(initial: Record<string, InitialStateNode> = {}) {
-  const store = Object.fromEntries(
-    Object.entries(initial).map(([id, node]) => [
-      id,
-      { ...node, rev: node.rev ?? 1 },
-    ]),
-  ) as Record<string, StateNode>;
+function createMemoryState(initial: Record<string, StateNode> = {}) {
+  const store: Record<string, StateNode> = { ...initial };
 
   return {
     store,
     get: vi.fn(async (id: string) => store[id]),
     update: vi.fn(
-      async (id: string, patch: Partial<StateNode>, expectedRev: number) => {
+      async (id: string, expectedRev: number, patch: Partial<StateNode>) => {
         const actualRev = store[id]?.rev ?? 0;
         if (actualRev !== expectedRev) {
           throw new RevConflict(id, expectedRev, store[id]?.rev);
@@ -114,6 +107,7 @@ describe("reconciler deploy", () => {
 
     const state = createMemoryState({
       existing: {
+        rev: 1,
         id: "existing",
         groupId: -1,
         groupType: "",
@@ -162,7 +156,7 @@ describe("reconciler deploy", () => {
       new CreateResource({ id: "new", config: { name: "new" } }),
     ]);
 
-    expect(state.update).toHaveBeenCalledWith("new", expect.any(Object), 0);
+    expect(state.update).toHaveBeenCalledWith("new", 0, expect.any(Object));
   });
 
   it("leases a resource before remote create so concurrent deploys cannot duplicate it", async () => {
@@ -263,6 +257,7 @@ describe("reconciler deploy", () => {
 
     const state = createMemoryState({
       resource: {
+        rev: 1,
         id: "resource",
         groupId: -1,
         groupType: "",
@@ -306,6 +301,7 @@ describe("reconciler deploy", () => {
 
     const state = createMemoryState({
       orphan: {
+        rev: 1,
         id: "orphan",
         groupId: -1,
         groupType: "",
@@ -346,6 +342,7 @@ describe("reconciler deploy", () => {
 
     const state = createMemoryState({
       orphan: {
+        rev: 1,
         id: "orphan",
         groupId: -1,
         groupType: "",
@@ -482,6 +479,7 @@ describe("reconciler destroy + refresh", () => {
 
     const state = createMemoryState({
       a: {
+        rev: 1,
         id: "a",
         groupId: -1,
         groupType: "",
@@ -493,6 +491,7 @@ describe("reconciler destroy + refresh", () => {
         lastOperationAt: new Date().toISOString(),
       },
       b: {
+        rev: 1,
         id: "b",
         groupId: -1,
         groupType: "",
@@ -504,6 +503,7 @@ describe("reconciler destroy + refresh", () => {
         lastOperationAt: new Date().toISOString(),
       },
       c: {
+        rev: 1,
         id: "c",
         groupId: -1,
         groupType: "",
@@ -538,6 +538,7 @@ describe("reconciler destroy + refresh", () => {
     const keep = new KeepResource({ id: "keep", config: { name: "keep" } });
     const state = createMemoryState({
       keep: {
+        rev: 1,
         id: "keep",
         groupId: -1,
         groupType: "",
@@ -549,6 +550,7 @@ describe("reconciler destroy + refresh", () => {
         lastOperationAt: new Date().toISOString(),
       },
       orphan: {
+        rev: 1,
         id: "orphan",
         groupId: -1,
         groupType: "",
@@ -591,6 +593,7 @@ describe("reconciler destroy + refresh", () => {
 
     const state = createMemoryState({
       "destroy-me": {
+        rev: 1,
         id: "destroy-me",
         groupId: -1,
         groupType: "",
@@ -602,6 +605,7 @@ describe("reconciler destroy + refresh", () => {
         lastOperationAt: new Date().toISOString(),
       },
       orphan: {
+        rev: 1,
         id: "orphan",
         groupId: -1,
         groupType: "",
