@@ -23,5 +23,5 @@ export async function destroy(
 
   await compile(entryPoint, { logger });
   logger.info(`Destroying ${entryPoint}\n`);
-  await destroyApp(entryPoint, undefined, undefined, emit);
+  await destroyApp({ entryPoint, emit });
 }

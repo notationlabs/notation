@@ -40,14 +40,11 @@ export async function watch(
 
     isDeploying = true;
 
-    deployApp(
+    deployApp({
       entryPoint,
-      false,
-      undefined,
-      undefined,
-      undefined,
-      createLoggerReconcilerSubscriber({ logger }),
-    )
+      driftDetection: false,
+      emit: createLoggerReconcilerSubscriber({ logger }),
+    })
       .then(() => {
         isDeploying = false;
         if (deployQueued) {

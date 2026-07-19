@@ -27,14 +27,10 @@ export async function deploy(
   logger.info(`Deploying ${entryPoint}`);
 
   try {
-    await deployApp(
+    await deployApp({
       entryPoint,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
       emit,
-    );
+    });
   } catch (err: any) {
     if (err.name === "CredentialsProviderError") {
       logger.error(
