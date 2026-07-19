@@ -9,15 +9,21 @@ import { getResourceGraph } from "src/orchestrator/graph";
 import { createDefaultStateBackend } from "../state-backend";
 import { refreshState } from "./workflow.refresh";
 
-export async function destroyApp(
-  entryPoint: string,
-  registry?: ResourceRegistry,
-  stateBackend?: StateBackend,
-  emit: ReconcilerEventEmitter = createLoggerReconcilerSubscriber(),
-) {
-  const state = stateBackend ?? createDefaultStateBackend();
+export type DestroyAppOptions = {
+  entryPoint: string;
+  registry?: ResourceRegistry;
+  state?: StateBackend;
+  emit?: ReconcilerEventEmitter;
+};
 
-  await refreshState(entryPoint, false, registry, state, emit);
+export async function destroyApp({
+  entryPoint,
+  registry,
+  state: stateBackend,
+  emit = createLoggerReconcilerSubscriber(),
+}: DestroyAppOptions) {
+  const state = stateBackend ?? createDefaultStateBackend();
+  await refreshState({ entryPoint, registry, state, emit });
 
   const graph = await getResourceGraph(entryPoint);
   const reconciler = new Reconciler({

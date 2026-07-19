@@ -11,13 +11,21 @@ import { createDefaultStateBackend } from "../state-backend";
 
 export type { Plan, PlanNode, PlanDecision } from "@notation/reconciler";
 
-export async function planApp(
-  entryPoint: string,
+export type PlanAppOptions = {
+  entryPoint: string;
+  driftDetection?: boolean;
+  registry?: ResourceRegistry;
+  state?: StateBackend;
+  emit?: ReconcilerEventEmitter;
+};
+
+export async function planApp({
+  entryPoint,
   driftDetection = true,
-  registry?: ResourceRegistry,
-  stateBackend?: StateBackend,
-  emit: ReconcilerEventEmitter = createLoggerReconcilerSubscriber(),
-): Promise<Plan> {
+  registry,
+  state: stateBackend,
+  emit = createLoggerReconcilerSubscriber(),
+}: PlanAppOptions): Promise<Plan> {
   const graph = await getResourceGraph(entryPoint);
   const state = stateBackend ?? createDefaultStateBackend();
   const reconciler = new Reconciler({

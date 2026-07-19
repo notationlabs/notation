@@ -31,13 +31,10 @@ export async function plan(entryPoint: string, opts: PlanCommandOptions = {}) {
       const { restore } = redirectStdoutToStderr();
       try {
         await compile(entryPoint, { logger });
-        result = await planApp(
+        result = await planApp({
           entryPoint,
-          undefined,
-          undefined,
-          undefined,
           emit,
-        );
+        });
       } finally {
         restore();
       }
@@ -47,13 +44,10 @@ export async function plan(entryPoint: string, opts: PlanCommandOptions = {}) {
 
     await compile(entryPoint, { logger });
     logger.info(`Planning ${entryPoint}\n`);
-    const result = await planApp(
+    const result = await planApp({
       entryPoint,
-      undefined,
-      undefined,
-      undefined,
       emit,
-    );
+    });
     printPlanSummary(result, logger);
   } catch (err: any) {
     if (err.name === "CredentialsProviderError") {

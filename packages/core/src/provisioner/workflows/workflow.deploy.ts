@@ -8,14 +8,23 @@ import type { StateBackend } from "@notation/state";
 import { getResourceGraph } from "src/orchestrator/graph";
 import { createDefaultStateBackend } from "../state-backend";
 
-export async function deployApp(
-  entryPoint: string,
+export type DeployAppOptions = {
+  entryPoint: string;
+  driftDetection?: boolean;
+  dryRun?: boolean;
+  registry?: ResourceRegistry;
+  state?: StateBackend;
+  emit?: ReconcilerEventEmitter;
+};
+
+export async function deployApp({
+  entryPoint,
   driftDetection = true,
   dryRun = false,
-  registry?: ResourceRegistry,
-  stateBackend?: StateBackend,
-  emit: ReconcilerEventEmitter = createLoggerReconcilerSubscriber(),
-): Promise<void> {
+  registry,
+  state: stateBackend,
+  emit = createLoggerReconcilerSubscriber(),
+}: DeployAppOptions): Promise<void> {
   const graph = await getResourceGraph(entryPoint);
   const state = stateBackend ?? createDefaultStateBackend();
   const reconciler = new Reconciler({

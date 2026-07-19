@@ -11,13 +11,21 @@ import { createDefaultStateBackend } from "../state-backend";
 /**
  * @description Destroy resources that are in state but not in the orchestration graph
  */
-export async function refreshState(
-  entryPoint: string,
+export type RefreshStateOptions = {
+  entryPoint: string;
+  dryRun?: boolean;
+  registry?: ResourceRegistry;
+  state?: StateBackend;
+  emit?: ReconcilerEventEmitter;
+};
+
+export async function refreshState({
+  entryPoint,
   dryRun = false,
-  registry?: ResourceRegistry,
-  stateBackend?: StateBackend,
-  emit: ReconcilerEventEmitter = createLoggerReconcilerSubscriber(),
-): Promise<void> {
+  registry,
+  state: stateBackend,
+  emit = createLoggerReconcilerSubscriber(),
+}: RefreshStateOptions): Promise<void> {
   const graph = await getResourceGraph(entryPoint);
   const state = stateBackend ?? createDefaultStateBackend();
 
