@@ -1,35 +1,50 @@
+import * as reconciler from "@notation/reconciler";
 import {
-  Reconciler,
   createLoggerReconcilerSubscriber,
   type ReconcilerEventEmitter,
   type ResourceRegistry,
 } from "@notation/reconciler";
-import type { StateBackend } from "@notation/state";
+import { createWorkflowRouter, workflow } from "yieldstar";
 import { getResourceGraph } from "src/orchestrator/graph";
-import { createDefaultStateBackend } from "../state-backend";
-import { refreshState } from "./workflow.refresh";
+import { NodeDurableRuntime } from "../durable-runtime";
 
 export type DestroyAppOptions = {
   entryPoint: string;
   registry?: ResourceRegistry;
-  state?: StateBackend;
+  runtime?: NodeDurableRuntime;
+  executionId?: string;
+  databasePath?: string;
   emit?: ReconcilerEventEmitter;
 };
 
 export async function destroyApp({
   entryPoint,
   registry,
-  state: stateBackend,
+  runtime: suppliedRuntime,
+  executionId,
+  databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: DestroyAppOptions) {
-  const state = stateBackend ?? createDefaultStateBackend();
-  await refreshState({ entryPoint, registry, state, emit });
-
   const graph = await getResourceGraph(entryPoint);
-  const reconciler = new Reconciler({
-    state,
-    emit,
+  const runtime =
+    suppliedRuntime ??
+    new NodeDurableRuntime({ deploymentId: entryPoint, databasePath });
+  const destroy = workflow(async function* (step, event) {
+    yield* reconciler.destroy(step, {
+      deploymentId: runtime.deploymentId,
+      executionId: event.executionId,
+      resources: graph.resources,
+      state: runtime.state,
+      registry,
+      emit,
+    });
   });
-
-  await reconciler.destroy(graph.resources);
+  try {
+    await runtime.run(createWorkflowRouter({ destroy }), {
+      workflowId: "destroy",
+      executionId,
+    });
+  } finally {
+    if (!suppliedRuntime) runtime.close();
+  }
 }

@@ -1,8 +1,26 @@
-import { Reconciler, createResourceRegistry } from "@notation/reconciler";
-import { SqliteStateBackend } from "@notation/state-sqlite";
+import { WorkflowRunner } from "@yieldstar/core";
+import {
+  SqliteHeapClient,
+  SqliteSchedulerClient,
+  SqliteStoreClient,
+  SqliteTaskQueueClient,
+  SqliteTimersClient,
+  createSqliteDb,
+} from "@yieldstar/sqlite-runtime/node";
+import * as reconciler from "@notation/reconciler";
+import pino from "pino";
+import { createWorkflowRouter, workflow } from "yieldstar";
 import { StaticSite } from "./static-site";
 
-const state = new SqliteStateBackend("sites.db");
+const logger = pino();
+const database = createSqliteDb({ path: "sites.db" });
+const taskQueueClient = new SqliteTaskQueueClient(database);
+const schedulerClient = new SqliteSchedulerClient({
+  taskQueueClient,
+  timersClient: new SqliteTimersClient(database),
+});
+const storeClient = new SqliteStoreClient({ db: database, schedulerClient });
+const state = new reconciler.DurableStateBackend(storeClient, "static-sites");
 
 const resources = [
   new StaticSite({
@@ -21,13 +39,34 @@ const resources = [
   }),
 ];
 
-const reconciler = new Reconciler({
-  state,
-  registry: createResourceRegistry([StaticSite]),
+const deploy = workflow(async function* (step, event) {
+  yield* reconciler.deploy(step, {
+    deploymentId: "static-sites",
+    executionId: event.executionId,
+    resources,
+    state,
+    registry: reconciler.createResourceRegistry([StaticSite]),
+  });
+});
+
+const runner = new WorkflowRunner({
+  router: createWorkflowRouter({ deploy }),
+  heapClient: new SqliteHeapClient(database),
+  storeClient,
+  schedulerClient,
+  logger,
 });
 
 try {
-  await reconciler.deploy(resources);
+  await runner.run(
+    {
+      workflowId: "deploy",
+      executionId: crypto.randomUUID(),
+      params: {},
+      context: new Map(),
+    },
+    logger,
+  );
 } finally {
-  state.close();
+  database.close();
 }
