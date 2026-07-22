@@ -60,7 +60,7 @@ describe("durable execution and replay", () => {
     runtime.close();
   });
 
-  it("resumes after a crash without repeating a completed create", async () => {
+  it("resumes after a crash following the create checkpoint", async () => {
     const create = vi.fn(async () => undefined);
     const TestResource = resource({ type: "test/durable/resume" })
       .defineSchema({})
@@ -83,7 +83,7 @@ describe("durable execution and replay", () => {
     runtime.close();
   });
 
-  it("resumes durable destroy after a crash without repeating delete", async () => {
+  it("resumes after a crash following the delete checkpoint", async () => {
     const remove = vi.fn(async () => undefined);
     const TestResource = resource({ type: "test/durable/destroy-resume" })
       .defineSchema({})
@@ -141,6 +141,46 @@ describe("durable execution and replay", () => {
     expect(await runtime.state.get("pending-delete")).toBeUndefined();
     runtime.close();
   });
+
+  it("retries a post-write not-found before persisting state", async () => {
+    let reads = 0;
+    const EventuallyReadable = resource({
+      type: "test/durable/eventually-readable",
+    })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        read: async () => {
+          reads += 1;
+          if (reads === 1) {
+            const error = new Error("not visible yet");
+            error.name = "NotFound";
+            throw error;
+          }
+          return {};
+        },
+        delete: async () => undefined,
+        notFoundOnError: [
+          { name: "NotFound", reason: "resource is not visible yet" },
+        ],
+      });
+    const runtime = createRuntime(
+      [new EventuallyReadable({ id: "eventually-readable" })],
+      "post-write-read",
+      { readPollOptions: { maxAttempts: 3, retryInterval: 1 } },
+    );
+
+    await runtime.run("post-write-read-execution");
+    expect(reads).toBe(1);
+    expect(await runtime.state.get("eventually-readable")).toBeUndefined();
+
+    await runtime.run("post-write-read-execution");
+    expect(reads).toBe(2);
+    expect(await runtime.state.get("eventually-readable")).toMatchObject({
+      rev: 1,
+    });
+    runtime.close();
+  });
 });
 
 describe("dependency ordering", () => {
@@ -174,6 +214,31 @@ describe("dependency ordering", () => {
 });
 
 describe("conditional state persistence", () => {
+  it("allows only one concurrent create-if-absent", async () => {
+    const runtime = createRuntime([], "conditional-create");
+    const first = runtime.state.update("resource", 0, {
+      ...statePatch("resource"),
+      output: { winner: "first" },
+    });
+    const second = runtime.state.update("resource", 0, {
+      ...statePatch("resource"),
+      output: { winner: "second" },
+    });
+
+    const results = await Promise.allSettled([first, second]);
+
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
+    const state = await runtime.state.get("resource");
+    expect(state).toMatchObject({ rev: 1 });
+    expect(state).not.toHaveProperty("$notationCreateToken");
+    runtime.close();
+  });
+
   it("uses store identity and version for conditional update and delete", async () => {
     const runtime = createRuntime([], "conditional-state");
     await runtime.state.update("resource", 0, statePatch("resource"));
@@ -397,6 +462,7 @@ function createRuntime(
   deploymentId: string,
   options: {
     retryOptions?: { maxAttempts: number; retryInterval: number };
+    readPollOptions?: { maxAttempts: number; retryInterval: number };
     crashAfterStep?: string;
     registry?: ResourceRegistry;
     driftDetection?: boolean;
@@ -424,6 +490,7 @@ function createRuntime(
       driftDetection: options.driftDetection ?? false,
       emit: options.emit,
       retryOptions: options.retryOptions,
+      readPollOptions: options.readPollOptions,
     });
   });
   const destroy = workflow(async function* (step, event) {
@@ -435,6 +502,7 @@ function createRuntime(
       registry: options.registry,
       emit: options.emit,
       retryOptions: options.retryOptions,
+      readPollOptions: options.readPollOptions,
     });
   });
   const router = createWorkflowRouter({ deploy, destroy });

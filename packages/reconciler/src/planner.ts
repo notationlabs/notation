@@ -1,4 +1,4 @@
-import type { BaseResource } from "@notation/resource";
+import { findErrorMatcher, type BaseResource } from "@notation/resource";
 import type { StateBackend } from "@notation/state";
 import { buildResourceDepthLevels } from "./dependency-graph";
 import {
@@ -42,9 +42,7 @@ export async function createPlan({
             driftRead: { status: "found", output },
           });
         } catch (error) {
-          const notFound = resource.notFoundOnError?.some(
-            (matcher) => matcher.name === (error as Error)?.name,
-          );
+          const notFound = findErrorMatcher(error, resource.notFoundOnError);
           if (!notFound) throw error;
           action = decideAction({
             resource,

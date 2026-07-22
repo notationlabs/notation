@@ -1,5 +1,7 @@
 import { RevConflict, type StateNode } from "@notation/state";
+import { randomUUID } from "node:crypto";
 import {
+  RESOURCE_CREATION_TOKEN,
   resourceStateStore,
   toStateNode,
   withoutRev,
@@ -9,12 +11,10 @@ import type { StoreClient } from "./yieldstar";
 
 export class DurableStateBackend {
   readonly #client: StoreClient;
-  readonly #deploymentId: string;
   readonly #prefix: string;
 
   constructor(client: StoreClient, deploymentId: string) {
     this.#client = client;
-    this.#deploymentId = deploymentId;
     // Keep deployment prefixes disjoint so orphan cleanup cannot delete
     // another deployment's stores.
     this.#prefix = `${encodeURIComponent(deploymentId)}:`;
@@ -60,12 +60,20 @@ export class DurableStateBackend {
     const snapshot = await this.#tryGetSnapshot(storeId);
     if (!snapshot) {
       if (expectedRev !== 0) throw new RevConflict(id, expectedRev, undefined);
-      const initial = { ...patch, id } as StoredResourceState;
+      const creationToken = randomUUID();
+      const initial = {
+        ...patch,
+        id,
+        [RESOURCE_CREATION_TOKEN]: creationToken,
+      } as StoredResourceState;
       const created = await this.#client.getOrCreateStore({
         definition: resourceStateStore,
         id: storeId,
         initial,
       });
+      if (created.state[RESOURCE_CREATION_TOKEN] !== creationToken) {
+        throw new RevConflict(id, expectedRev, created.version + 1);
+      }
       return { rev: created.version + 1 };
     }
 
@@ -80,7 +88,8 @@ export class DurableStateBackend {
         Object.assign(draft, withoutRev(patch));
       },
     });
-    if (!result.updated) throw new RevConflict(id, expectedRev, undefined);
+    if (!result.updated)
+      throw new RevConflict(id, expectedRev, result.actualVersion + 1);
     return { rev: result.version + 1 };
   }
 
@@ -99,7 +108,12 @@ export class DurableStateBackend {
       id: storeId,
       snapshot,
     });
-    if (!result.deleted) throw new RevConflict(id, expectedRev, undefined);
+    if (!result.deleted)
+      throw new RevConflict(
+        id,
+        expectedRev,
+        result.reason === "conflict" ? result.actualVersion + 1 : undefined,
+      );
   }
 
   async values(): Promise<StateNode[]> {
@@ -123,15 +137,27 @@ export class DurableStateBackend {
 
   async clear(): Promise<void> {
     const ids = await this.#client.listStores(resourceStateStore);
+    const scopedIds = ids.filter((id) => id.startsWith(this.#prefix));
+    const snapshots = await Promise.all(
+      scopedIds.map((id) => this.#tryGetSnapshot(id)),
+    );
     await Promise.all(
-      ids
-        .filter((id) => id.startsWith(this.#prefix))
-        .map((id) =>
-          this.#client.deleteStore({
-            definition: resourceStateStore,
-            id,
-          }),
-        ),
+      scopedIds.map(async (id, index) => {
+        const snapshot = snapshots[index];
+        if (!snapshot) return;
+        const result = await this.#client.deleteStoreFrom({
+          definition: resourceStateStore,
+          id,
+          snapshot,
+        });
+        if (!result.deleted && result.reason === "conflict") {
+          throw new RevConflict(
+            id.slice(this.#prefix.length),
+            snapshot.version + 1,
+            result.actualVersion + 1,
+          );
+        }
+      }),
     );
   }
 }

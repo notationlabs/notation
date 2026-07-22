@@ -1,5 +1,5 @@
 import type { ReconcilerEventEmitter } from "../events";
-import { emitOnce } from "./emit";
+import { emitEvent } from "./emit";
 import { deploymentCoordinationStore, type CoordinationState } from "./stores";
 import type { DurableStep, WorkflowStore } from "./yieldstar";
 
@@ -25,7 +25,7 @@ export async function* acquireDeploymentCoordination(
   const snapshot = yield* coordination.get("notation:coordination:inspect");
   const holder = snapshot.state.holder;
   if (holder !== null && holder !== opts.executionId) {
-    yield* emitOnce(step, "notation:coordination:waiting", opts.emit, () => ({
+    yield* emitEvent(step, "notation:coordination:waiting", opts.emit, () => ({
       level: "warn",
       event: "reconciler.coordination.waiting",
       deploymentId: opts.deploymentId,
