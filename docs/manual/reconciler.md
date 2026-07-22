@@ -29,6 +29,8 @@ The outer workflow supplies durable step execution, timers, shared stores, waiti
 
 Each live resource is one YieldStar store. Absence is represented by no store, not a tombstone. YieldStar's UUIDv7 store `instanceId` and version are authoritative for conditional update and delete; Notation exposes the version as the resource state's `rev` for its existing state contract.
 
+Deployments against the same `deploymentId` are serialized through a coordination store keyed by `executionId`. If a deployment crashes while holding the coordination store, resume it by running the same execution ID again: replay reclaims the acquisition through YieldStar's applied-step ledger and releases it on completion. A different execution ID waits durably until the holder releases.
+
 Pass the complete desired set on every invocation. Persisted resources absent from that set are deleted through the supplied resource registry.
 
 The runnable Node SQLite version is in `examples/reconciler`.

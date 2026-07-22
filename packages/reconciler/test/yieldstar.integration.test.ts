@@ -17,6 +17,11 @@ import {
   reconcileWithYieldStar,
   yieldStarResourceStateStore,
 } from "../src/yieldstar";
+import type { ReconcilerEvent } from "../src/reconciler";
+import {
+  createResourceRegistry,
+  type ResourceRegistry,
+} from "../src/resource-registry";
 
 const logger = pino({ level: "silent" });
 
@@ -42,7 +47,7 @@ describe("YieldStar reconciliation", () => {
     const runtime = createRuntime(
       [new PendingResource({ id: "pending" })],
       "durable-wait",
-      { maxAttempts: 3, retryInterval: 1 },
+      { retryOptions: { maxAttempts: 3, retryInterval: 1 } },
     );
 
     await runtime.run("wait-execution");
@@ -67,8 +72,7 @@ describe("YieldStar reconciliation", () => {
     const runtime = createRuntime(
       [new TestResource({ id: "resume" })],
       "crash-resume",
-      undefined,
-      "notation:resource:resume:create",
+      { crashAfterStep: "notation:resource:resume:create" },
     );
 
     await expect(runtime.run("resume-execution")).rejects.toThrow(
@@ -160,19 +164,90 @@ describe("YieldStar reconciliation", () => {
     expect(await runtime.state.values()).toHaveLength(1);
     runtime.close();
   });
+
+  it("deletes orphaned resources through the registry on a later deployment", async () => {
+    const deleteSpy = vi.fn(async () => undefined);
+    const OrphanResource = resource({ type: "test/yieldstar/orphan" })
+      .defineSchema({})
+      .defineOperations({ create: async () => undefined, delete: deleteSpy });
+    const resources: BaseResource[] = [new OrphanResource({ id: "orphan" })];
+    const runtime = createRuntime(resources, "orphan-deletion", {
+      registry: createResourceRegistry([OrphanResource]),
+    });
+
+    await runtime.run("deploy-1");
+    expect(await runtime.state.values()).toHaveLength(1);
+
+    resources.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(deleteSpy).toHaveBeenCalledOnce();
+    expect(await runtime.state.values()).toHaveLength(0);
+    expect(await runtime.state.get("orphan")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("emits drift detection and repairs remote drift with update", async () => {
+    let remote = { name: "expected" };
+    const updateSpy = vi.fn(async () => {
+      remote = { name: "expected" };
+    });
+    const DriftResource = resource({ type: "test/yieldstar/drift" })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          valueType: "string" as any,
+        },
+      })
+      .defineOperations({
+        create: async () => remote,
+        read: async () => remote,
+        update: updateSpy,
+        delete: async () => undefined,
+      });
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(
+      [new DriftResource({ id: "drifted", config: { name: "expected" } })],
+      "drift-repair",
+      { driftDetection: true, emit: (event) => void events.push(event) },
+    );
+
+    await runtime.run("deploy-1");
+    remote = { name: "drifted" };
+    await runtime.run("deploy-2");
+
+    expect(updateSpy).toHaveBeenCalledOnce();
+    expect(
+      events.find((event) => event.event === "reconciler.drift.detected"),
+    ).toMatchObject({ resourceId: "drifted", diff: { name: "expected" } });
+    expect(
+      events.filter(
+        (event) =>
+          event.event === "reconciler.deploy.decision" &&
+          event.decision === "drift-update",
+      ),
+    ).toHaveLength(1);
+    runtime.close();
+  });
 });
 
 function createRuntime(
   resources: BaseResource[],
   deploymentId: string,
-  retryOptions?: { maxAttempts: number; retryInterval: number },
-  crashAfterStep?: string,
+  options: {
+    retryOptions?: { maxAttempts: number; retryInterval: number };
+    crashAfterStep?: string;
+    registry?: ResourceRegistry;
+    driftDetection?: boolean;
+    emit?: (event: ReconcilerEvent) => void;
+  } = {},
 ) {
   const database = createSqliteDb({ path: ":memory:" });
   const scheduler = new TestScheduler();
   const sqliteHeap = new SqliteHeapClient(database);
-  const heap = crashAfterStep
-    ? new CrashAfterWriteHeap(sqliteHeap, crashAfterStep)
+  const heap = options.crashAfterStep
+    ? new CrashAfterWriteHeap(sqliteHeap, options.crashAfterStep)
     : sqliteHeap;
   const storeClient = new SqliteStoreClient({
     db: database,
@@ -185,8 +260,10 @@ function createRuntime(
       executionId: event.executionId,
       resources,
       state,
-      driftDetection: false,
-      retryOptions,
+      registry: options.registry,
+      driftDetection: options.driftDetection ?? false,
+      emit: options.emit,
+      retryOptions: options.retryOptions,
     });
   });
   const router = createWorkflowRouter({ deploy });

@@ -177,11 +177,19 @@ async function* reconcileResource(
       resource,
       stateNode: stateNode ?? undefined,
       params,
-      driftRead:
-        remote.status === "not-found"
-          ? remote
-          : { status: "found", output: remote.output },
+      driftRead: remote,
     });
+  }
+
+  if (action.decision === "drift-update") {
+    const diff = action.patch;
+    yield* emitDurably(step, `${prefix}:drift-detected`, opts.emit, () => ({
+      level: "info",
+      event: "reconciler.drift.detected",
+      resourceId: resource.id,
+      resourceType: resource.type,
+      diff,
+    }));
   }
 
   yield* emitDurably(step, `${prefix}:decision`, opts.emit, () => ({
@@ -206,7 +214,18 @@ async function* reconcileResource(
     resource.setOutput(params);
     if (primaryKey) resource.setOutput({ ...primaryKey, ...resource.output });
   } else {
-    if (!resource.update) return;
+    if (!resource.update) {
+      yield* emitDurably(step, `${prefix}:update-skip`, opts.emit, () => ({
+        level: "info",
+        event: "reconciler.operation.lifecycle",
+        operation: "update",
+        status: "skip",
+        resourceId: resource.id,
+        resourceType: resource.type,
+        reason: "update-not-implemented",
+      }));
+      return;
+    }
     yield* runProviderCall(
       step,
       `${prefix}:update`,
@@ -231,7 +250,6 @@ async function* reconcileResource(
   );
   if (read.status === "found")
     resource.setOutput({ ...resource.output, ...read.output });
-  if (opts.dryRun) return;
 
   const operation =
     action.decision === "create" || action.decision === "drift-recreate"
@@ -406,15 +424,31 @@ export class YieldStarStateBackend {
   }
 
   async get(id: string): Promise<StateNode | undefined> {
-    const storeId = this.storeId(id);
-    const ids = await this.#client.listStores(yieldStarResourceStateStore);
-    if (!ids.includes(storeId)) return undefined;
-    return toStateNode(
-      await this.#client.getStore({
+    const snapshot = await this.#tryGetSnapshot(this.storeId(id));
+    return snapshot ? toStateNode(snapshot) : undefined;
+  }
+
+  /**
+   * Reads a store snapshot in one round trip. A missing store is resource
+   * absence, so a read failure is re-checked against the store listing before
+   * it is allowed to propagate.
+   */
+  async #tryGetSnapshot(
+    storeId: string,
+  ): Promise<
+    | { state: StoredResourceState; instanceId: string; version: number }
+    | undefined
+  > {
+    try {
+      return await this.#client.getStore({
         definition: yieldStarResourceStateStore,
         id: storeId,
-      }),
-    );
+      });
+    } catch (error) {
+      const ids = await this.#client.listStores(yieldStarResourceStateStore);
+      if (!ids.includes(storeId)) return undefined;
+      throw error;
+    }
   }
 
   async has(id: string): Promise<boolean> {
@@ -427,8 +461,8 @@ export class YieldStarStateBackend {
     patch: Partial<StateNode>,
   ): Promise<{ rev: number }> {
     const storeId = this.storeId(id);
-    const ids = await this.#client.listStores(yieldStarResourceStateStore);
-    if (!ids.includes(storeId)) {
+    const snapshot = await this.#tryGetSnapshot(storeId);
+    if (!snapshot) {
       if (expectedRev !== 0) throw new RevConflict(id, expectedRev, undefined);
       const initial = { ...patch, id } as StoredResourceState;
       const created = await this.#client.getOrCreateStore({
@@ -439,14 +473,9 @@ export class YieldStarStateBackend {
       return { rev: created.version + 1 };
     }
 
-    const snapshot = await this.#client.getStore({
-      definition: yieldStarResourceStateStore,
-      id: storeId,
-    });
     const actualRev = snapshot.version + 1;
     if (actualRev !== expectedRev)
       throw new RevConflict(id, expectedRev, actualRev);
-    const rev = actualRev + 1;
     const result = await this.#client.updateStoreFrom({
       definition: yieldStarResourceStateStore,
       id: storeId,
@@ -456,20 +485,16 @@ export class YieldStarStateBackend {
       },
     });
     if (!result.updated) throw new RevConflict(id, expectedRev, undefined);
-    return { rev };
+    return { rev: result.version + 1 };
   }
 
   async delete(id: string, expectedRev: number): Promise<void> {
     const storeId = this.storeId(id);
-    const ids = await this.#client.listStores(yieldStarResourceStateStore);
-    if (!ids.includes(storeId)) {
+    const snapshot = await this.#tryGetSnapshot(storeId);
+    if (!snapshot) {
       if (expectedRev !== 0) throw new RevConflict(id, expectedRev, undefined);
       return;
     }
-    const snapshot = await this.#client.getStore({
-      definition: yieldStarResourceStateStore,
-      id: storeId,
-    });
     const actualRev = snapshot.version + 1;
     if (actualRev !== expectedRev)
       throw new RevConflict(id, expectedRev, actualRev);
@@ -484,19 +509,14 @@ export class YieldStarStateBackend {
   async values(): Promise<StateNode[]> {
     const prefix = `${this.#deploymentId}:`;
     const ids = await this.#client.listStores(yieldStarResourceStateStore);
-    const nodes = await Promise.all(
+    const snapshots = await Promise.all(
       ids
         .filter((id) => id.startsWith(prefix))
-        .map(async (id) =>
-          toStateNode(
-            await this.#client.getStore({
-              definition: yieldStarResourceStateStore,
-              id,
-            }),
-          ),
-        ),
+        .map((id) => this.#tryGetSnapshot(id)),
     );
-    return nodes;
+    return snapshots
+      .filter((snapshot) => snapshot !== undefined)
+      .map(toStateNode);
   }
 
   snapshot(id: string) {
