@@ -1,4 +1,4 @@
-import type { ReconcilerEvent, ReconcilerEventEmitter } from "./reconciler";
+import type { ReconcilerEvent, ReconcilerEventEmitter } from "./events";
 
 export type Logger = Pick<Console, "info" | "warn" | "error">;
 
@@ -17,7 +17,7 @@ export function createLoggerReconcilerSubscriber(
       return;
     }
 
-    if (event.event === "reconciler.orphan-deletion.skipped") {
+    if (event.level === "warn") {
       logger.warn(event.event, event);
       return;
     }

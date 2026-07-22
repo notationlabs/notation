@@ -1,38 +1,35 @@
-import {
-  Reconciler,
-  createLoggerReconcilerSubscriber,
-  type Plan,
-  type ReconcilerEventEmitter,
-  type ResourceRegistry,
-} from "@notation/reconciler";
-import type { StateBackend } from "@notation/state";
+import { createPlan, type Plan } from "@notation/reconciler";
 import { getResourceGraph } from "src/orchestrator/graph";
-import { createDefaultStateBackend } from "../state-backend";
+import { NodeDurableRuntime, resolveDeploymentId } from "../durable-runtime";
 
 export type { Plan, PlanNode, PlanDecision } from "@notation/reconciler";
 
 export type PlanAppOptions = {
   entryPoint: string;
   driftDetection?: boolean;
-  registry?: ResourceRegistry;
-  state?: StateBackend;
-  emit?: ReconcilerEventEmitter;
+  runtime?: NodeDurableRuntime;
+  databasePath?: string;
 };
 
 export async function planApp({
   entryPoint,
   driftDetection = true,
-  registry,
-  state: stateBackend,
-  emit = createLoggerReconcilerSubscriber(),
+  runtime: suppliedRuntime,
+  databasePath,
 }: PlanAppOptions): Promise<Plan> {
   const graph = await getResourceGraph(entryPoint);
-  const state = stateBackend ?? createDefaultStateBackend();
-  const reconciler = new Reconciler({
-    state,
-    registry,
-    emit,
-  });
-
-  return reconciler.plan(graph.resources, { driftDetection });
+  const deploymentId =
+    suppliedRuntime?.deploymentId ?? resolveDeploymentId(entryPoint);
+  const runtime =
+    suppliedRuntime ?? new NodeDurableRuntime({ deploymentId, databasePath });
+  try {
+    await runtime.initialize();
+    return await createPlan({
+      resources: graph.resources,
+      state: runtime.state,
+      driftDetection,
+    });
+  } finally {
+    if (!suppliedRuntime) runtime.close();
+  }
 }

@@ -4,10 +4,12 @@ import { compile } from "./compile";
 import { deploy } from "./deploy";
 import { destroy } from "./destroy";
 import { plan } from "./plan";
+import { defaultLogger } from "./logger";
+import { runWithCliErrorHandling } from "./run-with-error-handling";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
 import { startDashboardServer } from "@notation/dashboard";
-import { createDefaultStateBackend } from "@notation/core";
+import { NodeDurableRuntime, resolveDeploymentId } from "@notation/core";
 
 program
   .command("compile")
@@ -19,9 +21,14 @@ program
 
 program
   .command("dashboard")
+  .argument("<entryPoint>", "entryPoint")
   .description("Start Notation Dashboard")
-  .action(async () => {
-    await startDashboardServer({ state: createDefaultStateBackend() });
+  .action(async (entryPoint) => {
+    const runtime = new NodeDurableRuntime({
+      deploymentId: resolveDeploymentId(entryPoint),
+    });
+    await runtime.initialize();
+    await startDashboardServer({ state: runtime.state });
   });
 
 program
@@ -29,8 +36,12 @@ program
   .argument("<entryPoint>", "entryPoint")
   .description("Deploy Notation App")
   .option("--json", "stream reconciler events as NDJSON")
+  .option("--execution-id <id>", "resume a durable execution")
   .action(async (entryPoint, options) => {
-    await deploy(entryPoint, { json: options.json });
+    await deploy(entryPoint, {
+      json: options.json,
+      executionId: options.executionId,
+    });
   });
 
 program
@@ -38,8 +49,12 @@ program
   .argument("<entryPoint>", "entryPoint")
   .description("Destroy Notation App")
   .option("--json", "stream reconciler events as NDJSON")
+  .option("--execution-id <id>", "resume a durable execution")
   .action(async (entryPoint, options) => {
-    await destroy(entryPoint, { json: options.json });
+    await destroy(entryPoint, {
+      json: options.json,
+      executionId: options.executionId,
+    });
   });
 
 program
@@ -67,4 +82,7 @@ program
     await watch(entryPoint);
   });
 
-program.parse(process.argv);
+process.exitCode = await runWithCliErrorHandling(
+  () => program.parseAsync(process.argv),
+  { logger: defaultLogger, command: process.argv[2] ?? program.name() },
+);

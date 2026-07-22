@@ -1,19 +1,21 @@
+import * as reconciler from "@notation/reconciler";
 import {
-  Reconciler,
   createLoggerReconcilerSubscriber,
   type ReconcilerEventEmitter,
   type ResourceRegistry,
 } from "@notation/reconciler";
-import type { StateBackend } from "@notation/state";
+import { createWorkflowRouter, workflow } from "yieldstar";
 import { getResourceGraph } from "src/orchestrator/graph";
-import { createDefaultStateBackend } from "../state-backend";
+import { NodeDurableRuntime, resolveDeploymentId } from "../durable-runtime";
 
 export type DeployAppOptions = {
   entryPoint: string;
   driftDetection?: boolean;
   dryRun?: boolean;
   registry?: ResourceRegistry;
-  state?: StateBackend;
+  runtime?: NodeDurableRuntime;
+  executionId?: string;
+  databasePath?: string;
   emit?: ReconcilerEventEmitter;
 };
 
@@ -22,19 +24,34 @@ export async function deployApp({
   driftDetection = true,
   dryRun = false,
   registry,
-  state: stateBackend,
+  runtime: suppliedRuntime,
+  executionId,
+  databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: DeployAppOptions): Promise<void> {
   const graph = await getResourceGraph(entryPoint);
-  const state = stateBackend ?? createDefaultStateBackend();
-  const reconciler = new Reconciler({
-    state,
-    registry,
-    emit,
+  const deploymentId =
+    suppliedRuntime?.deploymentId ?? resolveDeploymentId(entryPoint);
+  const runtime =
+    suppliedRuntime ?? new NodeDurableRuntime({ deploymentId, databasePath });
+  const deploy = workflow(async function* (step, event) {
+    yield* reconciler.deploy(step, {
+      deploymentId: runtime.deploymentId,
+      executionId: event.executionId,
+      resources: graph.resources,
+      state: runtime.state,
+      registry,
+      emit,
+      dryRun,
+      driftDetection,
+    });
   });
-
-  await reconciler.deploy(graph.resources, {
-    dryRun,
-    driftDetection,
-  });
+  try {
+    await runtime.run(createWorkflowRouter({ deploy }), {
+      workflowId: "deploy",
+      executionId,
+    });
+  } finally {
+    if (!suppliedRuntime) runtime.close();
+  }
 }

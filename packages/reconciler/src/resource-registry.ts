@@ -1,4 +1,8 @@
-import type { BaseResource, ResourceClass, ResourceType } from "@notation/resource";
+import type {
+  BaseResource,
+  ResourceClass,
+  ResourceType,
+} from "@notation/resource";
 
 export type ResourceRegistry = Map<ResourceType, ResourceClass<any, any, any>>;
 
@@ -6,7 +10,7 @@ export type MissingResourceRegistryMatchWarningEvent = {
   level: "warn";
   event: "reconciler.orphan-deletion.skipped";
   reason: "resource-type-not-registered";
-  workflow: "deploy" | "refresh" | "destroy";
+  workflow: "deploy" | "destroy";
   resourceId: string;
   resourceType: ResourceType;
 };
@@ -46,7 +50,7 @@ export function resolveResourceClass(
 }
 
 export function createMissingResourceRegistryMatchWarningEvent(opts: {
-  workflow: "deploy" | "refresh" | "destroy";
+  workflow: "deploy" | "destroy";
   resourceId: string;
   resourceType: ResourceType;
 }): MissingResourceRegistryMatchWarningEvent {
