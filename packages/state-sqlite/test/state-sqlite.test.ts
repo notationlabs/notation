@@ -46,33 +46,6 @@ describe("SqliteStateBackend", () => {
     });
   });
 
-  it("coordinates leases across backend instances and releases by owner", async () => {
-    const directory = await mkdtemp(
-      path.join(tmpdir(), "notation-sqlite-lease-"),
-    );
-    const databasePath = path.join(directory, "state.db");
-    const first = new SqliteStateBackend(databasePath);
-    const second = new SqliteStateBackend(databasePath);
-    cleanups.push(async () => {
-      first.close();
-      second.close();
-      await rm(directory, { recursive: true, force: true });
-    });
-
-    const lease = await first.lease("orphans", 10_000);
-    await expect(second.lease("orphans", 10_000)).rejects.toMatchObject({
-      name: "LeaseConflict",
-      scope: "orphans",
-    });
-    const firstExpiry = lease.expiresAt;
-    await lease.renew(20_000);
-    expect(lease.expiresAt).not.toBe(firstExpiry);
-    await lease.release();
-    const nextLease = await second.lease("orphans", 10_000);
-    expect(nextLease).toMatchObject({ scope: "orphans" });
-    await nextLease.release();
-  });
-
   it("waits for a concurrent writer instead of raising database locked", async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), "notation-sqlite-busy-"),

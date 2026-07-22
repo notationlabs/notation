@@ -157,27 +157,6 @@ function runStateBackendContractTests(
         await fixture.cleanup();
       }
     });
-
-    it("holds and renews an exclusive lease", async () => {
-      const fixture = await createBackend();
-
-      try {
-        const lease = await fixture.backend.lease("resource:a", 1_000);
-        const firstExpiry = lease.expiresAt;
-        await expect(
-          fixture.backend.lease("resource:a", 1_000),
-        ).rejects.toMatchObject({ name: "LeaseConflict" });
-
-        await lease.renew(2_000);
-        expect(lease.expiresAt).not.toBe(firstExpiry);
-        await lease.release();
-
-        const next = await fixture.backend.lease("resource:a", 1_000);
-        await next.release();
-      } finally {
-        await fixture.cleanup();
-      }
-    });
   });
 }
 

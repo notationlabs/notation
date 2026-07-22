@@ -9,7 +9,7 @@ import {
   createResourceRegistryFromResources,
   resolveResourceClass,
 } from "../resource-registry";
-import { runPendingOperation } from "../operations/operation.pending";
+import { runPendingOperation } from "../pending-operation";
 import { decideAction, type DriftRead, type ResourceAction } from "../plan";
 import { emitEvent, emitLifecycle } from "./emit";
 import type { DurableStateBackend } from "./state-backend";

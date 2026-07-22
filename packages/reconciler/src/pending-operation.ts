@@ -2,12 +2,19 @@ import {
   ResourceOperationPendingError,
   type ResourceOperationContext,
 } from "@notation/resource";
-import type { StepRunner } from "./operation.types";
+
+type OperationStep = {
+  run<T>(
+    key: string,
+    operation: () => T | Promise<T>,
+  ): AsyncGenerator<unknown, T, unknown>;
+  delay(key: string, delayMs: number): AsyncGenerator<unknown, void, unknown>;
+};
 
 export const DEFAULT_MAX_OPERATION_ATTEMPTS = 30;
 
 export async function* runPendingOperation<T>(
-  step: StepRunner,
+  step: OperationStep,
   key: string,
   operation: (context?: ResourceOperationContext) => T | Promise<T>,
   maxAttempts = DEFAULT_MAX_OPERATION_ATTEMPTS,

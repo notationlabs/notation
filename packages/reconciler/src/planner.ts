@@ -1,7 +1,8 @@
 import { ResourceNotFoundError, type BaseResource } from "@notation/resource";
 import type { StateBackend } from "@notation/state";
+import { setTimeout as sleep } from "node:timers/promises";
 import { buildResourceDepthLevels } from "./dependency-graph";
-import { readResourceOperation } from "./operations";
+import { runPendingOperation } from "./pending-operation";
 import {
   decideAction,
   getDependencyIds,
@@ -9,18 +10,19 @@ import {
   type Plan,
   type PlanNode,
 } from "./plan";
-import { createStepRunner, runOperation } from "./reconciler";
 
 export type CreatePlanOptions = {
   resources: BaseResource[];
   state: StateBackend;
   driftDetection?: boolean;
+  maxOperationAttempts?: number;
 };
 
 export async function createPlan({
   resources,
   state,
   driftDetection = true,
+  maxOperationAttempts,
 }: CreatePlanOptions): Promise<Plan> {
   const resourceById = new Map(
     resources.map((resource) => [resource.id, resource]),
@@ -38,10 +40,12 @@ export async function createPlan({
         let driftRead;
         try {
           const output = await runOperation(
-            readResourceOperation(createStepRunner(), {
-              resource,
-              state,
-            }),
+            runPendingOperation(
+              createStepRunner(),
+              `plan:${resource.id}:read`,
+              (context) => resource.read!(resource.key, context),
+              maxOperationAttempts,
+            ),
           );
           driftRead = { kind: "present" as const, output };
         } catch (error) {
@@ -80,4 +84,31 @@ export async function createPlan({
   }
 
   return { createdAt: new Date().toISOString(), nodes };
+}
+
+async function runOperation<T>(
+  operation: AsyncGenerator<unknown, T, unknown>,
+) {
+  let next = await operation.next();
+  while (!next.done) {
+    next = await operation.next();
+  }
+  return next.value;
+}
+
+function createStepRunner() {
+  return {
+    async *run<T>(
+      _key: string,
+      operation: () => T | Promise<T>,
+    ): AsyncGenerator<unknown, T, unknown> {
+      return await operation();
+    },
+    async *delay(
+      _key: string,
+      delayMs: number,
+    ): AsyncGenerator<unknown, void, unknown> {
+      await sleep(delayMs);
+    },
+  };
 }

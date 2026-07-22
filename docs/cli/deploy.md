@@ -4,7 +4,7 @@
 notation deploy <entryPoint>
 ```
 
-Compiles and deploys the stack to AWS.
+Compiles and durably deploys the stack through the resident Yieldstar 0.5.0 Node runtime.
 
 ```sh
 notation deploy infra/api.ts
@@ -12,32 +12,36 @@ notation deploy infra/api.ts
 
 ## Event stream
 
-`--json` writes versioned reconciler events to stdout as newline-delimited JSON. Build
-output and diagnostics move to stderr.
+`--json` writes versioned reconciler events to stdout as newline-delimited JSON. Build output, the execution ID, and diagnostics move to stderr.
 
 ```sh
 notation deploy infra/api.ts --json > deploy.ndjson
 ```
 
-## What happens
+## Durable execution
 
-1. **Compile** – esbuild compiles infra and runtime modules to `dist/`.
-
-2. **Build resource graph** – imports the compiled output and collects the declared resources.
-
-3. **Reconcile** – the reconciler compares desired state (graph) against current state (`.notation/state.json`):
-   - New resources → **create**
-   - Changed params → **update**
-   - No changes → **noop**
-   - Orphaned resources (in state but not in graph) → **delete**
-
-4. **Topological deployment** – resources deploy in dependency order (levels). Resources at the same level deploy concurrently.
-
-5. **Drift detection** – enabled by default. Reads actual AWS state and compares against stored state. If drifted, Notation updates to match your definition.
-
-State is persisted to `.notation/state.json` after each operation. Set
-`NOTATION_STATE_PATH` to a path ending in `.db` or `.sqlite` to use SQLite:
+The command prints its Yieldstar execution ID before starting provider work. If the process crashes, resume the same durable heap with that ID:
 
 ```sh
-NOTATION_STATE_PATH=.notation/state.db notation deploy infra/api.ts
+notation deploy infra/api.ts --execution-id <id>
 ```
+
+Do not reuse a completed execution ID for a new deploy or for destroy.
+
+Retryable provider conditions and consistency reads suspend on durable SQLite timers. The CLI stays resident until the scheduler wakes the execution and the workflow completes; completed provider calls are replayed from the heap rather than repeated.
+
+## What happens
+
+1. **Compile** – esbuild compiles infrastructure and runtime modules to `dist/`.
+
+2. **Build resource graph** – the worker imports the compiled output and collects declared resources.
+
+3. **Reconcile** – Notation compares desired resources with Yieldstar stores, then creates, updates, recreates, or leaves each resource unchanged.
+
+4. **Order dependencies** – dependency levels run in topological order.
+
+5. **Detect drift** – unchanged resources are read from the provider and repaired when their remote state differs.
+
+6. **Delete orphans** – persisted resources absent from the graph are deleted when their resource type is registered.
+
+State, step results, timers, task coordination, and resource stores are persisted to `.notation/workflows.db`. Set `NOTATION_STATE_PATH` to choose another SQLite database path.

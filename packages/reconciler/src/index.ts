@@ -4,9 +4,10 @@ export type DeepObjectDiffApi = typeof import("deep-object-diff");
 export type YieldstarApi = typeof import("yieldstar");
 
 export * from "./resource-registry";
-export * from "./operations";
 export * from "./dependency-graph";
 export * from "./plan";
-export * from "./reconciler";
+export * from "./planner";
+export * from "./events";
+export * from "./durable";
 export * from "./logger-subscriber";
 export * from "./protocol";
