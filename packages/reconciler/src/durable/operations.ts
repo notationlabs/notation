@@ -10,7 +10,7 @@ import {
   resolveResourceClass,
 } from "../resource-registry";
 import { decideAction, type ResourceAction } from "../plan";
-import { emitLifecycle, emitOnce } from "./emit";
+import { emitEvent, emitLifecycle } from "./emit";
 import type { DurableStateBackend } from "./state-backend";
 import {
   resourceStateStore,
@@ -82,7 +82,7 @@ export async function* reconcileResource(
 
   if (action.decision === "drift-update") {
     const diff = action.patch;
-    yield* emitOnce(step, `${prefix}:drift-detected`, opts.emit, () => ({
+    yield* emitEvent(step, `${prefix}:drift-detected`, opts.emit, () => ({
       level: "info",
       event: "reconciler.drift.detected",
       resourceId: resource.id,
@@ -91,7 +91,7 @@ export async function* reconcileResource(
     }));
   }
 
-  yield* emitOnce(step, `${prefix}:decision`, opts.emit, () => ({
+  yield* emitEvent(step, `${prefix}:decision`, opts.emit, () => ({
     level: "info",
     event: "reconciler.deploy.decision",
     resourceId: resource.id,
@@ -126,8 +126,8 @@ export async function* reconcileResource(
   }
 
   try {
-    // Execute the provider call. Each call runs in its own durable step, so a
-    // replayed workflow never repeats a completed provider mutation.
+    // Checkpoint successful provider calls. Provider mutations must be
+    // idempotent because a crash before the checkpoint can repeat them.
     if (operation === "create") {
       const primaryKey = yield* runProviderCall(
         step,
@@ -174,6 +174,7 @@ export async function* reconcileResource(
       resource,
       opts,
       `${prefix}:read-after-write`,
+      { retryNotFound: true },
     );
     if (read.status === "found")
       resource.setOutput({ ...resource.output, ...read.output });
@@ -326,6 +327,7 @@ export async function* readRemote(
   resource: BaseResource,
   opts: DurableOperationOptions,
   key: string,
+  behaviour: { retryNotFound?: boolean } = {},
 ): AsyncGenerator<
   any,
   | { status: "found"; output: Record<string, unknown> }
@@ -360,7 +362,18 @@ export async function* readRemote(
   );
   try {
     const output = yield* step.run(key, async () => {
-      const value = await resource.read!(resource.key);
+      let value: Record<string, unknown>;
+      try {
+        value = await resource.read!(resource.key);
+      } catch (error) {
+        const notFound = findErrorMatcher(error, resource.notFoundOnError);
+        if (behaviour.retryNotFound && notFound) {
+          throw new RetryableError(notFound.reason, {
+            ...(opts.readPollOptions ?? DEFAULT_READ_POLL_OPTIONS),
+          });
+        }
+        throw error;
+      }
       // An unsettled read (a declared condition not yet met) re-polls
       // durably instead of returning a half-provisioned remote.
       const unsettled = (resource.retryReadOnCondition ?? [])
@@ -468,7 +481,7 @@ export async function* sweepOrphans(
 
     const Resource = resolveResourceClass(registry, node.type as ResourceType);
     if (!Resource) {
-      yield* emitOnce(step, params.warningKey(node.id), opts.emit, () =>
+      yield* emitEvent(step, params.warningKey(node.id), opts.emit, () =>
         createMissingResourceRegistryMatchWarningEvent({
           workflow: params.workflow,
           resourceId: node.id,

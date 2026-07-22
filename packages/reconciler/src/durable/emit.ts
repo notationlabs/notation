@@ -6,11 +6,8 @@ import type {
 } from "../events";
 import type { DurableStep } from "./yieldstar";
 
-/**
- * Emits an event inside a durable step so a replayed workflow does not
- * re-emit events it already sent.
- */
-export function emitOnce(
+/** Checkpoints delivery after the emitter returns. Emitters must tolerate a duplicate if the process crashes before that checkpoint. */
+export function emitEvent(
   step: DurableStep,
   key: string,
   emit: ReconcilerEventEmitter | undefined,
@@ -30,7 +27,7 @@ export function emitLifecycle(
   resource: LifecycleResource,
   extra: { reason?: string; error?: unknown } = {},
 ) {
-  return emitOnce(step, key, emit, () =>
+  return emitEvent(step, key, emit, () =>
     createLifecycleEvent(operation, status, resource, extra),
   );
 }
