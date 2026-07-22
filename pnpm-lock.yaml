@@ -117,21 +117,15 @@ importers:
 
   examples/reconciler:
     dependencies:
+      '@notation/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@notation/reconciler':
         specifier: workspace:*
         version: link:../../packages/reconciler
       '@notation/resource':
         specifier: workspace:*
         version: link:../../packages/resource
-      '@yieldstar/core':
-        specifier: 0.5.0
-        version: 0.5.0
-      '@yieldstar/sqlite-runtime':
-        specifier: 0.5.0
-        version: 0.5.0
-      pino:
-        specifier: ^9.9.0
-        version: 9.14.0
       yieldstar:
         specifier: 0.5.0
         version: 0.5.0
@@ -230,6 +224,9 @@ importers:
       '@notation/resource':
         specifier: workspace:*
         version: link:../resource
+      '@notation/state':
+        specifier: workspace:*
+        version: link:../state
       '@yieldstar/core':
         specifier: 0.5.0
         version: 0.5.0
