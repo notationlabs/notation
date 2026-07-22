@@ -62,7 +62,7 @@ export class DurableStateBackend {
       if (expectedRev !== 0) throw new RevConflict(id, expectedRev, undefined);
       const creationToken = randomUUID();
       const initial = {
-        ...patch,
+        ...withoutRev(patch),
         id,
         [RESOURCE_CREATION_TOKEN]: creationToken,
       } as StoredResourceState;
