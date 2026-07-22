@@ -117,12 +117,18 @@ importers:
 
   examples/reconciler:
     dependencies:
+      '@notation/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@notation/reconciler':
         specifier: workspace:*
         version: link:../../packages/reconciler
       '@notation/resource':
         specifier: workspace:*
         version: link:../../packages/resource
+      '@notation/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
       '@yieldstar/core':
         specifier: 0.5.0
         version: 0.5.0
@@ -230,6 +236,9 @@ importers:
       '@notation/resource':
         specifier: workspace:*
         version: link:../resource
+      '@notation/state':
+        specifier: workspace:*
+        version: link:../state
       '@yieldstar/core':
         specifier: 0.5.0
         version: 0.5.0

@@ -187,7 +187,7 @@ new ResourceOperationPendingError(message: string, {
 | `callbackContext` | `Readonly<Record<string, unknown>>` | no | Plain serializable data for the next attempt. |
 | `cause` | `unknown` | no | The provider error that caused this result. |
 
-The default limit is 30 attempts. Set `maxOperationAttempts` on the reconciler to change it. Reaching the limit fails the operation.
+The default limit is 30 attempts. Set `maxOperationAttempts` in the deploy, plan, or destroy options to change it. Reaching the limit fails the operation.
 
 ```ts
 read: async (key, context) => {

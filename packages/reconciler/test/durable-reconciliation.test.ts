@@ -38,7 +38,7 @@ describe("durable execution and replay", () => {
           if (attempts === 1) {
             expect(context).toBeUndefined();
             throw new ResourceOperationPendingError("provider is not ready", {
-              retryAfterMs: 1,
+              retryAfterMs: 250,
               callbackContext: { requestId: "request-123" },
             });
           }
@@ -56,7 +56,7 @@ describe("durable execution and replay", () => {
     expect(attempts).toBe(1);
     expect(runtime.scheduler.events).toHaveLength(1);
 
-    await sleep(5);
+    await sleep(275);
     await runtime.run("wait-execution");
     expect(attempts).toBe(2);
     expect(await runtime.state.get("pending")).toMatchObject({
@@ -124,7 +124,7 @@ describe("durable execution and replay", () => {
           attempts += 1;
           if (attempts === 1) {
             throw new ResourceOperationPendingError("delete is not ready", {
-              retryAfterMs: 1,
+              retryAfterMs: 250,
             });
           }
         },
@@ -140,7 +140,7 @@ describe("durable execution and replay", () => {
     expect(attempts).toBe(1);
     expect(await runtime.state.get("pending-delete")).toBeDefined();
 
-    await sleep(5);
+    await sleep(275);
     await runtime.destroy("destroy-wait");
     expect(attempts).toBe(2);
     expect(await runtime.state.get("pending-delete")).toBeUndefined();
@@ -160,7 +160,7 @@ describe("durable execution and replay", () => {
           if (reads === 1) {
             throw new ResourceOperationPendingError(
               "resource is not visible yet",
-              { retryAfterMs: 1 },
+              { retryAfterMs: 250 },
             );
           }
           return {} as const;
@@ -177,7 +177,7 @@ describe("durable execution and replay", () => {
     expect(reads).toBe(1);
     expect(await runtime.state.get("eventually-readable")).toBeUndefined();
 
-    await sleep(5);
+    await sleep(275);
     await runtime.run("post-write-read-execution");
     expect(reads).toBe(2);
     expect(await runtime.state.get("eventually-readable")).toMatchObject({

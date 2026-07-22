@@ -9,7 +9,7 @@ import { runWithCliErrorHandling } from "./run-with-error-handling";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
 import { startDashboardServer } from "@notation/dashboard";
-import { NodeDurableRuntime } from "@notation/core";
+import { NodeDurableRuntime, resolveDeploymentId } from "@notation/core";
 
 program
   .command("compile")
@@ -24,7 +24,10 @@ program
   .argument("<entryPoint>", "entryPoint")
   .description("Start Notation Dashboard")
   .action(async (entryPoint) => {
-    const runtime = new NodeDurableRuntime({ deploymentId: entryPoint });
+    const runtime = new NodeDurableRuntime({
+      deploymentId: resolveDeploymentId(entryPoint),
+    });
+    await runtime.initialize();
     await startDashboardServer({ state: runtime.state });
   });
 

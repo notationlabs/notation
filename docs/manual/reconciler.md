@@ -4,7 +4,7 @@ Use `deploy` and `destroy` when a Node.js application needs durable resource lif
 
 ```ts
 import { SqliteSchedulerClient, SqliteStoreClient, SqliteTaskQueueClient, SqliteTimersClient, createSqliteDb } from "@yieldstar/sqlite-runtime/node";
-import { DurableStateBackend, deploy, destroy } from "@notation/reconciler";
+import { DurableStateBackend, deploy as deployResources, destroy as destroyResources } from "@notation/reconciler";
 import { workflow } from "yieldstar";
 
 const database = createSqliteDb({ path: ".notation/workflows.db" });
@@ -16,7 +16,7 @@ const storeClient = new SqliteStoreClient({ db: database, schedulerClient });
 const state = new DurableStateBackend(storeClient, "my-application");
 
 export const deploy = workflow(async function* (step, event) {
-  yield* deploy(step, {
+  yield* deployResources(step, {
     deploymentId: "my-application",
     executionId: event.executionId,
     resources,
@@ -25,7 +25,7 @@ export const deploy = workflow(async function* (step, event) {
 });
 
 export const destroy = workflow(async function* (step, event) {
-  yield* destroy(step, {
+  yield* destroyResources(step, {
     deploymentId: "my-application",
     executionId: event.executionId,
     resources,
@@ -34,7 +34,7 @@ export const destroy = workflow(async function* (step, event) {
 });
 ```
 
-The outer workflow supplies durable step execution, timers, shared stores, waiting, scheduling, and coordination. Completed provider calls are replayed from the heap after a crash, retryable provider conditions suspend on a durable timer, and conditional state writes use Yieldstar store identity and version.
+The outer workflow supplies durable step execution, timers, shared stores, waiting, scheduling, and coordination. Checkpointed provider results are replayed from the heap after a crash, retryable provider conditions suspend on a durable timer, and conditional state writes use Yieldstar store identity and version. Provider mutations must be idempotent because a crash after provider acknowledgement but before the heap checkpoint repeats the call; event consumers must tolerate the same duplicate-delivery window.
 
 Each live resource is one Yieldstar store. Absence is represented by no store, not a tombstone. Yieldstar's UUIDv7 store `instanceId` and version are authoritative for conditional update and delete; Notation exposes the version as the resource state's `rev`.
 

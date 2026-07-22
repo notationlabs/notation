@@ -9,8 +9,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@notation/core": "workspace:*",
     "@notation/reconciler": "workspace:*",
     "@notation/resource": "workspace:*",
+    "@notation/utils": "workspace:*",
     "@yieldstar/core": "0.5.0",
     "@yieldstar/sqlite-runtime": "0.5.0",
     "pino": "^9.9.0",

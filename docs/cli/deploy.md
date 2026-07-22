@@ -28,7 +28,7 @@ notation deploy infra/api.ts --execution-id <id>
 
 Do not reuse a completed execution ID for a new deploy or for destroy.
 
-Retryable provider conditions and consistency reads suspend on durable SQLite timers. The CLI stays resident until the scheduler wakes the execution and the workflow completes; completed provider calls are replayed from the heap rather than repeated.
+Retryable provider conditions and consistency reads suspend on durable SQLite timers. The CLI stays resident until the scheduler wakes the execution and the workflow completes. Provider results are replayed after their heap checkpoint, but a crash after the provider accepts a create or update and before that checkpoint repeats the call, so provider mutations must be idempotent. Reconciler event consumers must tolerate the equivalent duplicate-delivery window.
 
 ## What happens
 
@@ -45,3 +45,5 @@ Retryable provider conditions and consistency reads suspend on durable SQLite ti
 6. **Delete orphans** – persisted resources absent from the graph are deleted when their resource type is registered.
 
 State, step results, timers, task coordination, and resource stores are persisted to `.notation/workflows.db`. Set `NOTATION_STATE_PATH` to choose another SQLite database path.
+
+On first use, Notation imports resource state from the legacy `.notation/state.json` file and archives it as `.notation/state.json.migrated`. If the durable database already contains conflicting resource state, Notation stops with recovery instructions instead of attempting to create resources from an empty namespace.

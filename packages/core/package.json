@@ -15,6 +15,7 @@
   "dependencies": {
     "@notation/reconciler": "workspace:*",
     "@notation/resource": "workspace:*",
+    "@notation/state": "workspace:*",
     "@yieldstar/core": "0.5.0",
     "@yieldstar/sqlite-runtime": "0.5.0",
     "deep-object-diff": "^1.1.9",
