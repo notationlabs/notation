@@ -1,12 +1,8 @@
-# Reconciler
+# Durable reconciler
 
-This example deploys two static sites from an ordinary Node.js program. It does not
-compile a Notation project or start the Notation CLI.
+This example deploys two static sites from an ordinary Node.js program using YieldStar 0.5.0 for durable execution, state, retries, waiting, and deployment coordination.
 
-[`src/index.ts`](./src/index.ts) is the complete program. It defines the desired
-resources inline, opens a SQLite state backend, and passes the resources directly to the
-reconciler. [`src/static-site.ts`](./src/static-site.ts) defines the local provider
-operations used to create, read, update, and delete each site.
+[`src/index.ts`](./src/index.ts) owns the outer workflow and Node SQLite runtime. It passes YieldStar's `step` context to `reconcileWithYieldStar`, while [`src/static-site.ts`](./src/static-site.ts) contains only the desired resources and provider lifecycle operations.
 
 Run it from the repository root:
 
@@ -14,9 +10,7 @@ Run it from the repository root:
 pnpm --filter reconciler-example demo
 ```
 
-The generated sites are written to `sites/`, and deployment state is stored in
-`sites.db`. Change the resource configuration and run the command again to update the
-sites. Remove a resource from the array and run it again to delete that site.
+The generated sites are written to `sites/`, and the workflow heap, resource stores, timers, and coordination state are stored in `sites.db`. Change the resource configuration and run the command again to update the sites. Remove a resource from the array and run it again to delete that site.
 
 Run the integration test with:
 

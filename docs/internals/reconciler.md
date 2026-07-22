@@ -4,6 +4,25 @@ The reconciler runs deployment operations to transition infrastructure from its 
 
 Source: `@notation/reconciler`
 
+## Durable workflow boundary
+
+`reconcileWithYieldStar` is the durable Node.js integration. It is an async generator intended to be composed inside an application-owned YieldStar workflow:
+
+```ts
+const deploy = workflow(async function* (step, event) {
+  yield* reconcileWithYieldStar(step, {
+    deploymentId: "production",
+    executionId: event.executionId,
+    resources,
+    state,
+  });
+});
+```
+
+The host owns runtime wiring and scheduling. Notation owns graph ordering, decisions, provider calls, drift reads, state persistence, and orphan lifecycle. Provider calls and state mutations are YieldStar steps, so completed calls are replayed instead of repeated after a process crash.
+
+The synchronous `Reconciler` described below remains the CLI path for this release.
+
 ## Deploy flow
 
 ```ts [packages/reconciler/src/index.ts]

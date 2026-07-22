@@ -11,7 +11,10 @@
   "dependencies": {
     "@notation/reconciler": "workspace:*",
     "@notation/resource": "workspace:*",
-    "@notation/state-sqlite": "workspace:*"
+    "@yieldstar/core": "0.5.0",
+    "@yieldstar/sqlite-runtime": "0.5.0",
+    "pino": "^9.9.0",
+    "yieldstar": "0.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",

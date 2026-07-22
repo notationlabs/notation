@@ -9,6 +9,4 @@
 "@notation/state-sqlite": minor
 ---
 
-Add the reconciler API, versioned event streams, renewable mutation leases,
-SQLite state, backend-neutral dashboard state, and compiled infrastructure
-graphs.
+Add the reconciler API, versioned event streams, renewable mutation leases, SQLite state, backend-neutral dashboard state, compiled infrastructure graphs, and durable YieldStar 0.5.0 reconciliation for Node.js runtimes.

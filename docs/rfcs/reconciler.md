@@ -1,102 +1,30 @@
-# RFC: Reconciler
+# RFC: Durable YieldStar reconciliation
 
-**Status:** implemented
-**Scope:** `@notation/state`, `@notation/reconciler`
+**Status:** implemented release slice
+**Scope:** `@notation/reconciler`, YieldStar 0.5.0
 
-Notation evaluates an infrastructure program into resources, then reconciles those
-resources against recorded state. The same engine now runs behind the CLI, the dashboard,
-and direct library integrations.
+Notation describes reconciliation and resource lifecycle operations. A host-owned YieldStar workflow supplies durable execution, waiting, state, and coordination by calling `yield* reconcileWithYieldStar(step, options)`.
 
-```ts
-import { Reconciler } from "@notation/reconciler";
-import { SqliteStateBackend } from "@notation/state-sqlite";
+## Boundary
 
-const state = new SqliteStateBackend(".notation/state.db");
-const reconciler = new Reconciler({ state });
+Live resource objects remain in the workflow worker. They are not serialized into workflow parameters. This keeps provider clients and operation closures under application control while YieldStar persists step results and shared state.
 
-await reconciler.deploy(resources);
-state.close();
-```
+Provider create, update, read, and delete calls are durable steps with stable resource-scoped keys. A process crash after a completed create replays the cached result and continues at state persistence instead of creating the provider resource again. Retryable provider conditions become YieldStar delays, allowing the process to stop until the scheduler wakes the execution.
 
-The reconciler boundary consists of live resource objects, a state backend, and an event
-subscriber. Resource operations run in the host process.
+## State lifecycle
 
-## State
+`YieldStarStateBackend` stores one live resource per `notation/resource-state` store. The store ID is scoped by deployment and resource ID. Store absence is resource absence; no application tombstone is created.
 
-Each state record carries a revision. Updates and deletes can require the revision which
-the caller previously read:
+The runtime-assigned UUIDv7 `instanceId` distinguishes a deleted store from a later store created under the same logical ID. YieldStar's version is the concurrency token and is exposed as Notation's one-based `rev`. Workflow updates use `store.updateFrom` and deletes use `store.deleteFrom`, so both the instance and version must match the snapshot that informed the operation.
 
-```ts
-await state.update(resource.id, patch, resource.rev);
-```
+`values` uses YieldStar 0.5.0's merged `listStores` lifecycle API, and administrative cleanup uses `deleteStore`.
 
-A stale writer receives `RevConflict`. A missing record has revision zero, so
-`expectedRev: 0` means that the record must not exist.
+## Coordination
 
-The reconciler also takes a renewable per-resource lease before it reads a resource for
-mutation. The lease remains held across the provider operation and state write. Two
-hosts therefore cannot create or update the same resource concurrently through the same
-backend.
+Each deployment has a `notation/deployment-coordination` store. The workflow atomically claims it with `store.take`. A concurrent execution suspends as a durable waiter and is woken when the holder releases the store. The same execution can recover an acquisition across the store-commit/heap-write crash gap through YieldStar's applied-step ledger.
 
-Orphan deletion takes an additional snapshot lease. The snapshot remains stable while
-the reconciler decides which state records no longer appear in the desired graph.
+## Release boundary
 
-## Backends
+This slice delivers durable deploy reconciliation, drift handling, orphan deletion, Node SQLite execution, external state access, conditional persistence, and concurrent deployment serialization. The existing synchronous `Reconciler` remains the CLI execution path in this release.
 
-`@notation/state` provides file and memory backends. `@notation/state-sqlite` provides
-the reference database backend.
-
-Every backend implements the same contract:
-
-```ts
-interface StateBackend {
-  get(id: string): Promise<StateNode | undefined>;
-  has(id: string): Promise<boolean>;
-  update(
-    id: string,
-    patch: Partial<StateNode>,
-    expectedRev?: number,
-  ): Promise<{ rev: number }>;
-  delete(id: string, expectedRev?: number): Promise<void>;
-  values(): Promise<StateNode[]>;
-  lease(scope: string, ttl: number): Promise<Lease>;
-}
-```
-
-The dashboard reads this interface. It does not inspect a state file directly.
-
-## Events
-
-The reconciler accepts one subscriber:
-
-```ts
-const reconciler = new Reconciler({
-  state,
-  emit: async (event) => auditLog.write(event),
-});
-```
-
-`createNdjsonEventEmitter` adapts the subscriber to a versioned newline-delimited JSON
-stream. The CLI uses the same adapter for `deploy --json` and `destroy --json`.
-
-## Package boundary
-
-The CLI creates resources from compiled Notation programs, then hands those live objects
-to `Reconciler`. An application can construct the same resource classes directly.
-
-The reconciler does not serialise resource classes or execute operations in another
-process. Detached execution needs manifests, resource-reference encoding, actuator
-binding, and a runtime consumer. That work has its own RFC and release.
-
-## Acceptance
-
-The reconciler example is the compatibility test for this boundary. It must:
-
-1. Construct a resource without the CLI.
-2. Plan and deploy it through `Reconciler`.
-3. Close and reopen SQLite state.
-4. Plan and apply an update.
-5. Receive versioned events.
-6. Destroy the resource and remove its state.
-
-The example lives in `examples/reconciler` and runs without cloud credentials.
+The next stacked phase will move CLI deploy and destroy onto a resident workflow runtime, add durable destroy as a first-class workflow operation, and fan independent dependency-level resources into coordinated child executions.

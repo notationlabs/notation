@@ -78,6 +78,16 @@ Stores state and leases in SQLite. Select it in the CLI by setting
 const state = new SqliteStateBackend(".notation/state.db");
 ```
 
+### `YieldStarStateBackend`
+
+The durable workflow integration stores resources in YieldStar 0.5.0 stores and runs on the Node SQLite runtime. Each resource is a live store; a missing store means a missing resource.
+
+```ts
+const state = new YieldStarStateBackend(storeClient, "production");
+```
+
+YieldStar assigns a UUIDv7 `instanceId` when the store is created and increments its version on update. Conditional workflow updates and deletes compare both values, preventing a stale snapshot from modifying a deleted and recreated resource. The one-based value exposed as `StateNode.rev` is derived from the authoritative YieldStar store version.
+
 ### `StateBackend` interface
 
 All backends implement the same interface:
