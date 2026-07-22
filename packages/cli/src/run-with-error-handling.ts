@@ -1,21 +1,22 @@
 import type { Logger } from "./logger";
 
 export async function runWithCliErrorHandling(
-  fn: () => Promise<void>,
+  fn: () => Promise<unknown>,
   opts: { logger: Logger; command: string },
-): Promise<void> {
+): Promise<0 | 1> {
   try {
     await fn();
-  } catch (err: any) {
-    if (err.name === "CredentialsProviderError") {
+    return 0;
+  } catch (error: unknown) {
+    if (error instanceof Error && error.name === "CredentialsProviderError") {
       opts.logger.error(
         "\nAWS credentials not found.",
         "\n\nEnsure you have a default profile set up in ~/.aws/credentials.",
         `\n\nIf using another profile run AWS_PROFILE=otherProfile notation ${opts.command}.\n`,
       );
-      process.exit(1);
+      return 1;
     }
-    opts.logger.error(err);
-    process.exit(1);
+    opts.logger.error(error);
+    return 1;
   }
 }

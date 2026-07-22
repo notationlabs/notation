@@ -17,7 +17,7 @@ export function createLoggerReconcilerSubscriber(
       return;
     }
 
-    if (event.event === "reconciler.orphan-deletion.skipped") {
+    if (event.level === "warn") {
       logger.warn(event.event, event);
       return;
     }

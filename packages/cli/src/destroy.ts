@@ -7,7 +7,6 @@ import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
 import { redirectStdoutToStderr } from "./stdio";
-import { runWithCliErrorHandling } from "./run-with-error-handling";
 
 export type DestroyCommandOptions = {
   json?: boolean;
@@ -29,8 +28,5 @@ export async function destroy(
   const executionId = opts.executionId ?? randomUUID();
   logger.info(`Yieldstar execution ${executionId}`);
 
-  await runWithCliErrorHandling(
-    () => destroyApp({ entryPoint, emit, executionId }),
-    { logger, command: "destroy" },
-  );
+  await destroyApp({ entryPoint, emit, executionId });
 }
