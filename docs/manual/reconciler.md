@@ -38,7 +38,7 @@ The outer workflow supplies durable step execution, timers, shared stores, waiti
 
 Each live resource is one YieldStar store. Absence is represented by no store, not a tombstone. YieldStar's UUIDv7 store `instanceId` and version are authoritative for conditional update and delete; Notation exposes the version as the resource state's `rev`.
 
-Operations against the same `deploymentId` are serialized through a coordination store keyed by `executionId`. Resume a crashed operation with the same execution ID; use a new globally unique execution ID for every new deploy or destroy.
+Operations against the same `deploymentId` are serialized through a coordination store keyed by `executionId`. Resume a crashed operation with the same execution ID; use a new globally unique execution ID for every new deploy or destroy. An execution that must wait emits a `reconciler.coordination.waiting` event naming the holder before it suspends, which also identifies a crashed holder that should be resumed instead.
 
 Pass the complete desired set on every deployment. Persisted resources absent from that set are deleted through the supplied resource registry. Destroy removes current resources in reverse dependency order and then removes any persisted orphans that the registry can hydrate.
 

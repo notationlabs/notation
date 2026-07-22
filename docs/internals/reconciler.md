@@ -33,8 +33,8 @@ Every provider call, event emission, state read, state write, and coordination t
 
 Each resource is stored under `notation/resource-state` with a deployment-scoped ID. Conditional updates and deletes compare the snapshot's UUIDv7 `instanceId` and version, so a stale execution cannot modify a deleted and recreated store.
 
-Deploy and destroy share one `notation/deployment-coordination` store per deployment. `store.take` suspends a competing execution as a durable waiter and wakes it after the holder releases.
+Deploy and destroy share one `notation/deployment-coordination` store per deployment. `store.take` suspends a competing execution as a durable waiter and wakes it after the holder releases. Before suspending, the waiter emits `reconciler.coordination.waiting` naming the holding execution ID, so a wait behind a crashed execution is visible instead of silent.
 
 ## Events
 
-The durable workflows emit `reconciler.deploy.decision`, `reconciler.drift.detected`, `reconciler.operation.lifecycle`, and `reconciler.orphan-deletion.skipped`. Lifecycle events cover create, read, update, and delete with `start`, `success`, `error`, `skip`, or `dry-run` status.
+The durable workflows emit `reconciler.deploy.decision`, `reconciler.drift.detected`, `reconciler.operation.lifecycle`, `reconciler.coordination.waiting`, and `reconciler.orphan-deletion.skipped`. Lifecycle events cover create, read, update, and delete with `start`, `success`, `error`, `skip`, or `dry-run` status.

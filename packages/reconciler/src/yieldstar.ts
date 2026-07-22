@@ -81,18 +81,7 @@ export async function* deployWithYieldStar(
   step: YieldStarStep,
   opts: YieldStarDeployOptions,
 ): AsyncGenerator<any, void, any> {
-  const coordination = yield* step.store(yieldStarDeploymentCoordinationStore, {
-    id: opts.deploymentId,
-    initial: { holder: null },
-  });
-
-  yield* coordination.take(
-    "notation:coordination:acquire",
-    (state) => state.holder === null || state.holder === opts.executionId,
-    (draft) => {
-      draft.holder = opts.executionId;
-    },
-  );
+  const coordination = yield* acquireDeploymentCoordination(step, opts);
 
   try {
     const resourceById = new Map(
@@ -149,18 +138,7 @@ export async function* destroyWithYieldStar(
   step: YieldStarStep,
   opts: YieldStarDestroyOptions,
 ): AsyncGenerator<any, void, any> {
-  const coordination = yield* step.store(yieldStarDeploymentCoordinationStore, {
-    id: opts.deploymentId,
-    initial: { holder: null },
-  });
-
-  yield* coordination.take(
-    "notation:coordination:acquire",
-    (state) => state.holder === null || state.holder === opts.executionId,
-    (draft) => {
-      draft.holder = opts.executionId;
-    },
-  );
+  const coordination = yield* acquireDeploymentCoordination(step, opts);
 
   try {
     const resourceById = new Map(
@@ -216,6 +194,43 @@ export async function* destroyWithYieldStar(
       if (draft.holder === opts.executionId) draft.holder = null;
     });
   }
+}
+
+/**
+ * Serializes deploy and destroy per deployment. A stale holder (a crashed
+ * execution that was never resumed) parks this execution as a durable waiter,
+ * so the wait is surfaced as a warning event before suspending.
+ */
+async function* acquireDeploymentCoordination(
+  step: YieldStarStep,
+  opts: YieldStarOperationOptions,
+): AsyncGenerator<any, WorkflowStore<CoordinationState>, any> {
+  const coordination = yield* step.store(yieldStarDeploymentCoordinationStore, {
+    id: opts.deploymentId,
+    initial: { holder: null },
+  });
+
+  const snapshot = yield* coordination.get("notation:coordination:inspect");
+  const holder = snapshot.state.holder;
+  if (holder !== null && holder !== opts.executionId) {
+    yield* emitDurably(step, "notation:coordination:waiting", opts.emit, () => ({
+      level: "warn",
+      event: "reconciler.coordination.waiting",
+      deploymentId: opts.deploymentId,
+      executionId: opts.executionId,
+      holderExecutionId: holder,
+    }));
+  }
+
+  yield* coordination.take(
+    "notation:coordination:acquire",
+    (state) => state.holder === null || state.holder === opts.executionId,
+    (draft) => {
+      draft.holder = opts.executionId;
+    },
+  );
+
+  return coordination;
 }
 
 async function* reconcileResource(
@@ -646,14 +661,19 @@ function emitOperationLifecycle(
 export class YieldStarStateBackend {
   readonly #client: StoreClient;
   readonly #deploymentId: string;
+  // The deployment segment is URI-encoded so the ":" delimiter cannot appear
+  // inside it; otherwise deployment "app" would match stores of "app:blue"
+  // during prefix listing and delete them as orphans.
+  readonly #prefix: string;
 
   constructor(client: StoreClient, deploymentId: string) {
     this.#client = client;
     this.#deploymentId = deploymentId;
+    this.#prefix = `${encodeURIComponent(deploymentId)}:`;
   }
 
   storeId(resourceId: string) {
-    return `${this.#deploymentId}:${resourceId}`;
+    return `${this.#prefix}${resourceId}`;
   }
 
   async get(id: string): Promise<StateNode | undefined> {
@@ -740,11 +760,10 @@ export class YieldStarStateBackend {
   }
 
   async values(): Promise<StateNode[]> {
-    const prefix = `${this.#deploymentId}:`;
     const ids = await this.#client.listStores(yieldStarResourceStateStore);
     const snapshots = await Promise.all(
       ids
-        .filter((id) => id.startsWith(prefix))
+        .filter((id) => id.startsWith(this.#prefix))
         .map((id) => this.#tryGetSnapshot(id)),
     );
     return snapshots
@@ -760,11 +779,10 @@ export class YieldStarStateBackend {
   }
 
   async clear(): Promise<void> {
-    const prefix = `${this.#deploymentId}:`;
     const ids = await this.#client.listStores(yieldStarResourceStateStore);
     await Promise.all(
       ids
-        .filter((id) => id.startsWith(prefix))
+        .filter((id) => id.startsWith(this.#prefix))
         .map((id) =>
           this.#client.deleteStore({
             definition: yieldStarResourceStateStore,

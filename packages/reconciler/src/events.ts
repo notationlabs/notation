@@ -33,8 +33,17 @@ export type ReconcilerDriftDetectedEvent = {
   diff: Record<string, unknown>;
 };
 
+export type CoordinationWaitingEvent = {
+  level: "warn";
+  event: "reconciler.coordination.waiting";
+  deploymentId: string;
+  executionId: string;
+  holderExecutionId: string;
+};
+
 export type ReconcilerEvent =
   | OperationLifecycleEvent
+  | CoordinationWaitingEvent
   | ReconcilerDeployEvent
   | ReconcilerDriftDetectedEvent
   | import("./resource-registry").MissingResourceRegistryMatchWarningEvent;

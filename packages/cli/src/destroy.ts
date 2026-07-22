@@ -27,5 +27,19 @@ export async function destroy(
   logger.info(`Destroying ${entryPoint}\n`);
   const executionId = opts.executionId ?? randomUUID();
   logger.info(`YieldStar execution ${executionId}`);
-  await destroyApp({ entryPoint, emit, executionId });
+
+  try {
+    await destroyApp({ entryPoint, emit, executionId });
+  } catch (err: any) {
+    if (err.name === "CredentialsProviderError") {
+      logger.error(
+        "\nAWS credentials not found.",
+        "\n\nEnsure you have a default profile set up in ~/.aws/credentials.",
+        "\n\nIf using another profile run AWS_PROFILE=otherProfile notation destroy.\n",
+      );
+      process.exit(1);
+    }
+    logger.error(err);
+    process.exit(1);
+  }
 }

@@ -253,6 +253,73 @@ describe("YieldStar reconciliation", () => {
     runtime.close();
   });
 
+  it("emits a coordination waiting event when another execution holds the deployment", async () => {
+    let unblockCreate!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      unblockCreate = resolve;
+    });
+    let started!: () => void;
+    const createStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const TestResource = resource({ type: "test/yieldstar/coordination" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => {
+          started();
+          await blocked;
+        },
+        delete: async () => undefined,
+      });
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(
+      [new TestResource({ id: "held" })],
+      "coordination-waiting",
+      { emit: (event) => void events.push(event) },
+    );
+
+    const first = runtime.run("holder-execution");
+    await createStarted;
+    await runtime.run("waiter-execution");
+
+    expect(
+      events.find(
+        (event) => event.event === "reconciler.coordination.waiting",
+      ),
+    ).toMatchObject({
+      level: "warn",
+      deploymentId: "coordination-waiting",
+      executionId: "waiter-execution",
+      holderExecutionId: "holder-execution",
+    });
+
+    unblockCreate();
+    await first;
+    runtime.close();
+  });
+
+  it("scopes store listing to the exact deployment despite prefix-like IDs", async () => {
+    const database = createSqliteDb({ path: ":memory:" });
+    const storeClient = new SqliteStoreClient({
+      db: database,
+      schedulerClient: new TestScheduler(),
+    });
+    const app = new YieldStarStateBackend(storeClient, "app");
+    const appBlue = new YieldStarStateBackend(storeClient, "app:blue");
+
+    await app.update("site", 0, statePatch("site"));
+    await appBlue.update("site", 0, statePatch("site"));
+
+    expect(await app.values()).toHaveLength(1);
+    expect(await appBlue.values()).toHaveLength(1);
+
+    await app.clear();
+    expect(await app.values()).toHaveLength(0);
+    expect(await appBlue.values()).toHaveLength(1);
+    expect(await appBlue.get("site")).toBeDefined();
+    database.close();
+  });
+
   it("deletes orphaned resources through the registry on a later deployment", async () => {
     const deleteSpy = vi.fn(async () => undefined);
     const OrphanResource = resource({ type: "test/yieldstar/orphan" })
