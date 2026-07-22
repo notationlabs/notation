@@ -2,7 +2,11 @@ import type { StateNode } from "@notation/state";
 import { isPlainObject } from "@notation/utils";
 import { defineStore, type StandardSchemaV1 } from "./yieldstar";
 
-export type StoredResourceState = Omit<StateNode, "rev">;
+export const RESOURCE_CREATION_TOKEN = "$notationCreateToken";
+
+export type StoredResourceState = Omit<StateNode, "rev"> & {
+  [RESOURCE_CREATION_TOKEN]?: string;
+};
 export type CoordinationState = { holder: string | null };
 
 const storedResourceStateSchema = plainObjectSchema<StoredResourceState>(
@@ -35,7 +39,9 @@ export function toStateNode(snapshot: {
   state: StoredResourceState;
   version: number;
 }): StateNode {
-  return { ...snapshot.state, rev: snapshot.version + 1 } as StateNode;
+  const { [RESOURCE_CREATION_TOKEN]: _creationToken, ...state } =
+    snapshot.state;
+  return { ...state, rev: snapshot.version + 1 } as StateNode;
 }
 
 export function withoutRev(
