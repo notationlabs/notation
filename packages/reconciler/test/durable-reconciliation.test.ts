@@ -218,10 +218,12 @@ describe("conditional state persistence", () => {
     const runtime = createRuntime([], "conditional-create");
     const first = runtime.state.update("resource", 0, {
       ...statePatch("resource"),
+      rev: 41,
       output: { winner: "first" },
     });
     const second = runtime.state.update("resource", 0, {
       ...statePatch("resource"),
+      rev: 42,
       output: { winner: "second" },
     });
 
