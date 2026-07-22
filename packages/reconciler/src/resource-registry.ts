@@ -6,7 +6,7 @@ export type MissingResourceRegistryMatchWarningEvent = {
   level: "warn";
   event: "reconciler.orphan-deletion.skipped";
   reason: "resource-type-not-registered";
-  workflow: "deploy" | "refresh";
+  workflow: "deploy" | "refresh" | "destroy";
   resourceId: string;
   resourceType: ResourceType;
 };
@@ -46,7 +46,7 @@ export function resolveResourceClass(
 }
 
 export function createMissingResourceRegistryMatchWarningEvent(opts: {
-  workflow: "deploy" | "refresh";
+  workflow: "deploy" | "refresh" | "destroy";
   resourceId: string;
   resourceType: ResourceType;
 }): MissingResourceRegistryMatchWarningEvent {

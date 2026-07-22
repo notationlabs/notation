@@ -28,6 +28,32 @@ export type ErrorMatcher = {
   reason: string;
 };
 
+/**
+ * Maps an untyped provider error to its resource-declared reconciliation
+ * behaviour.
+ */
+export function findErrorMatcher(
+  error: unknown,
+  matchers: ErrorMatcher[] | undefined,
+): ErrorMatcher | undefined {
+  if (!matchers || matchers.length === 0) return undefined;
+
+  const name =
+    typeof error === "object" && error && "name" in error
+      ? String((error as { name?: unknown }).name)
+      : undefined;
+  const message =
+    typeof error === "object" && error && "message" in error
+      ? String((error as { message?: unknown }).message)
+      : undefined;
+
+  return matchers.find((matcher) => {
+    if (matcher.name !== name) return false;
+    if (matcher.message && matcher.message !== message) return false;
+    return true;
+  });
+}
+
 export type ResultCondition<T, K extends keyof T = keyof T> = {
   key: K;
   reason: string;
