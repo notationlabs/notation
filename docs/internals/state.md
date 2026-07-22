@@ -1,14 +1,14 @@
 # State
 
-Notation CLI deploy, destroy, plan, and dashboard use YieldStar 0.5.0 stores in `.notation/workflows.db`. Override the database path with `NOTATION_STATE_PATH`.
+Notation CLI deploy, destroy, plan, and dashboard use Yieldstar 0.5.0 stores in `.notation/workflows.db`. Override the database path with `NOTATION_STATE_PATH`.
 
 Each live resource is a `notation/resource-state` store scoped by deployment and resource ID. A missing store means the resource is absent. No application tombstone is written.
 
 ```ts
-const state = new YieldStarStateBackend(storeClient, "infra/api.ts");
+const state = new YieldstarStateBackend(storeClient, "infra/api.ts");
 ```
 
-The runtime assigns a UUIDv7 `instanceId` when a store is created and increments its version on update. Conditional workflow updates and deletes compare both values, preventing a stale snapshot from modifying a deleted and recreated resource. The one-based value exposed as `StateNode.rev` is derived from the authoritative YieldStar store version.
+The runtime assigns a UUIDv7 `instanceId` when a store is created and increments its version on update. Conditional workflow updates and deletes compare both values, preventing a stale snapshot from modifying a deleted and recreated resource. The one-based value exposed as `StateNode.rev` is derived from the authoritative Yieldstar store version.
 
 ```ts
 interface StateBackend {
@@ -20,6 +20,6 @@ interface StateBackend {
 }
 ```
 
-Coordination is not part of the state backend contract. The outer YieldStar workflow serializes deploy and destroy through a deployment coordination store and records applied store steps for crash-safe replay.
+Coordination is not part of the state backend contract. The outer Yieldstar workflow serializes deploy and destroy through a deployment coordination store and records applied store steps for crash-safe replay.
 
 `MemoryStateBackend`, `FileStateBackend`, and `SqliteStateBackend` remain data adapters for tests and embedded read/write consumers. They are not CLI execution runtimes and do not provide mutation coordination.

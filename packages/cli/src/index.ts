@@ -7,7 +7,7 @@ import { plan } from "./plan";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
 import { startDashboardServer } from "@notation/dashboard";
-import { NodeYieldStarRuntime } from "@notation/core";
+import { NodeYieldstarRuntime } from "@notation/core";
 
 program
   .command("compile")
@@ -22,7 +22,7 @@ program
   .argument("<entryPoint>", "entryPoint")
   .description("Start Notation Dashboard")
   .action(async (entryPoint) => {
-    const runtime = new NodeYieldStarRuntime({ deploymentId: entryPoint });
+    const runtime = new NodeYieldstarRuntime({ deploymentId: entryPoint });
     await startDashboardServer({ state: runtime.state });
   });
 

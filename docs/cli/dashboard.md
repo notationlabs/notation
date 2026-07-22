@@ -4,7 +4,7 @@
 notation dashboard <entryPoint>
 ```
 
-Starts a local web dashboard for observing the deployment's YieldStar resource stores.
+Starts a local web dashboard for observing the deployment's Yieldstar resource stores.
 
 ```sh
 notation dashboard infra/api.ts

@@ -1,8 +1,8 @@
 # Durable reconciler
 
-This example deploys two static sites from an ordinary Node.js program using YieldStar 0.5.0 for durable execution, state, retries, waiting, and deployment coordination.
+This example deploys two static sites from an ordinary Node.js program using Yieldstar 0.5.0 for durable execution, state, retries, waiting, and deployment coordination.
 
-[`src/index.ts`](./src/index.ts) owns the outer workflow and Node SQLite runtime. It passes YieldStar's `step` context to `deployWithYieldStar`, while [`src/static-site.ts`](./src/static-site.ts) contains only the desired resources and provider lifecycle operations.
+[`src/index.ts`](./src/index.ts) owns the outer workflow and Node SQLite runtime. It passes Yieldstar's `step` context to `deployWithYieldstar`, while [`src/static-site.ts`](./src/static-site.ts) contains only the desired resources and provider lifecycle operations.
 
 Run it from the repository root:
 

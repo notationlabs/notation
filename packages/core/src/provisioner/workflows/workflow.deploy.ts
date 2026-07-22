@@ -1,19 +1,19 @@
 import {
-  deployWithYieldStar,
+  deployWithYieldstar,
   createLoggerReconcilerSubscriber,
   type ReconcilerEventEmitter,
   type ResourceRegistry,
 } from "@notation/reconciler";
 import { createWorkflowRouter, workflow } from "yieldstar";
 import { getResourceGraph } from "src/orchestrator/graph";
-import { NodeYieldStarRuntime } from "../yieldstar-runtime";
+import { NodeYieldstarRuntime } from "../yieldstar-runtime";
 
 export type DeployAppOptions = {
   entryPoint: string;
   driftDetection?: boolean;
   dryRun?: boolean;
   registry?: ResourceRegistry;
-  runtime?: NodeYieldStarRuntime;
+  runtime?: NodeYieldstarRuntime;
   executionId?: string;
   databasePath?: string;
   emit?: ReconcilerEventEmitter;
@@ -32,9 +32,9 @@ export async function deployApp({
   const graph = await getResourceGraph(entryPoint);
   const runtime =
     suppliedRuntime ??
-    new NodeYieldStarRuntime({ deploymentId: entryPoint, databasePath });
+    new NodeYieldstarRuntime({ deploymentId: entryPoint, databasePath });
   const deploy = workflow(async function* (step, event) {
-    yield* deployWithYieldStar(step, {
+    yield* deployWithYieldstar(step, {
       deploymentId: runtime.deploymentId,
       executionId: event.executionId,
       resources: graph.resources,

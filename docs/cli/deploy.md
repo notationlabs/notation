@@ -4,7 +4,7 @@
 notation deploy <entryPoint>
 ```
 
-Compiles and durably deploys the stack through the resident YieldStar 0.5.0 Node runtime.
+Compiles and durably deploys the stack through the resident Yieldstar 0.5.0 Node runtime.
 
 ```sh
 notation deploy infra/api.ts
@@ -20,7 +20,7 @@ notation deploy infra/api.ts --json > deploy.ndjson
 
 ## Durable execution
 
-The command prints its YieldStar execution ID before starting provider work. If the process crashes, resume the same durable heap with that ID:
+The command prints its Yieldstar execution ID before starting provider work. If the process crashes, resume the same durable heap with that ID:
 
 ```sh
 notation deploy infra/api.ts --execution-id <id>
@@ -36,7 +36,7 @@ Retryable provider conditions and consistency reads suspend on durable SQLite ti
 
 2. **Build resource graph** – the worker imports the compiled output and collects declared resources.
 
-3. **Reconcile** – Notation compares desired resources with YieldStar stores, then creates, updates, recreates, or leaves each resource unchanged.
+3. **Reconcile** – Notation compares desired resources with Yieldstar stores, then creates, updates, recreates, or leaves each resource unchanged.
 
 4. **Order dependencies** – dependency levels run in topological order.
 

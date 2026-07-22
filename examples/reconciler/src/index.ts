@@ -8,9 +8,9 @@ import {
   createSqliteDb,
 } from "@yieldstar/sqlite-runtime/node";
 import {
-  YieldStarStateBackend,
+  YieldstarStateBackend,
   createResourceRegistry,
-  deployWithYieldStar,
+  deployWithYieldstar,
 } from "@notation/reconciler";
 import pino from "pino";
 import { createWorkflowRouter, workflow } from "yieldstar";
@@ -24,7 +24,7 @@ const schedulerClient = new SqliteSchedulerClient({
   timersClient: new SqliteTimersClient(database),
 });
 const storeClient = new SqliteStoreClient({ db: database, schedulerClient });
-const state = new YieldStarStateBackend(storeClient, "static-sites");
+const state = new YieldstarStateBackend(storeClient, "static-sites");
 
 const resources = [
   new StaticSite({
@@ -44,7 +44,7 @@ const resources = [
 ];
 
 const deploy = workflow(async function* (step, event) {
-  yield* deployWithYieldStar(step, {
+  yield* deployWithYieldstar(step, {
     deploymentId: "static-sites",
     executionId: event.executionId,
     resources,

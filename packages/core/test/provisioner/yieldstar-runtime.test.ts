@@ -1,16 +1,16 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { deployWithYieldStar } from "@notation/reconciler";
+import { deployWithYieldstar } from "@notation/reconciler";
 import { resource } from "@notation/resource";
 import { createWorkflowRouter, workflow } from "yieldstar";
 import { describe, expect, it } from "vitest";
-import { NodeYieldStarRuntime } from "src/provisioner/yieldstar-runtime";
+import { NodeYieldstarRuntime } from "src/provisioner/yieldstar-runtime";
 
-describe("NodeYieldStarRuntime", () => {
+describe("NodeYieldstarRuntime", () => {
   it("stays resident across a provider delay and resumes from the SQLite event loop", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "notation-runtime-"));
-    const runtime = new NodeYieldStarRuntime({
+    const runtime = new NodeYieldstarRuntime({
       deploymentId: "resident-wait",
       databasePath: path.join(directory, "workflows.db"),
     });
@@ -33,7 +33,7 @@ describe("NodeYieldStarRuntime", () => {
       });
     const resources = [new PendingResource({ id: "pending" })];
     const deploy = workflow(async function* (step, event) {
-      yield* deployWithYieldStar(step, {
+      yield* deployWithYieldstar(step, {
         deploymentId: runtime.deploymentId,
         executionId: event.executionId,
         resources,

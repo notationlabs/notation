@@ -14,7 +14,7 @@ import {
   SqliteTimersClient,
   createSqliteDb,
 } from "@yieldstar/sqlite-runtime/node";
-import { YieldStarStateBackend } from "@notation/reconciler";
+import { YieldstarStateBackend } from "@notation/reconciler";
 import pino, { type Logger } from "pino";
 
 export const DEFAULT_WORKFLOW_STATE_PATH = ".notation/workflows.db";
@@ -23,7 +23,7 @@ export function resolveWorkflowStatePath(): string {
   return process.env.NOTATION_STATE_PATH ?? DEFAULT_WORKFLOW_STATE_PATH;
 }
 
-export type NodeYieldStarRuntimeOptions = {
+export type NodeYieldstarRuntimeOptions = {
   deploymentId: string;
   databasePath?: string;
   logger?: Logger;
@@ -35,10 +35,10 @@ export type RunWorkflowOptions = {
   params?: Record<string, unknown>;
 };
 
-/** Resident YieldStar 0.5.0 Node runtime used by Notation application commands. */
-export class NodeYieldStarRuntime {
+/** Resident Yieldstar 0.5.0 Node runtime used by Notation application commands. */
+export class NodeYieldstarRuntime {
   readonly deploymentId: string;
-  readonly state: YieldStarStateBackend;
+  readonly state: YieldstarStateBackend;
   readonly #database: ReturnType<typeof createSqliteDb>;
   readonly #eventLoop: SqliteEventLoop;
   readonly #heapClient: SqliteHeapClient;
@@ -47,7 +47,7 @@ export class NodeYieldStarRuntime {
   readonly #logger: Logger;
   #running = false;
 
-  constructor(opts: NodeYieldStarRuntimeOptions) {
+  constructor(opts: NodeYieldstarRuntimeOptions) {
     this.deploymentId = opts.deploymentId;
     this.#logger = opts.logger ?? pino({ level: "silent" });
     this.#database = createSqliteDb({
@@ -64,7 +64,7 @@ export class NodeYieldStarRuntime {
     });
     this.#heapClient = new SqliteHeapClient(this.#database);
     this.#eventLoop = new SqliteEventLoop(this.#database);
-    this.state = new YieldStarStateBackend(
+    this.state = new YieldstarStateBackend(
       this.#storeClient,
       this.deploymentId,
     );
@@ -76,7 +76,7 @@ export class NodeYieldStarRuntime {
   ): Promise<unknown> {
     if (this.#running) {
       throw new Error(
-        "The Node YieldStar runtime already has an active workflow",
+        "The Node Yieldstar runtime already has an active workflow",
       );
     }
     this.#running = true;
@@ -113,7 +113,7 @@ export class NodeYieldStarRuntime {
           rejectCompletion(error);
           return;
         }
-        this.#logger.error({ err: error }, "YieldStar replay failed");
+        this.#logger.error({ err: error }, "Yieldstar replay failed");
       }
     };
 
@@ -136,7 +136,7 @@ export class NodeYieldStarRuntime {
   close(): void {
     if (this.#running) {
       throw new Error(
-        "Cannot close the Node YieldStar runtime while a workflow is active",
+        "Cannot close the Node Yieldstar runtime while a workflow is active",
       );
     }
     this.#eventLoop.stop();

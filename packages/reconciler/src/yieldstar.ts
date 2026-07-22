@@ -43,23 +43,23 @@ const coordinationStateSchema = plainObjectSchema<CoordinationState>(
     (value.holder === null || typeof value.holder === "string"),
 );
 
-export const yieldStarResourceStateStore = defineStore(
+export const yieldstarResourceStateStore = defineStore(
   "notation/resource-state",
   storedResourceStateSchema,
 );
 
-export const yieldStarDeploymentCoordinationStore = defineStore(
+export const yieldstarDeploymentCoordinationStore = defineStore(
   "notation/deployment-coordination",
   coordinationStateSchema,
 );
 
-type YieldStarStep = Parameters<WorkflowFn<any, any, any>>[0];
+type YieldstarStep = Parameters<WorkflowFn<any, any, any>>[0];
 
-export type YieldStarOperationOptions = {
+export type YieldstarOperationOptions = {
   deploymentId: string;
   executionId: string;
   resources: BaseResource[];
-  state: YieldStarStateBackend;
+  state: YieldstarStateBackend;
   registry?: ResourceRegistry;
   dryRun?: boolean;
   emit?: ReconcilerEventEmitter;
@@ -67,19 +67,19 @@ export type YieldStarOperationOptions = {
   readPollOptions?: PollOptions;
 };
 
-export type YieldStarDeployOptions = YieldStarOperationOptions & {
+export type YieldstarDeployOptions = YieldstarOperationOptions & {
   driftDetection?: boolean;
 };
 
-export type YieldStarDestroyOptions = YieldStarOperationOptions;
+export type YieldstarDestroyOptions = YieldstarOperationOptions;
 
 /**
- * Reconciles resources as a custom YieldStar step. The caller owns the outer
+ * Reconciles resources as a custom Yieldstar step. The caller owns the outer
  * workflow and runtime; Notation owns resource decisions and lifecycle calls.
  */
-export async function* deployWithYieldStar(
-  step: YieldStarStep,
-  opts: YieldStarDeployOptions,
+export async function* deployWithYieldstar(
+  step: YieldstarStep,
+  opts: YieldstarDeployOptions,
 ): AsyncGenerator<any, void, any> {
   const coordination = yield* acquireDeploymentCoordination(step, opts);
 
@@ -134,9 +134,9 @@ export async function* deployWithYieldStar(
 }
 
 /** Durably destroys persisted resources in reverse dependency order. */
-export async function* destroyWithYieldStar(
-  step: YieldStarStep,
-  opts: YieldStarDestroyOptions,
+export async function* destroyWithYieldstar(
+  step: YieldstarStep,
+  opts: YieldstarDestroyOptions,
 ): AsyncGenerator<any, void, any> {
   const coordination = yield* acquireDeploymentCoordination(step, opts);
 
@@ -202,10 +202,10 @@ export async function* destroyWithYieldStar(
  * so the wait is surfaced as a warning event before suspending.
  */
 async function* acquireDeploymentCoordination(
-  step: YieldStarStep,
-  opts: YieldStarOperationOptions,
+  step: YieldstarStep,
+  opts: YieldstarOperationOptions,
 ): AsyncGenerator<any, WorkflowStore<CoordinationState>, any> {
-  const coordination = yield* step.store(yieldStarDeploymentCoordinationStore, {
+  const coordination = yield* step.store(yieldstarDeploymentCoordinationStore, {
     id: opts.deploymentId,
     initial: { holder: null },
   });
@@ -234,9 +234,9 @@ async function* acquireDeploymentCoordination(
 }
 
 async function* reconcileResource(
-  step: YieldStarStep,
+  step: YieldstarStep,
   resource: BaseResource,
-  opts: YieldStarDeployOptions,
+  opts: YieldstarDeployOptions,
 ): AsyncGenerator<any, void, any> {
   const prefix = `notation:resource:${resource.id}`;
   let stateNode = yield* step.run(`${prefix}:state:lookup`, () =>
@@ -244,7 +244,7 @@ async function* reconcileResource(
   );
   let stateStore: WorkflowStore<StoredResourceState> | undefined;
   let snapshot:
-    Awaited<ReturnType<YieldStarStateBackend["snapshot"]>> | undefined;
+    Awaited<ReturnType<YieldstarStateBackend["snapshot"]>> | undefined;
   if (stateNode) {
     stateStore = yield* openResourceState(step, opts.state, resource.id);
     snapshot = yield* stateStore.get(`${prefix}:state:get`);
@@ -383,7 +383,7 @@ async function* reconcileResource(
     };
 
     if (!stateStore || !snapshot) {
-      yield* step.store(yieldStarResourceStateStore, {
+      yield* step.store(yieldstarResourceStateStore, {
         id: opts.state.storeId(resource.id),
         initial: nextState,
       });
@@ -424,9 +424,9 @@ async function* reconcileResource(
 }
 
 async function* deleteResource(
-  step: YieldStarStep,
+  step: YieldstarStep,
   resource: BaseResource,
-  opts: YieldStarOperationOptions,
+  opts: YieldstarOperationOptions,
   suffix: string,
 ): AsyncGenerator<any, void, any> {
   const prefix = `notation:${suffix}:${resource.id}`;
@@ -507,9 +507,9 @@ async function* deleteResource(
 }
 
 async function* readRemote(
-  step: YieldStarStep,
+  step: YieldstarStep,
   resource: BaseResource,
-  opts: YieldStarOperationOptions,
+  opts: YieldstarOperationOptions,
   key: string,
 ): AsyncGenerator<
   any,
@@ -595,7 +595,7 @@ async function* readRemote(
 }
 
 function runProviderCall<T>(
-  step: YieldStarStep,
+  step: YieldstarStep,
   key: string,
   call: () => T | Promise<T>,
   resource: BaseResource,
@@ -617,17 +617,17 @@ function runProviderCall<T>(
 }
 
 function openResourceState(
-  step: YieldStarStep,
-  state: YieldStarStateBackend,
+  step: YieldstarStep,
+  state: YieldstarStateBackend,
   resourceId: string,
 ) {
-  return step.store(yieldStarResourceStateStore, {
+  return step.store(yieldstarResourceStateStore, {
     id: state.storeId(resourceId),
   });
 }
 
 function emitDurably(
-  step: YieldStarStep,
+  step: YieldstarStep,
   key: string,
   emit: ReconcilerEventEmitter | undefined,
   event: () => Parameters<ReconcilerEventEmitter>[0],
@@ -638,7 +638,7 @@ function emitDurably(
 }
 
 function emitOperationLifecycle(
-  step: YieldStarStep,
+  step: YieldstarStep,
   key: string,
   emit: ReconcilerEventEmitter | undefined,
   resource: BaseResource,
@@ -657,8 +657,8 @@ function emitOperationLifecycle(
   );
 }
 
-/** A Notation state backend backed by YieldStar 0.5 durable stores. */
-export class YieldStarStateBackend {
+/** A Notation state backend backed by Yieldstar 0.5 durable stores. */
+export class YieldstarStateBackend {
   readonly #client: StoreClient;
   readonly #deploymentId: string;
   // The deployment segment is URI-encoded so the ":" delimiter cannot appear
@@ -694,11 +694,11 @@ export class YieldStarStateBackend {
   > {
     try {
       return await this.#client.getStore({
-        definition: yieldStarResourceStateStore,
+        definition: yieldstarResourceStateStore,
         id: storeId,
       });
     } catch (error) {
-      const ids = await this.#client.listStores(yieldStarResourceStateStore);
+      const ids = await this.#client.listStores(yieldstarResourceStateStore);
       if (!ids.includes(storeId)) return undefined;
       throw error;
     }
@@ -719,7 +719,7 @@ export class YieldStarStateBackend {
       if (expectedRev !== 0) throw new RevConflict(id, expectedRev, undefined);
       const initial = { ...patch, id } as StoredResourceState;
       const created = await this.#client.getOrCreateStore({
-        definition: yieldStarResourceStateStore,
+        definition: yieldstarResourceStateStore,
         id: storeId,
         initial,
       });
@@ -730,7 +730,7 @@ export class YieldStarStateBackend {
     if (actualRev !== expectedRev)
       throw new RevConflict(id, expectedRev, actualRev);
     const result = await this.#client.updateStoreFrom({
-      definition: yieldStarResourceStateStore,
+      definition: yieldstarResourceStateStore,
       id: storeId,
       snapshot,
       updater: (draft) => {
@@ -752,7 +752,7 @@ export class YieldStarStateBackend {
     if (actualRev !== expectedRev)
       throw new RevConflict(id, expectedRev, actualRev);
     const result = await this.#client.deleteStoreFrom({
-      definition: yieldStarResourceStateStore,
+      definition: yieldstarResourceStateStore,
       id: storeId,
       snapshot,
     });
@@ -760,7 +760,7 @@ export class YieldStarStateBackend {
   }
 
   async values(): Promise<StateNode[]> {
-    const ids = await this.#client.listStores(yieldStarResourceStateStore);
+    const ids = await this.#client.listStores(yieldstarResourceStateStore);
     const snapshots = await Promise.all(
       ids
         .filter((id) => id.startsWith(this.#prefix))
@@ -773,19 +773,19 @@ export class YieldStarStateBackend {
 
   snapshot(id: string) {
     return this.#client.getStore({
-      definition: yieldStarResourceStateStore,
+      definition: yieldstarResourceStateStore,
       id: this.storeId(id),
     });
   }
 
   async clear(): Promise<void> {
-    const ids = await this.#client.listStores(yieldStarResourceStateStore);
+    const ids = await this.#client.listStores(yieldstarResourceStateStore);
     await Promise.all(
       ids
         .filter((id) => id.startsWith(this.#prefix))
         .map((id) =>
           this.#client.deleteStore({
-            definition: yieldStarResourceStateStore,
+            definition: yieldstarResourceStateStore,
             id,
           }),
         ),

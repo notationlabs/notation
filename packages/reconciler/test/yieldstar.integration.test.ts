@@ -13,10 +13,10 @@ import pino from "pino";
 import { createWorkflowRouter, workflow } from "yieldstar";
 import { describe, expect, it, vi } from "vitest";
 import {
-  YieldStarStateBackend,
-  deployWithYieldStar,
-  destroyWithYieldStar,
-  yieldStarResourceStateStore,
+  YieldstarStateBackend,
+  deployWithYieldstar,
+  destroyWithYieldstar,
+  yieldstarResourceStateStore,
 } from "../src/yieldstar";
 import type { ReconcilerEvent } from "../src/events";
 import {
@@ -26,7 +26,7 @@ import {
 
 const logger = pino({ level: "silent" });
 
-describe("YieldStar reconciliation", () => {
+describe("Yieldstar reconciliation", () => {
   it("waits durably for a retryable provider and persists after success", async () => {
     let attempts = 0;
     const PendingResource = resource({ type: "test/yieldstar/pending" })
@@ -202,7 +202,7 @@ describe("YieldStar reconciliation", () => {
     await runtime.state.clear();
     await runtime.state.update("resource", 0, statePatch("resource"));
     const staleDelete = await runtime.storeClient.deleteStoreFrom({
-      definition: yieldStarResourceStateStore,
+      definition: yieldstarResourceStateStore,
       id: runtime.state.storeId("resource"),
       snapshot: originalSnapshot,
     });
@@ -304,8 +304,8 @@ describe("YieldStar reconciliation", () => {
       db: database,
       schedulerClient: new TestScheduler(),
     });
-    const app = new YieldStarStateBackend(storeClient, "app");
-    const appBlue = new YieldStarStateBackend(storeClient, "app:blue");
+    const app = new YieldstarStateBackend(storeClient, "app");
+    const appBlue = new YieldstarStateBackend(storeClient, "app:blue");
 
     await app.update("site", 0, statePatch("site"));
     await appBlue.update("site", 0, statePatch("site"));
@@ -408,9 +408,9 @@ function createRuntime(
     db: database,
     schedulerClient: scheduler,
   });
-  const state = new YieldStarStateBackend(storeClient, deploymentId);
+  const state = new YieldstarStateBackend(storeClient, deploymentId);
   const deploy = workflow(async function* (step, event) {
-    yield* deployWithYieldStar(step, {
+    yield* deployWithYieldstar(step, {
       deploymentId,
       executionId: event.executionId,
       resources,
@@ -422,7 +422,7 @@ function createRuntime(
     });
   });
   const destroy = workflow(async function* (step, event) {
-    yield* destroyWithYieldStar(step, {
+    yield* destroyWithYieldstar(step, {
       deploymentId,
       executionId: event.executionId,
       resources,

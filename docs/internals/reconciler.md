@@ -1,10 +1,10 @@
 # Reconciler
 
-The reconciler expresses deployment and destruction as YieldStar async generators. Notation owns desired-state decisions and provider lifecycle; the caller's YieldStar runtime owns durable execution, waiting, shared state, and coordination.
+The reconciler expresses deployment and destruction as Yieldstar async generators. Notation owns desired-state decisions and provider lifecycle; the caller's Yieldstar runtime owns durable execution, waiting, shared state, and coordination.
 
 ## Deploy flow
 
-`deployWithYieldStar` acquires the deployment coordination store, walks dependency levels in order, decides an action for every resource, executes provider calls as durable steps, persists the result in a resource store, and deletes registered orphans.
+`deployWithYieldstar` acquires the deployment coordination store, walks dependency levels in order, decides an action for every resource, executes provider calls as durable steps, persists the result in a resource store, and deletes registered orphans.
 
 | Condition | Decision |
 | --- | --- |
@@ -19,13 +19,13 @@ Dry-run deploy performs decisions and emits lifecycle events without calling pro
 
 ## Destroy flow
 
-`destroyWithYieldStar` is a first-class durable operation. It acquires the same deployment coordination store as deploy, deletes desired resources in reverse dependency order, deletes hydratable persisted orphans, and conditionally removes each resource store only after the provider delete succeeds or reports that the resource is already absent.
+`destroyWithYieldstar` is a first-class durable operation. It acquires the same deployment coordination store as deploy, deletes desired resources in reverse dependency order, deletes hydratable persisted orphans, and conditionally removes each resource store only after the provider delete succeeds or reports that the resource is already absent.
 
 Provider delete is a stable durable step. If the process crashes after the provider acknowledges deletion but before state removal, replay uses the cached delete result and continues at the conditional store delete.
 
 ## Waiting and replay
 
-Retryable provider errors become YieldStar `RetryableError` delays. The resident Node runtime can remain idle until the SQLite timer queues a wake-up, then rebuild the resource graph and replay completed heap steps. Reads that wait for provider consistency use the same mechanism.
+Retryable provider errors become Yieldstar `RetryableError` delays. The resident Node runtime can remain idle until the SQLite timer queues a wake-up, then rebuild the resource graph and replay completed heap steps. Reads that wait for provider consistency use the same mechanism.
 
 Every provider call, event emission, state read, state write, and coordination transition has a stable step key. A resumed execution must use the same execution ID. A new deploy or destroy must use a new execution ID so its heap does not alias an earlier operation.
 
