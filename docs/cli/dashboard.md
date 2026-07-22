@@ -1,21 +1,13 @@
 # notation dashboard
 
 ```sh
-notation dashboard
+notation dashboard <entryPoint>
 ```
 
-Starts a local web dashboard for observing deployment state.
+Starts a local web dashboard for observing the deployment's YieldStar resource stores.
 
 ```sh
-notation dashboard
+notation dashboard infra/api.ts
 ```
 
-The dashboard uses the same state backend as deploy and destroy. Set
-`NOTATION_STATE_PATH` to select SQLite:
-
-```sh
-NOTATION_STATE_PATH=.notation/state.db notation dashboard
-```
-
-The server reads through `StateBackend`, so file and SQLite state produce the same
-dashboard payload.
+The dashboard reads `.notation/workflows.db`, the same database used by deploy, destroy, and plan. Set `NOTATION_STATE_PATH` to choose another SQLite database path.

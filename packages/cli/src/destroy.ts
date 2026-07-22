@@ -3,12 +3,14 @@ import {
   createNdjsonEventEmitter,
   destroyApp,
 } from "@notation/core";
+import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
 import { redirectStdoutToStderr } from "./stdio";
 
 export type DestroyCommandOptions = {
   json?: boolean;
+  executionId?: string;
   logger?: Logger;
 };
 
@@ -23,5 +25,7 @@ export async function destroy(
 
   await compile(entryPoint, { logger });
   logger.info(`Destroying ${entryPoint}\n`);
-  await destroyApp({ entryPoint, emit });
+  const executionId = opts.executionId ?? randomUUID();
+  logger.info(`YieldStar execution ${executionId}`);
+  await destroyApp({ entryPoint, emit, executionId });
 }

@@ -1,19 +1,21 @@
 import {
-  Reconciler,
+  deployWithYieldStar,
   createLoggerReconcilerSubscriber,
   type ReconcilerEventEmitter,
   type ResourceRegistry,
 } from "@notation/reconciler";
-import type { StateBackend } from "@notation/state";
+import { createWorkflowRouter, workflow } from "yieldstar";
 import { getResourceGraph } from "src/orchestrator/graph";
-import { createDefaultStateBackend } from "../state-backend";
+import { NodeYieldStarRuntime } from "../yieldstar-runtime";
 
 export type DeployAppOptions = {
   entryPoint: string;
   driftDetection?: boolean;
   dryRun?: boolean;
   registry?: ResourceRegistry;
-  state?: StateBackend;
+  runtime?: NodeYieldStarRuntime;
+  executionId?: string;
+  databasePath?: string;
   emit?: ReconcilerEventEmitter;
 };
 
@@ -22,19 +24,33 @@ export async function deployApp({
   driftDetection = true,
   dryRun = false,
   registry,
-  state: stateBackend,
+  runtime: suppliedRuntime,
+  executionId,
+  databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: DeployAppOptions): Promise<void> {
   const graph = await getResourceGraph(entryPoint);
-  const state = stateBackend ?? createDefaultStateBackend();
-  const reconciler = new Reconciler({
-    state,
-    registry,
-    emit,
+  const runtime =
+    suppliedRuntime ??
+    new NodeYieldStarRuntime({ deploymentId: entryPoint, databasePath });
+  const deploy = workflow(async function* (step, event) {
+    yield* deployWithYieldStar(step, {
+      deploymentId: runtime.deploymentId,
+      executionId: event.executionId,
+      resources: graph.resources,
+      state: runtime.state,
+      registry,
+      emit,
+      dryRun,
+      driftDetection,
+    });
   });
-
-  await reconciler.deploy(graph.resources, {
-    dryRun,
-    driftDetection,
-  });
+  try {
+    await runtime.run(createWorkflowRouter({ deploy }), {
+      workflowId: "deploy",
+      executionId,
+    });
+  } finally {
+    if (!suppliedRuntime) runtime.close();
+  }
 }

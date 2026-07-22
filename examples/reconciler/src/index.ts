@@ -10,7 +10,7 @@ import {
 import {
   YieldStarStateBackend,
   createResourceRegistry,
-  reconcileWithYieldStar,
+  deployWithYieldStar,
 } from "@notation/reconciler";
 import pino from "pino";
 import { createWorkflowRouter, workflow } from "yieldstar";
@@ -44,7 +44,7 @@ const resources = [
 ];
 
 const deploy = workflow(async function* (step, event) {
-  yield* reconcileWithYieldStar(step, {
+  yield* deployWithYieldStar(step, {
     deploymentId: "static-sites",
     executionId: event.executionId,
     resources,

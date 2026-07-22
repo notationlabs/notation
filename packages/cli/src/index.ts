@@ -7,7 +7,7 @@ import { plan } from "./plan";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
 import { startDashboardServer } from "@notation/dashboard";
-import { createDefaultStateBackend } from "@notation/core";
+import { NodeYieldStarRuntime } from "@notation/core";
 
 program
   .command("compile")
@@ -19,9 +19,11 @@ program
 
 program
   .command("dashboard")
+  .argument("<entryPoint>", "entryPoint")
   .description("Start Notation Dashboard")
-  .action(async () => {
-    await startDashboardServer({ state: createDefaultStateBackend() });
+  .action(async (entryPoint) => {
+    const runtime = new NodeYieldStarRuntime({ deploymentId: entryPoint });
+    await startDashboardServer({ state: runtime.state });
   });
 
 program
@@ -29,8 +31,12 @@ program
   .argument("<entryPoint>", "entryPoint")
   .description("Deploy Notation App")
   .option("--json", "stream reconciler events as NDJSON")
+  .option("--execution-id <id>", "resume a durable execution")
   .action(async (entryPoint, options) => {
-    await deploy(entryPoint, { json: options.json });
+    await deploy(entryPoint, {
+      json: options.json,
+      executionId: options.executionId,
+    });
   });
 
 program
@@ -38,8 +44,12 @@ program
   .argument("<entryPoint>", "entryPoint")
   .description("Destroy Notation App")
   .option("--json", "stream reconciler events as NDJSON")
+  .option("--execution-id <id>", "resume a durable execution")
   .action(async (entryPoint, options) => {
-    await destroy(entryPoint, { json: options.json });
+    await destroy(entryPoint, {
+      json: options.json,
+      executionId: options.executionId,
+    });
   });
 
 program

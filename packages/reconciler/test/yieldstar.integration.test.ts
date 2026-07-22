@@ -14,10 +14,11 @@ import { createWorkflowRouter, workflow } from "yieldstar";
 import { describe, expect, it, vi } from "vitest";
 import {
   YieldStarStateBackend,
-  reconcileWithYieldStar,
+  deployWithYieldStar,
+  destroyWithYieldStar,
   yieldStarResourceStateStore,
 } from "../src/yieldstar";
-import type { ReconcilerEvent } from "../src/reconciler";
+import type { ReconcilerEvent } from "../src/events";
 import {
   createResourceRegistry,
   type ResourceRegistry,
@@ -84,6 +85,93 @@ describe("YieldStar reconciliation", () => {
     await runtime.run("resume-execution");
     expect(create).toHaveBeenCalledOnce();
     expect(await runtime.state.get("resume")).toMatchObject({ rev: 1 });
+    runtime.close();
+  });
+
+  it("resumes durable destroy after a crash without repeating delete", async () => {
+    const remove = vi.fn(async () => undefined);
+    const TestResource = resource({ type: "test/yieldstar/destroy-resume" })
+      .defineSchema({})
+      .defineOperations({ create: async () => undefined, delete: remove });
+    const runtime = createRuntime(
+      [new TestResource({ id: "destroyed" })],
+      "destroy-crash-resume",
+      { crashAfterStep: "notation:destroy:destroyed:delete" },
+    );
+
+    await runtime.run("deploy-before-destroy");
+    await expect(runtime.destroy("destroy-execution")).rejects.toThrow(
+      "simulated process crash",
+    );
+    expect(remove).toHaveBeenCalledOnce();
+    expect(await runtime.state.get("destroyed")).toBeDefined();
+
+    await runtime.destroy("destroy-execution");
+    expect(remove).toHaveBeenCalledOnce();
+    expect(await runtime.state.get("destroyed")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("waits durably for a retryable delete before removing state", async () => {
+    let attempts = 0;
+    const PendingDelete = resource({ type: "test/yieldstar/pending-delete" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => {
+          attempts += 1;
+          if (attempts === 1) {
+            const error = new Error("delete is pending");
+            error.name = "DeletePending";
+            throw error;
+          }
+        },
+        retryLaterOnError: [
+          { name: "DeletePending", reason: "delete is pending" },
+        ],
+      });
+    const runtime = createRuntime(
+      [new PendingDelete({ id: "pending-delete" })],
+      "durable-destroy-wait",
+      { retryOptions: { maxAttempts: 3, retryInterval: 1 } },
+    );
+
+    await runtime.run("deploy-before-wait");
+    await runtime.destroy("destroy-wait");
+    expect(attempts).toBe(1);
+    expect(await runtime.state.get("pending-delete")).toBeDefined();
+
+    await runtime.destroy("destroy-wait");
+    expect(attempts).toBe(2);
+    expect(await runtime.state.get("pending-delete")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("destroys dependents before their dependencies", async () => {
+    const order: string[] = [];
+    const Dependency = resource({ type: "test/yieldstar/dependency" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => void order.push("dependency"),
+      });
+    const Dependent = resource({ type: "test/yieldstar/dependent" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => void order.push("dependent"),
+      });
+    const dependency = new Dependency({ id: "dependency" });
+    const dependent = new Dependent({
+      id: "dependent",
+      dependencies: { dependency },
+    });
+    const runtime = createRuntime([dependency, dependent], "destroy-order");
+
+    await runtime.run("deploy-before-ordered-destroy");
+    await runtime.destroy("ordered-destroy");
+
+    expect(order).toEqual(["dependent", "dependency"]);
     runtime.close();
   });
 
@@ -255,7 +343,7 @@ function createRuntime(
   });
   const state = new YieldStarStateBackend(storeClient, deploymentId);
   const deploy = workflow(async function* (step, event) {
-    yield* reconcileWithYieldStar(step, {
+    yield* deployWithYieldStar(step, {
       deploymentId,
       executionId: event.executionId,
       resources,
@@ -266,7 +354,18 @@ function createRuntime(
       retryOptions: options.retryOptions,
     });
   });
-  const router = createWorkflowRouter({ deploy });
+  const destroy = workflow(async function* (step, event) {
+    yield* destroyWithYieldStar(step, {
+      deploymentId,
+      executionId: event.executionId,
+      resources,
+      state,
+      registry: options.registry,
+      emit: options.emit,
+      retryOptions: options.retryOptions,
+    });
+  });
+  const router = createWorkflowRouter({ deploy, destroy });
   const runner = new WorkflowRunner({
     router,
     heapClient: heap,
@@ -284,6 +383,17 @@ function createRuntime(
       return runner.run(
         {
           workflowId: "deploy",
+          executionId,
+          params: {},
+          context: new Map(),
+        },
+        logger,
+      );
+    },
+    destroy(executionId: string) {
+      return runner.run(
+        {
+          workflowId: "destroy",
           executionId,
           params: {},
           context: new Map(),

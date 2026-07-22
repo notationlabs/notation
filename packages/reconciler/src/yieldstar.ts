@@ -8,20 +8,21 @@ import {
   type WorkflowStore,
 } from "yieldstar";
 import { buildResourceDepthLevels } from "./dependency-graph";
+import type { OperationName, ReconcilerEventEmitter } from "./events";
 import { decideAction, type ResourceAction } from "./plan";
 import {
   DEFAULT_READ_POLL_OPTIONS,
   DEFAULT_RETRY_OPTIONS,
+  createLifecycleEvent,
   matchError,
   type PollOptions,
-} from "./operations";
+} from "./operation-support";
 import {
   createMissingResourceRegistryMatchWarningEvent,
   createResourceRegistryFromResources,
   resolveResourceClass,
   type ResourceRegistry,
 } from "./resource-registry";
-import type { ReconcilerEventEmitter } from "./reconciler";
 
 type StoredResourceState = Omit<StateNode, "rev">;
 type CoordinationState = { holder: string | null };
@@ -54,26 +55,31 @@ export const yieldStarDeploymentCoordinationStore = defineStore(
 
 type YieldStarStep = Parameters<WorkflowFn<any, any, any>>[0];
 
-export type YieldStarReconciliationOptions = {
+export type YieldStarOperationOptions = {
   deploymentId: string;
   executionId: string;
   resources: BaseResource[];
   state: YieldStarStateBackend;
   registry?: ResourceRegistry;
   dryRun?: boolean;
-  driftDetection?: boolean;
   emit?: ReconcilerEventEmitter;
   retryOptions?: PollOptions;
   readPollOptions?: PollOptions;
 };
 
+export type YieldStarDeployOptions = YieldStarOperationOptions & {
+  driftDetection?: boolean;
+};
+
+export type YieldStarDestroyOptions = YieldStarOperationOptions;
+
 /**
  * Reconciles resources as a custom YieldStar step. The caller owns the outer
  * workflow and runtime; Notation owns resource decisions and lifecycle calls.
  */
-export async function* reconcileWithYieldStar(
+export async function* deployWithYieldStar(
   step: YieldStarStep,
-  opts: YieldStarReconciliationOptions,
+  opts: YieldStarDeployOptions,
 ): AsyncGenerator<any, void, any> {
   const coordination = yield* step.store(yieldStarDeploymentCoordinationStore, {
     id: opts.deploymentId,
@@ -138,10 +144,84 @@ export async function* reconcileWithYieldStar(
   }
 }
 
+/** Durably destroys persisted resources in reverse dependency order. */
+export async function* destroyWithYieldStar(
+  step: YieldStarStep,
+  opts: YieldStarDestroyOptions,
+): AsyncGenerator<any, void, any> {
+  const coordination = yield* step.store(yieldStarDeploymentCoordinationStore, {
+    id: opts.deploymentId,
+    initial: { holder: null },
+  });
+
+  yield* coordination.take(
+    "notation:coordination:acquire",
+    (state) => state.holder === null || state.holder === opts.executionId,
+    (draft) => {
+      draft.holder = opts.executionId;
+    },
+  );
+
+  try {
+    const resourceById = new Map(
+      opts.resources.map((resource) => [resource.id, resource]),
+    );
+    const levels = buildResourceDepthLevels(opts.resources);
+
+    for (let index = levels.length - 1; index >= 0; index -= 1) {
+      for (const resource of levels[index]!) {
+        const stateNode = yield* step.run(
+          `notation:destroy:${resource.id}:state:lookup`,
+          () => opts.state.get(resource.id),
+        );
+        if (!stateNode) continue;
+        resource.setOutput(stateNode.output);
+        yield* deleteResource(step, resource, opts, "destroy");
+      }
+    }
+
+    const persisted = yield* step.run("notation:destroy:orphans:list", () =>
+      opts.state.values(),
+    );
+    const registry =
+      opts.registry ?? createResourceRegistryFromResources(opts.resources);
+
+    for (const node of persisted) {
+      if (resourceById.has(node.id)) continue;
+      const Resource = resolveResourceClass(
+        registry,
+        node.type as ResourceType,
+      );
+      if (!Resource) {
+        yield* emitDurably(
+          step,
+          `notation:destroy:orphan:${node.id}:warning`,
+          opts.emit,
+          () =>
+            createMissingResourceRegistryMatchWarningEvent({
+              workflow: "destroy",
+              resourceId: node.id,
+              resourceType: node.type as ResourceType,
+            }),
+        );
+        continue;
+      }
+
+      const resource = new Resource({ id: node.id, config: node.config });
+      resource.setOutput(node.output);
+      yield* deleteResource(step, resource, opts, "destroy-orphan");
+    }
+  } finally {
+    yield* coordination.update("notation:coordination:release", (draft) => {
+      if (draft.holder === opts.executionId) draft.holder = null;
+    });
+  }
+}
+
 async function* reconcileResource(
   step: YieldStarStep,
   resource: BaseResource,
-  opts: YieldStarReconciliationOptions,
+  opts: YieldStarDeployOptions,
 ): AsyncGenerator<any, void, any> {
   const prefix = `notation:resource:${resource.id}`;
   let stateNode = yield* step.run(`${prefix}:state:lookup`, () =>
@@ -201,97 +281,137 @@ async function* reconcileResource(
   }));
 
   if (action.decision === "noop") return;
-  if (opts.dryRun) return;
-
-  if (action.decision === "create" || action.decision === "drift-recreate") {
-    const primaryKey = yield* runProviderCall(
-      step,
-      `${prefix}:create`,
-      () => resource.create(params),
-      resource,
-      opts.retryOptions,
-    );
-    resource.setOutput(params);
-    if (primaryKey) resource.setOutput({ ...primaryKey, ...resource.output });
-  } else {
-    if (!resource.update) {
-      yield* emitDurably(step, `${prefix}:update-skip`, opts.emit, () => ({
-        level: "info",
-        event: "reconciler.operation.lifecycle",
-        operation: "update",
-        status: "skip",
-        resourceId: resource.id,
-        resourceType: resource.type,
-        reason: "update-not-implemented",
-      }));
-      return;
-    }
-    yield* runProviderCall(
-      step,
-      `${prefix}:update`,
-      () =>
-        resource.update!(
-          resource.key,
-          action.patch,
-          params,
-          resource.toState(resource.output),
-        ),
-      resource,
-      opts.retryOptions,
-    );
-    resource.setOutput({ ...resource.key, ...params });
-  }
-
-  const read = yield* readRemote(
-    step,
-    resource,
-    opts,
-    `${prefix}:read-after-write`,
-  );
-  if (read.status === "found")
-    resource.setOutput({ ...resource.output, ...read.output });
-
   const operation =
     action.decision === "create" || action.decision === "drift-recreate"
       ? "create"
       : "update";
-  const nextState: StoredResourceState = {
-    id: resource.id,
-    groupId: resource.groupId,
-    groupType: resource.groupType,
-    type: resource.type,
-    lastOperation: operation,
-    lastOperationAt: new Date().toISOString(),
-    config: resource.config,
-    params: resource.toState(params),
-    output: resource.toState(resource.output),
-  };
-
-  if (!stateStore || !snapshot) {
-    yield* step.store(yieldStarResourceStateStore, {
-      id: opts.state.storeId(resource.id),
-      initial: nextState,
-    });
+  const patch = "patch" in action ? action.patch : {};
+  yield* emitOperationLifecycle(
+    step,
+    `${prefix}:${operation}:start`,
+    opts.emit,
+    resource,
+    operation,
+    "start",
+  );
+  if (opts.dryRun) {
+    yield* emitOperationLifecycle(
+      step,
+      `${prefix}:${operation}:dry-run`,
+      opts.emit,
+      resource,
+      operation,
+      "dry-run",
+    );
     return;
   }
 
-  const result = yield* stateStore.updateFrom(
-    `${prefix}:state:persist`,
-    snapshot,
-    () => nextState,
-  );
-  if (!result.updated)
-    throw new RevConflict(
-      resource.id,
-      stateNode?.rev ?? 0,
-      result.actualVersion + 1,
+  try {
+    if (operation === "create") {
+      const primaryKey = yield* runProviderCall(
+        step,
+        `${prefix}:create`,
+        () => resource.create(params),
+        resource,
+        opts.retryOptions,
+      );
+      resource.setOutput(params);
+      if (primaryKey) resource.setOutput({ ...primaryKey, ...resource.output });
+    } else {
+      if (!resource.update) {
+        yield* emitOperationLifecycle(
+          step,
+          `${prefix}:update:skip`,
+          opts.emit,
+          resource,
+          "update",
+          "skip",
+          { reason: "update-not-implemented" },
+        );
+        return;
+      }
+      yield* runProviderCall(
+        step,
+        `${prefix}:update`,
+        () =>
+          resource.update!(
+            resource.key,
+            patch,
+            params,
+            resource.toState(resource.output),
+          ),
+        resource,
+        opts.retryOptions,
+      );
+      resource.setOutput({ ...resource.key, ...params });
+    }
+
+    const read = yield* readRemote(
+      step,
+      resource,
+      opts,
+      `${prefix}:read-after-write`,
     );
+    if (read.status === "found")
+      resource.setOutput({ ...resource.output, ...read.output });
+
+    const nextState: StoredResourceState = {
+      id: resource.id,
+      groupId: resource.groupId,
+      groupType: resource.groupType,
+      type: resource.type,
+      lastOperation: operation,
+      lastOperationAt: new Date().toISOString(),
+      config: resource.config,
+      params: resource.toState(params),
+      output: resource.toState(resource.output),
+    };
+
+    if (!stateStore || !snapshot) {
+      yield* step.store(yieldStarResourceStateStore, {
+        id: opts.state.storeId(resource.id),
+        initial: nextState,
+      });
+    } else {
+      const result = yield* stateStore.updateFrom(
+        `${prefix}:state:persist`,
+        snapshot,
+        () => nextState,
+      );
+      if (!result.updated)
+        throw new RevConflict(
+          resource.id,
+          stateNode?.rev ?? 0,
+          result.actualVersion + 1,
+        );
+    }
+
+    yield* emitOperationLifecycle(
+      step,
+      `${prefix}:${operation}:success`,
+      opts.emit,
+      resource,
+      operation,
+      "success",
+    );
+  } catch (error) {
+    yield* emitOperationLifecycle(
+      step,
+      `${prefix}:${operation}:error`,
+      opts.emit,
+      resource,
+      operation,
+      "error",
+      { error },
+    );
+    throw error;
+  }
 }
 
 async function* deleteResource(
   step: YieldStarStep,
   resource: BaseResource,
-  opts: YieldStarReconciliationOptions,
+  opts: YieldStarOperationOptions,
   suffix: string,
 ): AsyncGenerator<any, void, any> {
   const prefix = `notation:${suffix}:${resource.id}`;
@@ -300,7 +420,28 @@ async function* deleteResource(
   const stateNode = toStateNode(snapshot);
   resource.setOutput(stateNode.output);
 
-  if (!opts.dryRun) {
+  yield* emitOperationLifecycle(
+    step,
+    `${prefix}:delete:start`,
+    opts.emit,
+    resource,
+    "delete",
+    "start",
+  );
+
+  if (opts.dryRun) {
+    yield* emitOperationLifecycle(
+      step,
+      `${prefix}:delete:dry-run`,
+      opts.emit,
+      resource,
+      "delete",
+      "dry-run",
+    );
+    return;
+  }
+
+  try {
     try {
       yield* runProviderCall(
         step,
@@ -311,6 +452,15 @@ async function* deleteResource(
       );
     } catch (error) {
       if (!matchError(error, resource.notFoundOnError)) throw error;
+      yield* emitOperationLifecycle(
+        step,
+        `${prefix}:delete:not-found`,
+        opts.emit,
+        resource,
+        "delete",
+        "skip",
+        { reason: "resource-not-found" },
+      );
     }
 
     const deleted = yield* stateStore.deleteFrom(
@@ -319,13 +469,32 @@ async function* deleteResource(
     );
     if (!deleted.deleted)
       throw new RevConflict(resource.id, stateNode.rev, undefined);
+    yield* emitOperationLifecycle(
+      step,
+      `${prefix}:delete:success`,
+      opts.emit,
+      resource,
+      "delete",
+      "success",
+    );
+  } catch (error) {
+    yield* emitOperationLifecycle(
+      step,
+      `${prefix}:delete:error`,
+      opts.emit,
+      resource,
+      "delete",
+      "error",
+      { error },
+    );
+    throw error;
   }
 }
 
 async function* readRemote(
   step: YieldStarStep,
   resource: BaseResource,
-  opts: YieldStarReconciliationOptions,
+  opts: YieldStarOperationOptions,
   key: string,
 ): AsyncGenerator<
   any,
@@ -334,12 +503,29 @@ async function* readRemote(
   any
 > {
   if (!resource.read) {
+    yield* emitOperationLifecycle(
+      step,
+      `${key}:skip`,
+      opts.emit,
+      resource,
+      "read",
+      "skip",
+      { reason: "read-not-implemented" },
+    );
     return {
       status: "found",
       output: { ...(await resource.getParams()), ...resource.output },
     };
   }
 
+  yield* emitOperationLifecycle(
+    step,
+    `${key}:start`,
+    opts.emit,
+    resource,
+    "read",
+    "start",
+  );
   try {
     const output = yield* step.run(key, async () => {
       const value = await resource.read!(resource.key);
@@ -358,10 +544,37 @@ async function* readRemote(
       }
       return value;
     });
+    yield* emitOperationLifecycle(
+      step,
+      `${key}:success`,
+      opts.emit,
+      resource,
+      "read",
+      "success",
+    );
     return { status: "found", output };
   } catch (error) {
-    if (matchError(error, resource.notFoundOnError))
+    if (matchError(error, resource.notFoundOnError)) {
+      yield* emitOperationLifecycle(
+        step,
+        `${key}:not-found`,
+        opts.emit,
+        resource,
+        "read",
+        "skip",
+        { reason: "resource-not-found" },
+      );
       return { status: "not-found" };
+    }
+    yield* emitOperationLifecycle(
+      step,
+      `${key}:error`,
+      opts.emit,
+      resource,
+      "read",
+      "error",
+      { error },
+    );
     throw error;
   }
 }
@@ -407,6 +620,26 @@ function emitDurably(
   return step.run(key, async () => {
     await emit?.(event());
   });
+}
+
+function emitOperationLifecycle(
+  step: YieldStarStep,
+  key: string,
+  emit: ReconcilerEventEmitter | undefined,
+  resource: BaseResource,
+  operation: OperationName,
+  status: "start" | "success" | "error" | "skip" | "dry-run",
+  extra: { reason?: string; error?: unknown } = {},
+) {
+  return emitDurably(step, key, emit, () =>
+    createLifecycleEvent({
+      operation,
+      status,
+      resourceId: resource.id,
+      resourceType: resource.type,
+      ...extra,
+    }),
+  );
 }
 
 /** A Notation state backend backed by YieldStar 0.5 durable stores. */

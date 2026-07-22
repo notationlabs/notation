@@ -9,7 +9,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { LeaseConflict, RevConflict } from "./conflicts";
+import { RevConflict } from "./conflicts";
 
 export type StateNode = {
   rev: number;
@@ -37,21 +37,12 @@ export interface StateBackend {
   ): Promise<{ rev: number }>;
   delete(id: string, expectedRev: number): Promise<void>;
   values(): Promise<StateNode[]>;
-  lease(scope: string, ttl: number): Promise<Lease>;
-}
-
-export interface Lease {
-  readonly scope: string;
-  readonly expiresAt: string;
-  renew(ttl: number): Promise<string>;
-  release(): Promise<void>;
 }
 
 export type State = StateBackend;
 
 export class MemoryStateBackend implements StateBackend {
   #state: Record<string, StateNode>;
-  #leases = new Map<string, { owner: string; expiresAtMs: number }>();
 
   constructor(initialState: Record<string, StateNode> = {}) {
     this.#state = cloneAsPersistedState(initialState);
@@ -106,46 +97,6 @@ export class MemoryStateBackend implements StateBackend {
         return 0;
       })
       .map(([, value]) => value);
-  }
-
-  async lease(scope: string, ttl: number): Promise<Lease> {
-    assertLeaseTtl(ttl);
-    const now = Date.now();
-    const current = this.#leases.get(scope);
-    if (current && current.expiresAtMs > now) {
-      throw new LeaseConflict(
-        scope,
-        new Date(current.expiresAtMs).toISOString(),
-      );
-    }
-
-    const owner = randomUUID();
-    let expiresAtMs = now + ttl;
-    this.#leases.set(scope, { owner, expiresAtMs });
-
-    return {
-      scope,
-      get expiresAt() {
-        return new Date(expiresAtMs).toISOString();
-      },
-      renew: async (nextTtl) => {
-        assertLeaseTtl(nextTtl);
-        const held = this.#leases.get(scope);
-        if (!held || held.owner !== owner || held.expiresAtMs <= Date.now()) {
-          throw new LeaseConflict(
-            scope,
-            new Date(held?.expiresAtMs ?? 0).toISOString(),
-          );
-        }
-        expiresAtMs = Date.now() + nextTtl;
-        held.expiresAtMs = expiresAtMs;
-        return new Date(expiresAtMs).toISOString();
-      },
-      release: async () => {
-        if (this.#leases.get(scope)?.owner === owner)
-          this.#leases.delete(scope);
-      },
-    };
   }
 
   private async readState(): Promise<Record<string, StateNode>> {
@@ -205,65 +156,6 @@ export class FileStateBackend implements StateBackend {
   async values(): Promise<StateNode[]> {
     const state = await this.readState();
     return Object.values(state);
-  }
-
-  async lease(scope: string, ttl: number): Promise<Lease> {
-    assertLeaseTtl(ttl);
-    const leaseFilePath = `${this.stateFilePath}.${encodeURIComponent(scope)}.lease`;
-    const owner = randomUUID();
-    let expiresAtMs: number;
-    await mkdir(path.dirname(this.stateFilePath), { recursive: true });
-
-    for (;;) {
-      expiresAtMs = Date.now() + ttl;
-      try {
-        await writeFile(leaseFilePath, JSON.stringify({ owner, expiresAtMs }), {
-          flag: "wx",
-        });
-        break;
-      } catch (error) {
-        if (!isFileExistsError(error)) throw error;
-        const current = await readFileLease(leaseFilePath);
-        if (!current || current.expiresAtMs <= Date.now()) {
-          await unlink(leaseFilePath).catch(() => undefined);
-          continue;
-        }
-        throw new LeaseConflict(
-          scope,
-          new Date(current.expiresAtMs).toISOString(),
-        );
-      }
-    }
-
-    return {
-      scope,
-      get expiresAt() {
-        return new Date(expiresAtMs).toISOString();
-      },
-      renew: async (nextTtl) => {
-        assertLeaseTtl(nextTtl);
-        const current = await readFileLease(leaseFilePath);
-        if (
-          !current ||
-          current.owner !== owner ||
-          current.expiresAtMs <= Date.now()
-        ) {
-          throw new LeaseConflict(
-            scope,
-            new Date(current?.expiresAtMs ?? 0).toISOString(),
-          );
-        }
-        expiresAtMs = Date.now() + nextTtl;
-        await writeFile(leaseFilePath, JSON.stringify({ owner, expiresAtMs }));
-        return new Date(expiresAtMs).toISOString();
-      },
-      release: async () => {
-        const current = await readFileLease(leaseFilePath);
-        if (current?.owner === owner) {
-          await unlink(leaseFilePath).catch(() => undefined);
-        }
-      },
-    };
   }
 
   private async readState(): Promise<Record<string, StateNode>> {
@@ -350,26 +242,6 @@ function assertExpectedRev(
 ): void {
   if ((node?.rev ?? 0) !== expectedRev) {
     throw new RevConflict(id, expectedRev, node?.rev);
-  }
-}
-
-function assertLeaseTtl(ttl: number): void {
-  if (!Number.isFinite(ttl) || ttl <= 0) {
-    throw new RangeError("Lease TTL must be a positive number of milliseconds");
-  }
-}
-
-type FileLeaseRecord = { owner: string; expiresAtMs: number };
-
-async function readFileLease(
-  filePath: string,
-): Promise<FileLeaseRecord | undefined> {
-  try {
-    return JSON.parse(await readFile(filePath, "utf8")) as FileLeaseRecord;
-  } catch (error) {
-    if (isFileMissingError(error) || error instanceof SyntaxError)
-      return undefined;
-    throw error;
   }
 }
 

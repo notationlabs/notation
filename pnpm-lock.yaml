@@ -230,12 +230,12 @@ importers:
       '@notation/resource':
         specifier: workspace:*
         version: link:../resource
-      '@notation/state':
-        specifier: workspace:*
-        version: link:../state
-      '@notation/state-sqlite':
-        specifier: workspace:*
-        version: link:../state-sqlite
+      '@yieldstar/core':
+        specifier: 0.5.0
+        version: 0.5.0
+      '@yieldstar/sqlite-runtime':
+        specifier: 0.5.0
+        version: 0.5.0
       deep-object-diff:
         specifier: ^1.1.9
         version: 1.1.9
@@ -248,6 +248,12 @@ importers:
       pako:
         specifier: ^2.1.0
         version: 2.1.0
+      pino:
+        specifier: ^9.14.0
+        version: 9.14.0
+      yieldstar:
+        specifier: 0.5.0
+        version: 0.5.0
     devDependencies:
       '@types/common-tags':
         specifier: ^1.8.4

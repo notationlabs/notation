@@ -11,14 +11,3 @@ export class RevConflict extends Error {
     );
   }
 }
-
-export class LeaseConflict extends Error {
-  readonly name = "LeaseConflict";
-
-  constructor(
-    readonly scope: string,
-    readonly expiresAt: string,
-  ) {
-    super(`State lease conflict for ${scope}: held until ${expiresAt}`);
-  }
-}

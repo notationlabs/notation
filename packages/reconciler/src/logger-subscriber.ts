@@ -1,4 +1,4 @@
-import type { ReconcilerEvent, ReconcilerEventEmitter } from "./reconciler";
+import type { ReconcilerEvent, ReconcilerEventEmitter } from "./events";
 
 export type Logger = Pick<Console, "info" | "warn" | "error">;
 

@@ -3,12 +3,14 @@ import {
   createNdjsonEventEmitter,
   deployApp,
 } from "@notation/core";
+import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
 import { redirectStdoutToStderr } from "./stdio";
 
 export type DeployCommandOptions = {
   json?: boolean;
+  executionId?: string;
   logger?: Logger;
 };
 
@@ -25,11 +27,14 @@ export async function deploy(
 
   await compile(entryPoint, { logger });
   logger.info(`Deploying ${entryPoint}`);
+  const executionId = opts.executionId ?? randomUUID();
+  logger.info(`YieldStar execution ${executionId}`);
 
   try {
     await deployApp({
       entryPoint,
       emit,
+      executionId,
     });
   } catch (err: any) {
     if (err.name === "CredentialsProviderError") {
