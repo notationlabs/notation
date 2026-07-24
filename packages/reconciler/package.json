@@ -16,6 +16,7 @@
     "@notation/state": "workspace:*",
     "@yieldstar/core": "0.5.0",
     "deep-object-diff": "^1.1.9",
+    "valibot": "^1.4.2",
     "yieldstar": "0.5.0"
   },
   "devDependencies": {

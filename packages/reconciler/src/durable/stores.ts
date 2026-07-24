@@ -1,38 +1,34 @@
 import type { StateNode } from "@notation/state";
-import { defineStore, type StandardSchemaV1 } from "./yieldstar";
+import * as v from "valibot";
+import { defineStore } from "./yieldstar";
 
 export const RESOURCE_CREATION_TOKEN = "$notationCreateToken";
 
-export type StoredResourceState = Omit<StateNode, "rev"> & {
-  [RESOURCE_CREATION_TOKEN]?: string;
-};
-export type CoordinationState = { holder: string | null };
-
-const storedResourceStateSchema = plainObjectSchema<StoredResourceState>(
-  "Stored resource state",
-  (value) =>
-    typeof value.id === "string" &&
-    typeof value.type === "string" &&
-    isPlainObject(value.config) &&
-    isPlainObject(value.params) &&
-    isPlainObject(value.output),
-);
-const coordinationStateSchema = plainObjectSchema<CoordinationState>(
-  "Deployment coordination state",
-  (value) =>
-    "holder" in value &&
-    (value.holder === null || typeof value.holder === "string"),
-);
-
 export const resourceStateStore = defineStore(
-  "notation/resource-state",
-  storedResourceStateSchema,
+  "resource-state",
+  v.looseObject({
+    id: v.string(),
+    type: v.string(),
+    config: v.record(v.string(), v.unknown()),
+    params: v.record(v.string(), v.unknown()),
+    output: v.record(v.string(), v.unknown()),
+    lastOperation: v.picklist(["drift", "create", "update", "delete"]),
+    lastOperationAt: v.string(),
+    [RESOURCE_CREATION_TOKEN]: v.optional(v.string()),
+  }),
 );
 
 export const deploymentCoordinationStore = defineStore(
-  "notation/deployment-coordination",
-  coordinationStateSchema,
+  "deployment-coordination",
+  v.object({ holder: v.nullable(v.string()) }),
 );
+
+export type StoredResourceState = v.InferOutput<
+  typeof resourceStateStore.schema
+>;
+export type CoordinationState = v.InferOutput<
+  typeof deploymentCoordinationStore.schema
+>;
 
 export function toStateNode(snapshot: {
   state: StoredResourceState;
@@ -40,7 +36,7 @@ export function toStateNode(snapshot: {
 }): StateNode {
   const { [RESOURCE_CREATION_TOKEN]: _creationToken, ...state } =
     snapshot.state;
-  return { ...state, rev: snapshot.version + 1 } as StateNode;
+  return { ...state, rev: snapshot.version + 1 };
 }
 
 export function withoutRev(
@@ -48,26 +44,4 @@ export function withoutRev(
 ): Partial<StoredResourceState> {
   const { rev: _rev, ...stored } = patch;
   return stored;
-}
-
-function plainObjectSchema<T extends Record<string, unknown>>(
-  label: string,
-  refine: (value: Record<string, unknown>) => boolean,
-): StandardSchemaV1<T, T> {
-  return {
-    "~standard": {
-      version: 1,
-      vendor: "notation",
-      validate(value) {
-        if (!isPlainObject(value) || !refine(value)) {
-          return { issues: [{ message: `${label} is invalid` }] };
-        }
-        return { value: value as T };
-      },
-    },
-  };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
