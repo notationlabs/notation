@@ -1,4 +1,4 @@
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-iam";
 import { iamClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
@@ -75,7 +75,9 @@ export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
       return Role!;
     } catch (error) {
       if (error instanceof sdk.NoSuchEntityException) {
-        return undefined;
+        throw new ResourceNotFoundError("Lambda IAM role was not found", {
+          cause: error,
+        });
       }
       throw error;
     }

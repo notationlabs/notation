@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import { isErrorWithCode } from "@notation/utils";
 
 type StaticSiteApi = {
@@ -38,7 +38,9 @@ export const StaticSite = staticSite
         return { html };
       } catch (error) {
         if (isErrorWithCode(error, "ENOENT")) {
-          return undefined;
+          throw new ResourceNotFoundError("Static site was not found", {
+            cause: error,
+          });
         }
         throw error;
       }

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  ResourceNotReadyError,
+  ResourceNotFoundError,
+  ResourceOperationPendingError,
   resource,
   type BaseResource,
 } from "@notation/resource";
@@ -41,9 +42,7 @@ function createTestResourceClass(opts: {
   create?: (
     params: Record<string, unknown>,
   ) => Promise<Record<string, unknown> | void>;
-  read?: (
-    key: Record<string, unknown>,
-  ) => Promise<Record<string, unknown> | undefined>;
+  read?: (key: Record<string, unknown>) => Promise<Record<string, unknown>>;
   update?: (
     key: Record<string, unknown>,
     patch: Record<string, unknown>,
@@ -207,7 +206,9 @@ describe("reconciler plan", () => {
   it("plans drift-recreate when the remote resource is gone", async () => {
     const TestResource = createTestResourceClass({
       type: "test/service/plan-drift-recreate",
-      read: async () => undefined,
+      read: async () => {
+        throw new ResourceNotFoundError("resource is absent");
+      },
     });
 
     const state = createMemoryState({
@@ -229,11 +230,19 @@ describe("reconciler plan", () => {
     });
   });
 
-  it("plans indeterminate when the remote reports a not-ready condition", async () => {
+  it("waits for a pending read before planning", async () => {
+    let attempts = 0;
     const TestResource = createTestResourceClass({
       type: "test/service/plan-not-ready",
       read: async () => {
-        throw new ResourceNotReadyError("Waiting for Lambda to become active");
+        attempts += 1;
+        if (attempts === 1) {
+          throw new ResourceOperationPendingError(
+            "Waiting for Lambda to become active",
+            { retryAfterMs: 0 },
+          );
+        }
+        return { name: "desired" };
       },
     });
 
@@ -250,9 +259,9 @@ describe("reconciler plan", () => {
 
     expect(plan.nodes[0]).toMatchObject({
       id: "resource",
-      decision: "indeterminate",
-      reason: "Waiting for Lambda to become active",
+      decision: "noop",
     });
+    expect(attempts).toBe(2);
   });
 
   it("skips remote reads when drift detection is off", async () => {

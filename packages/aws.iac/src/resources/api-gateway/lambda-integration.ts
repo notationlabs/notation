@@ -1,4 +1,4 @@
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { ApiInstance } from "./api";
 import { LambdaFunctionInstance } from "../lambda";
@@ -124,7 +124,10 @@ export const LambdaIntegration = integrationSchema
         return output;
       } catch (error) {
         if (error instanceof sdk.NotFoundException) {
-          return undefined;
+          throw new ResourceNotFoundError(
+            "API Gateway integration was not found",
+            { cause: error },
+          );
         }
         throw error;
       }

@@ -1,4 +1,4 @@
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
@@ -105,7 +105,9 @@ export const Api = apiSchema.defineOperations({
       return { RouteKey: "", ...result };
     } catch (error) {
       if (error instanceof sdk.NotFoundException) {
-        return undefined;
+        throw new ResourceNotFoundError("API Gateway API was not found", {
+          cause: error,
+        });
       }
       throw error;
     }

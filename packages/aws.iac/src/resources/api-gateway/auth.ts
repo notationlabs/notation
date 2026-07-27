@@ -1,6 +1,6 @@
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { AwsSchema } from "src/utils/types";
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { ApiInstance } from "./api";
 
@@ -65,7 +65,10 @@ export const RouteAuth = apiSchema
         return output;
       } catch (error) {
         if (error instanceof sdk.NotFoundException) {
-          return undefined;
+          throw new ResourceNotFoundError(
+            "API Gateway authorizer was not found",
+            { cause: error },
+          );
         }
         throw error;
       }

@@ -1,4 +1,9 @@
-import { resource, ResourceNotReadyError, typed } from "@notation/resource";
+import {
+  resource,
+  ResourceNotFoundError,
+  ResourceOperationPendingError,
+  typed,
+} from "@notation/resource";
 import * as sdk from "@aws-sdk/client-lambda";
 import { lambdaClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
@@ -204,12 +209,16 @@ export const LambdaFunction = lambdaFunctionSchema
           await lambdaClient.send(command);
 
         if (Configuration?.State !== "Active") {
-          throw new ResourceNotReadyError(
+          throw new ResourceOperationPendingError(
             "Waiting for Lambda to become active",
+            { retryAfterMs: 1_000 },
           );
         }
         if (!Configuration.RevisionId) {
-          throw new ResourceNotReadyError("Waiting for Lambda to be deployed");
+          throw new ResourceOperationPendingError(
+            "Waiting for Lambda to be deployed",
+            { retryAfterMs: 1_000 },
+          );
         }
 
         return {
@@ -225,7 +234,9 @@ export const LambdaFunction = lambdaFunctionSchema
         };
       } catch (error) {
         if (error instanceof sdk.ResourceNotFoundException) {
-          return undefined;
+          throw new ResourceNotFoundError("Lambda function was not found", {
+            cause: error,
+          });
         }
         throw error;
       }
@@ -278,9 +289,10 @@ async function runLambdaMutation<T>(mutation: () => Promise<T>): Promise<T> {
     return await mutation();
   } catch (error) {
     if (isIamPropagationFailure(error)) {
-      throw new ResourceNotReadyError("Waiting for IAM role to propagate", {
-        cause: error,
-      });
+      throw new ResourceOperationPendingError(
+        "Waiting for IAM role to propagate",
+        { retryAfterMs: 1_000, cause: error },
+      );
     }
     throw error;
   }

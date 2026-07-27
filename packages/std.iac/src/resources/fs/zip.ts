@@ -1,4 +1,4 @@
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import { isErrorWithCode } from "@notation/utils";
 import * as fs from "node:fs/promises";
 import { zip } from "src/utils/zip";
@@ -57,7 +57,9 @@ export const Zip = zipSchema.defineOperations({
       return { ...params, file };
     } catch (error) {
       if (isErrorWithCode(error, "ENOENT")) {
-        return undefined;
+        throw new ResourceNotFoundError("Zip archive was not found", {
+          cause: error,
+        });
       }
       throw error;
     }

@@ -12,7 +12,6 @@ export type PlanDecision =
   | "drift-update"
   | "drift-recreate"
   | "delete-orphan"
-  | "indeterminate"
   | "noop";
 
 export type PlanDiff = {
@@ -25,7 +24,6 @@ export type PlanNode = {
   id: string;
   type: string;
   decision: PlanDecision;
-  reason?: string;
   diff?: PlanDiff;
   params: Record<string, unknown>;
   dependsOn: string[];

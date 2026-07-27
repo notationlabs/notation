@@ -1,12 +1,11 @@
-import { RetryableError, createWorkflow } from "yieldstar";
-import { ResourceNotReadyError } from "@notation/resource";
+import { createWorkflow } from "yieldstar";
 import {
-  DEFAULT_RETRY_OPTIONS,
   type DeleteResourceParams,
   type StepRunner,
   emitLifecycleEvent,
   getErrorDetails,
 } from "./operation.types";
+import { runPendingOperation } from "./operation.pending";
 
 export async function* deleteResourceOperation(
   step: StepRunner,
@@ -20,21 +19,17 @@ export async function* deleteResourceOperation(
   }
 
   try {
-    yield* step.run("delete:remote", async () => {
-      try {
-        await params.resource.delete(
+    yield* runPendingOperation(
+      step,
+      "delete:remote",
+      (context) =>
+        params.resource.delete(
           params.resource.key,
           params.resource.toState(params.resource.output),
-        );
-      } catch (err) {
-        if (ResourceNotReadyError.is(err)) {
-          throw new RetryableError(err.message, {
-            ...(params.retryOptions ?? DEFAULT_RETRY_OPTIONS),
-          });
-        }
-        throw err;
-      }
-    });
+          context,
+        ),
+      params.maxOperationAttempts,
+    );
 
     yield* step.run("delete:persist-state", () =>
       params.state.delete(params.resource.id, params.expectedRev),

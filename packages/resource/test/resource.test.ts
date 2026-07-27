@@ -1,5 +1,9 @@
 import { expect, it, test, vi } from "vitest";
-import { ResourceNotReadyError, resource } from "src";
+import {
+  ResourceNotFoundError,
+  ResourceOperationPendingError,
+  resource,
+} from "src";
 import {
   TestResource,
   testResourceConfig,
@@ -139,24 +143,51 @@ describe("resource dependencies", () => {
   });
 });
 
-describe("ResourceNotReadyError", () => {
-  it("recognises its own instances", () => {
-    expect(ResourceNotReadyError.is(new ResourceNotReadyError("waiting"))).toBe(
+describe("resource operation signals", () => {
+  it("recognises a not-found signal structurally", () => {
+    expect(ResourceNotFoundError.is(new ResourceNotFoundError("missing"))).toBe(
       true,
     );
+    expect(
+      ResourceNotFoundError.is(
+        Object.assign(new Error("missing"), {
+          _tag: "ResourceNotFoundError",
+        }),
+      ),
+    ).toBe(true);
   });
 
-  it("recognises the tag without class identity", () => {
-    // A copy thrown from another realm or bundle carries the tag, not the class.
+  it("recognises a pending signal structurally", () => {
     const fromElsewhere = Object.assign(new Error("waiting"), {
-      _tag: "ResourceNotReadyError",
+      _tag: "ResourceOperationPendingError",
+      retryAfterMs: 2_000,
+      callbackContext: { operationId: "abc" },
     });
-    expect(ResourceNotReadyError.is(fromElsewhere)).toBe(true);
+    expect(ResourceOperationPendingError.is(fromElsewhere)).toBe(true);
   });
 
   it("rejects unrelated errors", () => {
-    expect(ResourceNotReadyError.is(new Error("boom"))).toBe(false);
-    expect(ResourceNotReadyError.is({ _tag: "SomethingElse" })).toBe(false);
-    expect(ResourceNotReadyError.is(undefined)).toBe(false);
+    expect(ResourceNotFoundError.is(new Error("boom"))).toBe(false);
+    expect(ResourceOperationPendingError.is(new Error("boom"))).toBe(false);
+    expect(
+      ResourceOperationPendingError.is({
+        _tag: "ResourceOperationPendingError",
+      }),
+    ).toBe(false);
+  });
+
+  it("carries retry instructions and callback context", () => {
+    const pending = new ResourceOperationPendingError("waiting", {
+      retryAfterMs: 1_500,
+      callbackContext: { operationId: "abc" },
+    });
+    expect(pending.retryAfterMs).toBe(1_500);
+    expect(pending.callbackContext).toEqual({ operationId: "abc" });
+  });
+
+  it("rejects an invalid retry delay", () => {
+    expect(
+      () => new ResourceOperationPendingError("waiting", { retryAfterMs: -1 }),
+    ).toThrowError("retryAfterMs must be a non-negative number");
   });
 });

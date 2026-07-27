@@ -1,4 +1,4 @@
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { ApiInstance, LambdaIntegrationInstance } from ".";
@@ -98,7 +98,9 @@ export const Route = routeSchema
         return { ...key, ...result };
       } catch (error) {
         if (error instanceof sdk.NotFoundException) {
-          return undefined;
+          throw new ResourceNotFoundError("API Gateway route was not found", {
+            cause: error,
+          });
         }
         throw error;
       }

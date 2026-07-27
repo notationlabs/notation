@@ -1,4 +1,4 @@
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import { AwsSchema } from "src/utils/types";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/utils/aws-clients";
@@ -79,7 +79,9 @@ export const EventBridgeRule = eventBridgeRuleSchema
         };
       } catch (error) {
         if (error instanceof sdk.ResourceNotFoundException) {
-          return undefined;
+          throw new ResourceNotFoundError("EventBridge rule was not found", {
+            cause: error,
+          });
         }
         throw error;
       }

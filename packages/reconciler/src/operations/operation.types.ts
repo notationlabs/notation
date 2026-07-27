@@ -22,26 +22,12 @@ export type OperationEventEmitter = (
   event: OperationLifecycleEvent,
 ) => void | Promise<void>;
 
-export type PollOptions = {
-  maxAttempts: number;
-  retryInterval: number;
-};
-
 export type StepRunner = {
   run<T>(fn: () => T | Promise<T>): AsyncGenerator<unknown, T, unknown>;
   run<T>(
     key: string,
     fn: () => T | Promise<T>,
   ): AsyncGenerator<unknown, T, unknown>;
-  poll(
-    opts: PollOptions,
-    predicate: () => boolean | Promise<boolean>,
-  ): AsyncGenerator<unknown, void, unknown>;
-  poll(
-    key: string,
-    opts: PollOptions,
-    predicate: () => boolean | Promise<boolean>,
-  ): AsyncGenerator<unknown, void, unknown>;
   delay(ms: number): AsyncGenerator<unknown, void, unknown>;
   delay(key: string, ms: number): AsyncGenerator<unknown, void, unknown>;
 };
@@ -51,17 +37,14 @@ export type ResourceOperationBaseParams = {
   state: Pick<State, "get" | "update" | "delete">;
   dryRun?: boolean;
   emit?: OperationEventEmitter;
-  retryOptions?: PollOptions;
-  readPollOptions?: PollOptions;
+  maxOperationAttempts?: number;
 };
 
 export type CreateResourceParams = ResourceOperationBaseParams & {
   expectedRev: number;
 };
 
-export type ReadResourceParams = ResourceOperationBaseParams & {
-  retryAbsent?: boolean;
-};
+export type ReadResourceParams = ResourceOperationBaseParams;
 
 export type UpdateResourceParams = ResourceOperationBaseParams & {
   patch: Record<string, unknown>;
@@ -70,16 +53,6 @@ export type UpdateResourceParams = ResourceOperationBaseParams & {
 
 export type DeleteResourceParams = ResourceOperationBaseParams & {
   expectedRev: number;
-};
-
-export const DEFAULT_RETRY_OPTIONS: PollOptions = {
-  maxAttempts: 10,
-  retryInterval: 1_000,
-};
-
-export const DEFAULT_READ_POLL_OPTIONS: PollOptions = {
-  maxAttempts: 30,
-  retryInterval: 1_000,
 };
 
 export function getErrorDetails(err: unknown): {

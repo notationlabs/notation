@@ -7,4 +7,4 @@
 "@notation/std.iac": minor
 ---
 
-A resource `read` now returns the remote object, or `undefined` when it does not exist. Providers translate their own not-found exceptions at the boundary. Known temporary conditions — a Lambda that is still deploying, an IAM role that has not propagated — throw the tagged `ResourceNotReadyError`, which the reconciler retries during deploys and reports as an `indeterminate` plan decision.
+A resource `read` now returns the remote object or throws the tagged `ResourceNotFoundError`. Operations that have started but not settled throw `ResourceOperationPendingError` with their retry delay and optional callback context. The reconciler follows those explicit instructions instead of guessing retry behaviour from provider errors or call-site context.

@@ -9,13 +9,16 @@ export type {
   ResourceClass,
   ResourceSchemaBuilder,
   ResourceBuilder,
+  ResourceOperationContext,
+  ResourceOperationSignal,
   Schema,
   SchemaItem,
 } from "@notation/resource";
 
 export {
   Resource,
-  ResourceNotReadyError,
+  ResourceNotFoundError,
+  ResourceOperationPendingError,
   defineResource,
   resource,
 } from "@notation/resource";

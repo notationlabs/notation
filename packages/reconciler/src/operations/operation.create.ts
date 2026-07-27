@@ -1,12 +1,11 @@
-import { RetryableError, createWorkflow } from "yieldstar";
-import { ResourceNotReadyError } from "@notation/resource";
+import { createWorkflow } from "yieldstar";
 import {
-  DEFAULT_RETRY_OPTIONS,
   type CreateResourceParams,
   type StepRunner,
   emitLifecycleEvent,
   getErrorDetails,
 } from "./operation.types";
+import { runPendingOperation } from "./operation.pending";
 import { readResourceOperation } from "./operation.read";
 
 export async function* createResourceOperation(
@@ -25,18 +24,12 @@ export async function* createResourceOperation(
       params.resource.getParams(),
     );
 
-    const computedPrimaryKey = yield* step.run("create:remote", async () => {
-      try {
-        return await params.resource.create(resourceParams);
-      } catch (err) {
-        if (ResourceNotReadyError.is(err)) {
-          throw new RetryableError(err.message, {
-            ...(params.retryOptions ?? DEFAULT_RETRY_OPTIONS),
-          });
-        }
-        throw err;
-      }
-    });
+    const computedPrimaryKey = yield* runPendingOperation(
+      step,
+      "create:remote",
+      (context) => params.resource.create(resourceParams, context),
+      params.maxOperationAttempts,
+    );
 
     params.resource.setOutput(resourceParams);
     if (computedPrimaryKey) {
@@ -50,15 +43,9 @@ export async function* createResourceOperation(
       resource: params.resource,
       state: params.state,
       emit: params.emit,
-      readPollOptions: params.readPollOptions,
-      retryAbsent: true,
+      maxOperationAttempts: params.maxOperationAttempts,
     });
 
-    if (!readResult) {
-      throw new Error(
-        "Post-create read completed without finding the resource",
-      );
-    }
     params.resource.setOutput({
       ...params.resource.output,
       ...readResult,

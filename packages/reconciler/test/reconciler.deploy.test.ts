@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import {
   LeaseConflict,
   MemoryStateBackend,
@@ -59,9 +59,7 @@ function createTestResourceClass(opts: {
   create?: (
     params: Record<string, unknown>,
   ) => Promise<Record<string, unknown> | void>;
-  read?: (
-    key: Record<string, unknown>,
-  ) => Promise<Record<string, unknown> | undefined>;
+  read?: (key: Record<string, unknown>) => Promise<Record<string, unknown>>;
   update?: (
     key: Record<string, unknown>,
     patch: Record<string, unknown>,
@@ -542,7 +540,9 @@ describe("reconciler destroy + refresh", () => {
       remoteExists = false;
     });
     const readSpy = vi.fn(async () => {
-      if (!remoteExists) return undefined;
+      if (!remoteExists) {
+        throw new ResourceNotFoundError("resource is absent");
+      }
       return found({ name: "doomed" });
     });
     const DestroyResource = createTestResourceClass({

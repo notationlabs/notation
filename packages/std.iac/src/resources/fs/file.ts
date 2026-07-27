@@ -1,4 +1,4 @@
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import { isErrorWithCode } from "@notation/utils";
 import { getSourceSha256 } from "src/utils/hash";
 import * as fs from "node:fs/promises";
@@ -42,7 +42,7 @@ export const File = fileSchema.defineOperations({
       return { ...config, file };
     } catch (error) {
       if (isErrorWithCode(error, "ENOENT")) {
-        return undefined;
+        throw new ResourceNotFoundError("File was not found", { cause: error });
       }
       throw error;
     }

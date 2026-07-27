@@ -141,17 +141,17 @@ All schema items carry these fields:
 
 | Field          | Required | Signature / Description                                                                                                                      |
 | -------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create`       | yes      | `(params: Params<S>) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key.                                      |
-| `read`         | no       | `(key: CompoundKey<S>) => Promise<Result<S> \| undefined>` – return the remote object, or `undefined` when it does not exist.                |
-| `update`       | no       | `(key, patch, params, state) => Promise<void>` – apply a partial update.                                                                     |
-| `delete`       | yes      | `(key, state) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
+| `create`       | yes      | `(params, context?) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key.                                       |
+| `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                         |
+| `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                           |
+| `delete`       | yes      | `(key, state, context?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
 | `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                        |
 
-Resource operations translate provider-specific responses at the provider boundary. A read returns the remote object when it is found, and `undefined` when the provider says it does not exist — the provider's own not-found exception is caught and turned into `undefined` there, not further up the stack.
+Resource operations translate provider-specific responses at the provider boundary. A read throws the structurally tagged `ResourceNotFoundError` when the provider says the resource does not exist. Delete implementations consume the equivalent provider error and complete successfully.
 
-When the provider reports a known temporary condition — a Lambda that is still deploying, an IAM role that has not propagated — a read or a mutation throws `ResourceNotReadyError`. It is recognised by its declared `_tag` via `ResourceNotReadyError.is(error)`, never by provider name, message, or `instanceof`. Every other error propagates and fails the operation.
+An operation that has started but not settled throws `ResourceOperationPendingError`. The error supplies the delay before the next attempt and may supply callback context for that attempt. The operation decides when this is appropriate: for example, a create handler may treat temporary absence as pending while an ordinary read reports not-found.
 
-The reconciler decides what a not-ready condition means. Deploy, read, and mutation workflows retry it; planning reports it as an `indeterminate` decision carrying the error's message, because it cannot diff against a resource that has not settled.
+The reconciler does not infer behaviour from provider error names, messages, or the operation being run. It persists callback context, waits for the requested delay, and invokes the same operation again. A configured maximum attempt count remains a framework safety limit. Every error other than the two declared resource-operation signals fails the operation.
 
 ## Dependencies
 

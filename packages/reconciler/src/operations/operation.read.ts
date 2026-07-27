@@ -1,17 +1,16 @@
-import { RetryableError, createWorkflow } from "yieldstar";
-import { ResourceNotReadyError } from "@notation/resource";
+import { createWorkflow } from "yieldstar";
 import {
-  DEFAULT_READ_POLL_OPTIONS,
   type ReadResourceParams,
   type StepRunner,
   emitLifecycleEvent,
   getErrorDetails,
 } from "./operation.types";
+import { runPendingOperation } from "./operation.pending";
 
 export async function* readResourceOperation(
   step: StepRunner,
   params: ReadResourceParams,
-): AsyncGenerator<unknown, Record<string, unknown> | undefined, unknown> {
+): AsyncGenerator<unknown, Record<string, unknown>, unknown> {
   await emitLifecycleEvent(params, "read", "start");
 
   if (params.dryRun) {
@@ -39,37 +38,12 @@ export async function* readResourceOperation(
       return merged as Record<string, unknown>;
     }
 
-    const remote = yield* step.run("read:remote", async () => {
-      try {
-        const output = await params.resource.read!(params.resource.key);
-
-        if (output === undefined && params.retryAbsent) {
-          throw new RetryableError("Waiting for resource to become visible", {
-            ...(params.readPollOptions ?? DEFAULT_READ_POLL_OPTIONS),
-          });
-        }
-
-        // Absence is `null` rather than `undefined` so that it survives the
-        // step's JSON round-trip when the run is replayed.
-        return output ?? null;
-      } catch (err) {
-        // A tagged not-ready condition is the provider telling us to wait.
-        // Everything else is a genuine failure and must surface.
-        if (ResourceNotReadyError.is(err)) {
-          throw new RetryableError(err.message, {
-            ...(params.readPollOptions ?? DEFAULT_READ_POLL_OPTIONS),
-          });
-        }
-        throw err;
-      }
-    });
-
-    if (remote === null) {
-      await emitLifecycleEvent(params, "read", "skip", {
-        reason: "resource-absent",
-      });
-      return undefined;
-    }
+    const remote = yield* runPendingOperation(
+      step,
+      "read:remote",
+      (context) => params.resource.read!(params.resource.key, context),
+      params.maxOperationAttempts,
+    );
 
     const mergedOutput = {
       ...resourceParams,

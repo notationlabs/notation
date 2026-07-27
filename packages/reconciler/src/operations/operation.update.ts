@@ -1,12 +1,11 @@
-import { RetryableError, createWorkflow } from "yieldstar";
-import { ResourceNotReadyError } from "@notation/resource";
+import { createWorkflow } from "yieldstar";
 import {
-  DEFAULT_RETRY_OPTIONS,
   type StepRunner,
   type UpdateResourceParams,
   emitLifecycleEvent,
   getErrorDetails,
 } from "./operation.types";
+import { runPendingOperation } from "./operation.pending";
 import { readResourceOperation } from "./operation.read";
 
 export async function* updateResourceOperation(
@@ -33,23 +32,19 @@ export async function* updateResourceOperation(
       params.resource.getParams(),
     );
 
-    yield* step.run("update:remote", async () => {
-      try {
-        await params.resource.update!(
+    yield* runPendingOperation(
+      step,
+      "update:remote",
+      (context) =>
+        params.resource.update!(
           params.resource.key,
           params.patch,
           resourceParams,
           params.resource.toState(params.resource.output),
-        );
-      } catch (err) {
-        if (ResourceNotReadyError.is(err)) {
-          throw new RetryableError(err.message, {
-            ...(params.retryOptions ?? DEFAULT_RETRY_OPTIONS),
-          });
-        }
-        throw err;
-      }
-    });
+          context,
+        ),
+      params.maxOperationAttempts,
+    );
 
     params.resource.setOutput({
       ...params.resource.key,
@@ -60,15 +55,9 @@ export async function* updateResourceOperation(
       resource: params.resource,
       state: params.state,
       emit: params.emit,
-      readPollOptions: params.readPollOptions,
-      retryAbsent: true,
+      maxOperationAttempts: params.maxOperationAttempts,
     });
 
-    if (!readResult) {
-      throw new Error(
-        "Post-update read completed without finding the resource",
-      );
-    }
     params.resource.setOutput({
       ...params.resource.output,
       ...readResult,
