@@ -364,6 +364,51 @@ describe("deployment coordination", () => {
     runtime.close();
   });
 
+  it("still holds the deployment when a failed execution is resumed", async () => {
+    // The failure has to live in plain generator code. A step that fails
+    // caches a StepError, and a cached StepError is rethrown on replay before
+    // the step's function is reached, so no later work would ever run
+    // uncached. decideAction calls toComparable outside any step, after the
+    // resource's reads have been checkpointed.
+    let failBeforeSecond = true;
+    const holders: Array<string | null> = [];
+    const Resource = resource({ type: "test/durable/hold-replay" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => {
+          const snapshot = await runtime.storeClient.getStore({
+            definition: durable.deploymentCoordinationStore,
+            id: "hold-replay",
+          });
+          holders.push(snapshot.state.holder);
+        },
+        delete: async () => undefined,
+      });
+
+    const first = new Resource({ id: "first" });
+    const second = new Resource({ id: "second" });
+    const toComparable = second.toComparable.bind(second);
+    second.toComparable = (output) => {
+      if (failBeforeSecond) throw new Error("simulated mid-deployment failure");
+      return toComparable(output);
+    };
+    const runtime = createRuntime([first, second], "hold-replay");
+
+    await expect(runtime.run("replayed-execution")).rejects.toThrow(
+      "simulated mid-deployment failure",
+    );
+    expect(holders).toEqual(["replayed-execution"]);
+
+    failBeforeSecond = false;
+    await runtime.run("replayed-execution");
+
+    // The second resource's create is the first uncached work after the
+    // failure, so it observes whichever hold the resumed execution is running
+    // under. Releasing on the way out of a failure would leave it null here.
+    expect(holders).toEqual(["replayed-execution", "replayed-execution"]);
+    runtime.close();
+  });
+
   it("emits a coordination waiting event when another execution holds the deployment", async () => {
     let unblockCreate!: () => void;
     const blocked = new Promise<void>((resolve) => {
