@@ -27,6 +27,15 @@ import {
 
 const logger = pino({ level: "silent" });
 
+/**
+ * A retry delay has to outlive the heap write that follows it. The workflow
+ * loop continues inline for a delay that has already elapsed by the time it
+ * is reached, so a delay shorter than a SQLite write runs the retry in the
+ * same execution — which is the opposite of what these tests assert.
+ */
+const RETRY_AFTER_MS = 50;
+const PAST_RETRY_MS = RETRY_AFTER_MS + 25;
+
 describe("durable execution and replay", () => {
   it("waits durably for a retryable provider and persists after success", async () => {
     let attempts = 0;
@@ -38,7 +47,7 @@ describe("durable execution and replay", () => {
           if (attempts === 1) {
             expect(context).toBeUndefined();
             throw new ResourceOperationPendingError("provider is not ready", {
-              retryAfterMs: 1,
+              retryAfterMs: RETRY_AFTER_MS,
               callbackContext: { requestId: "request-123" },
             });
           }
@@ -56,7 +65,7 @@ describe("durable execution and replay", () => {
     expect(attempts).toBe(1);
     expect(runtime.scheduler.events).toHaveLength(1);
 
-    await sleep(5);
+    await sleep(PAST_RETRY_MS);
     await runtime.run("wait-execution");
     expect(attempts).toBe(2);
     expect(await runtime.state.get("pending")).toMatchObject({
@@ -124,7 +133,7 @@ describe("durable execution and replay", () => {
           attempts += 1;
           if (attempts === 1) {
             throw new ResourceOperationPendingError("delete is not ready", {
-              retryAfterMs: 1,
+              retryAfterMs: RETRY_AFTER_MS,
             });
           }
         },
@@ -140,7 +149,7 @@ describe("durable execution and replay", () => {
     expect(attempts).toBe(1);
     expect(await runtime.state.get("pending-delete")).toBeDefined();
 
-    await sleep(5);
+    await sleep(PAST_RETRY_MS);
     await runtime.destroy("destroy-wait");
     expect(attempts).toBe(2);
     expect(await runtime.state.get("pending-delete")).toBeUndefined();
@@ -160,7 +169,7 @@ describe("durable execution and replay", () => {
           if (reads === 1) {
             throw new ResourceOperationPendingError(
               "resource is not visible yet",
-              { retryAfterMs: 1 },
+              { retryAfterMs: RETRY_AFTER_MS },
             );
           }
           return {} as const;
@@ -177,7 +186,7 @@ describe("durable execution and replay", () => {
     expect(reads).toBe(1);
     expect(await runtime.state.get("eventually-readable")).toBeUndefined();
 
-    await sleep(5);
+    await sleep(PAST_RETRY_MS);
     await runtime.run("post-write-read-execution");
     expect(reads).toBe(2);
     expect(await runtime.state.get("eventually-readable")).toMatchObject({
