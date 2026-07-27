@@ -39,7 +39,12 @@ export type PersistedResourceState = Pick<
   | "output"
   | "lastOperation"
   | "lastOperationAt"
-> & { [key: string]: unknown };
+> & {
+  // Not on StateNode itself, where they arrive through its index signature.
+  groupId: number;
+  groupType: string;
+  [key: string]: unknown;
+};
 
 /**
  * How a driver writes state. Both are steps so that each driver can carry its

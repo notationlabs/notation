@@ -690,6 +690,8 @@ function statePatch(id: string) {
   return {
     id,
     type: "test/durable/state",
+    groupId: -1,
+    groupType: "",
     config: {},
     params: {},
     output: {},
