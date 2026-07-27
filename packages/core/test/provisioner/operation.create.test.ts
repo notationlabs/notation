@@ -34,8 +34,10 @@ describe("resource creation", () => {
     await runOperation(
       createResourceOperation(step, {
         resource: testResource,
-        state: stateBackend,
-        expectedRev: 0,
+        resourceParams: await testResource.getParams(),
+        persist: async function* (next) {
+          await stateBackend.update(testResource.id, 0, next);
+        },
       }),
     );
 

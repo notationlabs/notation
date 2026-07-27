@@ -27,9 +27,7 @@ export async function* updateResourceOperation(
   }
 
   try {
-    const resourceParams = yield* step.run("update:get-params", () =>
-      params.resource.getParams(),
-    );
+    const resourceParams = params.resourceParams;
 
     yield* runPendingOperation(
       step,
@@ -52,7 +50,8 @@ export async function* updateResourceOperation(
 
     const readResult = yield* readResourceOperation(step, {
       resource: params.resource,
-      state: params.state,
+      resourceParams,
+      persistedOutput: params.persistedOutput,
       emit: params.emit,
       maxOperationAttempts: params.maxOperationAttempts,
     });

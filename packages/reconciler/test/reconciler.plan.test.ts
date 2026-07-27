@@ -13,16 +13,19 @@ function createMemoryState(initial: Record<string, StateNode> = {}) {
 
   return {
     store,
-    get: vi.fn(async (id: string) => store[id]),
+    get: vi.fn(async (id: string): Promise<StateNode | undefined> => store[id]),
     update: vi.fn(
-      async (id: string, expectedRev: number, patch: Partial<StateNode>) => {
+      async (id: string, _expectedRev: number, patch: Partial<StateNode>) => {
+        const rev = (store[id]?.rev ?? 0) + 1;
         store[id] = {
           ...(store[id] ?? {}),
           ...patch,
+          rev,
         } as StateNode;
+        return { rev };
       },
     ),
-    delete: vi.fn(async (id: string) => {
+    delete: vi.fn(async (id: string, _expectedRev: number) => {
       delete store[id];
     }),
     values: vi.fn(async () => Object.values(store)),
@@ -55,20 +58,16 @@ function createTestResourceClass(opts: {
   ) => Promise<void>;
 }) {
   return resource({ type: opts.type })
+    // Cast: a resource declared without API types constrains every schema key
+    // to be a key of an `any` API schema, which no named key can satisfy.
     .defineSchema({
-      name: {
-        presence: "required",
-        propertyType: "param",
-        valueType: "string" as any,
-      },
-      tag: {
-        presence: "optional",
-        propertyType: "param",
-        valueType: "string" as any,
-      },
-    })
+      name: { presence: "required", propertyType: "param" },
+      tag: { presence: "optional", propertyType: "param" },
+    } as any)
     .defineOperations({
-      create: opts.create ?? (async () => ({})),
+      // Cast: with no API types the schema resolves to no primary key, so the
+      // inferred create signature returns void.
+      create: (opts.create ?? (async () => ({}))) as any,
       read: opts.read,
       update: opts.update,
       delete: opts.delete ?? (async () => undefined),
@@ -82,6 +81,7 @@ function createStateNode(
   output: Record<string, unknown> = params,
 ): StateNode {
   return {
+    rev: 1,
     id,
     groupId: -1,
     groupType: "",
@@ -369,14 +369,10 @@ describe("reconciler plan", () => {
       type: "test/service/plan-derive-failure",
     })
       .defineSchema({
-        name: {
-          presence: "required",
-          propertyType: "param",
-          valueType: "string" as any,
-        },
-      })
+        name: { presence: "required", propertyType: "param" },
+      } as any)
       .defineOperations({
-        create: async () => ({}),
+        create: (async () => ({})) as any,
         delete: async () => undefined,
         deriveParams: () => {
           throw new Error("invalid derived configuration");

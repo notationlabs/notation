@@ -163,11 +163,23 @@ export class Reconciler {
     dryRun: boolean,
     driftDetection: boolean,
   ) {
-    await this.#withMutationLease(resource.id, () =>
-      this.#retryOnRevConflict((conflict) =>
-        this.#deployResourceOnce(resource, dryRun, driftDetection, conflict),
-      ),
-    );
+    await this.#withMutationLease(resource.id, async () => {
+      // Resolved once for the whole scheduled reconciliation, recovery
+      // included: deriveParams is user code and need not be deterministic, so
+      // a second resolution could decide against one set of params and
+      // persist another, with nothing to reconcile the two afterwards.
+      const params = (await resource.getParams()) as Record<string, unknown>;
+
+      await this.#retryOnRevConflict((conflict) =>
+        this.#deployResourceOnce(
+          resource,
+          params,
+          dryRun,
+          driftDetection,
+          conflict,
+        ),
+      );
+    });
   }
 
   async #withMutationLease<T>(resourceId: string, fn: () => Promise<T>) {
@@ -224,12 +236,13 @@ export class Reconciler {
 
   async #deployResourceOnce(
     resource: BaseResource,
+    params: Record<string, unknown>,
     dryRun: boolean,
     driftDetection: boolean,
     conflict?: RevConflict,
   ) {
     if (conflict) {
-      await this.#recoverDeployResource(resource, dryRun, conflict);
+      await this.#recoverDeployResource(resource, params, dryRun, conflict);
       return;
     }
 
@@ -237,14 +250,17 @@ export class Reconciler {
 
     let action: ResourceAction;
     if (!stateNode) {
-      action = decideAction({ resource });
+      action = decideAction({ resource, params });
     } else {
       resource.setOutput(stateNode.output);
-      const params = await resource.getParams();
       action = decideAction({ resource, stateNode, params });
 
       if (action.decision === "noop" && driftDetection) {
-        const driftRead = await this.#readForDrift(resource);
+        const driftRead = await this.#readForDrift(
+          resource,
+          params,
+          stateNode.output,
+        );
         action = decideAction({ resource, stateNode, params, driftRead });
       }
     }
@@ -273,7 +289,8 @@ export class Reconciler {
         await runOperation(
           createResourceOperation(this.#stepRunner, {
             resource,
-            state: this.#state,
+            resourceParams: params,
+            persistedOutput: stateNode?.output,
             dryRun,
             emit: this.#emitStep,
             maxOperationAttempts: this.#maxOperationAttempts,
@@ -287,7 +304,8 @@ export class Reconciler {
         await runOperation(
           updateResourceOperation(this.#stepRunner, {
             resource,
-            state: this.#state,
+            resourceParams: params,
+            persistedOutput: stateNode?.output,
             patch: action.patch,
             dryRun,
             emit: this.#emitStep,
@@ -303,6 +321,7 @@ export class Reconciler {
 
   async #recoverDeployResource(
     resource: BaseResource,
+    params: Record<string, unknown>,
     dryRun: boolean,
     conflict: RevConflict,
   ) {
@@ -311,8 +330,11 @@ export class Reconciler {
     const stateNode = await this.#state.get(resource.id);
     if (stateNode) resource.setOutput(stateNode.output);
 
-    const params = await resource.getParams();
-    const remote = await this.#readForDrift(resource);
+    const remote = await this.#readForDrift(
+      resource,
+      params,
+      stateNode?.output,
+    );
     const action = decideAction({
       resource,
       stateNode,
@@ -335,7 +357,8 @@ export class Reconciler {
         await runOperation(
           createResourceOperation(this.#stepRunner, {
             resource,
-            state: this.#state,
+            resourceParams: params,
+            persistedOutput: stateNode?.output,
             dryRun,
             emit: this.#emitStep,
             maxOperationAttempts: this.#maxOperationAttempts,
@@ -348,7 +371,8 @@ export class Reconciler {
         await runOperation(
           updateResourceOperation(this.#stepRunner, {
             resource,
-            state: this.#state,
+            resourceParams: params,
+            persistedOutput: stateNode?.output,
             patch: action.patch,
             dryRun,
             emit: this.#emitStep,
@@ -390,11 +414,16 @@ export class Reconciler {
     };
   }
 
-  #readForDrift(resource: BaseResource): Promise<DriftRead> {
+  #readForDrift(
+    resource: BaseResource,
+    params: Record<string, unknown>,
+    persistedOutput: Record<string, unknown> | undefined,
+  ): Promise<DriftRead> {
     return runOperation(
       readDriftOperation(this.#stepRunner, {
         resource,
-        state: this.#state,
+        resourceParams: params,
+        persistedOutput,
         emit: this.#emitStep,
         maxOperationAttempts: this.#maxOperationAttempts,
       }),
@@ -474,7 +503,14 @@ export class Reconciler {
     if (conflict) {
       if (!resource.read) throw conflict;
 
-      const remote = await this.#readForDrift(resource);
+      // Deletion never needs the desired params, so they are resolved here
+      // rather than for every delete: only the recovery read consumes them.
+      const params = (await resource.getParams()) as Record<string, unknown>;
+      const remote = await this.#readForDrift(
+        resource,
+        params,
+        stateNode.output,
+      );
       if (remote.kind !== "present") {
         if (!dryRun) await this.#state.delete(resource.id, stateNode.rev);
         return;
@@ -485,7 +521,6 @@ export class Reconciler {
     await runOperation(
       deleteResourceOperation(this.#stepRunner, {
         resource,
-        state: this.#state,
         dryRun,
         emit: this.#emitStep,
         maxOperationAttempts: this.#maxOperationAttempts,

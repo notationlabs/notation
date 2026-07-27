@@ -20,16 +20,11 @@ export async function* readResourceOperation(
   }
 
   try {
-    const resourceParams = yield* step.run("read:get-params", () =>
-      params.resource.getParams(),
-    );
+    const resourceParams = params.resourceParams;
 
     if (!params.resource.read) {
-      const stateNode = yield* step.run("read:get-state-node", () =>
-        params.state.get(params.resource.id),
-      );
-      const merged = stateNode
-        ? { ...stateNode.output, ...resourceParams }
+      const merged = params.persistedOutput
+        ? { ...params.persistedOutput, ...resourceParams }
         : resourceParams;
 
       yield* emitLifecycleEvent(params, "read", "skip", {

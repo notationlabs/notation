@@ -72,15 +72,15 @@ function createTestResourceClass(opts: {
   ) => Promise<void>;
 }) {
   return resource({ type: opts.type })
+    // Cast: a resource declared without API types constrains every schema key
+    // to be a key of an `any` API schema, which no named key can satisfy.
     .defineSchema({
-      name: {
-        presence: "required",
-        propertyType: "param",
-        valueType: "string" as any,
-      },
-    })
+      name: { presence: "required", propertyType: "param" },
+    } as any)
     .defineOperations({
-      create: opts.create ?? (async () => ({})),
+      // Cast: with no API types the schema resolves to no primary key, so the
+      // inferred create signature returns void.
+      create: (opts.create ?? (async () => ({}))) as any,
       read: opts.read,
       update: opts.update,
       delete: opts.delete ?? (async () => undefined),
@@ -93,7 +93,9 @@ const found = (output: Record<string, unknown>) => output;
 describe("reconciler deploy", () => {
   it("chooses create vs update from desired params vs state", async () => {
     const createSpy = vi.fn(async () => ({ name: "new" }));
-    const updateSpy = vi.fn(async () => undefined);
+    const updateSpy = vi.fn(
+      async (_key: unknown, _patch: Record<string, unknown>) => undefined,
+    );
 
     const CreateResource = createTestResourceClass({
       type: "test/service/create-choice",
@@ -397,7 +399,9 @@ describe("reconciler deploy", () => {
   });
 
   it("detects drift using live read output and converges with update", async () => {
-    const updateSpy = vi.fn(async () => undefined);
+    const updateSpy = vi.fn(
+      async (_key: unknown, _patch: Record<string, unknown>) => undefined,
+    );
     const events: Array<Record<string, unknown>> = [];
     const TestResource = createTestResourceClass({
       type: "test/service/drift",

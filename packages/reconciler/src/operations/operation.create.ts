@@ -19,9 +19,7 @@ export async function* createResourceOperation(
   }
 
   try {
-    const resourceParams = yield* step.run("create:get-params", () =>
-      params.resource.getParams(),
-    );
+    const resourceParams = params.resourceParams;
 
     const computedPrimaryKey = yield* runPendingOperation(
       step,
@@ -40,7 +38,8 @@ export async function* createResourceOperation(
 
     const readResult = yield* readResourceOperation(step, {
       resource: params.resource,
-      state: params.state,
+      resourceParams,
+      persistedOutput: params.persistedOutput,
       emit: params.emit,
       maxOperationAttempts: params.maxOperationAttempts,
     });

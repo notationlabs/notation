@@ -19,6 +19,7 @@
   ],
   "scripts": {
     "build": "tsup --clean",
+    "typecheck": "tsc --noEmit",
     "dev": "tsup --watch"
   },
   "dependencies": {

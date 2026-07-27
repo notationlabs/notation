@@ -253,13 +253,11 @@ describe("dependency ordering", () => {
 describe("conditional state persistence", () => {
   it("rejects a state write whose snapshot another writer has moved past", async () => {
     const RaceResource = resource({ type: "test/durable/write-race" })
+      // Cast: a resource declared without API types constrains every schema
+      // key to be a key of an `any` API schema, which no named key satisfies.
       .defineSchema({
-        name: {
-          presence: "required",
-          propertyType: "param",
-          valueType: "string" as any,
-        },
-      })
+        name: { presence: "required", propertyType: "param" },
+      } as any)
       .defineOperations({
         create: async () => undefined,
         // Moves the store on between the workflow reading its snapshot and
@@ -509,15 +507,13 @@ describe("drift detection and repair", () => {
       remote = { name: "expected" };
     });
     const DriftResource = resource({ type: "test/durable/drift" })
+      // Cast: a resource declared without API types constrains every schema
+      // key to be a key of an `any` API schema, which no named key satisfies.
       .defineSchema({
-        name: {
-          presence: "required",
-          propertyType: "param",
-          valueType: "string" as any,
-        },
-      })
+        name: { presence: "required", propertyType: "param" },
+      } as any)
       .defineOperations({
-        create: async () => remote,
+        create: (async () => remote) as any,
         read: async () => remote,
         update: updateSpy,
         delete: async () => undefined,

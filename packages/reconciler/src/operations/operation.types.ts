@@ -1,5 +1,5 @@
 import type { BaseResource } from "@notation/resource";
-import type { State, StateNode } from "@notation/state";
+import type { StateNode } from "@notation/state";
 import type {
   EmitStep,
   OperationLifecycleEvent,
@@ -60,19 +60,27 @@ export type RemoveState = () => AsyncGenerator<unknown, void, unknown>;
 
 export type ResourceOperationBaseParams = {
   resource: BaseResource;
-  state: Pick<State, "get">;
   dryRun?: boolean;
   emit?: OperationEventEmitter;
   maxOperationAttempts?: number;
 };
 
-export type CreateResourceParams = ResourceOperationBaseParams & {
+/**
+ * Everything a read needs is resolved before the operation starts: the
+ * desired params, and — for a resource with no read operation — the output
+ * the last write persisted. An operation that resolved either itself could
+ * see a different answer from the one the decision was taken against.
+ */
+export type ReadResourceParams = ResourceOperationBaseParams & {
+  resourceParams: Record<string, unknown>;
+  persistedOutput?: Record<string, unknown>;
+};
+
+export type CreateResourceParams = ReadResourceParams & {
   persist: PersistState;
 };
 
-export type ReadResourceParams = ResourceOperationBaseParams;
-
-export type UpdateResourceParams = ResourceOperationBaseParams & {
+export type UpdateResourceParams = ReadResourceParams & {
   patch: Record<string, unknown>;
   persist: PersistState;
 };

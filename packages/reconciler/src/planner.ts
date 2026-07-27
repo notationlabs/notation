@@ -47,7 +47,8 @@ export async function createPlan({
         const driftRead = await runOperation(
           readDriftOperation(createStepRunner(), {
             resource,
-            state,
+            resourceParams: params,
+            persistedOutput: stateNode?.output,
             emit: emitStep,
             maxOperationAttempts,
           }),

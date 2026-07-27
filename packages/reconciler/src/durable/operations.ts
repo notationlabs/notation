@@ -34,10 +34,17 @@ export async function* reconcileResource(
   const emit = durableEmitter(scope, opts.emit);
 
   const { stateNode, snapshot } = yield* hydrateResource(scope, resource, opts);
-  const shared = operationParams(scope, resource, opts, stateNode);
 
-  // Decide the operation from desired params vs persisted state.
+  // Decide the operation from desired params vs persisted state. The params
+  // are resolved once and then carried: deriveParams is user code and need
+  // not be deterministic, so an operation resolving them again could persist
+  // params other than the ones the decision was taken against.
   const params = yield* scope.run("params", () => resource.getParams());
+  const shared = {
+    ...operationParams(scope, resource, opts),
+    resourceParams: params,
+    persistedOutput: stateNode?.output,
+  };
   let action: ResourceAction = decideAction({ resource, stateNode, params });
 
   // A noop is only trusted after the remote is read back: the provider may
@@ -46,10 +53,11 @@ export async function* reconcileResource(
     // Its own scope: the operation that follows reads the remote again, and
     // the two reads must not share step keys.
     const driftScope = scopeStep(scope, "drift-read");
-    const driftRead = yield* readDriftOperation(
-      driftScope,
-      operationParams(driftScope, resource, opts, stateNode),
-    );
+    const driftRead = yield* readDriftOperation(driftScope, {
+      ...operationParams(driftScope, resource, opts),
+      resourceParams: params,
+      persistedOutput: stateNode?.output,
+    });
     action = decideAction({ resource, stateNode, params, driftRead });
   }
 
@@ -99,7 +107,7 @@ export async function* deleteResource(
   resource.setOutput(stateNode.output);
 
   yield* deleteResourceOperation(step, {
-    ...operationParams(step, resource, opts, stateNode),
+    ...operationParams(step, resource, opts),
     remove: removeResourceState(step, opts, resource, snapshot),
   });
 }
@@ -179,13 +187,9 @@ function operationParams(
   step: DurableStep,
   resource: BaseResource,
   opts: DurableOperationOptions,
-  stateNode: StateNode | undefined,
 ): ResourceOperationBaseParams {
   return {
     resource,
-    // Serve the record already read during hydration rather than reading it
-    // again; a workflow must see the same value on every replay anyway.
-    state: { get: async () => stateNode },
     dryRun: opts.dryRun,
     emit: durableEmitter(step, opts.emit),
     maxOperationAttempts: opts.maxOperationAttempts,
