@@ -289,8 +289,6 @@ export class Reconciler {
       }
     }
 
-    assertDecidable(action, resource);
-
     if (action.decision === "drift-update") {
       await this.#emit?.({
         level: "info",
@@ -363,7 +361,6 @@ export class Reconciler {
       params,
       driftRead: remote,
     });
-    assertDecidable(action, resource);
     if (remote.kind === "present") resource.setOutput(remote.output);
 
     await this.#emit?.({
@@ -434,44 +431,61 @@ export class Reconciler {
     let action = decideAction({ resource, stateNode, params });
 
     if (action.decision === "noop" && driftDetection) {
-      const driftRead = await this.#readForDrift(resource, {
-        retryNotReady: false,
-      });
-      action = decideAction({ resource, stateNode, params, driftRead });
+      try {
+        const driftRead = await this.#readForPlan(resource, params);
+        action = decideAction({ resource, stateNode, params, driftRead });
+      } catch (error) {
+        if (!ResourceNotReadyError.is(error)) throw error;
+        return {
+          id: resource.id,
+          type: resource.type,
+          decision: "indeterminate",
+          reason: error.message,
+          params,
+          dependsOn: getDependencyIds(resource),
+        };
+      }
     }
 
     return {
       id: resource.id,
       type: resource.type,
       decision: action.decision,
-      ...("reason" in action ? { reason: action.reason } : {}),
       ...("diff" in action ? { diff: action.diff } : {}),
       params,
       dependsOn: getDependencyIds(resource),
     };
   }
 
-  async #readForDrift(
+  async #readForPlan(
     resource: BaseResource,
-    opts: { retryNotReady?: boolean } = {},
+    params: Record<string, unknown>,
   ): Promise<DriftRead> {
-    try {
-      const output = await runOperation(
-        readResourceOperation(this.#stepRunner, {
-          resource,
-          state: this.#state,
-          emit: this.#emit,
-          readPollOptions: this.#readPollOptions,
-          retryNotReady: opts.retryNotReady,
-        }),
-      );
-      return output ? { kind: "present", output } : { kind: "absent" };
-    } catch (err) {
-      if (opts.retryNotReady === false && ResourceNotReadyError.is(err)) {
-        return { kind: "not-ready", reason: err.message };
-      }
-      throw err;
+    if (!resource.read) {
+      return {
+        kind: "present",
+        output: { ...resource.output, ...params },
+      };
     }
+
+    const output = await resource.read(resource.key);
+    return output === undefined
+      ? { kind: "absent" }
+      : { kind: "present", output: { ...params, ...output } };
+  }
+
+  async #readForDrift(resource: BaseResource): Promise<DriftRead> {
+    const output = await runOperation(
+      readResourceOperation(this.#stepRunner, {
+        resource,
+        state: this.#state,
+        emit: this.#emit,
+        readPollOptions: this.#readPollOptions,
+      }),
+    );
+    return output === undefined
+      ? { kind: "absent" }
+      : { kind: "present", output };
   }
 
   async #deleteOrphans(
@@ -565,20 +579,6 @@ export class Reconciler {
         expectedRev: stateNode.rev,
       }),
     );
-  }
-}
-
-/**
- * Deploy reads retry not-ready conditions rather than reporting them, so a
- * deploy decision is never indeterminate. Asserting it keeps the apply paths
- * honest if that ever changes.
- */
-function assertDecidable(
-  action: ResourceAction,
-  resource: BaseResource,
-): asserts action is Exclude<ResourceAction, { decision: "indeterminate" }> {
-  if (action.decision === "indeterminate") {
-    throw new Error(`Cannot deploy ${resource.id}: ${action.reason}`);
   }
 }
 

@@ -1,4 +1,5 @@
 import { resource } from "@notation/resource";
+import { isErrorWithCode } from "@notation/utils";
 import * as fs from "node:fs/promises";
 import { zip } from "src/utils/zip";
 import { getSourceSha256 } from "src/utils/hash";
@@ -55,7 +56,7 @@ export const Zip = zipSchema.defineOperations({
       const file = await fs.readFile(params.filePath);
       return { ...params, file };
     } catch (error) {
-      if (isFileMissing(error)) {
+      if (isErrorWithCode(error, "ENOENT")) {
         return undefined;
       }
       throw error;
@@ -72,18 +73,9 @@ export const Zip = zipSchema.defineOperations({
     try {
       await fs.unlink(config.filePath);
     } catch (error) {
-      if (!isFileMissing(error)) throw error;
+      if (!isErrorWithCode(error, "ENOENT")) throw error;
     }
   },
 });
 
 export type ZipFileInstance = InstanceType<typeof Zip>;
-
-function isFileMissing(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "ENOENT"
-  );
-}

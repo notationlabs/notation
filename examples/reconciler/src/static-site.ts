@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { resource } from "@notation/resource";
+import { isErrorWithCode } from "@notation/utils";
 
 type StaticSiteApi = {
   Key: { siteDirectory: string };
@@ -36,7 +37,7 @@ export const StaticSite = staticSite
         );
         return { html };
       } catch (error) {
-        if (isFileMissing(error)) {
+        if (isErrorWithCode(error, "ENOENT")) {
           return undefined;
         }
         throw error;
@@ -49,12 +50,3 @@ export const StaticSite = staticSite
       await rm(siteDirectory, { recursive: true, force: true });
     },
   });
-
-function isFileMissing(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "ENOENT"
-  );
-}

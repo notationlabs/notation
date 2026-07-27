@@ -126,6 +126,9 @@ importers:
       '@notation/state-sqlite':
         specifier: workspace:*
         version: link:../../packages/state-sqlite
+      '@notation/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
     devDependencies:
       '@types/node':
         specifier: ^22.13.4
@@ -352,6 +355,10 @@ importers:
   packages/resource: {}
 
   packages/state:
+    dependencies:
+      '@notation/utils':
+        specifier: workspace:*
+        version: link:../utils
     devDependencies:
       '@types/node':
         specifier: ^22.13.4
@@ -375,6 +382,9 @@ importers:
       '@notation/resource':
         specifier: workspace:*
         version: link:../resource
+      '@notation/utils':
+        specifier: workspace:*
+        version: link:../utils
       fflate:
         specifier: 0.8.2
         version: 0.8.2
@@ -384,6 +394,12 @@ importers:
         version: 22.13.4
 
   packages/tsconfig: {}
+
+  packages/utils:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.13.4
 
 packages:
 

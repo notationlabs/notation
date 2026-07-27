@@ -55,7 +55,7 @@ export async function* readResourceOperation(
       } catch (err) {
         // A tagged not-ready condition is the provider telling us to wait.
         // Everything else is a genuine failure and must surface.
-        if (params.retryNotReady !== false && ResourceNotReadyError.is(err)) {
+        if (ResourceNotReadyError.is(err)) {
           throw new RetryableError(err.message, {
             ...(params.readPollOptions ?? DEFAULT_READ_POLL_OPTIONS),
           });
