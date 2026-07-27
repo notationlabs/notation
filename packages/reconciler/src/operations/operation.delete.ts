@@ -1,4 +1,3 @@
-import { createWorkflow } from "yieldstar";
 import {
   type DeleteResourceParams,
   type StepRunner,
@@ -39,12 +38,3 @@ export async function* deleteResourceOperation(
     throw err;
   }
 }
-
-export const deleteResourceWorkflow: unknown = createWorkflow(
-  async function* (step, event) {
-    return yield* deleteResourceOperation(
-      step as StepRunner,
-      event.params as DeleteResourceParams,
-    );
-  },
-);

@@ -1,4 +1,3 @@
-import { createWorkflow } from "yieldstar";
 import {
   type StepRunner,
   type UpdateResourceParams,
@@ -81,12 +80,3 @@ export async function* updateResourceOperation(
     throw err;
   }
 }
-
-export const updateResourceWorkflow: unknown = createWorkflow(
-  async function* (step, event) {
-    return yield* updateResourceOperation(
-      step as StepRunner,
-      event.params as UpdateResourceParams,
-    );
-  },
-);

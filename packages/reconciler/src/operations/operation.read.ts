@@ -1,5 +1,4 @@
 import { ResourceNotFoundError } from "@notation/resource";
-import { createWorkflow } from "yieldstar";
 import type { DriftRead } from "../plan";
 import {
   type ReadResourceParams,
@@ -77,12 +76,3 @@ export async function* readDriftOperation(
     throw error;
   }
 }
-
-export const readResourceWorkflow: unknown = createWorkflow(
-  async function* (step, event) {
-    return yield* readResourceOperation(
-      step as StepRunner,
-      event.params as ReadResourceParams,
-    );
-  },
-);
