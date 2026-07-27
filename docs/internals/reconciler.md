@@ -83,9 +83,16 @@ Each CRUD operation is implemented as an async generator with retry support:
 
 ### Pending operations
 
-A resource operation reports that it is still in progress by throwing `ResourceOperationPendingError` with a retry delay and optional callback context. The reconciler persists that context, waits for the requested delay, and invokes the operation again. It does not infer retry behaviour from provider errors.
+A resource operation throws `ResourceOperationPendingError` when it has not finished. The reconciler reads two fields from the error:
 
-The reconciler limits the number of attempts as a safety boundary:
+| Field | Action |
+| ----- | ------ |
+| `retryAfterMs` | Wait this many milliseconds. |
+| `callbackContext` | Pass this value to the next call of the same operation. |
+
+The reconciler then calls the same operation again. Any other error fails the operation. See [Operation errors](./resource.md#operation-errors) for the complete API.
+
+The default limit is 30 calls to one operation:
 
 ```ts [packages/reconciler/src/index.ts]
 {
@@ -93,7 +100,7 @@ The reconciler limits the number of attempts as a safety boundary:
 }
 ```
 
-Resources provide the timing because they understand the remote operation. For example, the Lambda resource reports IAM propagation and inactive function states as pending.
+The last pending error becomes a failure when the limit is reached.
 
 ### Operation lifecycle
 

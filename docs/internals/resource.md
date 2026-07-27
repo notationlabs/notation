@@ -147,11 +147,69 @@ All schema items carry these fields:
 | `delete`       | yes      | `(key, state, context?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
 | `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                        |
 
-Resource operations translate provider-specific responses at the provider boundary. A read throws the structurally tagged `ResourceNotFoundError` when the provider says the resource does not exist. Delete implementations consume the equivalent provider error and complete successfully.
+### Operation errors
 
-An operation that has started but not settled throws `ResourceOperationPendingError`. The error supplies the delay before the next attempt and may supply callback context for that attempt. The operation decides when this is appropriate: for example, a create handler may treat temporary absence as pending while an ordinary read reports not-found.
+Import the errors from `@notation/resource`:
 
-The reconciler does not infer behaviour from provider error names, messages, or the operation being run. It persists callback context, waits for the requested delay, and invokes the same operation again. A configured maximum attempt count remains a framework safety limit. Every error other than the two declared resource-operation signals fails the operation.
+```ts
+import {
+  ResourceNotFoundError,
+  ResourceOperationPendingError,
+} from "@notation/resource";
+```
+
+The constructors are:
+
+```ts
+new ResourceNotFoundError(message: string, options?: { cause?: unknown });
+
+new ResourceOperationPendingError(message: string, {
+  retryAfterMs: number;
+  callbackContext?: Readonly<Record<string, unknown>>;
+  cause?: unknown;
+});
+```
+
+| Handler result | Meaning | What the reconciler does |
+| -------------- | ------- | ------------------------ |
+| Return normally | The operation finished. | Continues the deployment. |
+| `throw new ResourceNotFoundError(message, { cause })` | `read` found no resource for the given key. | Treats the resource as absent during planning and refresh. A read after create or update fails because that operation claimed to have finished. |
+| `throw new ResourceOperationPendingError(message, { retryAfterMs, callbackContext })` | The operation has not finished. | Waits for `retryAfterMs`, then calls the same handler again. It passes `callbackContext` as the handler's final argument. |
+| Throw any other error | The operation failed. | Stops the deployment. |
+
+`ResourceNotFoundError` is for `read`. A `delete` handler must catch the provider's missing-resource error and return normally.
+
+`ResourceOperationPendingError` may be thrown by `create`, `read`, `update`, or `delete`. Its options are:
+
+| Option | Type | Required | Meaning |
+| ------ | ---- | -------- | ------- |
+| `retryAfterMs` | `number` | yes | Milliseconds to wait. It must be zero or greater. |
+| `callbackContext` | `Readonly<Record<string, unknown>>` | no | Plain serializable data for the next attempt. |
+| `cause` | `unknown` | no | The provider error that caused this result. |
+
+The default limit is 30 attempts. Set `maxOperationAttempts` on the reconciler to change it. Reaching the limit fails the operation.
+
+```ts
+read: async (key, context) => {
+  try {
+    return await client.send(new GetResourceCommand(key));
+  } catch (error) {
+    if (error instanceof ResourceMissingException) {
+      throw new ResourceNotFoundError("Resource was not found", {
+        cause: error,
+      });
+    }
+    if (error instanceof OperationInProgressException) {
+      throw new ResourceOperationPendingError("Resource is not ready", {
+        retryAfterMs: 1_000,
+        callbackContext: { requestId: error.requestId },
+        cause: error,
+      });
+    }
+    throw error;
+  }
+};
+```
 
 ## Dependencies
 
