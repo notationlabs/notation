@@ -55,6 +55,11 @@ export async function* reconcileResource(
     const driftScope = scope.scope("drift-read");
     const driftRead = yield* readDriftOperation(driftScope, {
       ...operationParams(driftScope, resource, opts),
+      // A dry run suppresses mutations, not reads. Threading dryRun in here
+      // would make the read return {} without touching the provider, which
+      // decideAction would then diff against the desired params and report as
+      // drift that is not there.
+      dryRun: undefined,
       resourceParams: params,
       persistedOutput: stateNode?.output,
     });

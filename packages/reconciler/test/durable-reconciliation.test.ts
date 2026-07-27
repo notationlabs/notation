@@ -542,6 +542,52 @@ describe("drift detection and repair", () => {
     ).toHaveLength(1);
     runtime.close();
   });
+
+  it("reads the remote during a dry run rather than reporting false drift", async () => {
+    const remote = { name: "expected" };
+    const read = vi.fn(async () => remote);
+    const DryRunDriftResource = resource({ type: "test/durable/dry-run-drift" })
+      .defineSchema({
+        name: { presence: "required", propertyType: "param" },
+      } as any)
+      .defineOperations({
+        create: (async () => remote) as any,
+        read,
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const events: ReconcilerEvent[] = [];
+    const options = {
+      driftDetection: true,
+      dryRun: false,
+      emit: (event: ReconcilerEvent) => void events.push(event),
+    };
+    const runtime = createRuntime(
+      [new DryRunDriftResource({ id: "steady", config: { name: "expected" } })],
+      "dry-run-drift",
+      options,
+    );
+
+    await runtime.run("deploy-1");
+    const readsAfterDeploy = read.mock.calls.length;
+
+    options.dryRun = true;
+    events.length = 0;
+    await runtime.run("dry-run");
+
+    // Suppressing the drift read under dryRun would leave decideAction
+    // diffing an empty read against the desired params, which reports every
+    // param as drift; skipping it entirely would make a dry run unable to
+    // report the drift it exists to report.
+    expect(read.mock.calls.length).toBeGreaterThan(readsAfterDeploy);
+    expect(
+      events.filter((event) => event.event === "reconciler.drift.detected"),
+    ).toEqual([]);
+    expect(
+      events.find((event) => event.event === "reconciler.deploy.decision"),
+    ).toMatchObject({ resourceId: "steady", decision: "noop" });
+    runtime.close();
+  });
 });
 
 function createRuntime(
@@ -552,6 +598,7 @@ function createRuntime(
     crashAfterStep?: string;
     registry?: ResourceRegistry;
     driftDetection?: boolean;
+    dryRun?: boolean;
     emit?: (event: ReconcilerEvent) => void;
   } = {},
 ) {
@@ -574,6 +621,8 @@ function createRuntime(
       state,
       registry: options.registry,
       driftDetection: options.driftDetection ?? false,
+      // Read at execution time, so a test can switch it between runs.
+      dryRun: options.dryRun,
       emit: options.emit,
       maxOperationAttempts: options.maxOperationAttempts,
     });
