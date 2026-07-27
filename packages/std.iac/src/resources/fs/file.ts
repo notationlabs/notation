@@ -36,8 +36,16 @@ export const File = fileSchema.defineOperations({
     return { sourceSha256 };
   },
   read: async (config) => {
-    const file = await fs.readFile(config.filePath);
-    return { ...config, file };
+    try {
+      const file = await fs.readFile(config.filePath);
+      return {
+        status: "found",
+        output: { ...config, file },
+      } as const;
+    } catch (error) {
+      if (isFileMissing(error)) return { status: "absent" } as const;
+      throw error;
+    }
   },
   create: async () => {},
   update: async () => {},
@@ -45,3 +53,12 @@ export const File = fileSchema.defineOperations({
 });
 
 export type FileInstance = InstanceType<typeof File>;
+
+function isFileMissing(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ENOENT"
+  );
+}

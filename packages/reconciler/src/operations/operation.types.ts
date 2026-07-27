@@ -1,8 +1,4 @@
-import type {
-  BaseResource,
-  ErrorMatcher,
-  ResourceType,
-} from "@notation/resource";
+import type { BaseResource, ResourceType } from "@notation/resource";
 import type { State } from "@notation/state";
 
 export type OperationName = "create" | "read" | "update" | "delete";
@@ -63,7 +59,9 @@ export type CreateResourceParams = ResourceOperationBaseParams & {
   expectedRev: number;
 };
 
-export type ReadResourceParams = ResourceOperationBaseParams;
+export type ReadResourceParams = ResourceOperationBaseParams & {
+  retryAbsent?: boolean;
+};
 
 export type UpdateResourceParams = ResourceOperationBaseParams & {
   patch: Record<string, unknown>;
@@ -83,28 +81,6 @@ export const DEFAULT_READ_POLL_OPTIONS: PollOptions = {
   maxAttempts: 30,
   retryInterval: 1_000,
 };
-
-export function matchError(
-  err: unknown,
-  matchers: ErrorMatcher[] | undefined,
-): ErrorMatcher | undefined {
-  if (!matchers || matchers.length === 0) return undefined;
-
-  const name =
-    typeof err === "object" && err && "name" in err
-      ? String((err as { name?: unknown }).name)
-      : undefined;
-  const message =
-    typeof err === "object" && err && "message" in err
-      ? String((err as { message?: unknown }).message)
-      : undefined;
-
-  return matchers.find((matcher) => {
-    if (matcher.name !== name) return false;
-    if (matcher.message && matcher.message !== message) return false;
-    return true;
-  });
-}
 
 export function getErrorDetails(err: unknown): {
   errorName: string;

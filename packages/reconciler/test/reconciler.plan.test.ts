@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { resource, type BaseResource } from "@notation/resource";
+import {
+  resource,
+  type BaseResource,
+  type ResourceReadResult,
+} from "@notation/resource";
 import type { StateNode } from "@notation/state";
 import { Reconciler, UNKNOWN_AFTER_APPLY } from "../src";
 
@@ -37,7 +41,9 @@ function createTestResourceClass(opts: {
   create?: (
     params: Record<string, unknown>,
   ) => Promise<Record<string, unknown> | void>;
-  read?: (key: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  read?: (
+    key: Record<string, unknown>,
+  ) => Promise<ResourceReadResult<Record<string, unknown>>>;
   update?: (
     key: Record<string, unknown>,
     patch: Record<string, unknown>,
@@ -48,7 +54,6 @@ function createTestResourceClass(opts: {
     key: Record<string, unknown>,
     state: Record<string, unknown>,
   ) => Promise<void>;
-  notFoundOnError?: { name: string; reason: string }[];
 }) {
   return resource({ type: opts.type })
     .defineSchema({
@@ -68,7 +73,6 @@ function createTestResourceClass(opts: {
       read: opts.read,
       update: opts.update,
       delete: opts.delete ?? (async () => undefined),
-      notFoundOnError: opts.notFoundOnError,
     });
 }
 
@@ -168,7 +172,10 @@ describe("reconciler plan", () => {
   });
 
   it("plans drift-update from live read output when drift detection is on", async () => {
-    const readSpy = vi.fn(async () => ({ name: "drifted" }));
+    const readSpy = vi.fn(async () => ({
+      status: "found" as const,
+      output: { name: "drifted" },
+    }));
     const TestResource = createTestResourceClass({
       type: "test/service/plan-drift-update",
       read: readSpy,
@@ -203,14 +210,7 @@ describe("reconciler plan", () => {
   it("plans drift-recreate when the remote resource is gone", async () => {
     const TestResource = createTestResourceClass({
       type: "test/service/plan-drift-recreate",
-      read: async () => {
-        const err = new Error("gone");
-        err.name = "NotFoundException";
-        throw err;
-      },
-      notFoundOnError: [
-        { name: "NotFoundException", reason: "deleted remotely" },
-      ],
+      read: async () => ({ status: "absent" }),
     });
 
     const state = createMemoryState({
@@ -233,7 +233,10 @@ describe("reconciler plan", () => {
   });
 
   it("skips remote reads when drift detection is off", async () => {
-    const readSpy = vi.fn(async () => ({ name: "drifted" }));
+    const readSpy = vi.fn(async () => ({
+      status: "found" as const,
+      output: { name: "drifted" },
+    }));
     const TestResource = createTestResourceClass({
       type: "test/service/plan-no-read",
       read: readSpy,
@@ -332,6 +335,35 @@ describe("reconciler plan", () => {
     });
   });
 
+  it("does not disguise parameter derivation failures as unknown values", async () => {
+    const TestResource = resource({
+      type: "test/service/plan-derive-failure",
+    })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          valueType: "string" as any,
+        },
+      })
+      .defineOperations({
+        create: async () => ({}),
+        delete: async () => undefined,
+        deriveParams: () => {
+          throw new Error("invalid derived configuration");
+        },
+      });
+
+    const reconciler = new Reconciler({
+      state: createMemoryState(),
+      driftDetection: false,
+    });
+
+    await expect(
+      reconciler.plan([new TestResource({ id: "broken" })]),
+    ).rejects.toThrow("invalid derived configuration");
+  });
+
   it("produces a JSON-round-trippable plan", async () => {
     const CreateResource = createTestResourceClass({
       type: "test/service/plan-json-create",
@@ -375,7 +407,10 @@ describe("reconciler plan", () => {
       create: createSpy,
       update: updateSpy,
       delete: deleteSpy,
-      read: async () => ({ name: "drifted" }),
+      read: async () => ({
+        status: "found",
+        output: { name: "drifted" },
+      }),
     });
 
     const state = createMemoryState({

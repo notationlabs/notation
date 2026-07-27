@@ -1,4 +1,4 @@
-import { createWorkflow } from "yieldstar";
+import { RetryableError, createWorkflow } from "yieldstar";
 import {
   DEFAULT_READ_POLL_OPTIONS,
   type ReadResourceParams,
@@ -7,35 +7,18 @@ import {
   getErrorDetails,
 } from "./operation.types";
 
-type ReadRetryCondition = {
-  key: string;
-  reason: string;
-  value?: unknown;
-};
-
-function needsReadRetry(
-  readResult: Record<string, unknown>,
-  retryConditions: ReadonlyArray<ReadRetryCondition>,
-) {
-  return retryConditions.find((condition) => {
-    const resultValue = readResult[condition.key];
-    if (condition.value !== undefined) {
-      return resultValue !== condition.value;
-    }
-
-    return !resultValue;
-  });
-}
+export type SettledResourceReadResult =
+  { status: "found"; output: Record<string, unknown> } | { status: "absent" };
 
 export async function* readResourceOperation(
   step: StepRunner,
   params: ReadResourceParams,
-): AsyncGenerator<unknown, Record<string, unknown>, unknown> {
+): AsyncGenerator<unknown, SettledResourceReadResult, unknown> {
   await emitLifecycleEvent(params, "read", "start");
 
   if (params.dryRun) {
     await emitLifecycleEvent(params, "read", "dry-run");
-    return {};
+    return { status: "found", output: {} };
   }
 
   try {
@@ -55,36 +38,41 @@ export async function* readResourceOperation(
         reason: "read-not-implemented",
       });
       await emitLifecycleEvent(params, "read", "success");
-      return merged as Record<string, unknown>;
+      return {
+        status: "found",
+        output: merged as Record<string, unknown>,
+      };
     }
 
-    let remoteOutput: Record<string, unknown> = {};
-    const retryConditions = (params.resource.retryReadOnCondition ?? []).filter(
-      Boolean,
-    ) as ReadRetryCondition[];
+    const remote = yield* step.run("read:remote", async () => {
+      const result = await params.resource.read!(params.resource.key);
+      if (result.status === "pending") {
+        throw new RetryableError(result.reason, {
+          ...(params.readPollOptions ?? DEFAULT_READ_POLL_OPTIONS),
+        });
+      }
+      if (result.status === "absent" && params.retryAbsent) {
+        throw new RetryableError("Waiting for resource to become visible", {
+          ...(params.readPollOptions ?? DEFAULT_READ_POLL_OPTIONS),
+        });
+      }
+      return result;
+    });
 
-    if (retryConditions.length > 0) {
-      yield* step.poll(
-        "read:poll-until-settled",
-        params.readPollOptions ?? DEFAULT_READ_POLL_OPTIONS,
-        async () => {
-          remoteOutput = await params.resource.read!(params.resource.key);
-          return !needsReadRetry(remoteOutput, retryConditions);
-        },
-      );
-    } else {
-      remoteOutput = yield* step.run("read:remote", () =>
-        params.resource.read!(params.resource.key),
-      );
+    if (remote.status === "absent") {
+      await emitLifecycleEvent(params, "read", "skip", {
+        reason: "resource-absent",
+      });
+      return remote;
     }
 
     const mergedOutput = {
       ...resourceParams,
-      ...remoteOutput,
+      ...remote.output,
     };
 
     await emitLifecycleEvent(params, "read", "success");
-    return mergedOutput;
+    return { status: "found", output: mergedOutput };
   } catch (err) {
     await emitLifecycleEvent(params, "read", "error", getErrorDetails(err));
     throw err;

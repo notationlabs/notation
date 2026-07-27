@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { RetryableError } from "yieldstar";
-import { resource } from "@notation/resource";
+import { resource, RetryableResourceError } from "@notation/resource";
 import {
   createResourceOperation,
   deleteResourceOperation,
@@ -38,8 +38,7 @@ function createStepRunnerDouble(): StepRunner {
   ): AsyncGenerator<unknown, void, unknown> {
     const opts = (typeof arg1 === "string" ? arg2 : arg1) as PollOptions;
     const predicate = (typeof arg1 === "string" ? arg3 : arg2) as
-      | (() => boolean | Promise<boolean>)
-      | undefined;
+      (() => boolean | Promise<boolean>) | undefined;
 
     if (!predicate) {
       throw new Error("Missing poll predicate");
@@ -57,7 +56,11 @@ function createStepRunnerDouble(): StepRunner {
     });
   });
 
-  const delay = vi.fn(async function* (): AsyncGenerator<unknown, void, unknown> {
+  const delay = vi.fn(async function* (): AsyncGenerator<
+    unknown,
+    void,
+    unknown
+  > {
     return;
   });
 
@@ -90,9 +93,7 @@ describe("operation workflows", () => {
     const createMock = vi.fn(async () => {
       createAttempts += 1;
       if (createAttempts === 1) {
-        const err = new Error("eventual consistency");
-        err.name = "RetryCreate";
-        throw err;
+        throw new RetryableResourceError("retry create");
       }
       return { remoteId: "abc" };
     });
@@ -101,9 +102,11 @@ describe("operation workflows", () => {
       .defineSchema({})
       .defineOperations({
         create: createMock,
-        read: async () => ({ remoteId: "abc", status: "ready" }),
+        read: async () => ({
+          status: "found",
+          output: { remoteId: "abc", status: "ready" },
+        }),
         delete: async () => undefined,
-        retryLaterOnError: [{ name: "RetryCreate", reason: "retry create" }],
       });
 
     const testResource = new TestResource({ id: "test-create" });
@@ -123,12 +126,9 @@ describe("operation workflows", () => {
     expect(state.update).toHaveBeenCalledOnce();
     expect(createMock).toHaveBeenCalledWith(await testResource.getParams());
     expect(testResource.output).toEqual({ remoteId: "abc", status: "ready" });
-    expect(events.map((event) => `${event.operation}:${event.status}`)).toEqual([
-      "create:start",
-      "read:start",
-      "read:success",
-      "create:success",
-    ]);
+    expect(events.map((event) => `${event.operation}:${event.status}`)).toEqual(
+      ["create:start", "read:start", "read:success", "create:success"],
+    );
     expect(events[0]).toMatchObject({
       resourceId: "test-create",
       resourceType: TestResource.type,
@@ -136,7 +136,7 @@ describe("operation workflows", () => {
     });
   });
 
-  it("read uses durable polling semantics for retryReadOnCondition", async () => {
+  it("read retries while the resource reports a pending outcome", async () => {
     const step = createStepRunnerDouble();
     const state = {
       get: vi.fn(async () => undefined),
@@ -152,18 +152,17 @@ describe("operation workflows", () => {
         read: async () => {
           readAttempts += 1;
           if (readAttempts < 3) {
-            return { status: "pending" };
+            return {
+              status: "pending",
+              reason: "resource is not ready",
+            } as const;
           }
-          return { status: "ready" };
+          return {
+            status: "found",
+            output: { status: "ready" },
+          } as const;
         },
         delete: async () => undefined,
-        retryReadOnCondition: [
-          {
-            key: "status",
-            value: "ready",
-            reason: "resource is not ready",
-          },
-        ],
       });
 
     const testResource = new TestResource({ id: "test-read" });
@@ -176,11 +175,48 @@ describe("operation workflows", () => {
     );
 
     expect(readAttempts).toBe(3);
-    expect((step.poll as any).mock.calls.length).toBe(1);
-    expect(result).toEqual({ status: "ready" });
+    expect(result).toEqual({
+      status: "found",
+      output: { status: "ready" },
+    });
   });
 
-  it("delete treats only resource.notFoundOnError matchers as skip", async () => {
+  it("retries an absent read after creation until the resource is visible", async () => {
+    const step = createStepRunnerDouble();
+    const state = {
+      get: vi.fn(async () => undefined),
+      update: vi.fn(async () => undefined),
+      delete: vi.fn(async () => undefined),
+    };
+    let readAttempts = 0;
+    const TestResource = resource({ type: "test/service/eventually-visible" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => ({}),
+        read: async () => {
+          readAttempts += 1;
+          if (readAttempts === 1) return { status: "absent" } as const;
+          return {
+            status: "found",
+            output: { remoteId: "visible" },
+          } as const;
+        },
+        delete: async () => undefined,
+      });
+
+    await runOperation(
+      createResourceOperation(step, {
+        resource: new TestResource({ id: "eventually-visible" }),
+        state,
+        expectedRev: 0,
+      }),
+    );
+
+    expect(readAttempts).toBe(2);
+    expect(state.update).toHaveBeenCalledOnce();
+  });
+
+  it("delete treats an already-absent remote as success through its idempotent resource contract", async () => {
     const step = createStepRunnerDouble();
     const events: OperationLifecycleEvent[] = [];
     const state = {
@@ -193,17 +229,7 @@ describe("operation workflows", () => {
       .defineSchema({})
       .defineOperations({
         create: async () => ({}),
-        delete: async () => {
-          const err = new Error("gone");
-          err.name = "RemoteMissing";
-          throw err;
-        },
-        notFoundOnError: [
-          {
-            name: "RemoteMissing",
-            reason: "already deleted remotely",
-          },
-        ],
+        delete: async () => undefined,
       });
 
     const testResource = new TestResource({ id: "test-delete" });
@@ -220,14 +246,10 @@ describe("operation workflows", () => {
     );
 
     expect(state.delete).toHaveBeenCalledWith("test-delete", 1);
-    expect(events.map((event) => event.status)).toEqual([
-      "start",
-      "skip",
-      "success",
-    ]);
+    expect(events.map((event) => event.status)).toEqual(["start", "success"]);
   });
 
-  it("delete rethrows when error does not match notFoundOnError", async () => {
+  it("delete rethrows an unclassified resource error", async () => {
     const step = createStepRunnerDouble();
     const state = {
       get: vi.fn(async () => undefined),
@@ -244,12 +266,6 @@ describe("operation workflows", () => {
           err.name = "DifferentError";
           throw err;
         },
-        notFoundOnError: [
-          {
-            name: "RemoteMissing",
-            reason: "already deleted remotely",
-          },
-        ],
       });
 
     const testResource = new TestResource({ id: "test-delete-miss" });
@@ -262,7 +278,10 @@ describe("operation workflows", () => {
           expectedRev: 1,
         }),
       ),
-    ).rejects.toMatchObject({ name: "DifferentError", message: "still exists" });
+    ).rejects.toMatchObject({
+      name: "DifferentError",
+      message: "still exists",
+    });
 
     expect(state.delete).not.toHaveBeenCalled();
   });

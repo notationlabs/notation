@@ -22,21 +22,19 @@ export type { Schema, SchemaItem, DefineResourceApiSchema };
 
 export type ResourceType = `${string}/${string}/${string}`;
 
-export type ErrorMatcher = {
-  name: string;
-  message?: string;
-  reason: string;
-};
+export type ResourceReadResult<T> =
+  | { status: "found"; output: T }
+  | { status: "absent" }
+  | { status: "pending"; reason: string };
 
-export type ResultCondition<T, K extends keyof T = keyof T> = {
-  key: K;
-  reason: string;
-  value?: T[K];
-};
+export class RetryableResourceError extends Error {
+  readonly code = "RESOURCE_RETRYABLE";
 
-export type ResultConditions<T> = {
-  [K in keyof T]?: ResultCondition<T, K>;
-}[keyof T][];
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "RetryableResourceError";
+  }
+}
 
 export type ResourceOpts<C, D> = OptionalIfAllPropertiesOptional<"config", C> &
   OptionalIfAllPropertiesOptional<"dependencies", D> & { id: string };
@@ -77,17 +75,9 @@ export interface BaseResource {
   groupType: string;
   readonly output: {};
   readonly dependencies: Record<string, BaseResource | void>;
-  readonly retryReadOnCondition?: ({
-    key: any;
-    value?: any;
-    reason: string;
-  } | void)[];
-  readonly failOnError?: (ErrorMatcher & { reason: string })[];
-  readonly notFoundOnError?: ErrorMatcher[];
-  readonly retryLaterOnError?: ErrorMatcher[];
   readonly key: {};
   create: (params: any) => Promise<{} | void>;
-  read?: (key: any) => Promise<Record<string, any>>;
+  read?: (key: any) => Promise<ResourceReadResult<Record<string, any>>>;
   update?: (key: any, patch: any, params: any, state: any) => Promise<void>;
   delete: (key: any, state: any) => Promise<void>;
   getParams(): Promise<{}>;
@@ -115,7 +105,9 @@ export abstract class Resource<
   abstract type: ResourceType;
   abstract schema: Schema;
   abstract create: (params: T["params"]) => Promise<T["primaryKey"]>;
-  abstract read?: (key: T["compoundKey"]) => Promise<T["result"]>;
+  abstract read?: (
+    key: T["compoundKey"],
+  ) => Promise<ResourceReadResult<T["result"]>>;
   abstract update?: (
     key: T["compoundKey"],
     patch: T["params"],
@@ -123,10 +115,6 @@ export abstract class Resource<
     state: T["state"],
   ) => Promise<void>;
   abstract delete: (key: T["compoundKey"], state: T["state"]) => Promise<void>;
-  abstract retryReadOnCondition?: ResultConditions<T["output"]>;
-  abstract failOnError?: (ErrorMatcher & { reason: string })[];
-  abstract notFoundOnError?: ErrorMatcher[];
-  abstract retryLaterOnError?: ErrorMatcher[];
   abstract deriveParams(opts: {
     id: string;
     config: C;
@@ -199,7 +187,7 @@ export type ResourceOperationsOptions<
   IntrinsicParams extends Partial<T["params"]>,
 > = {
   create: (params: T["params"]) => Promise<T["primaryKey"]>;
-  read?: (key: T["compoundKey"]) => Promise<T["result"]>;
+  read?: (key: T["compoundKey"]) => Promise<ResourceReadResult<T["result"]>>;
   update?: (
     key: T["compoundKey"],
     patch: T["params"],
@@ -207,10 +195,6 @@ export type ResourceOperationsOptions<
     state: T["state"],
   ) => Promise<void>;
   delete: (key: T["compoundKey"], state: T["state"]) => Promise<void>;
-  retryReadOnCondition?: ResultConditions<T["output"]>;
-  failOnError?: (ErrorMatcher & { reason: string })[];
-  notFoundOnError?: ErrorMatcher[];
-  retryLaterOnError?: ErrorMatcher[];
   deriveParams?: (opts: {
     config: Partial<T["params"]>;
   }) => IntrinsicParams | Promise<IntrinsicParams>;
@@ -315,10 +299,6 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             read = opts.read ? opts.read : undefined;
             update = opts.update ? opts.update : undefined;
             delete = opts.delete;
-            retryReadOnCondition = opts.retryReadOnCondition;
-            failOnError = opts.failOnError;
-            notFoundOnError = opts.notFoundOnError;
-            retryLaterOnError = opts.retryLaterOnError;
 
             async deriveParams() {
               if (!opts.deriveParams) return {};

@@ -9,10 +9,6 @@ type StaticSiteApi = {
   ReadResult: { html: string };
 };
 
-class SiteNotFound extends Error {
-  readonly name = "SiteNotFound";
-}
-
 const staticSite = resource<StaticSiteApi>({ type: "local/site/static" });
 
 export const StaticSite = staticSite
@@ -38,9 +34,9 @@ export const StaticSite = staticSite
           path.join(siteDirectory, "index.html"),
           "utf8",
         );
-        return { html };
+        return { status: "found", output: { html } } as const;
       } catch (error) {
-        if (isFileMissing(error)) throw new SiteNotFound(siteDirectory);
+        if (isFileMissing(error)) return { status: "absent" } as const;
         throw error;
       }
     },
@@ -48,9 +44,8 @@ export const StaticSite = staticSite
       await writeFile(path.join(siteDirectory, "index.html"), html, "utf8");
     },
     delete: async ({ siteDirectory }) => {
-      await rm(siteDirectory, { recursive: true });
+      await rm(siteDirectory, { recursive: true, force: true });
     },
-    notFoundOnError: [{ name: "SiteNotFound", reason: "site was removed" }],
   });
 
 function isFileMissing(error: unknown): boolean {

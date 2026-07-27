@@ -65,7 +65,14 @@ export const testOperations = {
   async delete() {},
   async update() {},
   async read() {
-    return { primaryKey: "", optionalSecondaryKey: "", requiredParam: "" };
+    return {
+      status: "found",
+      output: {
+        primaryKey: "",
+        optionalSecondaryKey: "",
+        requiredParam: "",
+      },
+    } as const;
   },
   deriveParams() {
     return { intrinsicParam: true };

@@ -76,16 +76,28 @@ export const Stage = stageSchema
       await apiGatewayClient.send(command);
     },
     read: async (key) => {
-      const command = new sdk.GetStageCommand(key);
-      return apiGatewayClient.send(command);
+      try {
+        const command = new sdk.GetStageCommand(key);
+        const output = await apiGatewayClient.send(command);
+        return { status: "found", output } as const;
+      } catch (error) {
+        if (error instanceof sdk.NotFoundException) {
+          return { status: "absent" } as const;
+        }
+        throw error;
+      }
     },
     update: async (key, params) => {
       const command = new sdk.UpdateStageCommand({ ...key, ...params });
       await apiGatewayClient.send(command);
     },
     delete: async (key) => {
-      const command = new sdk.DeleteStageCommand(key);
-      await apiGatewayClient.send(command);
+      try {
+        const command = new sdk.DeleteStageCommand(key);
+        await apiGatewayClient.send(command);
+      } catch (error) {
+        if (!(error instanceof sdk.NotFoundException)) throw error;
+      }
     },
   })
   .requireDependencies<StageDependencies>()

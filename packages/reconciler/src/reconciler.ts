@@ -15,7 +15,6 @@ import {
 import {
   createResourceOperation,
   deleteResourceOperation,
-  matchError,
   readResourceOperation,
   type OperationLifecycleEvent,
   type PollOptions,
@@ -446,21 +445,17 @@ export class Reconciler {
   }
 
   async #readForDrift(resource: BaseResource): Promise<DriftRead> {
-    try {
-      const output = await runOperation(
-        readResourceOperation(this.#stepRunner, {
-          resource,
-          state: this.#state,
-          emit: this.#emit,
-          readPollOptions: this.#readPollOptions,
-        }),
-      );
-      return { status: "found", output };
-    } catch (err) {
-      const matcher = matchError(err, resource.notFoundOnError);
-      if (!matcher) throw err;
-      return { status: "not-found" };
-    }
+    const result = await runOperation(
+      readResourceOperation(this.#stepRunner, {
+        resource,
+        state: this.#state,
+        emit: this.#emit,
+        readPollOptions: this.#readPollOptions,
+      }),
+    );
+    return result.status === "found"
+      ? { status: "found", output: result.output }
+      : { status: "not-found" };
   }
 
   async #deleteOrphans(

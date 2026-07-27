@@ -53,12 +53,13 @@ export const Zip = zipSchema.defineOperations({
   read: async (params) => {
     try {
       const file = await fs.readFile(params.filePath);
-      return { ...params, file };
-    } catch (error: any) {
-      if (error.code !== "ENOENT") throw error;
-      await zip.package(params.sourceFilePath, params.filePath);
-      const file = await fs.readFile(params.filePath);
-      return { ...params, file };
+      return {
+        status: "found",
+        output: { ...params, file },
+      } as const;
+    } catch (error) {
+      if (isFileMissing(error)) return { status: "absent" } as const;
+      throw error;
     }
   },
   create: async (params) => {
@@ -69,8 +70,21 @@ export const Zip = zipSchema.defineOperations({
     await zip.package(config.sourceFilePath, config.filePath);
   },
   delete: async (config) => {
-    await fs.unlink(config.filePath);
+    try {
+      await fs.unlink(config.filePath);
+    } catch (error) {
+      if (!isFileMissing(error)) throw error;
+    }
   },
 });
 
 export type ZipFileInstance = InstanceType<typeof Zip>;
+
+function isFileMissing(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ENOENT"
+  );
+}

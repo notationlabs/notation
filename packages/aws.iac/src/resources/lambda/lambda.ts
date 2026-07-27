@@ -1,4 +1,4 @@
-import { resource, typed } from "@notation/resource";
+import { resource, RetryableResourceError, typed } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-lambda";
 import { lambdaClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
@@ -186,7 +186,7 @@ export const LambdaFunction = lambdaFunctionSchema
         Code: { ZipFile: params.Code.ZipFile },
       });
 
-      await lambdaClient.send(command);
+      await runLambdaMutation(() => lambdaClient.send(command));
 
       // if (params.ReservedConcurrentExecutions) {
       //   const concurrencyCommand = new sdk.PutFunctionConcurrencyCommand({
@@ -198,21 +198,44 @@ export const LambdaFunction = lambdaFunctionSchema
     },
 
     read: async (key) => {
-      const command = new sdk.GetFunctionCommand(key);
-      const { Code, Configuration, Concurrency } =
-        await lambdaClient.send(command);
+      try {
+        const command = new sdk.GetFunctionCommand(key);
+        const { Code, Configuration, Concurrency } =
+          await lambdaClient.send(command);
 
-      return {
-        ...Configuration,
-        Layers: Configuration!.Layers?.map((layer) => layer.Arn),
-        ...Concurrency,
-        Code: {
-          S3Bucket: Code?.Location?.split("/")[0],
-          S3Key: Code?.Location?.split("/")[1],
-          S3ObjectVersion: Code?.Location?.split("/")[2],
-          ZipFile: undefined,
-        },
-      };
+        if (Configuration?.State !== "Active") {
+          return {
+            status: "pending",
+            reason: "Waiting for Lambda to become active",
+          } as const;
+        }
+        if (!Configuration.RevisionId) {
+          return {
+            status: "pending",
+            reason: "Waiting for Lambda to be deployed",
+          } as const;
+        }
+
+        return {
+          status: "found",
+          output: {
+            ...Configuration,
+            Layers: Configuration.Layers?.map((layer) => layer.Arn),
+            ...Concurrency,
+            Code: {
+              S3Bucket: Code?.Location?.split("/")[0],
+              S3Key: Code?.Location?.split("/")[1],
+              S3ObjectVersion: Code?.Location?.split("/")[2],
+              ZipFile: undefined,
+            },
+          },
+        } as const;
+      } catch (error) {
+        if (error instanceof sdk.ResourceNotFoundException) {
+          return { status: "absent" } as const;
+        }
+        throw error;
+      }
     },
 
     update: async (key, patch, params) => {
@@ -226,7 +249,7 @@ export const LambdaFunction = lambdaFunctionSchema
           ...key,
           ...conf,
         });
-        await lambdaClient.send(confCommand);
+        await runLambdaMutation(() => lambdaClient.send(confCommand));
       }
 
       if (CodeSha256) {
@@ -234,39 +257,18 @@ export const LambdaFunction = lambdaFunctionSchema
           ...key,
           ZipFile: params.Code.ZipFile,
         });
-        await lambdaClient.send(codeCommand);
+        await runLambdaMutation(() => lambdaClient.send(codeCommand));
       }
     },
 
     delete: async (key) => {
-      const command = new sdk.DeleteFunctionCommand(key);
-      await lambdaClient.send(command);
+      try {
+        const command = new sdk.DeleteFunctionCommand(key);
+        await runLambdaMutation(() => lambdaClient.send(command));
+      } catch (error) {
+        if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
+      }
     },
-    retryLaterOnError: [
-      {
-        name: "InvalidParameterValueException",
-        message:
-          "The role defined for the function cannot be assumed by Lambda.",
-        reason: "Waiting for IAM role to propagate",
-      },
-      {
-        name: "InvalidParameterValueException",
-        message: "The provided execution role does not have permissions",
-        // todo: find real reason this is here
-        reason: "Waiting for IAM role to propagate",
-      },
-    ],
-    retryReadOnCondition: [
-      {
-        key: "State",
-        value: "Active",
-        reason: "Waiting for lambda to become active",
-      },
-      {
-        key: "RevisionId",
-        reason: "Waiting for lambda to be deployed",
-      },
-    ],
   })
   .requireDependencies<LambdaDependencies>()
   .deriveParams(async ({ deps }) => ({
@@ -277,6 +279,33 @@ export const LambdaFunction = lambdaFunctionSchema
   }));
 
 export type LambdaFunctionInstance = InstanceType<typeof LambdaFunction>;
+
+async function runLambdaMutation<T>(mutation: () => Promise<T>): Promise<T> {
+  try {
+    return await mutation();
+  } catch (error) {
+    if (isIamPropagationFailure(error)) {
+      throw new RetryableResourceError("Waiting for IAM role to propagate", {
+        cause: error,
+      });
+    }
+    throw error;
+  }
+}
+
+function isIamPropagationFailure(
+  error: unknown,
+): error is sdk.InvalidParameterValueException {
+  if (!(error instanceof sdk.InvalidParameterValueException)) return false;
+  return (
+    error.message.startsWith(
+      "The role defined for the function cannot be assumed by Lambda.",
+    ) ||
+    error.message.startsWith(
+      "The provided execution role does not have permissions",
+    )
+  );
+}
 
 export type LambdaFunctionConfig = ConstructorParameters<
   typeof LambdaFunction

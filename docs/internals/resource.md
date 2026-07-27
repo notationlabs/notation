@@ -137,19 +137,17 @@ All schema items carry these fields:
 
 ## Operations
 
-`defineOperations` accepts CRUD handlers and error-handling configuration:
+`defineOperations` accepts CRUD handlers and parameter derivation:
 
-| Field                  | Required | Signature / Description                                                                                 |
-| ---------------------- | -------- | ------------------------------------------------------------------------------------------------------- |
-| `create`               | yes      | `(params: Params<S>) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key. |
-| `read`                 | no       | `(key: CompoundKey<S>) => Promise<Result<S>>` – read current state.                                     |
-| `update`               | no       | `(key, patch, params, state) => Promise<void>` – apply a partial update.                                |
-| `delete`               | yes      | `(key, state) => Promise<void>` – destroy the resource.                                                 |
-| `deriveParams`         | no       | Computes intrinsic derived params from config (not dependency-aware).                                   |
-| `retryReadOnCondition` | no       | Conditions on read output that trigger a retry (e.g. eventual consistency).                             |
-| `failOnError`          | no       | Error matchers that cause immediate failure with a reason.                                              |
-| `notFoundOnError`      | no       | Error matchers that indicate the resource does not exist.                                               |
-| `retryLaterOnError`    | no       | Error matchers that indicate a transient failure worth retrying.                                        |
+| Field          | Required | Signature / Description                                                                                                                      |
+| -------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`       | yes      | `(params: Params<S>) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key.                                      |
+| `read`         | no       | `(key: CompoundKey<S>) => Promise<ResourceReadResult<Result<S>>>` – report the remote as `found`, `absent`, or temporarily `pending`.        |
+| `update`       | no       | `(key, patch, params, state) => Promise<void>` – apply a partial update.                                                                     |
+| `delete`       | yes      | `(key, state) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
+| `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                        |
+
+Resource operations translate provider-specific responses at the provider boundary. A read returns `{ status: "found", output }`, `{ status: "absent" }`, or `{ status: "pending", reason }`. A mutation throws `RetryableResourceError` when the provider explicitly reports a transient condition; all other errors fail the operation.
 
 ## Dependencies
 

@@ -1,9 +1,7 @@
 export type {
   BaseResource,
   ResourceType,
-  ErrorMatcher,
-  ResultCondition,
-  ResultConditions,
+  ResourceReadResult,
   ResourceOpts,
   DefineResourceMeta,
   DefineResourceApiSchema,
@@ -16,4 +14,9 @@ export type {
   SchemaItem,
 } from "@notation/resource";
 
-export { Resource, defineResource, resource } from "@notation/resource";
+export {
+  Resource,
+  RetryableResourceError,
+  defineResource,
+  resource,
+} from "@notation/resource";

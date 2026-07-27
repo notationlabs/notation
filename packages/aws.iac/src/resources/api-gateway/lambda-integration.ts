@@ -118,16 +118,28 @@ export const LambdaIntegration = integrationSchema
       return { IntegrationId: result.IntegrationId! };
     },
     read: async (key) => {
-      const command = new sdk.GetIntegrationCommand(key);
-      return apiGatewayClient.send(command);
+      try {
+        const command = new sdk.GetIntegrationCommand(key);
+        const output = await apiGatewayClient.send(command);
+        return { status: "found", output } as const;
+      } catch (error) {
+        if (error instanceof sdk.NotFoundException) {
+          return { status: "absent" } as const;
+        }
+        throw error;
+      }
     },
     update: async (key, params) => {
       const command = new sdk.UpdateIntegrationCommand({ ...key, ...params });
       await apiGatewayClient.send(command);
     },
     delete: async (key) => {
-      const command = new sdk.DeleteIntegrationCommand(key);
-      await apiGatewayClient.send(command);
+      try {
+        const command = new sdk.DeleteIntegrationCommand(key);
+        await apiGatewayClient.send(command);
+      } catch (error) {
+        if (!(error instanceof sdk.NotFoundException)) throw error;
+      }
     },
   })
   .requireDependencies<LambdaIntegrationDependencies>()

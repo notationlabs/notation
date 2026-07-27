@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createResourceOperation, createStepRunner, runOperation } from "@notation/reconciler";
+import {
+  createResourceOperation,
+  createStepRunner,
+  runOperation,
+} from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
 import {
   TestResourceSchema,
@@ -13,7 +17,10 @@ describe("resource creation", () => {
     const stateBackend = new MemoryStateBackend();
     const readResult = { ...testResourceOutput, volatileComputed: "123" };
     const createMock = vi.fn(async () => ({ primaryKey: "" }));
-    const readMock = vi.fn(async () => readResult);
+    const readMock = vi.fn(async () => ({
+      status: "found" as const,
+      output: readResult,
+    }));
 
     const TestResource = TestResourceSchema.defineOperations({
       ...testOperations,

@@ -1,11 +1,11 @@
 import { RetryableError, createWorkflow } from "yieldstar";
+import { RetryableResourceError } from "@notation/resource";
 import {
   DEFAULT_RETRY_OPTIONS,
   type CreateResourceParams,
   type StepRunner,
   emitLifecycleEvent,
   getErrorDetails,
-  matchError,
 } from "./operation.types";
 import { readResourceOperation } from "./operation.read";
 
@@ -29,9 +29,8 @@ export async function* createResourceOperation(
       try {
         return await params.resource.create(resourceParams);
       } catch (err) {
-        const matcher = matchError(err, params.resource.retryLaterOnError);
-        if (matcher) {
-          throw new RetryableError(matcher.reason, {
+        if (err instanceof RetryableResourceError) {
+          throw new RetryableError(err.message, {
             ...(params.retryOptions ?? DEFAULT_RETRY_OPTIONS),
           });
         }
@@ -52,11 +51,17 @@ export async function* createResourceOperation(
       state: params.state,
       emit: params.emit,
       readPollOptions: params.readPollOptions,
+      retryAbsent: true,
     });
 
+    if (readResult.status !== "found") {
+      throw new Error(
+        "Post-create read completed without finding the resource",
+      );
+    }
     params.resource.setOutput({
       ...params.resource.output,
-      ...readResult,
+      ...readResult.output,
     });
 
     yield* step.run("create:persist-state", async () => {

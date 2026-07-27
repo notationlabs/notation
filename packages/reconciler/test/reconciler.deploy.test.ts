@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { resource, type ErrorMatcher } from "@notation/resource";
+import { resource, type ResourceReadResult } from "@notation/resource";
 import {
   LeaseConflict,
   MemoryStateBackend,
@@ -59,7 +59,9 @@ function createTestResourceClass(opts: {
   create?: (
     params: Record<string, unknown>,
   ) => Promise<Record<string, unknown> | void>;
-  read?: (key: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  read?: (
+    key: Record<string, unknown>,
+  ) => Promise<ResourceReadResult<Record<string, unknown>>>;
   update?: (
     key: Record<string, unknown>,
     patch: Record<string, unknown>,
@@ -70,7 +72,6 @@ function createTestResourceClass(opts: {
     key: Record<string, unknown>,
     state: Record<string, unknown>,
   ) => Promise<void>;
-  notFoundOnError?: ErrorMatcher[];
 }) {
   return resource({ type: opts.type })
     .defineSchema({
@@ -85,11 +86,12 @@ function createTestResourceClass(opts: {
       read: opts.read,
       update: opts.update,
       delete: opts.delete ?? (async () => undefined),
-      notFoundOnError: opts.notFoundOnError,
     });
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const found = (output: Record<string, unknown>) =>
+  ({ status: "found", output }) as const;
 
 describe("reconciler deploy", () => {
   it("chooses create vs update from desired params vs state", async () => {
@@ -99,12 +101,12 @@ describe("reconciler deploy", () => {
     const CreateResource = createTestResourceClass({
       type: "test/service/create-choice",
       create: createSpy,
-      read: async () => ({ name: "new" }),
+      read: async () => found({ name: "new" }),
     });
     const UpdateResource = createTestResourceClass({
       type: "test/service/update-choice",
       update: updateSpy,
-      read: async () => ({ name: "new" }),
+      read: async () => found({ name: "new" }),
     });
 
     const state = createMemoryState({
@@ -149,7 +151,7 @@ describe("reconciler deploy", () => {
     const CreateResource = createTestResourceClass({
       type: "test/service/first-create",
       create: async () => ({ name: "new" }),
-      read: async () => ({ name: "new" }),
+      read: async () => found({ name: "new" }),
     });
     const state = createMemoryState();
     const reconciler = new Reconciler({ state, driftDetection: false });
@@ -178,7 +180,7 @@ describe("reconciler deploy", () => {
     const CreateResource = createTestResourceClass({
       type: "test/service/concurrent-create",
       create: createSpy,
-      read: async () => ({ name: "new" }),
+      read: async () => found({ name: "new" }),
     });
     const state = new MemoryStateBackend();
     const first = new Reconciler({ state, driftDetection: false });
@@ -202,7 +204,7 @@ describe("reconciler deploy", () => {
 
   it("reads remote state after an update conflict instead of repeating the update", async () => {
     let remoteName = "old";
-    const readSpy = vi.fn(async () => ({ name: remoteName }));
+    const readSpy = vi.fn(async () => found({ name: remoteName }));
     const updateSpy = vi.fn(async (_key, _patch, params) => {
       remoteName = params.name as string;
     });
@@ -268,7 +270,7 @@ describe("reconciler deploy", () => {
       remoteName = params.name as string;
       return { name: remoteName };
     });
-    const readSpy = vi.fn(async () => ({ name: remoteName! }));
+    const readSpy = vi.fn(async () => found({ name: remoteName! }));
     const CreateResource = createTestResourceClass({
       type: "test/service/create-conflict",
       create: createSpy,
@@ -360,7 +362,7 @@ describe("reconciler deploy", () => {
         marks.aEnd = Date.now();
         return { name: "a" };
       },
-      read: async () => ({ name: "a" }),
+      read: async () => found({ name: "a" }),
     });
     const CResource = createTestResourceClass({
       type: "test/service/c",
@@ -370,7 +372,7 @@ describe("reconciler deploy", () => {
         marks.cEnd = Date.now();
         return { name: "c" };
       },
-      read: async () => ({ name: "c" }),
+      read: async () => found({ name: "c" }),
     });
     const BResource = createTestResourceClass({
       type: "test/service/b",
@@ -378,7 +380,7 @@ describe("reconciler deploy", () => {
         marks.bStart = Date.now();
         return { name: "b" };
       },
-      read: async () => ({ name: "b" }),
+      read: async () => found({ name: "b" }),
     });
 
     const state = createMemoryState();
@@ -402,7 +404,7 @@ describe("reconciler deploy", () => {
     const events: Array<Record<string, unknown>> = [];
     const TestResource = createTestResourceClass({
       type: "test/service/drift",
-      read: async () => ({ name: "drifted" }),
+      read: async () => found({ name: "drifted" }),
       update: updateSpy,
     });
 
@@ -484,7 +486,7 @@ describe("reconciler deploy", () => {
     const CreateResource = createTestResourceClass({
       type: "test/service/dry-run-create",
       create: createSpy,
-      read: async () => ({ name: "new" }),
+      read: async () => found({ name: "new" }),
     });
     const OrphanResource = createTestResourceClass({
       type: "test/service/dry-run-orphan",
@@ -541,18 +543,13 @@ describe("reconciler destroy + refresh", () => {
       remoteExists = false;
     });
     const readSpy = vi.fn(async () => {
-      if (!remoteExists) {
-        const error = new Error("gone");
-        error.name = "RemoteMissing";
-        throw error;
-      }
-      return { name: "doomed" };
+      if (!remoteExists) return { status: "absent" } as const;
+      return found({ name: "doomed" });
     });
     const DestroyResource = createTestResourceClass({
       type: "test/service/destroy-retry",
       read: readSpy,
       delete: deleteSpy,
-      notFoundOnError: [{ name: "RemoteMissing", reason: "deleted" }],
     });
     const state = createMemoryState({
       doomed: {

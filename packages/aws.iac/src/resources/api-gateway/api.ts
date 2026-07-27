@@ -97,19 +97,33 @@ export const Api = apiSchema.defineOperations({
     return { ApiId: result.ApiId! };
   },
   async read(key) {
-    const command = new sdk.GetApiCommand(key);
-    const result = await apiGatewayClient.send(command);
-    // todo: check types or correct or if RouteKey is actually in result
-    // if not, need to pass the original params to read
-    return { RouteKey: "", ...result };
+    try {
+      const command = new sdk.GetApiCommand(key);
+      const result = await apiGatewayClient.send(command);
+      // todo: check types or correct or if RouteKey is actually in result
+      // if not, need to pass the original params to read
+      return {
+        status: "found",
+        output: { RouteKey: "", ...result },
+      } as const;
+    } catch (error) {
+      if (error instanceof sdk.NotFoundException) {
+        return { status: "absent" } as const;
+      }
+      throw error;
+    }
   },
   async update(key, params) {
     const command = new sdk.UpdateApiCommand({ ...key, ...params });
     await apiGatewayClient.send(command);
   },
   async delete(pk) {
-    const command = new sdk.DeleteApiCommand(pk);
-    await apiGatewayClient.send(command);
+    try {
+      const command = new sdk.DeleteApiCommand(pk);
+      await apiGatewayClient.send(command);
+    } catch (error) {
+      if (!(error instanceof sdk.NotFoundException)) throw error;
+    }
   },
 });
 
