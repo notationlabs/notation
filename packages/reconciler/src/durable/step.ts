@@ -3,36 +3,49 @@ import type {
   ReconcilerEvent,
   ReconcilerEventEmitter,
 } from "../events";
-import type { DurableStep, WorkflowStore } from "./yieldstar";
+import type { StepRunner } from "../operations";
+import type { DurableStep } from "./yieldstar";
+
+/**
+ * A durable step runner: the operation seam plus the store handle, which only
+ * the durable driver uses.
+ */
+export type DurableStepRunner = {
+  run<T>(
+    key: string,
+    fn: () => T | Promise<T>,
+  ): AsyncGenerator<unknown, T, unknown>;
+  delay(key: string, ms: number): AsyncGenerator<unknown, void, unknown>;
+  /** Narrower than StepRunner's, so a scope keeps its store handle. */
+  scope(prefix: string): DurableStepRunner;
+  store: DurableStep["store"];
+};
+
+// A durable runner is one of the step runners the operations accept.
+type AssertStepRunner = DurableStepRunner extends StepRunner ? true : never;
+export type DurableStepRunnerIsStepRunner = AssertStepRunner;
 
 /**
  * Namespaces the step keys of `step` so an operation can be written once and
  * replayed at several call sites without its keys colliding.
  *
  * Opening a store is not prefixed: yieldstar derives that key from the store
- * name and store id, which is already unique. The keys the store *handle*
- * takes are caller-supplied, so those are scoped like any other step.
+ * name and store id, which is already unique. The keys a store *handle* takes
+ * are caller-supplied and are left alone too — a store outlives the scope
+ * that opened it, so its call sites qualify their own keys.
  */
-export function scopeStep(step: DurableStep, prefix: string): DurableStep {
+export function scopeStep(
+  step: DurableStep,
+  prefix: string,
+): DurableStepRunner {
   const scoped = (key: string) => `${prefix}:${key}`;
 
   return {
-    ...step,
-    // The keyless overloads fall through untouched; yieldstar hashes the call
-    // site for those, and a prefix would not make them any more unique.
-    run: ((arg1: unknown, arg2?: unknown) =>
-      typeof arg1 === "string"
-        ? (step.run as any)(scoped(arg1), arg2)
-        : (step.run as any)(arg1)) as DurableStep["run"],
-    delay: ((arg1: unknown, arg2?: unknown) =>
-      typeof arg1 === "string"
-        ? (step.delay as any)(scoped(arg1), arg2)
-        : (step.delay as any)(arg1)) as DurableStep["delay"],
-    store: ((definition: any, params: any) =>
-      (async function* () {
-        const store = yield* step.store(definition, params);
-        return scopeStore(store, prefix);
-      })()) as DurableStep["store"],
+    run: ((key: string, fn: any) =>
+      step.run(scoped(key), fn)) as DurableStepRunner["run"],
+    delay: (key: string, ms: number) => step.delay(scoped(key), ms),
+    store: step.store,
+    scope: (nested: string) => scopeStep(step, scoped(nested)),
   };
 }
 
@@ -46,7 +59,7 @@ export function scopeStep(step: DurableStep, prefix: string): DurableStep {
  * event is delivered but before the checkpoint is written.
  */
 export function durableEmitter(
-  step: DurableStep,
+  step: DurableStepRunner,
   emit: ReconcilerEventEmitter | undefined,
 ): EmitStep {
   return async function* (event) {
@@ -59,26 +72,4 @@ function emitKey(event: ReconcilerEvent): string {
   return event.event === "reconciler.operation.lifecycle"
     ? `emit:${event.event}:${event.operation}:${event.status}`
     : `emit:${event.event}`;
-}
-
-function scopeStore<T>(
-  store: WorkflowStore<T>,
-  prefix: string,
-): WorkflowStore<T> {
-  const scoped = (key: string) => `${prefix}:${key}`;
-
-  return {
-    ...store,
-    get: (key?: string) => store.get(key === undefined ? key : scoped(key)),
-    select: (key, selector) => store.select(scoped(key), selector),
-    update: (key, updater) => store.update(scoped(key), updater),
-    updateFrom: (key, snapshot, updater) =>
-      store.updateFrom(scoped(key), snapshot, updater),
-    deleteFrom: (key, snapshot) => store.deleteFrom(scoped(key), snapshot),
-    when: ((arg1: any, arg2?: any) =>
-      typeof arg1 === "string"
-        ? store.when(scoped(arg1), arg2)
-        : store.when(arg1)) as WorkflowStore<T>["when"],
-    take: (key, selector, claim) => store.take(scoped(key), selector, claim),
-  };
 }

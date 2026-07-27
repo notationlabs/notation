@@ -11,30 +11,17 @@ export async function runOperation<T>(
 }
 
 export function createStepRunner(): StepRunner {
-  return {
-    async *run<T>(
-      arg1: string | (() => T | Promise<T>),
-      arg2?: () => T | Promise<T>,
-    ): AsyncGenerator<unknown, T, unknown> {
-      const fn = (typeof arg1 === "string" ? arg2 : arg1) as
-        (() => T | Promise<T>) | undefined;
-
-      if (!fn) {
-        throw new Error("Missing run function");
-      }
-
+  const runner: StepRunner = {
+    async *run<T>(_key: string, fn: () => T | Promise<T>) {
       return await fn();
     },
-    async *delay(
-      arg1: string | number,
-      arg2?: number,
-    ): AsyncGenerator<unknown, void, unknown> {
-      const ms = typeof arg1 === "number" ? arg1 : arg2;
-      if (ms === undefined) {
-        throw new Error("Missing delay duration");
-      }
-
+    async *delay(_key: string, ms: number) {
       await new Promise((resolve) => setTimeout(resolve, ms));
     },
+    // Nothing is replayed in process, so no step key is ever read and a scope
+    // has nothing to namespace: one runner serves every scope.
+    scope: () => runner,
   };
+
+  return runner;
 }

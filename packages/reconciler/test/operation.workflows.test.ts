@@ -13,31 +13,29 @@ import {
 } from "../src/operations";
 import { toEmitStep } from "../src/events";
 
-function createStepRunnerDouble(): StepRunner {
+function createStepRunnerDouble() {
   const run = vi.fn(async function* <T>(
-    arg1: string | (() => T | Promise<T>),
-    arg2?: () => T | Promise<T>,
+    _key: string,
+    fn: () => T | Promise<T>,
   ): AsyncGenerator<unknown, T, unknown> {
-    const fn = (typeof arg1 === "string" ? arg2 : arg1) as () => T | Promise<T>;
-    if (!fn) {
-      throw new Error("Missing run function");
-    }
-
     return await fn();
   });
 
-  const delay = vi.fn(async function* (): AsyncGenerator<
-    unknown,
-    void,
-    unknown
-  > {
+  const delay = vi.fn(async function* (
+    _key: string,
+    _ms: number,
+  ): AsyncGenerator<unknown, void, unknown> {
     return;
   });
 
-  return {
-    run,
-    delay,
+  // vi.fn erases the generic, so the seam's signature is restored here.
+  const runner: StepRunner = {
+    run: run as unknown as StepRunner["run"],
+    delay: delay as unknown as StepRunner["delay"],
+    scope: () => runner,
   };
+
+  return runner;
 }
 
 async function runOperation<T>(operation: AsyncGenerator<unknown, T, unknown>) {

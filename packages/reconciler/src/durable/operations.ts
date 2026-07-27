@@ -16,7 +16,7 @@ import {
 } from "../operations";
 import { decideAction, type ResourceAction } from "../plan";
 import type { DurableStateBackend } from "./state-backend";
-import { durableEmitter, scopeStep } from "./step";
+import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
   toStateNode,
@@ -52,7 +52,7 @@ export async function* reconcileResource(
   if (action.decision === "noop" && (opts.driftDetection ?? true)) {
     // Its own scope: the operation that follows reads the remote again, and
     // the two reads must not share step keys.
-    const driftScope = scopeStep(scope, "drift-read");
+    const driftScope = scope.scope("drift-read");
     const driftRead = yield* readDriftOperation(driftScope, {
       ...operationParams(driftScope, resource, opts),
       resourceParams: params,
@@ -95,7 +95,7 @@ export async function* reconcileResource(
 }
 
 export async function* deleteResource(
-  step: DurableStep,
+  step: DurableStepRunner,
   resource: BaseResource,
   opts: DurableOperationOptions,
 ): AsyncGenerator<any, void, any> {
@@ -118,7 +118,7 @@ export async function* deleteResource(
  * warning, because deleting it would need a resource class we cannot resolve.
  */
 export async function* sweepOrphans(
-  step: DurableStep,
+  step: DurableStepRunner,
   opts: DurableOperationOptions,
   workflow: "deploy" | "destroy",
 ): AsyncGenerator<any, void, any> {
@@ -131,7 +131,7 @@ export async function* sweepOrphans(
 
   for (const node of persisted) {
     if (resourceById.has(node.id)) continue;
-    const nodeScope = scopeStep(step, node.id);
+    const nodeScope = step.scope(node.id);
 
     const Resource = resolveResourceClass(registry, node.type as ResourceType);
     if (!Resource) {
@@ -158,7 +158,7 @@ export async function* sweepOrphans(
  * here, and is re-served to the operations so they need no second read.
  */
 async function* hydrateResource(
-  step: DurableStep,
+  step: DurableStepRunner,
   resource: BaseResource,
   opts: DurableOperationOptions,
 ): AsyncGenerator<
@@ -175,7 +175,7 @@ async function* hydrateResource(
 }
 
 function readSnapshot(
-  step: DurableStep,
+  step: DurableStepRunner,
   state: DurableStateBackend,
   resourceId: string,
 ): AsyncGenerator<any, ResourceSnapshot | undefined, any> {
@@ -184,7 +184,7 @@ function readSnapshot(
 
 /** The half of the operation params every durable driver call site shares. */
 function operationParams(
-  step: DurableStep,
+  step: DurableStepRunner,
   resource: BaseResource,
   opts: DurableOperationOptions,
 ): ResourceOperationBaseParams {
@@ -203,7 +203,7 @@ function operationParams(
  * recorded result instead of retrying a compare-and-set that would now fail.
  */
 function persistResourceState(
-  step: DurableStep,
+  step: DurableStepRunner,
   opts: DurableOperationOptions,
   resource: BaseResource,
   snapshot: ResourceSnapshot | undefined,
@@ -224,7 +224,7 @@ function persistResourceState(
       id: opts.state.storeId(resource.id),
     });
     const result = yield* store.updateFrom(
-      "state:persist",
+      `state:persist:${resource.id}`,
       snapshot,
       () => next,
     );
@@ -239,7 +239,7 @@ function persistResourceState(
 }
 
 function removeResourceState(
-  step: DurableStep,
+  step: DurableStepRunner,
   opts: DurableOperationOptions,
   resource: BaseResource,
   snapshot: ResourceSnapshot,
@@ -248,7 +248,10 @@ function removeResourceState(
     const store = yield* step.store(resourceStateStore, {
       id: opts.state.storeId(resource.id),
     });
-    const result = yield* store.deleteFrom("state:delete", snapshot);
+    const result = yield* store.deleteFrom(
+      `state:delete:${resource.id}`,
+      snapshot,
+    );
     if (!result.deleted) {
       throw new RevConflict(resource.id, snapshot.version + 1, undefined);
     }
