@@ -1,4 +1,5 @@
 import type { ResourceType } from "@notation/resource";
+import type { MissingResourceRegistryMatchWarningEvent } from "./resource-registry";
 
 export type OperationName = "create" | "read" | "update" | "delete";
 
@@ -46,8 +47,27 @@ export type ReconcilerEvent =
   | CoordinationWaitingEvent
   | ReconcilerDeployEvent
   | ReconcilerDriftDetectedEvent
-  | import("./resource-registry").MissingResourceRegistryMatchWarningEvent;
+  | MissingResourceRegistryMatchWarningEvent;
 
 export type ReconcilerEventEmitter = (
   event: ReconcilerEvent,
 ) => void | Promise<void>;
+
+/**
+ * The seam a driver fills in to deliver an event. Emission is a step so that
+ * each driver decides how it is recorded: the in-process driver simply awaits
+ * the emitter, while the durable driver checkpoints it so that replaying a
+ * workflow does not re-emit events it has already delivered.
+ */
+export type EmitStep<TEvent = ReconcilerEvent> = (
+  event: TEvent,
+) => AsyncGenerator<unknown, void, unknown>;
+
+/** Adapts a plain emitter to the driver seam, for drivers that just await. */
+export function toEmitStep<TEvent>(
+  emit: ((event: TEvent) => void | Promise<void>) | undefined,
+): EmitStep<TEvent> {
+  return async function* (event) {
+    await emit?.(event);
+  };
+}

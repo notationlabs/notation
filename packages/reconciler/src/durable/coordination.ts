@@ -1,5 +1,5 @@
 import type { ReconcilerEventEmitter } from "../events";
-import { emitEvent } from "./emit";
+import { durableEmitter, scopeStep } from "./step";
 import { deploymentCoordinationStore, type CoordinationState } from "./stores";
 import type { DurableStep, WorkflowStore } from "./yieldstar";
 
@@ -13,7 +13,7 @@ type CoordinationOptions = {
  * Prevents concurrent executions from mutating the same deployment. Names
  * the holder so an operator can resume it after a crash.
  */
-export async function* acquireDeploymentCoordination(
+async function* acquireDeploymentCoordination(
   step: DurableStep,
   opts: CoordinationOptions,
 ): AsyncGenerator<any, WorkflowStore<CoordinationState>, any> {
@@ -25,13 +25,13 @@ export async function* acquireDeploymentCoordination(
   const snapshot = yield* coordination.get("notation:coordination:inspect");
   const holder = snapshot.state.holder;
   if (holder !== null && holder !== opts.executionId) {
-    yield* emitEvent(step, "notation:coordination:waiting", opts.emit, () => ({
+    yield* durableEmitter(scopeStep(step, "notation:coordination"), opts.emit)({
       level: "warn",
       event: "reconciler.coordination.waiting",
       deploymentId: opts.deploymentId,
       executionId: opts.executionId,
       holderExecutionId: holder,
-    }));
+    });
   }
 
   yield* coordination.take(
@@ -45,11 +45,25 @@ export async function* acquireDeploymentCoordination(
   return coordination;
 }
 
-export function releaseDeploymentCoordination(
+function releaseDeploymentCoordination(
   coordination: WorkflowStore<CoordinationState>,
   executionId: string,
 ) {
   return coordination.update("notation:coordination:release", (draft) => {
     if (draft.holder === executionId) draft.holder = null;
   });
+}
+
+/** Runs `body` while holding the deployment, releasing it even on error. */
+export async function* withDeploymentHold(
+  step: DurableStep,
+  opts: CoordinationOptions,
+  body: () => AsyncGenerator<any, void, any>,
+): AsyncGenerator<any, void, any> {
+  const coordination = yield* acquireDeploymentCoordination(step, opts);
+  try {
+    yield* body();
+  } finally {
+    yield* releaseDeploymentCoordination(coordination, opts.executionId);
+  }
 }

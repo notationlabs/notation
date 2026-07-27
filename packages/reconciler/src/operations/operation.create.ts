@@ -12,10 +12,10 @@ export async function* createResourceOperation(
   step: StepRunner,
   params: CreateResourceParams,
 ): AsyncGenerator<unknown, void, unknown> {
-  await emitLifecycleEvent(params, "create", "start");
+  yield* emitLifecycleEvent(params, "create", "start");
 
   if (params.dryRun) {
-    await emitLifecycleEvent(params, "create", "dry-run");
+    yield* emitLifecycleEvent(params, "create", "dry-run");
     return;
   }
 
@@ -51,23 +51,21 @@ export async function* createResourceOperation(
       ...readResult,
     });
 
-    yield* step.run("create:persist-state", async () => {
-      await params.state.update(params.resource.id, params.expectedRev, {
-        id: params.resource.id,
-        groupId: params.resource.groupId,
-        groupType: params.resource.groupType,
-        type: params.resource.type,
-        lastOperation: "create",
-        lastOperationAt: new Date().toISOString(),
-        config: params.resource.config,
-        params: params.resource.toState(resourceParams),
-        output: params.resource.toState(params.resource.output),
-      });
+    yield* params.persist({
+      id: params.resource.id,
+      groupId: params.resource.groupId,
+      groupType: params.resource.groupType,
+      type: params.resource.type,
+      lastOperation: "create",
+      lastOperationAt: new Date().toISOString(),
+      config: params.resource.config,
+      params: params.resource.toState(resourceParams),
+      output: params.resource.toState(params.resource.output),
     });
 
-    await emitLifecycleEvent(params, "create", "success");
+    yield* emitLifecycleEvent(params, "create", "success");
   } catch (err) {
-    await emitLifecycleEvent(params, "create", "error", getErrorDetails(err));
+    yield* emitLifecycleEvent(params, "create", "error", getErrorDetails(err));
     throw err;
   }
 }

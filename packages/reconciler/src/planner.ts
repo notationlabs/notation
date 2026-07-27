@@ -1,7 +1,8 @@
-import { ResourceNotFoundError, type BaseResource } from "@notation/resource";
-import type { StateBackend } from "@notation/state";
+import type { BaseResource } from "@notation/resource";
+import type { State } from "@notation/state";
 import { buildResourceDepthLevels } from "./dependency-graph";
-import { readResourceOperation } from "./operations";
+import { toEmitStep, type ReconcilerEventEmitter } from "./events";
+import { readDriftOperation } from "./operations";
 import {
   decideAction,
   getDependencyIds,
@@ -9,22 +10,30 @@ import {
   type Plan,
   type PlanNode,
 } from "./plan";
-import { createStepRunner, runOperation } from "./reconciler";
+import { createStepRunner, runOperation } from "./step-runner";
+
+/** Planning reads state and never mutates it, so no lease is required. */
+export type PlannerState = Pick<State, "get" | "values">;
 
 export type CreatePlanOptions = {
   resources: BaseResource[];
-  state: StateBackend;
+  state: PlannerState;
   driftDetection?: boolean;
+  emit?: ReconcilerEventEmitter;
+  maxOperationAttempts?: number;
 };
 
 export async function createPlan({
   resources,
   state,
   driftDetection = true,
+  emit,
+  maxOperationAttempts,
 }: CreatePlanOptions): Promise<Plan> {
   const resourceById = new Map(
     resources.map((resource) => [resource.id, resource]),
   );
+  const emitStep = emit ? toEmitStep(emit) : undefined;
   const nodes: PlanNode[] = [];
 
   for (const level of buildResourceDepthLevels(resources)) {
@@ -35,19 +44,14 @@ export async function createPlan({
       let action = decideAction({ resource, stateNode, params });
 
       if (action.decision === "noop" && driftDetection && resource.read) {
-        let driftRead;
-        try {
-          const output = await runOperation(
-            readResourceOperation(createStepRunner(), {
-              resource,
-              state,
-            }),
-          );
-          driftRead = { kind: "present" as const, output };
-        } catch (error) {
-          if (!ResourceNotFoundError.is(error)) throw error;
-          driftRead = { kind: "absent" as const };
-        }
+        const driftRead = await runOperation(
+          readDriftOperation(createStepRunner(), {
+            resource,
+            state,
+            emit: emitStep,
+            maxOperationAttempts,
+          }),
+        );
 
         action = decideAction({
           resource,

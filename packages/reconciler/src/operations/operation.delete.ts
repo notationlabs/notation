@@ -11,10 +11,10 @@ export async function* deleteResourceOperation(
   step: StepRunner,
   params: DeleteResourceParams,
 ): AsyncGenerator<unknown, void, unknown> {
-  await emitLifecycleEvent(params, "delete", "start");
+  yield* emitLifecycleEvent(params, "delete", "start");
 
   if (params.dryRun) {
-    await emitLifecycleEvent(params, "delete", "dry-run");
+    yield* emitLifecycleEvent(params, "delete", "dry-run");
     return;
   }
 
@@ -31,13 +31,11 @@ export async function* deleteResourceOperation(
       params.maxOperationAttempts,
     );
 
-    yield* step.run("delete:persist-state", () =>
-      params.state.delete(params.resource.id, params.expectedRev),
-    );
+    yield* params.remove();
 
-    await emitLifecycleEvent(params, "delete", "success");
+    yield* emitLifecycleEvent(params, "delete", "success");
   } catch (err) {
-    await emitLifecycleEvent(params, "delete", "error", getErrorDetails(err));
+    yield* emitLifecycleEvent(params, "delete", "error", getErrorDetails(err));
     throw err;
   }
 }

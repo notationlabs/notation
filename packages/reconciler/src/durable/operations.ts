@@ -1,380 +1,107 @@
-import {
-  ResourceNotFoundError,
-  type BaseResource,
-  type ResourceType,
-} from "@notation/resource";
-import { RevConflict } from "@notation/state";
+import type { BaseResource, ResourceType } from "@notation/resource";
+import { RevConflict, type StateNode } from "@notation/state";
 import {
   createMissingResourceRegistryMatchWarningEvent,
   createResourceRegistryFromResources,
   resolveResourceClass,
 } from "../resource-registry";
-import { runPendingOperation } from "../operations/operation.pending";
-import { decideAction, type DriftRead, type ResourceAction } from "../plan";
-import { emitEvent, emitLifecycle } from "./emit";
+import {
+  createResourceOperation,
+  deleteResourceOperation,
+  readDriftOperation,
+  updateResourceOperation,
+  type PersistState,
+  type RemoveState,
+  type ResourceOperationBaseParams,
+} from "../operations";
+import { decideAction, type ResourceAction } from "../plan";
 import type { DurableStateBackend } from "./state-backend";
+import { durableEmitter, scopeStep } from "./step";
 import {
   resourceStateStore,
   toStateNode,
-  type StoredResourceState,
+  type ResourceSnapshot,
 } from "./stores";
 import type { DurableDeployOptions, DurableOperationOptions } from "./types";
-import type { DurableStep, WorkflowStore } from "./yieldstar";
+import type { DurableStep } from "./yieldstar";
 
 export async function* reconcileResource(
   step: DurableStep,
   resource: BaseResource,
   opts: DurableDeployOptions,
 ): AsyncGenerator<any, void, any> {
-  const prefix = `notation:resource:${resource.id}`;
+  const scope = scopeStep(step, `notation:resource:${resource.id}`);
+  const emit = durableEmitter(scope, opts.emit);
 
-  // Hydrate the resource from persisted state. The snapshot is kept so later
-  // writes can be conditional on the exact instance identity and version that
-  // was read here.
-  let stateNode = yield* step.run(`${prefix}:state:lookup`, () =>
-    opts.state.get(resource.id),
-  );
-  let stateStore: WorkflowStore<StoredResourceState> | undefined;
-  let snapshot:
-    Awaited<ReturnType<DurableStateBackend["snapshot"]>> | undefined;
-  if (stateNode) {
-    stateStore = yield* openResourceState(step, opts.state, resource.id);
-    snapshot = yield* stateStore.get(`${prefix}:state:get`);
-    stateNode = toStateNode(snapshot);
-  }
-  if (stateNode) resource.setOutput(stateNode.output);
+  const { stateNode, snapshot } = yield* hydrateResource(scope, resource, opts);
+  const shared = operationParams(scope, resource, opts, stateNode);
 
   // Decide the operation from desired params vs persisted state.
-  const params = yield* step.run(`${prefix}:params`, () =>
-    resource.getParams(),
-  );
-  let action: ResourceAction = decideAction({
-    resource,
-    stateNode: stateNode ?? undefined,
-    params,
-  });
+  const params = yield* scope.run("params", () => resource.getParams());
+  let action: ResourceAction = decideAction({ resource, stateNode, params });
 
   // A noop is only trusted after the remote is read back: the provider may
   // have drifted from persisted state, which upgrades the decision.
   if (action.decision === "noop" && (opts.driftDetection ?? true)) {
-    const remote = yield* readRemote(
-      step,
-      resource,
-      opts,
-      `${prefix}:drift-read`,
+    // Its own scope: the operation that follows reads the remote again, and
+    // the two reads must not share step keys.
+    const driftScope = scopeStep(scope, "drift-read");
+    const driftRead = yield* readDriftOperation(
+      driftScope,
+      operationParams(driftScope, resource, opts, stateNode),
     );
-    action = decideAction({
-      resource,
-      stateNode: stateNode ?? undefined,
-      params,
-      driftRead: remote,
-    });
+    action = decideAction({ resource, stateNode, params, driftRead });
   }
 
   if (action.decision === "drift-update") {
-    const diff = action.patch;
-    yield* emitEvent(step, `${prefix}:drift-detected`, opts.emit, () => ({
+    yield* emit({
       level: "info",
       event: "reconciler.drift.detected",
       resourceId: resource.id,
       resourceType: resource.type,
-      diff,
-    }));
+      diff: action.patch,
+    });
   }
 
-  yield* emitEvent(step, `${prefix}:decision`, opts.emit, () => ({
+  yield* emit({
     level: "info",
     event: "reconciler.deploy.decision",
     resourceId: resource.id,
     resourceType: resource.type,
     decision: action.decision,
-  }));
+  });
 
   if (action.decision === "noop") return;
-  const operation =
-    action.decision === "create" || action.decision === "drift-recreate"
-      ? "create"
-      : "update";
-  const patch = "patch" in action ? action.patch : {};
-  yield* emitLifecycle(
-    step,
-    `${prefix}:${operation}:start`,
-    opts.emit,
-    operation,
-    "start",
-    resource,
-  );
-  if (opts.dryRun) {
-    yield* emitLifecycle(
-      step,
-      `${prefix}:${operation}:dry-run`,
-      opts.emit,
-      operation,
-      "dry-run",
-      resource,
-    );
+
+  const persist = persistResourceState(scope, opts, resource, snapshot);
+  if (action.decision === "create" || action.decision === "drift-recreate") {
+    yield* createResourceOperation(scope, { ...shared, persist });
     return;
   }
 
-  try {
-    // Checkpoint successful provider calls. Provider mutations must be
-    // idempotent because a crash before the checkpoint can repeat them.
-    if (operation === "create") {
-      const primaryKey = yield* runPendingOperation(
-        step,
-        `${prefix}:create`,
-        (context) => resource.create(params, context),
-        opts.maxOperationAttempts,
-      );
-      resource.setOutput(params);
-      if (primaryKey) resource.setOutput({ ...primaryKey, ...resource.output });
-    } else {
-      if (!resource.update) {
-        yield* emitLifecycle(
-          step,
-          `${prefix}:update:skip`,
-          opts.emit,
-          "update",
-          "skip",
-          resource,
-          { reason: "update-not-implemented" },
-        );
-        return;
-      }
-      yield* runPendingOperation(
-        step,
-        `${prefix}:update`,
-        (context) =>
-          resource.update!(
-            resource.key,
-            patch,
-            params,
-            resource.toState(resource.output),
-            context,
-          ),
-        opts.maxOperationAttempts,
-      );
-      resource.setOutput({ ...resource.key, ...params });
-    }
-
-    // Read back the remote so persisted output reflects provider-assigned
-    // values, then persist conditionally against the snapshot read above.
-    const read = yield* readResource(
-      step,
-      resource,
-      opts,
-      `${prefix}:read-after-write`,
-    );
-    resource.setOutput({ ...resource.output, ...read });
-
-    const nextState: StoredResourceState = {
-      id: resource.id,
-      groupId: resource.groupId,
-      groupType: resource.groupType,
-      type: resource.type,
-      lastOperation: operation,
-      lastOperationAt: new Date().toISOString(),
-      config: resource.config,
-      params: resource.toState(params),
-      output: resource.toState(resource.output),
-    };
-
-    if (!stateStore || !snapshot) {
-      yield* step.store(resourceStateStore, {
-        id: opts.state.storeId(resource.id),
-        initial: nextState,
-      });
-    } else {
-      const result = yield* stateStore.updateFrom(
-        `${prefix}:state:persist`,
-        snapshot,
-        () => nextState,
-      );
-      if (!result.updated)
-        throw new RevConflict(
-          resource.id,
-          stateNode?.rev ?? 0,
-          result.actualVersion + 1,
-        );
-    }
-
-    yield* emitLifecycle(
-      step,
-      `${prefix}:${operation}:success`,
-      opts.emit,
-      operation,
-      "success",
-      resource,
-    );
-  } catch (error) {
-    yield* emitLifecycle(
-      step,
-      `${prefix}:${operation}:error`,
-      opts.emit,
-      operation,
-      "error",
-      resource,
-      { error },
-    );
-    throw error;
-  }
+  yield* updateResourceOperation(scope, {
+    ...shared,
+    patch: action.patch,
+    persist,
+  });
 }
 
 export async function* deleteResource(
   step: DurableStep,
   resource: BaseResource,
   opts: DurableOperationOptions,
-  suffix: string,
 ): AsyncGenerator<any, void, any> {
-  const prefix = `notation:${suffix}:${resource.id}`;
-
   // Hydrate output from persisted state; the delete call needs the primary
   // key and the state removal must be conditional on this exact snapshot.
-  const stateStore = yield* openResourceState(step, opts.state, resource.id);
-  const snapshot = yield* stateStore.get(`${prefix}:state:get`);
+  const snapshot = yield* readSnapshot(step, opts.state, resource.id);
+  if (!snapshot) return;
   const stateNode = toStateNode(snapshot);
   resource.setOutput(stateNode.output);
 
-  yield* emitLifecycle(
-    step,
-    `${prefix}:delete:start`,
-    opts.emit,
-    "delete",
-    "start",
-    resource,
-  );
-
-  if (opts.dryRun) {
-    yield* emitLifecycle(
-      step,
-      `${prefix}:delete:dry-run`,
-      opts.emit,
-      "delete",
-      "dry-run",
-      resource,
-    );
-    return;
-  }
-
-  try {
-    yield* runPendingOperation(
-      step,
-      `${prefix}:delete`,
-      (context) =>
-        resource.delete(
-          resource.key,
-          resource.toState(resource.output),
-          context,
-        ),
-      opts.maxOperationAttempts,
-    );
-
-    // State is removed only after the provider delete completes, and only if
-    // the store still matches the snapshot read before deleting.
-    const deleted = yield* stateStore.deleteFrom(
-      `${prefix}:state:delete`,
-      snapshot,
-    );
-    if (!deleted.deleted)
-      throw new RevConflict(resource.id, stateNode.rev, undefined);
-    yield* emitLifecycle(
-      step,
-      `${prefix}:delete:success`,
-      opts.emit,
-      "delete",
-      "success",
-      resource,
-    );
-  } catch (error) {
-    yield* emitLifecycle(
-      step,
-      `${prefix}:delete:error`,
-      opts.emit,
-      "delete",
-      "error",
-      resource,
-      { error },
-    );
-    throw error;
-  }
-}
-
-export async function* readRemote(
-  step: DurableStep,
-  resource: BaseResource,
-  opts: DurableOperationOptions,
-  key: string,
-): AsyncGenerator<any, DriftRead, any> {
-  try {
-    return {
-      kind: "present",
-      output: yield* readResource(step, resource, opts, key),
-    };
-  } catch (error) {
-    if (ResourceNotFoundError.is(error)) return { kind: "absent" };
-    throw error;
-  }
-}
-
-async function* readResource(
-  step: DurableStep,
-  resource: BaseResource,
-  opts: DurableOperationOptions,
-  key: string,
-): AsyncGenerator<any, Record<string, unknown>, any> {
-  if (!resource.read) {
-    yield* emitLifecycle(
-      step,
-      `${key}:skip`,
-      opts.emit,
-      "read",
-      "skip",
-      resource,
-      {
-        reason: "read-not-implemented",
-      },
-    );
-    return { ...(await resource.getParams()), ...resource.output };
-  }
-
-  yield* emitLifecycle(
-    step,
-    `${key}:start`,
-    opts.emit,
-    "read",
-    "start",
-    resource,
-  );
-  try {
-    const result = yield* runPendingOperation(
-      step,
-      key,
-      (context) => resource.read!(resource.key, context),
-      opts.maxOperationAttempts,
-    );
-    yield* emitLifecycle(
-      step,
-      `${key}:success`,
-      opts.emit,
-      "read",
-      "success",
-      resource,
-    );
-    return result;
-  } catch (error) {
-    yield* emitLifecycle(
-      step,
-      `${key}:error`,
-      opts.emit,
-      "read",
-      "error",
-      resource,
-      {
-        error,
-      },
-    );
-    throw error;
-  }
+  yield* deleteResourceOperation(step, {
+    ...operationParams(step, resource, opts, stateNode),
+    remove: removeResourceState(step, opts, resource, snapshot),
+  });
 }
 
 /**
@@ -385,28 +112,25 @@ async function* readResource(
 export async function* sweepOrphans(
   step: DurableStep,
   opts: DurableOperationOptions,
-  params: {
-    workflow: "deploy" | "destroy";
-    listKey: string;
-    warningKey: (nodeId: string) => string;
-    deleteSuffix: string;
-  },
+  workflow: "deploy" | "destroy",
 ): AsyncGenerator<any, void, any> {
   const resourceById = new Map(
     opts.resources.map((resource) => [resource.id, resource]),
   );
-  const persisted = yield* step.run(params.listKey, () => opts.state.values());
+  const persisted = yield* step.run("list", () => opts.state.values());
   const registry =
     opts.registry ?? createResourceRegistryFromResources(opts.resources);
 
   for (const node of persisted) {
     if (resourceById.has(node.id)) continue;
+    const nodeScope = scopeStep(step, node.id);
 
     const Resource = resolveResourceClass(registry, node.type as ResourceType);
     if (!Resource) {
-      yield* emitEvent(step, params.warningKey(node.id), opts.emit, () =>
+      const emit = durableEmitter(nodeScope, opts.emit);
+      yield* emit(
         createMissingResourceRegistryMatchWarningEvent({
-          workflow: params.workflow,
+          workflow,
           resourceId: node.id,
           resourceType: node.type as ResourceType,
         }),
@@ -416,16 +140,113 @@ export async function* sweepOrphans(
 
     const resource = new Resource({ id: node.id, config: node.config });
     resource.setOutput(node.output);
-    yield* deleteResource(step, resource, opts, params.deleteSuffix);
+    yield* deleteResource(nodeScope, resource, opts);
   }
 }
 
-export function openResourceState(
+/**
+ * Reads the persisted record once. The snapshot is kept so that later writes
+ * can be made conditional on the exact instance identity and version read
+ * here, and is re-served to the operations so they need no second read.
+ */
+async function* hydrateResource(
+  step: DurableStep,
+  resource: BaseResource,
+  opts: DurableOperationOptions,
+): AsyncGenerator<
+  any,
+  { stateNode?: StateNode; snapshot?: ResourceSnapshot },
+  any
+> {
+  const snapshot = yield* readSnapshot(step, opts.state, resource.id);
+  if (!snapshot) return {};
+
+  const stateNode = toStateNode(snapshot);
+  resource.setOutput(stateNode.output);
+  return { stateNode, snapshot };
+}
+
+function readSnapshot(
   step: DurableStep,
   state: DurableStateBackend,
   resourceId: string,
-) {
-  return step.store(resourceStateStore, {
-    id: state.storeId(resourceId),
-  });
+): AsyncGenerator<any, ResourceSnapshot | undefined, any> {
+  return step.run("state:snapshot", () => state.snapshot(resourceId));
+}
+
+/** The half of the operation params every durable driver call site shares. */
+function operationParams(
+  step: DurableStep,
+  resource: BaseResource,
+  opts: DurableOperationOptions,
+  stateNode: StateNode | undefined,
+): ResourceOperationBaseParams {
+  return {
+    resource,
+    // Serve the record already read during hydration rather than reading it
+    // again; a workflow must see the same value on every replay anyway.
+    state: { get: async () => stateNode },
+    dryRun: opts.dryRun,
+    emit: durableEmitter(step, opts.emit),
+    maxOperationAttempts: opts.maxOperationAttempts,
+  };
+}
+
+/**
+ * State writes go through the workflow store, never through the state backend:
+ * the store stamps the write with the step that made it, so the applied-step
+ * ledger and the state change commit together. Replaying then returns the
+ * recorded result instead of retrying a compare-and-set that would now fail.
+ */
+function persistResourceState(
+  step: DurableStep,
+  opts: DurableOperationOptions,
+  resource: BaseResource,
+  snapshot: ResourceSnapshot | undefined,
+): PersistState {
+  return async function* (next) {
+    if (!snapshot) {
+      // Create-if-absent. A racing writer would win here and this record would
+      // be silently adopted rather than written, which is safe only because a
+      // deployment is held exclusively for the length of the workflow.
+      yield* step.store(resourceStateStore, {
+        id: opts.state.storeId(resource.id),
+        initial: next,
+      });
+      return;
+    }
+
+    const store = yield* step.store(resourceStateStore, {
+      id: opts.state.storeId(resource.id),
+    });
+    const result = yield* store.updateFrom(
+      "state:persist",
+      snapshot,
+      () => next,
+    );
+    if (!result.updated) {
+      throw new RevConflict(
+        resource.id,
+        snapshot.version + 1,
+        result.actualVersion + 1,
+      );
+    }
+  };
+}
+
+function removeResourceState(
+  step: DurableStep,
+  opts: DurableOperationOptions,
+  resource: BaseResource,
+  snapshot: ResourceSnapshot,
+): RemoveState {
+  return async function* () {
+    const store = yield* step.store(resourceStateStore, {
+      id: opts.state.storeId(resource.id),
+    });
+    const result = yield* store.deleteFrom("state:delete", snapshot);
+    if (!result.deleted) {
+      throw new RevConflict(resource.id, snapshot.version + 1, undefined);
+    }
+  };
 }

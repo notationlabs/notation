@@ -1,4 +1,3 @@
-import { ResourceNotFoundError } from "@notation/resource";
 import type { BaseResource, ResourceType } from "@notation/resource";
 import { RevConflict, type State, type StateNode } from "@notation/state";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -15,8 +14,10 @@ import {
 import {
   createResourceOperation,
   deleteResourceOperation,
-  readResourceOperation,
-  type OperationLifecycleEvent,
+  readDriftOperation,
+  type OperationEventEmitter,
+  type PersistState,
+  type RemoveState,
   type StepRunner,
   updateResourceOperation,
 } from "./operations";
@@ -24,35 +25,19 @@ import {
   createMissingResourceRegistryMatchWarningEvent,
   createResourceRegistryFromResources,
   resolveResourceClass,
-  type MissingResourceRegistryMatchWarningEvent,
   type ResourceRegistry,
 } from "./resource-registry";
+import { toEmitStep, type ReconcilerEventEmitter } from "./events";
+import { createPlan } from "./planner";
+import { createStepRunner, runOperation } from "./step-runner";
 
-export type ReconcilerDeployEvent = {
-  level: "info";
-  event: "reconciler.deploy.decision";
-  resourceId: string;
-  resourceType: string;
-  decision: "create" | "update" | "drift-update" | "drift-recreate" | "noop";
-};
-
-export type ReconcilerDriftDetectedEvent = {
-  level: "info";
-  event: "reconciler.drift.detected";
-  resourceId: string;
-  resourceType: string;
-  diff: Record<string, unknown>;
-};
-
-export type ReconcilerEvent =
-  | OperationLifecycleEvent
-  | ReconcilerDeployEvent
-  | ReconcilerDriftDetectedEvent
-  | MissingResourceRegistryMatchWarningEvent;
-
-export type ReconcilerEventEmitter = (
-  event: ReconcilerEvent,
-) => void | Promise<void>;
+export type {
+  ReconcilerDeployEvent,
+  ReconcilerDriftDetectedEvent,
+  ReconcilerEvent,
+  ReconcilerEventEmitter,
+} from "./events";
+export { createStepRunner, runOperation } from "./step-runner";
 
 export type ReconcilerState = Pick<
   State,
@@ -92,6 +77,7 @@ export class Reconciler {
   readonly #defaultDryRun: boolean;
   readonly #defaultDriftDetection: boolean;
   readonly #emit?: ReconcilerEventEmitter;
+  readonly #emitStep?: OperationEventEmitter;
   readonly #maxOperationAttempts?: number;
   readonly #mutationLeaseTtl: number;
   readonly #stepRunner: StepRunner;
@@ -102,6 +88,8 @@ export class Reconciler {
     this.#defaultDryRun = opts.dryRun ?? false;
     this.#defaultDriftDetection = opts.driftDetection ?? true;
     this.#emit = opts.emit;
+    // Operations emit through a step seam; in process that is a plain await.
+    this.#emitStep = opts.emit ? toEmitStep(opts.emit) : undefined;
     this.#maxOperationAttempts = opts.maxOperationAttempts;
     this.#mutationLeaseTtl = opts.mutationLeaseTtl ?? 30_000;
     this.#stepRunner = createStepRunner();
@@ -130,36 +118,13 @@ export class Reconciler {
   }
 
   async plan(resources: BaseResource[], opts: PlanOptions = {}): Promise<Plan> {
-    const driftDetection = opts.driftDetection ?? this.#defaultDriftDetection;
-    const resourceById = new Map(
-      resources.map((resource) => [resource.id, resource]),
-    );
-    const nodes: PlanNode[] = [];
-
-    const dependencyLevels = buildResourceDepthLevels(resources);
-    for (const level of dependencyLevels) {
-      for (const resource of level) {
-        nodes.push(await this.#planResource(resource, driftDetection));
-      }
-    }
-
-    const stateNodes = await this.#state.values();
-    for (const stateNode of stateNodes) {
-      if (resourceById.has(stateNode.id)) continue;
-
-      nodes.push({
-        id: stateNode.id,
-        type: stateNode.type,
-        decision: "delete-orphan",
-        params: stateNode.params,
-        dependsOn: [],
-      });
-    }
-
-    return {
-      createdAt: new Date().toISOString(),
-      nodes,
-    };
+    return createPlan({
+      resources,
+      state: this.#state,
+      driftDetection: opts.driftDetection ?? this.#defaultDriftDetection,
+      emit: this.#emit,
+      maxOperationAttempts: this.#maxOperationAttempts,
+    });
   }
 
   async destroy(
@@ -310,9 +275,9 @@ export class Reconciler {
             resource,
             state: this.#state,
             dryRun,
-            emit: this.#emit,
+            emit: this.#emitStep,
             maxOperationAttempts: this.#maxOperationAttempts,
-            expectedRev: stateNode?.rev ?? 0,
+            persist: this.#persist(resource.id, stateNode?.rev ?? 0),
           }),
         );
         return;
@@ -325,9 +290,9 @@ export class Reconciler {
             state: this.#state,
             patch: action.patch,
             dryRun,
-            emit: this.#emit,
+            emit: this.#emitStep,
             maxOperationAttempts: this.#maxOperationAttempts,
-            expectedRev: stateNode!.rev,
+            persist: this.#persist(resource.id, stateNode!.rev),
           }),
         );
         return;
@@ -372,9 +337,9 @@ export class Reconciler {
             resource,
             state: this.#state,
             dryRun,
-            emit: this.#emit,
+            emit: this.#emitStep,
             maxOperationAttempts: this.#maxOperationAttempts,
-            expectedRev: stateNode?.rev ?? 0,
+            persist: this.#persist(resource.id, stateNode?.rev ?? 0),
           }),
         );
         return;
@@ -386,9 +351,9 @@ export class Reconciler {
             state: this.#state,
             patch: action.patch,
             dryRun,
-            emit: this.#emit,
+            emit: this.#emitStep,
             maxOperationAttempts: this.#maxOperationAttempts,
-            expectedRev: stateNode?.rev ?? 0,
+            persist: this.#persist(resource.id, stateNode?.rev ?? 0),
           }),
         );
         return;
@@ -409,48 +374,31 @@ export class Reconciler {
     }
   }
 
-  async #planResource(
-    resource: BaseResource,
-    driftDetection: boolean,
-  ): Promise<PlanNode> {
-    const stateNode = await this.#state.get(resource.id);
-    if (stateNode) {
-      resource.setOutput(stateNode.output);
-    }
-
-    const params = await resolvePlanParams(resource);
-    let action = decideAction({ resource, stateNode, params });
-
-    if (action.decision === "noop" && driftDetection) {
-      const driftRead = await this.#readForDrift(resource);
-      action = decideAction({ resource, stateNode, params, driftRead });
-    }
-
-    return {
-      id: resource.id,
-      type: resource.type,
-      decision: action.decision,
-      ...("diff" in action ? { diff: action.diff } : {}),
-      params,
-      dependsOn: getDependencyIds(resource),
+  // In process, concurrency control is a compare-and-set against the revision
+  // read before the operation started; the mutation lease keeps writers apart.
+  #persist(resourceId: string, expectedRev: number): PersistState {
+    const state = this.#state;
+    return async function* (next) {
+      await state.update(resourceId, expectedRev, next);
     };
   }
 
-  async #readForDrift(resource: BaseResource): Promise<DriftRead> {
-    try {
-      const output = await runOperation(
-        readResourceOperation(this.#stepRunner, {
-          resource,
-          state: this.#state,
-          emit: this.#emit,
-          maxOperationAttempts: this.#maxOperationAttempts,
-        }),
-      );
-      return { kind: "present", output };
-    } catch (error) {
-      if (ResourceNotFoundError.is(error)) return { kind: "absent" };
-      throw error;
-    }
+  #remove(resourceId: string, expectedRev: number): RemoveState {
+    const state = this.#state;
+    return async function* () {
+      await state.delete(resourceId, expectedRev);
+    };
+  }
+
+  #readForDrift(resource: BaseResource): Promise<DriftRead> {
+    return runOperation(
+      readDriftOperation(this.#stepRunner, {
+        resource,
+        state: this.#state,
+        emit: this.#emitStep,
+        maxOperationAttempts: this.#maxOperationAttempts,
+      }),
+    );
   }
 
   async #deleteOrphans(
@@ -539,22 +487,12 @@ export class Reconciler {
         resource,
         state: this.#state,
         dryRun,
-        emit: this.#emit,
+        emit: this.#emitStep,
         maxOperationAttempts: this.#maxOperationAttempts,
-        expectedRev: stateNode.rev,
+        remove: this.#remove(resource.id, stateNode.rev),
       }),
     );
   }
-}
-
-export async function runOperation<T>(
-  operation: AsyncGenerator<unknown, T, unknown>,
-) {
-  let next = await operation.next();
-  while (!next.done) {
-    next = await operation.next();
-  }
-  return next.value;
 }
 
 function hydrateResourceFromState(
@@ -570,33 +508,4 @@ function hydrateResourceFromState(
   });
   resource.setOutput(stateNode.output);
   return resource;
-}
-
-export function createStepRunner(): StepRunner {
-  return {
-    async *run<T>(
-      arg1: string | (() => T | Promise<T>),
-      arg2?: () => T | Promise<T>,
-    ): AsyncGenerator<unknown, T, unknown> {
-      const fn = (typeof arg1 === "string" ? arg2 : arg1) as
-        (() => T | Promise<T>) | undefined;
-
-      if (!fn) {
-        throw new Error("Missing run function");
-      }
-
-      return await fn();
-    },
-    async *delay(
-      arg1: string | number,
-      arg2?: number,
-    ): AsyncGenerator<unknown, void, unknown> {
-      const ms = typeof arg1 === "number" ? arg1 : arg2;
-      if (ms === undefined) {
-        throw new Error("Missing delay duration");
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, ms));
-    },
-  };
 }

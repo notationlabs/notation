@@ -1,4 +1,4 @@
-import type { ReconcilerEvent, ReconcilerEventEmitter } from "./reconciler";
+import type { ReconcilerEvent, ReconcilerEventEmitter } from "./events";
 
 export const EVENT_STREAM_VERSION = 1 as const;
 

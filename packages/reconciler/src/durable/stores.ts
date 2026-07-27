@@ -1,8 +1,6 @@
 import type { StateNode } from "@notation/state";
 import * as v from "valibot";
-import { defineStore } from "./yieldstar";
-
-export const RESOURCE_CREATION_TOKEN = "$notationCreateToken";
+import { defineStore, type StoreSnapshot } from "./yieldstar";
 
 export const resourceStateStore = defineStore(
   "resource-state",
@@ -14,7 +12,6 @@ export const resourceStateStore = defineStore(
     output: v.record(v.string(), v.unknown()),
     lastOperation: v.picklist(["drift", "create", "update", "delete"]),
     lastOperationAt: v.string(),
-    [RESOURCE_CREATION_TOKEN]: v.optional(v.string()),
   }),
 );
 
@@ -30,18 +27,10 @@ export type CoordinationState = v.InferOutput<
   typeof deploymentCoordinationStore.schema
 >;
 
-export function toStateNode(snapshot: {
-  state: StoredResourceState;
-  version: number;
-}): StateNode {
-  const { [RESOURCE_CREATION_TOKEN]: _creationToken, ...state } =
-    snapshot.state;
-  return { ...state, rev: snapshot.version + 1 };
-}
+/** A read of a resource record, carrying the identity a write is made against. */
+export type ResourceSnapshot = StoreSnapshot<StoredResourceState>;
 
-export function withoutRev(
-  patch: Partial<StateNode>,
-): Partial<StoredResourceState> {
-  const { rev: _rev, ...stored } = patch;
-  return stored;
+/** Store versions count from zero, state revisions from one. */
+export function toStateNode(snapshot: ResourceSnapshot): StateNode {
+  return { ...snapshot.state, rev: snapshot.version + 1 };
 }

@@ -11,6 +11,7 @@ import {
   type OperationLifecycleEvent,
   type StepRunner,
 } from "../src/operations";
+import { toEmitStep } from "../src/events";
 
 function createStepRunnerDouble(): StepRunner {
   const run = vi.fn(async function* <T>(
@@ -51,11 +52,8 @@ describe("operation workflows", () => {
   it("create performs create + read-after-create + state persistence", async () => {
     const step = createStepRunnerDouble();
     const events: OperationLifecycleEvent[] = [];
-    const state = {
-      get: vi.fn(async () => undefined),
-      update: vi.fn(async () => undefined),
-      delete: vi.fn(async () => undefined),
-    };
+    const state = { get: vi.fn(async () => undefined) };
+    const persist = vi.fn(async function* () {});
 
     let createAttempts = 0;
     const createMock = vi.fn(async (_params, context) => {
@@ -86,15 +84,25 @@ describe("operation workflows", () => {
       createResourceOperation(step, {
         resource: testResource,
         state,
-        expectedRev: 0,
-        emit: async (event) => {
-          events.push(event);
-        },
+        persist,
+        emit: toEmitStep((event) => void events.push(event)),
       }),
     );
 
     expect(createAttempts).toBe(2);
-    expect(state.update).toHaveBeenCalledOnce();
+    expect(persist).toHaveBeenCalledOnce();
+    expect(persist).toHaveBeenCalledWith({
+      id: "test-create",
+      groupId: testResource.groupId,
+      groupType: testResource.groupType,
+      type: TestResource.type,
+      lastOperation: "create",
+      lastOperationAt: expect.any(String),
+      config: testResource.config,
+      params: {},
+      // The resource declares no schema, so nothing survives toState.
+      output: {},
+    });
     expect(createMock).toHaveBeenNthCalledWith(
       1,
       await testResource.getParams(),
@@ -231,11 +239,8 @@ describe("operation workflows", () => {
   it("delete treats an already-absent remote as success through its idempotent resource contract", async () => {
     const step = createStepRunnerDouble();
     const events: OperationLifecycleEvent[] = [];
-    const state = {
-      get: vi.fn(async () => undefined),
-      update: vi.fn(async () => undefined),
-      delete: vi.fn(async () => undefined),
-    };
+    const state = { get: vi.fn(async () => undefined) };
+    const remove = vi.fn(async function* () {});
 
     const TestResource = resource({ type: "test/service/delete" })
       .defineSchema({})
@@ -250,14 +255,14 @@ describe("operation workflows", () => {
       deleteResourceOperation(step, {
         resource: testResource,
         state,
-        expectedRev: 1,
-        emit: async (event) => {
-          events.push(event);
-        },
+        remove,
+        emit: toEmitStep((event) => void events.push(event)),
       }),
     );
 
-    expect(state.delete).toHaveBeenCalledWith("test-delete", 1);
+    // State is removed only after the provider delete resolves; which record
+    // and revision that targets is the driver's concern, not the operation's.
+    expect(remove).toHaveBeenCalledOnce();
     expect(events.map((event) => event.status)).toEqual(["start", "success"]);
   });
 
@@ -326,9 +331,7 @@ describe("operation workflows", () => {
           resource: testResource,
           state,
           expectedRev: 0,
-          emit: async (event) => {
-            events.push(event);
-          },
+          emit: toEmitStep((event) => void events.push(event)),
         }),
       ),
     ).rejects.toMatchObject({ name: "CreateFailed", message: "boom" });

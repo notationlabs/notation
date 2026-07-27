@@ -12,18 +12,18 @@ export async function* updateResourceOperation(
   step: StepRunner,
   params: UpdateResourceParams,
 ): AsyncGenerator<unknown, void, unknown> {
-  await emitLifecycleEvent(params, "update", "start");
+  yield* emitLifecycleEvent(params, "update", "start");
 
   if (params.dryRun) {
-    await emitLifecycleEvent(params, "update", "dry-run");
+    yield* emitLifecycleEvent(params, "update", "dry-run");
     return;
   }
 
   if (!params.resource.update) {
-    await emitLifecycleEvent(params, "update", "skip", {
+    yield* emitLifecycleEvent(params, "update", "skip", {
       reason: "update-not-implemented",
     });
-    await emitLifecycleEvent(params, "update", "success");
+    yield* emitLifecycleEvent(params, "update", "success");
     return;
   }
 
@@ -63,23 +63,21 @@ export async function* updateResourceOperation(
       ...readResult,
     });
 
-    yield* step.run("update:persist-state", async () => {
-      await params.state.update(params.resource.id, params.expectedRev, {
-        id: params.resource.id,
-        groupId: params.resource.groupId,
-        groupType: params.resource.groupType,
-        type: params.resource.type,
-        lastOperation: "update",
-        lastOperationAt: new Date().toISOString(),
-        config: params.resource.config,
-        params: params.resource.toState(resourceParams),
-        output: params.resource.toState(params.resource.output),
-      });
+    yield* params.persist({
+      id: params.resource.id,
+      groupId: params.resource.groupId,
+      groupType: params.resource.groupType,
+      type: params.resource.type,
+      lastOperation: "update",
+      lastOperationAt: new Date().toISOString(),
+      config: params.resource.config,
+      params: params.resource.toState(resourceParams),
+      output: params.resource.toState(params.resource.output),
     });
 
-    await emitLifecycleEvent(params, "update", "success");
+    yield* emitLifecycleEvent(params, "update", "success");
   } catch (err) {
-    await emitLifecycleEvent(params, "update", "error", getErrorDetails(err));
+    yield* emitLifecycleEvent(params, "update", "error", getErrorDetails(err));
     throw err;
   }
 }

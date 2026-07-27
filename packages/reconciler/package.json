@@ -2,6 +2,16 @@
   "type": "module",
   "name": "@notation/reconciler",
   "version": "0.12.0",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./durable": {
+      "types": "./dist/durable/index.d.ts",
+      "default": "./dist/durable/index.js"
+    }
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [

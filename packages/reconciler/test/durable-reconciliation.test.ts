@@ -75,7 +75,7 @@ describe("durable execution and replay", () => {
     const runtime = createRuntime(
       [new TestResource({ id: "resume" })],
       "crash-resume",
-      { crashAfterStep: "notation:resource:resume:create:attempt:0" },
+      { crashAfterStep: "notation:resource:resume:create:remote:attempt:0" },
     );
 
     await expect(runtime.run("resume-execution")).rejects.toThrow(
@@ -98,7 +98,7 @@ describe("durable execution and replay", () => {
     const runtime = createRuntime(
       [new TestResource({ id: "destroyed" })],
       "destroy-crash-resume",
-      { crashAfterStep: "notation:destroy:destroyed:delete:attempt:0" },
+      { crashAfterStep: "notation:destroy:destroyed:delete:remote:attempt:0" },
     );
 
     await runtime.run("deploy-before-destroy");
@@ -242,69 +242,75 @@ describe("dependency ordering", () => {
 });
 
 describe("conditional state persistence", () => {
-  it("allows only one concurrent create-if-absent", async () => {
-    const runtime = createRuntime([], "conditional-create");
-    const first = runtime.state.update("resource", 0, {
-      ...statePatch("resource"),
-      rev: 41,
-      output: { winner: "first" },
-    });
-    const second = runtime.state.update("resource", 0, {
-      ...statePatch("resource"),
-      rev: 42,
-      output: { winner: "second" },
-    });
+  it("rejects a state write whose snapshot another writer has moved past", async () => {
+    const RaceResource = resource({ type: "test/durable/write-race" })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          valueType: "string" as any,
+        },
+      })
+      .defineOperations({
+        create: async () => undefined,
+        // Moves the store on between the workflow reading its snapshot and
+        // persisting against it, which is what the conditional write guards.
+        update: async () => {
+          await runtime.storeClient.updateStore({
+            definition: durable.resourceStateStore,
+            id: runtime.state.storeId("raced"),
+            updater: (draft: any) => {
+              draft.lastOperationAt = "1999-01-01T00:00:00.000Z";
+            },
+          });
+        },
+        delete: async () => undefined,
+      });
+    const resources = [
+      new RaceResource({ id: "raced", config: { name: "before" } }),
+    ];
+    const runtime = createRuntime(resources, "write-race");
 
-    const results = await Promise.allSettled([first, second]);
+    await runtime.run("deploy-1");
+    resources[0] = new RaceResource({ id: "raced", config: { name: "after" } });
 
-    expect(
-      results.filter((result) => result.status === "fulfilled"),
-    ).toHaveLength(1);
-    expect(
-      results.filter((result) => result.status === "rejected"),
-    ).toHaveLength(1);
-    const state = await runtime.state.get("resource");
-    expect(state).toMatchObject({ rev: 1 });
-    expect(state).not.toHaveProperty("$notationCreateToken");
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "RevConflict",
+    });
+    // The losing write left the other writer's record intact.
+    expect(await runtime.state.get("raced")).toMatchObject({
+      rev: 2,
+      lastOperationAt: "1999-01-01T00:00:00.000Z",
+    });
     runtime.close();
   });
 
-  it("uses store identity and version for conditional update and delete", async () => {
-    const runtime = createRuntime([], "conditional-state");
-    await runtime.state.update("resource", 0, statePatch("resource"));
-    const originalSnapshot = await runtime.state.snapshot("resource");
+  it("rejects a state removal whose snapshot another writer has moved past", async () => {
+    const RaceResource = resource({ type: "test/durable/delete-race" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => {
+          await runtime.storeClient.updateStore({
+            definition: durable.resourceStateStore,
+            id: runtime.state.storeId("delete-raced"),
+            updater: (draft: any) => {
+              draft.lastOperationAt = "1999-01-01T00:00:00.000Z";
+            },
+          });
+        },
+      });
+    const runtime = createRuntime(
+      [new RaceResource({ id: "delete-raced" })],
+      "delete-race",
+    );
 
-    const first = runtime.state.update("resource", 1, {
-      output: { winner: "first" },
-    });
-    const second = runtime.state.update("resource", 1, {
-      output: { winner: "second" },
-    });
-    const results = await Promise.allSettled([first, second]);
-
-    expect(
-      results.filter((result) => result.status === "fulfilled"),
-    ).toHaveLength(1);
-    expect(
-      results.filter((result) => result.status === "rejected"),
-    ).toHaveLength(1);
-    await expect(runtime.state.delete("resource", 1)).rejects.toMatchObject({
+    await runtime.run("deploy-1");
+    await expect(runtime.destroy("destroy-1")).rejects.toMatchObject({
       name: "RevConflict",
     });
-    expect(await runtime.state.get("resource")).toMatchObject({ rev: 2 });
-
-    await runtime.state.clear();
-    await runtime.state.update("resource", 0, statePatch("resource"));
-    const staleDelete = await runtime.storeClient.deleteStoreFrom({
-      definition: durable.resourceStateStore,
-      id: runtime.state.storeId("resource"),
-      snapshot: originalSnapshot,
-    });
-    expect(staleDelete).toMatchObject({
-      deleted: false,
-      reason: "conflict",
-    });
-    expect(await runtime.state.get("resource")).toMatchObject({ rev: 1 });
+    // State survives a removal that could not be proven safe.
+    expect(await runtime.state.get("delete-raced")).toBeDefined();
     runtime.close();
   });
 });
@@ -403,16 +409,17 @@ describe("deployment scoping", () => {
     const app = new durable.DurableStateBackend(storeClient, "app");
     const appBlue = new durable.DurableStateBackend(storeClient, "app:blue");
 
-    await app.update("site", 0, statePatch("site"));
-    await appBlue.update("site", 0, statePatch("site"));
+    await seedResourceState(storeClient, app.storeId("site"), "site");
+    await seedResourceState(storeClient, appBlue.storeId("site"), "blue-site");
 
-    expect(await app.values()).toHaveLength(1);
-    expect(await appBlue.values()).toHaveLength(1);
-
-    await app.clear();
-    expect(await app.values()).toHaveLength(0);
-    expect(await appBlue.values()).toHaveLength(1);
-    expect(await appBlue.get("site")).toBeDefined();
+    // A deployment named "app:blue" falls inside a naive "app:" prefix scan;
+    // encoding the deployment id is what keeps the two listings disjoint.
+    expect((await app.values()).map((node) => node.id)).toEqual(["site"]);
+    expect((await appBlue.values()).map((node) => node.id)).toEqual([
+      "blue-site",
+    ]);
+    expect(await app.get("site")).toMatchObject({ id: "site" });
+    expect(await appBlue.get("site")).toMatchObject({ id: "blue-site" });
     database.close();
   });
 });
@@ -611,6 +618,18 @@ class CrashAfterWriteHeap implements HeapClient {
       throw new Error("simulated process crash");
     }
   }
+}
+
+function seedResourceState(
+  storeClient: SqliteStoreClient,
+  storeId: string,
+  resourceId: string,
+) {
+  return storeClient.getOrCreateStore({
+    definition: durable.resourceStateStore,
+    id: storeId,
+    initial: statePatch(resourceId),
+  });
 }
 
 function statePatch(id: string) {

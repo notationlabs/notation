@@ -1,4 +1,6 @@
+import { ResourceNotFoundError } from "@notation/resource";
 import { createWorkflow } from "yieldstar";
+import type { DriftRead } from "../plan";
 import {
   type ReadResourceParams,
   type StepRunner,
@@ -11,10 +13,10 @@ export async function* readResourceOperation(
   step: StepRunner,
   params: ReadResourceParams,
 ): AsyncGenerator<unknown, Record<string, unknown>, unknown> {
-  await emitLifecycleEvent(params, "read", "start");
+  yield* emitLifecycleEvent(params, "read", "start");
 
   if (params.dryRun) {
-    await emitLifecycleEvent(params, "read", "dry-run");
+    yield* emitLifecycleEvent(params, "read", "dry-run");
     return {};
   }
 
@@ -31,10 +33,10 @@ export async function* readResourceOperation(
         ? { ...stateNode.output, ...resourceParams }
         : resourceParams;
 
-      await emitLifecycleEvent(params, "read", "skip", {
+      yield* emitLifecycleEvent(params, "read", "skip", {
         reason: "read-not-implemented",
       });
-      await emitLifecycleEvent(params, "read", "success");
+      yield* emitLifecycleEvent(params, "read", "success");
       return merged as Record<string, unknown>;
     }
 
@@ -50,11 +52,29 @@ export async function* readResourceOperation(
       ...remote,
     };
 
-    await emitLifecycleEvent(params, "read", "success");
+    yield* emitLifecycleEvent(params, "read", "success");
     return mergedOutput;
   } catch (err) {
-    await emitLifecycleEvent(params, "read", "error", getErrorDetails(err));
+    yield* emitLifecycleEvent(params, "read", "error", getErrorDetails(err));
     throw err;
+  }
+}
+
+/**
+ * Reads the remote to compare it against persisted state. An absent resource
+ * is a fact about the world rather than a failure, so it is reported as such;
+ * every other error still propagates.
+ */
+export async function* readDriftOperation(
+  step: StepRunner,
+  params: ReadResourceParams,
+): AsyncGenerator<unknown, DriftRead, unknown> {
+  try {
+    const output = yield* readResourceOperation(step, params);
+    return { kind: "present", output };
+  } catch (error) {
+    if (ResourceNotFoundError.is(error)) return { kind: "absent" };
+    throw error;
   }
 }
 
