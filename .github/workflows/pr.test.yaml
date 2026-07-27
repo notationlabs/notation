@@ -38,13 +38,13 @@ jobs:
             ${{ runner.os }}-pnpm-store-
 
       - name: Install
-        run: pnpm install
+        run: pnpm install --filter '!@notation/docs-site'
 
       - name: Build
         run: pnpm build
 
       - name: Install local bin scripts
-        run: pnpm install
+        run: pnpm install --filter '!@notation/docs-site'
 
       - name: Test
         run: pnpm test:once
