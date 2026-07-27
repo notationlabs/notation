@@ -451,6 +451,58 @@ describe("deployment coordination", () => {
   });
 });
 
+describe("deployment hold takeover", () => {
+  it("clears a hold its named holder still has, and unblocks the deployment", async () => {
+    const create = vi.fn(async () => undefined);
+    const Resource = resource({ type: "test/durable/takeover" })
+      .defineSchema({})
+      .defineOperations({ create, delete: async () => undefined });
+    const runtime = createRuntime([new Resource({ id: "held" })], "takeover");
+    await runtime.storeClient.getOrCreateStore({
+      definition: durable.deploymentCoordinationStore,
+      id: "takeover",
+      initial: { holder: "abandoned-execution" },
+    });
+
+    const result = await durable.takeOverDeploymentHold({
+      storeClient: runtime.storeClient,
+      deploymentId: "takeover",
+      fromExecutionId: "abandoned-execution",
+    });
+
+    expect(result).toEqual({
+      taken: true,
+      previousHolder: "abandoned-execution",
+    });
+    await runtime.run("later-execution");
+    expect(create).toHaveBeenCalledOnce();
+    runtime.close();
+  });
+
+  it("refuses to clear a hold that has moved to another execution", async () => {
+    const runtime = createRuntime([], "takeover-race");
+    await runtime.storeClient.getOrCreateStore({
+      definition: durable.deploymentCoordinationStore,
+      id: "takeover-race",
+      initial: { holder: "current-execution" },
+    });
+
+    const result = await durable.takeOverDeploymentHold({
+      storeClient: runtime.storeClient,
+      deploymentId: "takeover-race",
+      fromExecutionId: "abandoned-execution",
+    });
+
+    expect(result).toEqual({ taken: false, holder: "current-execution" });
+    const snapshot = await runtime.storeClient.getStore({
+      definition: durable.deploymentCoordinationStore,
+      id: "takeover-race",
+    });
+    expect(snapshot.state.holder).toBe("current-execution");
+    runtime.close();
+  });
+});
+
 describe("deployment scoping", () => {
   it("scopes store listing to the exact deployment despite prefix-like IDs", async () => {
     const database = createSqliteDb({ path: ":memory:" });

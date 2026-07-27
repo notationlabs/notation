@@ -5,7 +5,8 @@
  *
  *   notation:resource:<id>:*        per-resource reconciliation steps
  *   notation:destroy:<id>:*         per-resource deletion steps
- *   notation:orphans:<id>:*         orphan sweep, per persisted record
+ *   notation:orphans:<id>:*         orphan sweep on deploy, per record
+ *   notation:destroy:orphans:<id>:* orphan sweep on destroy, per record
  *   *:remote:attempt:<n>            one provider call attempt
  *   *:remote:retry-delay:<n>        the wait between two attempts
  *   emit:<event>[:<operation>:<status>]   event delivery checkpoint
@@ -16,6 +17,11 @@
  * The state: keys are store-handle keys and so are not scope-prefixed: a
  * store outlives the scope that opened it, which is why they carry the
  * resource id themselves.
+ *
+ * Resource ids are spliced in unescaped, so the delimiter is ambiguous: a
+ * resource named "orphans" sits in the same key space as the sweep's own
+ * segment. That predates the key map and is recorded here rather than fixed,
+ * since changing the composition invalidates in-flight executions.
  */
 export { deploy } from "./deploy";
 export { destroy } from "./destroy";
