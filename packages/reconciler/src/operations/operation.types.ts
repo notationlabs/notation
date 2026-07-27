@@ -61,6 +61,8 @@ export type CreateResourceParams = ResourceOperationBaseParams & {
 
 export type ReadResourceParams = ResourceOperationBaseParams & {
   retryAbsent?: boolean;
+  /** Defaults to true; planning sets it false so it can decide instead. */
+  retryNotReady?: boolean;
 };
 
 export type UpdateResourceParams = ResourceOperationBaseParams & {

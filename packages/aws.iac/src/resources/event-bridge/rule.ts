@@ -74,15 +74,12 @@ export const EventBridgeRule = eventBridgeRuleSchema
           ]);
 
         return {
-          status: "found",
-          output: {
-            ...ruleDescriptionResult,
-            ...listRuleTargetsResult,
-          },
-        } as const;
+          ...ruleDescriptionResult,
+          ...listRuleTargetsResult,
+        };
       } catch (error) {
         if (error instanceof sdk.ResourceNotFoundException) {
-          return { status: "absent" } as const;
+          return undefined;
         }
         throw error;
       }

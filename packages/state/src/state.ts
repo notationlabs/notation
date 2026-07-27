@@ -9,7 +9,6 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { isErrorWithCode } from "@notation/utils";
 import { LeaseConflict, RevConflict } from "./conflicts";
 
 export type StateNode = {
@@ -223,7 +222,7 @@ export class FileStateBackend implements StateBackend {
         });
         break;
       } catch (error) {
-        if (!isErrorWithCode(error, "EEXIST")) throw error;
+        if (!isFileExistsError(error)) throw error;
         const current = await readFileLease(leaseFilePath);
         if (!current || current.expiresAtMs <= Date.now()) {
           await unlink(leaseFilePath).catch(() => undefined);
@@ -272,7 +271,7 @@ export class FileStateBackend implements StateBackend {
       const file = await readFile(this.stateFilePath, "utf8");
       return JSON.parse(file) as Record<string, StateNode>;
     } catch (error) {
-      if (isErrorWithCode(error, "ENOENT")) {
+      if (isFileMissingError(error)) {
         return {};
       }
 
@@ -299,7 +298,7 @@ export class FileStateBackend implements StateBackend {
         );
         break;
       } catch (error) {
-        if (!isErrorWithCode(error, "EEXIST")) throw error;
+        if (!isFileExistsError(error)) throw error;
         const lockStat = await stat(lockFilePath).catch(() => undefined);
         if (lockStat && Date.now() - lockStat.mtimeMs > FILE_LOCK_STALE_MS) {
           await unlink(lockFilePath).catch(() => undefined);
@@ -368,10 +367,27 @@ async function readFileLease(
   try {
     return JSON.parse(await readFile(filePath, "utf8")) as FileLeaseRecord;
   } catch (error) {
-    if (isErrorWithCode(error, "ENOENT") || error instanceof SyntaxError)
+    if (isFileMissingError(error) || error instanceof SyntaxError)
       return undefined;
     throw error;
   }
+}
+
+function isFileMissingError(error: unknown): boolean {
+  return isErrorWithCode(error, "ENOENT");
+}
+
+function isFileExistsError(error: unknown): boolean {
+  return isErrorWithCode(error, "EEXIST");
+}
+
+function isErrorWithCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === code
+  );
 }
 
 function cloneAsPersistedState(

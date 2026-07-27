@@ -72,10 +72,10 @@ export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
     try {
       const command = new sdk.GetRoleCommand(key);
       const { Role } = await iamClient.send(command);
-      return { status: "found", output: Role! } as const;
+      return Role!;
     } catch (error) {
       if (error instanceof sdk.NoSuchEntityException) {
-        return { status: "absent" } as const;
+        return undefined;
       }
       throw error;
     }

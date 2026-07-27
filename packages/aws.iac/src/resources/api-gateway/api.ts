@@ -102,13 +102,10 @@ export const Api = apiSchema.defineOperations({
       const result = await apiGatewayClient.send(command);
       // todo: check types or correct or if RouteKey is actually in result
       // if not, need to pass the original params to read
-      return {
-        status: "found",
-        output: { RouteKey: "", ...result },
-      } as const;
+      return { RouteKey: "", ...result };
     } catch (error) {
       if (error instanceof sdk.NotFoundException) {
-        return { status: "absent" } as const;
+        return undefined;
       }
       throw error;
     }

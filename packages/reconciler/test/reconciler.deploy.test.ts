@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { resource, type ResourceReadResult } from "@notation/resource";
+import { resource } from "@notation/resource";
 import {
   LeaseConflict,
   MemoryStateBackend,
@@ -61,7 +61,7 @@ function createTestResourceClass(opts: {
   ) => Promise<Record<string, unknown> | void>;
   read?: (
     key: Record<string, unknown>,
-  ) => Promise<ResourceReadResult<Record<string, unknown>>>;
+  ) => Promise<Record<string, unknown> | undefined>;
   update?: (
     key: Record<string, unknown>,
     patch: Record<string, unknown>,
@@ -90,8 +90,7 @@ function createTestResourceClass(opts: {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const found = (output: Record<string, unknown>) =>
-  ({ status: "found", output }) as const;
+const found = (output: Record<string, unknown>) => output;
 
 describe("reconciler deploy", () => {
   it("chooses create vs update from desired params vs state", async () => {
@@ -543,7 +542,7 @@ describe("reconciler destroy + refresh", () => {
       remoteExists = false;
     });
     const readSpy = vi.fn(async () => {
-      if (!remoteExists) return { status: "absent" } as const;
+      if (!remoteExists) return undefined;
       return found({ name: "doomed" });
     });
     const DestroyResource = createTestResourceClass({

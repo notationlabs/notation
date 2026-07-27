@@ -1,4 +1,4 @@
-import { resource, RetryableResourceError, typed } from "@notation/resource";
+import { resource, ResourceNotReadyError, typed } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-lambda";
 import { lambdaClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
@@ -204,35 +204,28 @@ export const LambdaFunction = lambdaFunctionSchema
           await lambdaClient.send(command);
 
         if (Configuration?.State !== "Active") {
-          return {
-            status: "pending",
-            reason: "Waiting for Lambda to become active",
-          } as const;
+          throw new ResourceNotReadyError(
+            "Waiting for Lambda to become active",
+          );
         }
         if (!Configuration.RevisionId) {
-          return {
-            status: "pending",
-            reason: "Waiting for Lambda to be deployed",
-          } as const;
+          throw new ResourceNotReadyError("Waiting for Lambda to be deployed");
         }
 
         return {
-          status: "found",
-          output: {
-            ...Configuration,
-            Layers: Configuration.Layers?.map((layer) => layer.Arn),
-            ...Concurrency,
-            Code: {
-              S3Bucket: Code?.Location?.split("/")[0],
-              S3Key: Code?.Location?.split("/")[1],
-              S3ObjectVersion: Code?.Location?.split("/")[2],
-              ZipFile: undefined,
-            },
+          ...Configuration,
+          Layers: Configuration.Layers?.map((layer) => layer.Arn),
+          ...Concurrency,
+          Code: {
+            S3Bucket: Code?.Location?.split("/")[0],
+            S3Key: Code?.Location?.split("/")[1],
+            S3ObjectVersion: Code?.Location?.split("/")[2],
+            ZipFile: undefined,
           },
-        } as const;
+        };
       } catch (error) {
         if (error instanceof sdk.ResourceNotFoundException) {
-          return { status: "absent" } as const;
+          return undefined;
         }
         throw error;
       }
@@ -285,7 +278,7 @@ async function runLambdaMutation<T>(mutation: () => Promise<T>): Promise<T> {
     return await mutation();
   } catch (error) {
     if (isIamPropagationFailure(error)) {
-      throw new RetryableResourceError("Waiting for IAM role to propagate", {
+      throw new ResourceNotReadyError("Waiting for IAM role to propagate", {
         cause: error,
       });
     }

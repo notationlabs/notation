@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  ResourceNotReadyError,
   resource,
   type BaseResource,
-  type ResourceReadResult,
 } from "@notation/resource";
 import type { StateNode } from "@notation/state";
 import { Reconciler, UNKNOWN_AFTER_APPLY } from "../src";
@@ -43,7 +43,7 @@ function createTestResourceClass(opts: {
   ) => Promise<Record<string, unknown> | void>;
   read?: (
     key: Record<string, unknown>,
-  ) => Promise<ResourceReadResult<Record<string, unknown>>>;
+  ) => Promise<Record<string, unknown> | undefined>;
   update?: (
     key: Record<string, unknown>,
     patch: Record<string, unknown>,
@@ -172,10 +172,7 @@ describe("reconciler plan", () => {
   });
 
   it("plans drift-update from live read output when drift detection is on", async () => {
-    const readSpy = vi.fn(async () => ({
-      status: "found" as const,
-      output: { name: "drifted" },
-    }));
+    const readSpy = vi.fn(async () => ({ name: "drifted" }));
     const TestResource = createTestResourceClass({
       type: "test/service/plan-drift-update",
       read: readSpy,
@@ -210,7 +207,7 @@ describe("reconciler plan", () => {
   it("plans drift-recreate when the remote resource is gone", async () => {
     const TestResource = createTestResourceClass({
       type: "test/service/plan-drift-recreate",
-      read: async () => ({ status: "absent" }),
+      read: async () => undefined,
     });
 
     const state = createMemoryState({
@@ -232,11 +229,34 @@ describe("reconciler plan", () => {
     });
   });
 
+  it("plans indeterminate when the remote reports a not-ready condition", async () => {
+    const TestResource = createTestResourceClass({
+      type: "test/service/plan-not-ready",
+      read: async () => {
+        throw new ResourceNotReadyError("Waiting for Lambda to become active");
+      },
+    });
+
+    const state = createMemoryState({
+      resource: createStateNode("resource", "test/service/plan-not-ready", {
+        name: "desired",
+      }),
+    });
+    const reconciler = new Reconciler({ state, driftDetection: true });
+
+    const plan = await reconciler.plan([
+      new TestResource({ id: "resource", config: { name: "desired" } }),
+    ]);
+
+    expect(plan.nodes[0]).toMatchObject({
+      id: "resource",
+      decision: "indeterminate",
+      reason: "Waiting for Lambda to become active",
+    });
+  });
+
   it("skips remote reads when drift detection is off", async () => {
-    const readSpy = vi.fn(async () => ({
-      status: "found" as const,
-      output: { name: "drifted" },
-    }));
+    const readSpy = vi.fn(async () => ({ name: "drifted" }));
     const TestResource = createTestResourceClass({
       type: "test/service/plan-no-read",
       read: readSpy,
@@ -407,10 +427,7 @@ describe("reconciler plan", () => {
       create: createSpy,
       update: updateSpy,
       delete: deleteSpy,
-      read: async () => ({
-        status: "found",
-        output: { name: "drifted" },
-      }),
+      read: async () => ({ name: "drifted" }),
     });
 
     const state = createMemoryState({

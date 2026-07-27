@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { RetryableError } from "yieldstar";
-import { resource, RetryableResourceError } from "@notation/resource";
+import { resource, ResourceNotReadyError } from "@notation/resource";
 import {
   createResourceOperation,
   deleteResourceOperation,
@@ -93,7 +93,7 @@ describe("operation workflows", () => {
     const createMock = vi.fn(async () => {
       createAttempts += 1;
       if (createAttempts === 1) {
-        throw new RetryableResourceError("retry create");
+        throw new ResourceNotReadyError("retry create");
       }
       return { remoteId: "abc" };
     });
@@ -102,10 +102,7 @@ describe("operation workflows", () => {
       .defineSchema({})
       .defineOperations({
         create: createMock,
-        read: async () => ({
-          status: "found",
-          output: { remoteId: "abc", status: "ready" },
-        }),
+        read: async () => ({ remoteId: "abc", status: "ready" }),
         delete: async () => undefined,
       });
 
@@ -136,7 +133,7 @@ describe("operation workflows", () => {
     });
   });
 
-  it("read retries while the resource reports a pending outcome", async () => {
+  it("read retries while the resource reports a not-ready condition", async () => {
     const step = createStepRunnerDouble();
     const state = {
       get: vi.fn(async () => undefined),
@@ -152,15 +149,9 @@ describe("operation workflows", () => {
         read: async () => {
           readAttempts += 1;
           if (readAttempts < 3) {
-            return {
-              status: "pending",
-              reason: "resource is not ready",
-            } as const;
+            throw new ResourceNotReadyError("resource is not ready");
           }
-          return {
-            status: "found",
-            output: { status: "ready" },
-          } as const;
+          return { status: "ready" } as const;
         },
         delete: async () => undefined,
       });
@@ -175,10 +166,7 @@ describe("operation workflows", () => {
     );
 
     expect(readAttempts).toBe(3);
-    expect(result).toEqual({
-      status: "found",
-      output: { status: "ready" },
-    });
+    expect(result).toEqual({ status: "ready" });
   });
 
   it("retries an absent read after creation until the resource is visible", async () => {
@@ -195,11 +183,8 @@ describe("operation workflows", () => {
         create: async () => ({}),
         read: async () => {
           readAttempts += 1;
-          if (readAttempts === 1) return { status: "absent" } as const;
-          return {
-            status: "found",
-            output: { remoteId: "visible" },
-          } as const;
+          if (readAttempts === 1) return undefined;
+          return { remoteId: "visible" } as const;
         },
         delete: async () => undefined,
       });

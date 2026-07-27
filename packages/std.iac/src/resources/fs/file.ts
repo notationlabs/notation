@@ -1,5 +1,4 @@
 import { resource } from "@notation/resource";
-import { isErrorWithCode } from "@notation/utils";
 import { getSourceSha256 } from "src/utils/hash";
 import * as fs from "node:fs/promises";
 
@@ -39,13 +38,10 @@ export const File = fileSchema.defineOperations({
   read: async (config) => {
     try {
       const file = await fs.readFile(config.filePath);
-      return {
-        status: "found",
-        output: { ...config, file },
-      } as const;
+      return { ...config, file };
     } catch (error) {
-      if (isErrorWithCode(error, "ENOENT")) {
-        return { status: "absent" } as const;
+      if (isFileMissing(error)) {
+        return undefined;
       }
       throw error;
     }
@@ -56,3 +52,12 @@ export const File = fileSchema.defineOperations({
 });
 
 export type FileInstance = InstanceType<typeof File>;
+
+function isFileMissing(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ENOENT"
+  );
+}

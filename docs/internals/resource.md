@@ -142,12 +142,16 @@ All schema items carry these fields:
 | Field          | Required | Signature / Description                                                                                                                      |
 | -------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `create`       | yes      | `(params: Params<S>) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key.                                      |
-| `read`         | no       | `(key: CompoundKey<S>) => Promise<ResourceReadResult<Result<S>>>` – report the remote as `found`, `absent`, or temporarily `pending`.        |
+| `read`         | no       | `(key: CompoundKey<S>) => Promise<Result<S> \| undefined>` – return the remote object, or `undefined` when it does not exist.                |
 | `update`       | no       | `(key, patch, params, state) => Promise<void>` – apply a partial update.                                                                     |
 | `delete`       | yes      | `(key, state) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
 | `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                        |
 
-Resource operations translate provider-specific responses at the provider boundary. A read returns `{ status: "found", output }`, `{ status: "absent" }`, or `{ status: "pending", reason }`. A mutation throws `RetryableResourceError` when the provider explicitly reports a transient condition; all other errors fail the operation.
+Resource operations translate provider-specific responses at the provider boundary. A read returns the remote object when it is found, and `undefined` when the provider says it does not exist — the provider's own not-found exception is caught and turned into `undefined` there, not further up the stack.
+
+When the provider reports a known temporary condition — a Lambda that is still deploying, an IAM role that has not propagated — a read or a mutation throws `ResourceNotReadyError`. It is recognised by its declared `_tag` via `ResourceNotReadyError.is(error)`, never by provider name, message, or `instanceof`. Every other error propagates and fails the operation.
+
+The reconciler decides what a not-ready condition means. Deploy, read, and mutation workflows retry it; planning reports it as an `indeterminate` decision carrying the error's message, because it cannot diff against a resource that has not settled.
 
 ## Dependencies
 

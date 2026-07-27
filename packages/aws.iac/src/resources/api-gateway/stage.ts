@@ -79,10 +79,10 @@ export const Stage = stageSchema
       try {
         const command = new sdk.GetStageCommand(key);
         const output = await apiGatewayClient.send(command);
-        return { status: "found", output } as const;
+        return output;
       } catch (error) {
         if (error instanceof sdk.NotFoundException) {
-          return { status: "absent" } as const;
+          return undefined;
         }
         throw error;
       }

@@ -22,17 +22,29 @@ export type { Schema, SchemaItem, DefineResourceApiSchema };
 
 export type ResourceType = `${string}/${string}/${string}`;
 
-export type ResourceReadResult<T> =
-  | { status: "found"; output: T }
-  | { status: "absent" }
-  | { status: "pending"; reason: string };
-
-export class RetryableResourceError extends Error {
-  readonly code = "RESOURCE_RETRYABLE";
+/**
+ * Thrown by a resource operation when the provider reports a known temporary
+ * condition — the resource exists but is not yet usable, or a dependency has
+ * not finished propagating.
+ *
+ * Consumers recognise it by its declared `_tag`, not by class identity, so it
+ * survives being thrown across package or realm boundaries.
+ */
+export class ResourceNotReadyError extends Error {
+  readonly _tag = "ResourceNotReadyError";
 
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
-    this.name = "RetryableResourceError";
+    this.name = "ResourceNotReadyError";
+  }
+
+  static is(error: unknown): error is ResourceNotReadyError {
+    return (
+      typeof error === "object" &&
+      error !== null &&
+      "_tag" in error &&
+      (error as { _tag: unknown })._tag === "ResourceNotReadyError"
+    );
   }
 }
 
@@ -77,7 +89,7 @@ export interface BaseResource {
   readonly dependencies: Record<string, BaseResource | void>;
   readonly key: {};
   create: (params: any) => Promise<{} | void>;
-  read?: (key: any) => Promise<ResourceReadResult<Record<string, any>>>;
+  read?: (key: any) => Promise<Record<string, any> | undefined>;
   update?: (key: any, patch: any, params: any, state: any) => Promise<void>;
   delete: (key: any, state: any) => Promise<void>;
   getParams(): Promise<{}>;
@@ -105,9 +117,7 @@ export abstract class Resource<
   abstract type: ResourceType;
   abstract schema: Schema;
   abstract create: (params: T["params"]) => Promise<T["primaryKey"]>;
-  abstract read?: (
-    key: T["compoundKey"],
-  ) => Promise<ResourceReadResult<T["result"]>>;
+  abstract read?: (key: T["compoundKey"]) => Promise<T["result"] | undefined>;
   abstract update?: (
     key: T["compoundKey"],
     patch: T["params"],
@@ -187,7 +197,7 @@ export type ResourceOperationsOptions<
   IntrinsicParams extends Partial<T["params"]>,
 > = {
   create: (params: T["params"]) => Promise<T["primaryKey"]>;
-  read?: (key: T["compoundKey"]) => Promise<ResourceReadResult<T["result"]>>;
+  read?: (key: T["compoundKey"]) => Promise<T["result"] | undefined>;
   update?: (
     key: T["compoundKey"],
     patch: T["params"],

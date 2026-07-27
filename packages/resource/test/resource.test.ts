@@ -1,5 +1,5 @@
 import { expect, it, test, vi } from "vitest";
-import { resource } from "src";
+import { ResourceNotReadyError, resource } from "src";
 import {
   TestResource,
   testResourceConfig,
@@ -136,5 +136,27 @@ describe("resource dependencies", () => {
       requiredParam: "preset",
       intrinsicParam: true,
     });
+  });
+});
+
+describe("ResourceNotReadyError", () => {
+  it("recognises its own instances", () => {
+    expect(ResourceNotReadyError.is(new ResourceNotReadyError("waiting"))).toBe(
+      true,
+    );
+  });
+
+  it("recognises the tag without class identity", () => {
+    // A copy thrown from another realm or bundle carries the tag, not the class.
+    const fromElsewhere = Object.assign(new Error("waiting"), {
+      _tag: "ResourceNotReadyError",
+    });
+    expect(ResourceNotReadyError.is(fromElsewhere)).toBe(true);
+  });
+
+  it("rejects unrelated errors", () => {
+    expect(ResourceNotReadyError.is(new Error("boom"))).toBe(false);
+    expect(ResourceNotReadyError.is({ _tag: "SomethingElse" })).toBe(false);
+    expect(ResourceNotReadyError.is(undefined)).toBe(false);
   });
 });

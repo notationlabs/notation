@@ -66,12 +66,9 @@ export const testOperations = {
   async update() {},
   async read() {
     return {
-      status: "found",
-      output: {
-        primaryKey: "",
-        optionalSecondaryKey: "",
-        requiredParam: "",
-      },
+      primaryKey: "",
+      optionalSecondaryKey: "",
+      requiredParam: "",
     } as const;
   },
   deriveParams() {

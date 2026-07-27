@@ -12,6 +12,7 @@ export type PlanDecision =
   | "drift-update"
   | "drift-recreate"
   | "delete-orphan"
+  | "indeterminate"
   | "noop";
 
 export type PlanDiff = {
@@ -24,6 +25,7 @@ export type PlanNode = {
   id: string;
   type: string;
   decision: PlanDecision;
+  reason?: string;
   diff?: PlanDiff;
   params: Record<string, unknown>;
   dependsOn: string[];
@@ -34,14 +36,21 @@ export type Plan = {
   nodes: PlanNode[];
 };
 
+/**
+ * What a drift read told us about the remote. `not-ready` carries the message
+ * from the provider's {@link ResourceNotReadyError}: planning cannot compare
+ * against a resource that has not settled, so it reports rather than guesses.
+ */
 export type DriftRead =
-  | { status: "found"; output: Record<string, unknown> }
-  | { status: "not-found" };
+  | { kind: "present"; output: Record<string, unknown> }
+  | { kind: "absent" }
+  | { kind: "not-ready"; reason: string };
 
 export type ResourceAction =
   | { decision: "create" }
   | { decision: "noop" }
   | { decision: "drift-recreate" }
+  | { decision: "indeterminate"; reason: string }
   | { decision: "update"; patch: Record<string, unknown>; diff: PlanDiff }
   | {
       decision: "drift-update";
@@ -64,7 +73,11 @@ export function decideAction(opts: {
   >;
 
   if (driftRead) {
-    if (driftRead.status === "not-found") {
+    if (driftRead.kind === "not-ready") {
+      return { decision: "indeterminate", reason: driftRead.reason };
+    }
+
+    if (driftRead.kind === "absent") {
       return { decision: stateNode ? "drift-recreate" : "create" };
     }
 

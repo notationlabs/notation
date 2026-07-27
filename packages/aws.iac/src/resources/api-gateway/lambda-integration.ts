@@ -121,10 +121,10 @@ export const LambdaIntegration = integrationSchema
       try {
         const command = new sdk.GetIntegrationCommand(key);
         const output = await apiGatewayClient.send(command);
-        return { status: "found", output } as const;
+        return output;
       } catch (error) {
         if (error instanceof sdk.NotFoundException) {
-          return { status: "absent" } as const;
+          return undefined;
         }
         throw error;
       }

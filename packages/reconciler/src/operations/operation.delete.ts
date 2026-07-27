@@ -1,5 +1,5 @@
 import { RetryableError, createWorkflow } from "yieldstar";
-import { RetryableResourceError } from "@notation/resource";
+import { ResourceNotReadyError } from "@notation/resource";
 import {
   DEFAULT_RETRY_OPTIONS,
   type DeleteResourceParams,
@@ -27,7 +27,7 @@ export async function* deleteResourceOperation(
           params.resource.toState(params.resource.output),
         );
       } catch (err) {
-        if (err instanceof RetryableResourceError) {
+        if (ResourceNotReadyError.is(err)) {
           throw new RetryableError(err.message, {
             ...(params.retryOptions ?? DEFAULT_RETRY_OPTIONS),
           });

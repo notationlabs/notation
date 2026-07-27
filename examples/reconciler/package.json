@@ -11,8 +11,7 @@
   "dependencies": {
     "@notation/reconciler": "workspace:*",
     "@notation/resource": "workspace:*",
-    "@notation/state-sqlite": "workspace:*",
-    "@notation/utils": "workspace:*"
+    "@notation/state-sqlite": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",

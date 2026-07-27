@@ -17,10 +17,7 @@ describe("resource creation", () => {
     const stateBackend = new MemoryStateBackend();
     const readResult = { ...testResourceOutput, volatileComputed: "123" };
     const createMock = vi.fn(async () => ({ primaryKey: "" }));
-    const readMock = vi.fn(async () => ({
-      status: "found" as const,
-      output: readResult,
-    }));
+    const readMock = vi.fn(async () => readResult);
 
     const TestResource = TestResourceSchema.defineOperations({
       ...testOperations,

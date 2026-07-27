@@ -95,13 +95,10 @@ export const Route = routeSchema
       try {
         const command = new sdk.GetRouteCommand(key);
         const result = await apiGatewayClient.send(command);
-        return {
-          status: "found",
-          output: { ...key, ...result },
-        } as const;
+        return { ...key, ...result };
       } catch (error) {
         if (error instanceof sdk.NotFoundException) {
-          return { status: "absent" } as const;
+          return undefined;
         }
         throw error;
       }

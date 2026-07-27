@@ -19,6 +19,7 @@ const decisionSymbols: Record<PlanNode["decision"], string> = {
   "drift-update": "~",
   "drift-recreate": "±",
   "delete-orphan": "-",
+  indeterminate: "?",
   noop: " ",
 };
 
@@ -78,6 +79,7 @@ function printPlanSummary(result: Plan, logger: Logger) {
     `${count("create")} to create`,
     `${count("update") + count("drift-update")} to update`,
     `${count("drift-recreate")} to recreate`,
+    `${count("indeterminate")} indeterminate`,
     `${count("delete-orphan")} to delete`,
     `${count("noop")} unchanged`,
   ].join(", ");

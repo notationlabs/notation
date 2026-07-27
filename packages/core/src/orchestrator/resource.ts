@@ -1,7 +1,6 @@
 export type {
   BaseResource,
   ResourceType,
-  ResourceReadResult,
   ResourceOpts,
   DefineResourceMeta,
   DefineResourceApiSchema,
@@ -16,7 +15,7 @@ export type {
 
 export {
   Resource,
-  RetryableResourceError,
+  ResourceNotReadyError,
   defineResource,
   resource,
 } from "@notation/resource";
