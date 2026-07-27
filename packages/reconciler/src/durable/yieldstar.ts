@@ -1,6 +1,6 @@
 import type { WorkflowFn } from "yieldstar";
 
-export { RetryableError, defineStore } from "yieldstar";
+export { defineStore } from "yieldstar";
 export type { WorkflowStore } from "yieldstar";
 export type { StoreClient } from "@yieldstar/core";
 

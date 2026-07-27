@@ -1,4 +1,8 @@
-import { ResourceNotReadyError, resource } from "@notation/resource";
+import {
+  ResourceNotFoundError,
+  ResourceOperationPendingError,
+  resource,
+} from "@notation/resource";
 import { MemoryStateBackend } from "@notation/state";
 import { describe, expect, it } from "vitest";
 import { createPlan } from "../src/planner";
@@ -68,7 +72,9 @@ describe("createPlan", () => {
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
-        read: async () => undefined,
+        read: async () => {
+          throw new ResourceNotFoundError("resource is absent");
+        },
         delete: async () => undefined,
       });
     const state = new MemoryStateBackend();
@@ -93,13 +99,21 @@ describe("createPlan", () => {
     });
   });
 
-  it("reports an indeterminate decision while the resource is not ready", async () => {
+  it("waits for a pending read before planning", async () => {
+    let attempts = 0;
     const TestResource = resource({ type: "test/planner/pending" })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
         read: async () => {
-          throw new ResourceNotReadyError("Waiting for the provider");
+          attempts += 1;
+          if (attempts === 1) {
+            throw new ResourceOperationPendingError(
+              "Waiting for the provider",
+              { retryAfterMs: 0 },
+            );
+          }
+          return {};
         },
         delete: async () => undefined,
       });
@@ -121,8 +135,8 @@ describe("createPlan", () => {
 
     expect(plan.nodes[0]).toMatchObject({
       id: "existing",
-      decision: "indeterminate",
-      reason: "Waiting for the provider",
+      decision: "noop",
     });
+    expect(attempts).toBe(2);
   });
 });

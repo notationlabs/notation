@@ -8,11 +8,8 @@ export {
   type StoredResourceState,
 } from "./stores";
 export {
-  DEFAULT_READ_POLL_OPTIONS,
-  DEFAULT_RETRY_OPTIONS,
   type DurableDeployOptions,
   type DurableDestroyOptions,
   type DurableOperationOptions,
-  type PollOptions,
 } from "./types";
 export type { DurableStep } from "./yieldstar";

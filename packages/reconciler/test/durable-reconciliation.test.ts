@@ -10,9 +10,11 @@ import {
 } from "@yieldstar/sqlite-runtime/node";
 import {
   resource,
-  ResourceNotReadyError,
+  ResourceNotFoundError,
+  ResourceOperationPendingError,
   type BaseResource,
 } from "@notation/resource";
+import { setTimeout as sleep } from "node:timers/promises";
 import pino from "pino";
 import { createWorkflowRouter, workflow } from "yieldstar";
 import { describe, expect, it, vi } from "vitest";
@@ -31,24 +33,30 @@ describe("durable execution and replay", () => {
     const PendingResource = resource({ type: "test/durable/pending" })
       .defineSchema({})
       .defineOperations({
-        create: async () => {
+        create: async (_params, context) => {
           attempts += 1;
           if (attempts === 1) {
-            throw new ResourceNotReadyError("provider is not ready");
+            expect(context).toBeUndefined();
+            throw new ResourceOperationPendingError("provider is not ready", {
+              retryAfterMs: 1,
+              callbackContext: { requestId: "request-123" },
+            });
           }
+          expect(context).toEqual({ requestId: "request-123" });
         },
         delete: async () => undefined,
       });
     const runtime = createRuntime(
       [new PendingResource({ id: "pending" })],
       "durable-wait",
-      { retryOptions: { maxAttempts: 3, retryInterval: 1 } },
+      { maxOperationAttempts: 3 },
     );
 
     await runtime.run("wait-execution");
     expect(attempts).toBe(1);
     expect(runtime.scheduler.events).toHaveLength(1);
 
+    await sleep(5);
     await runtime.run("wait-execution");
     expect(attempts).toBe(2);
     expect(await runtime.state.get("pending")).toMatchObject({
@@ -67,7 +75,7 @@ describe("durable execution and replay", () => {
     const runtime = createRuntime(
       [new TestResource({ id: "resume" })],
       "crash-resume",
-      { crashAfterStep: "notation:resource:resume:create" },
+      { crashAfterStep: "notation:resource:resume:create:attempt:0" },
     );
 
     await expect(runtime.run("resume-execution")).rejects.toThrow(
@@ -90,7 +98,7 @@ describe("durable execution and replay", () => {
     const runtime = createRuntime(
       [new TestResource({ id: "destroyed" })],
       "destroy-crash-resume",
-      { crashAfterStep: "notation:destroy:destroyed:delete" },
+      { crashAfterStep: "notation:destroy:destroyed:delete:attempt:0" },
     );
 
     await runtime.run("deploy-before-destroy");
@@ -115,14 +123,16 @@ describe("durable execution and replay", () => {
         delete: async () => {
           attempts += 1;
           if (attempts === 1) {
-            throw new ResourceNotReadyError("delete is not ready");
+            throw new ResourceOperationPendingError("delete is not ready", {
+              retryAfterMs: 1,
+            });
           }
         },
       });
     const runtime = createRuntime(
       [new PendingDelete({ id: "pending-delete" })],
       "durable-destroy-wait",
-      { retryOptions: { maxAttempts: 3, retryInterval: 1 } },
+      { maxOperationAttempts: 3 },
     );
 
     await runtime.run("deploy-before-wait");
@@ -130,13 +140,14 @@ describe("durable execution and replay", () => {
     expect(attempts).toBe(1);
     expect(await runtime.state.get("pending-delete")).toBeDefined();
 
+    await sleep(5);
     await runtime.destroy("destroy-wait");
     expect(attempts).toBe(2);
     expect(await runtime.state.get("pending-delete")).toBeUndefined();
     runtime.close();
   });
 
-  it("retries a post-write not-found before persisting state", async () => {
+  it("waits when a resource reports that its post-write read is pending", async () => {
     let reads = 0;
     const EventuallyReadable = resource({
       type: "test/durable/eventually-readable",
@@ -147,7 +158,10 @@ describe("durable execution and replay", () => {
         read: async () => {
           reads += 1;
           if (reads === 1) {
-            return undefined;
+            throw new ResourceOperationPendingError(
+              "resource is not visible yet",
+              { retryAfterMs: 1 },
+            );
           }
           return {} as const;
         },
@@ -156,18 +170,43 @@ describe("durable execution and replay", () => {
     const runtime = createRuntime(
       [new EventuallyReadable({ id: "eventually-readable" })],
       "post-write-read",
-      { readPollOptions: { maxAttempts: 3, retryInterval: 1 } },
+      { maxOperationAttempts: 3 },
     );
 
     await runtime.run("post-write-read-execution");
     expect(reads).toBe(1);
     expect(await runtime.state.get("eventually-readable")).toBeUndefined();
 
+    await sleep(5);
     await runtime.run("post-write-read-execution");
     expect(reads).toBe(2);
     expect(await runtime.state.get("eventually-readable")).toMatchObject({
       rev: 1,
     });
+    runtime.close();
+  });
+
+  it("does not infer that not-found after a write is pending", async () => {
+    const MissingAfterCreate = resource({
+      type: "test/durable/missing-after-create",
+    })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        read: async () => {
+          throw new ResourceNotFoundError("resource is absent");
+        },
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime(
+      [new MissingAfterCreate({ id: "missing-after-create" })],
+      "missing-after-create",
+    );
+
+    await expect(runtime.run("missing-after-create-execution")).rejects.toThrow(
+      "resource is absent",
+    );
+    expect(await runtime.state.get("missing-after-create")).toBeUndefined();
     runtime.close();
   });
 });
@@ -452,8 +491,7 @@ function createRuntime(
   resources: BaseResource[],
   deploymentId: string,
   options: {
-    retryOptions?: { maxAttempts: number; retryInterval: number };
-    readPollOptions?: { maxAttempts: number; retryInterval: number };
+    maxOperationAttempts?: number;
     crashAfterStep?: string;
     registry?: ResourceRegistry;
     driftDetection?: boolean;
@@ -480,8 +518,7 @@ function createRuntime(
       registry: options.registry,
       driftDetection: options.driftDetection ?? false,
       emit: options.emit,
-      retryOptions: options.retryOptions,
-      readPollOptions: options.readPollOptions,
+      maxOperationAttempts: options.maxOperationAttempts,
     });
   });
   const destroy = workflow(async function* (step, event) {
@@ -492,8 +529,7 @@ function createRuntime(
       state,
       registry: options.registry,
       emit: options.emit,
-      retryOptions: options.retryOptions,
-      readPollOptions: options.readPollOptions,
+      maxOperationAttempts: options.maxOperationAttempts,
     });
   });
   const router = createWorkflowRouter({ deploy, destroy });

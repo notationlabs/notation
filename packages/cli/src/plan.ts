@@ -79,7 +79,6 @@ function printPlanSummary(result: Plan, logger: Logger) {
     `${count("update") + count("drift-update")} to update`,
     `${count("drift-recreate")} to recreate`,
     `${count("delete-orphan")} to delete`,
-    `${count("indeterminate")} could not be checked`,
     `${count("noop")} unchanged`,
   ].join(", ");
 

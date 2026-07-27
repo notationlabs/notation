@@ -1,5 +1,5 @@
 import {
-  ResourceNotReadyError,
+  ResourceNotFoundError,
   type BaseResource,
   type ResourceType,
 } from "@notation/resource";
@@ -9,6 +9,7 @@ import {
   createResourceRegistryFromResources,
   resolveResourceClass,
 } from "../resource-registry";
+import { runPendingOperation } from "../operations/operation.pending";
 import { decideAction, type DriftRead, type ResourceAction } from "../plan";
 import { emitEvent, emitLifecycle } from "./emit";
 import type { DurableStateBackend } from "./state-backend";
@@ -17,18 +18,8 @@ import {
   toStateNode,
   type StoredResourceState,
 } from "./stores";
-import {
-  DEFAULT_READ_POLL_OPTIONS,
-  DEFAULT_RETRY_OPTIONS,
-  type DurableDeployOptions,
-  type DurableOperationOptions,
-  type PollOptions,
-} from "./types";
-import {
-  RetryableError,
-  type DurableStep,
-  type WorkflowStore,
-} from "./yieldstar";
+import type { DurableDeployOptions, DurableOperationOptions } from "./types";
+import type { DurableStep, WorkflowStore } from "./yieldstar";
 
 export async function* reconcileResource(
   step: DurableStep,
@@ -129,11 +120,11 @@ export async function* reconcileResource(
     // Checkpoint successful provider calls. Provider mutations must be
     // idempotent because a crash before the checkpoint can repeat them.
     if (operation === "create") {
-      const primaryKey = yield* runResourceMutation(
+      const primaryKey = yield* runPendingOperation(
         step,
         `${prefix}:create`,
-        () => resource.create(params),
-        opts.retryOptions,
+        (context) => resource.create(params, context),
+        opts.maxOperationAttempts,
       );
       resource.setOutput(params);
       if (primaryKey) resource.setOutput({ ...primaryKey, ...resource.output });
@@ -150,32 +141,31 @@ export async function* reconcileResource(
         );
         return;
       }
-      yield* runResourceMutation(
+      yield* runPendingOperation(
         step,
         `${prefix}:update`,
-        () =>
+        (context) =>
           resource.update!(
             resource.key,
             patch,
             params,
             resource.toState(resource.output),
+            context,
           ),
-        opts.retryOptions,
+        opts.maxOperationAttempts,
       );
       resource.setOutput({ ...resource.key, ...params });
     }
 
     // Read back the remote so persisted output reflects provider-assigned
     // values, then persist conditionally against the snapshot read above.
-    const read = yield* readRemote(
+    const read = yield* readResource(
       step,
       resource,
       opts,
       `${prefix}:read-after-write`,
-      { retryAbsent: true },
     );
-    if (read.kind === "present")
-      resource.setOutput({ ...resource.output, ...read.output });
+    resource.setOutput({ ...resource.output, ...read });
 
     const nextState: StoredResourceState = {
       id: resource.id,
@@ -267,11 +257,16 @@ export async function* deleteResource(
   }
 
   try {
-    yield* runResourceMutation(
+    yield* runPendingOperation(
       step,
       `${prefix}:delete`,
-      () => resource.delete(resource.key, resource.toState(resource.output)),
-      opts.retryOptions,
+      (context) =>
+        resource.delete(
+          resource.key,
+          resource.toState(resource.output),
+          context,
+        ),
+      opts.maxOperationAttempts,
     );
 
     // State is removed only after the provider delete completes, and only if
@@ -309,8 +304,24 @@ export async function* readRemote(
   resource: BaseResource,
   opts: DurableOperationOptions,
   key: string,
-  behaviour: { retryAbsent?: boolean } = {},
 ): AsyncGenerator<any, DriftRead, any> {
+  try {
+    return {
+      kind: "present",
+      output: yield* readResource(step, resource, opts, key),
+    };
+  } catch (error) {
+    if (ResourceNotFoundError.is(error)) return { kind: "absent" };
+    throw error;
+  }
+}
+
+async function* readResource(
+  step: DurableStep,
+  resource: BaseResource,
+  opts: DurableOperationOptions,
+  key: string,
+): AsyncGenerator<any, Record<string, unknown>, any> {
   if (!resource.read) {
     yield* emitLifecycle(
       step,
@@ -323,10 +334,7 @@ export async function* readRemote(
         reason: "read-not-implemented",
       },
     );
-    return {
-      kind: "present",
-      output: { ...(await resource.getParams()), ...resource.output },
-    };
+    return { ...(await resource.getParams()), ...resource.output };
   }
 
   yield* emitLifecycle(
@@ -338,40 +346,12 @@ export async function* readRemote(
     resource,
   );
   try {
-    const result = yield* step.run(key, async () => {
-      try {
-        const output = await resource.read!(resource.key);
-        if (output === undefined && behaviour.retryAbsent) {
-          throw new RetryableError("Waiting for resource to become visible", {
-            ...(opts.readPollOptions ?? DEFAULT_READ_POLL_OPTIONS),
-          });
-        }
-        // Absence is null rather than undefined so that it survives the
-        // step's JSON round-trip when the run is replayed.
-        return output ?? null;
-      } catch (error) {
-        // A tagged not-ready condition is the provider telling us to wait.
-        // Everything else is a genuine failure and must surface.
-        if (ResourceNotReadyError.is(error)) {
-          throw new RetryableError(error.message, {
-            ...(opts.readPollOptions ?? DEFAULT_READ_POLL_OPTIONS),
-          });
-        }
-        throw error;
-      }
-    });
-    if (result === null) {
-      yield* emitLifecycle(
-        step,
-        `${key}:absent`,
-        opts.emit,
-        "read",
-        "skip",
-        resource,
-        { reason: "resource-absent" },
-      );
-      return { kind: "absent" };
-    }
+    const result = yield* runPendingOperation(
+      step,
+      key,
+      (context) => resource.read!(resource.key, context),
+      opts.maxOperationAttempts,
+    );
     yield* emitLifecycle(
       step,
       `${key}:success`,
@@ -380,7 +360,7 @@ export async function* readRemote(
       "success",
       resource,
     );
-    return { kind: "present", output: result };
+    return result;
   } catch (error) {
     yield* emitLifecycle(
       step,
@@ -395,30 +375,6 @@ export async function* readRemote(
     );
     throw error;
   }
-}
-
-/**
- * Runs a resource mutation in a durable step and adapts resource retry
- * signals to the workflow runtime.
- */
-export function runResourceMutation<T>(
-  step: DurableStep,
-  key: string,
-  call: () => T | Promise<T>,
-  retryOptions?: PollOptions,
-) {
-  return step.run(key, async () => {
-    try {
-      return await call();
-    } catch (error) {
-      if (ResourceNotReadyError.is(error)) {
-        throw new RetryableError(error.message, {
-          ...(retryOptions ?? DEFAULT_RETRY_OPTIONS),
-        });
-      }
-      throw error;
-    }
-  });
 }
 
 /**

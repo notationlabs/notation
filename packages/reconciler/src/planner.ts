@@ -1,6 +1,7 @@
-import { ResourceNotReadyError, type BaseResource } from "@notation/resource";
+import { ResourceNotFoundError, type BaseResource } from "@notation/resource";
 import type { StateBackend } from "@notation/state";
 import { buildResourceDepthLevels } from "./dependency-graph";
+import { readResourceOperation } from "./operations";
 import {
   decideAction,
   getDependencyIds,
@@ -8,6 +9,7 @@ import {
   type Plan,
   type PlanNode,
 } from "./plan";
+import { createStepRunner, runOperation } from "./reconciler";
 
 export type CreatePlanOptions = {
   resources: BaseResource[];
@@ -33,30 +35,25 @@ export async function createPlan({
       let action = decideAction({ resource, stateNode, params });
 
       if (action.decision === "noop" && driftDetection && resource.read) {
-        let output: Record<string, unknown> | undefined;
+        let driftRead;
         try {
-          output = (await resource.read(resource.key)) as
-            Record<string, unknown> | undefined;
+          const output = await runOperation(
+            readResourceOperation(createStepRunner(), {
+              resource,
+              state,
+            }),
+          );
+          driftRead = { kind: "present" as const, output };
         } catch (error) {
-          // Planning cannot diff against a resource that has not settled, so
-          // it reports the condition rather than guessing at a decision.
-          if (!ResourceNotReadyError.is(error)) throw error;
-          nodes.push({
-            id: resource.id,
-            type: resource.type,
-            decision: "indeterminate",
-            reason: error.message,
-            params,
-            dependsOn: getDependencyIds(resource),
-          });
-          continue;
+          if (!ResourceNotFoundError.is(error)) throw error;
+          driftRead = { kind: "absent" as const };
         }
 
         action = decideAction({
           resource,
           stateNode,
           params,
-          driftRead: output ? { kind: "present", output } : { kind: "absent" },
+          driftRead,
         });
       }
 
