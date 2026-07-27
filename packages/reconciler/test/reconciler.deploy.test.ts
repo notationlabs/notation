@@ -263,6 +263,79 @@ describe("reconciler deploy", () => {
     });
   });
 
+  it("reports the drift it adopts when recovering from a conflict", async () => {
+    // The provider ignored the update, so the remote still holds the old
+    // value while another writer has moved persisted state to the desired
+    // one: recovery re-decides as drift rather than as a repeat update.
+    const readSpy = vi.fn(async () => found({ name: "stale" }));
+    const updateSpy = vi.fn(
+      async (_key: unknown, _patch: Record<string, unknown>) => undefined,
+    );
+    const UpdateResource = createTestResourceClass({
+      type: "test/service/recovery-drift",
+      read: readSpy,
+      update: updateSpy,
+    });
+    const state = createMemoryState({
+      existing: {
+        rev: 1,
+        id: "existing",
+        groupId: -1,
+        groupType: "",
+        type: UpdateResource.type,
+        config: { name: "old" },
+        params: { name: "old" },
+        output: { name: "old" },
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+      },
+    });
+    const updateState = state.update.getMockImplementation()!;
+    state.update
+      .mockImplementationOnce(async () => {
+        state.store.existing = {
+          ...state.store.existing!,
+          rev: 2,
+          config: { name: "new" },
+          params: { name: "new" },
+          output: { name: "new" },
+        };
+        throw new RevConflict("existing", 1, 2);
+      })
+      .mockImplementation(updateState);
+
+    const events: Array<Record<string, unknown>> = [];
+    const reconciler = new Reconciler({
+      state,
+      driftDetection: false,
+      emit: async (event) => {
+        events.push(event as unknown as Record<string, unknown>);
+      },
+    });
+    await reconciler.deploy([
+      new UpdateResource({ id: "existing", config: { name: "new" } }),
+    ]);
+
+    expect(
+      events.filter((event) => event.event === "reconciler.drift.detected"),
+    ).toEqual([
+      {
+        level: "info",
+        event: "reconciler.drift.detected",
+        resourceId: "existing",
+        resourceType: UpdateResource.type,
+        diff: { name: "new" },
+      },
+    ]);
+    expect(
+      events.filter(
+        (event) =>
+          event.event === "reconciler.deploy.decision" &&
+          event.decision === "drift-update",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("reads remote state after a create conflict instead of creating twice", async () => {
     let remoteName: string | undefined;
     const createSpy = vi.fn(async (params) => {

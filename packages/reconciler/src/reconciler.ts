@@ -343,6 +343,19 @@ export class Reconciler {
     });
     if (remote.kind === "present") resource.setOutput(remote.output);
 
+    // Recovery is drift adoption: the remote moved while the attempt that
+    // conflicted was in flight, so the same event a first-pass drift-update
+    // emits is owed here too.
+    if (action.decision === "drift-update") {
+      await this.#emit?.({
+        level: "info",
+        event: "reconciler.drift.detected",
+        resourceId: resource.id,
+        resourceType: resource.type,
+        diff: action.patch,
+      });
+    }
+
     await this.#emit?.({
       level: "info",
       event: "reconciler.deploy.decision",
