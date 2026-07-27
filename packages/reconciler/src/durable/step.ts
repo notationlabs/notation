@@ -59,7 +59,7 @@ export function scopeStep(
  * event is delivered but before the checkpoint is written.
  */
 export function durableEmitter(
-  step: DurableStepRunner,
+  step: Pick<StepRunner, "run">,
   emit: ReconcilerEventEmitter | undefined,
 ): EmitStep {
   return async function* (event) {

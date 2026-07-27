@@ -1,21 +1,17 @@
 import type { BaseResource, ResourceType } from "@notation/resource";
-import { RevConflict, type StateNode } from "@notation/state";
+import { RevConflict } from "@notation/state";
 import {
   createMissingResourceRegistryMatchWarningEvent,
   createResourceRegistryFromResources,
   resolveResourceClass,
 } from "../resource-registry";
+import type { PersistState, RemoveState, StepRunner } from "../operations";
 import {
-  createResourceOperation,
-  deleteResourceOperation,
-  readDriftOperation,
-  updateResourceOperation,
-  type PersistState,
-  type RemoveState,
-  type ResourceOperationBaseParams,
-} from "../operations";
-import { decideAction, type ResourceAction } from "../plan";
-import type { DurableStateBackend } from "./state-backend";
+  destroyResource,
+  reconcileResource as reconcile,
+  type EmitFromStep,
+  type OpenStateSession,
+} from "../reconcile";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
@@ -31,71 +27,21 @@ export async function* reconcileResource(
   opts: DurableDeployOptions,
 ): AsyncGenerator<any, void, any> {
   const scope = scopeStep(step, `notation:resource:${resource.id}`);
-  const emit = durableEmitter(scope, opts.emit);
 
-  const { stateNode, snapshot } = yield* hydrateResource(scope, resource, opts);
-
-  // Decide the operation from desired params vs persisted state. The params
-  // are resolved once and then carried: deriveParams is user code and need
-  // not be deterministic, so an operation resolving them again could persist
-  // params other than the ones the decision was taken against.
+  // Resolved once and then carried: deriveParams is user code and need not be
+  // deterministic, so an operation resolving them again could persist params
+  // other than the ones the decision was taken against. The step also pins
+  // the answer across a replay.
   const params = yield* scope.run("params", () => resource.getParams());
-  const shared = {
-    ...operationParams(scope, resource, opts),
+
+  yield* reconcile(scope, {
+    resource,
     resourceParams: params,
-    persistedOutput: stateNode?.output,
-  };
-  let action: ResourceAction = decideAction({ resource, stateNode, params });
-
-  // A noop is only trusted after the remote is read back: the provider may
-  // have drifted from persisted state, which upgrades the decision.
-  if (action.decision === "noop" && (opts.driftDetection ?? true)) {
-    // Its own scope: the operation that follows reads the remote again, and
-    // the two reads must not share step keys.
-    const driftScope = scope.scope("drift-read");
-    const driftRead = yield* readDriftOperation(driftScope, {
-      ...operationParams(driftScope, resource, opts),
-      // A dry run suppresses mutations, not reads. Threading dryRun in here
-      // would make the read return {} without touching the provider, which
-      // decideAction would then diff against the desired params and report as
-      // drift that is not there.
-      dryRun: undefined,
-      resourceParams: params,
-      persistedOutput: stateNode?.output,
-    });
-    action = decideAction({ resource, stateNode, params, driftRead });
-  }
-
-  if (action.decision === "drift-update") {
-    yield* emit({
-      level: "info",
-      event: "reconciler.drift.detected",
-      resourceId: resource.id,
-      resourceType: resource.type,
-      diff: action.patch,
-    });
-  }
-
-  yield* emit({
-    level: "info",
-    event: "reconciler.deploy.decision",
-    resourceId: resource.id,
-    resourceType: resource.type,
-    decision: action.decision,
-  });
-
-  if (action.decision === "noop") return;
-
-  const persist = persistResourceState(scope, opts, resource, snapshot);
-  if (action.decision === "create" || action.decision === "drift-recreate") {
-    yield* createResourceOperation(scope, { ...shared, persist });
-    return;
-  }
-
-  yield* updateResourceOperation(scope, {
-    ...shared,
-    patch: action.patch,
-    persist,
+    openSession: durableSession(scope, opts),
+    emit: durableEmit(opts),
+    dryRun: opts.dryRun,
+    driftDetection: opts.driftDetection,
+    maxOperationAttempts: opts.maxOperationAttempts,
   });
 }
 
@@ -104,16 +50,15 @@ export async function* deleteResource(
   resource: BaseResource,
   opts: DurableOperationOptions,
 ): AsyncGenerator<any, void, any> {
-  // Hydrate output from persisted state; the delete call needs the primary
-  // key and the state removal must be conditional on this exact snapshot.
-  const snapshot = yield* readSnapshot(step, opts.state, resource.id);
-  if (!snapshot) return;
-  const stateNode = toStateNode(snapshot);
-  resource.setOutput(stateNode.output);
-
-  yield* deleteResourceOperation(step, {
-    ...operationParams(step, resource, opts),
-    remove: removeResourceState(step, opts, resource, snapshot),
+  // No recovery pass: a workflow's conditional writes are stamped with the
+  // step that made them, so a replay is served the recorded result rather
+  // than losing a race with itself.
+  yield* destroyResource(step, {
+    resource,
+    openSession: durableSession(step, opts),
+    emit: durableEmit(opts),
+    dryRun: opts.dryRun,
+    maxOperationAttempts: opts.maxOperationAttempts,
   });
 }
 
@@ -157,47 +102,35 @@ export async function* sweepOrphans(
   }
 }
 
+/** Delivery is checkpointed per scope, so the scope decides the key. */
+function durableEmit(opts: DurableOperationOptions): EmitFromStep {
+  return (step: StepRunner) => durableEmitter(step, opts.emit);
+}
+
 /**
- * Reads the persisted record once. The snapshot is kept so that later writes
- * can be made conditional on the exact instance identity and version read
- * here, and is re-served to the operations so they need no second read.
+ * Reads the persisted record once and binds the writes conditional on it.
+ *
+ * The snapshot is the precondition: it names the exact store instance and
+ * version the record was read at, so a write made against it cannot land on a
+ * record another writer has moved on. It is re-served to the operations so
+ * they need no second read.
  */
-async function* hydrateResource(
+function durableSession(
   step: DurableStepRunner,
-  resource: BaseResource,
   opts: DurableOperationOptions,
-): AsyncGenerator<
-  any,
-  { stateNode?: StateNode; snapshot?: ResourceSnapshot },
-  any
-> {
-  const snapshot = yield* readSnapshot(step, opts.state, resource.id);
-  if (!snapshot) return {};
+): OpenStateSession {
+  return async function* (resource: BaseResource) {
+    const snapshot = yield* step.run("state:snapshot", () =>
+      opts.state.snapshot(resource.id),
+    );
+    const persist = persistResourceState(step, opts, resource, snapshot);
+    if (!snapshot) return { node: undefined, persist };
 
-  const stateNode = toStateNode(snapshot);
-  resource.setOutput(stateNode.output);
-  return { stateNode, snapshot };
-}
-
-function readSnapshot(
-  step: DurableStepRunner,
-  state: DurableStateBackend,
-  resourceId: string,
-): AsyncGenerator<any, ResourceSnapshot | undefined, any> {
-  return step.run("state:snapshot", () => state.snapshot(resourceId));
-}
-
-/** The half of the operation params every durable driver call site shares. */
-function operationParams(
-  step: DurableStepRunner,
-  resource: BaseResource,
-  opts: DurableOperationOptions,
-): ResourceOperationBaseParams {
-  return {
-    resource,
-    dryRun: opts.dryRun,
-    emit: durableEmitter(step, opts.emit),
-    maxOperationAttempts: opts.maxOperationAttempts,
+    return {
+      node: toStateNode(snapshot),
+      persist,
+      remove: removeResourceState(step, opts, resource, snapshot),
+    };
   };
 }
 

@@ -766,6 +766,59 @@ describe("reconciler destroy + refresh", () => {
     expect(state.delete).toHaveBeenCalledWith("c", 1);
   });
 
+  it("destroy sweeps orphans after the resources it was given", async () => {
+    const order: string[] = [];
+    const DeclaredResource = createTestResourceClass({
+      type: "test/service/destroy-sweep-declared",
+      delete: async () => void order.push("declared"),
+    });
+    // Its type is only in the registry: an app that stopped declaring it is
+    // exactly the case where falling back to the declared types would skip it.
+    const OrphanResource = createTestResourceClass({
+      type: "test/service/destroy-sweep-orphan",
+      delete: async () => void order.push("orphan"),
+    });
+
+    const state = createMemoryState({
+      declared: {
+        rev: 1,
+        id: "declared",
+        groupId: -1,
+        groupType: "",
+        type: DeclaredResource.type,
+        config: { name: "declared" },
+        params: { name: "declared" },
+        output: { name: "declared" },
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+      },
+      orphan: {
+        rev: 1,
+        id: "orphan",
+        groupId: -1,
+        groupType: "",
+        type: OrphanResource.type,
+        config: { name: "orphan" },
+        params: { name: "orphan" },
+        output: { name: "orphan" },
+        lastOperation: "create",
+        lastOperationAt: new Date().toISOString(),
+      },
+    });
+
+    const reconciler = new Reconciler({
+      state,
+      registry: createResourceRegistry([DeclaredResource, OrphanResource]),
+    });
+
+    await reconciler.destroy([
+      new DeclaredResource({ id: "declared", config: { name: "declared" } }),
+    ]);
+
+    expect(order).toEqual(["declared", "orphan"]);
+    expect(state.store).toEqual({});
+  });
+
   it("refresh removes orphan state entries", async () => {
     const deleteSpy = vi.fn(async () => undefined);
     const OrphanResource = createTestResourceClass({

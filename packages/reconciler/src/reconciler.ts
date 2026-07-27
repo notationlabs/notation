@@ -2,25 +2,14 @@ import type { BaseResource, ResourceType } from "@notation/resource";
 import { RevConflict, type State, type StateNode } from "@notation/state";
 import { setTimeout as sleep } from "node:timers/promises";
 import { buildResourceDepthLevels } from "./dependency-graph";
+import type { Plan } from "./plan";
+import type { PersistState, RemoveState, StepRunner } from "./operations";
 import {
-  decideAction,
-  getDependencyIds,
-  resolvePlanParams,
-  type DriftRead,
-  type Plan,
-  type PlanNode,
-  type ResourceAction,
-} from "./plan";
-import {
-  createResourceOperation,
-  deleteResourceOperation,
-  readDriftOperation,
-  type OperationEventEmitter,
-  type PersistState,
-  type RemoveState,
-  type StepRunner,
-  updateResourceOperation,
-} from "./operations";
+  destroyResource,
+  reconcileResource,
+  type EmitFromStep,
+  type OpenStateSession,
+} from "./reconcile";
 import {
   createMissingResourceRegistryMatchWarningEvent,
   createResourceRegistryFromResources,
@@ -77,7 +66,7 @@ export class Reconciler {
   readonly #defaultDryRun: boolean;
   readonly #defaultDriftDetection: boolean;
   readonly #emit?: ReconcilerEventEmitter;
-  readonly #emitStep?: OperationEventEmitter;
+  readonly #emitFromStep?: EmitFromStep;
   readonly #maxOperationAttempts?: number;
   readonly #mutationLeaseTtl: number;
   readonly #stepRunner: StepRunner;
@@ -88,8 +77,10 @@ export class Reconciler {
     this.#defaultDryRun = opts.dryRun ?? false;
     this.#defaultDriftDetection = opts.driftDetection ?? true;
     this.#emit = opts.emit;
-    // Operations emit through a step seam; in process that is a plain await.
-    this.#emitStep = opts.emit ? toEmitStep(opts.emit) : undefined;
+    // Everything the shared generator emits — decisions, drift and operation
+    // lifecycle alike — goes through one seam; in process it is a plain
+    // await, and the scope it is handed is ignored because nothing is keyed.
+    this.#emitFromStep = opts.emit ? emitDirectly(opts.emit) : undefined;
     this.#maxOperationAttempts = opts.maxOperationAttempts;
     this.#mutationLeaseTtl = opts.mutationLeaseTtl ?? 30_000;
     this.#stepRunner = createStepRunner();
@@ -132,6 +123,9 @@ export class Reconciler {
     opts: DestroyOptions = {},
   ): Promise<void> {
     const dryRun = opts.dryRun ?? this.#defaultDryRun;
+    const resourceById = new Map(
+      resources.map((resource) => [resource.id, resource]),
+    );
     const dependencyLevels = buildResourceDepthLevels(resources);
 
     for (
@@ -144,6 +138,10 @@ export class Reconciler {
         level.map((resource) => this.#destroyResource(resource, dryRun)),
       );
     }
+
+    // Then the records that were never declared, so a destroy leaves the
+    // deployment empty rather than leaving orphans for a later refresh.
+    await this.#deleteOrphans(resources, resourceById, dryRun, "destroy");
   }
 
   async refresh(
@@ -171,12 +169,17 @@ export class Reconciler {
       const params = (await resource.getParams()) as Record<string, unknown>;
 
       await this.#retryOnRevConflict((conflict) =>
-        this.#deployResourceOnce(
-          resource,
-          params,
-          dryRun,
-          driftDetection,
-          conflict,
+        runOperation(
+          reconcileResource(this.#stepRunner, {
+            resource,
+            resourceParams: params,
+            openSession: this.#openSession(),
+            emit: this.#emitFromStep,
+            dryRun,
+            driftDetection,
+            maxOperationAttempts: this.#maxOperationAttempts,
+            recoverFrom: conflict,
+          }),
         ),
       );
     });
@@ -234,220 +237,34 @@ export class Reconciler {
     }
   }
 
-  async #deployResourceOnce(
-    resource: BaseResource,
-    params: Record<string, unknown>,
-    dryRun: boolean,
-    driftDetection: boolean,
-    conflict?: RevConflict,
-  ) {
-    if (conflict) {
-      await this.#recoverDeployResource(resource, params, dryRun, conflict);
-      return;
-    }
-
-    const stateNode = await this.#state.get(resource.id);
-
-    let action: ResourceAction;
-    if (!stateNode) {
-      action = decideAction({ resource, params });
-    } else {
-      resource.setOutput(stateNode.output);
-      action = decideAction({ resource, stateNode, params });
-
-      if (action.decision === "noop" && driftDetection) {
-        const driftRead = await this.#readForDrift(
-          resource,
-          params,
-          stateNode.output,
-        );
-        action = decideAction({ resource, stateNode, params, driftRead });
-      }
-    }
-
-    if (action.decision === "drift-update") {
-      await this.#emit?.({
-        level: "info",
-        event: "reconciler.drift.detected",
-        resourceId: resource.id,
-        resourceType: resource.type,
-        diff: action.patch,
-      });
-    }
-
-    await this.#emit?.({
-      level: "info",
-      event: "reconciler.deploy.decision",
-      resourceId: resource.id,
-      resourceType: resource.type,
-      decision: action.decision,
-    });
-
-    switch (action.decision) {
-      case "create":
-      case "drift-recreate":
-        await runOperation(
-          createResourceOperation(this.#stepRunner, {
-            resource,
-            resourceParams: params,
-            persistedOutput: stateNode?.output,
-            dryRun,
-            emit: this.#emitStep,
-            maxOperationAttempts: this.#maxOperationAttempts,
-            persist: this.#persist(resource.id, stateNode?.rev ?? 0),
-          }),
-        );
-        return;
-      case "update":
-      case "drift-update":
-        // decideAction only returns update decisions for an existing stateNode
-        await runOperation(
-          updateResourceOperation(this.#stepRunner, {
-            resource,
-            resourceParams: params,
-            persistedOutput: stateNode?.output,
-            patch: action.patch,
-            dryRun,
-            emit: this.#emitStep,
-            maxOperationAttempts: this.#maxOperationAttempts,
-            persist: this.#persist(resource.id, stateNode!.rev),
-          }),
-        );
-        return;
-      case "noop":
-        return;
-    }
-  }
-
-  async #recoverDeployResource(
-    resource: BaseResource,
-    params: Record<string, unknown>,
-    dryRun: boolean,
-    conflict: RevConflict,
-  ) {
-    if (!resource.read) throw conflict;
-
-    const stateNode = await this.#state.get(resource.id);
-    if (stateNode) resource.setOutput(stateNode.output);
-
-    const remote = await this.#readForDrift(
-      resource,
-      params,
-      stateNode?.output,
-    );
-    const action = decideAction({
-      resource,
-      stateNode,
-      params,
-      driftRead: remote,
-    });
-    if (remote.kind === "present") resource.setOutput(remote.output);
-
-    // Recovery is drift adoption: the remote moved while the attempt that
-    // conflicted was in flight, so the same event a first-pass drift-update
-    // emits is owed here too.
-    if (action.decision === "drift-update") {
-      await this.#emit?.({
-        level: "info",
-        event: "reconciler.drift.detected",
-        resourceId: resource.id,
-        resourceType: resource.type,
-        diff: action.patch,
-      });
-    }
-
-    await this.#emit?.({
-      level: "info",
-      event: "reconciler.deploy.decision",
-      resourceId: resource.id,
-      resourceType: resource.type,
-      decision: action.decision,
-    });
-
-    switch (action.decision) {
-      case "create":
-      case "drift-recreate":
-        await runOperation(
-          createResourceOperation(this.#stepRunner, {
-            resource,
-            resourceParams: params,
-            persistedOutput: stateNode?.output,
-            dryRun,
-            emit: this.#emitStep,
-            maxOperationAttempts: this.#maxOperationAttempts,
-            persist: this.#persist(resource.id, stateNode?.rev ?? 0),
-          }),
-        );
-        return;
-      case "update":
-      case "drift-update":
-        await runOperation(
-          updateResourceOperation(this.#stepRunner, {
-            resource,
-            resourceParams: params,
-            persistedOutput: stateNode?.output,
-            patch: action.patch,
-            dryRun,
-            emit: this.#emitStep,
-            maxOperationAttempts: this.#maxOperationAttempts,
-            persist: this.#persist(resource.id, stateNode?.rev ?? 0),
-          }),
-        );
-        return;
-      case "noop":
-        if (dryRun) return;
-        await this.#state.update(resource.id, stateNode?.rev ?? 0, {
-          id: resource.id,
-          groupId: resource.groupId,
-          groupType: resource.groupType,
-          type: resource.type,
-          lastOperation: "drift",
-          lastOperationAt: new Date().toISOString(),
-          config: resource.config,
-          params: resource.toState(params),
-          output: resource.toState(resource.output),
-        });
-        return;
-    }
-  }
-
-  // In process, concurrency control is a compare-and-set against the revision
-  // read before the operation started; the mutation lease keeps writers apart.
-  #persist(resourceId: string, expectedRev: number): PersistState {
+  /**
+   * Reads a resource's record and binds the writes that are conditional on
+   * that read. In process the precondition is the revision read here, which
+   * the mutation lease keeps other writers away from.
+   */
+  #openSession(): OpenStateSession {
     const state = this.#state;
-    return async function* (next) {
-      await state.update(resourceId, expectedRev, next);
-    };
-  }
+    return async function* (resource: BaseResource) {
+      const node = await state.get(resource.id);
+      const expectedRev = node?.rev ?? 0;
+      const persist: PersistState = async function* (next) {
+        await state.update(resource.id, expectedRev, next);
+      };
 
-  #remove(resourceId: string, expectedRev: number): RemoveState {
-    const state = this.#state;
-    return async function* () {
-      await state.delete(resourceId, expectedRev);
-    };
-  }
+      if (!node) return { node: undefined, persist };
 
-  #readForDrift(
-    resource: BaseResource,
-    params: Record<string, unknown>,
-    persistedOutput: Record<string, unknown> | undefined,
-  ): Promise<DriftRead> {
-    return runOperation(
-      readDriftOperation(this.#stepRunner, {
-        resource,
-        resourceParams: params,
-        persistedOutput,
-        emit: this.#emitStep,
-        maxOperationAttempts: this.#maxOperationAttempts,
-      }),
-    );
+      const remove: RemoveState = async function* () {
+        await state.delete(resource.id, node.rev);
+      };
+      return { node, persist, remove };
+    };
   }
 
   async #deleteOrphans(
     resources: BaseResource[],
     resourceById: Map<string, BaseResource>,
     dryRun: boolean,
-    workflow: "deploy" | "refresh",
+    workflow: "deploy" | "refresh" | "destroy",
   ) {
     await this.#withLease("reconciler:orphan-deletion", async () => {
       const stateNodes = await this.#state.values();
@@ -471,23 +288,17 @@ export class Reconciler {
           continue;
         }
 
+        // Built from the listing, so its config is as of that read rather
+        // than of the lease taken below — the session re-reads and refreshes
+        // output, but not this. Config reaches nothing but deriveParams on
+        // the delete-recovery read, so a racing write can only make that read
+        // one revision stale; the removal itself is still conditional on the
+        // session's own read.
+        const orphanResource = hydrateResourceFromState(Resource, stateNode);
         await this.#withMutationLease(stateNode.id, () =>
-          this.#retryOnRevConflict(async (conflict) => {
-            const currentNode = await this.#state.get(stateNode.id);
-            if (!currentNode) return;
-
-            const orphanResource = hydrateResourceFromState(
-              Resource,
-              currentNode,
-            );
-
-            await this.#deleteResourceOnce(
-              orphanResource,
-              currentNode,
-              dryRun,
-              conflict,
-            );
-          }),
+          this.#retryOnRevConflict((conflict) =>
+            this.#deleteResource(orphanResource, dryRun, conflict),
+          ),
         );
       }
     });
@@ -495,49 +306,37 @@ export class Reconciler {
 
   async #destroyResource(resource: BaseResource, dryRun: boolean) {
     await this.#withMutationLease(resource.id, () =>
-      this.#retryOnRevConflict(async (conflict) => {
-        const stateNode = await this.#state.get(resource.id);
-        if (!stateNode) {
-          return;
-        }
-
-        resource.setOutput(stateNode.output);
-        await this.#deleteResourceOnce(resource, stateNode, dryRun, conflict);
-      }),
+      this.#retryOnRevConflict((conflict) =>
+        this.#deleteResource(resource, dryRun, conflict),
+      ),
     );
   }
 
-  async #deleteResourceOnce(
+  async #deleteResource(
     resource: BaseResource,
-    stateNode: StateNode,
     dryRun: boolean,
     conflict?: RevConflict,
   ) {
-    if (conflict) {
-      if (!resource.read) throw conflict;
-
-      // Deletion never needs the desired params, so they are resolved here
-      // rather than for every delete: only the recovery read consumes them.
-      const params = (await resource.getParams()) as Record<string, unknown>;
-      const remote = await this.#readForDrift(
-        resource,
-        params,
-        stateNode.output,
-      );
-      if (remote.kind !== "present") {
-        if (!dryRun) await this.#state.delete(resource.id, stateNode.rev);
-        return;
-      }
-      resource.setOutput(remote.output);
-    }
+    // Deletion never needs the desired params, so they are resolved only for
+    // the recovery read, which is their sole consumer on this path.
+    const recoverFrom = conflict
+      ? {
+          conflict,
+          resourceParams: (await resource.getParams()) as Record<
+            string,
+            unknown
+          >,
+        }
+      : undefined;
 
     await runOperation(
-      deleteResourceOperation(this.#stepRunner, {
+      destroyResource(this.#stepRunner, {
         resource,
+        openSession: this.#openSession(),
+        emit: this.#emitFromStep,
         dryRun,
-        emit: this.#emitStep,
         maxOperationAttempts: this.#maxOperationAttempts,
-        remove: this.#remove(resource.id, stateNode.rev),
+        recoverFrom,
       }),
     );
   }
@@ -556,4 +355,13 @@ function hydrateResourceFromState(
   });
   resource.setOutput(stateNode.output);
   return resource;
+}
+
+/**
+ * The in-process emit seam: a scope carries no meaning here, since nothing
+ * keys anything, so every scope delivers through the same emitter.
+ */
+function emitDirectly(emit: ReconcilerEventEmitter): EmitFromStep {
+  const step = toEmitStep(emit);
+  return () => step;
 }

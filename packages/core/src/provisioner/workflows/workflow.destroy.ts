@@ -7,7 +7,6 @@ import {
 import type { StateBackend } from "@notation/state";
 import { getResourceGraph } from "src/orchestrator/graph";
 import { createDefaultStateBackend } from "../state-backend";
-import { refreshState } from "./workflow.refresh";
 
 export type DestroyAppOptions = {
   entryPoint: string;
@@ -23,11 +22,16 @@ export async function destroyApp({
   emit = createLoggerReconcilerSubscriber(),
 }: DestroyAppOptions) {
   const state = stateBackend ?? createDefaultStateBackend();
-  await refreshState({ entryPoint, registry, state, emit });
-
   const graph = await getResourceGraph(entryPoint);
+
+  // The registry has to be threaded through: destroy sweeps orphans itself
+  // now, and without one the sweep falls back to the types of the resources
+  // still declared — so an orphan whose type the app no longer declares would
+  // be skipped with a warning instead of deleted. The parameter is optional,
+  // so nothing but this would catch it.
   const reconciler = new Reconciler({
     state,
+    registry,
     emit,
   });
 
