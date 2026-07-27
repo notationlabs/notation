@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { resource, type BaseResource } from "@notation/resource";
+import {
+  ResourceNotFoundError,
+  ResourceOperationPendingError,
+  resource,
+  type BaseResource,
+} from "@notation/resource";
 import type { StateNode } from "@notation/state";
 import { Reconciler, UNKNOWN_AFTER_APPLY } from "../src";
 
@@ -48,7 +53,6 @@ function createTestResourceClass(opts: {
     key: Record<string, unknown>,
     state: Record<string, unknown>,
   ) => Promise<void>;
-  notFoundOnError?: { name: string; reason: string }[];
 }) {
   return resource({ type: opts.type })
     .defineSchema({
@@ -68,7 +72,6 @@ function createTestResourceClass(opts: {
       read: opts.read,
       update: opts.update,
       delete: opts.delete ?? (async () => undefined),
-      notFoundOnError: opts.notFoundOnError,
     });
 }
 
@@ -204,13 +207,8 @@ describe("reconciler plan", () => {
     const TestResource = createTestResourceClass({
       type: "test/service/plan-drift-recreate",
       read: async () => {
-        const err = new Error("gone");
-        err.name = "NotFoundException";
-        throw err;
+        throw new ResourceNotFoundError("resource is absent");
       },
-      notFoundOnError: [
-        { name: "NotFoundException", reason: "deleted remotely" },
-      ],
     });
 
     const state = createMemoryState({
@@ -230,6 +228,40 @@ describe("reconciler plan", () => {
       id: "resource",
       decision: "drift-recreate",
     });
+  });
+
+  it("waits for a pending read before planning", async () => {
+    let attempts = 0;
+    const TestResource = createTestResourceClass({
+      type: "test/service/plan-not-ready",
+      read: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new ResourceOperationPendingError(
+            "Waiting for Lambda to become active",
+            { retryAfterMs: 0 },
+          );
+        }
+        return { name: "desired" };
+      },
+    });
+
+    const state = createMemoryState({
+      resource: createStateNode("resource", "test/service/plan-not-ready", {
+        name: "desired",
+      }),
+    });
+    const reconciler = new Reconciler({ state, driftDetection: true });
+
+    const plan = await reconciler.plan([
+      new TestResource({ id: "resource", config: { name: "desired" } }),
+    ]);
+
+    expect(plan.nodes[0]).toMatchObject({
+      id: "resource",
+      decision: "noop",
+    });
+    expect(attempts).toBe(2);
   });
 
   it("skips remote reads when drift detection is off", async () => {
@@ -330,6 +362,35 @@ describe("reconciler plan", () => {
         tag: "known",
       },
     });
+  });
+
+  it("does not disguise parameter derivation failures as unknown values", async () => {
+    const TestResource = resource({
+      type: "test/service/plan-derive-failure",
+    })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          valueType: "string" as any,
+        },
+      })
+      .defineOperations({
+        create: async () => ({}),
+        delete: async () => undefined,
+        deriveParams: () => {
+          throw new Error("invalid derived configuration");
+        },
+      });
+
+    const reconciler = new Reconciler({
+      state: createMemoryState(),
+      driftDetection: false,
+    });
+
+    await expect(
+      reconciler.plan([new TestResource({ id: "broken" })]),
+    ).rejects.toThrow("invalid derived configuration");
   });
 
   it("produces a JSON-round-trippable plan", async () => {

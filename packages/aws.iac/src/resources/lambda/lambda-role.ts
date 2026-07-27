@@ -1,4 +1,4 @@
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-iam";
 import { iamClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
@@ -69,17 +69,30 @@ export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
     await iamClient.send(command);
   },
   read: async (key) => {
-    const command = new sdk.GetRoleCommand(key);
-    const { Role } = await iamClient.send(command);
-    return Role!;
+    try {
+      const command = new sdk.GetRoleCommand(key);
+      const { Role } = await iamClient.send(command);
+      return Role!;
+    } catch (error) {
+      if (error instanceof sdk.NoSuchEntityException) {
+        throw new ResourceNotFoundError("Lambda IAM role was not found", {
+          cause: error,
+        });
+      }
+      throw error;
+    }
   },
   update: async (key, params) => {
     const command = new sdk.UpdateRoleCommand({ ...key, ...params });
     await iamClient.send(command);
   },
   delete: async (key) => {
-    const command = new sdk.DeleteRoleCommand(key);
-    await iamClient.send(command);
+    try {
+      const command = new sdk.DeleteRoleCommand(key);
+      await iamClient.send(command);
+    } catch (error) {
+      if (!(error instanceof sdk.NoSuchEntityException)) throw error;
+    }
   },
   deriveParams: () => ({
     AssumeRolePolicyDocument: JSON.stringify(lambdaTrustPolicy),

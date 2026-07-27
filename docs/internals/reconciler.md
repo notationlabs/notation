@@ -81,18 +81,26 @@ Each CRUD operation is implemented as an async generator with retry support:
 - **`deleteResourceOperation`** – deletes the resource, removes the entry from state backend
 - **`readResourceOperation`** – reads current state from the cloud provider (used for drift detection)
 
-### Retry and polling
+### Pending operations
 
-Operations support polling for eventual consistency:
+A resource operation throws `ResourceOperationPendingError` when it has not finished. The reconciler reads two fields from the error:
+
+| Field | Action |
+| ----- | ------ |
+| `retryAfterMs` | Wait this many milliseconds. |
+| `callbackContext` | Pass this value to the next call of the same operation. |
+
+The reconciler then calls the same operation again. Any other error fails the operation. See [Operation errors](./resource.md#operation-errors) for the complete API.
+
+The default limit is 30 calls to one operation:
 
 ```ts [packages/reconciler/src/index.ts]
 {
-  maxAttempts: 10,
-  retryInterval: 2000,
+  maxOperationAttempts: 30,
 }
 ```
 
-This handles AWS services that return success before the resource is fully available. For example, after creating an IAM Role, a Lambda function may briefly fail to deploy until the role propagates. The retry loop handles cases like this.
+The last pending error becomes a failure when the limit is reached.
 
 ### Operation lifecycle
 

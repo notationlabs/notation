@@ -1,4 +1,4 @@
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { ApiInstance, LambdaIntegrationInstance } from ".";
@@ -92,17 +92,30 @@ export const Route = routeSchema
       return { RouteId: result.RouteId! };
     },
     read: async (key) => {
-      const command = new sdk.GetRouteCommand(key);
-      const result = await apiGatewayClient.send(command);
-      return { ...key, ...result };
+      try {
+        const command = new sdk.GetRouteCommand(key);
+        const result = await apiGatewayClient.send(command);
+        return { ...key, ...result };
+      } catch (error) {
+        if (error instanceof sdk.NotFoundException) {
+          throw new ResourceNotFoundError("API Gateway route was not found", {
+            cause: error,
+          });
+        }
+        throw error;
+      }
     },
     update: async (key, patch, params) => {
       const command = new sdk.UpdateRouteCommand({ ...key, ...params });
       await apiGatewayClient.send(command);
     },
     delete: async (key) => {
-      const command = new sdk.DeleteRouteCommand(key);
-      await apiGatewayClient.send(command);
+      try {
+        const command = new sdk.DeleteRouteCommand(key);
+        await apiGatewayClient.send(command);
+      } catch (error) {
+        if (!(error instanceof sdk.NotFoundException)) throw error;
+      }
     },
   })
   .requireDependencies<RouteDependencies>()

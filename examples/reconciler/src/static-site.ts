@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
+import { isErrorWithCode } from "@notation/utils";
 
 type StaticSiteApi = {
   Key: { siteDirectory: string };
@@ -8,10 +9,6 @@ type StaticSiteApi = {
   UpdateParams: { siteDirectory: string; html: string };
   ReadResult: { html: string };
 };
-
-class SiteNotFound extends Error {
-  readonly name = "SiteNotFound";
-}
 
 const staticSite = resource<StaticSiteApi>({ type: "local/site/static" });
 
@@ -40,7 +37,11 @@ export const StaticSite = staticSite
         );
         return { html };
       } catch (error) {
-        if (isFileMissing(error)) throw new SiteNotFound(siteDirectory);
+        if (isErrorWithCode(error, "ENOENT")) {
+          throw new ResourceNotFoundError("Static site was not found", {
+            cause: error,
+          });
+        }
         throw error;
       }
     },
@@ -48,16 +49,6 @@ export const StaticSite = staticSite
       await writeFile(path.join(siteDirectory, "index.html"), html, "utf8");
     },
     delete: async ({ siteDirectory }) => {
-      await rm(siteDirectory, { recursive: true });
+      await rm(siteDirectory, { recursive: true, force: true });
     },
-    notFoundOnError: [{ name: "SiteNotFound", reason: "site was removed" }],
   });
-
-function isFileMissing(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "ENOENT"
-  );
-}

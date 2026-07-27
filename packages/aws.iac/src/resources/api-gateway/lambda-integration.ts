@@ -1,4 +1,4 @@
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { ApiInstance } from "./api";
 import { LambdaFunctionInstance } from "../lambda";
@@ -118,16 +118,31 @@ export const LambdaIntegration = integrationSchema
       return { IntegrationId: result.IntegrationId! };
     },
     read: async (key) => {
-      const command = new sdk.GetIntegrationCommand(key);
-      return apiGatewayClient.send(command);
+      try {
+        const command = new sdk.GetIntegrationCommand(key);
+        const output = await apiGatewayClient.send(command);
+        return output;
+      } catch (error) {
+        if (error instanceof sdk.NotFoundException) {
+          throw new ResourceNotFoundError(
+            "API Gateway integration was not found",
+            { cause: error },
+          );
+        }
+        throw error;
+      }
     },
     update: async (key, params) => {
       const command = new sdk.UpdateIntegrationCommand({ ...key, ...params });
       await apiGatewayClient.send(command);
     },
     delete: async (key) => {
-      const command = new sdk.DeleteIntegrationCommand(key);
-      await apiGatewayClient.send(command);
+      try {
+        const command = new sdk.DeleteIntegrationCommand(key);
+        await apiGatewayClient.send(command);
+      } catch (error) {
+        if (!(error instanceof sdk.NotFoundException)) throw error;
+      }
     },
   })
   .requireDependencies<LambdaIntegrationDependencies>()

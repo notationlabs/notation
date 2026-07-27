@@ -1,9 +1,6 @@
 export type {
   BaseResource,
   ResourceType,
-  ErrorMatcher,
-  ResultCondition,
-  ResultConditions,
   ResourceOpts,
   DefineResourceMeta,
   DefineResourceApiSchema,
@@ -12,8 +9,16 @@ export type {
   ResourceClass,
   ResourceSchemaBuilder,
   ResourceBuilder,
+  ResourceOperationContext,
+  ResourceOperationSignal,
   Schema,
   SchemaItem,
 } from "@notation/resource";
 
-export { Resource, defineResource, resource } from "@notation/resource";
+export {
+  Resource,
+  ResourceNotFoundError,
+  ResourceOperationPendingError,
+  defineResource,
+  resource,
+} from "@notation/resource";

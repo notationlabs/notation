@@ -35,8 +35,7 @@ export type Plan = {
 };
 
 export type DriftRead =
-  | { status: "found"; output: Record<string, unknown> }
-  | { status: "not-found" };
+  { kind: "present"; output: Record<string, unknown> } | { kind: "absent" };
 
 export type ResourceAction =
   | { decision: "create" }
@@ -64,7 +63,7 @@ export function decideAction(opts: {
   >;
 
   if (driftRead) {
-    if (driftRead.status === "not-found") {
+    if (driftRead.kind === "absent") {
       return { decision: stateNode ? "drift-recreate" : "create" };
     }
 
@@ -115,22 +114,19 @@ export function decideAction(opts: {
 export async function resolvePlanParams(
   resource: BaseResource,
 ): Promise<Record<string, unknown>> {
-  let resolved: Record<string, unknown> | undefined;
-  try {
-    resolved = (await resource.getParams()) as Record<string, unknown>;
-  } catch {
-    resolved = undefined;
-  }
-
-  const params: Record<string, unknown> = {};
-
-  if (resolved) {
+  const hasUnresolvedDependency = Object.values(resource.dependencies).some(
+    (dependency) => dependency && dependency.output == null,
+  );
+  if (!hasUnresolvedDependency) {
+    const resolved = (await resource.getParams()) as Record<string, unknown>;
+    const params: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(resolved)) {
       params[key] = value === undefined ? UNKNOWN_AFTER_APPLY : value;
     }
     return params;
   }
 
+  const params: Record<string, unknown> = {};
   const config = resource.config as Record<string, unknown>;
   for (const [key, item] of Object.entries(resource.schema)) {
     if (item.propertyType === "computed") continue;

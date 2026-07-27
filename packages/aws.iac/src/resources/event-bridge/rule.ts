@@ -1,4 +1,4 @@
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import { AwsSchema } from "src/utils/types";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/utils/aws-clients";
@@ -60,21 +60,31 @@ const eventBridgeRuleSchema = eventBridgeRule.defineSchema({
 export const EventBridgeRule = eventBridgeRuleSchema
   .defineOperations({
     read: async (key) => {
-      const describeRuleCommand = new sdk.DescribeRuleCommand(key);
-      const listRuleTargetsCommand = new sdk.ListTargetsByRuleCommand({
-        Rule: key.Name,
-        EventBusName: key.EventBusName,
-      });
+      try {
+        const describeRuleCommand = new sdk.DescribeRuleCommand(key);
+        const listRuleTargetsCommand = new sdk.ListTargetsByRuleCommand({
+          Rule: key.Name,
+          EventBusName: key.EventBusName,
+        });
 
-      const [ruleDescriptionResult, listRuleTargetsResult] = await Promise.all([
-        eventBridgeClient.send(describeRuleCommand),
-        eventBridgeClient.send(listRuleTargetsCommand),
-      ]);
+        const [ruleDescriptionResult, listRuleTargetsResult] =
+          await Promise.all([
+            eventBridgeClient.send(describeRuleCommand),
+            eventBridgeClient.send(listRuleTargetsCommand),
+          ]);
 
-      return {
-        ...ruleDescriptionResult,
-        ...listRuleTargetsResult,
-      };
+        return {
+          ...ruleDescriptionResult,
+          ...listRuleTargetsResult,
+        };
+      } catch (error) {
+        if (error instanceof sdk.ResourceNotFoundException) {
+          throw new ResourceNotFoundError("EventBridge rule was not found", {
+            cause: error,
+          });
+        }
+        throw error;
+      }
     },
 
     create: async (params) => {
@@ -102,27 +112,30 @@ export const EventBridgeRule = eventBridgeRuleSchema
       await eventBridgeClient.send(updateTargetsCommand);
     },
     delete: async (key) => {
-      // The targets must be deleted first, otherwise the API will return an error response
+      try {
+        // The targets must be deleted first, otherwise the API will return an error response
+        const existingTargets = await eventBridgeClient.send(
+          new sdk.ListTargetsByRuleCommand({
+            Rule: key.Name,
+            EventBusName: key.EventBusName,
+          }),
+        );
 
-      const existingTargets = await eventBridgeClient.send(
-        new sdk.ListTargetsByRuleCommand({
-          Rule: key.Name,
-          EventBusName: key.EventBusName,
-        }),
-      );
+        if (existingTargets.Targets && existingTargets.Targets.length > 0) {
+          const deleteTargetsCommand = new sdk.RemoveTargetsCommand({
+            Rule: key.Name,
+            EventBusName: key.EventBusName,
+            Ids: existingTargets.Targets.map((target) => target.Id!),
+          });
 
-      if (existingTargets.Targets && existingTargets.Targets.length > 0) {
-        const deleteTargetsCommand = new sdk.RemoveTargetsCommand({
-          Rule: key.Name,
-          EventBusName: key.EventBusName,
-          Ids: existingTargets.Targets.map((target) => target.Id!),
-        });
+          await eventBridgeClient.send(deleteTargetsCommand);
+        }
 
-        await eventBridgeClient.send(deleteTargetsCommand);
+        const deleteRuleCommand = new sdk.DeleteRuleCommand(key);
+        await eventBridgeClient.send(deleteRuleCommand);
+      } catch (error) {
+        if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
       }
-
-      const deleteRuleCommand = new sdk.DeleteRuleCommand(key);
-      await eventBridgeClient.send(deleteRuleCommand);
     },
   })
   .requireDependencies<EventBridgeRuleDependencies>()

@@ -1,12 +1,11 @@
-import { RetryableError, createWorkflow } from "yieldstar";
+import { createWorkflow } from "yieldstar";
 import {
-  DEFAULT_RETRY_OPTIONS,
   type StepRunner,
   type UpdateResourceParams,
   emitLifecycleEvent,
   getErrorDetails,
-  matchError,
 } from "./operation.types";
+import { runPendingOperation } from "./operation.pending";
 import { readResourceOperation } from "./operation.read";
 
 export async function* updateResourceOperation(
@@ -33,24 +32,19 @@ export async function* updateResourceOperation(
       params.resource.getParams(),
     );
 
-    yield* step.run("update:remote", async () => {
-      try {
-        await params.resource.update!(
+    yield* runPendingOperation(
+      step,
+      "update:remote",
+      (context) =>
+        params.resource.update!(
           params.resource.key,
           params.patch,
           resourceParams,
           params.resource.toState(params.resource.output),
-        );
-      } catch (err) {
-        const matcher = matchError(err, params.resource.retryLaterOnError);
-        if (matcher) {
-          throw new RetryableError(matcher.reason, {
-            ...(params.retryOptions ?? DEFAULT_RETRY_OPTIONS),
-          });
-        }
-        throw err;
-      }
-    });
+          context,
+        ),
+      params.maxOperationAttempts,
+    );
 
     params.resource.setOutput({
       ...params.resource.key,
@@ -61,7 +55,7 @@ export async function* updateResourceOperation(
       resource: params.resource,
       state: params.state,
       emit: params.emit,
-      readPollOptions: params.readPollOptions,
+      maxOperationAttempts: params.maxOperationAttempts,
     });
 
     params.resource.setOutput({

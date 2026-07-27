@@ -1,6 +1,6 @@
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { AwsSchema } from "src/utils/types";
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { ApiInstance } from "./api";
 
@@ -59,18 +59,31 @@ export const RouteAuth = apiSchema
       };
     },
     read: async (key) => {
-      const command = new sdk.GetAuthorizerCommand(key);
-      const result = await apiGatewayClient.send(command);
-
-      return result;
+      try {
+        const command = new sdk.GetAuthorizerCommand(key);
+        const output = await apiGatewayClient.send(command);
+        return output;
+      } catch (error) {
+        if (error instanceof sdk.NotFoundException) {
+          throw new ResourceNotFoundError(
+            "API Gateway authorizer was not found",
+            { cause: error },
+          );
+        }
+        throw error;
+      }
     },
     update: async (key, patch, params) => {
       const command = new sdk.UpdateAuthorizerCommand({ ...key, ...params });
       await apiGatewayClient.send(command);
     },
     delete: async (params) => {
-      const command = new sdk.DeleteAuthorizerCommand(params);
-      await apiGatewayClient.send(command);
+      try {
+        const command = new sdk.DeleteAuthorizerCommand(params);
+        await apiGatewayClient.send(command);
+      } catch (error) {
+        if (!(error instanceof sdk.NotFoundException)) throw error;
+      }
     },
   })
   .requireDependencies<AuthorizerDependencies>()

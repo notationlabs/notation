@@ -1,5 +1,9 @@
 import { expect, it, test, vi } from "vitest";
-import { resource } from "src";
+import {
+  ResourceNotFoundError,
+  ResourceOperationPendingError,
+  resource,
+} from "src";
 import {
   TestResource,
   testResourceConfig,
@@ -136,5 +140,54 @@ describe("resource dependencies", () => {
       requiredParam: "preset",
       intrinsicParam: true,
     });
+  });
+});
+
+describe("resource operation signals", () => {
+  it("recognises a not-found signal structurally", () => {
+    expect(ResourceNotFoundError.is(new ResourceNotFoundError("missing"))).toBe(
+      true,
+    );
+    expect(
+      ResourceNotFoundError.is(
+        Object.assign(new Error("missing"), {
+          _tag: "ResourceNotFoundError",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("recognises a pending signal structurally", () => {
+    const fromElsewhere = Object.assign(new Error("waiting"), {
+      _tag: "ResourceOperationPendingError",
+      retryAfterMs: 2_000,
+      callbackContext: { operationId: "abc" },
+    });
+    expect(ResourceOperationPendingError.is(fromElsewhere)).toBe(true);
+  });
+
+  it("rejects unrelated errors", () => {
+    expect(ResourceNotFoundError.is(new Error("boom"))).toBe(false);
+    expect(ResourceOperationPendingError.is(new Error("boom"))).toBe(false);
+    expect(
+      ResourceOperationPendingError.is({
+        _tag: "ResourceOperationPendingError",
+      }),
+    ).toBe(false);
+  });
+
+  it("carries retry instructions and callback context", () => {
+    const pending = new ResourceOperationPendingError("waiting", {
+      retryAfterMs: 1_500,
+      callbackContext: { operationId: "abc" },
+    });
+    expect(pending.retryAfterMs).toBe(1_500);
+    expect(pending.callbackContext).toEqual({ operationId: "abc" });
+  });
+
+  it("rejects an invalid retry delay", () => {
+    expect(
+      () => new ResourceOperationPendingError("waiting", { retryAfterMs: -1 }),
+    ).toThrowError("retryAfterMs must be a non-negative number");
   });
 });

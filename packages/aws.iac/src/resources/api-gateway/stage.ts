@@ -1,4 +1,4 @@
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { ApiInstance } from "./api";
 import { apiGatewayClient } from "src/utils/aws-clients";
@@ -76,16 +76,30 @@ export const Stage = stageSchema
       await apiGatewayClient.send(command);
     },
     read: async (key) => {
-      const command = new sdk.GetStageCommand(key);
-      return apiGatewayClient.send(command);
+      try {
+        const command = new sdk.GetStageCommand(key);
+        const output = await apiGatewayClient.send(command);
+        return output;
+      } catch (error) {
+        if (error instanceof sdk.NotFoundException) {
+          throw new ResourceNotFoundError("API Gateway stage was not found", {
+            cause: error,
+          });
+        }
+        throw error;
+      }
     },
     update: async (key, params) => {
       const command = new sdk.UpdateStageCommand({ ...key, ...params });
       await apiGatewayClient.send(command);
     },
     delete: async (key) => {
-      const command = new sdk.DeleteStageCommand(key);
-      await apiGatewayClient.send(command);
+      try {
+        const command = new sdk.DeleteStageCommand(key);
+        await apiGatewayClient.send(command);
+      } catch (error) {
+        if (!(error instanceof sdk.NotFoundException)) throw error;
+      }
     },
   })
   .requireDependencies<StageDependencies>()

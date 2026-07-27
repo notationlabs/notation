@@ -1,4 +1,5 @@
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
+import { isErrorWithCode } from "@notation/utils";
 import { getSourceSha256 } from "src/utils/hash";
 import * as fs from "node:fs/promises";
 
@@ -36,8 +37,15 @@ export const File = fileSchema.defineOperations({
     return { sourceSha256 };
   },
   read: async (config) => {
-    const file = await fs.readFile(config.filePath);
-    return { ...config, file };
+    try {
+      const file = await fs.readFile(config.filePath);
+      return { ...config, file };
+    } catch (error) {
+      if (isErrorWithCode(error, "ENOENT")) {
+        throw new ResourceNotFoundError("File was not found", { cause: error });
+      }
+      throw error;
+    }
   },
   create: async () => {},
   update: async () => {},

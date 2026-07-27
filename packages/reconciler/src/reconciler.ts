@@ -1,6 +1,6 @@
+import { ResourceNotFoundError } from "@notation/resource";
 import type { BaseResource, ResourceType } from "@notation/resource";
 import { RevConflict, type State, type StateNode } from "@notation/state";
-import { RetryableError } from "yieldstar";
 import { setTimeout as sleep } from "node:timers/promises";
 import { buildResourceDepthLevels } from "./dependency-graph";
 import {
@@ -15,10 +15,8 @@ import {
 import {
   createResourceOperation,
   deleteResourceOperation,
-  matchError,
   readResourceOperation,
   type OperationLifecycleEvent,
-  type PollOptions,
   type StepRunner,
   updateResourceOperation,
 } from "./operations";
@@ -67,8 +65,7 @@ export type ReconcilerOptions = {
   dryRun?: boolean;
   driftDetection?: boolean;
   emit?: ReconcilerEventEmitter;
-  retryOptions?: PollOptions;
-  readPollOptions?: PollOptions;
+  maxOperationAttempts?: number;
   mutationLeaseTtl?: number;
 };
 
@@ -95,8 +92,7 @@ export class Reconciler {
   readonly #defaultDryRun: boolean;
   readonly #defaultDriftDetection: boolean;
   readonly #emit?: ReconcilerEventEmitter;
-  readonly #retryOptions?: PollOptions;
-  readonly #readPollOptions?: PollOptions;
+  readonly #maxOperationAttempts?: number;
   readonly #mutationLeaseTtl: number;
   readonly #stepRunner: StepRunner;
 
@@ -106,8 +102,7 @@ export class Reconciler {
     this.#defaultDryRun = opts.dryRun ?? false;
     this.#defaultDriftDetection = opts.driftDetection ?? true;
     this.#emit = opts.emit;
-    this.#retryOptions = opts.retryOptions;
-    this.#readPollOptions = opts.readPollOptions;
+    this.#maxOperationAttempts = opts.maxOperationAttempts;
     this.#mutationLeaseTtl = opts.mutationLeaseTtl ?? 30_000;
     this.#stepRunner = createStepRunner();
   }
@@ -316,8 +311,7 @@ export class Reconciler {
             state: this.#state,
             dryRun,
             emit: this.#emit,
-            retryOptions: this.#retryOptions,
-            readPollOptions: this.#readPollOptions,
+            maxOperationAttempts: this.#maxOperationAttempts,
             expectedRev: stateNode?.rev ?? 0,
           }),
         );
@@ -332,8 +326,7 @@ export class Reconciler {
             patch: action.patch,
             dryRun,
             emit: this.#emit,
-            retryOptions: this.#retryOptions,
-            readPollOptions: this.#readPollOptions,
+            maxOperationAttempts: this.#maxOperationAttempts,
             expectedRev: stateNode!.rev,
           }),
         );
@@ -361,7 +354,7 @@ export class Reconciler {
       params,
       driftRead: remote,
     });
-    if (remote.status === "found") resource.setOutput(remote.output);
+    if (remote.kind === "present") resource.setOutput(remote.output);
 
     await this.#emit?.({
       level: "info",
@@ -380,8 +373,7 @@ export class Reconciler {
             state: this.#state,
             dryRun,
             emit: this.#emit,
-            retryOptions: this.#retryOptions,
-            readPollOptions: this.#readPollOptions,
+            maxOperationAttempts: this.#maxOperationAttempts,
             expectedRev: stateNode?.rev ?? 0,
           }),
         );
@@ -395,8 +387,7 @@ export class Reconciler {
             patch: action.patch,
             dryRun,
             emit: this.#emit,
-            retryOptions: this.#retryOptions,
-            readPollOptions: this.#readPollOptions,
+            maxOperationAttempts: this.#maxOperationAttempts,
             expectedRev: stateNode?.rev ?? 0,
           }),
         );
@@ -452,14 +443,13 @@ export class Reconciler {
           resource,
           state: this.#state,
           emit: this.#emit,
-          readPollOptions: this.#readPollOptions,
+          maxOperationAttempts: this.#maxOperationAttempts,
         }),
       );
-      return { status: "found", output };
-    } catch (err) {
-      const matcher = matchError(err, resource.notFoundOnError);
-      if (!matcher) throw err;
-      return { status: "not-found" };
+      return { kind: "present", output };
+    } catch (error) {
+      if (ResourceNotFoundError.is(error)) return { kind: "absent" };
+      throw error;
     }
   }
 
@@ -537,7 +527,7 @@ export class Reconciler {
       if (!resource.read) throw conflict;
 
       const remote = await this.#readForDrift(resource);
-      if (remote.status === "not-found") {
+      if (remote.kind !== "present") {
         if (!dryRun) await this.#state.delete(resource.id, stateNode.rev);
         return;
       }
@@ -550,7 +540,7 @@ export class Reconciler {
         state: this.#state,
         dryRun,
         emit: this.#emit,
-        retryOptions: this.#retryOptions,
+        maxOperationAttempts: this.#maxOperationAttempts,
         expectedRev: stateNode.rev,
       }),
     );
@@ -595,37 +585,7 @@ export function createStepRunner(): StepRunner {
         throw new Error("Missing run function");
       }
 
-      while (true) {
-        try {
-          return await fn();
-        } catch (err) {
-          if (!(err instanceof RetryableError)) {
-            throw err;
-          }
-        }
-      }
-    },
-    async *poll(
-      arg1: string | PollOptions,
-      arg2: PollOptions | (() => boolean | Promise<boolean>),
-      arg3?: () => boolean | Promise<boolean>,
-    ): AsyncGenerator<unknown, void, unknown> {
-      const opts = (typeof arg1 === "string" ? arg2 : arg1) as PollOptions;
-      const predicate = (typeof arg1 === "string" ? arg3 : arg2) as
-        (() => boolean | Promise<boolean>) | undefined;
-
-      if (!predicate) {
-        throw new Error("Missing poll predicate");
-      }
-
-      for (let attempt = 0; attempt < opts.maxAttempts; attempt += 1) {
-        if (await predicate()) return;
-      }
-
-      throw new RetryableError("Polling reached max retries", {
-        maxAttempts: opts.maxAttempts,
-        retryInterval: opts.retryInterval,
-      });
+      return await fn();
     },
     async *delay(
       arg1: string | number,

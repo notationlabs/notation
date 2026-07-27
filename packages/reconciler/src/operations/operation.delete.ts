@@ -1,12 +1,11 @@
-import { RetryableError, createWorkflow } from "yieldstar";
+import { createWorkflow } from "yieldstar";
 import {
-  DEFAULT_RETRY_OPTIONS,
   type DeleteResourceParams,
   type StepRunner,
   emitLifecycleEvent,
   getErrorDetails,
-  matchError,
 } from "./operation.types";
+import { runPendingOperation } from "./operation.pending";
 
 export async function* deleteResourceOperation(
   step: StepRunner,
@@ -20,33 +19,17 @@ export async function* deleteResourceOperation(
   }
 
   try {
-    try {
-      yield* step.run("delete:remote", async () => {
-        try {
-          await params.resource.delete(
-            params.resource.key,
-            params.resource.toState(params.resource.output),
-          );
-        } catch (err) {
-          const matcher = matchError(err, params.resource.retryLaterOnError);
-          if (matcher) {
-            throw new RetryableError(matcher.reason, {
-              ...(params.retryOptions ?? DEFAULT_RETRY_OPTIONS),
-            });
-          }
-          throw err;
-        }
-      });
-    } catch (err) {
-      const matcher = matchError(err, params.resource.notFoundOnError);
-      if (matcher) {
-        await emitLifecycleEvent(params, "delete", "skip", {
-          reason: matcher.reason,
-        });
-      } else {
-        throw err;
-      }
-    }
+    yield* runPendingOperation(
+      step,
+      "delete:remote",
+      (context) =>
+        params.resource.delete(
+          params.resource.key,
+          params.resource.toState(params.resource.output),
+          context,
+        ),
+      params.maxOperationAttempts,
+    );
 
     yield* step.run("delete:persist-state", () =>
       params.state.delete(params.resource.id, params.expectedRev),

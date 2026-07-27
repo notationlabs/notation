@@ -1,4 +1,5 @@
-import { resource } from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
+import { isErrorWithCode } from "@notation/utils";
 import * as fs from "node:fs/promises";
 import { zip } from "src/utils/zip";
 import { getSourceSha256 } from "src/utils/hash";
@@ -54,11 +55,13 @@ export const Zip = zipSchema.defineOperations({
     try {
       const file = await fs.readFile(params.filePath);
       return { ...params, file };
-    } catch (error: any) {
-      if (error.code !== "ENOENT") throw error;
-      await zip.package(params.sourceFilePath, params.filePath);
-      const file = await fs.readFile(params.filePath);
-      return { ...params, file };
+    } catch (error) {
+      if (isErrorWithCode(error, "ENOENT")) {
+        throw new ResourceNotFoundError("Zip archive was not found", {
+          cause: error,
+        });
+      }
+      throw error;
     }
   },
   create: async (params) => {
@@ -69,7 +72,11 @@ export const Zip = zipSchema.defineOperations({
     await zip.package(config.sourceFilePath, config.filePath);
   },
   delete: async (config) => {
-    await fs.unlink(config.filePath);
+    try {
+      await fs.unlink(config.filePath);
+    } catch (error) {
+      if (!isErrorWithCode(error, "ENOENT")) throw error;
+    }
   },
 });
 

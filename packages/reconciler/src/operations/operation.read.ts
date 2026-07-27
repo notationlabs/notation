@@ -1,31 +1,11 @@
 import { createWorkflow } from "yieldstar";
 import {
-  DEFAULT_READ_POLL_OPTIONS,
   type ReadResourceParams,
   type StepRunner,
   emitLifecycleEvent,
   getErrorDetails,
 } from "./operation.types";
-
-type ReadRetryCondition = {
-  key: string;
-  reason: string;
-  value?: unknown;
-};
-
-function needsReadRetry(
-  readResult: Record<string, unknown>,
-  retryConditions: ReadonlyArray<ReadRetryCondition>,
-) {
-  return retryConditions.find((condition) => {
-    const resultValue = readResult[condition.key];
-    if (condition.value !== undefined) {
-      return resultValue !== condition.value;
-    }
-
-    return !resultValue;
-  });
-}
+import { runPendingOperation } from "./operation.pending";
 
 export async function* readResourceOperation(
   step: StepRunner,
@@ -58,29 +38,16 @@ export async function* readResourceOperation(
       return merged as Record<string, unknown>;
     }
 
-    let remoteOutput: Record<string, unknown> = {};
-    const retryConditions = (params.resource.retryReadOnCondition ?? []).filter(
-      Boolean,
-    ) as ReadRetryCondition[];
-
-    if (retryConditions.length > 0) {
-      yield* step.poll(
-        "read:poll-until-settled",
-        params.readPollOptions ?? DEFAULT_READ_POLL_OPTIONS,
-        async () => {
-          remoteOutput = await params.resource.read!(params.resource.key);
-          return !needsReadRetry(remoteOutput, retryConditions);
-        },
-      );
-    } else {
-      remoteOutput = yield* step.run("read:remote", () =>
-        params.resource.read!(params.resource.key),
-      );
-    }
+    const remote = yield* runPendingOperation(
+      step,
+      "read:remote",
+      (context) => params.resource.read!(params.resource.key, context),
+      params.maxOperationAttempts,
+    );
 
     const mergedOutput = {
       ...resourceParams,
-      ...remoteOutput,
+      ...remote,
     };
 
     await emitLifecycleEvent(params, "read", "success");

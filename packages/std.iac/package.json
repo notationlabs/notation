@@ -15,6 +15,7 @@
   "dependencies": {
     "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
+    "@notation/utils": "workspace:*",
     "fflate": "0.8.2"
   },
   "devDependencies": {

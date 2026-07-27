@@ -17,26 +17,11 @@ import type {
   Fallback,
   NoInfer,
 } from "./types";
+import type { ResourceOperationContext } from "./resource-operation";
 
 export type { Schema, SchemaItem, DefineResourceApiSchema };
 
 export type ResourceType = `${string}/${string}/${string}`;
-
-export type ErrorMatcher = {
-  name: string;
-  message?: string;
-  reason: string;
-};
-
-export type ResultCondition<T, K extends keyof T = keyof T> = {
-  key: K;
-  reason: string;
-  value?: T[K];
-};
-
-export type ResultConditions<T> = {
-  [K in keyof T]?: ResultCondition<T, K>;
-}[keyof T][];
 
 export type ResourceOpts<C, D> = OptionalIfAllPropertiesOptional<"config", C> &
   OptionalIfAllPropertiesOptional<"dependencies", D> & { id: string };
@@ -77,19 +62,27 @@ export interface BaseResource {
   groupType: string;
   readonly output: {};
   readonly dependencies: Record<string, BaseResource | void>;
-  readonly retryReadOnCondition?: ({
-    key: any;
-    value?: any;
-    reason: string;
-  } | void)[];
-  readonly failOnError?: (ErrorMatcher & { reason: string })[];
-  readonly notFoundOnError?: ErrorMatcher[];
-  readonly retryLaterOnError?: ErrorMatcher[];
   readonly key: {};
-  create: (params: any) => Promise<{} | void>;
-  read?: (key: any) => Promise<Record<string, any>>;
-  update?: (key: any, patch: any, params: any, state: any) => Promise<void>;
-  delete: (key: any, state: any) => Promise<void>;
+  create: (
+    params: any,
+    context?: ResourceOperationContext,
+  ) => Promise<{} | void>;
+  read?: (
+    key: any,
+    context?: ResourceOperationContext,
+  ) => Promise<Record<string, any>>;
+  update?: (
+    key: any,
+    patch: any,
+    params: any,
+    state: any,
+    context?: ResourceOperationContext,
+  ) => Promise<void>;
+  delete: (
+    key: any,
+    state: any,
+    context?: ResourceOperationContext,
+  ) => Promise<void>;
   getParams(): Promise<{}>;
   toState(output: {}): {};
   toComparable(output: {}): {};
@@ -114,19 +107,26 @@ export abstract class Resource<
   dependencies = {} as NoInfer<D>;
   abstract type: ResourceType;
   abstract schema: Schema;
-  abstract create: (params: T["params"]) => Promise<T["primaryKey"]>;
-  abstract read?: (key: T["compoundKey"]) => Promise<T["result"]>;
+  abstract create: (
+    params: T["params"],
+    context?: ResourceOperationContext,
+  ) => Promise<T["primaryKey"]>;
+  abstract read?: (
+    key: T["compoundKey"],
+    context?: ResourceOperationContext,
+  ) => Promise<T["result"]>;
   abstract update?: (
     key: T["compoundKey"],
     patch: T["params"],
     params: T["params"],
     state: T["state"],
+    context?: ResourceOperationContext,
   ) => Promise<void>;
-  abstract delete: (key: T["compoundKey"], state: T["state"]) => Promise<void>;
-  abstract retryReadOnCondition?: ResultConditions<T["output"]>;
-  abstract failOnError?: (ErrorMatcher & { reason: string })[];
-  abstract notFoundOnError?: ErrorMatcher[];
-  abstract retryLaterOnError?: ErrorMatcher[];
+  abstract delete: (
+    key: T["compoundKey"],
+    state: T["state"],
+    context?: ResourceOperationContext,
+  ) => Promise<void>;
   abstract deriveParams(opts: {
     id: string;
     config: C;
@@ -198,19 +198,26 @@ export type ResourceOperationsOptions<
   T extends ResourceTypes,
   IntrinsicParams extends Partial<T["params"]>,
 > = {
-  create: (params: T["params"]) => Promise<T["primaryKey"]>;
-  read?: (key: T["compoundKey"]) => Promise<T["result"]>;
+  create: (
+    params: T["params"],
+    context?: ResourceOperationContext,
+  ) => Promise<T["primaryKey"]>;
+  read?: (
+    key: T["compoundKey"],
+    context?: ResourceOperationContext,
+  ) => Promise<T["result"]>;
   update?: (
     key: T["compoundKey"],
     patch: T["params"],
     params: T["params"],
     state: T["state"],
+    context?: ResourceOperationContext,
   ) => Promise<void>;
-  delete: (key: T["compoundKey"], state: T["state"]) => Promise<void>;
-  retryReadOnCondition?: ResultConditions<T["output"]>;
-  failOnError?: (ErrorMatcher & { reason: string })[];
-  notFoundOnError?: ErrorMatcher[];
-  retryLaterOnError?: ErrorMatcher[];
+  delete: (
+    key: T["compoundKey"],
+    state: T["state"],
+    context?: ResourceOperationContext,
+  ) => Promise<void>;
   deriveParams?: (opts: {
     config: Partial<T["params"]>;
   }) => IntrinsicParams | Promise<IntrinsicParams>;
@@ -315,10 +322,6 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             read = opts.read ? opts.read : undefined;
             update = opts.update ? opts.update : undefined;
             delete = opts.delete;
-            retryReadOnCondition = opts.retryReadOnCondition;
-            failOnError = opts.failOnError;
-            notFoundOnError = opts.notFoundOnError;
-            retryLaterOnError = opts.retryLaterOnError;
 
             async deriveParams() {
               if (!opts.deriveParams) return {};
