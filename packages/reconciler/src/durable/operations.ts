@@ -1,5 +1,5 @@
 import {
-  findErrorMatcher,
+  ResourceNotReadyError,
   type BaseResource,
   type ResourceType,
 } from "@notation/resource";
@@ -9,7 +9,7 @@ import {
   createResourceRegistryFromResources,
   resolveResourceClass,
 } from "../resource-registry";
-import { decideAction, type ResourceAction } from "../plan";
+import { decideAction, type DriftRead, type ResourceAction } from "../plan";
 import { emitEvent, emitLifecycle } from "./emit";
 import type { DurableStateBackend } from "./state-backend";
 import {
@@ -129,11 +129,10 @@ export async function* reconcileResource(
     // Checkpoint successful provider calls. Provider mutations must be
     // idempotent because a crash before the checkpoint can repeat them.
     if (operation === "create") {
-      const primaryKey = yield* runProviderCall(
+      const primaryKey = yield* runResourceMutation(
         step,
         `${prefix}:create`,
         () => resource.create(params),
-        resource,
         opts.retryOptions,
       );
       resource.setOutput(params);
@@ -151,7 +150,7 @@ export async function* reconcileResource(
         );
         return;
       }
-      yield* runProviderCall(
+      yield* runResourceMutation(
         step,
         `${prefix}:update`,
         () =>
@@ -161,7 +160,6 @@ export async function* reconcileResource(
             params,
             resource.toState(resource.output),
           ),
-        resource,
         opts.retryOptions,
       );
       resource.setOutput({ ...resource.key, ...params });
@@ -174,9 +172,9 @@ export async function* reconcileResource(
       resource,
       opts,
       `${prefix}:read-after-write`,
-      { retryNotFound: true },
+      { retryAbsent: true },
     );
-    if (read.status === "found")
+    if (read.kind === "present")
       resource.setOutput({ ...resource.output, ...read.output });
 
     const nextState: StoredResourceState = {
@@ -269,28 +267,12 @@ export async function* deleteResource(
   }
 
   try {
-    // An already-deleted remote is success, not failure: the goal state is
-    // absence, so a declared not-found error downgrades to a skip.
-    try {
-      yield* runProviderCall(
-        step,
-        `${prefix}:delete`,
-        () => resource.delete(resource.key, resource.toState(resource.output)),
-        resource,
-        opts.retryOptions,
-      );
-    } catch (error) {
-      if (!findErrorMatcher(error, resource.notFoundOnError)) throw error;
-      yield* emitLifecycle(
-        step,
-        `${prefix}:delete:not-found`,
-        opts.emit,
-        "delete",
-        "skip",
-        resource,
-        { reason: "resource-not-found" },
-      );
-    }
+    yield* runResourceMutation(
+      step,
+      `${prefix}:delete`,
+      () => resource.delete(resource.key, resource.toState(resource.output)),
+      opts.retryOptions,
+    );
 
     // State is removed only after the provider delete completes, and only if
     // the store still matches the snapshot read before deleting.
@@ -327,13 +309,8 @@ export async function* readRemote(
   resource: BaseResource,
   opts: DurableOperationOptions,
   key: string,
-  behaviour: { retryNotFound?: boolean } = {},
-): AsyncGenerator<
-  any,
-  | { status: "found"; output: Record<string, unknown> }
-  | { status: "not-found" },
-  any
-> {
+  behaviour: { retryAbsent?: boolean } = {},
+): AsyncGenerator<any, DriftRead, any> {
   if (!resource.read) {
     yield* emitLifecycle(
       step,
@@ -347,7 +324,7 @@ export async function* readRemote(
       },
     );
     return {
-      status: "found",
+      kind: "present",
       output: { ...(await resource.getParams()), ...resource.output },
     };
   }
@@ -361,36 +338,40 @@ export async function* readRemote(
     resource,
   );
   try {
-    const output = yield* step.run(key, async () => {
-      let value: Record<string, unknown>;
+    const result = yield* step.run(key, async () => {
       try {
-        value = await resource.read!(resource.key);
+        const output = await resource.read!(resource.key);
+        if (output === undefined && behaviour.retryAbsent) {
+          throw new RetryableError("Waiting for resource to become visible", {
+            ...(opts.readPollOptions ?? DEFAULT_READ_POLL_OPTIONS),
+          });
+        }
+        // Absence is null rather than undefined so that it survives the
+        // step's JSON round-trip when the run is replayed.
+        return output ?? null;
       } catch (error) {
-        const notFound = findErrorMatcher(error, resource.notFoundOnError);
-        if (behaviour.retryNotFound && notFound) {
-          throw new RetryableError(notFound.reason, {
+        // A tagged not-ready condition is the provider telling us to wait.
+        // Everything else is a genuine failure and must surface.
+        if (ResourceNotReadyError.is(error)) {
+          throw new RetryableError(error.message, {
             ...(opts.readPollOptions ?? DEFAULT_READ_POLL_OPTIONS),
           });
         }
         throw error;
       }
-      // An unsettled read (a declared condition not yet met) re-polls
-      // durably instead of returning a half-provisioned remote.
-      const unsettled = (resource.retryReadOnCondition ?? [])
-        .filter(Boolean)
-        .find((condition) => {
-          const actual = value[condition!.key];
-          return condition!.value === undefined
-            ? !actual
-            : actual !== condition!.value;
-        });
-      if (unsettled) {
-        throw new RetryableError(unsettled.reason, {
-          ...(opts.readPollOptions ?? DEFAULT_READ_POLL_OPTIONS),
-        });
-      }
-      return value;
     });
+    if (result === null) {
+      yield* emitLifecycle(
+        step,
+        `${key}:absent`,
+        opts.emit,
+        "read",
+        "skip",
+        resource,
+        { reason: "resource-absent" },
+      );
+      return { kind: "absent" };
+    }
     yield* emitLifecycle(
       step,
       `${key}:success`,
@@ -399,20 +380,8 @@ export async function* readRemote(
       "success",
       resource,
     );
-    return { status: "found", output };
+    return { kind: "present", output: result };
   } catch (error) {
-    if (findErrorMatcher(error, resource.notFoundOnError)) {
-      yield* emitLifecycle(
-        step,
-        `${key}:not-found`,
-        opts.emit,
-        "read",
-        "skip",
-        resource,
-        { reason: "resource-not-found" },
-      );
-      return { status: "not-found" };
-    }
     yield* emitLifecycle(
       step,
       `${key}:error`,
@@ -429,23 +398,21 @@ export async function* readRemote(
 }
 
 /**
- * Runs a provider call in a durable step, converting errors the resource has
- * declared retryable into durable retries.
+ * Runs a resource mutation in a durable step and adapts resource retry
+ * signals to the workflow runtime.
  */
-export function runProviderCall<T>(
+export function runResourceMutation<T>(
   step: DurableStep,
   key: string,
   call: () => T | Promise<T>,
-  resource: BaseResource,
   retryOptions?: PollOptions,
 ) {
   return step.run(key, async () => {
     try {
       return await call();
     } catch (error) {
-      const matcher = findErrorMatcher(error, resource.retryLaterOnError);
-      if (matcher) {
-        throw new RetryableError(matcher.reason, {
+      if (ResourceNotReadyError.is(error)) {
+        throw new RetryableError(error.message, {
           ...(retryOptions ?? DEFAULT_RETRY_OPTIONS),
         });
       }

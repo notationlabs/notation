@@ -1,4 +1,4 @@
-import { resource } from "@notation/resource";
+import { ResourceNotReadyError, resource } from "@notation/resource";
 import { MemoryStateBackend } from "@notation/state";
 import { describe, expect, it } from "vitest";
 import { createPlan } from "../src/planner";
@@ -34,24 +34,15 @@ describe("createPlan", () => {
     ]);
   });
 
-  it("honours the message constraint in not-found matchers", async () => {
-    const TestResource = resource({ type: "test/planner/not-found" })
+  it("propagates unexpected read failures", async () => {
+    const TestResource = resource({ type: "test/planner/read-failure" })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
         read: async () => {
-          const error = new Error("access denied");
-          error.name = "ProviderError";
-          throw error;
+          throw new Error("access denied");
         },
         delete: async () => undefined,
-        notFoundOnError: [
-          {
-            name: "ProviderError",
-            message: "not found",
-            reason: "resource does not exist",
-          },
-        ],
       });
     const state = new MemoryStateBackend();
     await state.update("existing", 0, {
@@ -70,5 +61,68 @@ describe("createPlan", () => {
         state,
       }),
     ).rejects.toThrow("access denied");
+  });
+
+  it("plans recreation when the resource reports absence", async () => {
+    const TestResource = resource({ type: "test/planner/absent" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        read: async () => undefined,
+        delete: async () => undefined,
+      });
+    const state = new MemoryStateBackend();
+    await state.update("existing", 0, {
+      id: "existing",
+      type: TestResource.type,
+      config: {},
+      params: {},
+      output: {},
+      lastOperation: "create",
+      lastOperationAt: "2026-07-22T00:00:00.000Z",
+    });
+
+    const plan = await createPlan({
+      resources: [new TestResource({ id: "existing" })],
+      state,
+    });
+
+    expect(plan.nodes[0]).toMatchObject({
+      id: "existing",
+      decision: "drift-recreate",
+    });
+  });
+
+  it("reports an indeterminate decision while the resource is not ready", async () => {
+    const TestResource = resource({ type: "test/planner/pending" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        read: async () => {
+          throw new ResourceNotReadyError("Waiting for the provider");
+        },
+        delete: async () => undefined,
+      });
+    const state = new MemoryStateBackend();
+    await state.update("existing", 0, {
+      id: "existing",
+      type: TestResource.type,
+      config: {},
+      params: {},
+      output: {},
+      lastOperation: "create",
+      lastOperationAt: "2026-07-22T00:00:00.000Z",
+    });
+
+    const plan = await createPlan({
+      resources: [new TestResource({ id: "existing" })],
+      state,
+    });
+
+    expect(plan.nodes[0]).toMatchObject({
+      id: "existing",
+      decision: "indeterminate",
+      reason: "Waiting for the provider",
+    });
   });
 });

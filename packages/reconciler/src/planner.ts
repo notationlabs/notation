@@ -1,4 +1,4 @@
-import { findErrorMatcher, type BaseResource } from "@notation/resource";
+import { ResourceNotReadyError, type BaseResource } from "@notation/resource";
 import type { StateBackend } from "@notation/state";
 import { buildResourceDepthLevels } from "./dependency-graph";
 import {
@@ -33,24 +33,31 @@ export async function createPlan({
       let action = decideAction({ resource, stateNode, params });
 
       if (action.decision === "noop" && driftDetection && resource.read) {
+        let output: Record<string, unknown> | undefined;
         try {
-          const output = await resource.read(resource.key);
-          action = decideAction({
-            resource,
-            stateNode,
-            params,
-            driftRead: { status: "found", output },
-          });
+          output = (await resource.read(resource.key)) as
+            Record<string, unknown> | undefined;
         } catch (error) {
-          const notFound = findErrorMatcher(error, resource.notFoundOnError);
-          if (!notFound) throw error;
-          action = decideAction({
-            resource,
-            stateNode,
+          // Planning cannot diff against a resource that has not settled, so
+          // it reports the condition rather than guessing at a decision.
+          if (!ResourceNotReadyError.is(error)) throw error;
+          nodes.push({
+            id: resource.id,
+            type: resource.type,
+            decision: "indeterminate",
+            reason: error.message,
             params,
-            driftRead: { status: "not-found" },
+            dependsOn: getDependencyIds(resource),
           });
+          continue;
         }
+
+        action = decideAction({
+          resource,
+          stateNode,
+          params,
+          driftRead: output ? { kind: "present", output } : { kind: "absent" },
+        });
       }
 
       nodes.push({

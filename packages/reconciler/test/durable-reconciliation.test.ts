@@ -8,7 +8,11 @@ import {
   SqliteStoreClient,
   createSqliteDb,
 } from "@yieldstar/sqlite-runtime/node";
-import { resource, type BaseResource } from "@notation/resource";
+import {
+  resource,
+  ResourceNotReadyError,
+  type BaseResource,
+} from "@notation/resource";
 import pino from "pino";
 import { createWorkflowRouter, workflow } from "yieldstar";
 import { describe, expect, it, vi } from "vitest";
@@ -30,15 +34,10 @@ describe("durable execution and replay", () => {
         create: async () => {
           attempts += 1;
           if (attempts === 1) {
-            const error = new Error("provider is pending");
-            error.name = "ProviderPending";
-            throw error;
+            throw new ResourceNotReadyError("provider is not ready");
           }
         },
         delete: async () => undefined,
-        retryLaterOnError: [
-          { name: "ProviderPending", reason: "provider is pending" },
-        ],
       });
     const runtime = createRuntime(
       [new PendingResource({ id: "pending" })],
@@ -116,14 +115,9 @@ describe("durable execution and replay", () => {
         delete: async () => {
           attempts += 1;
           if (attempts === 1) {
-            const error = new Error("delete is pending");
-            error.name = "DeletePending";
-            throw error;
+            throw new ResourceNotReadyError("delete is not ready");
           }
         },
-        retryLaterOnError: [
-          { name: "DeletePending", reason: "delete is pending" },
-        ],
       });
     const runtime = createRuntime(
       [new PendingDelete({ id: "pending-delete" })],
@@ -153,16 +147,11 @@ describe("durable execution and replay", () => {
         read: async () => {
           reads += 1;
           if (reads === 1) {
-            const error = new Error("not visible yet");
-            error.name = "NotFound";
-            throw error;
+            return undefined;
           }
-          return {};
+          return {} as const;
         },
         delete: async () => undefined,
-        notFoundOnError: [
-          { name: "NotFound", reason: "resource is not visible yet" },
-        ],
       });
     const runtime = createRuntime(
       [new EventuallyReadable({ id: "eventually-readable" })],
