@@ -366,9 +366,10 @@ describe("deployment hold", () => {
     // The failure has to live in plain generator code. A step that fails
     // caches a StepError, and a cached StepError is rethrown on replay before
     // the step's function is reached, so no later work would ever run
-    // uncached. decideAction calls toComparable outside any step, after the
-    // resource's reads have been checkpointed.
-    let failBeforeSecond = true;
+    // uncached. For a resource with persisted state, decideAction calls
+    // toComparable outside any step, after the resource's reads have been
+    // checkpointed.
+    let failOnSecond = true;
     const holders: Array<string | null> = [];
     const Resource = resource({ type: "test/durable/hold-replay" })
       .defineSchema({})
@@ -385,22 +386,30 @@ describe("deployment hold", () => {
 
     const first = new Resource({ id: "first" });
     const second = new Resource({ id: "second" });
+    const third = new Resource({ id: "third" });
     const toComparable = second.toComparable.bind(second);
     second.toComparable = (output) => {
-      if (failBeforeSecond) throw new Error("simulated mid-deployment failure");
+      if (failOnSecond) throw new Error("simulated mid-deployment failure");
       return toComparable(output);
     };
-    const runtime = createRuntime([first, second], "hold-replay");
+    const runtime = createRuntime([first, second, third], "hold-replay");
+    // Persisted state for `second`, so deciding its action reaches the
+    // failure seam in toComparable.
+    await seedResourceState(
+      runtime.storeClient,
+      runtime.state.storeId("second"),
+      "second",
+    );
 
     await expect(runtime.run("replayed-execution")).rejects.toThrow(
       "simulated mid-deployment failure",
     );
     expect(holders).toEqual(["replayed-execution"]);
 
-    failBeforeSecond = false;
+    failOnSecond = false;
     await runtime.run("replayed-execution");
 
-    // The second resource's create is the first uncached work after the
+    // The third resource's create is the first uncached work after the
     // failure, so it observes whichever hold the resumed execution is running
     // under. Releasing on the way out of a failure would leave it null here.
     expect(holders).toEqual(["replayed-execution", "replayed-execution"]);
@@ -595,6 +604,40 @@ describe("drift detection and repair", () => {
     runtime.close();
   });
 
+  it("trusts a noop for a resource with no read instead of reading during drift detection", async () => {
+    const ReadlessResource = resource({ type: "test/durable/readless" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(
+      [new ReadlessResource({ id: "readless" })],
+      "readless-drift",
+      { driftDetection: true, emit: (event) => void events.push(event) },
+    );
+
+    await runtime.run("deploy-1");
+    events.length = 0;
+    await runtime.run("deploy-2");
+
+    // With nothing to read, the drift read would only replay persisted output
+    // through read skip/success lifecycle events a plan never emits.
+    expect(
+      events.filter(
+        (event) =>
+          event.event === "reconciler.operation.lifecycle" &&
+          event.operation === "read",
+      ),
+    ).toEqual([]);
+    expect(
+      events.find((event) => event.event === "reconciler.deploy.decision"),
+    ).toMatchObject({ resourceId: "readless", decision: "noop" });
+    runtime.close();
+  });
+
   it("reads the remote during a dry run rather than reporting false drift", async () => {
     const remote = { name: "expected" };
     const read = vi.fn(async () => remote);
@@ -779,11 +822,11 @@ function seedResourceState(
   return storeClient.getOrCreateStore({
     definition: durable.resourceStateStore,
     id: storeId,
-    initial: statePatch(resourceId),
+    initial: resourceStateRecord(resourceId),
   });
 }
 
-function statePatch(id: string) {
+function resourceStateRecord(id: string) {
   return {
     id,
     type: "test/durable/state",

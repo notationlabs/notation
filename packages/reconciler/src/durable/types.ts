@@ -17,5 +17,3 @@ export type DurableWorkflowOptions = {
 export type DurableDeployOptions = DurableWorkflowOptions & {
   driftDetection?: boolean;
 };
-
-export type DurableDestroyOptions = DurableWorkflowOptions;

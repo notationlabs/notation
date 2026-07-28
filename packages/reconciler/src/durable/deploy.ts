@@ -1,6 +1,7 @@
 import { buildResourceDepthLevels } from "../dependency-graph";
 import { withDeploymentHold } from "./deployment-hold";
 import { reconcileResource, sweepOrphans } from "./reconcile";
+import { scopeStep } from "./step";
 import type { DurableDeployOptions } from "./types";
 import type { DurableStep } from "./yieldstar";
 
@@ -13,7 +14,14 @@ export async function* deploy(
     // dependencies have converged.
     for (const level of buildResourceDepthLevels(opts.resources)) {
       for (const resource of level) {
-        yield* reconcileResource(step, resource, opts);
+        yield* reconcileResource(
+          scopeStep(
+            step,
+            `notation:resource:${encodeURIComponent(resource.id)}`,
+          ),
+          resource,
+          opts,
+        );
       }
     }
 

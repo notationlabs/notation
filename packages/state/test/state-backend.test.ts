@@ -39,7 +39,6 @@ function runStateBackendContractTests(
 
       try {
         await expect(fixture.backend.get("missing")).resolves.toBeUndefined();
-        await expect(fixture.backend.has("missing")).resolves.toBe(false);
         await expect(fixture.backend.values()).resolves.toEqual([]);
       } finally {
         await fixture.cleanup();
@@ -124,7 +123,6 @@ function runStateBackendContractTests(
         await expect(
           fixture.backend.get(initialNode.id),
         ).resolves.toBeUndefined();
-        await expect(fixture.backend.has(initialNode.id)).resolves.toBe(false);
         await expect(fixture.backend.values()).resolves.toEqual([]);
       } finally {
         await fixture.cleanup();

@@ -1,10 +1,11 @@
 import type { BaseResource } from "@notation/resource";
-import type { State } from "@notation/state";
+import type { StateBackend } from "@notation/state";
 import { buildResourceDepthLevels } from "./dependency-graph";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { readDriftOperation } from "./operations";
 import {
   decideAction,
+  decideDriftAction,
   getDependencyIds,
   resolvePlanParams,
   type Plan,
@@ -13,7 +14,7 @@ import {
 import { createStepRunner, runOperation } from "./step-runner";
 
 /** Planning only reads state. */
-export type PlannerState = Pick<State, "get" | "values">;
+export type PlannerState = Pick<StateBackend, "get" | "values">;
 
 export type CreatePlanOptions = {
   resources: BaseResource[];
@@ -54,12 +55,7 @@ export async function createPlan({
           }),
         );
 
-        action = decideAction({
-          resource,
-          stateNode,
-          params,
-          driftRead,
-        });
+        action = decideDriftAction({ resource, params, driftRead });
       }
 
       nodes.push({

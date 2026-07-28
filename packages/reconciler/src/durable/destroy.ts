@@ -2,13 +2,13 @@ import { buildResourceDepthLevels } from "../dependency-graph";
 import { withDeploymentHold } from "./deployment-hold";
 import { deleteResource, sweepOrphans } from "./reconcile";
 import { scopeStep } from "./step";
-import type { DurableDestroyOptions } from "./types";
+import type { DurableWorkflowOptions } from "./types";
 import type { DurableStep } from "./yieldstar";
 
 /** Durably destroys persisted resources in reverse dependency order. */
 export async function* destroy(
   step: DurableStep,
-  opts: DurableDestroyOptions,
+  opts: DurableWorkflowOptions,
 ): AsyncGenerator<any, void, any> {
   yield* withDeploymentHold(step, opts, async function* () {
     // Delete in reverse dependency order, so dependents are gone before the

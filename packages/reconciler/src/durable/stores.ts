@@ -4,6 +4,8 @@ import { defineStore, type StoreSnapshot } from "./yieldstar";
 
 // Store names are persisted identifiers, like the step keys mapped in
 // index.ts: renaming one orphans every record stored under the old name.
+// Notation-owned store names carry the "notation/" prefix, because an
+// application may share a store client with these workflows.
 
 /**
  * `looseObject` because PersistedResourceState carries an index signature: a
@@ -11,7 +13,7 @@ import { defineStore, type StoreSnapshot } from "./yieldstar";
  * strip them at the store boundary.
  */
 export const resourceStateStore = defineStore(
-  "resource-state",
+  "notation/resource-state",
   v.looseObject({
     id: v.string(),
     type: v.string(),
@@ -27,7 +29,7 @@ export const resourceStateStore = defineStore(
 );
 
 export const deploymentHoldStore = defineStore(
-  "deployment-hold",
+  "notation/deployment-hold",
   v.object({ holder: v.nullable(v.string()) }),
 );
 

@@ -13,13 +13,13 @@ Provider create, update, read, and delete calls are durable steps with stable re
 
 ## State lifecycle
 
-`DurableStateBackend` stores one live resource per `resource-state` store. The store ID is scoped by deployment and resource ID. Store absence is resource absence.
+`DurableStateBackend` stores one live resource per `notation/resource-state` store. The store ID is scoped by deployment and resource ID. Store absence is resource absence.
 
 The runtime-assigned UUIDv7 `instanceId` distinguishes a deleted store from a later store created under the same logical ID. Yieldstar's version is the concurrency token and is exposed as Notation's one-based `rev`. Workflow updates use `store.updateFrom` and deletes use `store.deleteFrom`, so both the instance and version must match the snapshot that informed the operation.
 
 ## Deployment hold
 
-Each deployment has a `deployment-hold` store shared by deploy and destroy. The workflow atomically claims it with `store.take`. A concurrent execution suspends as a durable waiter and is woken when the holder releases the store. The same execution can recover an acquisition across the store-commit and heap-write crash gap through Yieldstar's applied-step ledger.
+Each deployment has a `notation/deployment-hold` store shared by deploy and destroy. The workflow atomically claims it with `store.take`. A concurrent execution suspends as a durable waiter and is woken when the holder releases the store. The same execution can recover an acquisition across the store-commit and heap-write crash gap through Yieldstar's applied-step ledger.
 
 ## Node CLI runtime
 

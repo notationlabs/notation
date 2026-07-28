@@ -19,6 +19,13 @@
  * The state: keys are store-handle keys and so are not scope-prefixed: a
  * store outlives the scope that opened it, which is why they carry the
  * resource id themselves.
+ *
+ * Store names are persisted identifiers too, and carry the "notation/"
+ * prefix so they cannot collide with an application's stores on a shared
+ * store client:
+ *
+ *   notation/resource-state    one record per live resource
+ *   notation/deployment-hold   one hold per deployment
  */
 export { deploy } from "./deploy";
 export { destroy } from "./destroy";
@@ -35,7 +42,6 @@ export {
 } from "./stores";
 export {
   type DurableDeployOptions,
-  type DurableDestroyOptions,
   type DurableWorkflowOptions,
 } from "./types";
 export type { DurableStep } from "./yieldstar";

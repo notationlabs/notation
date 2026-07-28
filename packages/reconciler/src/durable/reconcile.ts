@@ -17,7 +17,7 @@ import {
   type PersistState,
   type RemoveState,
 } from "../operations";
-import { decideAction } from "../plan";
+import { decideAction, decideDriftAction } from "../plan";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
@@ -38,36 +38,37 @@ type ResourceStateSession =
 
 /**
  * Reconciles one resource: hydrate, decide, read the remote when the decision
- * needs it, announce the decision, then act.
+ * needs it, announce the decision, then act. `step` must already be scoped to
+ * the resource.
  */
 export async function* reconcileResource(
-  step: DurableStep,
+  step: DurableStepRunner,
   resource: BaseResource,
   opts: DurableDeployOptions,
 ): AsyncGenerator<any, void, any> {
-  const scope = scopeStep(
-    step,
-    `notation:resource:${encodeURIComponent(resource.id)}`,
-  );
-
   // Resolved once and then carried: deriveParams is user code and need not be
   // deterministic, so an operation resolving them again could persist params
   // other than the ones the decision was taken against. The step also pins
   // the answer across a replay.
-  const params = yield* scope.run("params", () => resource.getParams());
+  const params = yield* step.run("params", () => resource.getParams());
 
-  const emit = durableEmitter(scope, opts.emit);
-  const session = yield* openStateSession(scope, opts, resource);
+  const emit = durableEmitter(step, opts.emit);
+  const session = yield* openStateSession(step, opts, resource);
   if (session.node) resource.setOutput(session.node.output);
 
   let action = decideAction({ resource, stateNode: session.node, params });
 
   // A noop is only trusted once the remote has been read back: the provider
-  // may have drifted from persisted state, which upgrades the decision.
-  if (action.decision === "noop" && (opts.driftDetection ?? true)) {
+  // may have drifted from persisted state, which upgrades the decision. A
+  // resource with no read has no remote to compare, so its noop stands.
+  if (
+    action.decision === "noop" &&
+    (opts.driftDetection ?? true) &&
+    resource.read
+  ) {
     // Its own scope: the operation that follows reads the remote again, and
     // the two reads must not share step keys.
-    const driftStep = scope.scope("drift-read");
+    const driftStep = step.scope("drift-read");
     const driftRead = yield* readDriftOperation(driftStep, {
       resource,
       resourceParams: params,
@@ -77,12 +78,7 @@ export async function* reconcileResource(
       emit: durableEmitter(driftStep, opts.emit),
       maxOperationAttempts: opts.maxOperationAttempts,
     });
-    action = decideAction({
-      resource,
-      stateNode: session.node,
-      params,
-      driftRead,
-    });
+    action = decideDriftAction({ resource, params, driftRead });
   }
 
   if (action.decision === "drift-update") {
@@ -115,14 +111,14 @@ export async function* reconcileResource(
   switch (action.decision) {
     case "create":
     case "drift-recreate":
-      yield* createResourceOperation(scope, {
+      yield* createResourceOperation(step, {
         ...shared,
         persist: session.persist,
       });
       return;
     case "update":
     case "drift-update":
-      yield* updateResourceOperation(scope, {
+      yield* updateResourceOperation(step, {
         ...shared,
         patch: action.patch,
         persist: session.persist,
@@ -136,7 +132,8 @@ export async function* reconcileResource(
 /**
  * Deletes one resource. A resource with no persisted record was never created
  * — or has already been deleted — and is skipped, which is also what makes
- * the sweep of a partly-deleted deployment idempotent.
+ * the sweep of a partly-deleted deployment idempotent. `step` must already be
+ * scoped to the resource.
  */
 export async function* deleteResource(
   step: DurableStepRunner,

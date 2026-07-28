@@ -14,7 +14,6 @@ export type StateNode = {
 
 export interface StateBackend {
   get(id: string): Promise<StateNode | undefined>;
-  has(id: string): Promise<boolean>;
   /**
    * The stored revision must match expectedRev. A missing record counts as
    * revision 0, so expectedRev: 0 asserts that the record does not exist yet.
@@ -28,8 +27,6 @@ export interface StateBackend {
   values(): Promise<StateNode[]>;
 }
 
-export type State = StateBackend;
-
 export class MemoryStateBackend implements StateBackend {
   #state: Record<string, StateNode>;
 
@@ -40,11 +37,6 @@ export class MemoryStateBackend implements StateBackend {
   async get(id: string): Promise<StateNode | undefined> {
     const state = await this.readState();
     return state[id];
-  }
-
-  async has(id: string): Promise<boolean> {
-    const state = await this.readState();
-    return id in state;
   }
 
   async update(

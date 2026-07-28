@@ -27,7 +27,7 @@ import { createWorkflowRouter, defineStore, workflow } from "yieldstar";
 const DEFAULT_DATABASE_PATH = ".notation/workflows.db";
 
 function resolveDatabasePath(): string {
-  return process.env.NOTATION_STATE_PATH ?? DEFAULT_DATABASE_PATH;
+  return process.env.NOTATION_DATABASE_PATH ?? DEFAULT_DATABASE_PATH;
 }
 
 export function resolveDeploymentId(entryPoint: string): string {
@@ -201,6 +201,11 @@ export async function withRuntime<T>(
   },
   fn: (runtime: NodeDurableRuntime) => Promise<T>,
 ): Promise<T> {
+  if (opts.runtime && opts.databasePath) {
+    throw new Error(
+      "Pass either runtime or databasePath, not both: a runtime already owns its database",
+    );
+  }
   const runtime =
     opts.runtime ??
     new NodeDurableRuntime({
