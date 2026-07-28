@@ -1,4 +1,9 @@
-import { createPlan, type Plan } from "@notation/reconciler";
+import {
+  createLoggerReconcilerSubscriber,
+  createPlan,
+  type Plan,
+  type ReconcilerEventEmitter,
+} from "@notation/reconciler";
 import { getResourceGraph } from "src/orchestrator/graph";
 import { withRuntime, type NodeDurableRuntime } from "../durable-runtime";
 
@@ -10,6 +15,7 @@ export type PlanAppOptions = {
   maxOperationAttempts?: number;
   runtime?: NodeDurableRuntime;
   databasePath?: string;
+  emit?: ReconcilerEventEmitter;
 };
 
 export async function planApp({
@@ -18,6 +24,7 @@ export async function planApp({
   maxOperationAttempts,
   runtime: suppliedRuntime,
   databasePath,
+  emit = createLoggerReconcilerSubscriber(),
 }: PlanAppOptions): Promise<Plan> {
   const graph = await getResourceGraph(entryPoint);
   return withRuntime(
@@ -27,6 +34,7 @@ export async function planApp({
         resources: graph.resources,
         state: runtime.state,
         driftDetection,
+        emit,
         maxOperationAttempts,
       }),
   );

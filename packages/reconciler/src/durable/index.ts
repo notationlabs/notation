@@ -22,10 +22,13 @@
  *
  * Store names are persisted identifiers too, and carry the "notation/"
  * prefix so they cannot collide with an application's stores on a shared
- * store client:
+ * store client. This driver owns:
  *
  *   notation/resource-state    one record per live resource
  *   notation/deployment-hold   one hold per deployment
+ *
+ * @notation/core's durable runtime persists one more name under the same
+ * prefix, notation/execution-binding (see its durable-runtime module).
  */
 export { deploy } from "./deploy";
 export { destroy } from "./destroy";

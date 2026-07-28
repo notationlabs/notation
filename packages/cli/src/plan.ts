@@ -1,4 +1,9 @@
-import { planApp, type Plan, type PlanNode } from "@notation/core";
+import {
+  createLoggerReconcilerSubscriber,
+  planApp,
+  type Plan,
+  type PlanNode,
+} from "@notation/core";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
 import { redirectStdoutToStderr } from "./stdio";
@@ -19,6 +24,7 @@ const decisionSymbols: Record<PlanNode["decision"], string> = {
 
 export async function plan(entryPoint: string, opts: PlanCommandOptions = {}) {
   const logger = opts.logger ?? defaultLogger;
+  const emit = createLoggerReconcilerSubscriber({ logger });
   if (opts.json) {
     let result: Plan;
     const { restore } = redirectStdoutToStderr();
@@ -26,6 +32,7 @@ export async function plan(entryPoint: string, opts: PlanCommandOptions = {}) {
       await compile(entryPoint, { logger });
       result = await planApp({
         entryPoint,
+        emit,
       });
     } finally {
       restore();
@@ -38,6 +45,7 @@ export async function plan(entryPoint: string, opts: PlanCommandOptions = {}) {
   logger.info(`Planning ${entryPoint}\n`);
   const result = await planApp({
     entryPoint,
+    emit,
   });
   printPlanSummary(result, logger);
 }

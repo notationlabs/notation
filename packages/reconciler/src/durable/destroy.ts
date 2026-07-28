@@ -27,7 +27,6 @@ export async function* destroy(
       }
     }
 
-    // Then delete resources that are in state but no longer declared.
     yield* sweepOrphans(step, opts, "destroy");
   });
 }

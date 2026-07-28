@@ -163,15 +163,6 @@ importers:
       '@notation/utils':
         specifier: workspace:*
         version: link:../../packages/utils
-      '@yieldstar/core':
-        specifier: 0.5.0
-        version: 0.5.0
-      '@yieldstar/sqlite-runtime':
-        specifier: 0.5.0
-        version: 0.5.0
-      pino:
-        specifier: ^9.9.0
-        version: 9.14.0
       yieldstar:
         specifier: 0.5.0
         version: 0.5.0
