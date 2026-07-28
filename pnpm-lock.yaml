@@ -260,6 +260,9 @@ importers:
       pino:
         specifier: ^9.14.0
         version: 9.14.0
+      valibot:
+        specifier: ^1.4.2
+        version: 1.4.2(typescript@6.0.3)
       yieldstar:
         specifier: 0.5.0
         version: 0.5.0

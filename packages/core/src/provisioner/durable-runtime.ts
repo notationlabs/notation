@@ -24,6 +24,7 @@ import {
 } from "@notation/reconciler/durable";
 import { FileStateBackend, type StateNode } from "@notation/state";
 import pino, { type Logger } from "pino";
+import * as v from "valibot";
 import { defineStore } from "yieldstar";
 
 export const DEFAULT_WORKFLOW_STATE_PATH = ".notation/workflows.db";
@@ -50,30 +51,12 @@ export type RunWorkflowOptions = {
   params?: Record<string, unknown>;
 };
 
-type ExecutionBinding = {
-  deploymentId: string;
-  workflowId: string;
-};
+const executionBindingStore = defineStore(
+  "notation/execution-binding",
+  v.object({ deploymentId: v.string(), workflowId: v.string() }),
+);
 
-const executionBindingStore = defineStore("notation/execution-binding", {
-  "~standard": {
-    version: 1 as const,
-    vendor: "notation",
-    validate(value: unknown) {
-      if (
-        typeof value === "object" &&
-        value !== null &&
-        "deploymentId" in value &&
-        typeof value.deploymentId === "string" &&
-        "workflowId" in value &&
-        typeof value.workflowId === "string"
-      ) {
-        return { value: value as ExecutionBinding };
-      }
-      return { issues: [{ message: "Execution binding is invalid" }] };
-    },
-  },
-});
+type ExecutionBinding = v.InferOutput<typeof executionBindingStore.schema>;
 
 /** Resident Yieldstar 0.5.0 Node runtime used by Notation application commands. */
 export class NodeDurableRuntime {
@@ -201,7 +184,7 @@ export class NodeDurableRuntime {
       id: executionId,
       initial: expected,
     });
-    const existing = binding.state as ExecutionBinding;
+    const existing: ExecutionBinding = binding.state;
     if (!isDeepStrictEqual(existing, expected)) {
       throw new Error(
         `Yieldstar execution ${executionId} is bound to deployment ${existing.deploymentId} workflow ${existing.workflowId}, not deployment ${this.deploymentId} workflow ${workflowId}`,
