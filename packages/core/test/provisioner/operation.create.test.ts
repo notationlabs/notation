@@ -3,6 +3,7 @@ import {
   createResourceOperation,
   createStepRunner,
   runOperation,
+  toEmitStep,
 } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
 import {
@@ -38,6 +39,7 @@ describe("resource creation", () => {
         persist: async function* (next) {
           await stateBackend.update(testResource.id, 0, next);
         },
+        emit: toEmitStep(),
       }),
     );
 

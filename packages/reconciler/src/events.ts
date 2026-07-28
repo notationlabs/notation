@@ -71,9 +71,13 @@ export type EmitStep<TEvent = ReconcilerEvent> = (
   event: TEvent,
 ) => AsyncGenerator<unknown, void, unknown>;
 
-/** Adapts a plain emitter to the driver seam, for drivers that just await. */
+/**
+ * Adapts a plain emitter to the driver seam, for drivers that just await.
+ * Absorbs an absent emitter: the returned step then delivers nothing, so
+ * downstream code always has an emit step and never guards.
+ */
 export function toEmitStep<TEvent>(
-  emit: ((event: TEvent) => void | Promise<void>) | undefined,
+  emit?: (event: TEvent) => void | Promise<void>,
 ): EmitStep<TEvent> {
   return async function* (event) {
     await emit?.(event);

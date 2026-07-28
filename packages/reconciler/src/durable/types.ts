@@ -4,7 +4,6 @@ import type { ResourceRegistry } from "../resource-registry";
 import type { DurableStateBackend } from "./state-backend";
 
 export type DurableWorkflowOptions = {
-  deploymentId: string;
   executionId: string;
   resources: BaseResource[];
   state: DurableStateBackend;

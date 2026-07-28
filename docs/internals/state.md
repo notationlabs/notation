@@ -12,6 +12,4 @@ The runtime assigns a UUIDv7 `instanceId` when a store is created and increments
 
 `DurableStateBackend` is read-only: state writes happen inside the workflow, through the store handle, so each write is stamped with the step that made it and is not repeated on replay.
 
-The deployment hold is not part of resource state. The workflow serializes deploy and destroy through one `notation/deployment-hold` store per deployment.
-
-`MemoryStateBackend` in `@notation/state` remains a read/write data adapter for tests.
+The workflow serializes deploy and destroy through one `notation/deployment-hold` store per deployment.

@@ -1,4 +1,4 @@
-import * as reconciler from "@notation/reconciler/durable";
+import * as durable from "@notation/reconciler/durable";
 import {
   createLoggerReconcilerSubscriber,
   type ReconcilerEventEmitter,
@@ -30,8 +30,7 @@ export async function destroyApp({
   await runDurableWorkflow(
     { entryPoint, workflowId: "destroy", runtime, databasePath, executionId },
     (step, executionId, runtime) =>
-      reconciler.destroy(step, {
-        deploymentId: runtime.deploymentId,
+      durable.destroy(step, {
         executionId,
         resources: graph.resources,
         state: runtime.state,

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import * as reconciler from "@notation/reconciler/durable";
+import * as durable from "@notation/reconciler/durable";
 import {
   ResourceOperationPendingError,
   resource,
@@ -41,8 +41,7 @@ describe("NodeDurableRuntime", () => {
       });
     const resources = [new PendingResource({ id: "pending" })];
     const deploy = workflow(async function* (step, event) {
-      yield* reconciler.deploy(step, {
-        deploymentId: runtime.deploymentId,
+      yield* durable.deploy(step, {
         executionId: event.executionId,
         resources,
         state: runtime.state,

@@ -64,7 +64,9 @@ export type RemoveState = () => AsyncGenerator<unknown, void, unknown>;
 export type ResourceOperationBaseParams = {
   resource: BaseResource;
   dryRun?: boolean;
-  emit?: OperationEventEmitter;
+  /** Always present: an absent emitter is absorbed where the step is made
+   * (`toEmitStep`, `durableEmitter`), not guarded here. */
+  emit: OperationEventEmitter;
   maxOperationAttempts?: number;
 };
 
@@ -115,8 +117,6 @@ export async function* emitLifecycleEvent(
   status: OperationLifecycleStatus,
   extra: Partial<OperationLifecycleEvent> = {},
 ): AsyncGenerator<unknown, void, unknown> {
-  if (!params.emit) return;
-
   yield* params.emit({
     level: status === "error" ? "error" : "info",
     event: "reconciler.operation.lifecycle",

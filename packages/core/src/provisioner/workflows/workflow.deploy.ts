@@ -1,4 +1,4 @@
-import * as reconciler from "@notation/reconciler/durable";
+import * as durable from "@notation/reconciler/durable";
 import {
   createLoggerReconcilerSubscriber,
   type ReconcilerEventEmitter,
@@ -34,8 +34,7 @@ export async function deployApp({
   await runDurableWorkflow(
     { entryPoint, workflowId: "deploy", runtime, databasePath, executionId },
     (step, executionId, runtime) =>
-      reconciler.deploy(step, {
-        deploymentId: runtime.deploymentId,
+      durable.deploy(step, {
         executionId,
         resources: graph.resources,
         state: runtime.state,

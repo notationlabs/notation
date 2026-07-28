@@ -3,12 +3,14 @@
  * workflow execution.
  */
 import type { ReconcilerEventEmitter } from "../events";
+import type { DurableStateBackend } from "./state-backend";
 import { durableEmitter, scopeStep } from "./step";
 import { deploymentHoldStore, type DeploymentHoldState } from "./stores";
 import type { DurableStep, StoreClient, WorkflowStore } from "./yieldstar";
 
 type DeploymentHoldOptions = {
-  deploymentId: string;
+  /** Deployment identity comes from the state backend. */
+  state: Pick<DurableStateBackend, "deploymentId">;
   executionId: string;
   emit?: ReconcilerEventEmitter;
 };
@@ -22,7 +24,7 @@ async function* acquireDeploymentHold(
   opts: DeploymentHoldOptions,
 ): AsyncGenerator<any, WorkflowStore<DeploymentHoldState>, any> {
   const hold = yield* step.store(deploymentHoldStore, {
-    id: opts.deploymentId,
+    id: opts.state.deploymentId,
     initial: { holder: null },
   });
 
@@ -35,7 +37,7 @@ async function* acquireDeploymentHold(
     )({
       level: "warn",
       event: "reconciler.hold.waiting",
-      deploymentId: opts.deploymentId,
+      deploymentId: opts.state.deploymentId,
       executionId: opts.executionId,
       holderExecutionId: holder,
     });
@@ -98,7 +100,6 @@ export async function takeOverDeploymentHold(params: {
   storeClient: StoreClient;
   deploymentId: string;
   fromExecutionId: string;
-  toExecutionId?: string | null;
 }): Promise<DeploymentHoldTakeover> {
   const { storeClient, deploymentId, fromExecutionId } = params;
   const read = () =>
@@ -117,7 +118,7 @@ export async function takeOverDeploymentHold(params: {
     id: deploymentId,
     snapshot,
     updater: (draft) => {
-      draft.holder = params.toExecutionId ?? null;
+      draft.holder = null;
     },
   });
 

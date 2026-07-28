@@ -143,6 +143,7 @@ describe("operation workflows", () => {
       readResourceOperation(step, {
         resource: testResource,
         resourceParams: await testResource.getParams(),
+        emit: toEmitStep(),
       }),
     );
 
@@ -180,6 +181,7 @@ describe("operation workflows", () => {
         readResourceOperation(step, {
           resource: new TestResource({ id: "pending-limit" }),
           resourceParams: {},
+          emit: toEmitStep(),
           maxOperationAttempts: 2,
         }),
       ),
@@ -207,6 +209,7 @@ describe("operation workflows", () => {
           resource: new TestResource({ id: "eventually-visible" }),
           resourceParams: {},
           persist,
+          emit: toEmitStep(),
         }),
       ),
     ).rejects.toThrowError("resource is absent");
@@ -263,6 +266,7 @@ describe("operation workflows", () => {
         deleteResourceOperation(step, {
           resource: testResource,
           remove,
+          emit: toEmitStep(),
         }),
       ),
     ).rejects.toMatchObject({

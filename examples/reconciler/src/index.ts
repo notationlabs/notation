@@ -1,6 +1,6 @@
 import { NodeDurableRuntime } from "@notation/core";
 import { createResourceRegistry } from "@notation/reconciler";
-import * as reconciler from "@notation/reconciler/durable";
+import * as durable from "@notation/reconciler/durable";
 import { createWorkflowRouter, workflow } from "yieldstar";
 import { StaticSite } from "./static-site";
 
@@ -27,8 +27,7 @@ const resources = [
 ];
 
 const deploy = workflow(async function* (step, event) {
-  yield* reconciler.deploy(step, {
-    deploymentId: runtime.deploymentId,
+  yield* durable.deploy(step, {
     executionId: event.executionId,
     resources,
     state: runtime.state,

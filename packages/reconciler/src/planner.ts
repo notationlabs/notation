@@ -34,7 +34,7 @@ export async function createPlan({
   const resourceById = new Map(
     resources.map((resource) => [resource.id, resource]),
   );
-  const emitStep = emit ? toEmitStep(emit) : undefined;
+  const emitStep = toEmitStep(emit);
   const nodes: PlanNode[] = [];
 
   for (const level of buildResourceDepthLevels(resources)) {

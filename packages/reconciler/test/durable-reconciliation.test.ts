@@ -710,7 +710,6 @@ function createRuntime(
   const state = new durable.DurableStateBackend(storeClient, deploymentId);
   const deploy = workflow(async function* (step, event) {
     yield* durable.deploy(step, {
-      deploymentId,
       executionId: event.executionId,
       resources,
       state,
@@ -724,7 +723,6 @@ function createRuntime(
   });
   const destroy = workflow(async function* (step, event) {
     yield* durable.destroy(step, {
-      deploymentId,
       executionId: event.executionId,
       resources,
       state,

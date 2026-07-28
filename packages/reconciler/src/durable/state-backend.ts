@@ -13,10 +13,14 @@ import type { StoreClient } from "./yieldstar";
  * carry that step key, so a write made here would repeat on replay.
  */
 export class DurableStateBackend {
+  /** The deployment this backend belongs to; workflows and the deployment
+   * hold key off this rather than carrying the ID separately. */
+  readonly deploymentId: string;
   readonly #client: StoreClient;
   readonly #prefix: string;
 
   constructor(client: StoreClient, deploymentId: string) {
+    this.deploymentId = deploymentId;
     this.#client = client;
     // Keep deployment prefixes disjoint so orphan cleanup cannot delete
     // another deployment's stores.

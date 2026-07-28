@@ -7,8 +7,9 @@ import type { StepRunner } from "../operations";
 import type { DurableStep } from "./yieldstar";
 
 /**
- * A durable step runner: the operation seam plus the store handle, which only
- * the durable driver uses.
+ * The operation seam (`StepRunner`) plus the store handle, which only the
+ * durable driver uses. `DurableStep` is yieldstar's raw step primitive;
+ * `scopeStep` wraps one of those into one of these.
  */
 export interface DurableStepRunner extends StepRunner {
   /** Narrower than StepRunner's, so a scope keeps its store handle. */
