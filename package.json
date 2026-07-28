@@ -26,6 +26,7 @@
     "execa": "^9.5.2",
     "glob": "^13.0.6",
     "husky": "^9.1.7",
+    "pok-plugins": "github:djgrant/pok-plugins",
     "pokit": "^0.3.2",
     "prettier": "^3.9.4",
     "tsconfig": "workspace:*",
