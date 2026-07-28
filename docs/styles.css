@@ -1,0 +1,5 @@
+@import "@notation/docs/styles.css";
+
+@theme {
+  --color-accent: #fe5537;
+}

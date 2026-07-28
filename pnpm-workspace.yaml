@@ -1,8 +1,16 @@
 packages:
   - "examples/*"
   - "packages/*"
+  - docs
 allowBuilds:
   esbuild: true
+  lightningcss: true
+  workerd: true
+  # Pulled in by Wrangler's image bindings, which the docs site does not use.
+  sharp: false
+  # The docs framework ships no dist/; its prepare script builds it after clone.
+  # Matching by repo URL rather than resolved commit needs pnpm 11.11+.
+  "@notation/docs@git+ssh://git@github.com/djgrant/docs.git": true
 minimumReleaseAgeExclude:
   - "@yieldstar/core@0.5.0"
   - "@yieldstar/sqlite-runtime@0.5.0"
