@@ -277,7 +277,13 @@ function removeResourceState(
       snapshot,
     );
     if (!result.deleted) {
-      throw new VersionConflict(resource.id, snapshot.version, undefined);
+      // "conflict" carries the version the record moved to; "not-found" means
+      // the record is genuinely gone, which the message reports as "missing".
+      throw new VersionConflict(
+        resource.id,
+        snapshot.version,
+        result.reason === "conflict" ? result.actualVersion : undefined,
+      );
     }
   };
 }

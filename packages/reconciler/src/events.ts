@@ -21,7 +21,7 @@ export type DeployDecisionEvent = {
   level: "info";
   event: "reconciler.deploy.decision";
   resourceId: string;
-  resourceType: string;
+  resourceType: ResourceType;
   decision: "create" | "update" | "drift-update" | "drift-recreate" | "noop";
 };
 
@@ -29,7 +29,7 @@ export type DriftDetectedEvent = {
   level: "info";
   event: "reconciler.drift.detected";
   resourceId: string;
-  resourceType: string;
+  resourceType: ResourceType;
   diff: Record<string, unknown>;
 };
 

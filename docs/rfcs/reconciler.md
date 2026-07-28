@@ -9,7 +9,7 @@ Notation describes reconciliation intent and resource lifecycle operations. An o
 
 Live resource objects remain in the workflow process. They are not serialized into workflow parameters. This keeps provider clients and operation closures under Notation's lifecycle control while Yieldstar persists step results and shared state.
 
-Provider create, update, read, and delete calls are durable steps with stable resource-scoped keys. Once a result reaches the heap checkpoint, replay uses the cached result and continues at state persistence. Provider mutations must be idempotent because a crash after provider acknowledgement but before that checkpoint repeats the call. Retryable provider conditions become Yieldstar delays, allowing the process to wait without polling the provider continuously.
+Provider create, update, read, and delete calls are durable steps with stable resource-scoped keys. Once a result reaches the heap checkpoint, replay uses the cached result and continues at state persistence. The resulting crash-window contract is stated in [the reconciler internals](../internals/reconciler.md#waiting-and-replay). Retryable provider conditions become Yieldstar delays, allowing the process to wait without polling the provider continuously.
 
 ## State lifecycle
 

@@ -24,4 +24,4 @@ notation destroy infra/api.ts --execution-id <id>
 
 Retryable deletes suspend on durable SQLite timers. Resource state is removed only after the provider delete succeeds or reports that the resource is already absent.
 
-The provider acknowledgement and heap checkpoint are not atomic. A crash between them repeats the delete, so provider delete operations must be idempotent and event consumers must tolerate duplicate delivery.
+The crash-window contract described under [notation deploy](./deploy.md#durable-execution) applies to deletes as well.

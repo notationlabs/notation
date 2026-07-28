@@ -315,6 +315,9 @@ describe("conditional state persistence", () => {
     await runtime.run("deploy-1");
     await expect(runtime.destroy("destroy-1")).rejects.toMatchObject({
       name: "VersionConflict",
+      // A conflict names the version the record moved to; only a genuinely
+      // absent record may be reported as "missing".
+      message: expect.stringMatching(/expected 0, got 1$/),
     });
     // State survives a removal that could not be proven safe.
     expect(await runtime.state.get("delete-raced")).toBeDefined();

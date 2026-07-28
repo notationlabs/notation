@@ -32,7 +32,7 @@ export const destroy = workflow(async function* (step, event) {
 });
 ```
 
-The outer workflow supplies durable step execution, timers, shared stores, waiting, and scheduling. Checkpointed provider results are replayed from the heap after a crash, retryable provider conditions suspend on a durable timer, and conditional state writes use Yieldstar store identity and version. Provider mutations must be idempotent because a crash after provider acknowledgement but before the heap checkpoint repeats the call; event consumers must tolerate the same duplicate-delivery window.
+The outer workflow supplies durable step execution, timers, shared stores, waiting, and scheduling. Checkpointed provider results are replayed from the heap after a crash, retryable provider conditions suspend on a durable timer, and conditional state writes use Yieldstar store identity and version. Provider operations and event consumers are bound by the crash-window contract stated in [the reconciler internals](../internals/reconciler.md#waiting-and-replay).
 
 Each live resource is one Yieldstar store. Yieldstar's UUIDv7 store `instanceId` and version are authoritative for conditional update and delete; Notation exposes the version unchanged as the resource state's `version`.
 
