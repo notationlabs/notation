@@ -26,7 +26,7 @@ export async function destroy(
   await compile(entryPoint, { logger });
   logger.info(`Destroying ${entryPoint}\n`);
   const executionId = opts.executionId ?? randomUUID();
-  logger.info(`Yieldstar execution ${executionId}`);
+  logger.info(`Execution ID ${executionId}`);
 
   await destroyApp({ entryPoint, emit, executionId });
 }

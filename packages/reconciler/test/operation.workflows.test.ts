@@ -12,6 +12,7 @@ import {
   type StepRunner,
 } from "../src/operations";
 import { toEmitStep } from "../src/events";
+import { runOperation } from "../src/step-runner";
 
 function createStepRunnerDouble() {
   const run = vi.fn(async function* <T>(
@@ -36,14 +37,6 @@ function createStepRunnerDouble() {
   };
 
   return runner;
-}
-
-async function runOperation<T>(operation: AsyncGenerator<unknown, T, unknown>) {
-  let next = await operation.next();
-  while (!next.done) {
-    next = await operation.next();
-  }
-  return next.value;
 }
 
 describe("operation workflows", () => {

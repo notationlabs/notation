@@ -1,13 +1,10 @@
 /**
  * The deployment hold: an exclusive claim on a deployment for the length of a
- * workflow execution. It lives in the `deployment-coordination` store — that
- * store name, the `notation:coordination:*` step keys, and the
- * `reconciler.coordination.waiting` event are persisted or published strings
- * and keep the older "coordination" wording; the identifiers here do not.
+ * workflow execution.
  */
 import type { ReconcilerEventEmitter } from "../events";
 import { durableEmitter, scopeStep } from "./step";
-import { deploymentCoordinationStore, type CoordinationState } from "./stores";
+import { deploymentHoldStore, type DeploymentHoldState } from "./stores";
 import type { DurableStep, StoreClient, WorkflowStore } from "./yieldstar";
 
 type DeploymentHoldOptions = {
@@ -23,21 +20,21 @@ type DeploymentHoldOptions = {
 async function* acquireDeploymentHold(
   step: DurableStep,
   opts: DeploymentHoldOptions,
-): AsyncGenerator<any, WorkflowStore<CoordinationState>, any> {
-  const hold = yield* step.store(deploymentCoordinationStore, {
+): AsyncGenerator<any, WorkflowStore<DeploymentHoldState>, any> {
+  const hold = yield* step.store(deploymentHoldStore, {
     id: opts.deploymentId,
     initial: { holder: null },
   });
 
-  const snapshot = yield* hold.get("notation:coordination:inspect");
+  const snapshot = yield* hold.get("notation:hold:inspect");
   const holder = snapshot.state.holder;
   if (holder !== null && holder !== opts.executionId) {
     yield* durableEmitter(
-      scopeStep(step, "notation:coordination"),
+      scopeStep(step, "notation:hold"),
       opts.emit,
     )({
       level: "warn",
-      event: "reconciler.coordination.waiting",
+      event: "reconciler.hold.waiting",
       deploymentId: opts.deploymentId,
       executionId: opts.executionId,
       holderExecutionId: holder,
@@ -45,7 +42,7 @@ async function* acquireDeploymentHold(
   }
 
   yield* hold.take(
-    "notation:coordination:acquire",
+    "notation:hold:acquire",
     (state) => state.holder === null || state.holder === opts.executionId,
     (draft) => {
       draft.holder = opts.executionId;
@@ -56,24 +53,20 @@ async function* acquireDeploymentHold(
 }
 
 function releaseDeploymentHold(
-  hold: WorkflowStore<CoordinationState>,
+  hold: WorkflowStore<DeploymentHoldState>,
   executionId: string,
 ) {
-  return hold.update("notation:coordination:release", (draft) => {
+  return hold.update("notation:hold:release", (draft) => {
     if (draft.holder === executionId) draft.holder = null;
   });
 }
 
 /**
  * Runs `body` while holding the deployment, releasing the hold only once
- * `body` has completed. A failed or suspended execution keeps the hold, which
- * is what makes it safe to resume: the resumed execution replays `take` from
- * the step cache and so never re-acquires anything, so a hold released on the
- * way out would leave the resumption mutating a deployment it does not hold.
- *
- * The cost is that an execution which will never be resumed holds its
- * deployment indefinitely. That is deliberate — nothing here can tell "will
- * retry" from "abandoned" — and it is resolved by an operator calling
+ * `body` has completed. A failed or suspended execution keeps its hold: a
+ * resumed execution replays `take` from the step cache without re-acquiring
+ * anything, so it must still be the holder. An execution that will never be
+ * resumed holds its deployment until an operator calls
  * `takeOverDeploymentHold`.
  */
 export async function* withDeploymentHold(
@@ -91,19 +84,15 @@ export type DeploymentHoldTakeover =
   | { taken: false; holder: string | null };
 
 /**
- * Clears a deployment hold left by an execution that will not be resumed, so
- * that later deployments are not blocked behind it. Named separately from the
- * workflow path because it is the only supported way out of that state: the
- * hold is otherwise released solely by an execution completing.
+ * Clears the hold of an execution that will not be resumed, so later
+ * deployments are not blocked behind it.
  *
  * The write is conditional on `fromExecutionId` still being the named holder,
- * so it cannot clear a hold that has since been released and re-taken by
- * another execution. Confirm the holder is genuinely dead first: it may still
- * be mid-flight, and taking its hold away permits a concurrent mutation of
- * the same deployment.
+ * so it cannot clear a hold that has since moved to another execution.
+ * Confirm the holder is genuinely dead first: taking a live execution's hold
+ * away permits a concurrent mutation of the same deployment.
  *
- * Throws if the deployment has no coordination store, i.e. if it has never
- * been deployed.
+ * Throws if the deployment has no hold store, i.e. has never been deployed.
  */
 export async function takeOverDeploymentHold(params: {
   storeClient: StoreClient;
@@ -114,7 +103,7 @@ export async function takeOverDeploymentHold(params: {
   const { storeClient, deploymentId, fromExecutionId } = params;
   const read = () =>
     storeClient.getStore({
-      definition: deploymentCoordinationStore,
+      definition: deploymentHoldStore,
       id: deploymentId,
     });
 
@@ -124,7 +113,7 @@ export async function takeOverDeploymentHold(params: {
   }
 
   const result = await storeClient.updateStoreFrom({
-    definition: deploymentCoordinationStore,
+    definition: deploymentHoldStore,
     id: deploymentId,
     snapshot,
     updater: (draft) => {

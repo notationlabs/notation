@@ -1,9 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  FileStateBackend,
   MemoryStateBackend,
   type StateBackend,
   type StateNode,
@@ -160,50 +156,10 @@ function runStateBackendContractTests(
   });
 }
 
-runStateBackendContractTests("FileStateBackend", async () => {
-  const tempDirectory = await mkdtemp(path.join(tmpdir(), "notation-state-"));
-  return {
-    backend: new FileStateBackend(path.join(tempDirectory, "state.json")),
-    cleanup: () => rm(tempDirectory, { recursive: true, force: true }),
-  };
-});
-
 runStateBackendContractTests("MemoryStateBackend", async () => ({
   backend: new MemoryStateBackend(),
   cleanup: async () => undefined,
 }));
-
-describe("FileStateBackend", () => {
-  it("serialises concurrent CAS writers so only one wins", async () => {
-    const tempDirectory = await mkdtemp(path.join(tmpdir(), "notation-state-"));
-    const statePath = path.join(tempDirectory, "state.json");
-    const first = new FileStateBackend(statePath);
-    const second = new FileStateBackend(statePath);
-    const initialNode = createStateNode("resource-a");
-
-    try {
-      await first.update(initialNode.id, 0, initialNode);
-
-      const results = await Promise.allSettled([
-        first.update(initialNode.id, 1, { output: { writer: "first" } }),
-        second.update(initialNode.id, 1, { output: { writer: "second" } }),
-      ]);
-
-      const fulfilled = results.filter((r) => r.status === "fulfilled");
-      const rejected = results.filter((r) => r.status === "rejected");
-      expect(fulfilled).toHaveLength(1);
-      expect(rejected).toHaveLength(1);
-      expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
-        name: "RevConflict",
-      });
-      await expect(first.get(initialNode.id)).resolves.toMatchObject({
-        rev: 2,
-      });
-    } finally {
-      await rm(tempDirectory, { recursive: true, force: true });
-    }
-  });
-});
 
 describe("MemoryStateBackend", () => {
   it("returns values in deterministic id order", async () => {

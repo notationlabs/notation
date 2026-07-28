@@ -28,7 +28,7 @@ const resources = [
 
 const deploy = workflow(async function* (step, event) {
   yield* reconciler.deploy(step, {
-    deploymentId: "static-sites",
+    deploymentId: runtime.deploymentId,
     executionId: event.executionId,
     resources,
     state: runtime.state,

@@ -4,7 +4,7 @@
 notation destroy <entryPoint>
 ```
 
-Compiles the application and runs durable destroy through the resident Yieldstar Node runtime. Resources are removed in reverse dependency order, then registered persisted orphans are removed.
+Compiles the application and runs a durable destroy. Resources are removed in reverse dependency order, then registered persisted orphans are removed.
 
 ```sh
 notation destroy infra/api.ts

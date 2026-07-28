@@ -426,20 +426,6 @@ importers:
   packages/resource: {}
 
   packages/state:
-    dependencies:
-      '@notation/utils':
-        specifier: workspace:*
-        version: link:../utils
-    devDependencies:
-      '@types/node':
-        specifier: ^22.13.4
-        version: 22.13.4
-
-  packages/state-sqlite:
-    dependencies:
-      '@notation/state':
-        specifier: workspace:*
-        version: link:../state
     devDependencies:
       '@types/node':
         specifier: ^22.13.4

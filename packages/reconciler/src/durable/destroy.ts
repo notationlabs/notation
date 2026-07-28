@@ -17,7 +17,10 @@ export async function* destroy(
     for (let index = levels.length - 1; index >= 0; index -= 1) {
       for (const resource of levels[index]!) {
         yield* deleteResource(
-          scopeStep(step, `notation:destroy:${resource.id}`),
+          scopeStep(
+            step,
+            `notation:destroy:${encodeURIComponent(resource.id)}`,
+          ),
           resource,
           opts,
         );
@@ -25,10 +28,6 @@ export async function* destroy(
     }
 
     // Then delete resources that are in state but no longer declared.
-    yield* sweepOrphans(
-      scopeStep(step, "notation:destroy:orphans"),
-      opts,
-      "destroy",
-    );
+    yield* sweepOrphans(step, opts, "destroy");
   });
 }

@@ -3,7 +3,6 @@ import type { ReconcilerEventEmitter } from "../events";
 import type { ResourceRegistry } from "../resource-registry";
 import type { DurableStateBackend } from "./state-backend";
 
-/** What both durable workflows need; "operation" would mean resource CRUD here. */
 export type DurableWorkflowOptions = {
   deploymentId: string;
   executionId: string;

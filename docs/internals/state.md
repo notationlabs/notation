@@ -10,16 +10,8 @@ const state = new DurableStateBackend(storeClient, "infra/api.ts");
 
 The runtime assigns a UUIDv7 `instanceId` when a store is created and increments its version on update. Conditional workflow updates and deletes compare both values, preventing a stale snapshot from modifying a deleted and recreated resource. The one-based value exposed as `StateNode.rev` is derived from the authoritative Yieldstar store version.
 
-```ts
-interface StateBackend {
-  get(id: string): Promise<StateNode | undefined>;
-  has(id: string): Promise<boolean>;
-  update(id: string, expectedRev: number, patch: Partial<StateNode>): Promise<{ rev: number }>;
-  delete(id: string, expectedRev: number): Promise<void>;
-  values(): Promise<StateNode[]>;
-}
-```
+`DurableStateBackend` is read-only: state writes happen inside the workflow, through the store handle, so each write is stamped with the step that made it and is not repeated on replay.
 
-Coordination is not part of the state backend contract. The outer Yieldstar workflow serializes deploy and destroy through a deployment coordination store and records applied store steps for crash-safe replay.
+The deployment hold is not part of resource state. The workflow serializes deploy and destroy through one `deployment-hold` store per deployment.
 
-`MemoryStateBackend`, `FileStateBackend`, and `SqliteStateBackend` remain data adapters for tests and embedded read/write consumers. They are not CLI execution runtimes and do not provide mutation coordination.
+`MemoryStateBackend` in `@notation/state` remains a read/write data adapter for tests.

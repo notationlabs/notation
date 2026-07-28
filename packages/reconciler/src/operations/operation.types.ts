@@ -16,16 +16,9 @@ export type {
 export type OperationEventEmitter = EmitStep<OperationLifecycleEvent>;
 
 /**
- * How an operation runs a step, and how it namespaces the steps it runs.
- *
- * Keys are mandatory. A driver may ignore them — the in-process one does —
- * but a keyless step would have to derive a key from its call site, which for
- * a step reached through `scope` is the scoping wrapper's call site rather
- * than the caller's, so any two keyless steps under one scope would collide.
- *
- * `scope` is the seam that lets one operation run at several call sites in a
- * single execution: in process it is the identity, and in a workflow it
- * prefixes the keys the runtime caches against.
+ * How an operation runs a step. Keys identify a step's cached result across a
+ * replay; `scope` namespaces them so one operation can run at several call
+ * sites in a single execution. The in-process driver ignores both.
  */
 export type StepRunner = {
   run<T>(
@@ -38,8 +31,8 @@ export type StepRunner = {
 
 /**
  * The record an operation wants persisted; the driver owns the revision.
- * Spelled out rather than derived with Omit, which would collapse against
- * StateNode's index signature and widen every field to unknown.
+ * Not derived with Omit, which would collapse against StateNode's index
+ * signature and widen every field to unknown.
  */
 export type PersistedResourceState = Pick<
   StateNode,

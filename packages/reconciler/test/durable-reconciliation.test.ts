@@ -322,7 +322,7 @@ describe("conditional state persistence", () => {
   });
 });
 
-describe("deployment coordination", () => {
+describe("deployment hold", () => {
   it("serializes concurrent deployments through durable store waiting", async () => {
     let unblockCreate!: () => void;
     const blocked = new Promise<void>((resolve) => {
@@ -375,7 +375,7 @@ describe("deployment coordination", () => {
       .defineOperations({
         create: async () => {
           const snapshot = await runtime.storeClient.getStore({
-            definition: durable.deploymentCoordinationStore,
+            definition: durable.deploymentHoldStore,
             id: "hold-replay",
           });
           holders.push(snapshot.state.holder);
@@ -407,7 +407,7 @@ describe("deployment coordination", () => {
     runtime.close();
   });
 
-  it("emits a coordination waiting event when another execution holds the deployment", async () => {
+  it("emits a hold waiting event when another execution holds the deployment", async () => {
     let unblockCreate!: () => void;
     const blocked = new Promise<void>((resolve) => {
       unblockCreate = resolve;
@@ -416,7 +416,7 @@ describe("deployment coordination", () => {
     const createStarted = new Promise<void>((resolve) => {
       started = resolve;
     });
-    const TestResource = resource({ type: "test/durable/coordination" })
+    const TestResource = resource({ type: "test/durable/hold" })
       .defineSchema({})
       .defineOperations({
         create: async () => {
@@ -428,7 +428,7 @@ describe("deployment coordination", () => {
     const events: ReconcilerEvent[] = [];
     const runtime = createRuntime(
       [new TestResource({ id: "held" })],
-      "coordination-waiting",
+      "hold-waiting",
       { emit: (event) => void events.push(event) },
     );
 
@@ -437,10 +437,10 @@ describe("deployment coordination", () => {
     await runtime.run("waiter-execution");
 
     expect(
-      events.find((event) => event.event === "reconciler.coordination.waiting"),
+      events.find((event) => event.event === "reconciler.hold.waiting"),
     ).toMatchObject({
       level: "warn",
-      deploymentId: "coordination-waiting",
+      deploymentId: "hold-waiting",
       executionId: "waiter-execution",
       holderExecutionId: "holder-execution",
     });
@@ -459,7 +459,7 @@ describe("deployment hold takeover", () => {
       .defineOperations({ create, delete: async () => undefined });
     const runtime = createRuntime([new Resource({ id: "held" })], "takeover");
     await runtime.storeClient.getOrCreateStore({
-      definition: durable.deploymentCoordinationStore,
+      definition: durable.deploymentHoldStore,
       id: "takeover",
       initial: { holder: "abandoned-execution" },
     });
@@ -482,7 +482,7 @@ describe("deployment hold takeover", () => {
   it("refuses to clear a hold that has moved to another execution", async () => {
     const runtime = createRuntime([], "takeover-race");
     await runtime.storeClient.getOrCreateStore({
-      definition: durable.deploymentCoordinationStore,
+      definition: durable.deploymentHoldStore,
       id: "takeover-race",
       initial: { holder: "current-execution" },
     });
@@ -495,7 +495,7 @@ describe("deployment hold takeover", () => {
 
     expect(result).toEqual({ taken: false, holder: "current-execution" });
     const snapshot = await runtime.storeClient.getStore({
-      definition: durable.deploymentCoordinationStore,
+      definition: durable.deploymentHoldStore,
       id: "takeover-race",
     });
     expect(snapshot.state.holder).toBe("current-execution");

@@ -4,7 +4,7 @@
 notation deploy <entryPoint>
 ```
 
-Compiles and durably deploys the stack through the resident Yieldstar Node runtime.
+Compiles the stack and runs a durable deploy.
 
 ```sh
 notation deploy infra/api.ts
@@ -20,7 +20,7 @@ notation deploy infra/api.ts --json > deploy.ndjson
 
 ## Durable execution
 
-The command prints its Yieldstar execution ID before starting provider work. If the process crashes, resume the same durable heap with that ID:
+The command prints its execution ID before starting provider work. If the process crashes, resume the same execution with that ID:
 
 ```sh
 notation deploy infra/api.ts --execution-id <id>
@@ -44,6 +44,4 @@ Retryable provider conditions and consistency reads suspend on durable SQLite ti
 
 6. **Delete orphans** – persisted resources absent from the graph are deleted when their resource type is registered.
 
-State, step results, timers, task coordination, and resource stores are persisted to `.notation/workflows.db`. Set `NOTATION_STATE_PATH` to choose another SQLite database path.
-
-On first use, Notation imports resource state from the legacy `.notation/state.json` file and archives it as `.notation/state.json.migrated`. If the durable database already contains conflicting resource state, Notation stops with recovery instructions instead of attempting to create resources from an empty namespace.
+State, step results, timers, queued tasks, and resource stores are persisted to `.notation/workflows.db`. Set `NOTATION_STATE_PATH` to choose another SQLite database path.

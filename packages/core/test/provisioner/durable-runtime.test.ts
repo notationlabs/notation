@@ -1,4 +1,4 @@
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import * as reconciler from "@notation/reconciler/durable";
@@ -155,50 +155,6 @@ describe("NodeDurableRuntime", () => {
     reopened.close();
     await rm(directory, { recursive: true, force: true });
   }, 5_000);
-
-  it("imports and archives legacy JSON state before running", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "notation-migrate-"));
-    const databasePath = path.join(directory, "workflows.db");
-    const legacyStatePath = path.join(directory, "state.json");
-    await writeFile(
-      legacyStatePath,
-      JSON.stringify({
-        existing: {
-          rev: 7,
-          id: "existing",
-          type: "test/legacy",
-          config: {},
-          params: {},
-          output: { remoteId: "provider-123" },
-          lastOperation: "create",
-          lastOperationAt: "2026-07-22T00:00:00.000Z",
-        },
-      }),
-    );
-    const runtime = new NodeDurableRuntime({
-      deploymentId: "legacy-deployment",
-      databasePath,
-      legacyStatePath,
-    });
-    const completed = workflow(async function* () {});
-
-    try {
-      await runtime.run(createWorkflowRouter({ deploy: completed }), {
-        workflowId: "deploy",
-        executionId: "migration-execution",
-      });
-      await expect(runtime.state.get("existing")).resolves.toMatchObject({
-        output: { remoteId: "provider-123" },
-      });
-      await expect(access(legacyStatePath)).rejects.toThrow();
-      await expect(
-        access(`${legacyStatePath}.migrated`),
-      ).resolves.toBeUndefined();
-    } finally {
-      runtime.close();
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
 
   it("canonicalises equivalent entry-point spellings", () => {
     const absolute = path.resolve("infra/api.ts");

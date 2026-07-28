@@ -12,7 +12,7 @@ import {
 } from "./plan";
 import { createStepRunner, runOperation } from "./step-runner";
 
-/** Planning reads state and never mutates it, so no lease is required. */
+/** Planning only reads state. */
 export type PlannerState = Pick<State, "get" | "values">;
 
 export type CreatePlanOptions = {

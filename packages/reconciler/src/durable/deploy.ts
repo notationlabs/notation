@@ -1,7 +1,6 @@
 import { buildResourceDepthLevels } from "../dependency-graph";
 import { withDeploymentHold } from "./deployment-hold";
 import { reconcileResource, sweepOrphans } from "./reconcile";
-import { scopeStep } from "./step";
 import type { DurableDeployOptions } from "./types";
 import type { DurableStep } from "./yieldstar";
 
@@ -19,6 +18,6 @@ export async function* deploy(
     }
 
     // Then delete resources that are in state but no longer declared.
-    yield* sweepOrphans(scopeStep(step, "notation:orphans"), opts, "deploy");
+    yield* sweepOrphans(step, opts, "deploy");
   });
 }

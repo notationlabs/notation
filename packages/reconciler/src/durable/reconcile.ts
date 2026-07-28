@@ -6,7 +6,6 @@
 import type { BaseResource, ResourceType } from "@notation/resource";
 import { RevConflict, type StateNode } from "@notation/state";
 import {
-  createMissingResourceRegistryMatchWarningEvent,
   createResourceRegistryFromResources,
   resolveResourceClass,
 } from "../resource-registry";
@@ -30,12 +29,8 @@ import type { DurableStep } from "./yieldstar";
 
 /**
  * A read of a resource's persisted record, together with the writes that are
- * conditional on that exact read.
- *
- * The union is the point: `remove` exists only alongside a `node`, because
- * removing a record that was never read cannot be done safely. Keeping the
- * writes bound to the read that produced them is what stops a node being
- * combined with a precondition from a different read.
+ * conditional on that exact read. `remove` exists only alongside a `node`:
+ * a record that was never read cannot be removed safely.
  */
 type ResourceStateSession =
   | { node: undefined; persist: PersistState; remove?: never }
@@ -50,7 +45,10 @@ export async function* reconcileResource(
   resource: BaseResource,
   opts: DurableDeployOptions,
 ): AsyncGenerator<any, void, any> {
-  const scope = scopeStep(step, `notation:resource:${resource.id}`);
+  const scope = scopeStep(
+    step,
+    `notation:resource:${encodeURIComponent(resource.id)}`,
+  );
 
   // Resolved once and then carried: deriveParams is user code and need not be
   // deterministic, so an operation resolving them again could persist params
@@ -74,8 +72,8 @@ export async function* reconcileResource(
       resource,
       resourceParams: params,
       persistedOutput: session.node?.output,
-      // Deliberately no dryRun: a dry run suppresses mutations, not reads.
-      // Reading is how a dry run reports drift at all.
+      // No dryRun: a dry run suppresses mutations, not reads, and reading is
+      // how a dry run reports drift at all.
       emit: durableEmitter(driftStep, opts.emit),
       maxOperationAttempts: opts.maxOperationAttempts,
     });
@@ -164,31 +162,33 @@ export async function* deleteResource(
  * warning, because deleting it would need a resource class we cannot resolve.
  */
 export async function* sweepOrphans(
-  step: DurableStepRunner,
+  step: DurableStep,
   opts: DurableWorkflowOptions,
   workflow: "deploy" | "destroy",
 ): AsyncGenerator<any, void, any> {
+  const scope = scopeStep(step, "notation:orphans");
   const resourceById = new Map(
     opts.resources.map((resource) => [resource.id, resource]),
   );
-  const persisted = yield* step.run("list", () => opts.state.values());
+  const persisted = yield* scope.run("list", () => opts.state.values());
   const registry =
     opts.registry ?? createResourceRegistryFromResources(opts.resources);
 
   for (const node of persisted) {
     if (resourceById.has(node.id)) continue;
-    const nodeScope = step.scope(node.id);
+    const nodeScope = scope.scope(encodeURIComponent(node.id));
 
     const Resource = resolveResourceClass(registry, node.type as ResourceType);
     if (!Resource) {
       const emit = durableEmitter(nodeScope, opts.emit);
-      yield* emit(
-        createMissingResourceRegistryMatchWarningEvent({
-          workflow,
-          resourceId: node.id,
-          resourceType: node.type as ResourceType,
-        }),
-      );
+      yield* emit({
+        level: "warn",
+        event: "reconciler.orphan-deletion.skipped",
+        reason: "resource-type-not-registered",
+        workflow,
+        resourceId: node.id,
+        resourceType: node.type as ResourceType,
+      });
       continue;
     }
 
@@ -203,8 +203,7 @@ export async function* sweepOrphans(
  *
  * The snapshot is the precondition: it names the exact store instance and
  * version the record was read at, so a write made against it cannot land on a
- * record another writer has moved on. It is re-served to the operations so
- * they need no second read.
+ * record another writer has moved on.
  */
 async function* openStateSession(
   step: DurableStepRunner,

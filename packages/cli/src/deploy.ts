@@ -26,7 +26,7 @@ export async function deploy(
   await compile(entryPoint, { logger });
   logger.info(`Deploying ${entryPoint}`);
   const executionId = opts.executionId ?? randomUUID();
-  logger.info(`Yieldstar execution ${executionId}`);
+  logger.info(`Execution ID ${executionId}`);
 
   await deployApp({ entryPoint, emit, executionId });
 }

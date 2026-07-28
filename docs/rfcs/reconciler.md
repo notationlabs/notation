@@ -3,7 +3,7 @@
 **Status:** implemented
 **Scope:** `@notation/reconciler`, `@notation/core`, Yieldstar 0.5.0
 
-Notation describes reconciliation intent and resource lifecycle operations. An outer Yieldstar workflow supplies durable execution, waiting, state, and coordination by composing `deploy` or `destroy`.
+Notation describes reconciliation intent and resource lifecycle operations. An outer Yieldstar workflow supplies durable execution, waiting, and state by composing `deploy` or `destroy`.
 
 ## Boundary
 
@@ -17,9 +17,9 @@ Provider create, update, read, and delete calls are durable steps with stable re
 
 The runtime-assigned UUIDv7 `instanceId` distinguishes a deleted store from a later store created under the same logical ID. Yieldstar's version is the concurrency token and is exposed as Notation's one-based `rev`. Workflow updates use `store.updateFrom` and deletes use `store.deleteFrom`, so both the instance and version must match the snapshot that informed the operation.
 
-## Coordination
+## Deployment hold
 
-Each deployment has a `deployment-coordination` store shared by deploy and destroy. The workflow atomically claims it with `store.take`. A concurrent execution suspends as a durable waiter and is woken when the holder releases the store. The same execution can recover an acquisition across the store-commit and heap-write crash gap through Yieldstar's applied-step ledger.
+Each deployment has a `deployment-hold` store shared by deploy and destroy. The workflow atomically claims it with `store.take`. A concurrent execution suspends as a durable waiter and is woken when the holder releases the store. The same execution can recover an acquisition across the store-commit and heap-write crash gap through Yieldstar's applied-step ledger.
 
 ## Node CLI runtime
 

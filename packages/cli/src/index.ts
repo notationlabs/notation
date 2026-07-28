@@ -27,7 +27,6 @@ program
     const runtime = new NodeDurableRuntime({
       deploymentId: resolveDeploymentId(entryPoint),
     });
-    await runtime.initialize();
     await startDashboardServer({ state: runtime.state });
   });
 

@@ -8,12 +8,9 @@ import type { StoreClient } from "./yieldstar";
 
 /**
  * Reads deployment state from outside a workflow, for the planner and for
- * anything reporting on a deployment.
- *
- * Deliberately read-only. Writes belong to the workflow, which makes them
- * through the store handle so they are stamped with the step that made them.
- * There is nowhere on this interface to carry that idempotency key, so a
- * write made here would be repeated on replay rather than recognised.
+ * anything reporting on a deployment. Read-only: state writes must be stamped
+ * with the workflow step that made them, and this interface has nowhere to
+ * carry that step key, so a write made here would repeat on replay.
  */
 export class DurableStateBackend {
   readonly #client: StoreClient;
@@ -51,9 +48,8 @@ export class DurableStateBackend {
       .map(toStateNode);
   }
 
-  // getStore throws for a store that does not exist rather than returning
-  // undefined, and the error is not distinguishable from a real failure, so
-  // absence is confirmed by listing. Kept here so no caller has to know that.
+  // getStore throws for a missing store, and the error is indistinguishable
+  // from a real failure, so absence is confirmed by listing.
   async #read(storeId: string): Promise<ResourceSnapshot | undefined> {
     try {
       return await this.#client.getStore({

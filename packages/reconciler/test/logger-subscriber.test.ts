@@ -29,7 +29,7 @@ describe("logger reconciler subscriber", () => {
     });
     await emit({
       level: "warn",
-      event: "reconciler.coordination.waiting",
+      event: "reconciler.hold.waiting",
       deploymentId: "deployment-1",
       executionId: "execution-2",
       holderExecutionId: "execution-1",
@@ -49,7 +49,7 @@ describe("logger reconciler subscriber", () => {
     expect(warn).toHaveBeenCalledTimes(2);
     expect(warn).toHaveBeenNthCalledWith(
       2,
-      "reconciler.coordination.waiting",
+      "reconciler.hold.waiting",
       expect.objectContaining({ level: "warn" }),
     );
     expect(error).toHaveBeenCalledOnce();

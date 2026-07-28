@@ -1,5 +1,4 @@
 import type { ResourceType } from "@notation/resource";
-import type { MissingResourceRegistryMatchWarningEvent } from "./resource-registry";
 
 export type OperationName = "create" | "read" | "update" | "delete";
 
@@ -18,7 +17,7 @@ export type OperationLifecycleEvent = {
   errorMessage?: string;
 };
 
-export type ReconcilerDeployEvent = {
+export type DeployDecisionEvent = {
   level: "info";
   event: "reconciler.deploy.decision";
   resourceId: string;
@@ -26,7 +25,7 @@ export type ReconcilerDeployEvent = {
   decision: "create" | "update" | "drift-update" | "drift-recreate" | "noop";
 };
 
-export type ReconcilerDriftDetectedEvent = {
+export type DriftDetectedEvent = {
   level: "info";
   event: "reconciler.drift.detected";
   resourceId: string;
@@ -34,20 +33,29 @@ export type ReconcilerDriftDetectedEvent = {
   diff: Record<string, unknown>;
 };
 
-export type CoordinationWaitingEvent = {
+export type HoldWaitingEvent = {
   level: "warn";
-  event: "reconciler.coordination.waiting";
+  event: "reconciler.hold.waiting";
   deploymentId: string;
   executionId: string;
   holderExecutionId: string;
 };
 
+export type OrphanDeletionSkippedEvent = {
+  level: "warn";
+  event: "reconciler.orphan-deletion.skipped";
+  reason: "resource-type-not-registered";
+  workflow: "deploy" | "destroy";
+  resourceId: string;
+  resourceType: ResourceType;
+};
+
 export type ReconcilerEvent =
   | OperationLifecycleEvent
-  | CoordinationWaitingEvent
-  | ReconcilerDeployEvent
-  | ReconcilerDriftDetectedEvent
-  | MissingResourceRegistryMatchWarningEvent;
+  | DeployDecisionEvent
+  | DriftDetectedEvent
+  | HoldWaitingEvent
+  | OrphanDeletionSkippedEvent;
 
 export type ReconcilerEventEmitter = (
   event: ReconcilerEvent,

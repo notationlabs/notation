@@ -22,14 +22,12 @@ export async function planApp({
   const graph = await getResourceGraph(entryPoint);
   return withRuntime(
     { entryPoint, runtime: suppliedRuntime, databasePath },
-    async (runtime) => {
-      await runtime.initialize();
-      return createPlan({
+    (runtime) =>
+      createPlan({
         resources: graph.resources,
         state: runtime.state,
         driftDetection,
         maxOperationAttempts,
-      });
-    },
+      }),
   );
 }
