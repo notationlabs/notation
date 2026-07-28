@@ -8,7 +8,7 @@ Each live resource is a `notation/resource-state` store scoped by deployment and
 const state = new DurableStateBackend(storeClient, "infra/api.ts");
 ```
 
-The runtime assigns a UUIDv7 `instanceId` when a store is created and increments its version on update. Conditional workflow updates and deletes compare both values, preventing a stale snapshot from modifying a deleted and recreated resource. The one-based value exposed as `StateNode.rev` is derived from the authoritative Yieldstar store version.
+The runtime assigns a UUIDv7 `instanceId` when a store is created and increments its version on update. Conditional workflow updates and deletes compare both values, preventing a stale snapshot from modifying a deleted and recreated resource. The store version is exposed unchanged as `StateNode.version`.
 
 `DurableStateBackend` is read-only: state writes happen inside the workflow, through the store handle, so each write is stamped with the step that made it and is not repeated on replay.
 

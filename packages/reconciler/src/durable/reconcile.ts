@@ -4,7 +4,7 @@
  * writes conditional on that read.
  */
 import type { BaseResource, ResourceType } from "@notation/resource";
-import { RevConflict, type StateNode } from "@notation/state";
+import { VersionConflict, type StateNode } from "@notation/state";
 import {
   createResourceRegistryFromResources,
   resolveResourceClass,
@@ -253,10 +253,10 @@ function persistResourceState(
       () => next,
     );
     if (!result.updated) {
-      throw new RevConflict(
+      throw new VersionConflict(
         resource.id,
-        snapshot.version + 1,
-        result.actualVersion + 1,
+        snapshot.version,
+        result.actualVersion,
       );
     }
   };
@@ -277,7 +277,7 @@ function removeResourceState(
       snapshot,
     );
     if (!result.deleted) {
-      throw new RevConflict(resource.id, snapshot.version + 1, undefined);
+      throw new VersionConflict(resource.id, snapshot.version, undefined);
     }
   };
 }

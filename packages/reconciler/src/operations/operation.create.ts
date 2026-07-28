@@ -19,16 +19,14 @@ export async function* createResourceOperation(
   }
 
   try {
-    const resourceParams = params.resourceParams;
-
     const computedPrimaryKey = yield* runPendingOperation(
       step,
       "create:remote",
-      (context) => params.resource.create(resourceParams, context),
+      (context) => params.resource.create(params.resourceParams, context),
       params.maxOperationAttempts,
     );
 
-    params.resource.setOutput(resourceParams);
+    params.resource.setOutput(params.resourceParams);
     if (computedPrimaryKey) {
       params.resource.setOutput({
         ...computedPrimaryKey,
@@ -38,7 +36,7 @@ export async function* createResourceOperation(
 
     const readResult = yield* readResourceOperation(step, {
       resource: params.resource,
-      resourceParams,
+      resourceParams: params.resourceParams,
       persistedOutput: params.persistedOutput,
       emit: params.emit,
       maxOperationAttempts: params.maxOperationAttempts,
@@ -57,7 +55,7 @@ export async function* createResourceOperation(
       lastOperation: "create",
       lastOperationAt: new Date().toISOString(),
       config: params.resource.config,
-      params: params.resource.toState(resourceParams),
+      params: params.resource.toState(params.resourceParams),
       output: params.resource.toState(params.resource.output),
     });
 

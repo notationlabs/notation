@@ -6,7 +6,7 @@ function createStateNode(
   overrides: Partial<StateNode> = {},
 ): StateNode {
   return {
-    rev: 1,
+    version: 1,
     id,
     groupId: 1,
     groupType: "stack",

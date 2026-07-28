@@ -5,7 +5,7 @@ import { deploy } from "./deploy";
 import { destroy } from "./destroy";
 import { plan } from "./plan";
 import { defaultLogger } from "./logger";
-import { runWithCliErrorHandling } from "./run-with-error-handling";
+import { runWithErrorHandling } from "./run-with-error-handling";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
 import { startDashboardServer } from "@notation/dashboard";
@@ -81,7 +81,7 @@ program
     await watch(entryPoint);
   });
 
-process.exitCode = await runWithCliErrorHandling(
+process.exitCode = await runWithErrorHandling(
   () => program.parseAsync(process.argv),
   { logger: defaultLogger, command: process.argv[2] ?? program.name() },
 );

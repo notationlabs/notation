@@ -1,7 +1,7 @@
 import { ResourceNotFoundError } from "@notation/resource";
 import type { DriftRead } from "../plan";
 import {
-  type ReadResourceParams,
+  type ResolvedResourceParams,
   type StepRunner,
   emitLifecycleEvent,
   getErrorDetails,
@@ -10,7 +10,7 @@ import { runPendingOperation } from "./operation.pending";
 
 export async function* readResourceOperation(
   step: StepRunner,
-  params: ReadResourceParams,
+  params: ResolvedResourceParams,
 ): AsyncGenerator<unknown, Record<string, unknown>, unknown> {
   yield* emitLifecycleEvent(params, "read", "start");
 
@@ -20,12 +20,10 @@ export async function* readResourceOperation(
   }
 
   try {
-    const resourceParams = params.resourceParams;
-
     if (!params.resource.read) {
       const merged = params.persistedOutput
-        ? { ...params.persistedOutput, ...resourceParams }
-        : resourceParams;
+        ? { ...params.persistedOutput, ...params.resourceParams }
+        : params.resourceParams;
 
       yield* emitLifecycleEvent(params, "read", "skip", {
         reason: "read-not-implemented",
@@ -42,7 +40,7 @@ export async function* readResourceOperation(
     );
 
     const mergedOutput = {
-      ...resourceParams,
+      ...params.resourceParams,
       ...remote,
     };
 
@@ -61,7 +59,7 @@ export async function* readResourceOperation(
  */
 export async function* readDriftOperation(
   step: StepRunner,
-  params: ReadResourceParams,
+  params: ResolvedResourceParams,
 ): AsyncGenerator<unknown, DriftRead, unknown> {
   try {
     const output = yield* readResourceOperation(step, params);

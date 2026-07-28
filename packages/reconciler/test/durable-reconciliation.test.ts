@@ -71,7 +71,7 @@ describe("durable execution and replay", () => {
     expect(await runtime.state.get("pending")).toMatchObject({
       id: "pending",
       lastOperation: "create",
-      rev: 1,
+      version: 0,
     });
     runtime.close();
   });
@@ -95,7 +95,7 @@ describe("durable execution and replay", () => {
 
     await runtime.run("resume-execution");
     expect(create).toHaveBeenCalledOnce();
-    expect(await runtime.state.get("resume")).toMatchObject({ rev: 1 });
+    expect(await runtime.state.get("resume")).toMatchObject({ version: 0 });
     runtime.close();
   });
 
@@ -190,7 +190,7 @@ describe("durable execution and replay", () => {
     await runtime.run("post-write-read-execution");
     expect(reads).toBe(2);
     expect(await runtime.state.get("eventually-readable")).toMatchObject({
-      rev: 1,
+      version: 0,
     });
     runtime.close();
   });
@@ -282,11 +282,11 @@ describe("conditional state persistence", () => {
     resources[0] = new RaceResource({ id: "raced", config: { name: "after" } });
 
     await expect(runtime.run("deploy-2")).rejects.toMatchObject({
-      name: "RevConflict",
+      name: "VersionConflict",
     });
     // The losing write left the other writer's record intact.
     expect(await runtime.state.get("raced")).toMatchObject({
-      rev: 2,
+      version: 1,
       lastOperationAt: "1999-01-01T00:00:00.000Z",
     });
     runtime.close();
@@ -314,7 +314,7 @@ describe("conditional state persistence", () => {
 
     await runtime.run("deploy-1");
     await expect(runtime.destroy("destroy-1")).rejects.toMatchObject({
-      name: "RevConflict",
+      name: "VersionConflict",
     });
     // State survives a removal that could not be proven safe.
     expect(await runtime.state.get("delete-raced")).toBeDefined();

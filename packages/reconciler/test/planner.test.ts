@@ -17,7 +17,7 @@ describe("createPlan", () => {
       });
     const state = new MemoryStateBackend({
       orphan: {
-        rev: 1,
+        version: 1,
         id: "orphan",
         type: TestResource.type,
         config: {},
@@ -52,7 +52,7 @@ describe("createPlan", () => {
       });
     const state = new MemoryStateBackend({
       existing: {
-        rev: 1,
+        version: 1,
         id: "existing",
         type: TestResource.type,
         config: {},
@@ -83,7 +83,7 @@ describe("createPlan", () => {
       });
     const state = new MemoryStateBackend({
       existing: {
-        rev: 1,
+        version: 1,
         id: "existing",
         type: TestResource.type,
         config: {},
@@ -125,7 +125,7 @@ describe("createPlan", () => {
       });
     const state = new MemoryStateBackend({
       existing: {
-        rev: 1,
+        version: 1,
         id: "existing",
         type: TestResource.type,
         config: {},

@@ -15,7 +15,7 @@ Provider create, update, read, and delete calls are durable steps with stable re
 
 `DurableStateBackend` stores one live resource per `notation/resource-state` store. The store ID is scoped by deployment and resource ID. Store absence is resource absence.
 
-The runtime-assigned UUIDv7 `instanceId` distinguishes a deleted store from a later store created under the same logical ID. Yieldstar's version is the concurrency token and is exposed as Notation's one-based `rev`. Workflow updates use `store.updateFrom` and deletes use `store.deleteFrom`, so both the instance and version must match the snapshot that informed the operation.
+The runtime-assigned UUIDv7 `instanceId` distinguishes a deleted store from a later store created under the same logical ID. Yieldstar's version is the concurrency token, exposed unchanged as `StateNode.version`. Workflow updates use `store.updateFrom` and deletes use `store.deleteFrom`, so both the instance and version must match the snapshot that informed the operation.
 
 ## Deployment hold
 

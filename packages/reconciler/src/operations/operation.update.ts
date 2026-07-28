@@ -27,8 +27,6 @@ export async function* updateResourceOperation(
   }
 
   try {
-    const resourceParams = params.resourceParams;
-
     yield* runPendingOperation(
       step,
       "update:remote",
@@ -36,7 +34,7 @@ export async function* updateResourceOperation(
         params.resource.update!(
           params.resource.key,
           params.patch,
-          resourceParams,
+          params.resourceParams,
           params.resource.toState(params.resource.output),
           context,
         ),
@@ -45,12 +43,12 @@ export async function* updateResourceOperation(
 
     params.resource.setOutput({
       ...params.resource.key,
-      ...resourceParams,
+      ...params.resourceParams,
     });
 
     const readResult = yield* readResourceOperation(step, {
       resource: params.resource,
-      resourceParams,
+      resourceParams: params.resourceParams,
       persistedOutput: params.persistedOutput,
       emit: params.emit,
       maxOperationAttempts: params.maxOperationAttempts,
@@ -69,7 +67,7 @@ export async function* updateResourceOperation(
       lastOperation: "update",
       lastOperationAt: new Date().toISOString(),
       config: params.resource.config,
-      params: params.resource.toState(resourceParams),
+      params: params.resource.toState(params.resourceParams),
       output: params.resource.toState(params.resource.output),
     });
 

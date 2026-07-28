@@ -34,7 +34,7 @@ export const destroy = workflow(async function* (step, event) {
 
 The outer workflow supplies durable step execution, timers, shared stores, waiting, and scheduling. Checkpointed provider results are replayed from the heap after a crash, retryable provider conditions suspend on a durable timer, and conditional state writes use Yieldstar store identity and version. Provider mutations must be idempotent because a crash after provider acknowledgement but before the heap checkpoint repeats the call; event consumers must tolerate the same duplicate-delivery window.
 
-Each live resource is one Yieldstar store. Yieldstar's UUIDv7 store `instanceId` and version are authoritative for conditional update and delete; Notation exposes the version as the resource state's `rev`.
+Each live resource is one Yieldstar store. Yieldstar's UUIDv7 store `instanceId` and version are authoritative for conditional update and delete; Notation exposes the version unchanged as the resource state's `version`.
 
 Operations against the same deployment — the `deploymentId` the `DurableStateBackend` is constructed with — are serialized through a deployment hold naming the holding `executionId`. Resume a crashed operation with the same execution ID; use a new globally unique execution ID for every new deploy or destroy. An execution that must wait emits a `reconciler.hold.waiting` event naming the holder before it suspends, which also identifies a crashed holder that should be resumed instead. If the holder is genuinely abandoned, clear its hold with `takeOverDeploymentHold`.
 

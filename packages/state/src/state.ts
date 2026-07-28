@@ -1,5 +1,6 @@
 export type StateNode = {
-  rev: number;
+  /** The backing store's version of the record, counted from zero. */
+  version: number;
   id: string;
   type: string;
   config: Record<string, unknown>;

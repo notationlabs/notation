@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { runWithCliErrorHandling } from "../src/run-with-error-handling";
+import { runWithErrorHandling } from "../src/run-with-error-handling";
 
 describe("CLI error handling", () => {
   it("reports credential failures with command-specific guidance", async () => {
@@ -7,7 +7,7 @@ describe("CLI error handling", () => {
     error.name = "CredentialsProviderError";
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-    const exitCode = await runWithCliErrorHandling(
+    const exitCode = await runWithErrorHandling(
       async () => {
         throw error;
       },
@@ -27,7 +27,7 @@ describe("CLI error handling", () => {
     const error = new Error("deploy failed");
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-    const exitCode = await runWithCliErrorHandling(
+    const exitCode = await runWithErrorHandling(
       async () => {
         throw error;
       },

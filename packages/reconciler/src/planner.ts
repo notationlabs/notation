@@ -13,12 +13,9 @@ import {
 } from "./plan";
 import { createStepRunner, runOperation } from "./step-runner";
 
-/** Planning only reads state. */
-export type PlannerState = Pick<StateBackend, "get" | "values">;
-
 export type CreatePlanOptions = {
   resources: BaseResource[];
-  state: PlannerState;
+  state: StateBackend;
   driftDetection?: boolean;
   emit?: ReconcilerEventEmitter;
   maxOperationAttempts?: number;

@@ -6,7 +6,7 @@ describe("dashboard state", () => {
   it("reads state through the backend contract", async () => {
     const state = new MemoryStateBackend({
       service: {
-        rev: 1,
+        version: 1,
         id: "service",
         type: "test/service/main",
         config: {},
@@ -20,7 +20,7 @@ describe("dashboard state", () => {
     await expect(readStateSnapshot(state)).resolves.toMatchObject({
       service: {
         id: "service",
-        rev: 1,
+        version: 1,
         output: { ready: true },
       },
     });

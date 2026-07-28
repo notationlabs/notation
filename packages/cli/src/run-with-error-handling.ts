@@ -1,6 +1,6 @@
 import type { Logger } from "./logger";
 
-export async function runWithCliErrorHandling(
+export async function runWithErrorHandling(
   fn: () => Promise<unknown>,
   opts: { logger: Logger; command: string },
 ): Promise<0 | 1> {

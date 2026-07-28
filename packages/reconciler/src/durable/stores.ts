@@ -1,5 +1,6 @@
 import type { StateNode } from "@notation/state";
 import * as v from "valibot";
+import type { PersistedResourceState } from "../operations";
 import { defineStore, type StoreSnapshot } from "./yieldstar";
 
 // Store names are persisted identifiers, like the step keys mapped in
@@ -35,17 +36,19 @@ export const deploymentHoldStore = defineStore(
   v.object({ holder: v.nullable(v.string()) }),
 );
 
-export type StoredResourceState = v.InferOutput<
+// The schema validates exactly the record operations persist; drift between
+// the two is a type error here.
+({}) as v.InferOutput<
   typeof resourceStateStore.schema
->;
+> satisfies PersistedResourceState;
+
 export type DeploymentHoldState = v.InferOutput<
   typeof deploymentHoldStore.schema
 >;
 
 /** A read of a resource record, carrying the identity a write is made against. */
-export type ResourceSnapshot = StoreSnapshot<StoredResourceState>;
+export type ResourceSnapshot = StoreSnapshot<PersistedResourceState>;
 
-/** Store versions count from zero, state revisions from one. */
 export function toStateNode(snapshot: ResourceSnapshot): StateNode {
-  return { ...snapshot.state, rev: snapshot.version + 1 };
+  return { ...snapshot.state, version: snapshot.version };
 }

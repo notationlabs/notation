@@ -30,7 +30,7 @@ export type StepRunner = {
 };
 
 /**
- * The record an operation wants persisted; the driver owns the revision.
+ * The record an operation wants persisted; the driver owns the version.
  * Not derived with Omit, which would collapse against StateNode's index
  * signature and widen every field to unknown.
  */
@@ -71,21 +71,22 @@ export type ResourceOperationBaseParams = {
 };
 
 /**
- * Everything a read needs is resolved before the operation starts: the
- * desired params, and — for a resource with no read operation — the output
- * the last write persisted. An operation that resolved either itself could
- * see a different answer from the one the decision was taken against.
+ * Inputs resolved before an operation starts: the desired params, and — for
+ * a resource with no read operation — the output the last write persisted.
+ * An operation that resolved either itself could see a different answer from
+ * the one the decision was taken against. Read takes exactly this; create
+ * and update add their write.
  */
-export type ReadResourceParams = ResourceOperationBaseParams & {
+export type ResolvedResourceParams = ResourceOperationBaseParams & {
   resourceParams: Record<string, unknown>;
   persistedOutput?: Record<string, unknown>;
 };
 
-export type CreateResourceParams = ReadResourceParams & {
+export type CreateResourceParams = ResolvedResourceParams & {
   persist: PersistState;
 };
 
-export type UpdateResourceParams = ReadResourceParams & {
+export type UpdateResourceParams = ResolvedResourceParams & {
   patch: Record<string, unknown>;
   persist: PersistState;
 };

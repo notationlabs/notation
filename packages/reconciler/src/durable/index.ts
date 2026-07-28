@@ -42,7 +42,6 @@ export {
   deploymentHoldStore,
   resourceStateStore,
   type DeploymentHoldState,
-  type StoredResourceState,
 } from "./stores";
 export {
   type DurableDeployOptions,
