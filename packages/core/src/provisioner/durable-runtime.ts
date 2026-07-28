@@ -20,12 +20,13 @@ import {
 import {
   DurableStateBackend,
   resourceStateStore,
+  type DurableStep,
   type StoredResourceState,
 } from "@notation/reconciler/durable";
 import { FileStateBackend, type StateNode } from "@notation/state";
 import pino, { type Logger } from "pino";
 import * as v from "valibot";
-import { defineStore } from "yieldstar";
+import { createWorkflowRouter, defineStore, workflow } from "yieldstar";
 
 export const DEFAULT_WORKFLOW_STATE_PATH = ".notation/workflows.db";
 export const DEFAULT_LEGACY_STATE_PATH = ".notation/state.json";
@@ -109,64 +110,72 @@ export class NodeDurableRuntime {
       );
     }
     this.#running = true;
-    const executionId = opts.executionId ?? randomUUID();
-    const event: WorkflowEvent = {
-      workflowId: opts.workflowId,
-      executionId,
-      params: opts.params ?? {},
-      context: new Map(),
-    };
-    const runner = new WorkflowRunner({
-      router,
-      heapClient: this.#heapClient,
-      storeClient: this.#storeClient,
-      schedulerClient: this.#schedulerClient,
-      logger: this.#logger,
-    });
-
-    let resolveCompletion!: (value: unknown) => void;
-    let rejectCompletion!: (error: unknown) => void;
-    let completed = false;
-    const completion = new Promise<unknown>((resolve, reject) => {
-      resolveCompletion = resolve;
-      rejectCompletion = reject;
-    });
-    const processEvent = async (nextEvent: WorkflowEvent, logger: Logger) => {
-      try {
-        const result = await runner.run(nextEvent, logger);
-        if (result && nextEvent.executionId === event.executionId) {
-          completed = true;
-          resolveCompletion(result.result);
-        }
-      } catch (error) {
-        if (nextEvent.executionId === event.executionId) {
-          completed = true;
-          rejectCompletion(error);
-          return;
-        }
-        this.#logger.error({ err: error }, "Yieldstar replay failed");
-      }
-    };
-
     try {
+      const executionId = opts.executionId ?? randomUUID();
+      const runner = new WorkflowRunner({
+        router,
+        heapClient: this.#heapClient,
+        storeClient: this.#storeClient,
+        schedulerClient: this.#schedulerClient,
+        logger: this.#logger,
+      });
+
       await this.initialize();
       await this.#bindExecution(executionId, opts.workflowId);
-      await processEvent(event, this.#logger);
-      const eventPump = this.#processQueuedEvents(
+      const result = await this.#driveToCompletion(runner, {
+        workflowId: opts.workflowId,
         executionId,
-        processEvent,
-        rejectCompletion,
-        () => completed,
-      );
-      try {
-        return await completion;
-      } finally {
-        await eventPump;
-        // Let the queue transaction finish before callers close the shared database.
-        await setImmediate();
-      }
+        params: opts.params ?? {},
+        context: new Map(),
+      });
+      // Let the queue transaction finish before callers close the shared database.
+      await setImmediate();
+      return result;
     } finally {
       this.#running = false;
+    }
+  }
+
+  /**
+   * Runs one execution to completion in-process: the trigger event directly,
+   * then every event the queue produces for it (retries, timer wake-ups),
+   * polling timers between rounds. Tasks queued for other executions are
+   * hidden for the duration and made visible again on the way out, so this
+   * runner never resumes an execution it was not asked to run.
+   */
+  async #driveToCompletion(
+    runner: WorkflowRunner<WorkflowRouter>,
+    event: WorkflowEvent,
+  ): Promise<unknown> {
+    const deferredTaskIds: number[] = [];
+    try {
+      let outcome = await runner.run(event, this.#logger);
+      while (!outcome) {
+        const task = this.#eventLoop.taskQueue.process();
+        if (!task) {
+          this.#eventLoop.timers.processTimers();
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          continue;
+        }
+        if (task.event.executionId !== event.executionId) {
+          deferredTaskIds.push(task.taskId);
+          continue;
+        }
+        try {
+          await this.#bindExecution(
+            task.event.executionId,
+            task.event.workflowId,
+          );
+          outcome = await runner.run(task.event, this.#logger);
+        } finally {
+          this.#eventLoop.taskQueue.remove(task.taskId);
+        }
+      }
+      return outcome.result;
+    } finally {
+      for (const taskId of deferredTaskIds) {
+        this.#eventLoop.taskQueue.makeVisible(taskId);
+      }
     }
   }
 
@@ -189,45 +198,6 @@ export class NodeDurableRuntime {
       throw new Error(
         `Yieldstar execution ${executionId} is bound to deployment ${existing.deploymentId} workflow ${existing.workflowId}, not deployment ${this.deploymentId} workflow ${workflowId}`,
       );
-    }
-  }
-
-  async #processQueuedEvents(
-    executionId: string,
-    processEvent: (event: WorkflowEvent, logger: Logger) => Promise<void>,
-    rejectCompletion: (error: unknown) => void,
-    isCompleted: () => boolean,
-  ): Promise<void> {
-    const deferredTaskIds: number[] = [];
-    try {
-      while (this.#running && !isCompleted()) {
-        let task = this.#eventLoop.taskQueue.process();
-        while (task) {
-          if (task.event.executionId !== executionId) {
-            deferredTaskIds.push(task.taskId);
-          } else {
-            try {
-              await this.#bindExecution(
-                task.event.executionId,
-                task.event.workflowId,
-              );
-              await processEvent(task.event, this.#logger);
-            } finally {
-              this.#eventLoop.taskQueue.remove(task.taskId);
-            }
-          }
-          if (!this.#running || isCompleted()) return;
-          task = this.#eventLoop.taskQueue.process();
-        }
-        this.#eventLoop.timers.processTimers();
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-    } catch (error) {
-      rejectCompletion(error);
-    } finally {
-      for (const taskId of deferredTaskIds) {
-        this.#eventLoop.taskQueue.makeVisible(taskId);
-      }
     }
   }
 
@@ -301,6 +271,36 @@ export async function withRuntime<T>(
   } finally {
     if (!opts.runtime) runtime.close();
   }
+}
+
+/**
+ * Wraps a reconciler generator as a single-workflow router and runs it to
+ * completion on the entry point's runtime. This is the cutover pattern shared
+ * by every mutating command: one command, one workflow, one execution.
+ */
+export async function runDurableWorkflow(
+  opts: {
+    entryPoint: string;
+    workflowId: string;
+    runtime?: NodeDurableRuntime;
+    databasePath?: string;
+    executionId?: string;
+  },
+  body: (
+    step: DurableStep,
+    executionId: string,
+    runtime: NodeDurableRuntime,
+  ) => AsyncGenerator<any, void, any>,
+): Promise<void> {
+  await withRuntime(opts, async (runtime) => {
+    const handler = workflow(async function* (step, event) {
+      yield* body(step, event.executionId, runtime);
+    });
+    await runtime.run(createWorkflowRouter({ [opts.workflowId]: handler }), {
+      workflowId: opts.workflowId,
+      executionId: opts.executionId,
+    });
+  });
 }
 
 function statesMatchIgnoringRevision(left: StateNode, right: StateNode) {

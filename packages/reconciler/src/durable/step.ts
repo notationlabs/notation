@@ -10,20 +10,11 @@ import type { DurableStep } from "./yieldstar";
  * A durable step runner: the operation seam plus the store handle, which only
  * the durable driver uses.
  */
-export type DurableStepRunner = {
-  run<T>(
-    key: string,
-    fn: () => T | Promise<T>,
-  ): AsyncGenerator<unknown, T, unknown>;
-  delay(key: string, ms: number): AsyncGenerator<unknown, void, unknown>;
+export interface DurableStepRunner extends StepRunner {
   /** Narrower than StepRunner's, so a scope keeps its store handle. */
   scope(prefix: string): DurableStepRunner;
   store: DurableStep["store"];
-};
-
-// A durable runner is one of the step runners the operations accept.
-type AssertStepRunner = DurableStepRunner extends StepRunner ? true : never;
-export type DurableStepRunnerIsStepRunner = AssertStepRunner;
+}
 
 /**
  * Namespaces the step keys of `step` so an operation can be written once and
