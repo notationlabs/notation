@@ -1,17 +1,19 @@
 import type { BaseResource, ResourceType } from "@notation/resource";
-import { RevConflict } from "@notation/state";
+import { RevConflict, type StateNode } from "@notation/state";
 import {
   createMissingResourceRegistryMatchWarningEvent,
   createResourceRegistryFromResources,
   resolveResourceClass,
 } from "../resource-registry";
-import type { PersistState, RemoveState, StepRunner } from "../operations";
 import {
-  destroyResource,
-  reconcileResource as reconcile,
-  type EmitFromStep,
-  type OpenStateSession,
-} from "../reconcile";
+  createResourceOperation,
+  deleteResourceOperation,
+  readDriftOperation,
+  updateResourceOperation,
+  type PersistState,
+  type RemoveState,
+} from "../operations";
+import { decideAction } from "../plan";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
@@ -21,6 +23,23 @@ import {
 import type { DurableDeployOptions, DurableOperationOptions } from "./types";
 import type { DurableStep } from "./yieldstar";
 
+/**
+ * A read of a resource's persisted record, together with the writes that are
+ * conditional on that exact read.
+ *
+ * The union is the point: `remove` exists only alongside a `node`, because
+ * removing a record that was never read cannot be done safely. Keeping the
+ * writes bound to the read that produced them is what stops a node being
+ * combined with a precondition from a different read.
+ */
+type ResourceStateSession =
+  | { node: undefined; persist: PersistState; remove?: never }
+  | { node: StateNode; persist: PersistState; remove: RemoveState };
+
+/**
+ * Reconciles one resource: hydrate, decide, read the remote when the decision
+ * needs it, announce the decision, then act.
+ */
 export async function* reconcileResource(
   step: DurableStep,
   resource: BaseResource,
@@ -34,31 +53,103 @@ export async function* reconcileResource(
   // the answer across a replay.
   const params = yield* scope.run("params", () => resource.getParams());
 
-  yield* reconcile(scope, {
+  const emit = durableEmitter(scope, opts.emit);
+  const session = yield* openStateSession(scope, opts, resource);
+  if (session.node) resource.setOutput(session.node.output);
+
+  let action = decideAction({ resource, stateNode: session.node, params });
+
+  // A noop is only trusted once the remote has been read back: the provider
+  // may have drifted from persisted state, which upgrades the decision.
+  if (action.decision === "noop" && (opts.driftDetection ?? true)) {
+    // Its own scope: the operation that follows reads the remote again, and
+    // the two reads must not share step keys.
+    const driftStep = scope.scope("drift-read");
+    const driftRead = yield* readDriftOperation(driftStep, {
+      resource,
+      resourceParams: params,
+      persistedOutput: session.node?.output,
+      // Deliberately no dryRun: a dry run suppresses mutations, not reads.
+      // Reading is how a dry run reports drift at all.
+      emit: durableEmitter(driftStep, opts.emit),
+      maxOperationAttempts: opts.maxOperationAttempts,
+    });
+    action = decideAction({
+      resource,
+      stateNode: session.node,
+      params,
+      driftRead,
+    });
+  }
+
+  if (action.decision === "drift-update") {
+    yield* emit({
+      level: "info",
+      event: "reconciler.drift.detected",
+      resourceId: resource.id,
+      resourceType: resource.type,
+      diff: action.patch,
+    });
+  }
+
+  yield* emit({
+    level: "info",
+    event: "reconciler.deploy.decision",
+    resourceId: resource.id,
+    resourceType: resource.type,
+    decision: action.decision,
+  });
+
+  const shared = {
     resource,
     resourceParams: params,
-    openSession: durableSession(scope, opts),
-    emit: durableEmit(opts),
+    persistedOutput: session.node?.output,
     dryRun: opts.dryRun,
-    driftDetection: opts.driftDetection,
+    emit,
     maxOperationAttempts: opts.maxOperationAttempts,
-  });
+  };
+
+  switch (action.decision) {
+    case "create":
+    case "drift-recreate":
+      yield* createResourceOperation(scope, {
+        ...shared,
+        persist: session.persist,
+      });
+      return;
+    case "update":
+    case "drift-update":
+      yield* updateResourceOperation(scope, {
+        ...shared,
+        patch: action.patch,
+        persist: session.persist,
+      });
+      return;
+    case "noop":
+      return;
+  }
 }
 
+/**
+ * Deletes one resource. A resource with no persisted record was never created
+ * — or has already been deleted — and is skipped, which is also what makes
+ * the sweep of a partly-deleted deployment idempotent.
+ */
 export async function* deleteResource(
   step: DurableStepRunner,
   resource: BaseResource,
   opts: DurableOperationOptions,
 ): AsyncGenerator<any, void, any> {
-  // No recovery pass: a workflow's conditional writes are stamped with the
-  // step that made them, so a replay is served the recorded result rather
-  // than losing a race with itself.
-  yield* destroyResource(step, {
+  const session = yield* openStateSession(step, opts, resource);
+  if (!session.node) return;
+  resource.setOutput(session.node.output);
+
+  yield* deleteResourceOperation(step, {
     resource,
-    openSession: durableSession(step, opts),
-    emit: durableEmit(opts),
     dryRun: opts.dryRun,
+    emit: durableEmitter(step, opts.emit),
     maxOperationAttempts: opts.maxOperationAttempts,
+    remove: session.remove,
   });
 }
 
@@ -102,11 +193,6 @@ export async function* sweepOrphans(
   }
 }
 
-/** Delivery is checkpointed per scope, so the scope decides the key. */
-function durableEmit(opts: DurableOperationOptions): EmitFromStep {
-  return (step: StepRunner) => durableEmitter(step, opts.emit);
-}
-
 /**
  * Reads the persisted record once and binds the writes conditional on it.
  *
@@ -115,22 +201,21 @@ function durableEmit(opts: DurableOperationOptions): EmitFromStep {
  * record another writer has moved on. It is re-served to the operations so
  * they need no second read.
  */
-function durableSession(
+async function* openStateSession(
   step: DurableStepRunner,
   opts: DurableOperationOptions,
-): OpenStateSession {
-  return async function* (resource: BaseResource) {
-    const snapshot = yield* step.run("state:snapshot", () =>
-      opts.state.snapshot(resource.id),
-    );
-    const persist = persistResourceState(step, opts, resource, snapshot);
-    if (!snapshot) return { node: undefined, persist };
+  resource: BaseResource,
+): AsyncGenerator<any, ResourceStateSession, any> {
+  const snapshot = yield* step.run("state:snapshot", () =>
+    opts.state.snapshot(resource.id),
+  );
+  const persist = persistResourceState(step, opts, resource, snapshot);
+  if (!snapshot) return { node: undefined, persist };
 
-    return {
-      node: toStateNode(snapshot),
-      persist,
-      remove: removeResourceState(step, opts, resource, snapshot),
-    };
+  return {
+    node: toStateNode(snapshot),
+    persist,
+    remove: removeResourceState(step, opts, resource, snapshot),
   };
 }
 

@@ -277,6 +277,32 @@ export class NodeDurableRuntime {
   }
 }
 
+/**
+ * Runs `fn` with a Node runtime for the entry point's deployment, creating one
+ * when the caller did not supply a runtime and closing it again afterwards. A
+ * supplied runtime stays open: its lifecycle belongs to the caller.
+ */
+export async function withRuntime<T>(
+  opts: {
+    entryPoint: string;
+    runtime?: NodeDurableRuntime;
+    databasePath?: string;
+  },
+  fn: (runtime: NodeDurableRuntime) => Promise<T>,
+): Promise<T> {
+  const runtime =
+    opts.runtime ??
+    new NodeDurableRuntime({
+      deploymentId: resolveDeploymentId(opts.entryPoint),
+      databasePath: opts.databasePath,
+    });
+  try {
+    return await fn(runtime);
+  } finally {
+    if (!opts.runtime) runtime.close();
+  }
+}
+
 function statesMatchIgnoringRevision(left: StateNode, right: StateNode) {
   const { rev: _leftRev, ...leftState } = left;
   const { rev: _rightRev, ...rightState } = right;

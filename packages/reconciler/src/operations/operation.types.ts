@@ -58,10 +58,9 @@ export type PersistedResourceState = Pick<
 };
 
 /**
- * How a driver writes state. Both are steps so that each driver can carry its
- * own concurrency control: in process that is a compare-and-set against the
- * revision read before the operation, and in a workflow it is a store write
- * stamped with the step that made it, so a replay does not repeat it.
+ * How the driver writes state. Both are steps so the driver can carry its own
+ * concurrency control: in a workflow that is a store write stamped with the
+ * step that made it, so a replay does not repeat it.
  */
 export type PersistState = (
   next: PersistedResourceState,

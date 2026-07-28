@@ -6,7 +6,7 @@ import {
 } from "@notation/reconciler";
 import { createWorkflowRouter, workflow } from "yieldstar";
 import { getResourceGraph } from "src/orchestrator/graph";
-import { NodeDurableRuntime, resolveDeploymentId } from "../durable-runtime";
+import { withRuntime, type NodeDurableRuntime } from "../durable-runtime";
 
 export type DeployAppOptions = {
   entryPoint: string;
@@ -32,29 +32,26 @@ export async function deployApp({
   emit = createLoggerReconcilerSubscriber(),
 }: DeployAppOptions): Promise<void> {
   const graph = await getResourceGraph(entryPoint);
-  const deploymentId =
-    suppliedRuntime?.deploymentId ?? resolveDeploymentId(entryPoint);
-  const runtime =
-    suppliedRuntime ?? new NodeDurableRuntime({ deploymentId, databasePath });
-  const deploy = workflow(async function* (step, event) {
-    yield* reconciler.deploy(step, {
-      deploymentId: runtime.deploymentId,
-      executionId: event.executionId,
-      resources: graph.resources,
-      state: runtime.state,
-      registry,
-      emit,
-      dryRun,
-      driftDetection,
-      maxOperationAttempts,
-    });
-  });
-  try {
-    await runtime.run(createWorkflowRouter({ deploy }), {
-      workflowId: "deploy",
-      executionId,
-    });
-  } finally {
-    if (!suppliedRuntime) runtime.close();
-  }
+  await withRuntime(
+    { entryPoint, runtime: suppliedRuntime, databasePath },
+    async (runtime) => {
+      const deploy = workflow(async function* (step, event) {
+        yield* reconciler.deploy(step, {
+          deploymentId: runtime.deploymentId,
+          executionId: event.executionId,
+          resources: graph.resources,
+          state: runtime.state,
+          registry,
+          emit,
+          dryRun,
+          driftDetection,
+          maxOperationAttempts,
+        });
+      });
+      await runtime.run(createWorkflowRouter({ deploy }), {
+        workflowId: "deploy",
+        executionId,
+      });
+    },
+  );
 }
