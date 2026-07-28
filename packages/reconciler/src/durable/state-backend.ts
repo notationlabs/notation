@@ -35,10 +35,6 @@ export class DurableStateBackend {
     return snapshot ? toStateNode(snapshot) : undefined;
   }
 
-  async has(id: string): Promise<boolean> {
-    return (await this.get(id)) !== undefined;
-  }
-
   snapshot(id: string): Promise<ResourceSnapshot | undefined> {
     return this.#read(this.storeId(id));
   }

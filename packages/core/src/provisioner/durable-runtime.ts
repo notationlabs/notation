@@ -213,26 +213,30 @@ export class NodeDurableRuntime {
     const legacyState = await new FileStateBackend(legacyStatePath).values();
     const durableState = await this.state.values();
     const legacyById = new Map(legacyState.map((node) => [node.id, node]));
+
+    // Every durable record must match its legacy counterpart exactly; one
+    // that is missing from the legacy file, or that differs, means the two
+    // stores have diverged and neither can be trusted as the source.
     for (const current of durableState) {
       const legacy = legacyById.get(current.id);
       if (!legacy || !statesMatchIgnoringRevision(current, legacy)) {
         throw legacyMigrationConflict(legacyStatePath);
       }
     }
+
+    // Import only the legacy records the durable store lacks: any shared
+    // record was verified identical above.
+    const durableIds = new Set(durableState.map((node) => node.id));
     for (const node of legacyState) {
-      const current = await this.state.get(node.id);
-      if (!current) {
-        const { rev: _rev, ...state } = node;
-        await this.#storeClient.getOrCreateStore({
-          definition: resourceStateStore,
-          id: this.state.storeId(node.id),
-          // Legacy records predate group metadata; -1 and "" are
-          // BaseResource's defaults for a resource that belongs to no group.
-          initial: { groupId: -1, groupType: "", ...state } as StoredResourceState,
-        });
-      } else if (!statesMatchIgnoringRevision(current, node)) {
-        throw legacyMigrationConflict(legacyStatePath);
-      }
+      if (durableIds.has(node.id)) continue;
+      const { rev: _rev, ...state } = node;
+      await this.#storeClient.getOrCreateStore({
+        definition: resourceStateStore,
+        id: this.state.storeId(node.id),
+        // Legacy records predate group metadata; -1 and "" are
+        // BaseResource's defaults for a resource that belongs to no group.
+        initial: { groupId: -1, groupType: "", ...state } as StoredResourceState,
+      });
     }
     await rename(legacyStatePath, `${legacyStatePath}.migrated`);
   }
