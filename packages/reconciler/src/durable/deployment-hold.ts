@@ -1,9 +1,16 @@
+/**
+ * The deployment hold: an exclusive claim on a deployment for the length of a
+ * workflow execution. It lives in the `deployment-coordination` store — that
+ * store name, the `notation:coordination:*` step keys, and the
+ * `reconciler.coordination.waiting` event are persisted or published strings
+ * and keep the older "coordination" wording; the identifiers here do not.
+ */
 import type { ReconcilerEventEmitter } from "../events";
 import { durableEmitter, scopeStep } from "./step";
 import { deploymentCoordinationStore, type CoordinationState } from "./stores";
 import type { DurableStep, StoreClient, WorkflowStore } from "./yieldstar";
 
-type CoordinationOptions = {
+type DeploymentHoldOptions = {
   deploymentId: string;
   executionId: string;
   emit?: ReconcilerEventEmitter;
@@ -13,19 +20,22 @@ type CoordinationOptions = {
  * Prevents concurrent executions from mutating the same deployment. Names
  * the holder so an operator can resume it after a crash.
  */
-async function* acquireDeploymentCoordination(
+async function* acquireDeploymentHold(
   step: DurableStep,
-  opts: CoordinationOptions,
+  opts: DeploymentHoldOptions,
 ): AsyncGenerator<any, WorkflowStore<CoordinationState>, any> {
-  const coordination = yield* step.store(deploymentCoordinationStore, {
+  const hold = yield* step.store(deploymentCoordinationStore, {
     id: opts.deploymentId,
     initial: { holder: null },
   });
 
-  const snapshot = yield* coordination.get("notation:coordination:inspect");
+  const snapshot = yield* hold.get("notation:coordination:inspect");
   const holder = snapshot.state.holder;
   if (holder !== null && holder !== opts.executionId) {
-    yield* durableEmitter(scopeStep(step, "notation:coordination"), opts.emit)({
+    yield* durableEmitter(
+      scopeStep(step, "notation:coordination"),
+      opts.emit,
+    )({
       level: "warn",
       event: "reconciler.coordination.waiting",
       deploymentId: opts.deploymentId,
@@ -34,7 +44,7 @@ async function* acquireDeploymentCoordination(
     });
   }
 
-  yield* coordination.take(
+  yield* hold.take(
     "notation:coordination:acquire",
     (state) => state.holder === null || state.holder === opts.executionId,
     (draft) => {
@@ -42,14 +52,14 @@ async function* acquireDeploymentCoordination(
     },
   );
 
-  return coordination;
+  return hold;
 }
 
-function releaseDeploymentCoordination(
-  coordination: WorkflowStore<CoordinationState>,
+function releaseDeploymentHold(
+  hold: WorkflowStore<CoordinationState>,
   executionId: string,
 ) {
-  return coordination.update("notation:coordination:release", (draft) => {
+  return hold.update("notation:coordination:release", (draft) => {
     if (draft.holder === executionId) draft.holder = null;
   });
 }
@@ -68,12 +78,12 @@ function releaseDeploymentCoordination(
  */
 export async function* withDeploymentHold(
   step: DurableStep,
-  opts: CoordinationOptions,
+  opts: DeploymentHoldOptions,
   body: () => AsyncGenerator<any, void, any>,
 ): AsyncGenerator<any, void, any> {
-  const coordination = yield* acquireDeploymentCoordination(step, opts);
+  const hold = yield* acquireDeploymentHold(step, opts);
   yield* body();
-  yield* releaseDeploymentCoordination(coordination, opts.executionId);
+  yield* releaseDeploymentHold(hold, opts.executionId);
 }
 
 export type DeploymentHoldTakeover =

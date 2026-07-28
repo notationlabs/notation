@@ -1,6 +1,6 @@
 import { buildResourceDepthLevels } from "../dependency-graph";
-import { withDeploymentHold } from "./coordination";
-import { deleteResource, sweepOrphans } from "./operations";
+import { withDeploymentHold } from "./deployment-hold";
+import { deleteResource, sweepOrphans } from "./reconcile";
 import { scopeStep } from "./step";
 import type { DurableDestroyOptions } from "./types";
 import type { DurableStep } from "./yieldstar";
@@ -12,8 +12,7 @@ export async function* destroy(
 ): AsyncGenerator<any, void, any> {
   yield* withDeploymentHold(step, opts, async function* () {
     // Delete in reverse dependency order, so dependents are gone before the
-    // resources they depend on. Resources with no persisted state were never
-    // created (or are already deleted) and are skipped by deleteResource.
+    // resources they depend on.
     const levels = buildResourceDepthLevels(opts.resources);
     for (let index = levels.length - 1; index >= 0; index -= 1) {
       for (const resource of levels[index]!) {

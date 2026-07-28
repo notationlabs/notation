@@ -1,6 +1,6 @@
 import { buildResourceDepthLevels } from "../dependency-graph";
-import { withDeploymentHold } from "./coordination";
-import { reconcileResource, sweepOrphans } from "./operations";
+import { withDeploymentHold } from "./deployment-hold";
+import { reconcileResource, sweepOrphans } from "./reconcile";
 import { scopeStep } from "./step";
 import type { DurableDeployOptions } from "./types";
 import type { DurableStep } from "./yieldstar";

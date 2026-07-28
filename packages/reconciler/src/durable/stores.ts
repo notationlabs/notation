@@ -2,6 +2,9 @@ import type { StateNode } from "@notation/state";
 import * as v from "valibot";
 import { defineStore, type StoreSnapshot } from "./yieldstar";
 
+// Store names are persisted identifiers, like the step keys mapped in
+// index.ts: renaming one orphans every record stored under the old name.
+
 /**
  * Loose on purpose: PersistedResourceState carries an index signature so a
  * driver can persist fields this schema does not name yet, and v.object would

@@ -4,7 +4,7 @@
 notation deploy <entryPoint>
 ```
 
-Compiles and durably deploys the stack through the resident Yieldstar 0.5.0 Node runtime.
+Compiles and durably deploys the stack through the resident Yieldstar Node runtime.
 
 ```sh
 notation deploy infra/api.ts

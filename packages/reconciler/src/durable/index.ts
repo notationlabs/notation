@@ -1,4 +1,7 @@
 /**
+ * The durable reconciler driver: `deploy` and `destroy` as generators that a
+ * Yieldstar workflow composes, and the store-backed state they run against.
+ *
  * Step keys are a public contract: they are what a resumed execution matches
  * its cached work against, so changing one re-executes the work behind it.
  * The shapes in use are:
@@ -28,7 +31,7 @@ export { destroy } from "./destroy";
 export {
   takeOverDeploymentHold,
   type DeploymentHoldTakeover,
-} from "./coordination";
+} from "./deployment-hold";
 export { DurableStateBackend } from "./state-backend";
 export {
   deploymentCoordinationStore,
@@ -39,6 +42,6 @@ export {
 export {
   type DurableDeployOptions,
   type DurableDestroyOptions,
-  type DurableOperationOptions,
+  type DurableWorkflowOptions,
 } from "./types";
 export type { DurableStep } from "./yieldstar";

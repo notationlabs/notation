@@ -1,3 +1,8 @@
+/**
+ * Per-resource reconciliation: converging, deleting, and sweeping single
+ * resources, each built on one read of the resource's persisted record and
+ * writes conditional on that read.
+ */
 import type { BaseResource, ResourceType } from "@notation/resource";
 import { RevConflict, type StateNode } from "@notation/state";
 import {
@@ -20,7 +25,7 @@ import {
   toStateNode,
   type ResourceSnapshot,
 } from "./stores";
-import type { DurableDeployOptions, DurableOperationOptions } from "./types";
+import type { DurableDeployOptions, DurableWorkflowOptions } from "./types";
 import type { DurableStep } from "./yieldstar";
 
 /**
@@ -138,7 +143,7 @@ export async function* reconcileResource(
 export async function* deleteResource(
   step: DurableStepRunner,
   resource: BaseResource,
-  opts: DurableOperationOptions,
+  opts: DurableWorkflowOptions,
 ): AsyncGenerator<any, void, any> {
   const session = yield* openStateSession(step, opts, resource);
   if (!session.node) return;
@@ -160,7 +165,7 @@ export async function* deleteResource(
  */
 export async function* sweepOrphans(
   step: DurableStepRunner,
-  opts: DurableOperationOptions,
+  opts: DurableWorkflowOptions,
   workflow: "deploy" | "destroy",
 ): AsyncGenerator<any, void, any> {
   const resourceById = new Map(
@@ -203,7 +208,7 @@ export async function* sweepOrphans(
  */
 async function* openStateSession(
   step: DurableStepRunner,
-  opts: DurableOperationOptions,
+  opts: DurableWorkflowOptions,
   resource: BaseResource,
 ): AsyncGenerator<any, ResourceStateSession, any> {
   const snapshot = yield* step.run("state:snapshot", () =>
@@ -227,7 +232,7 @@ async function* openStateSession(
  */
 function persistResourceState(
   step: DurableStepRunner,
-  opts: DurableOperationOptions,
+  opts: DurableWorkflowOptions,
   resource: BaseResource,
   snapshot: ResourceSnapshot | undefined,
 ): PersistState {
@@ -263,7 +268,7 @@ function persistResourceState(
 
 function removeResourceState(
   step: DurableStepRunner,
-  opts: DurableOperationOptions,
+  opts: DurableWorkflowOptions,
   resource: BaseResource,
   snapshot: ResourceSnapshot,
 ): RemoveState {

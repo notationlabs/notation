@@ -3,7 +3,8 @@ import type { ReconcilerEventEmitter } from "../events";
 import type { ResourceRegistry } from "../resource-registry";
 import type { DurableStateBackend } from "./state-backend";
 
-export type DurableOperationOptions = {
+/** What both durable workflows need; "operation" would mean resource CRUD here. */
+export type DurableWorkflowOptions = {
   deploymentId: string;
   executionId: string;
   resources: BaseResource[];
@@ -14,8 +15,8 @@ export type DurableOperationOptions = {
   maxOperationAttempts?: number;
 };
 
-export type DurableDeployOptions = DurableOperationOptions & {
+export type DurableDeployOptions = DurableWorkflowOptions & {
   driftDetection?: boolean;
 };
 
-export type DurableDestroyOptions = DurableOperationOptions;
+export type DurableDestroyOptions = DurableWorkflowOptions;

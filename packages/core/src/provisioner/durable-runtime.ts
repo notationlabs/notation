@@ -59,7 +59,7 @@ const executionBindingStore = defineStore(
 
 type ExecutionBinding = v.InferOutput<typeof executionBindingStore.schema>;
 
-/** Resident Yieldstar 0.5.0 Node runtime used by Notation application commands. */
+/** Resident Yieldstar Node runtime used by Notation application commands. */
 export class NodeDurableRuntime {
   readonly deploymentId: string;
   readonly state: DurableStateBackend;
@@ -142,6 +142,11 @@ export class NodeDurableRuntime {
    * polling timers between rounds. Tasks queued for other executions are
    * hidden for the duration and made visible again on the way out, so this
    * runner never resumes an execution it was not asked to run.
+   *
+   * This loop exists because Yieldstar's own SqliteEventLoop is a resident
+   * server: it runs until stopped, serves every execution in the queue, and
+   * never says when one is done — none of which fits a command that must run
+   * exactly its own execution and then exit.
    */
   async #driveToCompletion(
     runner: WorkflowRunner<WorkflowRouter>,
@@ -179,6 +184,12 @@ export class NodeDurableRuntime {
     }
   }
 
+  /**
+   * Prepares the deployment database for use — today that means importing
+   * legacy `.notation/state.json` state on first contact. `run` calls this
+   * itself; read-only consumers (plan, dashboard) call it before reading so
+   * they see migrated state too.
+   */
   async initialize(): Promise<void> {
     await this.#migrateLegacyState();
   }
