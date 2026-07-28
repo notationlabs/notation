@@ -28,6 +28,13 @@ describe("logger reconciler subscriber", () => {
       resourceType: "test/service/subscriber",
     });
     await emit({
+      level: "warn",
+      event: "reconciler.coordination.waiting",
+      deploymentId: "deployment-1",
+      executionId: "execution-2",
+      holderExecutionId: "execution-1",
+    });
+    await emit({
       level: "error",
       event: "reconciler.operation.lifecycle",
       operation: "delete",
@@ -39,7 +46,12 @@ describe("logger reconciler subscriber", () => {
     });
 
     expect(info).toHaveBeenCalledOnce();
-    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenNthCalledWith(
+      2,
+      "reconciler.coordination.waiting",
+      expect.objectContaining({ level: "warn" }),
+    );
     expect(error).toHaveBeenCalledOnce();
   });
 });

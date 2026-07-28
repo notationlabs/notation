@@ -1,8 +1,13 @@
-import { Reconciler, createResourceRegistry } from "@notation/reconciler";
-import { SqliteStateBackend } from "@notation/state-sqlite";
+import { NodeDurableRuntime } from "@notation/core";
+import { createResourceRegistry } from "@notation/reconciler";
+import * as reconciler from "@notation/reconciler/durable";
+import { createWorkflowRouter, workflow } from "yieldstar";
 import { StaticSite } from "./static-site";
 
-const state = new SqliteStateBackend("sites.db");
+const runtime = new NodeDurableRuntime({
+  deploymentId: "static-sites",
+  databasePath: "sites.db",
+});
 
 const resources = [
   new StaticSite({
@@ -21,13 +26,20 @@ const resources = [
   }),
 ];
 
-const reconciler = new Reconciler({
-  state,
-  registry: createResourceRegistry([StaticSite]),
+const deploy = workflow(async function* (step, event) {
+  yield* reconciler.deploy(step, {
+    deploymentId: "static-sites",
+    executionId: event.executionId,
+    resources,
+    state: runtime.state,
+    registry: createResourceRegistry([StaticSite]),
+  });
 });
 
 try {
-  await reconciler.deploy(resources);
+  await runtime.run(createWorkflowRouter({ deploy }), {
+    workflowId: "deploy",
+  });
 } finally {
-  state.close();
+  runtime.close();
 }

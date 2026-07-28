@@ -6,8 +6,11 @@ import { fileURLToPath } from "node:url";
 
 const serverDirectory = dirname(fileURLToPath(import.meta.url));
 
+/** The dashboard only reads state, so any backend that can list it will do. */
+export type DashboardState = Pick<StateBackend, "values">;
+
 export type DashboardServerOptions = {
-  state: StateBackend;
+  state: DashboardState;
   pollInterval?: number;
 };
 
@@ -16,7 +19,7 @@ export type StartDashboardServerOptions = DashboardServerOptions & {
 };
 
 export async function readStateSnapshot(
-  state: StateBackend,
+  state: DashboardState,
 ): Promise<Record<string, StateNode>> {
   const nodes = await state.values();
   return Object.fromEntries(nodes.map((node) => [node.id, node]));

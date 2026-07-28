@@ -8,6 +8,6 @@ export * from "./dependency-graph";
 export * from "./events";
 export * from "./plan";
 export * from "./planner";
-export * from "./reconciler";
+export * from "./step-runner";
 export * from "./logger-subscriber";
 export * from "./protocol";
