@@ -4,15 +4,6 @@
   "private": true,
   "packageManager": "pnpm@11.17.0",
   "scripts": {
-    "build": "turbo run build",
-    "dev": "turbo run dev --concurrency=20",
-    "test": "vitest watch",
-    "test:once": "vitest run",
-    "format": "prettier --write .",
-    "typecheck": "turbo run typecheck --continue",
-    "changeset": "changeset",
-    "version": "turbo run build && changeset version && pnpm install",
-    "release": "changeset publish",
     "prepare": "husky"
   },
   "repository": {

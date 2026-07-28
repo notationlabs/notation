@@ -1,1 +1,1 @@
-pnpm run test:once
+pnpm exec pok test run
