@@ -3,8 +3,9 @@ import {
   createResourceOperation,
   createStepRunner,
   runOperation,
+  toEmitStep,
+  type PersistedResourceState,
 } from "@notation/reconciler";
-import { MemoryStateBackend } from "@notation/state";
 import {
   TestResourceSchema,
   testResourceConfig,
@@ -14,7 +15,7 @@ import {
 
 describe("resource creation", () => {
   it("passes computed input to resource.create", async () => {
-    const stateBackend = new MemoryStateBackend();
+    let persisted: PersistedResourceState | undefined;
     const readResult = { ...testResourceOutput, volatileComputed: "123" };
     const createMock = vi.fn(async () => ({ primaryKey: "" }));
     const readMock = vi.fn(async () => readResult);
@@ -34,8 +35,11 @@ describe("resource creation", () => {
     await runOperation(
       createResourceOperation(step, {
         resource: testResource,
-        state: stateBackend,
-        expectedRev: 0,
+        resourceParams: await testResource.getParams(),
+        persist: async function* (next) {
+          persisted = next;
+        },
+        emit: toEmitStep(),
       }),
     );
 
@@ -43,7 +47,7 @@ describe("resource creation", () => {
     const persistedOutput = testResource.toState(readResult);
 
     expect(createMock.mock.calls[0]).toEqual([params, undefined]);
-    await expect(stateBackend.get(testResource.id)).resolves.toMatchObject({
+    expect(persisted).toMatchObject({
       id: testResource.id,
       output: persistedOutput,
       lastOperation: "create",

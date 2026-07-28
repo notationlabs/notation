@@ -173,11 +173,11 @@ new ResourceOperationPendingError(message: string, {
 | Handler result | Meaning | What the reconciler does |
 | -------------- | ------- | ------------------------ |
 | Return normally | The operation finished. | Continues the deployment. |
-| `throw new ResourceNotFoundError(message, { cause })` | `read` found no resource for the given key. | Treats the resource as absent during planning and refresh. A read after create or update fails because that operation claimed to have finished. |
+| `throw new ResourceNotFoundError(message, { cause })` | `read` or `delete` found no resource for the given key. | From `read`, treats the resource as absent during planning and drift detection; a read after create or update fails because that operation claimed to have finished. From `delete`, treats the delete as complete, since absence is its goal state. |
 | `throw new ResourceOperationPendingError(message, { retryAfterMs, callbackContext })` | The operation has not finished. | Waits for `retryAfterMs`, then calls the same handler again. It passes `callbackContext` as the handler's final argument. |
 | Throw any other error | The operation failed. | Stops the deployment. |
 
-`ResourceNotFoundError` is for `read`. A `delete` handler must catch the provider's missing-resource error and return normally.
+`ResourceNotFoundError` means the resource is absent wherever it is thrown. A `delete` handler may either catch the provider's missing-resource error and return normally, or translate it to `ResourceNotFoundError`; both count as success.
 
 `ResourceOperationPendingError` may be thrown by `create`, `read`, `update`, or `delete`. Its options are:
 
@@ -187,7 +187,7 @@ new ResourceOperationPendingError(message: string, {
 | `callbackContext` | `Readonly<Record<string, unknown>>` | no | Plain serializable data for the next attempt. |
 | `cause` | `unknown` | no | The provider error that caused this result. |
 
-The default limit is 30 attempts. Set `maxOperationAttempts` on the reconciler to change it. Reaching the limit fails the operation.
+The default limit is 30 attempts. Set `maxOperationAttempts` in the deploy, plan, or destroy options to change it. Reaching the limit fails the operation.
 
 ```ts
 read: async (key, context) => {

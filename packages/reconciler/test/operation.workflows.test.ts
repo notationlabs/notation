@@ -11,54 +11,42 @@ import {
   type OperationLifecycleEvent,
   type StepRunner,
 } from "../src/operations";
+import { toEmitStep } from "../src/events";
+import { runOperation } from "../src/step-runner";
 
-function createStepRunnerDouble(): StepRunner {
+function createStepRunnerDouble() {
   const run = vi.fn(async function* <T>(
-    arg1: string | (() => T | Promise<T>),
-    arg2?: () => T | Promise<T>,
+    _key: string,
+    fn: () => T | Promise<T>,
   ): AsyncGenerator<unknown, T, unknown> {
-    const fn = (typeof arg1 === "string" ? arg2 : arg1) as () => T | Promise<T>;
-    if (!fn) {
-      throw new Error("Missing run function");
-    }
-
     return await fn();
   });
 
-  const delay = vi.fn(async function* (): AsyncGenerator<
-    unknown,
-    void,
-    unknown
-  > {
+  const delay = vi.fn(async function* (
+    _key: string,
+    _ms: number,
+  ): AsyncGenerator<unknown, void, unknown> {
     return;
   });
 
-  return {
-    run,
-    delay,
+  // vi.fn erases the generic, so the seam's signature is restored here.
+  const runner: StepRunner = {
+    run: run as unknown as StepRunner["run"],
+    delay: delay as unknown as StepRunner["delay"],
+    scope: () => runner,
   };
-}
 
-async function runOperation<T>(operation: AsyncGenerator<unknown, T, unknown>) {
-  let next = await operation.next();
-  while (!next.done) {
-    next = await operation.next();
-  }
-  return next.value;
+  return runner;
 }
 
 describe("operation workflows", () => {
   it("create performs create + read-after-create + state persistence", async () => {
     const step = createStepRunnerDouble();
     const events: OperationLifecycleEvent[] = [];
-    const state = {
-      get: vi.fn(async () => undefined),
-      update: vi.fn(async () => undefined),
-      delete: vi.fn(async () => undefined),
-    };
+    const persist = vi.fn(async function* () {});
 
     let createAttempts = 0;
-    const createMock = vi.fn(async (_params, context) => {
+    const createMock = vi.fn(async (_params: unknown, context: unknown) => {
       createAttempts += 1;
       if (createAttempts === 1) {
         expect(context).toBeUndefined();
@@ -75,7 +63,8 @@ describe("operation workflows", () => {
     const TestResource = resource({ type: "test/service/create" })
       .defineSchema({})
       .defineOperations({
-        create: createMock,
+        // Cast: an empty schema declares no primary key to return.
+        create: createMock as any,
         read: async () => ({ remoteId: "abc", status: "ready" }),
         delete: async () => undefined,
       });
@@ -85,16 +74,26 @@ describe("operation workflows", () => {
     await runOperation(
       createResourceOperation(step, {
         resource: testResource,
-        state,
-        expectedRev: 0,
-        emit: async (event) => {
-          events.push(event);
-        },
+        resourceParams: await testResource.getParams(),
+        persist,
+        emit: toEmitStep((event) => void events.push(event)),
       }),
     );
 
     expect(createAttempts).toBe(2);
-    expect(state.update).toHaveBeenCalledOnce();
+    expect(persist).toHaveBeenCalledOnce();
+    expect(persist).toHaveBeenCalledWith({
+      id: "test-create",
+      groupId: testResource.groupId,
+      groupType: testResource.groupType,
+      type: TestResource.type,
+      lastOperation: "create",
+      lastOperationAt: expect.any(String),
+      config: testResource.config,
+      params: {},
+      // The resource declares no schema, so nothing survives toState.
+      output: {},
+    });
     expect(createMock).toHaveBeenNthCalledWith(
       1,
       await testResource.getParams(),
@@ -118,17 +117,12 @@ describe("operation workflows", () => {
 
   it("read follows pending retry instructions", async () => {
     const step = createStepRunnerDouble();
-    const state = {
-      get: vi.fn(async () => undefined),
-      update: vi.fn(async () => undefined),
-      delete: vi.fn(async () => undefined),
-    };
 
     let readAttempts = 0;
     const TestResource = resource({ type: "test/service/read" })
       .defineSchema({})
       .defineOperations({
-        create: async () => ({}),
+        create: (async () => ({})) as any,
         read: async (_key, context) => {
           readAttempts += 1;
           if (readAttempts < 3) {
@@ -148,7 +142,8 @@ describe("operation workflows", () => {
     const result = await runOperation(
       readResourceOperation(step, {
         resource: testResource,
-        state,
+        resourceParams: await testResource.getParams(),
+        emit: toEmitStep(),
       }),
     );
 
@@ -168,11 +163,6 @@ describe("operation workflows", () => {
 
   it("fails when an operation remains pending past the safety limit", async () => {
     const step = createStepRunnerDouble();
-    const state = {
-      get: vi.fn(async () => undefined),
-      update: vi.fn(async () => undefined),
-      delete: vi.fn(async () => undefined),
-    };
     const read = vi.fn(async () => {
       throw new ResourceOperationPendingError("still pending", {
         retryAfterMs: 10,
@@ -181,7 +171,7 @@ describe("operation workflows", () => {
     const TestResource = resource({ type: "test/service/pending-limit" })
       .defineSchema({})
       .defineOperations({
-        create: async () => ({}),
+        create: (async () => ({})) as any,
         read,
         delete: async () => undefined,
       });
@@ -190,7 +180,8 @@ describe("operation workflows", () => {
       runOperation(
         readResourceOperation(step, {
           resource: new TestResource({ id: "pending-limit" }),
-          state,
+          resourceParams: {},
+          emit: toEmitStep(),
           maxOperationAttempts: 2,
         }),
       ),
@@ -201,15 +192,11 @@ describe("operation workflows", () => {
 
   it("does not infer that not-found after creation is retryable", async () => {
     const step = createStepRunnerDouble();
-    const state = {
-      get: vi.fn(async () => undefined),
-      update: vi.fn(async () => undefined),
-      delete: vi.fn(async () => undefined),
-    };
+    const persist = vi.fn(async function* () {});
     const TestResource = resource({ type: "test/service/eventually-visible" })
       .defineSchema({})
       .defineOperations({
-        create: async () => ({}),
+        create: (async () => ({})) as any,
         read: async () => {
           throw new ResourceNotFoundError("resource is absent");
         },
@@ -220,27 +207,24 @@ describe("operation workflows", () => {
       runOperation(
         createResourceOperation(step, {
           resource: new TestResource({ id: "eventually-visible" }),
-          state,
-          expectedRev: 0,
+          resourceParams: {},
+          persist,
+          emit: toEmitStep(),
         }),
       ),
     ).rejects.toThrowError("resource is absent");
-    expect(state.update).not.toHaveBeenCalled();
+    expect(persist).not.toHaveBeenCalled();
   });
 
   it("delete treats an already-absent remote as success through its idempotent resource contract", async () => {
     const step = createStepRunnerDouble();
     const events: OperationLifecycleEvent[] = [];
-    const state = {
-      get: vi.fn(async () => undefined),
-      update: vi.fn(async () => undefined),
-      delete: vi.fn(async () => undefined),
-    };
+    const remove = vi.fn(async function* () {});
 
     const TestResource = resource({ type: "test/service/delete" })
       .defineSchema({})
       .defineOperations({
-        create: async () => ({}),
+        create: (async () => ({})) as any,
         delete: async () => undefined,
       });
 
@@ -249,30 +233,56 @@ describe("operation workflows", () => {
     await runOperation(
       deleteResourceOperation(step, {
         resource: testResource,
-        state,
-        expectedRev: 1,
-        emit: async (event) => {
-          events.push(event);
-        },
+        remove,
+        emit: toEmitStep((event) => void events.push(event)),
       }),
     );
 
-    expect(state.delete).toHaveBeenCalledWith("test-delete", 1);
+    // State is removed only after the provider delete resolves; which record
+    // and version that targets is the driver's concern, not the operation's.
+    expect(remove).toHaveBeenCalledOnce();
+    expect(events.map((event) => event.status)).toEqual(["start", "success"]);
+  });
+
+  it("delete treats ResourceNotFoundError as the resource already being absent", async () => {
+    const step = createStepRunnerDouble();
+    const events: OperationLifecycleEvent[] = [];
+    const remove = vi.fn(async function* () {});
+
+    const TestResource = resource({ type: "test/service/delete-absent" })
+      .defineSchema({})
+      .defineOperations({
+        create: (async () => ({})) as any,
+        delete: async () => {
+          throw new ResourceNotFoundError("resource is already gone");
+        },
+      });
+
+    const testResource = new TestResource({ id: "test-delete-absent" });
+
+    await runOperation(
+      deleteResourceOperation(step, {
+        resource: testResource,
+        remove,
+        emit: toEmitStep((event) => void events.push(event)),
+      }),
+    );
+
+    // Absence is delete's goal state: state is removed and the operation
+    // reports success, which is what makes a crash-window replayed delete
+    // idempotent even when the handler surfaces the provider's missing error.
+    expect(remove).toHaveBeenCalledOnce();
     expect(events.map((event) => event.status)).toEqual(["start", "success"]);
   });
 
   it("delete rethrows an unclassified resource error", async () => {
     const step = createStepRunnerDouble();
-    const state = {
-      get: vi.fn(async () => undefined),
-      update: vi.fn(async () => undefined),
-      delete: vi.fn(async () => undefined),
-    };
+    const remove = vi.fn(async function* () {});
 
     const TestResource = resource({ type: "test/service/delete-miss" })
       .defineSchema({})
       .defineOperations({
-        create: async () => ({}),
+        create: (async () => ({})) as any,
         delete: async () => {
           const err = new Error("still exists");
           err.name = "DifferentError";
@@ -286,8 +296,8 @@ describe("operation workflows", () => {
       runOperation(
         deleteResourceOperation(step, {
           resource: testResource,
-          state,
-          expectedRev: 1,
+          remove,
+          emit: toEmitStep(),
         }),
       ),
     ).rejects.toMatchObject({
@@ -295,17 +305,13 @@ describe("operation workflows", () => {
       message: "still exists",
     });
 
-    expect(state.delete).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it("emits structured error details on operation failure", async () => {
     const step = createStepRunnerDouble();
     const events: OperationLifecycleEvent[] = [];
-    const state = {
-      get: vi.fn(async () => undefined),
-      update: vi.fn(async () => undefined),
-      delete: vi.fn(async () => undefined),
-    };
+    const persist = vi.fn(async function* () {});
 
     const TestResource = resource({ type: "test/service/create-error" })
       .defineSchema({})
@@ -324,11 +330,9 @@ describe("operation workflows", () => {
       runOperation(
         createResourceOperation(step, {
           resource: testResource,
-          state,
-          expectedRev: 0,
-          emit: async (event) => {
-            events.push(event);
-          },
+          resourceParams: {},
+          persist,
+          emit: toEmitStep((event) => void events.push(event)),
         }),
       ),
     ).rejects.toMatchObject({ name: "CreateFailed", message: "boom" });

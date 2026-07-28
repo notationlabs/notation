@@ -1,4 +1,4 @@
-import { createWorkflow } from "yieldstar";
+import { ResourceNotFoundError } from "@notation/resource";
 import {
   type DeleteResourceParams,
   type StepRunner,
@@ -11,42 +11,38 @@ export async function* deleteResourceOperation(
   step: StepRunner,
   params: DeleteResourceParams,
 ): AsyncGenerator<unknown, void, unknown> {
-  await emitLifecycleEvent(params, "delete", "start");
+  yield* emitLifecycleEvent(params, "delete", "start");
 
   if (params.dryRun) {
-    await emitLifecycleEvent(params, "delete", "dry-run");
+    yield* emitLifecycleEvent(params, "delete", "dry-run");
     return;
   }
 
   try {
-    yield* runPendingOperation(
-      step,
-      "delete:remote",
-      (context) =>
-        params.resource.delete(
-          params.resource.key,
-          params.resource.toState(params.resource.output),
-          context,
-        ),
-      params.maxOperationAttempts,
-    );
+    try {
+      yield* runPendingOperation(
+        step,
+        "delete:remote",
+        (context) =>
+          params.resource.delete(
+            params.resource.key,
+            params.resource.toState(params.resource.output),
+            context,
+          ),
+        params.maxOperationAttempts,
+      );
+    } catch (error) {
+      // Absence is delete's goal state, so a delete that finds the resource
+      // already gone — a crash-window replay, or an out-of-band removal —
+      // has succeeded.
+      if (!ResourceNotFoundError.is(error)) throw error;
+    }
 
-    yield* step.run("delete:persist-state", () =>
-      params.state.delete(params.resource.id, params.expectedRev),
-    );
+    yield* params.remove();
 
-    await emitLifecycleEvent(params, "delete", "success");
+    yield* emitLifecycleEvent(params, "delete", "success");
   } catch (err) {
-    await emitLifecycleEvent(params, "delete", "error", getErrorDetails(err));
+    yield* emitLifecycleEvent(params, "delete", "error", getErrorDetails(err));
     throw err;
   }
 }
-
-export const deleteResourceWorkflow: unknown = createWorkflow(
-  async function* (step, event) {
-    return yield* deleteResourceOperation(
-      step as StepRunner,
-      event.params as DeleteResourceParams,
-    );
-  },
-);

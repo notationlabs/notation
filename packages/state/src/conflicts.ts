@@ -1,24 +1,18 @@
-export class RevConflict extends Error {
-  readonly name = "RevConflict";
+/**
+ * A conditional state write or removal found the record moved past the
+ * version it was read at. Nothing catches this: it fails the workflow, and
+ * the constructor arguments exist to name the losing write in the message.
+ */
+export class VersionConflict extends Error {
+  readonly name = "VersionConflict";
 
   constructor(
-    readonly id: string,
-    readonly expectedRev: number,
-    readonly actualRev: number | undefined,
+    id: string,
+    expectedVersion: number,
+    actualVersion: number | undefined,
   ) {
     super(
-      `State revision conflict for ${id}: expected ${expectedRev}, got ${actualRev ?? "missing"}`,
+      `State version conflict for ${id}: expected ${expectedVersion}, got ${actualVersion ?? "missing"}`,
     );
-  }
-}
-
-export class LeaseConflict extends Error {
-  readonly name = "LeaseConflict";
-
-  constructor(
-    readonly scope: string,
-    readonly expiresAt: string,
-  ) {
-    super(`State lease conflict for ${scope}: held until ${expiresAt}`);
   }
 }

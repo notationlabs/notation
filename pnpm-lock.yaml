@@ -151,18 +151,21 @@ importers:
 
   examples/reconciler:
     dependencies:
+      '@notation/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@notation/reconciler':
         specifier: workspace:*
         version: link:../../packages/reconciler
       '@notation/resource':
         specifier: workspace:*
         version: link:../../packages/resource
-      '@notation/state-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/state-sqlite
       '@notation/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      yieldstar:
+        specifier: 0.5.0
+        version: 0.5.0
     devDependencies:
       '@types/node':
         specifier: ^22.13.4
@@ -261,9 +264,12 @@ importers:
       '@notation/state':
         specifier: workspace:*
         version: link:../state
-      '@notation/state-sqlite':
-        specifier: workspace:*
-        version: link:../state-sqlite
+      '@yieldstar/core':
+        specifier: 0.5.0
+        version: 0.5.0
+      '@yieldstar/sqlite-runtime':
+        specifier: 0.5.0
+        version: 0.5.0
       deep-object-diff:
         specifier: ^1.1.9
         version: 1.1.9
@@ -276,6 +282,15 @@ importers:
       pako:
         specifier: ^2.1.0
         version: 2.1.0
+      pino:
+        specifier: ^9.14.0
+        version: 9.14.0
+      valibot:
+        specifier: ^1.4.2
+        version: 1.4.2(typescript@6.0.3)
+      yieldstar:
+        specifier: 0.5.0
+        version: 0.5.0
     devDependencies:
       '@types/common-tags':
         specifier: ^1.8.4
@@ -379,30 +394,29 @@ importers:
       '@notation/state':
         specifier: workspace:*
         version: link:../state
+      '@yieldstar/core':
+        specifier: 0.5.0
+        version: 0.5.0
       deep-object-diff:
         specifier: ^1.1.9
         version: 1.1.9
+      valibot:
+        specifier: ^1.4.2
+        version: 1.4.2(typescript@6.0.3)
       yieldstar:
-        specifier: ^0.4.6
-        version: 0.4.6
+        specifier: 0.5.0
+        version: 0.5.0
+    devDependencies:
+      '@yieldstar/sqlite-runtime':
+        specifier: 0.5.0
+        version: 0.5.0
+      pino:
+        specifier: ^9.9.0
+        version: 9.14.0
 
   packages/resource: {}
 
   packages/state:
-    dependencies:
-      '@notation/utils':
-        specifier: workspace:*
-        version: link:../utils
-    devDependencies:
-      '@types/node':
-        specifier: ^22.13.4
-        version: 22.13.4
-
-  packages/state-sqlite:
-    dependencies:
-      '@notation/state':
-        specifier: workspace:*
-        version: link:../state
     devDependencies:
       '@types/node':
         specifier: ^22.13.4
@@ -2720,8 +2734,12 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@yieldstar/core@0.4.6':
-    resolution: {integrity: sha512-6aJQ2NwA07YKdQpiyxdg+SCKwnHQsuxAGGW6uKZYydTS10ljL3uTE6mKdrt/22ehOtbXzjRa/xnECAWh3GM7pw==}
+  '@yieldstar/core@0.5.0':
+    resolution: {integrity: sha512-KaN1+AVg54W9G4VXHNmCRixV0MY123714YZgaA9EZx7mDgB0vfFA6T71rUnldGH86QEkocCwI4GCZzZ+0G4fyQ==}
+
+  '@yieldstar/sqlite-runtime@0.5.0':
+    resolution: {integrity: sha512-zdG4kvOzEJFrTW52SY+WtdUuSvKhXs438H2/+TQotwi3fltLqva9EMgRJ/l9mcvC7nqAq1i0g2v+TZWjO/py4A==}
+    engines: {node: '>=22.6'}
 
   abstract-logging@2.0.1:
     resolution: {integrity: sha512-2BjRTZxTPvheOvGbBslFSYOUkr+SjPtOnrLP33f+VIWLzezQpZcqVg7ja3L4dBXmzzgwT+a029jRx5PCi3JuiA==}
@@ -3719,18 +3737,8 @@ packages:
   pino-abstract-transport@2.0.0:
     resolution: {integrity: sha512-F63x5tizV6WCh4R6RHyi2Ml+M70DNRXt/+HANowMflpgGFMAym/VKm6G7ZOQRjqN7XbGxK1Lg9t6ZrtzOaivMw==}
 
-  pino-abstract-transport@3.0.0:
-    resolution: {integrity: sha512-wlfUczU+n7Hy/Ha5j9a/gZNy7We5+cXp8YL+X+PG8S0KXxw7n/JXA3c46Y0zQznIJ83URJiwy7Lh56WLokNuxg==}
-
-  pino-std-serializers@7.0.0:
-    resolution: {integrity: sha512-e906FRY0+tV27iq4juKzSYPbUj2do2X2JX4EzSca1631EB2QJQUqGbDuERal7LCtOpxl6x3+nvo9NPZcmjkiFA==}
-
   pino-std-serializers@7.1.0:
     resolution: {integrity: sha512-BndPH67/JxGExRgiX1dX0w1FvZck5Wa4aal9198SrRhZjH3GxKQUKIBnYJTdj2HDN3UQAS06HlfcSbQj2OHmaw==}
-
-  pino@10.3.1:
-    resolution: {integrity: sha512-r34yH/GlQpKZbU1BvFFqOjhISRo1MNx1tWYsYvmj6KIRHSPMT2+yHOEb1SG6NMvRoHRF0a07kCOox/9yakl1vg==}
-    hasBin: true
 
   pino@9.14.0:
     resolution: {integrity: sha512-8OEwKp5juEvb/MjpIc4hjqfgCNysrS94RIOMXYvpYCdm/jglrKEiAYmiumbmGhCvs+IcInsphYDFwqrjr7398w==}
@@ -3882,9 +3890,6 @@ packages:
     resolution: {integrity: sha512-57frrGM/OCTLqLOAh0mhVA9VBMHd+9U7Zb2THMGdBUoZVOtGbJzjxsYGDJ3A9AYYCP4hn6y1TVbaOfzWtm5GFg==}
     engines: {node: '>= 12.13.0'}
 
-  real-require@1.0.0:
-    resolution: {integrity: sha512-P4nbQYQfePJxRSmY+v/KINxVucm4NF3p3s7pJveMTtom52FR4YGltUQLB8idDXwDDWW+eYrWDFbuzUnjoWHF7g==}
-
   recast@0.23.12:
     resolution: {integrity: sha512-dEWRjcINDu/F4l2dYx57ugBtD7HV9KXESyxhzw/MqWLeglJrsjJKqACPyUPg+6AF8mIgm+Zi0dZ3ACoIg+QtpA==}
     engines: {node: '>= 4'}
@@ -4027,9 +4032,6 @@ packages:
     resolution: {integrity: sha512-g9Q1haeby36OSStwb4ntCGGGaKsaVSjQ68fBxoQcutl5fS1vuY18H3wSt3jFyFtrkx+Kz0V1G85A4MyAdDMi2Q==}
     engines: {node: '>=8'}
 
-  sonic-boom@4.2.0:
-    resolution: {integrity: sha512-INb7TM37/mAcsGmc9hyyI6+QR3rR1zVRu36B0NeGXKnOOLiZOfER5SA+N7X7k3yUYRzLWafduTDvJAfDswwEww==}
-
   sonic-boom@4.2.1:
     resolution: {integrity: sha512-w6AxtubXa2wTXAUsZMMWERrsIRAdrK0Sc+FUytWvYAhBJLyuI4llrMIC1DtlNSdI99EI86KZum2MMq3EAZlF9Q==}
 
@@ -4117,10 +4119,6 @@ packages:
 
   thread-stream@3.1.0:
     resolution: {integrity: sha512-OqyPZ9u96VohAyMfJykzmivOrY2wfMSf3C5TtFJVgN+Hm6aj+voFhlK+kZEIv2FBh1X6Xp3DlnCOfEQ3B2J86A==}
-
-  thread-stream@4.2.0:
-    resolution: {integrity: sha512-e2zZ96wSChazBsbENf/Pcm/4swHt2cEKQ92rhUjkL9GCKiTDJIaTBenjE/m9DXi0QBmTMDkFDdOomUy20A1tDQ==}
-    engines: {node: '>=20'}
 
   tiny-invariant@1.3.3:
     resolution: {integrity: sha512-+FbBPE1o9QAYvviau/qC5SE3caw21q3xkvWKBtja5vgqOWIHHJ3ioaq1VPfn/Szqctz2bU/oYeKd9/z5BL+PVg==}
@@ -4344,6 +4342,18 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
+  uuid@11.1.1:
+    resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
+    hasBin: true
+
+  valibot@1.4.2:
+    resolution: {integrity: sha512-gjdCvJ6d3RyHAneqxMYMW9QMCwYMb3jpOO0IyHZV1bnRHFBHrX3VkIILt5XYR0WhwHiH7Mty8ovuPZ/O3gamrg==}
+    peerDependencies:
+      typescript: '>=5'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
   vfile-message@4.0.3:
     resolution: {integrity: sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw==}
 
@@ -4524,8 +4534,8 @@ packages:
   yallist@3.1.1:
     resolution: {integrity: sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g==}
 
-  yieldstar@0.4.6:
-    resolution: {integrity: sha512-toVxX0hHx+AlD5S3MT7voOW/Jw7AX5Mqejp28BJErSHGdZVcuKyVIfzYknbfnRnmBxAeZd3wfVnk7JQJQzZUZQ==}
+  yieldstar@0.5.0:
+    resolution: {integrity: sha512-MKuo2uaHYdy+1u0O0Q3Po3eVLGEmiNACsbaQ9aqOD4miZyRT63fXc/mhk0V4n8fNtoMN1BORD9QiXq5ZuOBtkQ==}
 
   yoctocolors@2.1.1:
     resolution: {integrity: sha512-GQHQqAopRhwU8Kt1DDM8NjibDXHC8eoh1erhGAJPEyveY9qqVeXvVikNKrDz69sHowPMorbPUrH/mx8c50eiBQ==}
@@ -6657,7 +6667,15 @@ snapshots:
   '@voidzero-dev/vite-plus-win32-x64-msvc@0.1.16':
     optional: true
 
-  '@yieldstar/core@0.4.6': {}
+  '@yieldstar/core@0.5.0':
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+
+  '@yieldstar/sqlite-runtime@0.5.0':
+    dependencies:
+      '@yieldstar/core': 0.5.0
+      pino: 9.14.0
+      uuid: 11.1.1
 
   abstract-logging@2.0.1: {}
 
@@ -7116,7 +7134,7 @@ snapshots:
       fast-json-stringify: 7.0.0
       find-my-way: 9.6.0
       light-my-request: 6.6.0
-      pino: 10.3.1
+      pino: 9.14.0
       process-warning: 5.0.0
       rfdc: 1.4.1
       secure-json-parse: 4.1.0
@@ -7689,27 +7707,7 @@ snapshots:
     dependencies:
       split2: 4.2.0
 
-  pino-abstract-transport@3.0.0:
-    dependencies:
-      split2: 4.2.0
-
-  pino-std-serializers@7.0.0: {}
-
   pino-std-serializers@7.1.0: {}
-
-  pino@10.3.1:
-    dependencies:
-      '@pinojs/redact': 0.4.0
-      atomic-sleep: 1.0.0
-      on-exit-leak-free: 2.1.2
-      pino-abstract-transport: 3.0.0
-      pino-std-serializers: 7.1.0
-      process-warning: 5.0.0
-      quick-format-unescaped: 4.0.4
-      real-require: 0.2.0
-      safe-stable-stringify: 2.5.0
-      sonic-boom: 4.2.1
-      thread-stream: 4.2.0
 
   pino@9.14.0:
     dependencies:
@@ -7717,12 +7715,12 @@ snapshots:
       atomic-sleep: 1.0.0
       on-exit-leak-free: 2.1.2
       pino-abstract-transport: 2.0.0
-      pino-std-serializers: 7.0.0
+      pino-std-serializers: 7.1.0
       process-warning: 5.0.0
       quick-format-unescaped: 4.0.4
       real-require: 0.2.0
       safe-stable-stringify: 2.5.0
-      sonic-boom: 4.2.0
+      sonic-boom: 4.2.1
       thread-stream: 3.1.0
 
   pirates@4.0.7: {}
@@ -7837,8 +7835,6 @@ snapshots:
   readdirp@4.1.2: {}
 
   real-require@0.2.0: {}
-
-  real-require@1.0.0: {}
 
   recast@0.23.12:
     dependencies:
@@ -8026,10 +8022,6 @@ snapshots:
 
   slash@3.0.0: {}
 
-  sonic-boom@4.2.0:
-    dependencies:
-      atomic-sleep: 1.0.0
-
   sonic-boom@4.2.1:
     dependencies:
       atomic-sleep: 1.0.0
@@ -8101,10 +8093,6 @@ snapshots:
   thread-stream@3.1.0:
     dependencies:
       real-require: 0.2.0
-
-  thread-stream@4.2.0:
-    dependencies:
-      real-require: 1.0.0
 
   tiny-invariant@1.3.3: {}
 
@@ -8310,6 +8298,12 @@ snapshots:
 
   util-deprecate@1.0.2: {}
 
+  uuid@11.1.1: {}
+
+  valibot@1.4.2(typescript@6.0.3):
+    optionalDependencies:
+      typescript: 6.0.3
+
   vfile-message@4.0.3:
     dependencies:
       '@types/unist': 3.0.3
@@ -8487,9 +8481,9 @@ snapshots:
 
   yallist@3.1.1: {}
 
-  yieldstar@0.4.6:
+  yieldstar@0.5.0:
     dependencies:
-      '@yieldstar/core': 0.4.6
+      '@yieldstar/core': 0.5.0
       nanoid: 5.1.16
       pino: 9.14.0
       serialize-error: 11.0.3

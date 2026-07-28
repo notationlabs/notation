@@ -1,115 +1,52 @@
 # Reconciler
 
-The reconciler runs deployment operations to transition infrastructure from its current state to the state defined in the project.
-
-Source: `@notation/reconciler`
+The reconciler expresses deployment and destruction as Yieldstar async generators. Notation owns desired-state decisions and provider lifecycle; the caller's Yieldstar runtime owns durable execution, waiting, and shared state.
 
 ## Deploy flow
 
-```ts [packages/reconciler/src/index.ts]
-const reconciler = new Reconciler({ state, registry, emit });
-await reconciler.deploy(resources, { dryRun, driftDetection });
-```
+`deploy` takes the deployment hold, walks dependency levels in order, decides an action for every resource, executes provider calls as durable steps, persists the result in a resource store, and deletes registered orphans.
 
-The reconciler walks the resource graph and, for each resource, determines an action:
+| Condition | Decision |
+| --- | --- |
+| Not in state | **create** |
+| In state, params changed | **update** |
+| In state, params unchanged, no drift | **noop** |
+| In state, but deleted from the provider | **drift-recreate** |
+| In state, provider state differs from stored state | **drift-update** |
+| In state, not in graph | **delete-orphan** |
 
-| Condition                                     | Decision           |
-| --------------------------------------------- | ------------------ |
-| Not in state                                  | **create**         |
-| In state, params changed                      | **update**         |
-| In state, params unchanged, no drift          | **noop**           |
-| In state, but deleted from AWS                | **drift-recreate** |
-| In state, AWS state differs from stored state | **drift-update**   |
-| In state, not in graph (orphan)               | **delete**         |
+Dry-run deploy performs decisions and emits lifecycle events without provider mutations or state mutations. When drift detection is enabled, it can still call provider read operations to decide whether a nominal noop has drifted.
 
-The `dryRun` flag runs the full diffing pipeline without executing any operations, so you can preview what a deploy would do.
+## Destroy flow
 
-## Topological ordering
+`destroy` is a first-class durable operation. It takes the same deployment hold as deploy, deletes desired resources in reverse dependency order, deletes registered persisted orphans, and conditionally removes each resource store only after the provider delete succeeds or reports that the resource is already absent.
 
-Resources are deployed in dependency order using `buildResourceDepthLevels()`. This function partitions the resource graph into levels – each level contains resources whose dependencies have all been satisfied by previous levels.
+## Waiting and replay
 
-```
-Level 0: IAM Role, CloudWatch LogGroup
-Level 1: Lambda Function (depends on Role, LogGroup)
-Level 2: API Gateway Integration (depends on Lambda)
-Level 3: API Gateway Route (depends on Integration)
-```
+Provider calls are stable durable steps, but provider acknowledgement and the Yieldstar heap checkpoint are not atomic. If the process crashes between them, replay repeats the call, so provider create, update, and delete operations must be idempotent. Event subscribers must likewise tolerate duplicate delivery when a crash occurs before the event checkpoint.
 
-Resources within a level deploy concurrently, so independent resources like the IAM Role and LogGroup above are provisioned in parallel. Dependent resources wait for their dependencies.
+A resource operation throws `ResourceOperationPendingError` when it has not finished. The error gives the reconciler a delay and optional callback context. The runtime stores the context, waits without keeping the process busy, and calls the same operation again. See [Operation errors](./resource.md#operation-errors) for the complete API.
 
-Destroy operates in reverse order with dependents getting removed before their dependencies.
+Each attempt, delay, event, state read, state write, and hold change has a stable step key. A resumed execution must use the same execution ID. A new deploy or destroy must use a new execution ID.
 
-### Cycle detection
+## State and the deployment hold
 
-Cycle detection is built in. If resources form a circular dependency, the build fails with:
+Each resource is stored under `notation/resource-state` with a deployment-scoped ID. Conditional updates and deletes compare the snapshot's UUIDv7 `instanceId` and version, so a stale execution cannot modify a deleted and recreated store.
 
-```
-Resource dependency cycle detected
-```
+Deploy and destroy take an exclusive hold on the deployment through one `notation/deployment-hold` store per deployment. `store.take` suspends a competing execution as a durable waiter and wakes it after the holder releases. A waiter that finds the hold already taken when it inspects it emits `reconciler.hold.waiting` naming the holding execution ID, so a wait behind a crashed execution is visible instead of silent; a holder that appears only between that inspection and the `take` suspends the waiter without the event.
 
-This catches configuration errors before any cloud operations are attempted.
-
-## Drift detection
-
-Drift detection is enabled by default. After confirming no local changes to a resource, the reconciler reads the resource's current state from AWS (via the resource's `read()` operation) and diffs it against stored state.
-
-If AWS has drifted (e.g. someone changed a Lambda timeout in the console, or an IAM policy was modified by another tool), Notation updates the resource to match the canoncial definition in the source code.
-
-Properties marked as `volatile` in the schema (like `LastModified` timestamps) are excluded from drift comparison.
+A failed or suspended execution keeps its hold, which is what makes resuming it safe. The hold of an execution that will never be resumed is cleared with `clearDeploymentHold` from `@notation/reconciler/durable` — the only supported way out of that state.
 
 ## Events
 
-The reconciler emits events at each step of an operation's lifecycle. The default `createConsoleReconcilerSubscriber()` logs these to the console with formatted output.
+The durable workflows emit these events:
 
 | Event                                | When                                                |
 | ------------------------------------ | --------------------------------------------------- |
 | `reconciler.deploy.decision`         | After deciding what action to take for a resource   |
 | `reconciler.drift.detected`          | When drift is found between stored and actual state |
 | `reconciler.operation.lifecycle`     | When an operation starts, finishes, skips, or fails |
+| `reconciler.hold.waiting`            | When another execution holds the deployment         |
 | `reconciler.orphan-deletion.skipped` | When no registered class can delete an orphan       |
 
-Lifecycle events contain the operation (`create`, `read`, `update`, or `delete`) and its
-status (`start`, `success`, `error`, `skip`, or `dry-run`). Events carry the resource ID,
-type, and relevant diff or error details.
-
-## Operations
-
-Each CRUD operation is implemented as an async generator with retry support:
-
-- **`createResourceOperation`** – creates the resource, reads back its state, persists to state backend
-- **`updateResourceOperation`** – applies the update, reads back new state, persists to state backend
-- **`deleteResourceOperation`** – deletes the resource, removes the entry from state backend
-- **`readResourceOperation`** – reads current state from the cloud provider (used for drift detection)
-
-### Pending operations
-
-A resource operation throws `ResourceOperationPendingError` when it has not finished. The reconciler reads two fields from the error:
-
-| Field | Action |
-| ----- | ------ |
-| `retryAfterMs` | Wait this many milliseconds. |
-| `callbackContext` | Pass this value to the next call of the same operation. |
-
-The reconciler then calls the same operation again. Any other error fails the operation. See [Operation errors](./resource.md#operation-errors) for the complete API.
-
-The default limit is 30 calls to one operation:
-
-```ts [packages/reconciler/src/index.ts]
-{
-  maxOperationAttempts: 30,
-}
-```
-
-The last pending error becomes a failure when the limit is reached.
-
-### Operation lifecycle
-
-Each operation follows the following pattern:
-
-1. Emit `started` event
-2. Execute the cloud operation (with retries)
-3. Read back the resource state
-4. Persist to state backend
-5. Emit `completed` event (or `failed` on error)
-
-State is updated after the provider operation and read-back complete.
+Lifecycle events cover create, read, update, and delete with `start`, `success`, `error`, `skip`, or `dry-run` status.

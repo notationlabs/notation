@@ -51,54 +51,19 @@ export type ResourceAction =
 export function decideAction(opts: {
   resource: BaseResource;
   stateNode?: StateNode;
-  params?: Record<string, unknown>;
-  driftRead?: DriftRead;
+  params: Record<string, unknown>;
 }): ResourceAction {
-  const { resource, stateNode, params, driftRead } = opts;
-  const desiredComparable = resource.toComparable(params ?? {});
-  const previousComparable = resource.toComparable(stateNode?.params ?? {});
+  const { resource, stateNode, params } = opts;
+  if (!stateNode) {
+    return { decision: "create" };
+  }
+
+  const desiredComparable = resource.toComparable(params);
+  const previousComparable = resource.toComparable(stateNode.params);
   const localPatch = diff(previousComparable, desiredComparable) as Record<
     string,
     unknown
   >;
-
-  if (driftRead) {
-    if (driftRead.kind === "absent") {
-      return { decision: stateNode ? "drift-recreate" : "create" };
-    }
-
-    const remoteComparable = resource.toComparable(driftRead.output);
-    const remotePatch = diff(remoteComparable, desiredComparable) as Record<
-      string,
-      unknown
-    >;
-
-    if (Object.keys(remotePatch).length === 0) {
-      return { decision: "noop" };
-    }
-
-    const remoteDetailedDiff = detailedDiff(
-      remoteComparable,
-      desiredComparable,
-    );
-    if (!stateNode || Object.keys(localPatch).length > 0) {
-      return {
-        decision: "update",
-        patch: remotePatch,
-        diff: toPlanDiff(remoteDetailedDiff),
-      };
-    }
-
-    return {
-      decision: "drift-update",
-      patch: remotePatch,
-      diff: toPlanDiff(remoteDetailedDiff),
-    };
-  }
-
-  if (!stateNode) {
-    return { decision: "create" };
-  }
 
   if (Object.keys(localPatch).length > 0) {
     return {
@@ -109,6 +74,39 @@ export function decideAction(opts: {
   }
 
   return { decision: "noop" };
+}
+
+/**
+ * Upgrades a noop decision with a read of the remote. Callers reach this only
+ * after decideAction returned noop, so a state node exists and the desired
+ * params match it: the remote is the only remaining source of difference.
+ */
+export function decideDriftAction(opts: {
+  resource: BaseResource;
+  params: Record<string, unknown>;
+  driftRead: DriftRead;
+}): ResourceAction {
+  const { resource, params, driftRead } = opts;
+  if (driftRead.kind === "absent") {
+    return { decision: "drift-recreate" };
+  }
+
+  const desiredComparable = resource.toComparable(params);
+  const remoteComparable = resource.toComparable(driftRead.output);
+  const remotePatch = diff(remoteComparable, desiredComparable) as Record<
+    string,
+    unknown
+  >;
+
+  if (Object.keys(remotePatch).length === 0) {
+    return { decision: "noop" };
+  }
+
+  return {
+    decision: "drift-update",
+    patch: remotePatch,
+    diff: toPlanDiff(detailedDiff(remoteComparable, desiredComparable)),
+  };
 }
 
 export async function resolvePlanParams(

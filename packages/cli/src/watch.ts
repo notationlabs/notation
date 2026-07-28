@@ -1,4 +1,5 @@
 import chokidar from "chokidar";
+import { randomUUID } from "node:crypto";
 import { createLoggerReconcilerSubscriber, deployApp } from "@notation/core";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
@@ -40,8 +41,11 @@ export async function watch(
 
     isDeploying = true;
 
+    const executionId = randomUUID();
+    logger.info(`Execution ID ${executionId}`);
     deployApp({
       entryPoint,
+      executionId,
       driftDetection: false,
       emit: createLoggerReconcilerSubscriber({ logger }),
     })

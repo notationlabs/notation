@@ -1,15 +1,10 @@
-import type { BaseResource, ResourceClass, ResourceType } from "@notation/resource";
+import type {
+  BaseResource,
+  ResourceClass,
+  ResourceType,
+} from "@notation/resource";
 
 export type ResourceRegistry = Map<ResourceType, ResourceClass<any, any, any>>;
-
-export type MissingResourceRegistryMatchWarningEvent = {
-  level: "warn";
-  event: "reconciler.orphan-deletion.skipped";
-  reason: "resource-type-not-registered";
-  workflow: "deploy" | "refresh";
-  resourceId: string;
-  resourceType: ResourceType;
-};
 
 export function createResourceRegistry(
   entries: Iterable<ResourceClass<any, any, any>> = [],
@@ -43,19 +38,4 @@ export function resolveResourceClass(
   type: ResourceType,
 ): ResourceClass<any, any, any> | undefined {
   return registry.get(type);
-}
-
-export function createMissingResourceRegistryMatchWarningEvent(opts: {
-  workflow: "deploy" | "refresh";
-  resourceId: string;
-  resourceType: ResourceType;
-}): MissingResourceRegistryMatchWarningEvent {
-  return {
-    level: "warn",
-    event: "reconciler.orphan-deletion.skipped",
-    reason: "resource-type-not-registered",
-    workflow: opts.workflow,
-    resourceId: opts.resourceId,
-    resourceType: opts.resourceType,
-  };
 }

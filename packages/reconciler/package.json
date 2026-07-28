@@ -2,6 +2,16 @@
   "type": "module",
   "name": "@notation/reconciler",
   "version": "0.12.0",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./durable": {
+      "types": "./dist/durable/index.d.ts",
+      "default": "./dist/durable/index.js"
+    }
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
@@ -9,12 +19,19 @@
   ],
   "scripts": {
     "build": "tsup --clean",
+    "typecheck": "tsc --noEmit",
     "dev": "tsup --watch"
   },
   "dependencies": {
     "@notation/resource": "workspace:*",
     "@notation/state": "workspace:*",
+    "@yieldstar/core": "0.5.0",
     "deep-object-diff": "^1.1.9",
-    "yieldstar": "^0.4.6"
+    "valibot": "^1.4.2",
+    "yieldstar": "0.5.0"
+  },
+  "devDependencies": {
+    "@yieldstar/sqlite-runtime": "0.5.0",
+    "pino": "^9.9.0"
   }
 }

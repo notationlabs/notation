@@ -1,8 +1,14 @@
-import { Reconciler, createResourceRegistry } from "@notation/reconciler";
-import { SqliteStateBackend } from "@notation/state-sqlite";
+import { randomUUID } from "node:crypto";
+import { NodeDurableRuntime } from "@notation/core";
+import { createResourceRegistry } from "@notation/reconciler";
+import * as durable from "@notation/reconciler/durable";
+import { createWorkflowRouter, workflow } from "yieldstar";
 import { StaticSite } from "./static-site";
 
-const state = new SqliteStateBackend("sites.db");
+const runtime = new NodeDurableRuntime({
+  deploymentId: "static-sites",
+  databasePath: "sites.db",
+});
 
 const resources = [
   new StaticSite({
@@ -21,13 +27,25 @@ const resources = [
   }),
 ];
 
-const reconciler = new Reconciler({
-  state,
-  registry: createResourceRegistry([StaticSite]),
+const deploy = workflow(async function* (step, event) {
+  yield* durable.deploy(step, {
+    executionId: event.executionId,
+    resources,
+    state: runtime.state,
+    registry: createResourceRegistry([StaticSite]),
+  });
 });
 
+// The resume handle for this run: rerunning with the same ID replays
+// checkpointed work instead of repeating it.
+const executionId = randomUUID();
+console.log(`Execution ID ${executionId}`);
+
 try {
-  await reconciler.deploy(resources);
+  await runtime.run(createWorkflowRouter({ deploy }), {
+    workflowId: "deploy",
+    executionId,
+  });
 } finally {
-  state.close();
+  runtime.close();
 }

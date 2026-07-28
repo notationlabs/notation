@@ -1,6 +1,7 @@
-import { createWorkflow } from "yieldstar";
+import { ResourceNotFoundError } from "@notation/resource";
+import { decideDriftAction, type DriftRead, type ResourceAction } from "../plan";
 import {
-  type ReadResourceParams,
+  type ResolvedResourceParams,
   type StepRunner,
   emitLifecycleEvent,
   getErrorDetails,
@@ -9,32 +10,25 @@ import { runPendingOperation } from "./operation.pending";
 
 export async function* readResourceOperation(
   step: StepRunner,
-  params: ReadResourceParams,
+  params: ResolvedResourceParams,
 ): AsyncGenerator<unknown, Record<string, unknown>, unknown> {
-  await emitLifecycleEvent(params, "read", "start");
+  yield* emitLifecycleEvent(params, "read", "start");
 
   if (params.dryRun) {
-    await emitLifecycleEvent(params, "read", "dry-run");
+    yield* emitLifecycleEvent(params, "read", "dry-run");
     return {};
   }
 
   try {
-    const resourceParams = yield* step.run("read:get-params", () =>
-      params.resource.getParams(),
-    );
-
     if (!params.resource.read) {
-      const stateNode = yield* step.run("read:get-state-node", () =>
-        params.state.get(params.resource.id),
-      );
-      const merged = stateNode
-        ? { ...stateNode.output, ...resourceParams }
-        : resourceParams;
+      const merged = params.persistedOutput
+        ? { ...params.persistedOutput, ...params.resourceParams }
+        : params.resourceParams;
 
-      await emitLifecycleEvent(params, "read", "skip", {
+      yield* emitLifecycleEvent(params, "read", "skip", {
         reason: "read-not-implemented",
       });
-      await emitLifecycleEvent(params, "read", "success");
+      yield* emitLifecycleEvent(params, "read", "success");
       return merged as Record<string, unknown>;
     }
 
@@ -46,23 +40,63 @@ export async function* readResourceOperation(
     );
 
     const mergedOutput = {
-      ...resourceParams,
+      ...params.resourceParams,
       ...remote,
     };
 
-    await emitLifecycleEvent(params, "read", "success");
+    yield* emitLifecycleEvent(params, "read", "success");
     return mergedOutput;
   } catch (err) {
-    await emitLifecycleEvent(params, "read", "error", getErrorDetails(err));
+    yield* emitLifecycleEvent(params, "read", "error", getErrorDetails(err));
     throw err;
   }
 }
 
-export const readResourceWorkflow: unknown = createWorkflow(
-  async function* (step, event) {
-    return yield* readResourceOperation(
-      step as StepRunner,
-      event.params as ReadResourceParams,
-    );
+/**
+ * Reads the remote to compare it against persisted state. An absent resource
+ * is a fact about the world rather than a failure, so it is reported as such;
+ * every other error still propagates.
+ */
+export async function* readDriftOperation(
+  step: StepRunner,
+  params: ResolvedResourceParams,
+): AsyncGenerator<unknown, DriftRead, unknown> {
+  try {
+    const output = yield* readResourceOperation(step, params);
+    return { kind: "present", output };
+  } catch (error) {
+    if (ResourceNotFoundError.is(error)) return { kind: "absent" };
+    throw error;
+  }
+}
+
+/**
+ * The drift gate, shared by every driver: a noop is only trusted once the
+ * remote has been read back, because the provider may have drifted from
+ * persisted state, which upgrades the decision. A resource with no read has
+ * no remote to compare, so its noop stands. `driftDetection` defaults to on
+ * here and nowhere else. Any other decision passes through untouched.
+ */
+export async function* applyDriftDetection(
+  step: StepRunner,
+  params: ResolvedResourceParams & {
+    action: ResourceAction;
+    driftDetection?: boolean;
   },
-);
+): AsyncGenerator<unknown, ResourceAction, unknown> {
+  const { action, driftDetection, ...readParams } = params;
+  if (
+    action.decision !== "noop" ||
+    !(driftDetection ?? true) ||
+    !readParams.resource.read
+  ) {
+    return action;
+  }
+
+  const driftRead = yield* readDriftOperation(step, readParams);
+  return decideDriftAction({
+    resource: readParams.resource,
+    params: readParams.resourceParams,
+    driftRead,
+  });
+}

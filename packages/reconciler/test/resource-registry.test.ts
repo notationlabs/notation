@@ -9,14 +9,14 @@ import {
 const TestResourceA = resource({ type: "test/service/a" })
   .defineSchema({})
   .defineOperations({
-    create: async () => ({}),
+    create: (async () => ({})) as any,
     delete: async () => undefined,
   });
 
 const TestResourceB = resource({ type: "test/service/b" })
   .defineSchema({})
   .defineOperations({
-    create: async () => ({}),
+    create: (async () => ({})) as any,
     delete: async () => undefined,
   });
 
