@@ -463,7 +463,7 @@ describe("deployment hold", () => {
   });
 });
 
-describe("deployment hold takeover", () => {
+describe("deployment hold clearing", () => {
   it("clears a hold its named holder still has, and unblocks the deployment", async () => {
     const create = vi.fn(async () => undefined);
     const Resource = resource({ type: "test/durable/takeover" })
@@ -476,14 +476,14 @@ describe("deployment hold takeover", () => {
       initial: { holder: "abandoned-execution" },
     });
 
-    const result = await durable.takeOverDeploymentHold({
+    const result = await durable.clearDeploymentHold({
       storeClient: runtime.storeClient,
       deploymentId: "takeover",
       fromExecutionId: "abandoned-execution",
     });
 
     expect(result).toEqual({
-      taken: true,
+      cleared: true,
       previousHolder: "abandoned-execution",
     });
     await runtime.run("later-execution");
@@ -499,13 +499,13 @@ describe("deployment hold takeover", () => {
       initial: { holder: "current-execution" },
     });
 
-    const result = await durable.takeOverDeploymentHold({
+    const result = await durable.clearDeploymentHold({
       storeClient: runtime.storeClient,
       deploymentId: "takeover-race",
       fromExecutionId: "abandoned-execution",
     });
 
-    expect(result).toEqual({ taken: false, holder: "current-execution" });
+    expect(result).toEqual({ cleared: false, holder: "current-execution" });
     const snapshot = await runtime.storeClient.getStore({
       definition: durable.deploymentHoldStore,
       id: "takeover-race",

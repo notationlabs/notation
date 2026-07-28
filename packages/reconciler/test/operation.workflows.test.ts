@@ -244,6 +244,37 @@ describe("operation workflows", () => {
     expect(events.map((event) => event.status)).toEqual(["start", "success"]);
   });
 
+  it("delete treats ResourceNotFoundError as the resource already being absent", async () => {
+    const step = createStepRunnerDouble();
+    const events: OperationLifecycleEvent[] = [];
+    const remove = vi.fn(async function* () {});
+
+    const TestResource = resource({ type: "test/service/delete-absent" })
+      .defineSchema({})
+      .defineOperations({
+        create: (async () => ({})) as any,
+        delete: async () => {
+          throw new ResourceNotFoundError("resource is already gone");
+        },
+      });
+
+    const testResource = new TestResource({ id: "test-delete-absent" });
+
+    await runOperation(
+      deleteResourceOperation(step, {
+        resource: testResource,
+        remove,
+        emit: toEmitStep((event) => void events.push(event)),
+      }),
+    );
+
+    // Absence is delete's goal state: state is removed and the operation
+    // reports success, which is what makes a crash-window replayed delete
+    // idempotent even when the handler surfaces the provider's missing error.
+    expect(remove).toHaveBeenCalledOnce();
+    expect(events.map((event) => event.status)).toEqual(["start", "success"]);
+  });
+
   it("delete rethrows an unclassified resource error", async () => {
     const step = createStepRunnerDouble();
     const remove = vi.fn(async function* () {});

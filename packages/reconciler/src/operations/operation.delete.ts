@@ -1,3 +1,4 @@
+import { ResourceNotFoundError } from "@notation/resource";
 import {
   type DeleteResourceParams,
   type StepRunner,
@@ -18,17 +19,24 @@ export async function* deleteResourceOperation(
   }
 
   try {
-    yield* runPendingOperation(
-      step,
-      "delete:remote",
-      (context) =>
-        params.resource.delete(
-          params.resource.key,
-          params.resource.toState(params.resource.output),
-          context,
-        ),
-      params.maxOperationAttempts,
-    );
+    try {
+      yield* runPendingOperation(
+        step,
+        "delete:remote",
+        (context) =>
+          params.resource.delete(
+            params.resource.key,
+            params.resource.toState(params.resource.output),
+            context,
+          ),
+        params.maxOperationAttempts,
+      );
+    } catch (error) {
+      // Absence is delete's goal state, so a delete that finds the resource
+      // already gone — a crash-window replay, or an out-of-band removal —
+      // has succeeded.
+      if (!ResourceNotFoundError.is(error)) throw error;
+    }
 
     yield* params.remove();
 

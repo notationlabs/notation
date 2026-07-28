@@ -35,7 +35,7 @@ Each resource is stored under `notation/resource-state` with a deployment-scoped
 
 Deploy and destroy take an exclusive hold on the deployment through one `notation/deployment-hold` store per deployment. `store.take` suspends a competing execution as a durable waiter and wakes it after the holder releases. A waiter that finds the hold already taken when it inspects it emits `reconciler.hold.waiting` naming the holding execution ID, so a wait behind a crashed execution is visible instead of silent; a holder that appears only between that inspection and the `take` suspends the waiter without the event.
 
-A failed or suspended execution keeps its hold, which is what makes resuming it safe. The hold of an execution that will never be resumed is cleared with `takeOverDeploymentHold` from `@notation/reconciler/durable` — the only supported way out of that state.
+A failed or suspended execution keeps its hold, which is what makes resuming it safe. The hold of an execution that will never be resumed is cleared with `clearDeploymentHold` from `@notation/reconciler/durable` — the only supported way out of that state.
 
 ## Events
 

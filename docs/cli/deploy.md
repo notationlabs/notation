@@ -34,7 +34,7 @@ Retryable provider conditions and consistency reads suspend on durable SQLite ti
 
 1. **Compile** – esbuild compiles infrastructure and runtime modules to `dist/`.
 
-2. **Build resource graph** – the worker imports the compiled output and collects declared resources.
+2. **Build resource graph** – the CLI imports the compiled output in-process and collects declared resources.
 
 3. **Order dependencies** – dependency levels run in topological order.
 

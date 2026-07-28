@@ -34,8 +34,8 @@
 export { deploy } from "./deploy";
 export { destroy } from "./destroy";
 export {
-  takeOverDeploymentHold,
-  type DeploymentHoldTakeover,
+  clearDeploymentHold,
+  type DeploymentHoldClearance,
 } from "./deployment-hold";
 export { DurableStateBackend } from "./state-backend";
 export { deploymentHoldStore, resourceStateStore } from "./stores";

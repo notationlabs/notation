@@ -69,7 +69,7 @@ function releaseDeploymentHold(
  * resumed execution replays `take` from the step cache without re-acquiring
  * anything, so it must still be the holder. An execution that will never be
  * resumed holds its deployment until an operator calls
- * `takeOverDeploymentHold`.
+ * `clearDeploymentHold`.
  */
 export async function* withDeploymentHold(
   step: DurableStep,
@@ -81,9 +81,9 @@ export async function* withDeploymentHold(
   yield* releaseDeploymentHold(hold, opts.executionId);
 }
 
-export type DeploymentHoldTakeover =
-  | { taken: true; previousHolder: string }
-  | { taken: false; holder: string | null };
+export type DeploymentHoldClearance =
+  | { cleared: true; previousHolder: string }
+  | { cleared: false; holder: string | null };
 
 /**
  * Clears the hold of an execution that will not be resumed, so later
@@ -91,16 +91,16 @@ export type DeploymentHoldTakeover =
  *
  * The write is conditional on `fromExecutionId` still being the named holder,
  * so it cannot clear a hold that has since moved to another execution.
- * Confirm the holder is genuinely dead first: taking a live execution's hold
- * away permits a concurrent mutation of the same deployment.
+ * Confirm the holder is genuinely dead first: clearing a live execution's
+ * hold permits a concurrent mutation of the same deployment.
  *
  * Throws if the deployment has no hold store, i.e. has never been deployed.
  */
-export async function takeOverDeploymentHold(params: {
+export async function clearDeploymentHold(params: {
   storeClient: StoreClient;
   deploymentId: string;
   fromExecutionId: string;
-}): Promise<DeploymentHoldTakeover> {
+}): Promise<DeploymentHoldClearance> {
   const { storeClient, deploymentId, fromExecutionId } = params;
   const read = () =>
     storeClient.getStore({
@@ -110,7 +110,7 @@ export async function takeOverDeploymentHold(params: {
 
   const snapshot = await read();
   if (snapshot.state.holder !== fromExecutionId) {
-    return { taken: false, holder: snapshot.state.holder };
+    return { cleared: false, holder: snapshot.state.holder };
   }
 
   const result = await storeClient.updateStoreFrom({
@@ -123,8 +123,8 @@ export async function takeOverDeploymentHold(params: {
   });
 
   if (!result.updated) {
-    return { taken: false, holder: (await read()).state.holder };
+    return { cleared: false, holder: (await read()).state.holder };
   }
 
-  return { taken: true, previousHolder: fromExecutionId };
+  return { cleared: true, previousHolder: fromExecutionId };
 }

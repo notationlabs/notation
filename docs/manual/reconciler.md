@@ -36,7 +36,7 @@ The outer workflow supplies durable step execution, timers, shared stores, waiti
 
 Each live resource is one Yieldstar store. Yieldstar's UUIDv7 store `instanceId` and version are authoritative for conditional update and delete; Notation exposes the version unchanged as the resource state's `version`.
 
-Operations against the same deployment — the `deploymentId` the `DurableStateBackend` is constructed with — are serialized through a deployment hold naming the holding `executionId`. Resume a crashed operation with the same execution ID; use a new globally unique execution ID for every new deploy or destroy. An execution that must wait emits a `reconciler.hold.waiting` event naming the holder before it suspends, which also identifies a crashed holder that should be resumed instead. If the holder is genuinely abandoned, clear its hold with `takeOverDeploymentHold`.
+Operations against the same deployment — the `deploymentId` the `DurableStateBackend` is constructed with — are serialized through a deployment hold naming the holding `executionId`. Resume a crashed operation with the same execution ID; use a new globally unique execution ID for every new deploy or destroy. An execution that must wait emits a `reconciler.hold.waiting` event naming the holder before it suspends, which also identifies a crashed holder that should be resumed instead. If the holder is genuinely abandoned, clear its hold with `clearDeploymentHold`.
 
 Pass the complete desired set on every deployment. Persisted resources absent from that set are deleted through the supplied resource registry. Destroy removes current resources in reverse dependency order and then removes any persisted orphans whose resource type is registered.
 
