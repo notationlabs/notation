@@ -239,7 +239,7 @@ describe("operation workflows", () => {
     );
 
     // State is removed only after the provider delete resolves; which record
-    // and revision that targets is the driver's concern, not the operation's.
+    // and version that targets is the driver's concern, not the operation's.
     expect(remove).toHaveBeenCalledOnce();
     expect(events.map((event) => event.status)).toEqual(["start", "success"]);
   });

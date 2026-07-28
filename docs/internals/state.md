@@ -2,7 +2,7 @@
 
 Notation CLI deploy, destroy, plan, and dashboard use Yieldstar stores in `.notation/workflows.db`. Override the database path with `NOTATION_DATABASE_PATH`.
 
-Each live resource is a `notation/resource-state` store scoped by deployment and resource ID. A missing store means the resource is absent. No application tombstone is written.
+Each live resource is a `notation/resource-state` store scoped by deployment and resource ID. A missing store means the resource is absent.
 
 ```ts
 const state = new DurableStateBackend(storeClient, "infra/api.ts");

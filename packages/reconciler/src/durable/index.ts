@@ -38,11 +38,7 @@ export {
   type DeploymentHoldTakeover,
 } from "./deployment-hold";
 export { DurableStateBackend } from "./state-backend";
-export {
-  deploymentHoldStore,
-  resourceStateStore,
-  type DeploymentHoldState,
-} from "./stores";
+export { deploymentHoldStore, resourceStateStore } from "./stores";
 export {
   type DurableDeployOptions,
   type DurableWorkflowOptions,

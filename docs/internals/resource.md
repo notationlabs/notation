@@ -173,7 +173,7 @@ new ResourceOperationPendingError(message: string, {
 | Handler result | Meaning | What the reconciler does |
 | -------------- | ------- | ------------------------ |
 | Return normally | The operation finished. | Continues the deployment. |
-| `throw new ResourceNotFoundError(message, { cause })` | `read` found no resource for the given key. | Treats the resource as absent during planning and refresh. A read after create or update fails because that operation claimed to have finished. |
+| `throw new ResourceNotFoundError(message, { cause })` | `read` found no resource for the given key. | Treats the resource as absent during planning and drift detection. A read after create or update fails because that operation claimed to have finished. |
 | `throw new ResourceOperationPendingError(message, { retryAfterMs, callbackContext })` | The operation has not finished. | Waits for `retryAfterMs`, then calls the same handler again. It passes `callbackContext` as the handler's final argument. |
 | Throw any other error | The operation failed. | Stops the deployment. |
 
