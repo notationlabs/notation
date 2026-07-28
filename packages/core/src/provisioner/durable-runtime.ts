@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
@@ -40,9 +39,15 @@ export type NodeDurableRuntimeOptions = {
   logger?: Logger;
 };
 
+/**
+ * The execution ID is required rather than defaulted: it is the handle for
+ * resuming a crashed execution, so the caller that starts a run must already
+ * hold it. Generation belongs to the outermost caller (e.g. the CLI, which
+ * prints the ID before any provider work).
+ */
 export type RunWorkflowOptions = {
   workflowId: string;
-  executionId?: string;
+  executionId: string;
 };
 
 const executionBindingStore = defineStore(
@@ -93,7 +98,7 @@ export class NodeDurableRuntime {
     }
     this.#running = true;
     try {
-      const executionId = opts.executionId ?? randomUUID();
+      const { executionId } = opts;
       const runner = new WorkflowRunner({
         router,
         heapClient: this.#heapClient,
@@ -230,7 +235,7 @@ export async function runDurableWorkflow(
     workflowId: string;
     runtime?: NodeDurableRuntime;
     databasePath?: string;
-    executionId?: string;
+    executionId: string;
   },
   body: (
     step: DurableStep,

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NodeDurableRuntime } from "@notation/core";
 import { createResourceRegistry } from "@notation/reconciler";
 import * as durable from "@notation/reconciler/durable";
@@ -35,9 +36,15 @@ const deploy = workflow(async function* (step, event) {
   });
 });
 
+// The resume handle for this run: rerunning with the same ID replays
+// checkpointed work instead of repeating it.
+const executionId = randomUUID();
+console.log(`Execution ID ${executionId}`);
+
 try {
   await runtime.run(createWorkflowRouter({ deploy }), {
     workflowId: "deploy",
+    executionId,
   });
 } finally {
   runtime.close();

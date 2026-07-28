@@ -84,7 +84,7 @@ describe("durable execution and replay", () => {
     const runtime = createRuntime(
       [new TestResource({ id: "resume" })],
       "crash-resume",
-      { crashAfterStep: "notation:resource:resume:create:remote:attempt:0" },
+      { crashAfterStep: "notation:deploy:resume:create:remote:attempt:0" },
     );
 
     await expect(runtime.run("resume-execution")).rejects.toThrow(

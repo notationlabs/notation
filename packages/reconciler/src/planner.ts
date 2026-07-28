@@ -2,10 +2,9 @@ import type { BaseResource } from "@notation/resource";
 import type { StateBackend } from "@notation/state";
 import { buildResourceDepthLevels } from "./dependency-graph";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
-import { readDriftOperation } from "./operations";
+import { applyDriftDetection } from "./operations";
 import {
   decideAction,
-  decideDriftAction,
   getDependencyIds,
   resolvePlanParams,
   type Plan,
@@ -24,7 +23,7 @@ export type CreatePlanOptions = {
 export async function createPlan({
   resources,
   state,
-  driftDetection = true,
+  driftDetection,
   emit,
   maxOperationAttempts,
 }: CreatePlanOptions): Promise<Plan> {
@@ -39,21 +38,17 @@ export async function createPlan({
       const stateNode = await state.get(resource.id);
       if (stateNode) resource.setOutput(stateNode.output);
       const params = await resolvePlanParams(resource);
-      let action = decideAction({ resource, stateNode, params });
-
-      if (action.decision === "noop" && driftDetection && resource.read) {
-        const driftRead = await runOperation(
-          readDriftOperation(createStepRunner(), {
-            resource,
-            resourceParams: params,
-            persistedOutput: stateNode?.output,
-            emit: emitStep,
-            maxOperationAttempts,
-          }),
-        );
-
-        action = decideDriftAction({ resource, params, driftRead });
-      }
+      const action = await runOperation(
+        applyDriftDetection(createStepRunner(), {
+          action: decideAction({ resource, stateNode, params }),
+          driftDetection,
+          resource,
+          resourceParams: params,
+          persistedOutput: stateNode?.output,
+          emit: emitStep,
+          maxOperationAttempts,
+        }),
+      );
 
       nodes.push({
         id: resource.id,

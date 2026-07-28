@@ -5,8 +5,8 @@
  * Step keys are persisted: a resumed execution matches its cached work by
  * key, so changing one re-executes the work behind it. The shapes in use are:
  *
- *   notation:resource:<id>:*   per-resource reconciliation steps (deploy)
- *   notation:destroy:<id>:*    per-resource deletion steps (destroy)
+ *   notation:deploy:<id>:*     per-resource reconciliation steps
+ *   notation:destroy:<id>:*    per-resource deletion steps
  *   notation:orphans:list      the orphan sweep's one read of persisted state
  *   notation:orphans:<id>:*    orphan sweep, per persisted record
  *   *:remote:attempt:<n>       one provider call attempt

@@ -17,7 +17,7 @@ export async function* deploy(
         yield* reconcileResource(
           scopeStep(
             step,
-            `notation:resource:${encodeURIComponent(resource.id)}`,
+            `notation:deploy:${encodeURIComponent(resource.id)}`,
           ),
           resource,
           opts,

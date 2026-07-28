@@ -10,14 +10,14 @@ import {
   resolveResourceClass,
 } from "../resource-registry";
 import {
+  applyDriftDetection,
   createResourceOperation,
   deleteResourceOperation,
-  readDriftOperation,
   updateResourceOperation,
   type PersistState,
   type RemoveState,
 } from "../operations";
-import { decideAction, decideDriftAction } from "../plan";
+import { decideAction } from "../plan";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
@@ -58,28 +58,20 @@ export async function* reconcileResource(
 
   let action = decideAction({ resource, stateNode: session.node, params });
 
-  // A noop is only trusted once the remote has been read back: the provider
-  // may have drifted from persisted state, which upgrades the decision. A
-  // resource with no read has no remote to compare, so its noop stands.
-  if (
-    action.decision === "noop" &&
-    (opts.driftDetection ?? true) &&
-    resource.read
-  ) {
-    // Its own scope: the operation that follows reads the remote again, and
-    // the two reads must not share step keys.
-    const driftStep = step.scope("drift-read");
-    const driftRead = yield* readDriftOperation(driftStep, {
-      resource,
-      resourceParams: params,
-      persistedOutput: session.node?.output,
-      // No dryRun: a dry run suppresses mutations, not reads, and reading is
-      // how a dry run reports drift at all.
-      emit: durableEmitter(driftStep, opts.emit),
-      maxOperationAttempts: opts.maxOperationAttempts,
-    });
-    action = decideDriftAction({ resource, params, driftRead });
-  }
+  // Its own scope: when the gate fires, the operation that follows the drift
+  // read reads the remote again, and the two reads must not share step keys.
+  const driftStep = step.scope("drift-read");
+  action = yield* applyDriftDetection(driftStep, {
+    action,
+    driftDetection: opts.driftDetection,
+    resource,
+    resourceParams: params,
+    persistedOutput: session.node?.output,
+    // No dryRun: a dry run suppresses mutations, not reads, and reading is
+    // how a dry run reports drift at all.
+    emit: durableEmitter(driftStep, opts.emit),
+    maxOperationAttempts: opts.maxOperationAttempts,
+  });
 
   if (action.decision === "drift-update") {
     yield* emit({
@@ -207,7 +199,7 @@ async function* openStateSession(
   opts: DurableWorkflowOptions,
   resource: BaseResource,
 ): AsyncGenerator<any, ResourceStateSession, any> {
-  const snapshot = yield* step.run("state:snapshot", () =>
+  const snapshot = yield* step.run("persisted-record", () =>
     opts.state.snapshot(resource.id),
   );
   const persist = persistResourceState(step, opts, resource, snapshot);

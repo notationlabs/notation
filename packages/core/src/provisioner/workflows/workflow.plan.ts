@@ -20,7 +20,8 @@ export type PlanAppOptions = {
 
 export async function planApp({
   entryPoint,
-  driftDetection = true,
+  // Defaulted in one place: the reconciler's drift gate treats absent as on.
+  driftDetection,
   maxOperationAttempts,
   runtime: suppliedRuntime,
   databasePath,
