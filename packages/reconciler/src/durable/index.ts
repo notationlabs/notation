@@ -7,10 +7,11 @@
  *
  *   notation:resource:<id>:*   per-resource reconciliation steps (deploy)
  *   notation:destroy:<id>:*    per-resource deletion steps (destroy)
+ *   notation:orphans:list      the orphan sweep's one read of persisted state
  *   notation:orphans:<id>:*    orphan sweep, per persisted record
  *   *:remote:attempt:<n>       one provider call attempt
  *   *:remote:retry-delay:<n>   the wait between two attempts
- *   emit:<event>[:<operation>:<status>]   event delivery checkpoint
+ *   *:emit:<event>[:<operation>:<status>]   event delivery checkpoint
  *   notation:hold:*            deployment hold: inspect/acquire/release
  *   state:persist:<id>         conditional write of a resource record
  *   state:delete:<id>          conditional removal of one

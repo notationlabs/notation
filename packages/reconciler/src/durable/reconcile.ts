@@ -37,9 +37,9 @@ type ResourceStateSession =
   | { node: StateNode; persist: PersistState; remove: RemoveState };
 
 /**
- * Reconciles one resource: hydrate, decide, read the remote when the decision
- * needs it, announce the decision, then act. `step` must already be scoped to
- * the resource.
+ * Reconciles one resource: load the persisted record, decide, read the
+ * remote when the decision needs it, announce the decision, then act. `step`
+ * must already be scoped to the resource.
  */
 export async function* reconcileResource(
   step: DurableStepRunner,

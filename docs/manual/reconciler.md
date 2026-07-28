@@ -34,10 +34,10 @@ export const destroy = workflow(async function* (step, event) {
 
 The outer workflow supplies durable step execution, timers, shared stores, waiting, and scheduling. Checkpointed provider results are replayed from the heap after a crash, retryable provider conditions suspend on a durable timer, and conditional state writes use Yieldstar store identity and version. Provider mutations must be idempotent because a crash after provider acknowledgement but before the heap checkpoint repeats the call; event consumers must tolerate the same duplicate-delivery window.
 
-Each live resource is one Yieldstar store. Absence is represented by no store, not a tombstone. Yieldstar's UUIDv7 store `instanceId` and version are authoritative for conditional update and delete; Notation exposes the version as the resource state's `rev`.
+Each live resource is one Yieldstar store. Yieldstar's UUIDv7 store `instanceId` and version are authoritative for conditional update and delete; Notation exposes the version as the resource state's `rev`.
 
 Operations against the same deployment — the `deploymentId` the `DurableStateBackend` is constructed with — are serialized through a deployment hold naming the holding `executionId`. Resume a crashed operation with the same execution ID; use a new globally unique execution ID for every new deploy or destroy. An execution that must wait emits a `reconciler.hold.waiting` event naming the holder before it suspends, which also identifies a crashed holder that should be resumed instead. If the holder is genuinely abandoned, clear its hold with `takeOverDeploymentHold`.
 
-Pass the complete desired set on every deployment. Persisted resources absent from that set are deleted through the supplied resource registry. Destroy removes current resources in reverse dependency order and then removes any persisted orphans that the registry can hydrate.
+Pass the complete desired set on every deployment. Persisted resources absent from that set are deleted through the supplied resource registry. Destroy removes current resources in reverse dependency order and then removes any persisted orphans whose resource type is registered.
 
 The runnable Node SQLite composition is in `examples/reconciler`.

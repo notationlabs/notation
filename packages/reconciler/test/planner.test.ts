@@ -15,15 +15,17 @@ describe("createPlan", () => {
         create: async () => undefined,
         delete: async () => undefined,
       });
-    const state = new MemoryStateBackend();
-    await state.update("orphan", 0, {
-      id: "orphan",
-      type: TestResource.type,
-      config: {},
-      params: {},
-      output: {},
-      lastOperation: "create",
-      lastOperationAt: "2026-07-22T00:00:00.000Z",
+    const state = new MemoryStateBackend({
+      orphan: {
+        rev: 1,
+        id: "orphan",
+        type: TestResource.type,
+        config: {},
+        params: {},
+        output: {},
+        lastOperation: "create",
+        lastOperationAt: "2026-07-22T00:00:00.000Z",
+      },
     });
 
     const plan = await createPlan({
@@ -48,15 +50,17 @@ describe("createPlan", () => {
         },
         delete: async () => undefined,
       });
-    const state = new MemoryStateBackend();
-    await state.update("existing", 0, {
-      id: "existing",
-      type: TestResource.type,
-      config: {},
-      params: {},
-      output: {},
-      lastOperation: "create",
-      lastOperationAt: "2026-07-22T00:00:00.000Z",
+    const state = new MemoryStateBackend({
+      existing: {
+        rev: 1,
+        id: "existing",
+        type: TestResource.type,
+        config: {},
+        params: {},
+        output: {},
+        lastOperation: "create",
+        lastOperationAt: "2026-07-22T00:00:00.000Z",
+      },
     });
 
     await expect(
@@ -77,15 +81,17 @@ describe("createPlan", () => {
         },
         delete: async () => undefined,
       });
-    const state = new MemoryStateBackend();
-    await state.update("existing", 0, {
-      id: "existing",
-      type: TestResource.type,
-      config: {},
-      params: {},
-      output: {},
-      lastOperation: "create",
-      lastOperationAt: "2026-07-22T00:00:00.000Z",
+    const state = new MemoryStateBackend({
+      existing: {
+        rev: 1,
+        id: "existing",
+        type: TestResource.type,
+        config: {},
+        params: {},
+        output: {},
+        lastOperation: "create",
+        lastOperationAt: "2026-07-22T00:00:00.000Z",
+      },
     });
 
     const plan = await createPlan({
@@ -117,15 +123,17 @@ describe("createPlan", () => {
         },
         delete: async () => undefined,
       });
-    const state = new MemoryStateBackend();
-    await state.update("existing", 0, {
-      id: "existing",
-      type: TestResource.type,
-      config: {},
-      params: {},
-      output: {},
-      lastOperation: "create",
-      lastOperationAt: "2026-07-22T00:00:00.000Z",
+    const state = new MemoryStateBackend({
+      existing: {
+        rev: 1,
+        id: "existing",
+        type: TestResource.type,
+        config: {},
+        params: {},
+        output: {},
+        lastOperation: "create",
+        lastOperationAt: "2026-07-22T00:00:00.000Z",
+      },
     });
 
     const plan = await createPlan({

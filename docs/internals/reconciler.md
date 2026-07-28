@@ -13,13 +13,13 @@ The reconciler expresses deployment and destruction as Yieldstar async generator
 | In state, params unchanged, no drift | **noop** |
 | In state, but deleted from the provider | **drift-recreate** |
 | In state, provider state differs from stored state | **drift-update** |
-| In state, not in graph | **delete** |
+| In state, not in graph | **delete-orphan** |
 
 Dry-run deploy performs decisions and emits lifecycle events without provider mutations or state mutations. When drift detection is enabled, it can still call provider read operations to decide whether a nominal noop has drifted.
 
 ## Destroy flow
 
-`destroy` is a first-class durable operation. It takes the same deployment hold as deploy, deletes desired resources in reverse dependency order, deletes hydratable persisted orphans, and conditionally removes each resource store only after the provider delete succeeds or reports that the resource is already absent.
+`destroy` is a first-class durable operation. It takes the same deployment hold as deploy, deletes desired resources in reverse dependency order, deletes registered persisted orphans, and conditionally removes each resource store only after the provider delete succeeds or reports that the resource is already absent.
 
 Provider delete is a stable durable step, but the provider acknowledgement and Yieldstar heap checkpoint are not atomic. If the process crashes between them, replay repeats the delete, so provider create, update, and delete operations must be idempotent. Event subscribers must likewise tolerate duplicate delivery when a crash occurs before the event checkpoint.
 

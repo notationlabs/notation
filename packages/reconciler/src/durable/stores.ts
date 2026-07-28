@@ -23,7 +23,9 @@ export const resourceStateStore = defineStore(
     config: v.record(v.string(), v.unknown()),
     params: v.record(v.string(), v.unknown()),
     output: v.record(v.string(), v.unknown()),
-    lastOperation: v.picklist(["drift", "create", "update", "delete"]),
+    // Only the operations that leave a record behind: delete removes the
+    // store, and drift repair persists as "update".
+    lastOperation: v.picklist(["create", "update"]),
     lastOperationAt: v.string(),
   }),
 );

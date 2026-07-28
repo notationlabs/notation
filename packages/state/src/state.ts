@@ -1,5 +1,3 @@
-import { RevConflict } from "./conflicts";
-
 export type StateNode = {
   rev: number;
   id: string;
@@ -7,23 +5,17 @@ export type StateNode = {
   config: Record<string, unknown>;
   params: Record<string, unknown>;
   output: Record<string, unknown>;
-  lastOperation: "drift" | "create" | "update" | "delete";
+  lastOperation: "create" | "update";
   lastOperationAt: string;
   [key: string]: unknown;
 };
 
+/**
+ * Read-only: state writes happen inside the durable workflow, through the
+ * store handle, so each write is stamped with the step that made it.
+ */
 export interface StateBackend {
   get(id: string): Promise<StateNode | undefined>;
-  /**
-   * The stored revision must match expectedRev. A missing record counts as
-   * revision 0, so expectedRev: 0 asserts that the record does not exist yet.
-   */
-  update(
-    id: string,
-    expectedRev: number,
-    patch: Partial<StateNode>,
-  ): Promise<{ rev: number }>;
-  delete(id: string, expectedRev: number): Promise<void>;
   values(): Promise<StateNode[]>;
 }
 
@@ -37,30 +29,6 @@ export class MemoryStateBackend implements StateBackend {
   async get(id: string): Promise<StateNode | undefined> {
     const state = await this.readState();
     return state[id];
-  }
-
-  async update(
-    id: string,
-    expectedRev: number,
-    patch: Partial<StateNode>,
-  ): Promise<{ rev: number }> {
-    const state = await this.readState();
-    assertExpectedRev(id, state[id], expectedRev);
-    const rev = (state[id]?.rev ?? 0) + 1;
-    state[id] = {
-      ...state[id],
-      ...patch,
-      rev,
-    } as StateNode;
-    await this.writeState(state);
-    return { rev };
-  }
-
-  async delete(id: string, expectedRev: number): Promise<void> {
-    const state = await this.readState();
-    assertExpectedRev(id, state[id], expectedRev);
-    delete state[id];
-    await this.writeState(state);
   }
 
   async values(): Promise<StateNode[]> {
@@ -83,23 +51,10 @@ export class MemoryStateBackend implements StateBackend {
   private async readState(): Promise<Record<string, StateNode>> {
     return cloneAsPersistedState(this.#state);
   }
-
-  private async writeState(state: Record<string, StateNode>): Promise<void> {
-    this.#state = cloneAsPersistedState(state);
-  }
 }
 
-// A missing record counts as rev 0, so expectedRev: 0 means "must not exist".
-function assertExpectedRev(
-  id: string,
-  node: StateNode | undefined,
-  expectedRev: number,
-): void {
-  if ((node?.rev ?? 0) !== expectedRev) {
-    throw new RevConflict(id, expectedRev, node?.rev);
-  }
-}
-
+// Seeds and reads pass through JSON, so callers see what a persisted backend
+// would return and cannot mutate the backend through a shared reference.
 function cloneAsPersistedState(
   state: Record<string, StateNode>,
 ): Record<string, StateNode> {

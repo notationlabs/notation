@@ -63,9 +63,9 @@ export type ReconcilerEventEmitter = (
 
 /**
  * The seam a driver fills in to deliver an event. Emission is a step so that
- * each driver decides how it is recorded: the in-process driver simply awaits
- * the emitter, while the durable driver checkpoints it so that replaying a
- * workflow does not re-emit events it has already delivered.
+ * each driver decides how it is recorded: `toEmitStep` simply awaits the
+ * emitter, while the durable driver's `durableEmitter` checkpoints it so that
+ * replaying a workflow does not re-emit events it has already delivered.
  */
 export type EmitStep<TEvent = ReconcilerEvent> = (
   event: TEvent,

@@ -18,7 +18,7 @@ export type OperationEventEmitter = EmitStep<OperationLifecycleEvent>;
 /**
  * How an operation runs a step. Keys identify a step's cached result across a
  * replay; `scope` namespaces them so one operation can run at several call
- * sites in a single execution. The in-process driver ignores both.
+ * sites in a single execution. `createStepRunner` ignores both.
  */
 export type StepRunner = {
   run<T>(

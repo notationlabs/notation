@@ -1,21 +1,12 @@
 import { describe, expect, it } from "vitest";
-import {
-  MemoryStateBackend,
-  type StateBackend,
-  type StateNode,
-} from "src/state";
-
-type BackendFixture = {
-  backend: StateBackend;
-  cleanup: () => Promise<void>;
-};
+import { MemoryStateBackend, type StateNode } from "src/state";
 
 function createStateNode(
   id: string,
   overrides: Partial<StateNode> = {},
 ): StateNode {
   return {
-    rev: 0,
+    rev: 1,
     id,
     groupId: 1,
     groupType: "stack",
@@ -29,148 +20,43 @@ function createStateNode(
   };
 }
 
-function runStateBackendContractTests(
-  label: string,
-  createBackend: () => Promise<BackendFixture>,
-) {
-  describe(label, () => {
-    it("starts with empty state", async () => {
-      const fixture = await createBackend();
-
-      try {
-        await expect(fixture.backend.get("missing")).resolves.toBeUndefined();
-        await expect(fixture.backend.values()).resolves.toEqual([]);
-      } finally {
-        await fixture.cleanup();
-      }
-    });
-
-    it("merges patches on update", async () => {
-      const fixture = await createBackend();
-      const initialNode = createStateNode("resource-a");
-
-      try {
-        await fixture.backend.update(initialNode.id, 0, initialNode);
-        await fixture.backend.update(initialNode.id, 1, {
-          output: { status: "ready" },
-          lastOperation: "update",
-        });
-
-        await expect(fixture.backend.get(initialNode.id)).resolves.toEqual({
-          ...initialNode,
-          rev: 2,
-          output: { status: "ready" },
-          lastOperation: "update",
-        });
-      } finally {
-        await fixture.cleanup();
-      }
-    });
-
-    it("rejects stale updates and deletes", async () => {
-      const fixture = await createBackend();
-      const initialNode = createStateNode("resource-a");
-
-      try {
-        await expect(
-          fixture.backend.update(initialNode.id, 0, initialNode),
-        ).resolves.toEqual({ rev: 1 });
-        await expect(
-          fixture.backend.update(initialNode.id, 0, { output: {} }),
-        ).rejects.toMatchObject({
-          name: "RevConflict",
-          expectedRev: 0,
-          actualRev: 1,
-        });
-        await expect(
-          fixture.backend.delete(initialNode.id, 0),
-        ).rejects.toMatchObject({
-          name: "RevConflict",
-        });
-      } finally {
-        await fixture.cleanup();
-      }
-    });
-
-    it("treats expectedRev 0 as an expect-absent assertion", async () => {
-      const fixture = await createBackend();
-      const initialNode = createStateNode("resource-a");
-
-      try {
-        await expect(
-          fixture.backend.update(initialNode.id, 0, initialNode),
-        ).resolves.toEqual({ rev: 1 });
-        await expect(
-          fixture.backend.update(initialNode.id, 0, initialNode),
-        ).rejects.toMatchObject({
-          name: "RevConflict",
-          expectedRev: 0,
-          actualRev: 1,
-        });
-      } finally {
-        await fixture.cleanup();
-      }
-    });
-
-    it("deletes values", async () => {
-      const fixture = await createBackend();
-      const initialNode = createStateNode("resource-a");
-
-      try {
-        await fixture.backend.update(initialNode.id, 0, initialNode);
-        await fixture.backend.delete(initialNode.id, 1);
-
-        await expect(
-          fixture.backend.get(initialNode.id),
-        ).resolves.toBeUndefined();
-        await expect(fixture.backend.values()).resolves.toEqual([]);
-      } finally {
-        await fixture.cleanup();
-      }
-    });
-
-    it("returns all values", async () => {
-      const fixture = await createBackend();
-      const firstNode = createStateNode("resource-a");
-      const secondNode = createStateNode("resource-b");
-
-      try {
-        await fixture.backend.update(firstNode.id, 0, firstNode);
-        await fixture.backend.update(secondNode.id, 0, secondNode);
-
-        const values = await fixture.backend.values();
-
-        expect(values).toHaveLength(2);
-        expect(values).toEqual(
-          expect.arrayContaining([
-            { ...firstNode, rev: 1 },
-            { ...secondNode, rev: 1 },
-          ]),
-        );
-      } finally {
-        await fixture.cleanup();
-      }
-    });
-  });
-}
-
-runStateBackendContractTests("MemoryStateBackend", async () => ({
-  backend: new MemoryStateBackend(),
-  cleanup: async () => undefined,
-}));
-
 describe("MemoryStateBackend", () => {
-  it("returns values in deterministic id order", async () => {
+  it("starts with empty state", async () => {
     const backend = new MemoryStateBackend();
+
+    await expect(backend.get("missing")).resolves.toBeUndefined();
+    await expect(backend.values()).resolves.toEqual([]);
+  });
+
+  it("returns seeded nodes by id", async () => {
+    const node = createStateNode("resource-a");
+    const backend = new MemoryStateBackend({ [node.id]: node });
+
+    await expect(backend.get(node.id)).resolves.toEqual(node);
+    await expect(backend.get("missing")).resolves.toBeUndefined();
+  });
+
+  it("returns values in deterministic id order", async () => {
     const laterNode = createStateNode("resource-z");
     const earlierNode = createStateNode("resource-a");
+    const backend = new MemoryStateBackend({
+      [laterNode.id]: laterNode,
+      [earlierNode.id]: earlierNode,
+    });
 
-    await backend.update(laterNode.id, 0, laterNode);
-    await backend.update(earlierNode.id, 0, earlierNode);
+    await expect(backend.values()).resolves.toEqual([earlierNode, laterNode]);
+  });
 
-    await expect(backend.values()).resolves.toEqual([
-      { ...earlierNode, rev: 1 },
-      { ...laterNode, rev: 1 },
-    ]);
+  it("isolates reads from the seed object and from each other", async () => {
+    const node = createStateNode("resource-a");
+    const backend = new MemoryStateBackend({ [node.id]: node });
+
+    node.output["name"] = "mutated-seed";
+    const read = await backend.get(node.id);
+    read!.output["name"] = "mutated-read";
+
+    await expect(backend.get(node.id)).resolves.toMatchObject({
+      output: { name: "resource-a-output" },
+    });
   });
 });

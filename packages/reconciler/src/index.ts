@@ -1,7 +1,3 @@
-export type ResourceApi = typeof import("@notation/resource");
-export type StateApi = typeof import("@notation/state");
-export type DeepObjectDiffApi = typeof import("deep-object-diff");
-
 export * from "./resource-registry";
 export * from "./operations";
 export * from "./dependency-graph";

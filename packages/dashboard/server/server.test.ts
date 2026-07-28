@@ -4,11 +4,9 @@ import { readStateSnapshot } from "./server";
 
 describe("dashboard state", () => {
   it("reads state through the backend contract", async () => {
-    const state = new MemoryStateBackend();
-    await state.update(
-      "service",
-      0,
-      {
+    const state = new MemoryStateBackend({
+      service: {
+        rev: 1,
         id: "service",
         type: "test/service/main",
         config: {},
@@ -17,7 +15,7 @@ describe("dashboard state", () => {
         lastOperation: "create",
         lastOperationAt: "2026-07-18T00:00:00.000Z",
       },
-    );
+    });
 
     await expect(readStateSnapshot(state)).resolves.toMatchObject({
       service: {
