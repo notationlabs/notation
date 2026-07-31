@@ -5,7 +5,7 @@ import type { ReleasePackage } from "pok-plugins";
 
 // turbo builds the whole graph in dependency order, so every published package
 // shares one build command and the plugin runs it once.
-const build = "turbo run build";
+const build = "pnpm exec turbo run build";
 
 const framework: ReleasePackage[] = [
   { file: "packages/aws/package.json", build },
@@ -44,7 +44,7 @@ export default defineConfig({
           packages: [
             {
               file: "packages/create-notation/package.json",
-              build: "turbo run build --filter=create-notation",
+              build: "pnpm exec turbo run build --filter=create-notation",
             },
           ],
         },
