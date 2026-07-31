@@ -17,7 +17,6 @@
   },
   "homepage": "https://github.com/notation-dev/notation#readme",
   "dependencies": {
-    "@changesets/cli": "^2.27.12",
     "@notation/aws.iac": "workspace:*",
     "@notation/std.iac": "workspace:*",
     "@pokit/core": "^0.6.0",
