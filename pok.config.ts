@@ -28,6 +28,11 @@ export default defineConfig({
   plugins: [
     docs({ name: "notation-docs" }),
     release({
+      // Versioning runs through changesets: `pok changeset` records changes,
+      // `pok version` consumes them. Lockstep for @notation/* comes from the
+      // `fixed` group in .changeset/config.json; these groups drive tagging
+      // and publishing.
+      changesets: true,
       packages: {
         framework: { label: "@notation/* framework packages", packages: framework },
         // create-notation versions independently (0.2.x vs the framework's
