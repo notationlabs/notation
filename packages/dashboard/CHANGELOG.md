@@ -1,5 +1,12 @@
 # @notation/dashboard
 
+## 0.13.0
+
+### Patch Changes
+
+- Updated dependencies [b7119a8]
+  - @notation/state@0.13.0
+
 ## 0.12.0
 
 ## 0.11.1

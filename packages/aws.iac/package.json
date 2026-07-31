@@ -1,7 +1,7 @@
 {
   "type": "module",
   "name": "@notation/aws.iac",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "scripts": {
     "build": "tsup --clean",
     "dev": "tsup --watch",

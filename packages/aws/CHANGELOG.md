@@ -1,5 +1,19 @@
 # @notation/aws
 
+## 0.13.0
+
+### Minor Changes
+
+- b7119a8: Add durable Yieldstar 0.5.0 deploy and destroy workflows, a resident Node SQLite runtime for CLI execution, versioned event streams, backend-neutral dashboard state, and compiled infrastructure graphs.
+
+### Patch Changes
+
+- Updated dependencies [b7119a8]
+- Updated dependencies [f7e9186]
+  - @notation/aws.iac@0.13.0
+  - @notation/resource@0.13.0
+  - @notation/std.iac@0.13.0
+
 ## 0.12.0
 
 ### Patch Changes
