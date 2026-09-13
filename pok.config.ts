@@ -1,5 +1,4 @@
 import { defineConfig } from "@pokit/core";
-import { createTerminalUI } from "@pokit/terminal";
 import { docs, release } from "pok-plugins";
 import type { ReleasePackage } from "pok-plugins";
 
@@ -23,7 +22,6 @@ const framework: ReleasePackage[] = [
 
 export default defineConfig({
   commandsDir: "./commands",
-  ...createTerminalUI(),
   appName: "notation",
   plugins: [
     docs({ name: "notation-docs" }),
