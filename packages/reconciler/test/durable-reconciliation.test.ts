@@ -323,6 +323,90 @@ describe("conditional state persistence", () => {
     expect(await runtime.state.get("delete-raced")).toBeDefined();
     runtime.close();
   });
+
+  // A record deleted and created again under the same ID starts back at the
+  // version the workflow's snapshot was read at, so only the store's instance
+  // ID tells the two records apart.
+  it("rejects a state write whose record was deleted and created again", async () => {
+    let recreatedInstanceId: string | undefined;
+    const RaceResource = resource({ type: "test/durable/write-recreate-race" })
+      // Cast: see "rejects a state write whose snapshot another writer has
+      // moved past".
+      .defineSchema({
+        name: { presence: "required", propertyType: "param" },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => {
+          recreatedInstanceId = await recreateResourceState(
+            runtime.storeClient,
+            runtime.state.storeId("recreated"),
+            "recreated",
+          );
+        },
+        delete: async () => undefined,
+      });
+    const resources = [
+      new RaceResource({ id: "recreated", config: { name: "before" } }),
+    ];
+    const runtime = createRuntime(resources, "write-recreate-race");
+
+    await runtime.run("deploy-1");
+    const original = await runtime.state.snapshot("recreated");
+    resources[0] = new RaceResource({
+      id: "recreated",
+      config: { name: "after" },
+    });
+
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "VersionConflict",
+    });
+    // The version alone would have let the write through.
+    const current = await runtime.state.snapshot("recreated");
+    expect(current).toMatchObject({
+      instanceId: recreatedInstanceId,
+      version: original!.version,
+      state: { lastOperationAt: "1999-01-01T00:00:00.000Z" },
+    });
+    expect(current!.instanceId).not.toBe(original!.instanceId);
+    runtime.close();
+  });
+
+  it("rejects a state removal whose record was deleted and created again", async () => {
+    let recreatedInstanceId: string | undefined;
+    const RaceResource = resource({ type: "test/durable/delete-recreate-race" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => {
+          recreatedInstanceId = await recreateResourceState(
+            runtime.storeClient,
+            runtime.state.storeId("delete-recreated"),
+            "delete-recreated",
+          );
+        },
+      });
+    const runtime = createRuntime(
+      [new RaceResource({ id: "delete-recreated" })],
+      "delete-recreate-race",
+    );
+
+    await runtime.run("deploy-1");
+    const original = await runtime.state.snapshot("delete-recreated");
+
+    await expect(runtime.destroy("destroy-1")).rejects.toMatchObject({
+      name: "VersionConflict",
+    });
+    // The record created after the snapshot was read survives.
+    const current = await runtime.state.snapshot("delete-recreated");
+    expect(current).toMatchObject({
+      instanceId: recreatedInstanceId,
+      version: original!.version,
+      state: { lastOperationAt: "1999-01-01T00:00:00.000Z" },
+    });
+    expect(current!.instanceId).not.toBe(original!.instanceId);
+    runtime.close();
+  });
 });
 
 describe("deployment hold", () => {
@@ -825,6 +909,27 @@ function seedResourceState(
     id: storeId,
     initial: resourceStateRecord(resourceId),
   });
+}
+
+/** Deletes a resource's store and creates it again, returning the new instance ID. */
+async function recreateResourceState(
+  storeClient: SqliteStoreClient,
+  storeId: string,
+  resourceId: string,
+) {
+  await storeClient.deleteStore({
+    definition: durable.resourceStateStore,
+    id: storeId,
+  });
+  const store = await storeClient.getOrCreateStore({
+    definition: durable.resourceStateStore,
+    id: storeId,
+    initial: {
+      ...resourceStateRecord(resourceId),
+      lastOperationAt: "1999-01-01T00:00:00.000Z",
+    },
+  });
+  return store.instanceId;
 }
 
 function resourceStateRecord(id: string) {
