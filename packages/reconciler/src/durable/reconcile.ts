@@ -14,6 +14,7 @@ import {
   createResourceOperation,
   deleteResourceOperation,
   updateResourceOperation,
+  type CreateResourceParams,
   type PersistState,
   type RemoveState,
 } from "../operations";
@@ -73,7 +74,10 @@ export async function* reconcileResource(
     maxOperationAttempts: opts.maxOperationAttempts,
   });
 
-  if (action.decision === "drift-update") {
+  if (
+    action.decision === "drift-update" ||
+    action.decision === "drift-replace"
+  ) {
     yield* emit({
       level: "info",
       event: "reconciler.drift.detected",
@@ -89,6 +93,9 @@ export async function* reconcileResource(
     resourceId: resource.id,
     resourceType: resource.type,
     decision: action.decision,
+    ...("replaceFields" in action
+      ? { replaceFields: action.replaceFields }
+      : {}),
   });
 
   const shared = {
@@ -116,9 +123,50 @@ export async function* reconcileResource(
         persist: session.persist,
       });
       return;
+    case "replace":
+    case "drift-replace":
+      if (!session.node) {
+        throw new Error(
+          `Cannot replace ${resource.id}: it has no state record`,
+        );
+      }
+      yield* replaceResource(step, opts, session, shared);
+      return;
     case "noop":
       return;
   }
+}
+
+/**
+ * Deletes the resource and then creates it again, each half in its own scope.
+ * Deleting first is deliberate: a resource usually takes its physical name
+ * from its params, so a new one created beside the old would collide with it.
+ * The new record is a new store instance, so observers can tell the
+ * replacement from the resource it replaced.
+ */
+async function* replaceResource(
+  step: DurableStepRunner,
+  opts: DurableDeployOptions,
+  session: Extract<ResourceStateSession, { node: StateNode }>,
+  shared: Omit<CreateResourceParams, "persist">,
+): AsyncGenerator<any, void, any> {
+  const deleteStep = step.scope("replace:delete");
+  yield* deleteResourceOperation(deleteStep, {
+    resource: shared.resource,
+    dryRun: shared.dryRun,
+    emit: durableEmitter(deleteStep, opts.emit),
+    maxOperationAttempts: shared.maxOperationAttempts,
+    remove: session.remove,
+  });
+
+  const createStep = step.scope("replace:create");
+  yield* createResourceOperation(createStep, {
+    ...shared,
+    emit: durableEmitter(createStep, opts.emit),
+    // The persisted output describes the resource that was just deleted.
+    persistedOutput: undefined,
+    persist: createResourceState(createStep, opts, shared.resource),
+  });
 }
 
 /**
@@ -251,6 +299,25 @@ function persistResourceState(
         result.actualVersion,
       );
     }
+  };
+}
+
+/**
+ * Create-if-absent for a record removed earlier in the same execution. It
+ * cannot go through a workflow store: opening a store is a step keyed by the
+ * store's ID alone, and the removal already opened this one. Creating a store
+ * is exactly what that step does, so running it as a keyed step here is no
+ * weaker, and like any create-if-absent it is safe to repeat.
+ */
+function createResourceState(
+  step: DurableStepRunner,
+  opts: DurableWorkflowOptions,
+  resource: BaseResource,
+): PersistState {
+  return async function* (next) {
+    yield* step.run("state:create", () =>
+      opts.state.createIfAbsent(resource.id, next),
+    );
   };
 }
 

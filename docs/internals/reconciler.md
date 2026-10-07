@@ -6,14 +6,24 @@ The reconciler expresses deployment and destruction as Yieldstar async generator
 
 `deploy` takes the deployment hold, walks dependency levels in order, decides an action for every resource, executes provider calls as durable steps, persists the result in a resource store, and deletes registered orphans.
 
-| Condition | Decision |
-| --- | --- |
-| Not in state | **create** |
-| In state, params changed | **update** |
-| In state, params unchanged, no drift | **noop** |
-| In state, but deleted from the provider | **drift-recreate** |
-| In state, provider state differs from stored state | **drift-update** |
-| In state, not in graph | **delete-orphan** |
+| Condition                                                                                | Decision           |
+| ---------------------------------------------------------------------------------------- | ------------------ |
+| Not in state                                                                             | **create**         |
+| In state, params changed                                                                 | **update**         |
+| In state, an immutable or key param changed, or any param of a resource with no `update` | **replace**        |
+| In state, params unchanged, no drift                                                     | **noop**           |
+| In state, but deleted from the provider                                                  | **drift-recreate** |
+| In state, provider state differs from stored state                                       | **drift-update**   |
+| In state, provider state differs in an immutable or key param                            | **drift-replace**  |
+| In state, not in graph                                                                   | **delete-orphan**  |
+
+The change decision comes from the resource schema, through `diffParams` in `@notation/resource`. It compares comparable params (`param` items that are not `volatile` or `hidden`) field by field. A changed field forces replacement when its schema item is `immutable`, `primaryKey` or `secondaryKey`, or when the resource has no `update` operation. A change anywhere inside such a field replaces the whole resource.
+
+Replacement deletes the resource and then creates it again, because a resource usually takes its physical name from its params and the new one would collide with the old. Each half is durable: the delete removes the state record, and the create writes a new one with a new instance ID. A crash anywhere in between resumes where it stopped. If the create fails for good, the resource and its record are both gone, and the next deploy plans **create**.
+
+A plan cannot know params derived from a resource that has not been created yet, and marks them unknown. An unknown immutable or key param plans **replace** with the field marked "unknown, may force replacement". The planner treats a replaced resource's output as unknown, so its dependents show the cascade. Deploy decides again for each resource once its dependencies have converged, with real params, so it replaces only what really changed.
+
+Delete-then-create removes a resource while its dependents still exist. A provider that refuses to delete a resource in use fails the deploy.
 
 Dry-run deploy performs decisions and emits lifecycle events without provider mutations or state mutations. When drift detection is enabled, it can still call provider read operations to decide whether a nominal noop has drifted.
 

@@ -409,9 +409,6 @@ importers:
       '@yieldstar/core':
         specifier: 0.5.0
         version: 0.5.0
-      deep-object-diff:
-        specifier: ^1.1.9
-        version: 1.1.9
       valibot:
         specifier: ^1.4.2
         version: 1.4.2(typescript@6.0.3)
@@ -426,7 +423,11 @@ importers:
         specifier: ^9.9.0
         version: 9.14.0
 
-  packages/resource: {}
+  packages/resource:
+    dependencies:
+      deep-object-diff:
+        specifier: ^1.1.9
+        version: 1.1.9
 
   packages/state:
     devDependencies:

@@ -1,4 +1,4 @@
-import type { ResourceType } from "@notation/resource";
+import type { ReplaceField, ResourceType } from "@notation/resource";
 
 export type OperationName = "create" | "read" | "update" | "delete";
 
@@ -22,7 +22,15 @@ export type DeployDecisionEvent = {
   event: "reconciler.deploy.decision";
   resourceId: string;
   resourceType: ResourceType;
-  decision: "create" | "update" | "drift-update" | "drift-recreate" | "noop";
+  decision:
+    | "create"
+    | "update"
+    | "replace"
+    | "drift-update"
+    | "drift-replace"
+    | "drift-recreate"
+    | "noop";
+  replaceFields?: ReplaceField[];
 };
 
 export type DriftDetectedEvent = {

@@ -4,13 +4,15 @@ import {
   toStateNode,
   type ResourceSnapshot,
 } from "./stores";
+import type { PersistedResourceState } from "../operations";
 import type { StoreClient } from "./yieldstar";
 
 /**
  * Reads deployment state from outside a workflow, for the planner and for
- * anything reporting on a deployment. Read-only: state writes must be stamped
- * with the workflow step that made them, and this interface has nowhere to
- * carry that step key, so a write made here would repeat on replay.
+ * anything reporting on a deployment. Read-only, but for one idempotent
+ * create: state writes must be stamped with the workflow step that made them,
+ * and this interface has nowhere to carry that step key, so any other write
+ * made here would repeat on replay.
  */
 export class DurableStateBackend {
   /** The deployment this backend belongs to; workflows and the deployment
@@ -38,6 +40,22 @@ export class DurableStateBackend {
 
   snapshot(id: string): Promise<ResourceSnapshot | undefined> {
     return this.#read(this.storeId(id));
+  }
+
+  /**
+   * Creates a resource's record unless one exists. Repeating it is harmless,
+   * which is what makes it the one write allowed here; a workflow still runs
+   * it as a step, so that a replay does not repeat it.
+   */
+  async createIfAbsent(
+    id: string,
+    initial: PersistedResourceState,
+  ): Promise<void> {
+    await this.#client.getOrCreateStore({
+      definition: resourceStateStore,
+      id: this.storeId(id),
+      initial,
+    });
   }
 
   async values(): Promise<StateNode[]> {

@@ -1,30 +1,36 @@
-import { diff, detailedDiff } from "deep-object-diff";
-import type { BaseResource } from "@notation/resource";
+import {
+  UNKNOWN_AFTER_APPLY,
+  diffParams,
+  type BaseResource,
+  type ParamsDiffDisplay,
+  type ReplaceField,
+} from "@notation/resource";
 import type { StateNode } from "@notation/state";
 
-export const UNKNOWN_AFTER_APPLY = { $unknown: "after-apply" } as const;
-
-export type UnknownAfterApply = typeof UNKNOWN_AFTER_APPLY;
+export {
+  UNKNOWN_AFTER_APPLY,
+  type ReplaceField,
+  type UnknownAfterApply,
+} from "@notation/resource";
 
 export type PlanDecision =
   | "create"
   | "update"
+  | "replace"
   | "drift-update"
+  | "drift-replace"
   | "drift-recreate"
   | "delete-orphan"
   | "noop";
 
-export type PlanDiff = {
-  added: Record<string, unknown>;
-  deleted: Record<string, unknown>;
-  updated: Record<string, unknown>;
-};
+export type PlanDiff = ParamsDiffDisplay;
 
 export type PlanNode = {
   id: string;
   type: string;
   decision: PlanDecision;
   diff?: PlanDiff;
+  replaceFields?: ReplaceField[];
   params: Record<string, unknown>;
   dependsOn: string[];
 };
@@ -46,6 +52,18 @@ export type ResourceAction =
       decision: "drift-update";
       patch: Record<string, unknown>;
       diff: PlanDiff;
+    }
+  | {
+      decision: "replace";
+      patch: Record<string, unknown>;
+      diff: PlanDiff;
+      replaceFields: ReplaceField[];
+    }
+  | {
+      decision: "drift-replace";
+      patch: Record<string, unknown>;
+      diff: PlanDiff;
+      replaceFields: ReplaceField[];
     };
 
 export function decideAction(opts: {
@@ -58,19 +76,18 @@ export function decideAction(opts: {
     return { decision: "create" };
   }
 
-  const desiredComparable = resource.toComparable(params);
-  const previousComparable = resource.toComparable(stateNode.params);
-  const localPatch = diff(previousComparable, desiredComparable) as Record<
-    string,
-    unknown
-  >;
+  const { patch, diff, replaceFields } = diffParams(
+    resource.schema,
+    stateNode.params,
+    params,
+    { canUpdate: Boolean(resource.update) },
+  );
 
-  if (Object.keys(localPatch).length > 0) {
-    return {
-      decision: "update",
-      patch: localPatch,
-      diff: toPlanDiff(detailedDiff(previousComparable, desiredComparable)),
-    };
+  if (replaceFields.length > 0) {
+    return { decision: "replace", patch, diff, replaceFields };
+  }
+  if (Object.keys(patch).length > 0) {
+    return { decision: "update", patch, diff };
   }
 
   return { decision: "noop" };
@@ -91,22 +108,21 @@ export function decideDriftAction(opts: {
     return { decision: "drift-recreate" };
   }
 
-  const desiredComparable = resource.toComparable(params);
-  const remoteComparable = resource.toComparable(driftRead.output);
-  const remotePatch = diff(remoteComparable, desiredComparable) as Record<
-    string,
-    unknown
-  >;
+  const { patch, diff, replaceFields } = diffParams(
+    resource.schema,
+    driftRead.output,
+    params,
+    { canUpdate: Boolean(resource.update) },
+  );
 
-  if (Object.keys(remotePatch).length === 0) {
-    return { decision: "noop" };
+  if (replaceFields.length > 0) {
+    return { decision: "drift-replace", patch, diff, replaceFields };
+  }
+  if (Object.keys(patch).length > 0) {
+    return { decision: "drift-update", patch, diff };
   }
 
-  return {
-    decision: "drift-update",
-    patch: remotePatch,
-    diff: toPlanDiff(detailedDiff(remoteComparable, desiredComparable)),
-  };
+  return { decision: "noop" };
 }
 
 export async function resolvePlanParams(
@@ -140,29 +156,4 @@ export function getDependencyIds(resource: BaseResource): string[] {
   return Object.values(resource.dependencies)
     .filter((dependency): dependency is BaseResource => Boolean(dependency))
     .map((dependency) => dependency.id);
-}
-
-function toPlanDiff(diffResult: {
-  added: object;
-  deleted: object;
-  updated: object;
-}): PlanDiff {
-  return {
-    added: toJsonSafe(diffResult.added) as Record<string, unknown>,
-    deleted: toJsonSafe(diffResult.deleted) as Record<string, unknown>,
-    updated: toJsonSafe(diffResult.updated) as Record<string, unknown>,
-  };
-}
-
-function toJsonSafe(value: unknown): unknown {
-  if (value === undefined) return null;
-  if (Array.isArray(value)) return value.map(toJsonSafe);
-  if (value !== null && typeof value === "object") {
-    const safe: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) {
-      safe[key] = toJsonSafe(entry);
-    }
-    return safe;
-  }
-  return value;
 }

@@ -15,6 +15,9 @@
  *   notation:hold:*            deployment hold: inspect/acquire/release
  *   state:persist:<id>         conditional write of a resource record
  *   state:delete:<id>          conditional removal of one
+ *   *:replace:delete:*         replacement, first half: the delete
+ *   *:replace:create:*         replacement, second half: the create, ending
+ *                              in state:create, a create-if-absent
  *
  * An <id> inside a scope is URI-encoded, so the `:` delimiter is unambiguous.
  * The state: keys are store-handle keys and so are not scope-prefixed: a
