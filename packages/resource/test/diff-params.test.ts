@@ -119,6 +119,18 @@ describe("diffParams", () => {
     });
   });
 
+  test("treats an undefined param as absent", () => {
+    const { path: _, ...stored } = previous;
+    expect(
+      diffParams(
+        schema,
+        JSON.parse(JSON.stringify(stored)),
+        { ...stored, path: undefined },
+        { canUpdate: true },
+      ).changed,
+    ).toEqual([]);
+  });
+
   test("marks an unknown immutable or key param as possibly forcing replacement", () => {
     const result = diffParams(
       schema,

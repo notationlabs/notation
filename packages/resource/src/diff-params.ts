@@ -44,7 +44,9 @@ export type ParamsDiff = {
 
 /**
  * Keeps the params that take part in a comparison: `param` items that are
- * neither volatile nor hidden.
+ * neither volatile nor hidden. An `undefined` value counts as absent: state
+ * is stored as JSON, which drops it, so keeping it would make an unset
+ * optional param look changed on every deploy.
  */
 export function toComparableParams(
   schema: Schema,
@@ -53,7 +55,7 @@ export function toComparableParams(
   const comparable: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(schema)) {
     if (!isComparable(item)) continue;
-    if (key in values) comparable[key] = values[key];
+    if (values[key] !== undefined) comparable[key] = values[key];
   }
   return comparable;
 }

@@ -226,4 +226,65 @@ describe("createPlan", () => {
       }),
     ]);
   });
+  describe("leaves alone fields it cannot compare", () => {
+    // Cast: see above.
+    const Role = resource({ type: "test/planner/role-fields" })
+      .defineSchema({
+        name: { presence: "required", propertyType: "param", primaryKey: true },
+        path: { presence: "optional", propertyType: "param", immutable: true },
+        boundary: {
+          presence: "optional",
+          propertyType: "param",
+          immutable: true,
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        read: async () => remote,
+        delete: async () => undefined,
+      });
+    let remote: Record<string, unknown> = {};
+    const plan = (config: Record<string, unknown>) =>
+      createPlan({
+        resources: [new Role({ id: "role", config: config as any })],
+        state: new MemoryStateBackend({
+          role: {
+            version: 1,
+            id: "role",
+            type: Role.type,
+            config: {},
+            params: { name: "app", boundary: "arn:boundary" },
+            output: { name: "app", boundary: "arn:boundary" },
+            lastOperation: "create",
+            lastOperationAt: "2026-07-22T00:00:00.000Z",
+          },
+        }),
+      });
+
+    it("an optional param left undefined", async () => {
+      remote = { name: "app", boundary: "arn:boundary" };
+      const result = await plan({
+        name: "app",
+        path: undefined,
+        boundary: "arn:boundary",
+      });
+      expect(result.nodes[0]).toMatchObject({ decision: "noop" });
+    });
+
+    it("a field the read leaves out, or reports for an unset param", async () => {
+      remote = { name: "app", path: "/" };
+      const result = await plan({ name: "app", boundary: "arn:boundary" });
+      expect(result.nodes[0]).toMatchObject({ decision: "noop" });
+    });
+
+    it("but replaces on drift in a field both sides have", async () => {
+      remote = { name: "app", boundary: "arn:other" };
+      const result = await plan({ name: "app", boundary: "arn:boundary" });
+      expect(result.nodes[0]).toMatchObject({
+        decision: "drift-replace",
+        replaceFields: [{ name: "boundary", known: true }],
+      });
+    });
+  });
 });

@@ -110,8 +110,8 @@ export function decideDriftAction(opts: {
 
   const { patch, diff, replaceFields } = diffParams(
     resource.schema,
-    driftRead.output,
-    params,
+    pick(driftRead.output, params),
+    pick(params, driftRead.output),
     { canUpdate: Boolean(resource.update) },
   );
 
@@ -125,6 +125,24 @@ export function decideDriftAction(opts: {
   return { decision: "noop" };
 }
 
+/**
+ * Keeps the fields of `values` that `other` also has. Drift compares only
+ * fields present on both sides: a read need not return every param, and the
+ * remote reports defaults for params left unset. Neither is drift, and
+ * comparing them would plan the same drift on every deploy, and replace the
+ * resource if the field is immutable or a key.
+ */
+function pick(
+  values: Record<string, unknown>,
+  other: Record<string, unknown>,
+): Record<string, unknown> {
+  const picked: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined && other[key] !== undefined) picked[key] = value;
+  }
+  return picked;
+}
+
 export async function resolvePlanParams(
   resource: BaseResource,
 ): Promise<Record<string, unknown>> {
@@ -132,10 +150,12 @@ export async function resolvePlanParams(
     (dependency) => dependency && dependency.output == null,
   );
   if (!hasUnresolvedDependency) {
+    // Every dependency has an output, so an undefined param is one left
+    // unset, not one waiting on a dependency, and is dropped.
     const resolved = (await resource.getParams()) as Record<string, unknown>;
     const params: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(resolved)) {
-      params[key] = value === undefined ? UNKNOWN_AFTER_APPLY : value;
+      if (value !== undefined) params[key] = value;
     }
     return params;
   }
