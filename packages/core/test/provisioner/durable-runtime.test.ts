@@ -65,6 +65,69 @@ describe("NodeDurableRuntime", () => {
     }
   }, 5_000);
 
+  it("resumes an interrupted execution from a new runtime on the same database", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "notation-resume-"));
+    const databasePath = path.join(directory, "workflows.db");
+    let creates = 0;
+    const TestResource = resource({ type: "test/runtime/resume" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => {
+          creates += 1;
+        },
+        delete: async () => undefined,
+      });
+    const interrupted = new TestResource({ id: "interrupted" });
+    // The failure has to live in plain generator code, after the create step
+    // is checkpointed but before state is persisted: a failing step would be
+    // cached and rethrown on replay. A resource with no persisted state first
+    // sets its output straight after create returns.
+    const setOutput = interrupted.setOutput.bind(interrupted);
+    let failSetOutput = true;
+    interrupted.setOutput = (output) => {
+      if (failSetOutput) throw new Error("simulated process crash");
+      return setOutput(output);
+    };
+    const runDeploy = async () => {
+      const runtime = new NodeDurableRuntime({
+        deploymentId: "resume-deployment",
+        databasePath,
+      });
+      const deploy = workflow(async function* (step, event) {
+        yield* durable.deploy(step, {
+          executionId: event.executionId,
+          resources: [interrupted],
+          state: runtime.state,
+          driftDetection: false,
+        });
+      });
+      try {
+        await runtime.run(createWorkflowRouter({ deploy }), {
+          workflowId: "deploy",
+          executionId: "resumed-execution",
+        });
+        return await runtime.state.get("interrupted");
+      } finally {
+        runtime.close();
+      }
+    };
+
+    try {
+      await expect(runDeploy()).rejects.toThrow("simulated process crash");
+      expect(creates).toBe(1);
+
+      failSetOutput = false;
+      await expect(runDeploy()).resolves.toMatchObject({
+        id: "interrupted",
+        lastOperation: "create",
+      });
+      // The provider call was replayed from the heap, not repeated.
+      expect(creates).toBe(1);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("binds an execution ID to its deployment and workflow", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "notation-binding-"));
     const databasePath = path.join(directory, "workflows.db");

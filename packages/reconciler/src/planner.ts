@@ -50,11 +50,19 @@ export async function createPlan({
         }),
       );
 
+      // A replacement's output is unknown until it has been created again,
+      // so its dependents plan against unknown params, as they would for a
+      // resource with no state.
+      if ("replaceFields" in action) resource.setOutput(null as any);
+
       nodes.push({
         id: resource.id,
         type: resource.type,
         decision: action.decision,
         ...("diff" in action ? { diff: action.diff } : {}),
+        ...("replaceFields" in action
+          ? { replaceFields: action.replaceFields }
+          : {}),
         params,
         dependsOn: getDependencyIds(resource),
       });

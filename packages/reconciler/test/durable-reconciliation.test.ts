@@ -13,6 +13,7 @@ import {
   ResourceNotFoundError,
   ResourceOperationPendingError,
   type BaseResource,
+  type ResourceType,
 } from "@notation/resource";
 import { setTimeout as sleep } from "node:timers/promises";
 import pino from "pino";
@@ -323,6 +324,90 @@ describe("conditional state persistence", () => {
     expect(await runtime.state.get("delete-raced")).toBeDefined();
     runtime.close();
   });
+
+  // A record deleted and created again under the same ID starts back at the
+  // version the workflow's snapshot was read at, so only the store's instance
+  // ID tells the two records apart.
+  it("rejects a state write whose record was deleted and created again", async () => {
+    let recreatedInstanceId: string | undefined;
+    const RaceResource = resource({ type: "test/durable/write-recreate-race" })
+      // Cast: see "rejects a state write whose snapshot another writer has
+      // moved past".
+      .defineSchema({
+        name: { presence: "required", propertyType: "param" },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => {
+          recreatedInstanceId = await recreateResourceState(
+            runtime.storeClient,
+            runtime.state.storeId("recreated"),
+            "recreated",
+          );
+        },
+        delete: async () => undefined,
+      });
+    const resources = [
+      new RaceResource({ id: "recreated", config: { name: "before" } }),
+    ];
+    const runtime = createRuntime(resources, "write-recreate-race");
+
+    await runtime.run("deploy-1");
+    const original = await runtime.state.snapshot("recreated");
+    resources[0] = new RaceResource({
+      id: "recreated",
+      config: { name: "after" },
+    });
+
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "VersionConflict",
+    });
+    // The version alone would have let the write through.
+    const current = await runtime.state.snapshot("recreated");
+    expect(current).toMatchObject({
+      instanceId: recreatedInstanceId,
+      version: original!.version,
+      state: { lastOperationAt: "1999-01-01T00:00:00.000Z" },
+    });
+    expect(current!.instanceId).not.toBe(original!.instanceId);
+    runtime.close();
+  });
+
+  it("rejects a state removal whose record was deleted and created again", async () => {
+    let recreatedInstanceId: string | undefined;
+    const RaceResource = resource({ type: "test/durable/delete-recreate-race" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => {
+          recreatedInstanceId = await recreateResourceState(
+            runtime.storeClient,
+            runtime.state.storeId("delete-recreated"),
+            "delete-recreated",
+          );
+        },
+      });
+    const runtime = createRuntime(
+      [new RaceResource({ id: "delete-recreated" })],
+      "delete-recreate-race",
+    );
+
+    await runtime.run("deploy-1");
+    const original = await runtime.state.snapshot("delete-recreated");
+
+    await expect(runtime.destroy("destroy-1")).rejects.toMatchObject({
+      name: "VersionConflict",
+    });
+    // The record created after the snapshot was read survives.
+    const current = await runtime.state.snapshot("delete-recreated");
+    expect(current).toMatchObject({
+      instanceId: recreatedInstanceId,
+      version: original!.version,
+      state: { lastOperationAt: "1999-01-01T00:00:00.000Z" },
+    });
+    expect(current!.instanceId).not.toBe(original!.instanceId);
+    runtime.close();
+  });
 });
 
 describe("deployment hold", () => {
@@ -369,8 +454,8 @@ describe("deployment hold", () => {
     // The failure has to live in plain generator code. A step that fails
     // caches a StepError, and a cached StepError is rethrown on replay before
     // the step's function is reached, so no later work would ever run
-    // uncached. For a resource with persisted state, decideAction calls
-    // toComparable outside any step, after the resource's reads have been
+    // uncached. For a resource with persisted state, decideAction reads the
+    // schema outside any step, after the resource's reads have been
     // checkpointed.
     let failOnSecond = true;
     const holders: Array<string | null> = [];
@@ -390,14 +475,16 @@ describe("deployment hold", () => {
     const first = new Resource({ id: "first" });
     const second = new Resource({ id: "second" });
     const third = new Resource({ id: "third" });
-    const toComparable = second.toComparable.bind(second);
-    second.toComparable = (output) => {
-      if (failOnSecond) throw new Error("simulated mid-deployment failure");
-      return toComparable(output);
-    };
+    const schema = second.schema;
+    Object.defineProperty(second, "schema", {
+      get() {
+        if (failOnSecond) throw new Error("simulated mid-deployment failure");
+        return schema;
+      },
+    });
     const runtime = createRuntime([first, second, third], "hold-replay");
     // Persisted state for `second`, so deciding its action reaches the
-    // failure seam in toComparable.
+    // failure seam in its schema.
     await seedResourceState(
       runtime.storeClient,
       runtime.state.storeId("second"),
@@ -688,6 +775,262 @@ describe("drift detection and repair", () => {
   });
 });
 
+describe("replacement", () => {
+  /** A role-like resource whose path cannot change after creation. */
+  function defineReplaceable(
+    type: ResourceType,
+    calls: string[],
+    opts: { update?: boolean; read?: () => Promise<object> } = {},
+  ) {
+    return (
+      resource({ type })
+        // Cast: a resource declared without API types constrains every schema
+        // key to be a key of an `any` API schema, which no named key satisfies.
+        .defineSchema({
+          name: { presence: "required", propertyType: "param" },
+          path: {
+            presence: "required",
+            propertyType: "param",
+            immutable: true,
+          },
+        } as any)
+        .defineOperations({
+          create: async (params: any) => {
+            calls.push(`create:${params.path}`);
+          },
+          ...(opts.read ? { read: opts.read as any } : {}),
+          ...(opts.update === false
+            ? {}
+            : {
+                update: async () => {
+                  calls.push("update");
+                },
+              }),
+          delete: async (key: any, state: any) => {
+            calls.push(`delete:${state.path}`);
+          },
+        })
+    );
+  }
+
+  it("deletes and then creates a resource whose immutable param changed, under a new record", async () => {
+    const calls: string[] = [];
+    const Role = defineReplaceable("test/durable/replace", calls);
+    const resources = [
+      new Role({ id: "role", config: { name: "app", path: "/" } as any }),
+    ];
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "replace", {
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("deploy-1");
+    const original = await runtime.state.snapshot("role");
+    resources[0] = new Role({
+      id: "role",
+      config: { name: "app", path: "/service/" } as any,
+    });
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:/", "delete:/", "create:/service/"]);
+    const current = await runtime.state.snapshot("role");
+    expect(current!.state.params).toEqual({ name: "app", path: "/service/" });
+    expect(current!.instanceId).not.toBe(original!.instanceId);
+    expect(
+      events.filter(
+        (event) =>
+          event.event === "reconciler.deploy.decision" &&
+          event.decision === "replace",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        resourceId: "role",
+        replaceFields: [{ name: "path", known: true }],
+      }),
+    ]);
+    runtime.close();
+  });
+
+  it("replaces a resource with no update rather than skipping the change", async () => {
+    const calls: string[] = [];
+    const Attachment = defineReplaceable("test/durable/no-update", calls, {
+      update: false,
+    });
+    const resources = [
+      new Attachment({
+        id: "attachment",
+        config: { name: "a", path: "/" } as any,
+      }),
+    ];
+    const runtime = createRuntime(resources, "no-update");
+
+    await runtime.run("deploy-1");
+    resources[0] = new Attachment({
+      id: "attachment",
+      config: { name: "b", path: "/" } as any,
+    });
+    await runtime.run("deploy-2");
+    await runtime.run("deploy-3");
+
+    // The third deploy finds the change applied and does nothing.
+    expect(calls).toEqual(["create:/", "delete:/", "create:/"]);
+    expect(await runtime.state.get("attachment")).toMatchObject({
+      params: { name: "b", path: "/" },
+    });
+    runtime.close();
+  });
+
+  it.each([
+    [
+      "the remote delete",
+      "notation:deploy:role:replace:delete:delete:remote:attempt:0",
+    ],
+    ["the state record's removal", "state:delete:role"],
+  ])(
+    "resumes a replacement after a crash following %s",
+    async (_, crashAfterStep) => {
+      const calls: string[] = [];
+      const Role = defineReplaceable("test/durable/replace-resume", calls);
+      const resources = [
+        new Role({ id: "role", config: { name: "app", path: "/" } as any }),
+      ];
+      const runtime = createRuntime(resources, "replace-resume", {
+        crashAfterStep,
+      });
+
+      await runtime.run("deploy-1");
+      resources[0] = new Role({
+        id: "role",
+        config: { name: "app", path: "/service/" } as any,
+      });
+      await expect(runtime.run("deploy-2")).rejects.toThrow(
+        "simulated process crash",
+      );
+      expect(calls).toEqual(["create:/", "delete:/"]);
+
+      await runtime.run("deploy-2");
+      expect(calls).toEqual(["create:/", "delete:/", "create:/service/"]);
+      expect(await runtime.state.get("role")).toMatchObject({
+        params: { name: "app", path: "/service/" },
+      });
+      runtime.close();
+    },
+  );
+
+  it("plans a create after a replacement whose create failed", async () => {
+    const calls: string[] = [];
+    let failCreate = false;
+    const Role = resource({ type: "test/durable/replace-failed" })
+      .defineSchema({
+        path: { presence: "required", propertyType: "param", immutable: true },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          if (failCreate) throw new Error("create rejected");
+          calls.push(`create:${params.path}`);
+        },
+        update: async () => undefined,
+        delete: async (_key: any, state: any) => {
+          calls.push(`delete:${state.path}`);
+        },
+      });
+    const resources = [new Role({ id: "role", config: { path: "/" } as any })];
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "replace-failed", {
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("deploy-1");
+    resources[0] = new Role({
+      id: "role",
+      config: { path: "/service/" } as any,
+    });
+    failCreate = true;
+    await expect(runtime.run("deploy-2")).rejects.toThrow("create rejected");
+    expect(await runtime.state.get("role")).toBeUndefined();
+
+    // The failed execution keeps the deployment hold until it is abandoned.
+    await durable.clearDeploymentHold({
+      storeClient: runtime.storeClient,
+      deploymentId: "replace-failed",
+      fromExecutionId: "deploy-2",
+    });
+    failCreate = false;
+    events.length = 0;
+    await runtime.run("deploy-3");
+    expect(calls).toEqual(["create:/", "delete:/", "create:/service/"]);
+    expect(
+      events.find((event) => event.event === "reconciler.deploy.decision"),
+    ).toMatchObject({ resourceId: "role", decision: "create" });
+    runtime.close();
+  });
+
+  it("emits dry-run for both halves of a replacement and changes nothing", async () => {
+    const calls: string[] = [];
+    const Role = defineReplaceable("test/durable/replace-dry-run", calls);
+    const resources = [
+      new Role({ id: "role", config: { name: "app", path: "/" } as any }),
+    ];
+    const events: ReconcilerEvent[] = [];
+    const options = {
+      dryRun: false,
+      emit: (event: ReconcilerEvent) => void events.push(event),
+    };
+    const runtime = createRuntime(resources, "replace-dry-run", options);
+
+    await runtime.run("deploy-1");
+    const before = await runtime.state.snapshot("role");
+    resources[0] = new Role({
+      id: "role",
+      config: { name: "app", path: "/service/" } as any,
+    });
+    options.dryRun = true;
+    events.length = 0;
+    await runtime.run("dry-run");
+
+    expect(calls).toEqual(["create:/"]);
+    expect(await runtime.state.snapshot("role")).toEqual(before);
+    expect(
+      events
+        .filter(
+          (event) =>
+            event.event === "reconciler.operation.lifecycle" &&
+            event.status === "dry-run",
+        )
+        .map((event) => (event as { operation: string }).operation),
+    ).toEqual(["delete", "create"]);
+    runtime.close();
+  });
+
+  it("replaces a resource whose remote drifted in an immutable param", async () => {
+    const calls: string[] = [];
+    let remote = { name: "app", path: "/" };
+    const Role = defineReplaceable("test/durable/drift-replace", calls, {
+      read: async () => remote,
+    });
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(
+      [new Role({ id: "role", config: { name: "app", path: "/" } as any })],
+      "drift-replace",
+      { driftDetection: true, emit: (event) => void events.push(event) },
+    );
+
+    await runtime.run("deploy-1");
+    remote = { name: "app", path: "/drifted/" };
+    events.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:/", "delete:/", "create:/"]);
+    expect(
+      events.find((event) => event.event === "reconciler.deploy.decision"),
+    ).toMatchObject({
+      decision: "drift-replace",
+      replaceFields: [{ name: "path", known: true }],
+    });
+    runtime.close();
+  });
+});
+
 function createRuntime(
   resources: BaseResource[],
   deploymentId: string,
@@ -825,6 +1168,27 @@ function seedResourceState(
     id: storeId,
     initial: resourceStateRecord(resourceId),
   });
+}
+
+/** Deletes a resource's store and creates it again, returning the new instance ID. */
+async function recreateResourceState(
+  storeClient: SqliteStoreClient,
+  storeId: string,
+  resourceId: string,
+) {
+  await storeClient.deleteStore({
+    definition: durable.resourceStateStore,
+    id: storeId,
+  });
+  const store = await storeClient.getOrCreateStore({
+    definition: durable.resourceStateStore,
+    id: storeId,
+    initial: {
+      ...resourceStateRecord(resourceId),
+      lastOperationAt: "1999-01-01T00:00:00.000Z",
+    },
+  });
+  return store.instanceId;
 }
 
 function resourceStateRecord(id: string) {

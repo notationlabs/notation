@@ -18,15 +18,13 @@ export async function* updateResourceOperation(
     return;
   }
 
-  if (!params.resource.update) {
-    yield* emitLifecycleEvent(params, "update", "skip", {
-      reason: "update-not-implemented",
-    });
-    yield* emitLifecycleEvent(params, "update", "success");
-    return;
-  }
-
   try {
+    // A resource with no update is replaced on any change, so the decision
+    // never routes it here; skipping would drop the change silently.
+    if (!params.resource.update) {
+      throw new Error(`${params.resource.type} has no update operation`);
+    }
+
     yield* runPendingOperation(
       step,
       "update:remote",

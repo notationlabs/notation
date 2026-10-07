@@ -16,7 +16,9 @@ export type PlanCommandOptions = {
 const decisionSymbols: Record<PlanNode["decision"], string> = {
   create: "+",
   update: "~",
+  replace: "-/+",
   "drift-update": "~",
+  "drift-replace": "-/+",
   "drift-recreate": "±",
   "delete-orphan": "-",
   noop: " ",
@@ -57,6 +59,13 @@ function printPlanSummary(result: Plan, logger: Logger) {
     logger.info(
       `${decisionSymbols[node.decision]} ${node.decision} ${node.type} ${node.id}`,
     );
+    for (const field of node.replaceFields ?? []) {
+      logger.info(
+        field.known
+          ? `    ${field.name} forces replacement`
+          : `    ${field.name} unknown, may force replacement`,
+      );
+    }
   }
 
   const count = (decision: PlanNode["decision"]) =>
@@ -65,6 +74,7 @@ function printPlanSummary(result: Plan, logger: Logger) {
   const summary = [
     `${count("create")} to create`,
     `${count("update") + count("drift-update")} to update`,
+    `${count("replace") + count("drift-replace")} to replace`,
     `${count("drift-recreate")} to recreate`,
     `${count("delete-orphan")} to delete`,
     `${count("noop")} unchanged`,

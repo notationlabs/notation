@@ -18,6 +18,7 @@ import type {
   NoInfer,
 } from "./types";
 import type { ResourceOperationContext } from "./resource-operation";
+import { toComparableParams } from "./diff-params";
 
 export type { Schema, SchemaItem, DefineResourceApiSchema };
 
@@ -157,16 +158,7 @@ export abstract class Resource<
   }
 
   toComparable(output: T["output"]): T["output"] {
-    const parsed = {} as Record<string, any>;
-    for (const [k, v] of Object.entries(this.schema)) {
-      if (v.volatile) continue;
-      if (v.hidden) continue;
-      if (v.propertyType !== "param") continue;
-      if (k in (output as any)) {
-        parsed[k] = (output as any)[k];
-      }
-    }
-    return parsed;
+    return toComparableParams(this.schema, output as Record<string, unknown>);
   }
 
   toState(output: T["output"]): T["state"] {
