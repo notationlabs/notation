@@ -7,16 +7,16 @@
   },
   "dependencies": {
     "@notation/docs": "git+ssh://git@github.com/djgrant/docs.git#main&path:/packages/docs",
-    "@tanstack/react-router": "1.168.11",
-    "@tanstack/react-start": "1.167.18",
-    "react": "19.2.5",
-    "react-dom": "19.2.5"
+    "@tanstack/react-router": "1.170.44",
+    "@tanstack/react-start": "1.169.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "typescript": "^5.9.3",
-    "vite": "npm:@voidzero-dev/vite-plus-core@0.1.16",
-    "vite-plus": "0.1.16"
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^7.0.2",
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.2.0",
+    "vite-plus": "1.2.0"
   }
 }
