@@ -1,5 +1,14 @@
 # @notation/aws.iac
 
+## 0.14.0
+
+### Patch Changes
+
+- Updated dependencies [9afdb3c]
+  - @notation/resource@0.14.0
+  - @notation/core@0.14.0
+  - @notation/std.iac@0.14.0
+
 ## 0.13.0
 
 ### Minor Changes

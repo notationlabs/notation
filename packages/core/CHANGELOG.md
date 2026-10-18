@@ -1,5 +1,14 @@
 # @notation/core
 
+## 0.14.0
+
+### Patch Changes
+
+- Updated dependencies [9afdb3c]
+  - @notation/reconciler@0.14.0
+  - @notation/resource@0.14.0
+  - @notation/state@0.14.0
+
 ## 0.13.0
 
 ### Minor Changes
