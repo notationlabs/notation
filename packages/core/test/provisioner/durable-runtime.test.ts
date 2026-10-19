@@ -220,8 +220,8 @@ describe("NodeDurableRuntime", () => {
 
   it("canonicalises equivalent entry-point spellings", () => {
     const absolute = path.resolve("infra/api.ts");
-    expect(resolveDeploymentId("infra/api.ts")).toBe(absolute);
-    expect(resolveDeploymentId("./infra/api.ts")).toBe(absolute);
-    expect(resolveDeploymentId(absolute)).toBe(absolute);
+    expect(resolveDeploymentId("infra/api.ts")).toBe("infra/api.ts");
+    expect(resolveDeploymentId("./infra/api.ts")).toBe("infra/api.ts");
+    expect(resolveDeploymentId(absolute)).toBe("infra/api.ts");
   });
 });

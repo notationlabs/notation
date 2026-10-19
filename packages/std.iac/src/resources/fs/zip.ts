@@ -1,3 +1,4 @@
+import { fromProjectRoot } from "@notation/core";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { isErrorWithCode } from "@notation/utils";
 import * as fs from "node:fs/promises";
@@ -53,7 +54,7 @@ export const Zip = zipSchema.defineOperations({
   },
   read: async (params) => {
     try {
-      const file = await fs.readFile(params.filePath);
+      const file = await fs.readFile(fromProjectRoot(params.filePath));
       return { ...params, file };
     } catch (error) {
       if (isErrorWithCode(error, "ENOENT")) {
@@ -68,12 +69,12 @@ export const Zip = zipSchema.defineOperations({
     await zip.package(params.sourceFilePath, params.filePath);
   },
   update: async (config) => {
-    await fs.unlink(config.filePath);
+    await fs.unlink(fromProjectRoot(config.filePath));
     await zip.package(config.sourceFilePath, config.filePath);
   },
   delete: async (config) => {
     try {
-      await fs.unlink(config.filePath);
+      await fs.unlink(fromProjectRoot(config.filePath));
     } catch (error) {
       if (!isErrorWithCode(error, "ENOENT")) throw error;
     }

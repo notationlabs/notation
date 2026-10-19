@@ -1,4 +1,3 @@
-import path from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -20,17 +19,16 @@ import {
   type DurableStep,
 } from "@notation/reconciler/durable";
 import pino, { type Logger } from "pino";
+import { filePaths, toProjectRoot } from "src/utils/paths";
 import * as v from "valibot";
 import { createWorkflowRouter, defineStore, workflow } from "yieldstar";
 
-const DEFAULT_DATABASE_PATH = ".notation/workflows.db";
-
 function resolveDatabasePath(): string {
-  return process.env.NOTATION_DATABASE_PATH ?? DEFAULT_DATABASE_PATH;
+  return process.env.NOTATION_DATABASE_PATH ?? filePaths.database();
 }
 
 export function resolveDeploymentId(entryPoint: string): string {
-  return path.resolve(entryPoint);
+  return toProjectRoot(entryPoint);
 }
 
 export type NodeDurableRuntimeOptions = {

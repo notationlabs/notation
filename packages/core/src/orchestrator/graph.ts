@@ -1,4 +1,3 @@
-import path from "path";
 import {
   collectResourceGraph,
   type BaseResource,
@@ -18,6 +17,6 @@ export async function getResourceGraph(
 
   // todo: move into worker thread. this will cause memory leaks
   return collectResourceGraph(async () => {
-    await import(path.join(process.cwd(), `${outFilePath}?${Date.now()}`));
+    await import(`${outFilePath}?${Date.now()}`);
   });
 }

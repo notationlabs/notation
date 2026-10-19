@@ -1,3 +1,4 @@
+import { fromProjectRoot } from "@notation/core";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { isErrorWithCode } from "@notation/utils";
 import { getSourceSha256 } from "src/utils/hash";
@@ -38,7 +39,7 @@ export const File = fileSchema.defineOperations({
   },
   read: async (config) => {
     try {
-      const file = await fs.readFile(config.filePath);
+      const file = await fs.readFile(fromProjectRoot(config.filePath));
       return { ...config, file };
     } catch (error) {
       if (isErrorWithCode(error, "ENOENT")) {

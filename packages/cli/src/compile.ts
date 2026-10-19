@@ -5,7 +5,7 @@ import {
   functionInfraPlugin,
   functionRuntimePlugin,
 } from "@notation/esbuild-plugins";
-import { filePaths } from "@notation/core";
+import { filePaths, fromProjectRoot } from "@notation/core";
 import { defaultLogger, type Logger } from "./logger";
 
 export type CompileOptions = {
@@ -23,19 +23,20 @@ export async function compile(entryPoint: string, opts: CompileOptions = {}) {
   logger.info(`${watch ? "Watching" : "Compiling"} functions`);
 
   // @todo: fnEntryPoints could be an output of compileInfra
-  const fnEntryPoints = await glob("runtime/**/*.fn.ts");
+  const fnEntryPoints = await glob(fromProjectRoot("runtime/**/*.fn.ts"));
   let disposeFnCompiler = await compileFns(fnEntryPoints, watch);
 
   if (!watch) return;
 
   chokidar
     .watch("**/*.fn.ts", {
+      cwd: fromProjectRoot("."),
       ignored: /node_modules/,
       persistent: true,
     })
     .on("all", async () => {
       if (disposeFnCompiler) disposeFnCompiler();
-      const fnEntryPoints = await glob("runtime/**/*.fn.ts");
+      const fnEntryPoints = await glob(fromProjectRoot("runtime/**/*.fn.ts"));
       disposeFnCompiler = await compileFns(fnEntryPoints, watch);
     });
 }
@@ -44,8 +45,8 @@ export async function compileInfra(entryPoint: string, watch: boolean = false) {
   const context = await esbuild.context({
     entryPoints: [entryPoint],
     plugins: [functionInfraPlugin()],
-    outdir: "dist",
-    outbase: ".",
+    outdir: filePaths.dist.dir(),
+    outbase: fromProjectRoot("."),
     outExtension: { ".js": ".mjs" },
     bundle: true,
     format: "esm",

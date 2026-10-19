@@ -1,9 +1,8 @@
-import path from "node:path";
 import { Plugin } from "esbuild";
 import { parseFnModule } from "src/parsers/parse-fn-module";
 import { removeUnsafeReferences } from "src/parsers/remove-unsafe-references";
 import { GetFile, fsGetFile, withFileCheck } from "src/utils/get-file";
-import { filePaths } from "@notation/core";
+import { filePaths, toProjectRoot } from "@notation/core";
 
 type PluginOpts = {
   getFile?: GetFile;
@@ -16,8 +15,9 @@ export function functionInfraPlugin(opts: PluginOpts = {}): Plugin {
       build.onLoad({ filter: /.\.fn*/ }, async (args) => {
         const getFile = withFileCheck(opts.getFile || fsGetFile);
         const fileContent = await getFile(args.path);
-        const fileName = path.relative(process.cwd(), args.path);
-        const outFileName = filePaths.dist.runtime.index(fileName);
+        const outFileName = toProjectRoot(
+          filePaths.dist.runtime.index(args.path),
+        );
         const safeFnModule = removeUnsafeReferences(fileContent);
         const { config, exports } = parseFnModule(fileContent);
 
