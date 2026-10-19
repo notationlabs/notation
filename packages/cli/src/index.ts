@@ -36,10 +36,14 @@ program
   .description("Deploy Notation App")
   .option("--json", "stream reconciler events as NDJSON")
   .option("--execution-id <id>", "resume a durable execution")
+  .option("--no-compile", "deploy the existing build without compiling")
+  .option("--no-drift-detection", "skip drift detection")
   .action(async (entryPoint, options) => {
     await deploy(entryPoint, {
       json: options.json,
       executionId: options.executionId,
+      compile: options.compile,
+      driftDetection: options.driftDetection,
     });
   });
 

@@ -1,7 +1,7 @@
 import chokidar from "chokidar";
 import { randomUUID } from "node:crypto";
-import { createLoggerReconcilerSubscriber, deployApp } from "@notation/core";
 import { compile } from "./compile";
+import { deployInChild } from "./deploy-child";
 import { defaultLogger, type Logger } from "./logger";
 
 const dotFilesRe = /(^|[\/\\])\../;
@@ -41,14 +41,11 @@ export async function watch(
 
     isDeploying = true;
 
+    // The child logs the execution ID itself.
     const executionId = randomUUID();
-    logger.info(`Execution ID ${executionId}`);
-    deployApp({
-      entryPoint,
-      executionId,
-      driftDetection: false,
-      emit: createLoggerReconcilerSubscriber({ logger }),
-    })
+    // A fresh process per deploy: importing the rebuilt infra in this
+    // long-lived process would leak a copy of the bundle every time.
+    deployInChild({ entryPoint, executionId, logger })
       .then(() => {
         isDeploying = false;
         if (deployQueued) {

@@ -11,6 +11,9 @@ import { redirectStdoutToStderr } from "./stdio";
 export type DeployCommandOptions = {
   json?: boolean;
   executionId?: string;
+  // Off when the caller (e.g. watch) has already compiled.
+  compile?: boolean;
+  driftDetection?: boolean;
   logger?: Logger;
 };
 
@@ -23,10 +26,17 @@ export async function deploy(
     ? createNdjsonEventEmitter(redirectStdoutToStderr().write)
     : createLoggerReconcilerSubscriber({ logger });
 
-  await compile(entryPoint, { logger });
+  if (opts.compile !== false) {
+    await compile(entryPoint, { logger });
+  }
   logger.info(`Deploying ${entryPoint}`);
   const executionId = opts.executionId ?? randomUUID();
   logger.info(`Execution ID ${executionId}`);
 
-  await deployApp({ entryPoint, emit, executionId });
+  await deployApp({
+    entryPoint,
+    emit,
+    executionId,
+    driftDetection: opts.driftDetection,
+  });
 }

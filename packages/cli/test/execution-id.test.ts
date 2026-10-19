@@ -61,3 +61,33 @@ describe.each([
     expect(printedAt).toBeLessThan(app.mock.invocationCallOrder[0]!);
   });
 });
+
+describe("deploy options", () => {
+  it("skips compiling and drift detection when told to", async () => {
+    const { compile } = await import("../src/compile");
+    vi.mocked(compile).mockClear();
+    deployApp.mockClear();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    await deploy("infra/app.ts", {
+      compile: false,
+      driftDetection: false,
+      logger,
+    });
+
+    expect(compile).not.toHaveBeenCalled();
+    expect(deployApp).toHaveBeenCalledWith(
+      expect.objectContaining({ driftDetection: false }),
+    );
+  });
+
+  it("compiles by default", async () => {
+    const { compile } = await import("../src/compile");
+    vi.mocked(compile).mockClear();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    await deploy("infra/app.ts", { logger });
+
+    expect(compile).toHaveBeenCalledOnce();
+  });
+});
