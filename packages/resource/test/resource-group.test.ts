@@ -70,20 +70,28 @@ it("increments resource group IDs", async () => {
   expect(graph.resourceGroups[1].id).toBe(1);
 });
 
-it("finds a resource within a group", () => {
-  const resourceGroup = new TestResourceGroup("test-group", {
-    type: "group1",
-  });
-  const resource = resourceGroup.add(testResource);
-
-  expect(resourceGroup.findResource(TestResource)).toBe(resource);
-  expect(resourceGroup.findResource(TestResource2)).toBe(undefined);
-});
-
 it("throws an error when adding an existing resource", () => {
   const resourceGroup = new TestResourceGroup("test-group", {});
   resourceGroup.add(testResource);
   expect(() => resourceGroup.add(testResource)).toThrow();
+});
+
+it("adds a resource once per id", () => {
+  const resourceGroup = new TestResourceGroup("test-group", {});
+  const opts = { id: "binding", config: testResourceConfig };
+  const first = resourceGroup.addOnce(TestResource, opts);
+  const second = resourceGroup.addOnce(TestResource, opts);
+
+  expect(second).toBe(first);
+  expect(resourceGroup.resources).toEqual([first]);
+});
+
+it("throws when an id is reused for a different resource type", () => {
+  const resourceGroup = new TestResourceGroup("test-group", {});
+  const opts = { id: "binding", config: testResourceConfig };
+  resourceGroup.addOnce(TestResource, opts);
+
+  expect(() => resourceGroup.addOnce(TestResource2, opts)).toThrow();
 });
 
 it("isolates consecutive collections", async () => {

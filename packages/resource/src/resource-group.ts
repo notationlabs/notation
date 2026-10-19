@@ -54,10 +54,24 @@ export abstract class ResourceGroup {
     return resource;
   }
 
-  findResource<T extends new (...opts: any[]) => BaseResource>(
+  /**
+   * Adds a resource unless the group already has one with the same ID, and
+   * returns the one the group holds. Use it for resources that bind two
+   * others, such as an API integration, which several call sites may create.
+   */
+  addOnce<T extends new (opts: any) => BaseResource>(
     ResourceClass: T,
-  ) {
-    return this.resources.find((r) => r instanceof ResourceClass) as
-      InstanceType<T> | undefined;
+    opts: ConstructorParameters<T>[0] & { id: string },
+  ): InstanceType<T> {
+    const existing = this.resources.find((r) => r.id === opts.id);
+    if (!existing) {
+      return this.add(new ResourceClass(opts) as InstanceType<T>);
+    }
+    if (existing.constructor !== ResourceClass) {
+      throw new Error(
+        `Resource ${opts.id} already exists as ${existing.type} in group ${this.type}.`,
+      );
+    }
+    return existing as InstanceType<T>;
   }
 }

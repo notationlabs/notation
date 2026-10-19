@@ -13,8 +13,18 @@ type LambdaConfig = {
   runtime?: aws.lambda.LambdaFunctionConfig["Runtime"];
 };
 
-export const lambda = (config: LambdaConfig): aws.AwsResourceGroup => {
-  const functionGroup = new aws.AwsResourceGroup("Lambda", { config });
+export class LambdaGroup extends aws.AwsResourceGroup {
+  readonly fn: aws.lambda.LambdaFunctionInstance;
+
+  constructor(config: LambdaConfig) {
+    super("Lambda", { config });
+    this.fn = build(this, config);
+  }
+}
+
+export const lambda = (config: LambdaConfig) => new LambdaGroup(config);
+
+const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
   const filePath = config.code.path;
 
   let lambdaId = config.id;
@@ -91,5 +101,5 @@ export const lambda = (config: LambdaConfig): aws.AwsResourceGroup => {
     }),
   );
 
-  return functionGroup;
+  return lambdaResource;
 };

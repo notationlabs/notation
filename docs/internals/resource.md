@@ -243,7 +243,7 @@ abstract class ResourceGroup {
   resources: BaseResource[];
 
   add<T extends BaseResource>(resource: T): T;
-  findResource<T>(ResourceClass: T): InstanceType<T> | undefined;
+  addOnce<T>(ResourceClass: T, opts: ResourceOpts): InstanceType<T>;
 }
 ```
 
@@ -251,6 +251,8 @@ Construction accepts `ResourceGroupOptions` with:
 
 - `id` – an optional pre-assigned ID used outside graph collection.
 - `dependencies` – map of dependency names to group IDs.
+
+`addOnce` adds a resource unless the group already has one with the same ID, and returns the one the group holds. Use it for resources that bind two others, such as an API integration, which several call sites may create. It throws if the existing resource has a different class.
 
 During graph construction, the group and each resource added via `add()` become part of the active graph automatically. This is how a construct like `export const getTodos = lambda({ ... })` maps to the 4–6 actual AWS resources required to run it.
 

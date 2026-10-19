@@ -2,15 +2,15 @@ import type {
   ApiGatewayHandler,
   JWTAuthorizedApiGatewayHandler,
 } from "src/shared";
-import * as aws from "@notation/aws.iac";
+import type { LambdaGroup } from "src/lambda";
 import { route } from "./route";
-import { api } from "./api";
+import type { ApiGroup } from "./api";
 import { AuthorizerConfig, JWTAuthorizerConfig, NO_AUTH } from "./auth";
 
-export const router = (apiGroup: ReturnType<typeof api>) => {
+export const router = (apiGroup: ApiGroup) => {
   const createRouteCallback =
     (method: string) =>
-    (path: `/${string}`, handler: ApiGatewayHandler | aws.AwsResourceGroup) => {
+    (path: `/${string}`, handler: ApiGatewayHandler | LambdaGroup) => {
       return route(apiGroup, method, path, NO_AUTH, handler);
     };
 
@@ -29,9 +29,9 @@ export const router = (apiGroup: ReturnType<typeof api>) => {
 
 class AuthorizedRouteBuilder {
   auth: AuthorizerConfig = NO_AUTH;
-  apiGroup: ReturnType<typeof api>;
+  apiGroup: ApiGroup;
 
-  constructor(apiGroup: ReturnType<typeof api>) {
+  constructor(apiGroup: ApiGroup) {
     this.apiGroup = apiGroup;
   }
 

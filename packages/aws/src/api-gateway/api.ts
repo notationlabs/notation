@@ -1,25 +1,29 @@
 import * as aws from "@notation/aws.iac";
 
-export const api = (rgConfig: { name: string }) => {
-  const apiGroup = new aws.AwsResourceGroup("API Gateway", rgConfig);
+export class ApiGroup extends aws.AwsResourceGroup {
+  readonly api: aws.apiGateway.ApiInstance;
 
-  const apiResource = apiGroup.add(
-    new aws.apiGateway.Api({
-      id: rgConfig.name,
-      config: {
-        Name: rgConfig.name,
-        ProtocolType: "HTTP",
-      },
-    }),
-  );
+  constructor(rgConfig: { name: string }) {
+    super("API Gateway", rgConfig);
 
-  apiGroup.add(
-    new aws.apiGateway.Stage({
-      id: `${rgConfig.name}-stage`,
-      config: { StageName: "$default", AutoDeploy: true },
-      dependencies: { api: apiResource },
-    }),
-  );
+    this.api = this.add(
+      new aws.apiGateway.Api({
+        id: rgConfig.name,
+        config: {
+          Name: rgConfig.name,
+          ProtocolType: "HTTP",
+        },
+      }),
+    );
 
-  return apiGroup;
-};
+    this.add(
+      new aws.apiGateway.Stage({
+        id: `${rgConfig.name}-stage`,
+        config: { StageName: "$default", AutoDeploy: true },
+        dependencies: { api: this.api },
+      }),
+    );
+  }
+}
+
+export const api = (rgConfig: { name: string }) => new ApiGroup(rgConfig);

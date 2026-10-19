@@ -1,55 +1,49 @@
 import { EventBridgeHandler } from "src/shared/lambda.handler";
+import type { LambdaGroup } from "src/lambda";
 import { Schedule } from "./schedule";
 import * as aws from "@notation/aws.iac";
 import { toAwsScheduleExpression } from "./aws-conversions";
 
-export const schedule = (config: {
+type ScheduleConfig = {
   name: string;
   schedule: Schedule;
-  handler:
-    | EventBridgeHandler<"Scheduled Event", any>
-    // todo: narrow to lambda group
-    | aws.AwsResourceGroup;
-}): aws.AwsResourceGroup => {
-  const eventBridgeScheduleGroup = new aws.AwsResourceGroup(
-    "aws/eventBridge/schedule",
-    config,
-  );
+  handler: EventBridgeHandler<"Scheduled Event", any> | LambdaGroup;
+};
 
-  // at compile time, a runtime handler import becomes an infra resource group
-  const lambdaGroup = config.handler as aws.AwsResourceGroup;
+export class ScheduleGroup extends aws.AwsResourceGroup {
+  readonly rule: aws.eventBridge.EventBridgeRuleInstance;
 
-  const lambdaResource = lambdaGroup.findResource(aws.lambda.LambdaFunction)!;
+  constructor(config: ScheduleConfig) {
+    super("aws/eventBridge/schedule", config);
 
-  const eventBridgeRule = new aws.eventBridge.EventBridgeRule({
-    id: `${config.name}-eventbridge-rule`,
-    config: {
-      Name: config.name,
-      ScheduleExpression: toAwsScheduleExpression(config.schedule),
-      EventBusName: "default",
-    },
-    dependencies: {
-      lambda: lambdaResource,
-    },
-  });
+    // at compile time, a runtime handler import becomes a lambda group
+    const lambdaGroup = config.handler as LambdaGroup;
+    const lambdaResource = lambdaGroup.fn;
 
-  eventBridgeScheduleGroup.add(eventBridgeRule);
+    this.rule = this.add(
+      new aws.eventBridge.EventBridgeRule({
+        id: `${config.name}-eventbridge-rule`,
+        config: {
+          Name: config.name,
+          ScheduleExpression: toAwsScheduleExpression(config.schedule),
+          EventBusName: "default",
+        },
+        dependencies: {
+          lambda: lambdaResource,
+        },
+      }),
+    );
 
-  const permission = lambdaGroup.findResource(
-    aws.eventBridge.LambdaEventBridgeRulePermission,
-  );
-
-  if (!permission) {
     lambdaGroup.add(
       new aws.eventBridge.LambdaEventBridgeRulePermission({
         id: `${config.name}-eventbridge-permission`,
         dependencies: {
           lambda: lambdaResource,
-          eventBridgeRule: eventBridgeRule,
+          eventBridgeRule: this.rule,
         },
       }),
     );
   }
+}
 
-  return eventBridgeScheduleGroup;
-};
+export const schedule = (config: ScheduleConfig) => new ScheduleGroup(config);
