@@ -244,6 +244,10 @@ export const LambdaFunction = lambdaFunctionSchema
 
     update: async (key, patch, params) => {
       const { Code, CodeSha256, ...conf } = patch;
+      // An omitted Environment leaves the variables as they were.
+      if ("Environment" in conf && conf.Environment === undefined) {
+        conf.Environment = { Variables: {} };
+      }
 
       // todo: work it out so that these commands be run together. currently errors on:
       // ResourceConflictException: The operation cannot be performed at this time. An update is in progress for resource: arn...

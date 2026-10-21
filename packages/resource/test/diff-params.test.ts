@@ -82,7 +82,7 @@ describe("diffParams", () => {
       { ...previous, tags: { team: "a", env: "prod" } },
       { canUpdate: true },
     );
-    expect(result.patch).toEqual({ tags: { env: "prod" } });
+    expect(result.patch).toEqual({ tags: { team: "a", env: "prod" } });
     expect(result.replaceFields).toEqual([{ name: "tags", known: true }]);
   });
 

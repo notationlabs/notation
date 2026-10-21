@@ -87,8 +87,10 @@ export function diffParams(
     const unknown = isUnknownAfterApply(desiredComparable[name]);
     if (!unknown && !(name in patch)) continue;
 
-    // A change anywhere inside the value changes the whole field.
-    if (!(name in patch)) patch[name] = desiredComparable[name];
+    // A change anywhere inside the value changes the whole field, and the
+    // patch carries it whole: cloud APIs replace a field, so a nested diff
+    // can't be sent as it is.
+    patch[name] = desiredComparable[name];
     changed.push(name);
     if (!options.canUpdate || forcesReplacement(item)) {
       replaceFields.push({ name, known: !unknown });

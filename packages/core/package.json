@@ -18,7 +18,6 @@
     "@notation/state": "workspace:*",
     "@yieldstar/core": "0.5.0",
     "@yieldstar/sqlite-runtime": "0.5.0",
-    "deep-object-diff": "^1.1.9",
     "js-base64": "^3.7.7",
     "valibot": "^1.4.2",
     "lodash-es": "^4.17.21",

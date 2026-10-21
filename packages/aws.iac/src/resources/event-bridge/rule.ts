@@ -99,7 +99,9 @@ export const EventBridgeRule = eventBridgeRuleSchema
       await eventBridgeClient.send(createTargetsCommand);
     },
     update: async (key, patch, params) => {
-      const { Targets, ...ruleConfig } = patch;
+      // PutRule replaces the rule's settings, so it is sent the whole rule,
+      // not just the changed fields.
+      const { Targets, ...ruleConfig } = params;
 
       const updateRuleCommand = new sdk.PutRuleCommand(ruleConfig);
       const updateTargetsCommand = new sdk.PutTargetsCommand({
