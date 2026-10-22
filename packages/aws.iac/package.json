@@ -23,5 +23,9 @@
     "@notation/resource": "workspace:*",
     "@notation/std.iac": "workspace:*",
     "@types/aws-lambda": "^8.10.147"
+  },
+  "devDependencies": {
+    "@notation/reconciler": "workspace:*",
+    "@notation/state": "workspace:*"
   }
 }

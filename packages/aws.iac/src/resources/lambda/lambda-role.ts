@@ -8,8 +8,20 @@ export type LambdaIamRoleSchema = AwsSchema<{
   Key: sdk.DeleteRoleRequest;
   CreateParams: sdk.CreateRoleRequest;
   UpdateParams: sdk.UpdateRoleRequest;
-  ReadResult: NonNullable<sdk.GetRoleResponse["Role"]>;
+  ReadResult: LambdaIamRoleReadResult;
 }>;
+
+/**
+ * The role as GetRole reports it, with each param in the shape it is
+ * configured in, so a read can be compared with params.
+ */
+type LambdaIamRoleReadResult = Omit<
+  sdk.Role,
+  "AssumeRolePolicyDocument" | "PermissionsBoundary"
+> & {
+  AssumeRolePolicyDocument?: string;
+  PermissionsBoundary?: string;
+};
 
 const lambdaIamRole = resource<LambdaIamRoleSchema>({
   type: "aws/lambda/LambdaIamRole",
@@ -72,7 +84,7 @@ export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
     try {
       const command = new sdk.GetRoleCommand(key);
       const { Role } = await iamClient.send(command);
-      return Role!;
+      return toReadResult(Role!);
     } catch (error) {
       if (error instanceof sdk.NoSuchEntityException) {
         throw new ResourceNotFoundError("Lambda IAM role was not found", {
@@ -98,5 +110,30 @@ export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
     AssumeRolePolicyDocument: JSON.stringify(lambdaTrustPolicy),
   }),
 });
+
+function toReadResult(role: sdk.Role): LambdaIamRoleReadResult {
+  const { AssumeRolePolicyDocument, PermissionsBoundary, ...rest } = role;
+  return {
+    ...rest,
+    AssumeRolePolicyDocument:
+      AssumeRolePolicyDocument === undefined
+        ? undefined
+        : decodePolicyDocument(AssumeRolePolicyDocument),
+    PermissionsBoundary: PermissionsBoundary?.PermissionsBoundaryArn,
+  };
+}
+
+/**
+ * IAM returns policy documents URL-encoded (RFC 3986). Decodes one and
+ * re-serialises it compactly, the form the trust policy param is built in.
+ */
+function decodePolicyDocument(document: string): string {
+  const decoded = decodeURIComponent(document);
+  try {
+    return JSON.stringify(JSON.parse(decoded));
+  } catch {
+    return decoded;
+  }
+}
 
 export type LambdaIamRoleInstance = InstanceType<typeof LambdaIamRole>;

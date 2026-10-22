@@ -221,9 +221,17 @@ export const LambdaFunction = lambdaFunctionSchema
           );
         }
 
+        // Response shapes carry computed fields the params don't have, which
+        // would read as drift; each param is returned as it is configured.
+        const { VpcId, ...vpcConfig } = Configuration.VpcConfig ?? {};
+        const { OptimizationStatus, ...snapStart } =
+          Configuration.SnapStart ?? {};
+
         return {
           ...Configuration,
           Layers: Configuration.Layers?.map((layer) => layer.Arn),
+          VpcConfig: Configuration.VpcConfig ? vpcConfig : undefined,
+          SnapStart: Configuration.SnapStart ? snapStart : undefined,
           ...Concurrency,
           Code: {
             S3Bucket: Code?.Location?.split("/")[0],

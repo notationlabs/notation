@@ -236,6 +236,13 @@ importers:
       '@types/aws-lambda':
         specifier: ^8.10.147
         version: 8.10.147
+    devDependencies:
+      '@notation/reconciler':
+        specifier: workspace:*
+        version: link:../reconciler
+      '@notation/state':
+        specifier: workspace:*
+        version: link:../state
 
   packages/cli:
     dependencies:
