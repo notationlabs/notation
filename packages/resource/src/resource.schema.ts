@@ -47,16 +47,12 @@ export type SchemaItem<T = any> = {
   | {
       propertyType: "param";
       immutable?: true;
-      defaultValue?: T;
       primaryKey?: true;
       secondaryKey?: true;
     }
   | {
       propertyType: "computed";
       primaryKey?: true;
-    }
-  | {
-      propertyType: "derived";
     }
 );
 
@@ -138,11 +134,11 @@ export type CompoundKey<S extends ResolvedSchema> = MapSchema<
 
 export type Params<S extends ResolvedSchema> = MapSchema<
   S,
-  { propertyType: "computed" | "derived" }
+  { propertyType: "computed" }
 >;
 
 export type Result<S extends ResolvedSchema> = DeepPartial<
-  MapSchema<S, { propertyType: "param" | "derived" }>
+  MapSchema<S, { propertyType: "param" }>
 >;
 
 export type Output<S extends ResolvedSchema> = MapSchema<S>;

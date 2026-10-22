@@ -40,13 +40,11 @@ const LambdaFunction = defineResource<{
       propertyType: "param",
       valueType: z.string(),
       presence: "required",
-      defaultValue: "index.handler",
     },
     MemorySize: {
       propertyType: "param",
       valueType: z.number(),
       presence: "optional",
-      defaultValue: 128,
     },
 
     // computed – populated by the cloud provider after creation
@@ -105,30 +103,26 @@ FunctionName: { propertyType: "param", valueType: z.string(), presence: "require
 
 // computed – output, set by the cloud provider after creation
 FunctionArn: { propertyType: "computed", valueType: z.string(), presence: "required", primaryKey: true }
-
-// derived – calculated from dependencies at deploy time via deriveParams()
-IntegrationUri: { propertyType: "derived", valueType: z.string(), presence: "required" }
 ```
 
 ### Common fields
 
 All schema items carry these fields:
 
-| Field          | Type                                 | Description                                                      |
-| -------------- | ------------------------------------ | ---------------------------------------------------------------- |
-| `propertyType` | `"param" \| "computed" \| "derived"` | Role of the field.                                               |
-| `valueType`    | `ZodType`                            | Zod validator for type checking and serialisation.               |
-| `presence`     | `"required" \| "optional"`           | Whether the field must be provided.                              |
-| `sensitive`    | `true?`                              | Redacted in logs.                                                |
-| `hidden`       | `true?`                              | Excluded from CLI display and state output.                      |
-| `volatile`     | `true?`                              | Expected to change between reads; excluded from diff comparison. |
+| Field          | Type                       | Description                                                      |
+| -------------- | -------------------------- | ---------------------------------------------------------------- |
+| `propertyType` | `"param" \| "computed"`    | Role of the field.                                               |
+| `valueType`    | `ZodType`                  | Zod validator for type checking and serialisation.               |
+| `presence`     | `"required" \| "optional"` | Whether the field must be provided.                              |
+| `sensitive`    | `true?`                    | Redacted in logs.                                                |
+| `hidden`       | `true?`                    | Excluded from CLI display and state output.                      |
+| `volatile`     | `true?`                    | Expected to change between reads; excluded from diff comparison. |
 
 ### Flags by property type
 
 **`param`**
 
 - `immutable` – cannot change after creation (forces replacement).
-- `defaultValue` – fallback when no value is provided.
 - `primaryKey` / `secondaryKey` – together form the compound key used for read/update/delete.
 
 **`computed`**

@@ -42,7 +42,6 @@ const integrationSchema = integration.defineSchema({
     presence: "optional",
   },
   ConnectionType: {
-    defaultValue: "INTERNET",
     propertyType: "param",
     presence: "optional",
   },

@@ -63,7 +63,6 @@ const apiSchema = api.defineSchema({
   },
   ProtocolType: {
     propertyType: "param",
-    defaultValue: "HTTP",
     immutable: true,
     presence: "required",
   },

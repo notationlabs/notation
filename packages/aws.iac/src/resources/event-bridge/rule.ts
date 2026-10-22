@@ -33,7 +33,6 @@ const eventBridgeRuleSchema = eventBridgeRule.defineSchema({
   },
   EventBusName: {
     presence: "required",
-    defaultValue: "default",
     propertyType: "param",
     secondaryKey: true,
   },
