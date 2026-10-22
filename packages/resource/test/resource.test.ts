@@ -1,4 +1,4 @@
-import { expect, it, test, vi } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 import {
   ResourceNotFoundError,
   ResourceOperationPendingError,
@@ -9,7 +9,6 @@ import {
   testResourceConfig,
   testResourceOutput,
 } from "./resource.doubles";
-import { describe } from "node:test";
 
 describe("resource basics", () => {
   const TestResource = resource({ type: "provider/service/resource" })

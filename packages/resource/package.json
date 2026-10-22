@@ -15,7 +15,8 @@
   ],
   "scripts": {
     "build": "tsup --clean",
-    "dev": "tsup --watch"
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "deep-object-diff": "^1.1.9"
