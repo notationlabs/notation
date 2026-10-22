@@ -103,14 +103,43 @@ export const EventBridgeRule = eventBridgeRuleSchema
       const { Targets, ...ruleConfig } = params;
 
       const updateRuleCommand = new sdk.PutRuleCommand(ruleConfig);
-      const updateTargetsCommand = new sdk.PutTargetsCommand({
-        Rule: ruleConfig.Name,
-        EventBusName: ruleConfig.EventBusName,
-        Targets: Targets,
-      });
-
       await eventBridgeClient.send(updateRuleCommand);
-      await eventBridgeClient.send(updateTargetsCommand);
+
+      // PutTargets only adds or replaces targets, so any target no longer in
+      // config has to be removed explicitly. The rule's current targets are
+      // listed rather than taken from state, so targets added outside of
+      // Notation are removed too.
+      const existingTargets = await eventBridgeClient.send(
+        new sdk.ListTargetsByRuleCommand({
+          Rule: ruleConfig.Name,
+          EventBusName: ruleConfig.EventBusName,
+        }),
+      );
+
+      const desiredTargetIds = new Set(Targets?.map((target) => target.Id));
+      const staleTargetIds = (existingTargets.Targets ?? [])
+        .map((target) => target.Id!)
+        .filter((id) => !desiredTargetIds.has(id));
+
+      // Stale targets are removed first so that swapping targets never takes
+      // the rule over its target limit.
+      if (staleTargetIds.length > 0) {
+        const removeTargetsCommand = new sdk.RemoveTargetsCommand({
+          Rule: ruleConfig.Name,
+          EventBusName: ruleConfig.EventBusName,
+          Ids: staleTargetIds,
+        });
+        await eventBridgeClient.send(removeTargetsCommand);
+      }
+
+      if (Targets && Targets.length > 0) {
+        const updateTargetsCommand = new sdk.PutTargetsCommand({
+          Rule: ruleConfig.Name,
+          EventBusName: ruleConfig.EventBusName,
+          Targets: Targets,
+        });
+        await eventBridgeClient.send(updateTargetsCommand);
+      }
     },
     delete: async (key) => {
       try {
