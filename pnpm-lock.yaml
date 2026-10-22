@@ -330,6 +330,9 @@ importers:
         specifier: ^1.1.0
         version: 1.1.0
     devDependencies:
+      '@notation/aws':
+        specifier: workspace:*
+        version: link:../aws
       '@types/fs-extra':
         specifier: ^11.0.4
         version: 11.0.4

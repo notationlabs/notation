@@ -7,13 +7,15 @@
   },
   "scripts": {
     "build": "tsup --clean",
-    "dev": "tsup --watch"
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p templates/starter"
   },
   "dependencies": {
     "fs-extra": "^11.3.0",
     "which-pm-runs": "^1.1.0"
   },
   "devDependencies": {
+    "@notation/aws": "workspace:*",
     "@types/fs-extra": "^11.0.4",
     "@types/which-pm-runs": "^1.0.2"
   }
