@@ -7,7 +7,7 @@
     "dev": "vite & tsup --watch",
     "build": "tsc && vite build && tsup",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p server"
   },
   "files": [
     "dist"

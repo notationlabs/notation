@@ -1,6 +1,6 @@
 import { MemoryStateBackend } from "@notation/state";
 import { describe, expect, it } from "vitest";
-import { readStateSnapshot } from "./server";
+import { readStateSnapshot } from "./server.js";
 
 describe("dashboard state", () => {
   it("reads state through the backend contract", async () => {
