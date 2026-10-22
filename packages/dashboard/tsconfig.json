@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    // Silence baseUrl deprecation surfaced via workspace deps during the
-    // tsup dts build (TS 6; baseUrl is removed in TS 7).
+    // tsup's dts build injects `baseUrl: "."` (deprecated in TS 6, removed
+    // in TS 7); silence the TS 6 deprecation error it would otherwise raise.
     "ignoreDeprecations": "6.0",
     "useDefineForClassFields": true,
     "lib": ["ES2020", "DOM", "DOM.Iterable"],

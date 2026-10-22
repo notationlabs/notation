@@ -1,7 +1,6 @@
 {
   "extends": "tsconfig/base.json",
   "compilerOptions": {
-    "baseUrl": ".",
     "types": ["node"],
     "paths": {
       "@notation/resource": ["../resource/src/index.ts"],

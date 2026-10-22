@@ -6,8 +6,9 @@
     "module": "esnext",
     "target": "esnext",
 
-    // baseUrl is deprecated in TS 6 (removed in TS 7) but is still
-    // load-bearing here: packages use src/-rooted absolute imports.
+    // No tsconfig here sets baseUrl (removed in TS 7), but tsup's dts build
+    // injects `baseUrl: "."` itself and runs on TS 6, which rejects it as
+    // deprecated unless silenced.
     "ignoreDeprecations": "6.0",
 
     "moduleResolution": "bundler",
