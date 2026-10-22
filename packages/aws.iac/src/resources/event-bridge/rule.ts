@@ -21,6 +21,39 @@ export type EventBridgeRuleDependencies = {
   lambda: LambdaFunctionInstance;
 };
 
+type TargetsResult = {
+  FailedEntryCount?: number;
+  FailedEntries?: {
+    TargetId?: string;
+    ErrorCode?: string;
+    ErrorMessage?: string;
+  }[];
+};
+
+// PutTargets and RemoveTargets report per-target failures in the response
+// rather than throwing, so a partially failed call has to be detected here.
+function assertNoFailedTargets(
+  action: string,
+  rule: string | undefined,
+  result: TargetsResult,
+) {
+  const failed = result.FailedEntries ?? [];
+  if (!result.FailedEntryCount && failed.length === 0) return;
+
+  const details = failed
+    .map(
+      (entry) =>
+        `  - ${entry.TargetId ?? "(unknown target)"}: ${entry.ErrorCode ?? "UnknownError"}${entry.ErrorMessage ? ` - ${entry.ErrorMessage}` : ""}`,
+    )
+    .join("\n");
+  const count = result.FailedEntryCount || failed.length;
+
+  throw new Error(
+    `Failed to ${action} ${count} target(s) on EventBridge rule "${rule}"` +
+      (details ? `:\n${details}` : ""),
+  );
+}
+
 const eventBridgeRule = resource<EventBridgeRuleSchema>({
   type: "aws/eventBridge/rule",
 });
@@ -95,7 +128,11 @@ export const EventBridgeRule = eventBridgeRuleSchema
       });
 
       await eventBridgeClient.send(createRuleCommand);
-      await eventBridgeClient.send(createTargetsCommand);
+      assertNoFailedTargets(
+        "put",
+        params.Name,
+        await eventBridgeClient.send(createTargetsCommand),
+      );
     },
     update: async (key, patch, params) => {
       // PutRule replaces the rule's settings, so it is sent the whole rule,
@@ -129,7 +166,11 @@ export const EventBridgeRule = eventBridgeRuleSchema
           EventBusName: ruleConfig.EventBusName,
           Ids: staleTargetIds,
         });
-        await eventBridgeClient.send(removeTargetsCommand);
+        assertNoFailedTargets(
+          "remove",
+          ruleConfig.Name,
+          await eventBridgeClient.send(removeTargetsCommand),
+        );
       }
 
       if (Targets && Targets.length > 0) {
@@ -138,7 +179,11 @@ export const EventBridgeRule = eventBridgeRuleSchema
           EventBusName: ruleConfig.EventBusName,
           Targets: Targets,
         });
-        await eventBridgeClient.send(updateTargetsCommand);
+        assertNoFailedTargets(
+          "put",
+          ruleConfig.Name,
+          await eventBridgeClient.send(updateTargetsCommand),
+        );
       }
     },
     delete: async (key) => {
@@ -158,7 +203,11 @@ export const EventBridgeRule = eventBridgeRuleSchema
             Ids: existingTargets.Targets.map((target) => target.Id!),
           });
 
-          await eventBridgeClient.send(deleteTargetsCommand);
+          assertNoFailedTargets(
+            "remove",
+            key.Name,
+            await eventBridgeClient.send(deleteTargetsCommand),
+          );
         }
 
         const deleteRuleCommand = new sdk.DeleteRuleCommand(key);

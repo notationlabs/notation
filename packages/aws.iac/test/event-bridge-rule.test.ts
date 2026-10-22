@@ -92,3 +92,76 @@ test("read reports the rule's current targets", async () => {
 
   expect(result).toMatchObject({ Targets: [{ Id: "fn", Arn: "arn:fn" }] });
 });
+
+function mockFailedEntries(
+  failingCommand: new (...args: any[]) => unknown,
+  existingTargetIds: string[] = [],
+) {
+  send.mockImplementation(async (command: any) => {
+    if (command instanceof sdk.ListTargetsByRuleCommand) {
+      return {
+        Targets: existingTargetIds.map((Id) => ({ Id, Arn: `arn:${Id}` })),
+      };
+    }
+    if (command instanceof failingCommand) {
+      return {
+        FailedEntryCount: 1,
+        FailedEntries: [
+          {
+            TargetId: "bad-fn",
+            ErrorCode: "ConcurrentModificationException",
+            ErrorMessage: "Rule is being modified",
+          },
+        ],
+      };
+    }
+    return { FailedEntryCount: 0, FailedEntries: [] };
+  });
+}
+
+const failureMessage =
+  /bad-fn: ConcurrentModificationException - Rule is being modified/;
+
+test("create fails when a target could not be put", async () => {
+  mockFailedEntries(sdk.PutTargetsCommand);
+  const params = { ...key, Targets: [{ Id: "bad-fn", Arn: "arn:bad-fn" }] };
+
+  await expect(rule.create!(params, {} as any)).rejects.toThrow(failureMessage);
+});
+
+test("update fails when a stale target could not be removed", async () => {
+  mockFailedEntries(sdk.RemoveTargetsCommand, ["bad-fn"]);
+  const params = { ...key, Targets: [{ Id: "fn", Arn: "arn:fn" }] };
+
+  await expect(rule.update!(key, params, params, {} as any)).rejects.toThrow(
+    failureMessage,
+  );
+  expect(sentCommands().map((c) => c.constructor)).not.toContain(
+    sdk.PutTargetsCommand,
+  );
+});
+
+test("update fails when a target could not be put", async () => {
+  mockFailedEntries(sdk.PutTargetsCommand, ["fn"]);
+  const params = { ...key, Targets: [{ Id: "bad-fn", Arn: "arn:bad-fn" }] };
+
+  await expect(rule.update!(key, params, params, {} as any)).rejects.toThrow(
+    failureMessage,
+  );
+});
+
+test("delete fails and keeps the rule when a target could not be removed", async () => {
+  mockFailedEntries(sdk.RemoveTargetsCommand, ["bad-fn"]);
+
+  await expect(rule.delete!(key, {} as any)).rejects.toThrow(failureMessage);
+  expect(sentCommands().map((c) => c.constructor)).not.toContain(
+    sdk.DeleteRuleCommand,
+  );
+});
+
+test("create succeeds when no targets failed", async () => {
+  mockFailedEntries(class Never {});
+  const params = { ...key, Targets: [{ Id: "fn", Arn: "arn:fn" }] };
+
+  await expect(rule.create!(params, {} as any)).resolves.toBeUndefined();
+});
