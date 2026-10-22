@@ -12,6 +12,7 @@ export const getUserHandler = handle.jwtAuthorizedApiRequest<JWTClaims>(
 
 export const config: LambdaConfig = {
   service: "aws/lambda",
+  id: "user",
   timeout: 5,
   memory: 64,
 };

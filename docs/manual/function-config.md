@@ -7,6 +7,7 @@ Export a `config` object from any `.fn.ts` file to customize Lambda function set
 ```ts [@notation/aws/lambda.fn.ts]
 type LambdaConfig = {
   service: "aws/lambda";
+  id: string;
   memory?: number;
   timeout?: number;
 };
@@ -24,10 +25,15 @@ export const processData = handle.apiRequest((event) => {
 
 export const config: LambdaConfig = {
   service: "aws/lambda",
+  id: "heavy-task",
   memory: 256,
   timeout: 30,
 };
 ```
+
+## `id`
+
+`id` is required. Each handler in the file becomes a Lambda function with the ID `<id>-<handler>`; in the example above, `heavy-task-processData`. The ID names the function, its IAM role and its log group, and keys them in state, so changing it replaces the functions. Use letters, digits, hyphens and underscores, and keep `<id>-<handler>` to 59 characters or fewer. See [Lambda IDs](../resources/lambda.md#ids).
 
 ## Defaults
 

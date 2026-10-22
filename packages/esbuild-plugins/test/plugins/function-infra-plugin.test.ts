@@ -1,80 +1,87 @@
 import { expect, it } from "vitest";
-import { stripIndent } from "common-tags";
 import { functionInfraPlugin } from "src/plugins/function-infra-plugin";
 import { createBuilder } from "test/esbuild-test-utils";
 
 const buildInfra = createBuilder((input) => ({
   entryPoints: ["entry.fn.ts"],
+  format: "esm",
   plugins: [functionInfraPlugin({ getFile: () => input })],
 }));
 
-it.skip("remaps exports", async () => {
+it("gives each handler the id <module id>-<handler>", async () => {
   const input = `
-    import { handler } from "@notation/aws/api-gateway";
+    import { handle } from "@notation/aws/lambda.fn";
+    export const getNum = handle.apiRequest(() => 1);
+    export const getDoubleNum = handle.apiRequest(() => 2);
+    export const config = { service: "aws/lambda", id: "nums", memory: 64 };
+  `;
+
+  const output = await buildInfra(input);
+
+  expect(output).toContain('import { lambda } from "@notation/aws/lambda"');
+  expect(output).toContain(
+    'const getNum = lambda({ code: { type: "file", path: "dist/entry.fn/index.mjs" }, handler: "getNum", ...config, id: "nums-getNum" });',
+  );
+  expect(output).toContain(
+    'handler: "getDoubleNum", ...config, id: "nums-getDoubleNum"',
+  );
+});
+
+it("fails if the config has no id", async () => {
+  const input = `
+    import { handle } from "@notation/aws/lambda.fn";
+    export const getNum = handle.apiRequest(() => 1);
     export const config = { service: "aws/lambda" };
-    export const getNum = handler(() => 1);
   `;
 
-  const expected = stripIndent`
-    import { lambda } from "@notation/aws/lambda";
-    const config = { service: "aws/lambda" };
-    export const getNum = lambda({ fileName: "dist/runtime/entry.fn/index.mjs", handler: "getNum", ...config });
+  await expect(buildInfra(input)).rejects.toThrow(
+    /the config export must set an id/,
+  );
+});
+
+it("fails if the config id is not name-safe", async () => {
+  const input = `
+    import { handle } from "@notation/aws/lambda.fn";
+    export const getNum = handle.apiRequest(() => 1);
+    export const config = { service: "aws/lambda", id: "my.module" };
+  `;
+
+  await expect(buildInfra(input)).rejects.toThrow(
+    /invalid config id "my\.module"/,
+  );
+});
+
+it("allows <id>-<handler> up to 59 characters", async () => {
+  const input = `
+    import { handle } from "@notation/aws/lambda.fn";
+    export const getNum = handle.apiRequest(() => 1);
+    export const config = { service: "aws/lambda", id: "${"a".repeat(52)}" };
   `;
 
   const output = await buildInfra(input);
 
-  expect(output).toContain(expected);
+  expect(output).toContain(`id: "${"a".repeat(52)}-getNum"`);
 });
 
-it.skip("merges config", async () => {
+it("fails if <id>-<handler> is longer than 59 characters", async () => {
   const input = `
-    import { LambdaConfig } from "@notation/aws/lambda";
-    import { handler } from "@notation/aws/api-gateway";
-    export const getNum = handler(() => 1);
-    export const config: LambdaConfig = { service: "aws/lambda", memory: 64 };
+    import { handle } from "@notation/aws/lambda.fn";
+    export const getNum = handle.apiRequest(() => 1);
+    export const config = { service: "aws/lambda", id: "${"a".repeat(53)}" };
   `;
 
-  const expected = stripIndent`
-    import { lambda } from "@notation/aws/lambda";
-    const config = { service: "aws/lambda", memory: 64 };
-    export const getNum = lambda({ fileName: "dist/runtime/entry.fn/index.mjs", handler: "getNum", ...config });
-  `;
-
-  const output = await buildInfra(input);
-
-  expect(output).toContain(expected);
+  await expect(buildInfra(input)).rejects.toThrow(
+    /the function id "a{53}-getNum" \(`<id>-<handler>`\) must be at most 59/,
+  );
 });
 
-it.skip("should strip runtime code", async () => {
+it("fails if no config is exported", async () => {
   const input = `
-    import { LambdaConfig } from "@notation/aws/lambda";
-    import { handler } from "@notation/aws/api-gateway";
-    import lib from "lib";
-
-    let num = lib.getNum();
-
-    export const getNum = () => num;
-    export const getDoubleNum = () => num * 2;
-    export const config = { service: "aws/lambda" };`;
-
-  const expected = stripIndent`
-    import { lambda } from "@notation/aws/lambda";
-    const config = { service: "aws/lambda" };
-    export const getNum = lambda({ fileName: "dist/runtime/entry.fn/index.mjs", handler: "getNum", ...config });
-    export const getDoubleNum = lambda({ fileName: "dist/runtime/entry.fn/index.mjs", handler: "getDoubleNum", ...config });
+    import { handle } from "@notation/aws/lambda.fn";
+    export const getNum = handle.apiRequest(() => 1);
   `;
 
-  const output = await buildInfra(input);
-
-  expect(output).toContain(expected);
-});
-
-// broken in bun 1.0.7
-it.skip("should fail if no config is exported", async () => {
-  const input = `
-    import { handler } from "@notation/aws/api-gateway";
-    export const getNum = handler(() => 1);
-  `;
-
-  expect(buildInfra(input)).rejects.toThrow(/No config object was exported/);
+  await expect(buildInfra(input)).rejects.toThrow(
+    /A config object was not exported/,
+  );
 });

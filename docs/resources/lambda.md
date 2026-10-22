@@ -37,6 +37,7 @@ export const getTodos = handle.apiRequest(() => {
 
 export const config: LambdaConfig = {
   service: "aws/lambda",
+  id: "todos",
   timeout: 5,
   memory: 64,
 };
@@ -55,6 +56,26 @@ export const getTodos = async () => {
 
 The plugin strips runtime-only code (imports, side effects) that would be unsafe in an infrastructure context, preserves the `config` object, and emits a `lambda()` call for each exported handler. Reserved exports like `config` and `preload` are excluded from the transform.
 
+## IDs
+
+Every Lambda function has an ID. It names the function and the resources that support it (`<id>`, `<id>-role`, `<id>-zip`, `<id>-policy` and `<id>-log-group`), and keys them in state. Changing an ID replaces the function, so choose one that stays the same when you move or rename files.
+
+In a `.fn.ts` file, set `id` in the `config` export. Each handler gets the ID `<id>-<handler>`, so with `id: "todos"` the `getTodos` handler becomes the function `todos-getTodos`. Compilation fails if `config` has no `id`, or if `<id>-<handler>` isn't name-safe.
+
+When calling `lambda()` directly, pass `id`:
+
+```ts [infra/lambda.ts]
+import { lambda } from "@notation/aws/lambda";
+
+export const external = lambda({
+  id: "external-js",
+  handler: "handler",
+  code: { type: "file", path: "external/lambda.mjs" },
+});
+```
+
+IDs must be name-safe: 1 to 59 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names, and 59 leaves room for the `-role` suffix in the 64-character IAM role name. `lambda()` only accepts string literals that follow this rule, and throws at runtime if it gets anything else. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, count as the same, because IAM role names ignore case.
+
 ## Configuration
 
 Lambda settings are configured via the `config` export in `.fn.ts` files. See [Lambda Config](lambda-config.md) for details.
@@ -62,6 +83,7 @@ Lambda settings are configured via the `config` export in `.fn.ts` files. See [L
 ```ts [runtime/user.fn.ts]
 export const config: LambdaConfig = {
   service: "aws/lambda",
+  id: "user",
   memory: 256,
   timeout: 30,
 };

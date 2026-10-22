@@ -35,6 +35,7 @@ export const createTodo = handle.apiRequest(async (req) => {
 
 export const config: LambdaConfig = {
   service: "aws/lambda",
+  id: "todos",
   timeout: 5,
   memory: 64,
 };
@@ -47,12 +48,14 @@ export const getTodos = lambda({
   handler: "getTodos",
   timeout: 5,
   memory: 64,
+  id: "todos-getTodos",
 });
 
 export const createTodo = lambda({
   handler: "createTodo",
   timeout: 5,
   memory: 64,
+  id: "todos-createTodo",
 });
 ```
 
@@ -63,7 +66,7 @@ export const createTodo = lambda({
 1. The plugin matches files with `.fn` in the path
 2. Parses the source to extract the `config` export and all named exports
 3. Reads `config.service` to determine the platform and service (e.g., `"aws/lambda"`)
-4. Generates infrastructure code that imports the resource constructor and creates a resource for each export
+4. Generates infrastructure code that imports the resource constructor and creates a resource for each export, with the ID `<config.id>-<export>`. Compilation fails if `config.id` is missing or the resulting ID isn't name-safe
 5. Reserved names (`preload`, `config`) are skipped
 
 Each named export in a `.fn.ts` file becomes a Lambda function (or other serverless resource). The same file defines both the runtime behaviour and the infrastructure required to run it.

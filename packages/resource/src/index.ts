@@ -6,5 +6,6 @@ export * from "./resource-operation";
 export * from "./resource-group";
 export {
   collectResourceGraph,
+  getActiveResourceCollection,
   type ResourceGraph,
 } from "./resource-collection";

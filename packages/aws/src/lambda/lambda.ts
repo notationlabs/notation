@@ -1,10 +1,17 @@
 import * as aws from "@notation/aws.iac";
 import * as std from "@notation/std.iac";
-import crypto from "crypto";
+import { getActiveResourceCollection } from "@notation/resource";
 import path from "path";
+import { assertLambdaId, type NameSafe } from "./lambda-id";
 
-type LambdaConfig = {
-  id?: string;
+export type LambdaConfig = {
+  /**
+   * Names the function and its role, zip, policy and log group, and keys them
+   * in state. Changing it replaces the function, so keep it stable.
+   *
+   * Must be name-safe: 1 to 59 letters, digits, hyphens or underscores.
+   */
+  id: string;
   handler: string;
   code: {
     type: "file" | "zip";
@@ -17,27 +24,43 @@ export class LambdaGroup extends aws.AwsResourceGroup {
   readonly fn: aws.lambda.LambdaFunctionInstance;
 
   constructor(config: LambdaConfig) {
+    assertLambdaId(config.id);
+    assertUniqueLambdaId(config.id);
     super("Lambda", { config });
     this.fn = build(this, config);
   }
 }
 
-export const lambda = (config: LambdaConfig) => new LambdaGroup(config);
+/**
+ * Declares a Lambda function. `id` must be a name-safe string literal; see
+ * `NameSafe`.
+ */
+export const lambda = <const Id extends string>(
+  config: Omit<LambdaConfig, "id"> & { id: NameSafe<Id> },
+) => new LambdaGroup(config);
+
+// IAM role names are unique regardless of case, so compare IDs in lower case
+function assertUniqueLambdaId(id: string) {
+  const collection = getActiveResourceCollection();
+  if (!collection) return;
+  const clash = collection.graph.resourceGroups.find(
+    (group) =>
+      group instanceof LambdaGroup &&
+      group.config.config.id.toLowerCase() === id.toLowerCase(),
+  ) as LambdaGroup | undefined;
+  if (clash) {
+    const existing = clash.config.config.id;
+    throw new Error(
+      existing === id
+        ? `Duplicate lambda id "${id}": another lambda in this deployment already uses it. Give each lambda a unique id.`
+        : `Duplicate lambda id "${id}": it clashes with "${existing}", because AWS IAM role names ignore case. Give each lambda a unique id.`,
+    );
+  }
+}
 
 const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
   const filePath = config.code.path;
-
-  let lambdaId = config.id;
-
-  if (!lambdaId) {
-    const filePathHash = crypto
-      .createHash("BLAKE2s256")
-      .update(filePath)
-      .digest("hex")
-      .slice(0, 8);
-
-    lambdaId = `${config.handler}-${filePathHash}`;
-  }
+  const lambdaId = config.id;
 
   let zipFile: std.fs.ZipFileInstance | std.fs.FileInstance;
 

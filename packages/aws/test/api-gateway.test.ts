@@ -6,6 +6,7 @@ import { lambda } from "src/lambda";
 test("route resource group idempotency snapshot", () => {
   const apiResourceGroup = api({ name: "api" });
   const fnResourceGroup = lambda({
+    id: "handler",
     code: {
       type: "file",
       path: "src/fns/handler.fn.js",
@@ -25,6 +26,7 @@ test("router provides methods for each HTTP verb", () => {
   const apiResourceGroup = api({ name: "api" });
   const apiRouter = router(apiResourceGroup);
   const handler = lambda({
+    id: "handler",
     code: {
       type: "file",
       path: "src/fns/handler.fn.js",
@@ -41,6 +43,7 @@ test("router provides methods for each HTTP verb", () => {
 
 test("a lambda routed from two apis gets an integration per api", () => {
   const handler = lambda({
+    id: "handler",
     code: { type: "file", path: "src/fns/handler.fn.js" },
     handler: "handler.fn.js",
   });

@@ -5,6 +5,7 @@ import { lambda } from "src/lambda";
 
 test("each schedule on a lambda gets its own invoke permission", () => {
   const handler = lambda({
+    id: "handler",
     code: { type: "file", path: "src/fns/handler.fn.js" },
     handler: "handler.fn.js",
   });

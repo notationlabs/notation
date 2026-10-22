@@ -15,7 +15,11 @@ export const getTodos = handle.apiRequest(() => { ... });
 ```ts [dist/todos.fn.ts]
 import { lambda } from "@notation/aws/lambda";
 
-export const getTodos = lambda({ handler: "getTodos", ...config });
+export const getTodos = lambda({
+  handler: "getTodos",
+  ...config,
+  id: "todos-getTodos",
+});
 ```
 
 2. **Function compilation** – each `.fn.ts` file is bundled separately as a Node.js Lambda handler.

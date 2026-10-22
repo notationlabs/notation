@@ -14,6 +14,7 @@ export const getTodoCount = handle.apiRequest(() => {
 
 export const config: LambdaConfig = {
   service: "aws/lambda",
+  id: "todos",
   timeout: 5,
   memory: 64,
 };
