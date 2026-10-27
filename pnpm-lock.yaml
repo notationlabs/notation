@@ -28,11 +28,11 @@ importers:
         specifier: workspace:*
         version: link:packages/std.iac
       '@pokit/core':
-        specifier: ^0.12.0
-        version: 0.12.0(zod@4.6.7)
+        specifier: ^0.13.0
+        version: 0.13.0(zod@4.6.7)
       '@pokit/terminal':
-        specifier: ^0.12.0
-        version: 0.12.0(@pokit/core@0.12.0(zod@4.6.7))
+        specifier: ^0.13.0
+        version: 0.13.0(@pokit/core@0.13.0(zod@4.6.7))
       '@types/node':
         specifier: ^22.13.4
         version: 22.13.4
@@ -47,7 +47,7 @@ importers:
         version: 9.1.7
       pok-plugins:
         specifier: github:djgrant/pok-plugins
-        version: https://codeload.github.com/djgrant/pok-plugins/tar.gz/267ec295bdd04099455b117c75a1844773636213(@pokit/core@0.12.0(zod@4.6.7))
+        version: https://codeload.github.com/djgrant/pok-plugins/tar.gz/267ec295bdd04099455b117c75a1844773636213(@pokit/core@0.13.0(zod@4.6.7))
       pokit:
         specifier: ^0.5.0
         version: 0.5.0
@@ -1866,17 +1866,17 @@ packages:
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
 
-  '@pokit/core@0.12.0':
-    resolution: {integrity: sha512-JmqR3PE8Kq4V42vOK0rSUlddtuyJCtP7RRrVWpCnyXLb7KMwYqLYeoflWrD8VNVXMIit/nJqPPbRV2x23QCufw==}
+  '@pokit/core@0.13.0':
+    resolution: {integrity: sha512-q0x3mnwZ8dQPxSQmxK2/veRuIsJXIeAoUsHaf7KXOLN8zYmqrfq4RjQlKSJD+SM6VoLWLFO0hFTHIo3GJAckzQ==}
     engines: {bun: '>=1.0.0', node: '>=18.0.0'}
     peerDependencies:
       zod: ^4.3.6
 
-  '@pokit/terminal@0.12.0':
-    resolution: {integrity: sha512-lJJZnstxK19IM12FobXel7goJ1ExpP6raRmeDlYy3IaPWaEU33s8Qq8hD4e+JyXshB27kU3TtRqDw0DK6zWZZg==}
+  '@pokit/terminal@0.13.0':
+    resolution: {integrity: sha512-qdHdqH+Ecqrvwu6/ZAljitKhB8q+FbWoh36aaKR+Af5GhkqnBTiHwNd8f1F56ZgSZ03/Upp8YHoWN574yBuDDA==}
     engines: {bun: '>=1.0.0'}
     peerDependencies:
-      '@pokit/core': 0.12.0
+      '@pokit/core': 0.13.0
 
   '@polka/url@1.0.0-next.29':
     resolution: {integrity: sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww==}
@@ -6774,16 +6774,16 @@ snapshots:
 
   '@pinojs/redact@0.4.0': {}
 
-  '@pokit/core@0.12.0(zod@4.6.7)':
+  '@pokit/core@0.13.0(zod@4.6.7)':
     dependencies:
       '@folder/xdg': 4.0.1
       fast-glob: 3.3.3
       picomatch: 4.0.7
       zod: 4.6.7
 
-  '@pokit/terminal@0.12.0(@pokit/core@0.12.0(zod@4.6.7))':
+  '@pokit/terminal@0.13.0(@pokit/core@0.13.0(zod@4.6.7))':
     dependencies:
-      '@pokit/core': 0.12.0(zod@4.6.7)
+      '@pokit/core': 0.13.0(zod@4.6.7)
       marked: 15.0.12
       marked-terminal: 7.3.0(marked@15.0.12)
       picocolors: 1.1.1
@@ -9205,9 +9205,9 @@ snapshots:
 
   pngjs@7.0.0: {}
 
-  pok-plugins@https://codeload.github.com/djgrant/pok-plugins/tar.gz/267ec295bdd04099455b117c75a1844773636213(@pokit/core@0.12.0(zod@4.6.7)):
+  pok-plugins@https://codeload.github.com/djgrant/pok-plugins/tar.gz/267ec295bdd04099455b117c75a1844773636213(@pokit/core@0.13.0(zod@4.6.7)):
     dependencies:
-      '@pokit/core': 0.12.0(zod@4.6.7)
+      '@pokit/core': 0.13.0(zod@4.6.7)
       bumpp: 10.4.1
       zod: 4.4.3
     transitivePeerDependencies:
