@@ -88,6 +88,3 @@ Thumbs.db
 .notation
 
 .explainers
-
-# Local post:publish hook (installs the published CLI into ~/npmbin)
-commands/publish.ts
