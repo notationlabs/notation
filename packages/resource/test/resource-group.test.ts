@@ -22,37 +22,42 @@ const testResource2 = new TestResource2({
 
 it("creates a resource group", async () => {
   const graph = await collectResourceGraph(() => {
-    new TestResourceGroup("test-group", { config: { a: 1 } });
+    new TestResourceGroup("test-group", { id: "group-a", config: { a: 1 } });
   });
   const resourceGroup = graph.resourceGroups[0] as TestResourceGroup;
 
-  expect(resourceGroup.id).toBe(0);
+  expect(resourceGroup.id).toBe("group-a");
   expect(resourceGroup.type).toBe("test-group");
   expect(resourceGroup.platform).toBe("test-platform");
   expect(resourceGroup.config).toEqual({ a: 1 });
   expect(resourceGroup.resources).toEqual([]);
 });
 
+it("keeps the id it is given outside a collection", () => {
+  const resourceGroup = new TestResourceGroup("test-group", { id: "group-a" });
+  expect(resourceGroup.id).toBe("group-a");
+});
+
 it("keeps config keys that share a name with group options", async () => {
   const config = { id: "my-fn" };
   const graph = await collectResourceGraph(() => {
-    new TestResourceGroup("test-group", { config });
+    new TestResourceGroup("test-group", { id: "group-a", config });
   });
   const resourceGroup = graph.resourceGroups[0] as TestResourceGroup;
 
-  expect(resourceGroup.id).toBe(0);
+  expect(resourceGroup.id).toBe("group-a");
   expect(resourceGroup.config).toEqual(config);
 });
 
 it("defaults config to an empty object", () => {
-  const resourceGroup = new TestResourceGroup("test-group", {});
+  const resourceGroup = new TestResourceGroup("test-group", { id: "group-a" });
   expect(resourceGroup.config).toEqual({});
 });
 
 it("collects resource groups", async () => {
   const graph = await collectResourceGraph(() => {
-    new TestResourceGroup("test-group", { config: { type: "test1" } });
-    new TestResourceGroup("test-group-2", { config: { type: "test2" } });
+    new TestResourceGroup("test-group", { id: "group-a" });
+    new TestResourceGroup("test-group-2", { id: "group-b" });
   });
 
   expect(graph.resourceGroups).toHaveLength(2);
@@ -60,15 +65,48 @@ it("collects resource groups", async () => {
   expect(graph.resourceGroups[1].type).toBe("test-group-2");
 });
 
+it("throws when an id is reused within a type", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      new TestResourceGroup("test-group", { id: "group-a" });
+      new TestResourceGroup("test-group", { id: "group-a" });
+    }),
+  ).rejects.toThrow(
+    'Duplicate test-group id "group-a": another test-group group in this deployment already uses it.',
+  );
+});
+
+it("allows an id to be reused across types", async () => {
+  const graph = await collectResourceGraph(() => {
+    new TestResourceGroup("test-group", { id: "group-a" });
+    new TestResourceGroup("test-group-2", { id: "group-a" });
+  });
+
+  expect(graph.resourceGroups).toHaveLength(2);
+});
+
 it("creates a resource within a group", () => {
-  const resourceGroup = new TestResourceGroup("test-group", {});
+  const resourceGroup = new TestResourceGroup("test-group", { id: "group-a" });
   const resource = resourceGroup.add(testResource);
   expect(resourceGroup.resources).toContain(resource);
 });
 
+it("records the group on the resources it adds", () => {
+  const resource = new TestResource({
+    id: "grouped",
+    config: testResourceConfig,
+  });
+  expect(resource.group).toBeNull();
+
+  new TestResourceGroup("test-group", { id: "group-a" }).add(resource);
+  expect(resource.group).toEqual({ type: "test-group", id: "group-a" });
+});
+
 it("collects resources", async () => {
   const graph = await collectResourceGraph(() => {
-    const resourceGroup = new TestResourceGroup("test-group", {});
+    const resourceGroup = new TestResourceGroup("test-group", {
+      id: "group-a",
+    });
     resourceGroup.add(testResource);
     resourceGroup.add(testResource2);
   });
@@ -76,24 +114,14 @@ it("collects resources", async () => {
   expect(graph.resources).toEqual([testResource, testResource2]);
 });
 
-it("increments resource group IDs", async () => {
-  const graph = await collectResourceGraph(() => {
-    new TestResourceGroup("test-group", { config: { type: "group1" } });
-    new TestResourceGroup("test-group", { config: { type: "group2" } });
-  });
-
-  expect(graph.resourceGroups[0].id).toBe(0);
-  expect(graph.resourceGroups[1].id).toBe(1);
-});
-
 it("throws an error when adding an existing resource", () => {
-  const resourceGroup = new TestResourceGroup("test-group", {});
+  const resourceGroup = new TestResourceGroup("test-group", { id: "group-a" });
   resourceGroup.add(testResource);
   expect(() => resourceGroup.add(testResource)).toThrow();
 });
 
 it("adds a resource once per id", () => {
-  const resourceGroup = new TestResourceGroup("test-group", {});
+  const resourceGroup = new TestResourceGroup("test-group", { id: "group-a" });
   const opts = { id: "binding", config: testResourceConfig };
   const first = resourceGroup.addOnce(TestResource, opts);
   const second = resourceGroup.addOnce(TestResource, opts);
@@ -103,7 +131,7 @@ it("adds a resource once per id", () => {
 });
 
 it("throws when an id is reused for a different resource type", () => {
-  const resourceGroup = new TestResourceGroup("test-group", {});
+  const resourceGroup = new TestResourceGroup("test-group", { id: "group-a" });
   const opts = { id: "binding", config: testResourceConfig };
   resourceGroup.addOnce(TestResource, opts);
 
@@ -112,30 +140,29 @@ it("throws when an id is reused for a different resource type", () => {
 
 it("isolates consecutive collections", async () => {
   const first = await collectResourceGraph(() => {
-    new TestResourceGroup("first", {});
+    new TestResourceGroup("test-group", { id: "group-a" });
   });
   const second = await collectResourceGraph(() => {
-    new TestResourceGroup("second", {});
+    new TestResourceGroup("test-group", { id: "group-a" });
   });
 
-  expect(first.resourceGroups[0].id).toBe(0);
-  expect(second.resourceGroups[0].id).toBe(0);
-  expect(first.resourceGroups[0].type).toBe("first");
-  expect(second.resourceGroups[0].type).toBe("second");
+  expect(first.resourceGroups).toHaveLength(1);
+  expect(second.resourceGroups).toHaveLength(1);
+  expect(second.resourceGroups[0]).not.toBe(first.resourceGroups[0]);
 });
 
 it("releases collection state after an error", async () => {
   await expect(
     collectResourceGraph(() => {
-      new TestResourceGroup("failed", {});
+      new TestResourceGroup("test-group", { id: "group-a" });
       throw new Error("failed");
     }),
   ).rejects.toThrow("failed");
 
   const graph = await collectResourceGraph(() => {
-    new TestResourceGroup("recovered", {});
+    new TestResourceGroup("test-group", { id: "group-a" });
   });
 
-  expect(graph.resourceGroups[0].id).toBe(0);
-  expect(graph.resourceGroups[0].type).toBe("recovered");
+  expect(graph.resourceGroups).toHaveLength(1);
+  expect(graph.resourceGroups[0].id).toBe("group-a");
 });

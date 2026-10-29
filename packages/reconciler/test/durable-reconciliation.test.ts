@@ -651,6 +651,92 @@ describe("orphan deletion", () => {
   });
 });
 
+describe("state from before groups had stable IDs", () => {
+  const LegacyResource = resource({ type: "test/durable/legacy-group" })
+    // Cast: a resource declared without API types constrains every schema
+    // key to be a key of an `any` API schema, which no named key satisfies.
+    .defineSchema({
+      name: { presence: "required", propertyType: "param" },
+    } as any)
+    .defineOperations({
+      create: async () => undefined,
+      update: async () => undefined,
+      delete: async () => undefined,
+    });
+
+  // Writes the record as an earlier version did, with a positional groupId
+  // and groupType and no group. Written to SQLite directly, as the store
+  // client would validate it against the current schema.
+  function writeLegacyRecord(
+    runtime: ReturnType<typeof createRuntime>,
+    id: string,
+  ) {
+    const storeId = runtime.state.storeId(id);
+    const row = runtime.database
+      .query(
+        "SELECT state FROM stores WHERE store_name = $storeName AND store_id = $storeId",
+      )
+      .get({
+        $storeName: durable.resourceStateStore.name,
+        $storeId: storeId,
+      }) as { state: string };
+    const { group: _, ...record } = JSON.parse(row.state);
+    runtime.database
+      .query(
+        "UPDATE stores SET state = $state WHERE store_name = $storeName AND store_id = $storeId",
+      )
+      .run({
+        $state: JSON.stringify({ ...record, groupId: 0, groupType: "Legacy" }),
+        $storeName: durable.resourceStateStore.name,
+        $storeId: storeId,
+      });
+  }
+
+  function groupedResource(name: string) {
+    const legacy = new LegacyResource({ id: "legacy", config: { name } });
+    legacy.group = { type: "Legacy", id: "legacy-group" };
+    return legacy;
+  }
+
+  it("rewrites the record with the group when the resource is next updated", async () => {
+    const resources: BaseResource[] = [groupedResource("before")];
+    const runtime = createRuntime(resources, "legacy-group-update");
+
+    await runtime.run("deploy-1");
+    writeLegacyRecord(runtime, "legacy");
+    expect(await runtime.state.get("legacy")).toMatchObject({
+      groupId: 0,
+      groupType: "Legacy",
+    });
+
+    resources[0] = groupedResource("after");
+    await runtime.run("deploy-2");
+
+    const node = await runtime.state.get("legacy");
+    expect(node).toMatchObject({
+      group: { type: "Legacy", id: "legacy-group" },
+      params: { name: "after" },
+    });
+    expect(node).not.toHaveProperty("groupId");
+    expect(node).not.toHaveProperty("groupType");
+    runtime.close();
+  });
+
+  it("destroys a resource whose record predates stable group IDs", async () => {
+    const runtime = createRuntime(
+      [groupedResource("before")],
+      "legacy-group-destroy",
+    );
+
+    await runtime.run("deploy-1");
+    writeLegacyRecord(runtime, "legacy");
+    await runtime.destroy("destroy-1");
+
+    expect(await runtime.state.values()).toHaveLength(0);
+    runtime.close();
+  });
+});
+
 describe("drift detection and repair", () => {
   it("emits drift detection and repairs remote drift with update", async () => {
     let remote = { name: "expected" };
@@ -1091,6 +1177,7 @@ function createRuntime(
     scheduler,
     state,
     storeClient,
+    database,
     run(executionId: string) {
       return runner.run(
         {
@@ -1195,8 +1282,7 @@ function resourceStateRecord(id: string) {
   return {
     id,
     type: "test/durable/state",
-    groupId: -1,
-    groupType: "",
+    group: null,
     config: {},
     params: {},
     output: {},

@@ -18,6 +18,12 @@ test("resource ids and names embed the id", () => {
   expect(group.fn.config.FunctionName).toBe("get-todos");
 });
 
+test("the group is identified by the id", () => {
+  const group = lambda({ id: "get-todos", handler: "getTodos", code });
+  expect(group.id).toBe("get-todos");
+  expect(group.fn.group).toEqual({ type: "Lambda", id: "get-todos" });
+});
+
 test("the id does not depend on the code path", () => {
   const a = lambda({ id: "fn", handler: "h", code });
   const b = lambda({ id: "fn", handler: "h", code: { ...code, path: "x.js" } });

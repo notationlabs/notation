@@ -13,11 +13,11 @@ it("should create a mermaid flowchart string", () => {
 
   const expected = stripIndent`
     flowchart TD
-      subgraph GroupTypeA_0
+      subgraph GroupTypeA_a
         ResourceTypeA_0(ResourceTypeA)
         ResourceTypeB_1(ResourceTypeB)
       end
-      subgraph GroupTypeB_1
+      subgraph GroupTypeB_b
         ResourceTypeC_2(ResourceTypeC)
       end
 
@@ -37,26 +37,26 @@ it("should create a mermaid live URL from given code", () => {
 function getFixture() {
   const resourceGroups = [
     {
-      id: 0,
+      id: "a",
       type: "GroupTypeA",
       config: {},
       resources: [
         {
           id: 0,
-          groupId: 0,
+          group: { type: "GroupTypeA", id: "a" },
           config: {},
           type: "ResourceTypeA",
           dependencies: {},
         },
         {
           id: 1,
-          groupId: 0,
+          group: { type: "GroupTypeA", id: "a" },
           config: {},
           type: "ResourceTypeB",
           dependencies: {
             dep1: {
               id: 0,
-              groupId: 0,
+              group: { type: "GroupTypeA", id: "a" },
               input: {},
               type: "ResourceTypeA",
               dependencies: {},
@@ -66,13 +66,13 @@ function getFixture() {
       ],
     },
     {
-      id: 1,
+      id: "b",
       type: "GroupTypeB",
       config: {},
       resources: [
         {
           id: 2,
-          groupId: 1,
+          group: { type: "GroupTypeB", id: "b" },
           input: {},
           type: "ResourceTypeC",
           dependencies: {},
@@ -84,20 +84,20 @@ function getFixture() {
   const resources = [
     {
       id: 0,
-      groupId: 0,
+      group: { type: "GroupTypeA", id: "a" },
       config: {},
       type: "ResourceTypeA",
       dependencies: {},
     },
     {
       id: 1,
-      groupId: 0,
+      group: { type: "GroupTypeA", id: "a" },
       config: {},
       type: "ResourceTypeB",
       dependencies: {
         dep1: {
           id: 0,
-          groupId: 0,
+          group: { type: "GroupTypeA", id: "a" },
           input: {},
           type: "ResourceTypeA",
           dependencies: {},
@@ -106,7 +106,7 @@ function getFixture() {
     },
     {
       id: 2,
-      groupId: 1,
+      group: { type: "GroupTypeB", id: "b" },
       config: {},
       type: "ResourceTypeC",
       dependencies: {},

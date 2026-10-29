@@ -8,8 +8,7 @@ function createStateNode(
   return {
     version: 1,
     id,
-    groupId: 1,
-    groupType: "stack",
+    group: { type: "stack", id: "stack-1" },
     type: "test/resource",
     config: { name: `${id}-config` },
     params: { name: `${id}-params` },

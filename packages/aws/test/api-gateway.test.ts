@@ -1,4 +1,5 @@
 import { test, expect } from "vitest";
+import { collectResourceGraph } from "@notation/resource";
 import { NO_AUTH, api, router } from "src/api-gateway";
 import { route } from "src/api-gateway/route";
 import { lambda } from "src/lambda";
@@ -39,6 +40,38 @@ test("router provides methods for each HTTP verb", () => {
     const route = routeGroup.route;
     expect(route.config.RouteKey).toEqual(`${method.toUpperCase()} /hello`);
   }
+});
+
+test("api and route groups are identified by the api name and route", () => {
+  const handler = lambda({
+    id: "handler",
+    code: { type: "file", path: "src/fns/handler.fn.js" },
+    handler: "handler.fn.js",
+  });
+  const todoApi = api({ name: "todo-api" });
+  const todoRoute = route(todoApi, "GET", "/todos", NO_AUTH, handler);
+
+  expect(todoApi.id).toBe("todo-api");
+  expect(todoRoute.id).toBe("todo-api-GET-/todos");
+  expect(todoRoute.route.group).toEqual({
+    type: "API Gateway/Route",
+    id: "todo-api-GET-/todos",
+  });
+});
+
+test("declaring the same route twice in one deployment throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const handler = lambda({
+        id: "handler",
+        code: { type: "file", path: "src/fns/handler.fn.js" },
+        handler: "handler.fn.js",
+      });
+      const todoApi = api({ name: "todo-api" });
+      route(todoApi, "GET", "/todos", NO_AUTH, handler);
+      route(todoApi, "GET", "/todos", NO_AUTH, handler);
+    }),
+  ).rejects.toThrow('Duplicate API Gateway/Route id "todo-api-GET-/todos"');
 });
 
 test("a lambda routed from two apis gets an integration per api", () => {

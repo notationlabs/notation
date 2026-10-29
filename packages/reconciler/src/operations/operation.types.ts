@@ -1,4 +1,4 @@
-import type { BaseResource } from "@notation/resource";
+import type { BaseResource, ResourceGroupRef } from "@notation/resource";
 import type { StateNode } from "@notation/state";
 import type {
   EmitStep,
@@ -42,9 +42,8 @@ export type PersistedResourceState = Pick<
   | "lastOperation"
   | "lastOperationAt"
 > & {
-  // Not on StateNode itself, where they arrive through its index signature.
-  groupId: number;
-  groupType: string;
+  // Not on StateNode itself, where it arrives through its index signature.
+  group: ResourceGroupRef | null;
   [key: string]: unknown;
 };
 

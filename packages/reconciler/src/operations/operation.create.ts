@@ -49,8 +49,7 @@ export async function* createResourceOperation(
 
     yield* params.persist({
       id: params.resource.id,
-      groupId: params.resource.groupId,
-      groupType: params.resource.groupType,
+      group: params.resource.group,
       type: params.resource.type,
       lastOperation: "create",
       lastOperationAt: new Date().toISOString(),

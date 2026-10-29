@@ -54,13 +54,19 @@ export type InferResourceTypes<S extends ResolvedSchema> = {
   output: Output<S>;
 };
 
+/**
+ * Identifies the group a resource belongs to. A group's ID is unique among
+ * groups of the same type.
+ */
+export type ResourceGroupRef = { type: string; id: string };
+
 export interface BaseResource {
   readonly type: ResourceType;
   readonly schema: Schema;
   readonly config: any;
   id: string;
-  groupId: number;
-  groupType: string;
+  /** The group the resource was added to, or null if it is in none. */
+  group: ResourceGroupRef | null;
   readonly output: {};
   readonly dependencies: Record<string, BaseResource | void>;
   readonly key: {};
@@ -102,8 +108,7 @@ export abstract class Resource<
 > implements BaseResource {
   config: C;
   id: string;
-  groupId = -1;
-  groupType = "";
+  group: ResourceGroupRef | null = null;
   output = null as any as T["output"];
   dependencies = {} as NoInfer<D>;
   abstract type: ResourceType;

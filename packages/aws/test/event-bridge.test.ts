@@ -22,3 +22,18 @@ test("each schedule on a lambda gets its own invoke permission", () => {
 
   expect(rules).toEqual([daily.rule, hourly.rule]);
 });
+
+test("a schedule group is identified by its name", () => {
+  const handler = lambda({
+    id: "handler",
+    code: { type: "file", path: "src/fns/handler.fn.js" },
+    handler: "handler.fn.js",
+  });
+  const daily = schedule({ name: "daily", schedule: rate(1, "day"), handler });
+
+  expect(daily.id).toBe("daily");
+  expect(daily.rule.group).toEqual({
+    type: "aws/eventBridge/schedule",
+    id: "daily",
+  });
+});

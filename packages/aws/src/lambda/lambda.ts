@@ -26,7 +26,7 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
   constructor(config: LambdaConfig) {
     assertLambdaId(config.id);
     assertUniqueLambdaId(config.id);
-    super("Lambda", { config });
+    super("Lambda", { id: config.id, config });
     this.fn = build(this, config);
   }
 }
@@ -46,10 +46,10 @@ function assertUniqueLambdaId(id: string) {
   const clash = collection.graph.resourceGroups.find(
     (group) =>
       group instanceof LambdaGroup &&
-      group.config.id.toLowerCase() === id.toLowerCase(),
-  ) as LambdaGroup | undefined;
+      group.id.toLowerCase() === id.toLowerCase(),
+  );
   if (clash) {
-    const existing = clash.config.id;
+    const existing = clash.id;
     throw new Error(
       existing === id
         ? `Duplicate lambda id "${id}": another lambda in this deployment already uses it. Give each lambda a unique id.`

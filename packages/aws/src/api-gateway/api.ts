@@ -4,7 +4,7 @@ export class ApiGroup extends aws.AwsResourceGroup<{ name: string }> {
   readonly api: aws.apiGateway.ApiInstance;
 
   constructor(rgConfig: { name: string }) {
-    super("API Gateway", { config: rgConfig });
+    super("API Gateway", { id: rgConfig.name, config: rgConfig });
 
     this.api = this.add(
       new aws.apiGateway.Api({

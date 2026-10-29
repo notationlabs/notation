@@ -1,5 +1,6 @@
 export type {
   BaseResource,
+  ResourceGroupRef,
   ResourceType,
   ResourceOpts,
   DefineResourceMeta,

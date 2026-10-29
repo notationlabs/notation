@@ -18,9 +18,8 @@ export const resourceStateStore = defineStore(
   v.looseObject({
     id: v.string(),
     type: v.string(),
-    // -1 and "" are BaseResource's defaults for a resource with no group.
-    groupId: v.number(),
-    groupType: v.string(),
+    // null for a resource that is in no group.
+    group: v.nullable(v.object({ type: v.string(), id: v.string() })),
     config: v.record(v.string(), v.unknown()),
     params: v.record(v.string(), v.unknown()),
     output: v.record(v.string(), v.unknown()),

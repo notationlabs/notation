@@ -232,10 +232,10 @@ A `ResourceGroup` bundles the low-level resources that make up a single logical 
 abstract class ResourceGroup<
   C extends Record<string, any> = Record<string, any>,
 > {
-  type: string;
-  id: number;
-  config: C;
-  resources: BaseResource[];
+  readonly type: string;
+  readonly id: string;
+  readonly config: C;
+  readonly resources: BaseResource[];
 
   add<T extends BaseResource>(resource: T): T;
   addOnce<T>(ResourceClass: T, opts: ResourceOpts): InstanceType<T>;
@@ -244,10 +244,21 @@ abstract class ResourceGroup<
 
 Construction accepts `ResourceGroupOptions` with:
 
-- `id` – an optional pre-assigned ID used outside graph collection.
+- `id` – identifies the group across deployments. It must be unique among groups of the same type: declaring two groups with the same type and ID in one graph throws.
 - `config` – the group's configuration, stored as `group.config`. Defaults to `{}`.
 
-Groups don't declare dependencies. Edges between groups follow from the dependencies of the resources they contain, since each resource records its `groupId`.
+Each group derives its ID from a value the user supplies, the same value its resource IDs are built from, so the group's identity changes exactly when its resources' identities do:
+
+| Group           | ID                         | Example               |
+| --------------- | -------------------------- | --------------------- |
+| `LambdaGroup`   | the lambda's `id`          | `get-todos`           |
+| `ApiGroup`      | the API's `name`           | `todo-api`            |
+| `RouteGroup`    | `<api id>-<method>-<path>` | `todo-api-GET-/todos` |
+| `ScheduleGroup` | the schedule's `name`      | `nightly`             |
+
+`add()` records the group on the resource as `resource.group`, a `{ type, id }` pair. A resource that is in no group has `group: null`. The reconciler persists the pair with each resource's state.
+
+Groups don't declare dependencies. Edges between groups follow from the dependencies of the resources they contain, since each resource records its group.
 
 `addOnce` adds a resource unless the group already has one with the same ID, and returns the one the group holds. Use it for resources that bind two others, such as an API integration, which several call sites may create. It throws if the existing resource has a different class.
 

@@ -84,8 +84,7 @@ describe("operation workflows", () => {
     expect(persist).toHaveBeenCalledOnce();
     expect(persist).toHaveBeenCalledWith({
       id: "test-create",
-      groupId: testResource.groupId,
-      groupType: testResource.groupType,
+      group: testResource.group,
       type: TestResource.type,
       lastOperation: "create",
       lastOperationAt: expect.any(String),

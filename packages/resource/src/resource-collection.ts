@@ -8,7 +8,6 @@ export type ResourceGraph = {
 
 type ResourceCollection = {
   graph: ResourceGraph;
-  nextResourceGroupId: number;
 };
 
 let activeCollection: ResourceCollection | undefined;
@@ -22,7 +21,6 @@ export async function collectResourceGraph(
 
   const collection: ResourceCollection = {
     graph: { resourceGroups: [], resources: [] },
-    nextResourceGroupId: 0,
   };
 
   activeCollection = collection;

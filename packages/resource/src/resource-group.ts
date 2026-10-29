@@ -8,9 +8,10 @@ export type ResourceGroupOptions<
   C extends Record<string, any> = Record<string, any>,
 > = {
   /**
-   * Optional pre-assigned ID. Used outside graph collection.
+   * Identifies the group across deployments. Must be unique among groups of
+   * the same type.
    */
-  id?: number;
+  id: string;
 
   config?: C;
 };
@@ -18,19 +19,28 @@ export type ResourceGroupOptions<
 export abstract class ResourceGroup<
   C extends Record<string, any> = Record<string, any>,
 > {
-  type: string;
-  id: number;
-  config: C;
-  resources: BaseResource[];
+  readonly type: string;
+  readonly id: string;
+  readonly config: C;
+  readonly resources: BaseResource[];
 
   #graph?: ResourceGraph;
 
   constructor(type: string, opts: ResourceGroupOptions<C>) {
     const { id, config } = opts;
     const collection = getActiveResourceCollection();
+    if (
+      collection?.graph.resourceGroups.some(
+        (group) => group.type === type && group.id === id,
+      )
+    ) {
+      throw new Error(
+        `Duplicate ${type} id "${id}": another ${type} group in this deployment already uses it.`,
+      );
+    }
     this.type = type;
+    this.id = id;
     this.#graph = collection?.graph;
-    this.id = collection ? collection.nextResourceGroupId++ : (id ?? -1);
     this.config = config || ({} as C);
     this.resources = [];
 
@@ -49,8 +59,7 @@ export abstract class ResourceGroup<
     } else if (this.resources.includes(resource)) {
       throw new Error(`Resource ${resource.type} has already been registered.`);
     }
-    resource.groupId = this.id;
-    resource.groupType = this.type;
+    resource.group = { type: this.type, id: this.id };
     this.resources.push(resource);
     return resource;
   }
