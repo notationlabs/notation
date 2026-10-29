@@ -1,10 +1,10 @@
 import * as aws from "@notation/aws.iac";
 
-export class ApiGroup extends aws.AwsResourceGroup {
+export class ApiGroup extends aws.AwsResourceGroup<{ name: string }> {
   readonly api: aws.apiGateway.ApiInstance;
 
   constructor(rgConfig: { name: string }) {
-    super("API Gateway", rgConfig);
+    super("API Gateway", { config: rgConfig });
 
     this.api = this.add(
       new aws.apiGateway.Api({

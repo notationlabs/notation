@@ -10,11 +10,11 @@ type ScheduleConfig = {
   handler: EventBridgeHandler<"Scheduled Event", any> | LambdaGroup;
 };
 
-export class ScheduleGroup extends aws.AwsResourceGroup {
+export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
   readonly rule: aws.eventBridge.EventBridgeRuleInstance;
 
   constructor(config: ScheduleConfig) {
-    super("aws/eventBridge/schedule", config);
+    super("aws/eventBridge/schedule", { config });
 
     // at compile time, a runtime handler import becomes a lambda group
     const lambdaGroup = config.handler as LambdaGroup;

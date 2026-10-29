@@ -4,33 +4,37 @@ import {
   type ResourceGraph,
 } from "./resource-collection";
 
-export type ResourceGroupOptions = {
+export type ResourceGroupOptions<
+  C extends Record<string, any> = Record<string, any>,
+> = {
   /**
    * Optional pre-assigned ID. Used outside graph collection.
    */
   id?: number;
 
+  config?: C;
   dependencies?: Record<string, number>;
-  [key: string]: any;
 };
 
-export abstract class ResourceGroup {
+export abstract class ResourceGroup<
+  C extends Record<string, any> = Record<string, any>,
+> {
   type: string;
   id: number;
   dependencies: Record<string, number>;
-  config: Record<string, any>;
+  config: C;
   resources: BaseResource[];
 
   #graph?: ResourceGraph;
 
-  constructor(type: string, opts: ResourceGroupOptions) {
-    const { dependencies, id, ...config } = opts;
+  constructor(type: string, opts: ResourceGroupOptions<C>) {
+    const { dependencies, id, config } = opts;
     const collection = getActiveResourceCollection();
     this.type = type;
     this.#graph = collection?.graph;
     this.id = collection ? collection.nextResourceGroupId++ : (id ?? -1);
     this.dependencies = dependencies || {};
-    this.config = config || {};
+    this.config = config || ({} as C);
     this.resources = [];
 
     collection?.graph.resourceGroups.push(this);

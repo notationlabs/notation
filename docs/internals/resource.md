@@ -229,11 +229,13 @@ Dependencies also determine deployment order: a resource is not created until al
 A `ResourceGroup` bundles the low-level resources that make up a single logical construct. A Lambda group, for example, contains a Lambda function, an IAM role, a CloudWatch log group, and a zip package.
 
 ```ts
-abstract class ResourceGroup {
+abstract class ResourceGroup<
+  C extends Record<string, any> = Record<string, any>,
+> {
   type: string;
   id: number;
   dependencies: Record<string, number>;
-  config: Record<string, any>;
+  config: C;
   resources: BaseResource[];
 
   add<T extends BaseResource>(resource: T): T;
@@ -244,6 +246,7 @@ abstract class ResourceGroup {
 Construction accepts `ResourceGroupOptions` with:
 
 - `id` – an optional pre-assigned ID used outside graph collection.
+- `config` – the group's configuration, stored as `group.config`. Defaults to `{}`.
 - `dependencies` – map of dependency names to group IDs.
 
 `addOnce` adds a resource unless the group already has one with the same ID, and returns the one the group holds. Use it for resources that bind two others, such as an API integration, which several call sites may create. It throws if the existing resource has a different class.

@@ -20,7 +20,7 @@ export type LambdaConfig = {
   runtime?: aws.lambda.LambdaFunctionConfig["Runtime"];
 };
 
-export class LambdaGroup extends aws.AwsResourceGroup {
+export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
   readonly fn: aws.lambda.LambdaFunctionInstance;
 
   constructor(config: LambdaConfig) {
@@ -46,10 +46,10 @@ function assertUniqueLambdaId(id: string) {
   const clash = collection.graph.resourceGroups.find(
     (group) =>
       group instanceof LambdaGroup &&
-      group.config.config.id.toLowerCase() === id.toLowerCase(),
+      group.config.id.toLowerCase() === id.toLowerCase(),
   ) as LambdaGroup | undefined;
   if (clash) {
-    const existing = clash.config.config.id;
+    const existing = clash.config.id;
     throw new Error(
       existing === id
         ? `Duplicate lambda id "${id}": another lambda in this deployment already uses it. Give each lambda a unique id.`

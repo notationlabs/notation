@@ -22,7 +22,7 @@ const testResource2 = new TestResource2({
 
 it("creates a resource group", async () => {
   const graph = await collectResourceGraph(() => {
-    new TestResourceGroup("test-group", { a: 1 });
+    new TestResourceGroup("test-group", { config: { a: 1 } });
   });
   const resourceGroup = graph.resourceGroups[0] as TestResourceGroup;
 
@@ -33,10 +33,27 @@ it("creates a resource group", async () => {
   expect(resourceGroup.resources).toEqual([]);
 });
 
+it("keeps config keys that share a name with group options", async () => {
+  const config = { id: "my-fn", dependencies: ["x"] };
+  const graph = await collectResourceGraph(() => {
+    new TestResourceGroup("test-group", { config });
+  });
+  const resourceGroup = graph.resourceGroups[0] as TestResourceGroup;
+
+  expect(resourceGroup.id).toBe(0);
+  expect(resourceGroup.dependencies).toEqual({});
+  expect(resourceGroup.config).toEqual(config);
+});
+
+it("defaults config to an empty object", () => {
+  const resourceGroup = new TestResourceGroup("test-group", {});
+  expect(resourceGroup.config).toEqual({});
+});
+
 it("collects resource groups", async () => {
   const graph = await collectResourceGraph(() => {
-    new TestResourceGroup("test-group", { type: "test1" });
-    new TestResourceGroup("test-group-2", { type: "test2" });
+    new TestResourceGroup("test-group", { config: { type: "test1" } });
+    new TestResourceGroup("test-group-2", { config: { type: "test2" } });
   });
 
   expect(graph.resourceGroups).toHaveLength(2);
@@ -62,8 +79,8 @@ it("collects resources", async () => {
 
 it("increments resource group IDs", async () => {
   const graph = await collectResourceGraph(() => {
-    new TestResourceGroup("test-group", { type: "group1" });
-    new TestResourceGroup("test-group", { type: "group2" });
+    new TestResourceGroup("test-group", { config: { type: "group1" } });
+    new TestResourceGroup("test-group", { config: { type: "group2" } });
   });
 
   expect(graph.resourceGroups[0].id).toBe(0);
