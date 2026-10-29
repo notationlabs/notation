@@ -1,5 +1,53 @@
 # @notation/aws.iac
 
+## 0.15.0
+
+### Minor Changes
+
+- 83f0de1: `ResourceGroup` now takes its config as its own argument: `super(type, id, config)`. Previously, every key except `id` and `dependencies` was collected into `group.config`, so a config with its own `id` or `dependencies` key lost it to the group.
+
+  `ResourceGroup` and `AwsResourceGroup` take an optional type parameter for the config, so `group.config` is typed. `LambdaGroup`, `ApiGroup` and `ScheduleGroup` use it, and `LambdaGroup.config` is now the `LambdaConfig` itself rather than `{ config: LambdaConfig }`.
+
+- b290eb1: Resources and resource groups take their ID as their first argument, ahead of their options:
+
+  ```ts
+  // before
+  new LambdaIamRole({ id: "todos-role", config: { RoleName: "todos-role" } });
+  super("Lambda", { id: config.id, config });
+
+  // after
+  new LambdaIamRole("todos-role", { config: { RoleName: "todos-role" } });
+  super("Lambda", config.id, config);
+  ```
+
+  - A resource's options can be left out when neither `config` nor `dependencies` has a required property: `new TestResource("a")`.
+  - `ResourceGroup.addOnce` takes the ID separately: `group.addOnce(LambdaIntegration, id, { dependencies })`.
+  - `ResourceOpts` no longer includes `id`.
+  - `ResourceGroupOptions` is removed.
+
+  The `@notation/aws` functions, such as `lambda({ id, ... })`, still take an object.
+
+### Patch Changes
+
+- 18c2b4c: Schema items no longer accept `defaultValue` or `propertyType: "derived"`. Nothing read either at runtime, so a `defaultValue` never filled in a missing param. Set the value in params, or compute it with `deriveParams`.
+- 91806d0: Creating, updating or deleting an EventBridge rule now fails when AWS rejects any of its target changes, listing each failed target's id, error code and message. Previously PutTargets and RemoveTargets partial failures were ignored and the deploy recorded success.
+- 41f2a02: Updating an EventBridge rule now removes targets that are no longer in config. Previously a removed target stayed attached to the rule in AWS and kept receiving events.
+- f150ec6: Stop drift detection from replacing unchanged Lambda IAM roles on every deploy. The role read now decodes the URL-encoded trust policy and returns the permissions boundary as its ARN, and the Lambda function read drops computed fields from `VpcConfig` and `SnapStart`, so reads compare cleanly with configured params.
+- 6943418: `diffParams` now puts each changed param in `patch` whole, rather than as a nested diff. Changing one Lambda environment variable no longer drops the others, removing all of them now clears them, and an EventBridge rule update no longer sends a rule with no name or targets keyed by index. `@notation/core` drops its unused `deep-object-diff` dependency.
+- Updated dependencies [bddd9f8]
+- Updated dependencies [18c2b4c]
+- Updated dependencies [83f0de1]
+- Updated dependencies [16a0209]
+- Updated dependencies [425f8ba]
+- Updated dependencies [b290eb1]
+- Updated dependencies [4fe4451]
+- Updated dependencies [7a90e6b]
+- Updated dependencies [6508511]
+- Updated dependencies [6943418]
+  - @notation/resource@0.15.0
+  - @notation/core@0.15.0
+  - @notation/std.iac@0.15.0
+
 ## 0.14.0
 
 ### Patch Changes

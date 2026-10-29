@@ -1,5 +1,29 @@
 # @notation/std.iac
 
+## 0.15.0
+
+### Minor Changes
+
+- 4fe4451: Paths are now relative to the project root (the nearest directory with a package.json, starting from the working directory), not the working directory. This covers deployment IDs, Lambda IDs, build output, the state database and the files that file and zip resources read. You can run the CLI from any folder inside the project and get the same result.
+
+  This is a breaking change. Deployment IDs used to be absolute paths, so Notation will not find the state of existing deployments. Destroy them before upgrading, or redeploy and delete the old resources by hand.
+
+### Patch Changes
+
+- Updated dependencies [bddd9f8]
+- Updated dependencies [18c2b4c]
+- Updated dependencies [83f0de1]
+- Updated dependencies [16a0209]
+- Updated dependencies [425f8ba]
+- Updated dependencies [b290eb1]
+- Updated dependencies [4fe4451]
+- Updated dependencies [7a90e6b]
+- Updated dependencies [6508511]
+- Updated dependencies [6943418]
+  - @notation/resource@0.15.0
+  - @notation/core@0.15.0
+  - @notation/utils@0.15.0
+
 ## 0.14.0
 
 ### Patch Changes

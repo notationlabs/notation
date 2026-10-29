@@ -1,5 +1,26 @@
 # @notation/cli
 
+## 0.15.0
+
+### Minor Changes
+
+- 4fe4451: Paths are now relative to the project root (the nearest directory with a package.json, starting from the working directory), not the working directory. This covers deployment IDs, Lambda IDs, build output, the state database and the files that file and zip resources read. You can run the CLI from any folder inside the project and get the same result.
+
+  This is a breaking change. Deployment IDs used to be absolute paths, so Notation will not find the state of existing deployments. Destroy them before upgrading, or redeploy and delete the old resources by hand.
+
+### Patch Changes
+
+- 7735a67: `notation watch` runs each deploy in a fresh child process, so its memory no longer grows with every rebuild. `notation deploy` gains `--no-compile` and `--no-drift-detection`.
+- Updated dependencies [16a0209]
+- Updated dependencies [425f8ba]
+- Updated dependencies [b290eb1]
+- Updated dependencies [4fe4451]
+- Updated dependencies [7a90e6b]
+- Updated dependencies [6943418]
+  - @notation/esbuild-plugins@0.15.0
+  - @notation/core@0.15.0
+  - @notation/dashboard@0.15.0
+
 ## 0.14.0
 
 ### Minor Changes
