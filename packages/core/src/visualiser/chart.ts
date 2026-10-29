@@ -3,35 +3,60 @@ import { fromUint8Array } from "js-base64";
 import { ResourceGroup } from "../orchestrator/resource-group";
 import { BaseResource } from "../orchestrator/resource";
 
+// Mermaid IDs can't hold characters that resource and group names may use,
+// such as the spaces in an API name or the braces in a `/todos/{id}` route,
+// and replacing those characters could make two names collide. So nodes and subgraphs get IDs from their position in the chart,
+// and the names go in quoted labels.
 export const createMermaidFlowChart = (
   resourceGroups: ResourceGroup[],
   resources: BaseResource[],
 ): string => {
   let mermaidString = "flowchart TD\n";
   let connectionsString = "";
+  const nodeIds = new Map<string, string>();
+  const drawn: BaseResource[] = [];
 
-  resourceGroups.forEach((group) => {
-    mermaidString += `  subgraph ${group.type}_${group.id}\n`;
-    group.resources.forEach((resource) => {
-      mermaidString += `    ${resource.type}_${resource.id}(${resource.type})\n`;
-    });
+  const drawResource = (resource: BaseResource, indent: string) => {
+    const nodeId = `r${drawn.length}`;
+    nodeIds.set(resource.id, nodeId);
+    drawn.push(resource);
+    mermaidString += `${indent}${nodeId}(${label(`${resource.type} ${resource.id}`)})\n`;
+  };
+
+  resourceGroups.forEach((group, index) => {
+    mermaidString += `  subgraph g${index}[${label(`${group.type} ${group.id}`)}]\n`;
+    group.resources.forEach((resource) => drawResource(resource, "    "));
     mermaidString += `  end\n`;
+  });
 
-    group.resources.forEach((resource) => {
-      (Object.values(resource.dependencies) as BaseResource[]).forEach(
-        (dep) => {
-          if (!dep) return;
-          const depResource = resources.find((r) => r.id === dep.id);
-          if (depResource) {
-            connectionsString += `  ${resource.type}_${resource.id} --> ${depResource.type}_${dep.id}\n`;
-          }
-        },
-      );
+  resources
+    .filter((resource) => !nodeIds.has(resource.id))
+    .forEach((resource) => drawResource(resource, "  "));
+
+  drawn.forEach((resource) => {
+    Object.values(resource.dependencies).forEach((dep) => {
+      if (!dep) return;
+      const depNodeId = nodeIds.get(dep.id);
+      if (depNodeId) {
+        connectionsString += `  ${nodeIds.get(resource.id)} --> ${depNodeId}\n`;
+      }
     });
   });
 
   return `${mermaidString}\n${connectionsString}`;
 };
+
+// A quoted Mermaid label. Quotes and the characters Mermaid reads as markup
+// are written as entity codes; "#" goes first, as it starts every code.
+function label(text: string) {
+  const escaped = text
+    .replaceAll("#", "#35;")
+    .replaceAll('"', "#quot;")
+    .replaceAll("`", "#96;")
+    .replaceAll("<", "#lt;")
+    .replaceAll(">", "#gt;");
+  return `"${escaped}"`;
+}
 
 export function createMermaidLiveUrl(mermaidCode: string) {
   const state = {
