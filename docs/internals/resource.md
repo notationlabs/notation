@@ -222,6 +222,16 @@ const LambdaIntegration = defineResource<{ ... }>({ type: "aws/apiGateway/Lambda
 
 `requireDependencies` declares typed dependency slots. `deriveParams` receives `{ id, config, deps }` and returns properties computed from dependency outputs. The values are resolved at deploy time after dependencies have been provisioned.
 
+A resource takes its ID first, then its config and dependencies:
+
+```ts
+const integration = new LambdaIntegration("todo-api-get-todos-integration", {
+  dependencies: { api, lambda },
+});
+```
+
+The ID keys the resource in state, so keep it stable. The second argument can be left out when neither `config` nor `dependencies` has a required property.
+
 Dependencies also determine deployment order: a resource is not created until all its dependencies exist.
 
 ## Resource groups
@@ -238,12 +248,17 @@ abstract class ResourceGroup<
   readonly resources: BaseResource[];
 
   add<T extends BaseResource>(resource: T): T;
-  addOnce<T>(ResourceClass: T, opts: ResourceOpts): InstanceType<T>;
+  addOnce<T>(
+    ResourceClass: T,
+    id: string,
+    opts?: ResourceOpts,
+  ): InstanceType<T>;
 }
 ```
 
-Construction accepts `ResourceGroupOptions` with:
+A group's constructor takes `(type, id, config?)`:
 
+- `type` – the kind of group, such as `"Lambda"`.
 - `id` – identifies the group across deployments. It must be unique among groups of the same type: declaring two groups with the same type and ID in one graph throws.
 - `config` – the group's configuration, stored as `group.config`. Defaults to `{}`.
 

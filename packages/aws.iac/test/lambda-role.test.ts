@@ -45,7 +45,7 @@ function mockGetRole(response: sdk.GetRoleResponse) {
 
 // Plans a role whose state matches its config, as after a successful create.
 async function planUnchangedRole(config: Record<string, unknown>) {
-  const role = new LambdaIamRole({ id: "role", config: config as any });
+  const role = new LambdaIamRole("role", { config: config as any });
   const params = await role.getParams();
   const plan = await createPlan({
     resources: [role],

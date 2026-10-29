@@ -2,10 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import * as durable from "@notation/reconciler/durable";
-import {
-  ResourceOperationPendingError,
-  resource,
-} from "@notation/resource";
+import { ResourceOperationPendingError, resource } from "@notation/resource";
 import {
   SqliteEventLoop,
   SqliteTaskQueueClient,
@@ -39,7 +36,7 @@ describe("NodeDurableRuntime", () => {
         },
         delete: async () => undefined,
       });
-    const resources = [new PendingResource({ id: "pending" })];
+    const resources = [new PendingResource("pending")];
     const deploy = workflow(async function* (step, event) {
       yield* durable.deploy(step, {
         executionId: event.executionId,
@@ -77,7 +74,7 @@ describe("NodeDurableRuntime", () => {
         },
         delete: async () => undefined,
       });
-    const interrupted = new TestResource({ id: "interrupted" });
+    const interrupted = new TestResource("interrupted");
     // The failure has to live in plain generator code, after the create step
     // is checkpointed but before state is persisted: a failing step would be
     // cached and rethrown on replay. A resource with no persisted state first

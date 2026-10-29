@@ -229,7 +229,7 @@ export async function* sweepOrphans(
       continue;
     }
 
-    const resource = new Resource({ id: node.id, config: node.config });
+    const resource = new Resource(node.id, { config: node.config });
     resource.setOutput(node.output);
     yield* deleteResource(nodeScope, resource, opts);
   }

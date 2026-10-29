@@ -69,7 +69,7 @@ describe("operation workflows", () => {
         delete: async () => undefined,
       });
 
-    const testResource = new TestResource({ id: "test-create" });
+    const testResource = new TestResource("test-create");
 
     await runOperation(
       createResourceOperation(step, {
@@ -136,7 +136,7 @@ describe("operation workflows", () => {
         delete: async () => undefined,
       });
 
-    const testResource = new TestResource({ id: "test-read" });
+    const testResource = new TestResource("test-read");
 
     const result = await runOperation(
       readResourceOperation(step, {
@@ -178,7 +178,7 @@ describe("operation workflows", () => {
     await expect(
       runOperation(
         readResourceOperation(step, {
-          resource: new TestResource({ id: "pending-limit" }),
+          resource: new TestResource("pending-limit"),
           resourceParams: {},
           emit: toEmitStep(),
           maxOperationAttempts: 2,
@@ -205,7 +205,7 @@ describe("operation workflows", () => {
     await expect(
       runOperation(
         createResourceOperation(step, {
-          resource: new TestResource({ id: "eventually-visible" }),
+          resource: new TestResource("eventually-visible"),
           resourceParams: {},
           persist,
           emit: toEmitStep(),
@@ -227,7 +227,7 @@ describe("operation workflows", () => {
         delete: async () => undefined,
       });
 
-    const testResource = new TestResource({ id: "test-delete" });
+    const testResource = new TestResource("test-delete");
 
     await runOperation(
       deleteResourceOperation(step, {
@@ -257,7 +257,7 @@ describe("operation workflows", () => {
         },
       });
 
-    const testResource = new TestResource({ id: "test-delete-absent" });
+    const testResource = new TestResource("test-delete-absent");
 
     await runOperation(
       deleteResourceOperation(step, {
@@ -289,7 +289,7 @@ describe("operation workflows", () => {
         },
       });
 
-    const testResource = new TestResource({ id: "test-delete-miss" });
+    const testResource = new TestResource("test-delete-miss");
 
     await expect(
       runOperation(
@@ -323,7 +323,7 @@ describe("operation workflows", () => {
         delete: async () => undefined,
       });
 
-    const testResource = new TestResource({ id: "test-create-error" });
+    const testResource = new TestResource("test-create-error");
 
     await expect(
       runOperation(

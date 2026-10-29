@@ -29,10 +29,13 @@ describe("resource registry", () => {
   });
 
   it("creates a registry from resource instances", () => {
-    const resourceA = new TestResourceA({ id: "a" });
-    const resourceB = new TestResourceB({ id: "b" });
+    const resourceA = new TestResourceA("a");
+    const resourceB = new TestResourceB("b");
 
-    const registry = createResourceRegistryFromResources([resourceA, resourceB]);
+    const registry = createResourceRegistryFromResources([
+      resourceA,
+      resourceB,
+    ]);
 
     expect(registry.get(TestResourceA.type)).toBe(TestResourceA);
     expect(registry.get(TestResourceB.type)).toBe(TestResourceB);
@@ -41,6 +44,8 @@ describe("resource registry", () => {
   it("returns undefined for missing resource type matches", () => {
     const registry = createResourceRegistry([TestResourceA]);
 
-    expect(resolveResourceClass(registry, "test/service/unknown")).toBeUndefined();
+    expect(
+      resolveResourceClass(registry, "test/service/unknown"),
+    ).toBeUndefined();
   });
 });

@@ -1,4 +1,1 @@
-export {
-  ResourceGroup,
-  type ResourceGroupOptions,
-} from "@notation/resource";
+export { ResourceGroup } from "@notation/resource";

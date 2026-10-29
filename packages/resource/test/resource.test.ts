@@ -15,7 +15,7 @@ describe("resource basics", () => {
     .defineSchema({})
     .defineOperations({} as any);
 
-  const testResource = new TestResource({ id: "0" });
+  const testResource = new TestResource("0");
 
   test("type", () => {
     expect(TestResource.type).toBe("provider/service/resource");
@@ -29,8 +29,7 @@ describe("resource basics", () => {
 });
 
 describe("resource schema", () => {
-  const testResource = new TestResource({
-    id: "test-resource-1",
+  const testResource = new TestResource("test-resource-1", {
     config: testResourceConfig,
   });
 
@@ -70,8 +69,7 @@ describe("resource schema", () => {
       { requiredParam: "name1", hiddenParam: "" },
       { requiredParam: "name1", hiddenParam: "", optionalSecondaryKey: 1 },
     ].forEach(async (params) => {
-      const testResource = new TestResource({
-        id: "test-resource-1",
+      const testResource = new TestResource("test-resource-1", {
         config: params,
       });
       expect(await testResource.getParams()).toEqual({
@@ -90,13 +88,11 @@ describe("resource dependencies", () => {
       dep1: InstanceType<typeof TestResource>;
     }>().deriveParams(deriveParamsMock);
 
-    const childTestResource = new TestResource({
-      id: "test-resource-1",
+    const childTestResource = new TestResource("test-resource-1", {
       config: testResourceConfig,
     });
 
-    const testResource = new TestResourceWithDeps({
-      id: "test-resource-1",
+    const testResource = new TestResourceWithDeps("test-resource-1", {
       config: testResourceConfig,
       dependencies: { dep1: childTestResource },
     });
@@ -123,13 +119,11 @@ describe("resource dependencies", () => {
       dep1: InstanceType<typeof TestResource>;
     }>().deriveParams(deriveParamsMock);
 
-    const childTestResource = new TestResource({
-      id: "test-resource-1",
+    const childTestResource = new TestResource("test-resource-1", {
       config: testResourceConfig,
     });
 
-    const testResource = new TestResourceWithDeps({
-      id: "test-resource-1",
+    const testResource = new TestResourceWithDeps("test-resource-1", {
       config: nonIntrinsicConfig,
       dependencies: { dep1: childTestResource },
     });

@@ -26,7 +26,7 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
   constructor(config: LambdaConfig) {
     assertLambdaId(config.id);
     assertUniqueLambdaId(config.id);
-    super("Lambda", { id: config.id, config });
+    super("Lambda", config.id, config);
     this.fn = build(this, config);
   }
 }
@@ -66,23 +66,20 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
 
   if (config.code.type === "file") {
     zipFile = functionGroup.add(
-      new std.fs.Zip({
-        id: `${lambdaId}-zip`,
+      new std.fs.Zip(`${lambdaId}-zip`, {
         config: { sourceFilePath: filePath },
       }),
     );
   } else {
     zipFile = functionGroup.add(
-      new std.fs.File({
-        id: `${lambdaId}-zip`,
+      new std.fs.File(`${lambdaId}-zip`, {
         config: { filePath },
       }),
     );
   }
 
   const role = functionGroup.add(
-    new aws.lambda.LambdaIamRole({
-      id: `${lambdaId}-role`,
+    new aws.lambda.LambdaIamRole(`${lambdaId}-role`, {
       config: {
         RoleName: `${lambdaId}-role`,
       },
@@ -90,8 +87,7 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
   );
 
   functionGroup.add(
-    new aws.lambda.LambdaRolePolicyAttachment({
-      id: `${lambdaId}-policy`,
+    new aws.lambda.LambdaRolePolicyAttachment(`${lambdaId}-policy`, {
       dependencies: { role },
     }),
   );
@@ -100,8 +96,7 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
   const runtime = config.runtime || "nodejs22.x";
 
   const lambdaResource = functionGroup.add(
-    new aws.lambda.LambdaFunction({
-      id: lambdaId,
+    new aws.lambda.LambdaFunction(lambdaId, {
       config: {
         FunctionName: lambdaId,
         Handler: `${fileName}.${config.handler}`,
@@ -117,8 +112,7 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
   );
 
   functionGroup.add(
-    new aws.lambda.LambdaLogGroup({
-      id: `${lambdaId}-log-group`,
+    new aws.lambda.LambdaLogGroup(`${lambdaId}-log-group`, {
       config: { retentionInDays: 30 },
       dependencies: { lambda: lambdaResource },
     }),

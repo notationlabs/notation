@@ -324,6 +324,6 @@ function isIamPropagationFailure(
   );
 }
 
-export type LambdaFunctionConfig = ConstructorParameters<
-  typeof LambdaFunction
->[0]["config"];
+export type LambdaFunctionConfig = NonNullable<
+  ConstructorParameters<typeof LambdaFunction>[1]
+>["config"];

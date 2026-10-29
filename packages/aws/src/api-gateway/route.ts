@@ -22,45 +22,52 @@ export class RouteGroup extends aws.AwsResourceGroup {
   constructor({ apiGroup, method, path, auth, lambdaGroup }: RouteGroupConfig) {
     const apiResource = apiGroup.api;
     const routeId = `${apiResource.id}-${method}-${path}`;
-    super("API Gateway/Route", { id: routeId });
+    super("API Gateway/Route", routeId);
 
     const lambdaResource = lambdaGroup.fn;
 
     // a lambda needs one integration and permission per api, however many
     // routes it serves
-    const integration = lambdaGroup.addOnce(aws.apiGateway.LambdaIntegration, {
-      id: `${apiResource.id}-${lambdaResource.id}-integration`,
-      dependencies: {
-        api: apiResource,
-        lambda: lambdaResource,
+    const integration = lambdaGroup.addOnce(
+      aws.apiGateway.LambdaIntegration,
+      `${apiResource.id}-${lambdaResource.id}-integration`,
+      {
+        dependencies: {
+          api: apiResource,
+          lambda: lambdaResource,
+        },
       },
-    });
+    );
 
-    lambdaGroup.addOnce(aws.lambda.LambdaApiGatewayV2Permission, {
-      id: `${lambdaResource.id}-${apiResource.id}-permission`,
-      dependencies: {
-        api: apiResource,
-        lambda: lambdaResource,
+    lambdaGroup.addOnce(
+      aws.lambda.LambdaApiGatewayV2Permission,
+      `${lambdaResource.id}-${apiResource.id}-permission`,
+      {
+        dependencies: {
+          api: apiResource,
+          lambda: lambdaResource,
+        },
       },
-    });
+    );
 
     let authorizer: aws.apiGateway.AuthInstance | undefined;
 
     if (auth.type != "NONE") {
       authorizer = this.add(
-        new aws.apiGateway.RouteAuth({
-          id: `${routeId}-${apiResource.id}-authorizer`,
-          config: mapAuthConfig(apiResource.id, method, path, auth),
-          dependencies: {
-            api: apiResource,
+        new aws.apiGateway.RouteAuth(
+          `${routeId}-${apiResource.id}-authorizer`,
+          {
+            config: mapAuthConfig(apiResource.id, method, path, auth),
+            dependencies: {
+              api: apiResource,
+            },
           },
-        }),
+        ),
       );
     }
 
     this.route = this.add(
-      new aws.apiGateway.Route({
-        id: routeId,
+      new aws.apiGateway.Route(routeId, {
         config: {
           AuthorizationScopes: auth.scopes,
           RouteKey: `${method} ${path}`,

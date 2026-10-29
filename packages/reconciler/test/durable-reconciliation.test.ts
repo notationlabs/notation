@@ -57,7 +57,7 @@ describe("durable execution and replay", () => {
         delete: async () => undefined,
       });
     const runtime = createRuntime(
-      [new PendingResource({ id: "pending" })],
+      [new PendingResource("pending")],
       "durable-wait",
       { maxOperationAttempts: 3 },
     );
@@ -83,7 +83,7 @@ describe("durable execution and replay", () => {
       .defineSchema({})
       .defineOperations({ create, delete: async () => undefined });
     const runtime = createRuntime(
-      [new TestResource({ id: "resume" })],
+      [new TestResource("resume")],
       "crash-resume",
       { crashAfterStep: "notation:deploy:resume:create:remote:attempt:0" },
     );
@@ -106,7 +106,7 @@ describe("durable execution and replay", () => {
       .defineSchema({})
       .defineOperations({ create: async () => undefined, delete: remove });
     const runtime = createRuntime(
-      [new TestResource({ id: "destroyed" })],
+      [new TestResource("destroyed")],
       "destroy-crash-resume",
       { crashAfterStep: "notation:destroy:destroyed:delete:remote:attempt:0" },
     );
@@ -140,7 +140,7 @@ describe("durable execution and replay", () => {
         },
       });
     const runtime = createRuntime(
-      [new PendingDelete({ id: "pending-delete" })],
+      [new PendingDelete("pending-delete")],
       "durable-destroy-wait",
       { maxOperationAttempts: 3 },
     );
@@ -178,7 +178,7 @@ describe("durable execution and replay", () => {
         delete: async () => undefined,
       });
     const runtime = createRuntime(
-      [new EventuallyReadable({ id: "eventually-readable" })],
+      [new EventuallyReadable("eventually-readable")],
       "post-write-read",
       { maxOperationAttempts: 3 },
     );
@@ -209,7 +209,7 @@ describe("durable execution and replay", () => {
         delete: async () => undefined,
       });
     const runtime = createRuntime(
-      [new MissingAfterCreate({ id: "missing-after-create" })],
+      [new MissingAfterCreate("missing-after-create")],
       "missing-after-create",
     );
 
@@ -236,9 +236,8 @@ describe("dependency ordering", () => {
         create: async () => undefined,
         delete: async () => void order.push("dependent"),
       });
-    const dependency = new Dependency({ id: "dependency" });
-    const dependent = new Dependent({
-      id: "dependent",
+    const dependency = new Dependency("dependency");
+    const dependent = new Dependent("dependent", {
       dependencies: { dependency },
     });
     const runtime = createRuntime([dependency, dependent], "destroy-order");
@@ -275,12 +274,12 @@ describe("conditional state persistence", () => {
         delete: async () => undefined,
       });
     const resources = [
-      new RaceResource({ id: "raced", config: { name: "before" } }),
+      new RaceResource("raced", { config: { name: "before" } }),
     ];
     const runtime = createRuntime(resources, "write-race");
 
     await runtime.run("deploy-1");
-    resources[0] = new RaceResource({ id: "raced", config: { name: "after" } });
+    resources[0] = new RaceResource("raced", { config: { name: "after" } });
 
     await expect(runtime.run("deploy-2")).rejects.toMatchObject({
       name: "VersionConflict",
@@ -309,7 +308,7 @@ describe("conditional state persistence", () => {
         },
       });
     const runtime = createRuntime(
-      [new RaceResource({ id: "delete-raced" })],
+      [new RaceResource("delete-raced")],
       "delete-race",
     );
 
@@ -348,14 +347,13 @@ describe("conditional state persistence", () => {
         delete: async () => undefined,
       });
     const resources = [
-      new RaceResource({ id: "recreated", config: { name: "before" } }),
+      new RaceResource("recreated", { config: { name: "before" } }),
     ];
     const runtime = createRuntime(resources, "write-recreate-race");
 
     await runtime.run("deploy-1");
     const original = await runtime.state.snapshot("recreated");
-    resources[0] = new RaceResource({
-      id: "recreated",
+    resources[0] = new RaceResource("recreated", {
       config: { name: "after" },
     });
 
@@ -388,7 +386,7 @@ describe("conditional state persistence", () => {
         },
       });
     const runtime = createRuntime(
-      [new RaceResource({ id: "delete-recreated" })],
+      [new RaceResource("delete-recreated")],
       "delete-recreate-race",
     );
 
@@ -427,10 +425,7 @@ describe("deployment hold", () => {
     const TestResource = resource({ type: "test/durable/concurrent" })
       .defineSchema({})
       .defineOperations({ create, delete: async () => undefined });
-    const runtime = createRuntime(
-      [new TestResource({ id: "shared" })],
-      "concurrent",
-    );
+    const runtime = createRuntime([new TestResource("shared")], "concurrent");
 
     const first = runtime.run("deployment-a");
     await createStarted;
@@ -472,9 +467,9 @@ describe("deployment hold", () => {
         delete: async () => undefined,
       });
 
-    const first = new Resource({ id: "first" });
-    const second = new Resource({ id: "second" });
-    const third = new Resource({ id: "third" });
+    const first = new Resource("first");
+    const second = new Resource("second");
+    const third = new Resource("third");
     const schema = second.schema;
     Object.defineProperty(second, "schema", {
       get() {
@@ -525,11 +520,9 @@ describe("deployment hold", () => {
         delete: async () => undefined,
       });
     const events: ReconcilerEvent[] = [];
-    const runtime = createRuntime(
-      [new TestResource({ id: "held" })],
-      "hold-waiting",
-      { emit: (event) => void events.push(event) },
-    );
+    const runtime = createRuntime([new TestResource("held")], "hold-waiting", {
+      emit: (event) => void events.push(event),
+    });
 
     const first = runtime.run("holder-execution");
     await createStarted;
@@ -556,7 +549,7 @@ describe("deployment hold clearing", () => {
     const Resource = resource({ type: "test/durable/takeover" })
       .defineSchema({})
       .defineOperations({ create, delete: async () => undefined });
-    const runtime = createRuntime([new Resource({ id: "held" })], "takeover");
+    const runtime = createRuntime([new Resource("held")], "takeover");
     await runtime.storeClient.getOrCreateStore({
       definition: durable.deploymentHoldStore,
       id: "takeover",
@@ -633,7 +626,7 @@ describe("orphan deletion", () => {
     const OrphanResource = resource({ type: "test/durable/orphan" })
       .defineSchema({})
       .defineOperations({ create: async () => undefined, delete: deleteSpy });
-    const resources: BaseResource[] = [new OrphanResource({ id: "orphan" })];
+    const resources: BaseResource[] = [new OrphanResource("orphan")];
     const runtime = createRuntime(resources, "orphan-deletion", {
       registry: createResourceRegistry([OrphanResource]),
     });
@@ -693,7 +686,7 @@ describe("state from before groups had stable IDs", () => {
   }
 
   function groupedResource(name: string) {
-    const legacy = new LegacyResource({ id: "legacy", config: { name } });
+    const legacy = new LegacyResource("legacy", { config: { name } });
     legacy.group = { type: "Legacy", id: "legacy-group" };
     return legacy;
   }
@@ -757,7 +750,7 @@ describe("drift detection and repair", () => {
       });
     const events: ReconcilerEvent[] = [];
     const runtime = createRuntime(
-      [new DriftResource({ id: "drifted", config: { name: "expected" } })],
+      [new DriftResource("drifted", { config: { name: "expected" } })],
       "drift-repair",
       { driftDetection: true, emit: (event) => void events.push(event) },
     );
@@ -790,7 +783,7 @@ describe("drift detection and repair", () => {
       });
     const events: ReconcilerEvent[] = [];
     const runtime = createRuntime(
-      [new ReadlessResource({ id: "readless" })],
+      [new ReadlessResource("readless")],
       "readless-drift",
       { driftDetection: true, emit: (event) => void events.push(event) },
     );
@@ -834,7 +827,7 @@ describe("drift detection and repair", () => {
       emit: (event: ReconcilerEvent) => void events.push(event),
     };
     const runtime = createRuntime(
-      [new DryRunDriftResource({ id: "steady", config: { name: "expected" } })],
+      [new DryRunDriftResource("steady", { config: { name: "expected" } })],
       "dry-run-drift",
       options,
     );
@@ -903,7 +896,7 @@ describe("replacement", () => {
     const calls: string[] = [];
     const Role = defineReplaceable("test/durable/replace", calls);
     const resources = [
-      new Role({ id: "role", config: { name: "app", path: "/" } as any }),
+      new Role("role", { config: { name: "app", path: "/" } as any }),
     ];
     const events: ReconcilerEvent[] = [];
     const runtime = createRuntime(resources, "replace", {
@@ -912,8 +905,7 @@ describe("replacement", () => {
 
     await runtime.run("deploy-1");
     const original = await runtime.state.snapshot("role");
-    resources[0] = new Role({
-      id: "role",
+    resources[0] = new Role("role", {
       config: { name: "app", path: "/service/" } as any,
     });
     await runtime.run("deploy-2");
@@ -943,16 +935,14 @@ describe("replacement", () => {
       update: false,
     });
     const resources = [
-      new Attachment({
-        id: "attachment",
+      new Attachment("attachment", {
         config: { name: "a", path: "/" } as any,
       }),
     ];
     const runtime = createRuntime(resources, "no-update");
 
     await runtime.run("deploy-1");
-    resources[0] = new Attachment({
-      id: "attachment",
+    resources[0] = new Attachment("attachment", {
       config: { name: "b", path: "/" } as any,
     });
     await runtime.run("deploy-2");
@@ -978,15 +968,14 @@ describe("replacement", () => {
       const calls: string[] = [];
       const Role = defineReplaceable("test/durable/replace-resume", calls);
       const resources = [
-        new Role({ id: "role", config: { name: "app", path: "/" } as any }),
+        new Role("role", { config: { name: "app", path: "/" } as any }),
       ];
       const runtime = createRuntime(resources, "replace-resume", {
         crashAfterStep,
       });
 
       await runtime.run("deploy-1");
-      resources[0] = new Role({
-        id: "role",
+      resources[0] = new Role("role", {
         config: { name: "app", path: "/service/" } as any,
       });
       await expect(runtime.run("deploy-2")).rejects.toThrow(
@@ -1020,15 +1009,14 @@ describe("replacement", () => {
           calls.push(`delete:${state.path}`);
         },
       });
-    const resources = [new Role({ id: "role", config: { path: "/" } as any })];
+    const resources = [new Role("role", { config: { path: "/" } as any })];
     const events: ReconcilerEvent[] = [];
     const runtime = createRuntime(resources, "replace-failed", {
       emit: (event) => void events.push(event),
     });
 
     await runtime.run("deploy-1");
-    resources[0] = new Role({
-      id: "role",
+    resources[0] = new Role("role", {
       config: { path: "/service/" } as any,
     });
     failCreate = true;
@@ -1055,7 +1043,7 @@ describe("replacement", () => {
     const calls: string[] = [];
     const Role = defineReplaceable("test/durable/replace-dry-run", calls);
     const resources = [
-      new Role({ id: "role", config: { name: "app", path: "/" } as any }),
+      new Role("role", { config: { name: "app", path: "/" } as any }),
     ];
     const events: ReconcilerEvent[] = [];
     const options = {
@@ -1066,8 +1054,7 @@ describe("replacement", () => {
 
     await runtime.run("deploy-1");
     const before = await runtime.state.snapshot("role");
-    resources[0] = new Role({
-      id: "role",
+    resources[0] = new Role("role", {
       config: { name: "app", path: "/service/" } as any,
     });
     options.dryRun = true;
@@ -1096,7 +1083,7 @@ describe("replacement", () => {
     });
     const events: ReconcilerEvent[] = [];
     const runtime = createRuntime(
-      [new Role({ id: "role", config: { name: "app", path: "/" } as any })],
+      [new Role("role", { config: { name: "app", path: "/" } as any })],
       "drift-replace",
       { driftDetection: true, emit: (event) => void events.push(event) },
     );

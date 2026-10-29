@@ -14,15 +14,14 @@ export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
   readonly rule: aws.eventBridge.EventBridgeRuleInstance;
 
   constructor(config: ScheduleConfig) {
-    super("aws/eventBridge/schedule", { id: config.name, config });
+    super("aws/eventBridge/schedule", config.name, config);
 
     // at compile time, a runtime handler import becomes a lambda group
     const lambdaGroup = config.handler as LambdaGroup;
     const lambdaResource = lambdaGroup.fn;
 
     this.rule = this.add(
-      new aws.eventBridge.EventBridgeRule({
-        id: `${config.name}-eventbridge-rule`,
+      new aws.eventBridge.EventBridgeRule(`${config.name}-eventbridge-rule`, {
         config: {
           Name: config.name,
           ScheduleExpression: toAwsScheduleExpression(config.schedule),
@@ -35,13 +34,15 @@ export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
     );
 
     lambdaGroup.add(
-      new aws.eventBridge.LambdaEventBridgeRulePermission({
-        id: `${config.name}-eventbridge-permission`,
-        dependencies: {
-          lambda: lambdaResource,
-          eventBridgeRule: this.rule,
+      new aws.eventBridge.LambdaEventBridgeRulePermission(
+        `${config.name}-eventbridge-permission`,
+        {
+          dependencies: {
+            lambda: lambdaResource,
+            eventBridgeRule: this.rule,
+          },
         },
-      }),
+      ),
     );
   }
 }

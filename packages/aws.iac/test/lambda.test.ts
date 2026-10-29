@@ -27,8 +27,7 @@ it("reads VPC and SnapStart config in the shape they are configured in", async (
     throw new Error("unexpected command");
   });
 
-  const lambda = new LambdaFunction({
-    id: "app",
+  const lambda = new LambdaFunction("app", {
     config: {} as any,
     dependencies: {} as any,
   });

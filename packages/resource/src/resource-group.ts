@@ -4,18 +4,6 @@ import {
   type ResourceGraph,
 } from "./resource-collection";
 
-export type ResourceGroupOptions<
-  C extends Record<string, any> = Record<string, any>,
-> = {
-  /**
-   * Identifies the group across deployments. Must be unique among groups of
-   * the same type.
-   */
-  id: string;
-
-  config?: C;
-};
-
 export abstract class ResourceGroup<
   C extends Record<string, any> = Record<string, any>,
 > {
@@ -26,8 +14,11 @@ export abstract class ResourceGroup<
 
   #graph?: ResourceGraph;
 
-  constructor(type: string, opts: ResourceGroupOptions<C>) {
-    const { id, config } = opts;
+  /**
+   * @param id Identifies the group across deployments. Must be unique among
+   * groups of the same type.
+   */
+  constructor(type: string, id: string, config?: C) {
     const collection = getActiveResourceCollection();
     if (
       collection?.graph.resourceGroups.some(
@@ -69,17 +60,18 @@ export abstract class ResourceGroup<
    * returns the one the group holds. Use it for resources that bind two
    * others, such as an API integration, which several call sites may create.
    */
-  addOnce<T extends new (opts: any) => BaseResource>(
+  addOnce<T extends new (id: string, ...args: any[]) => BaseResource>(
     ResourceClass: T,
-    opts: ConstructorParameters<T>[0] & { id: string },
+    id: string,
+    ...args: T extends new (id: string, ...args: infer A) => any ? A : never
   ): InstanceType<T> {
-    const existing = this.resources.find((r) => r.id === opts.id);
+    const existing = this.resources.find((r) => r.id === id);
     if (!existing) {
-      return this.add(new ResourceClass(opts) as InstanceType<T>);
+      return this.add(new ResourceClass(id, ...args) as InstanceType<T>);
     }
     if (existing.constructor !== ResourceClass) {
       throw new Error(
-        `Resource ${opts.id} already exists as ${existing.type} in group ${this.type}.`,
+        `Resource ${id} already exists as ${existing.type} in group ${this.type}.`,
       );
     }
     return existing as InstanceType<T>;

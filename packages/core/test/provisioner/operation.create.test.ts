@@ -26,8 +26,7 @@ describe("resource creation", () => {
       read: readMock,
     });
 
-    const testResource = new TestResource({
-      id: "test-resource",
+    const testResource = new TestResource("test-resource", {
       config: testResourceConfig,
     });
     const step = createStepRunner();

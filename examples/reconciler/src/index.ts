@@ -11,15 +11,13 @@ const runtime = new NodeDurableRuntime({
 });
 
 const resources = [
-  new StaticSite({
-    id: "documentation",
+  new StaticSite("documentation", {
     config: {
       siteDirectory: "sites/docs",
       html: "<h1>Documentation</h1>\n",
     },
   }),
-  new StaticSite({
-    id: "status",
+  new StaticSite("status", {
     config: {
       siteDirectory: "sites/status",
       html: "<h1>All systems operational</h1>\n",

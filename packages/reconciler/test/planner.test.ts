@@ -29,7 +29,7 @@ describe("createPlan", () => {
     });
 
     const plan = await createPlan({
-      resources: [new TestResource({ id: "desired" })],
+      resources: [new TestResource("desired")],
       state,
       driftDetection: false,
     });
@@ -65,7 +65,7 @@ describe("createPlan", () => {
 
     await expect(
       createPlan({
-        resources: [new TestResource({ id: "existing" })],
+        resources: [new TestResource("existing")],
         state,
       }),
     ).rejects.toThrow("access denied");
@@ -95,7 +95,7 @@ describe("createPlan", () => {
     });
 
     const plan = await createPlan({
-      resources: [new TestResource({ id: "existing" })],
+      resources: [new TestResource("existing")],
       state,
     });
 
@@ -137,7 +137,7 @@ describe("createPlan", () => {
     });
 
     const plan = await createPlan({
-      resources: [new TestResource({ id: "existing" })],
+      resources: [new TestResource("existing")],
       state,
     });
 
@@ -196,12 +196,10 @@ describe("createPlan", () => {
         policyArn: "arn:policy",
       }),
     });
-    const role = new Role({
-      id: "role",
+    const role = new Role("role", {
       config: { name: "app", path: "/service/" } as any,
     });
-    const attachment = new Attachment({
-      id: "attachment",
+    const attachment = new Attachment("attachment", {
       config: { policyArn: "arn:policy" } as any,
       dependencies: { role },
     });
@@ -247,7 +245,7 @@ describe("createPlan", () => {
     let remote: Record<string, unknown> = {};
     const plan = (config: Record<string, unknown>) =>
       createPlan({
-        resources: [new Role({ id: "role", config: config as any })],
+        resources: [new Role("role", { config: config as any })],
         state: new MemoryStateBackend({
           role: {
             version: 1,
