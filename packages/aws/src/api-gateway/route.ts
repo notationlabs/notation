@@ -20,9 +20,7 @@ export class RouteGroup extends aws.AwsResourceGroup {
   readonly route: aws.apiGateway.RouteInstance;
 
   constructor({ apiGroup, method, path, auth, lambdaGroup }: RouteGroupConfig) {
-    super("API Gateway/Route", {
-      dependencies: { router: apiGroup.id, fn: lambdaGroup.id },
-    });
+    super("API Gateway/Route", {});
 
     const apiResource = apiGroup.api;
     const routeId = `${apiResource.id}-${method}-${path}`;

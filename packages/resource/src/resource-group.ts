@@ -13,7 +13,6 @@ export type ResourceGroupOptions<
   id?: number;
 
   config?: C;
-  dependencies?: Record<string, number>;
 };
 
 export abstract class ResourceGroup<
@@ -21,19 +20,17 @@ export abstract class ResourceGroup<
 > {
   type: string;
   id: number;
-  dependencies: Record<string, number>;
   config: C;
   resources: BaseResource[];
 
   #graph?: ResourceGraph;
 
   constructor(type: string, opts: ResourceGroupOptions<C>) {
-    const { dependencies, id, config } = opts;
+    const { id, config } = opts;
     const collection = getActiveResourceCollection();
     this.type = type;
     this.#graph = collection?.graph;
     this.id = collection ? collection.nextResourceGroupId++ : (id ?? -1);
-    this.dependencies = dependencies || {};
     this.config = config || ({} as C);
     this.resources = [];
 

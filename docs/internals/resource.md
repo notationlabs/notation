@@ -234,7 +234,6 @@ abstract class ResourceGroup<
 > {
   type: string;
   id: number;
-  dependencies: Record<string, number>;
   config: C;
   resources: BaseResource[];
 
@@ -247,7 +246,8 @@ Construction accepts `ResourceGroupOptions` with:
 
 - `id` – an optional pre-assigned ID used outside graph collection.
 - `config` – the group's configuration, stored as `group.config`. Defaults to `{}`.
-- `dependencies` – map of dependency names to group IDs.
+
+Groups don't declare dependencies. Edges between groups follow from the dependencies of the resources they contain, since each resource records its `groupId`.
 
 `addOnce` adds a resource unless the group already has one with the same ID, and returns the one the group holds. Use it for resources that bind two others, such as an API integration, which several call sites may create. It throws if the existing resource has a different class.
 

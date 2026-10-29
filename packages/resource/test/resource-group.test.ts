@@ -34,14 +34,13 @@ it("creates a resource group", async () => {
 });
 
 it("keeps config keys that share a name with group options", async () => {
-  const config = { id: "my-fn", dependencies: ["x"] };
+  const config = { id: "my-fn" };
   const graph = await collectResourceGraph(() => {
     new TestResourceGroup("test-group", { config });
   });
   const resourceGroup = graph.resourceGroups[0] as TestResourceGroup;
 
   expect(resourceGroup.id).toBe(0);
-  expect(resourceGroup.dependencies).toEqual({});
   expect(resourceGroup.config).toEqual(config);
 });
 
