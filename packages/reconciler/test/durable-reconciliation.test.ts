@@ -222,6 +222,26 @@ describe("durable execution and replay", () => {
   });
 });
 
+describe("durable values", () => {
+  it("rejects a provider output that is not a durable value", async () => {
+    const DatedResource = resource({ type: "test/durable/dated" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        read: async () => ({ CreatedDate: new Date() }),
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime([new DatedResource("dated")], "dated");
+
+    await expect(runtime.run("dated-execution")).rejects.toMatchObject({
+      name: "WorkflowValueError",
+      code: "INVALID_STEP_VALUE",
+    });
+    expect(await runtime.state.get("dated")).toBeUndefined();
+    runtime.close();
+  });
+});
+
 describe("dependency ordering", () => {
   it("destroys dependents before their dependencies", async () => {
     const order: string[] = [];
