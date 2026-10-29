@@ -6,7 +6,12 @@ import type { ReconcilerEventEmitter } from "../events";
 import type { DurableStateBackend } from "./state-backend";
 import { durableEmitter, scopeStep } from "./step";
 import { deploymentHoldStore, type DeploymentHoldState } from "./stores";
-import type { DurableStep, StoreClient, WorkflowStore } from "./yieldstar";
+import {
+  InfrastructureError,
+  type DurableStep,
+  type StoreClient,
+  type WorkflowStore,
+} from "./yieldstar";
 
 type DeploymentHoldOptions = {
   /** Deployment identity comes from the state backend. */
@@ -23,10 +28,7 @@ async function* acquireDeploymentHold(
   step: DurableStep,
   opts: DeploymentHoldOptions,
 ): AsyncGenerator<any, WorkflowStore<DeploymentHoldState>, any> {
-  const hold = yield* step.store(deploymentHoldStore, {
-    id: opts.state.deploymentId,
-    initial: { holder: null },
-  });
+  const hold = step.store(deploymentHoldStore, { id: opts.state.deploymentId });
 
   const snapshot = yield* hold.get("notation:hold:inspect");
   const holder = snapshot.state.holder;
@@ -57,19 +59,28 @@ async function* acquireDeploymentHold(
 function releaseDeploymentHold(
   hold: WorkflowStore<DeploymentHoldState>,
   executionId: string,
+  key: string,
 ) {
-  return hold.update("notation:hold:release", (draft) => {
+  return hold.update(key, (draft) => {
     if (draft.holder === executionId) draft.holder = null;
   });
 }
 
 /**
- * Runs `body` while holding the deployment, releasing the hold only once
- * `body` has completed. A failed or suspended execution keeps its hold: a
- * resumed execution replays `take` from the step cache without re-acquiring
- * anything, so it must still be the holder. An execution that will never be
- * resumed holds its deployment until an operator calls
- * `clearDeploymentHold`.
+ * Runs `body` while holding the deployment, and releases the hold when `body`
+ * completes or throws. A thrown error fails the execution permanently, so
+ * nothing would resume it to release the hold later.
+ *
+ * Two cases keep the hold:
+ *
+ *   1. A suspended execution never reaches the catch. When it resumes, it
+ *      replays `take` from the step cache without acquiring the hold again,
+ *      so it must still be the holder.
+ *   2. An `InfrastructureError` ends the delivery rather than the execution,
+ *      and the dispatcher delivers the execution again.
+ *
+ * An execution that crashed and will never be resumed holds its deployment
+ * until an operator calls `clearDeploymentHold`.
  */
 export async function* withDeploymentHold(
   step: DurableStep,
@@ -77,8 +88,18 @@ export async function* withDeploymentHold(
   body: () => AsyncGenerator<any, void, any>,
 ): AsyncGenerator<any, void, any> {
   const hold = yield* acquireDeploymentHold(step, opts);
-  yield* body();
-  yield* releaseDeploymentHold(hold, opts.executionId);
+  try {
+    yield* body();
+  } catch (error) {
+    if (InfrastructureError.is(error)) throw error;
+    yield* releaseDeploymentHold(
+      hold,
+      opts.executionId,
+      "notation:hold:release-failed",
+    );
+    throw error;
+  }
+  yield* releaseDeploymentHold(hold, opts.executionId, "notation:hold:release");
 }
 
 export type DeploymentHoldClearance =
@@ -86,15 +107,17 @@ export type DeploymentHoldClearance =
   | { cleared: false; holder: string | null };
 
 /**
- * Clears the hold of an execution that will not be resumed, so later
- * deployments are not blocked behind it.
+ * Clears the hold of an execution that has not ended and will not be resumed,
+ * so later deployments are not blocked behind it. An execution that failed
+ * has already released its hold.
  *
  * The write is conditional on `fromExecutionId` still being the named holder,
  * so it cannot clear a hold that has since moved to another execution.
  * Confirm the holder is genuinely dead first: clearing a live execution's
  * hold permits a concurrent mutation of the same deployment.
  *
- * Throws if the deployment has no hold store, i.e. has never been deployed.
+ * Returns `{ cleared: false, holder: null }` for a deployment that was never
+ * deployed.
  */
 export async function clearDeploymentHold(params: {
   storeClient: StoreClient;
@@ -102,28 +125,19 @@ export async function clearDeploymentHold(params: {
   fromExecutionId: string;
 }): Promise<DeploymentHoldClearance> {
   const { storeClient, deploymentId, fromExecutionId } = params;
-  const read = () =>
-    storeClient.getStore({
-      definition: deploymentHoldStore,
-      id: deploymentId,
-    });
+  const hold = storeClient.store(deploymentHoldStore, deploymentId);
 
-  const snapshot = await read();
+  const snapshot = await hold.get();
   if (snapshot.state.holder !== fromExecutionId) {
     return { cleared: false, holder: snapshot.state.holder };
   }
 
-  const result = await storeClient.updateStoreFrom({
-    definition: deploymentHoldStore,
-    id: deploymentId,
-    snapshot,
-    updater: (draft) => {
-      draft.holder = null;
-    },
+  const result = await hold.updateFrom(snapshot, (draft) => {
+    draft.holder = null;
   });
 
   if (!result.updated) {
-    return { cleared: false, holder: (await read()).state.holder };
+    return { cleared: false, holder: (await hold.get()).state.holder };
   }
 
   return { cleared: true, previousHolder: fromExecutionId };

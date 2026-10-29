@@ -12,12 +12,18 @@
  *   *:remote:attempt:<n>       one provider call attempt
  *   *:remote:retry-delay:<n>   the wait between two attempts
  *   *:emit:<event>[:<operation>:<status>]   event delivery checkpoint
- *   notation:hold:*            deployment hold: inspect/acquire/release
- *   state:persist:<id>         conditional write of a resource record
+ *   notation:hold:*            deployment hold: inspect/acquire/release,
+ *                              and release-failed when the workflow throws
+ *   state:persist:<id>         conditional create or update of a resource
+ *                              record
  *   state:delete:<id>          conditional removal of one
+ *   state:create:<id>          unconditional write of a record removed
+ *                              earlier in the same execution
  *   *:replace:delete:*         replacement, first half: the delete
  *   *:replace:create:*         replacement, second half: the create, ending
- *                              in state:create, a create-if-absent
+ *                              in state:create
+ *
+ * Opening a store has no step key.
  *
  * An <id> inside a scope is URI-encoded, so the `:` delimiter is unambiguous.
  * The state: keys are store-handle keys and so are not scope-prefixed: a
@@ -30,10 +36,8 @@
  *
  *   notation/resource-state    one record per live resource
  *   notation/deployment-hold   one hold per deployment
- *
- * @notation/core's durable runtime persists one more name under the same
- * prefix, notation/execution-binding (see its durable-runtime module).
  */
+import "./errors";
 export { deploy } from "./deploy";
 export { destroy } from "./destroy";
 export {

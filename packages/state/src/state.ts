@@ -1,5 +1,8 @@
 export type StateNode = {
-  /** The backing store's version of the record, counted from zero. */
+  /**
+   * The backing store's version of the record. The store exists at version 0
+   * before the record is written, so a new record is version 1.
+   */
   version: number;
   id: string;
   type: string;

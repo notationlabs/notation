@@ -3,12 +3,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import * as durable from "@notation/reconciler/durable";
 import { ResourceOperationPendingError, resource } from "@notation/resource";
-import {
-  SqliteEventLoop,
-  SqliteTaskQueueClient,
-  createSqliteDb,
-} from "@yieldstar/sqlite-runtime/node";
-import { RetryableError, createWorkflowRouter, workflow } from "yieldstar";
+import { WorkflowRunner } from "@yieldstar/core";
+import { SqliteRuntime, createSqliteDb } from "@yieldstar/sqlite-runtime/node";
+import pino from "pino";
+import { createWorkflowRouter, workflow } from "yieldstar";
 import { describe, expect, it } from "vitest";
 import {
   NodeDurableRuntime,
@@ -16,7 +14,7 @@ import {
 } from "src/provisioner/durable-runtime";
 
 describe("NodeDurableRuntime", () => {
-  it("stays resident across a provider delay and resumes from the SQLite event loop", async () => {
+  it("stays resident across a provider delay and resumes the execution", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "notation-runtime-"));
     const runtime = new NodeDurableRuntime({
       deploymentId: "resident-wait",
@@ -75,49 +73,80 @@ describe("NodeDurableRuntime", () => {
         delete: async () => undefined,
       });
     const interrupted = new TestResource("interrupted");
-    // The failure has to live in plain generator code, after the create step
-    // is checkpointed but before state is persisted: a failing step would be
-    // cached and rethrown on replay. A resource with no persisted state first
-    // sets its output straight after create returns.
-    const setOutput = interrupted.setOutput.bind(interrupted);
-    let failSetOutput = true;
-    interrupted.setOutput = (output) => {
-      if (failSetOutput) throw new Error("simulated process crash");
-      return setOutput(output);
-    };
-    const runDeploy = async () => {
+    const deployWorkflow = (state: durable.DurableStateBackend) =>
+      workflow(async function* (step, event) {
+        yield* durable.deploy(step, {
+          executionId: event.executionId,
+          resources: [interrupted],
+          state,
+          driftDetection: false,
+        });
+      });
+
+    try {
+      // The first process records the provider call and then dies, which
+      // leaves its lease in place until the lease expires.
+      const database = createSqliteDb({ path: databasePath });
+      const crashed = new SqliteRuntime(database);
+      const runner = new WorkflowRunner(crashed, {
+        router: createWorkflowRouter({
+          deploy: deployWorkflow(
+            new durable.DurableStateBackend(
+              crashed.stores,
+              "resume-deployment",
+            ),
+          ),
+        }),
+        logger: pino({ level: "silent" }),
+      });
+      await crashed.executions.admit({
+        executionId: "resumed-execution",
+        workflowId: "deploy",
+        params: { deploymentId: "resume-deployment" },
+        context: new Map(),
+      });
+      const [lease] = await crashed.executions.claimDue({
+        limit: 1,
+        duration: 100,
+        filter: { executionIds: ["resumed-execution"] },
+      });
+      const controller = new AbortController();
+      const setOutput = interrupted.setOutput.bind(interrupted);
+      interrupted.setOutput = (output) => {
+        controller.abort(new Error("simulated process crash"));
+        return setOutput(output);
+      };
+      await expect(
+        runner.run(
+          {
+            workflowId: "deploy",
+            executionId: "resumed-execution",
+            params: { deploymentId: "resume-deployment" },
+            context: new Map(),
+          },
+          { lease: lease!, signal: controller.signal },
+        ),
+      ).rejects.toThrow("simulated process crash");
+      database.close();
+      interrupted.setOutput = setOutput;
+      expect(creates).toBe(1);
+
       const runtime = new NodeDurableRuntime({
         deploymentId: "resume-deployment",
         databasePath,
       });
-      const deploy = workflow(async function* (step, event) {
-        yield* durable.deploy(step, {
-          executionId: event.executionId,
-          resources: [interrupted],
-          state: runtime.state,
-          driftDetection: false,
-        });
-      });
       try {
-        await runtime.run(createWorkflowRouter({ deploy }), {
-          workflowId: "deploy",
-          executionId: "resumed-execution",
+        await runtime.run(
+          createWorkflowRouter({ deploy: deployWorkflow(runtime.state) }),
+          { workflowId: "deploy", executionId: "resumed-execution" },
+        );
+        await expect(runtime.state.get("interrupted")).resolves.toMatchObject({
+          id: "interrupted",
+          lastOperation: "create",
         });
-        return await runtime.state.get("interrupted");
       } finally {
         runtime.close();
       }
-    };
-
-    try {
-      await expect(runDeploy()).rejects.toThrow("simulated process crash");
-      expect(creates).toBe(1);
-
-      failSetOutput = false;
-      await expect(runDeploy()).resolves.toMatchObject({
-        id: "interrupted",
-        lastOperation: "create",
-      });
       // The provider call was replayed from the heap, not repeated.
       expect(creates).toBe(1);
     } finally {
@@ -142,6 +171,11 @@ describe("NodeDurableRuntime", () => {
       await first.run(router, {
         workflowId: "deploy",
         executionId: "bound-execution",
+      });
+      await expect(first.execution("bound-execution")).resolves.toMatchObject({
+        workflowId: "deploy",
+        params: { deploymentId: "first-deployment" },
+        status: "completed",
       });
       await expect(
         first.run(router, {
@@ -170,50 +204,102 @@ describe("NodeDurableRuntime", () => {
     }
   });
 
-  it("does not acknowledge queued events from another execution", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "notation-queue-"));
+  it("does not deliver another execution that is ready to run", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "notation-filter-"));
     const databasePath = path.join(directory, "workflows.db");
     const database = createSqliteDb({ path: databasePath });
-    new SqliteEventLoop(database);
-    new SqliteTaskQueueClient(database).add({
-      workflowId: "deploy",
+    await new SqliteRuntime(database).executions.admit({
       executionId: "unrelated-execution",
-      params: {},
+      workflowId: "deploy",
+      params: { deploymentId: "filter-test" },
       context: new Map(),
     });
     database.close();
 
-    let attempts = 0;
-    const delayed = workflow(async function* (step) {
-      yield* step.run("delay", async () => {
-        attempts += 1;
-        if (attempts === 1) {
-          throw new RetryableError("not ready", {
-            maxAttempts: 2,
-            retryInterval: 10,
-          });
-        }
-      });
+    const delivered: string[] = [];
+    const deploy = workflow(async function* (_step, event) {
+      delivered.push(event.executionId);
     });
     const runtime = new NodeDurableRuntime({
-      deploymentId: "queue-test",
+      deploymentId: "filter-test",
       databasePath,
     });
     try {
-      await runtime.run(createWorkflowRouter({ deploy: delayed }), {
+      await runtime.run(createWorkflowRouter({ deploy }), {
         workflowId: "deploy",
         executionId: "current-execution",
       });
+      expect(delivered).toEqual(["current-execution"]);
+      await expect(
+        runtime.execution("unrelated-execution"),
+      ).resolves.toMatchObject({ status: "admitted" });
     } finally {
       runtime.close();
+      await rm(directory, { recursive: true, force: true });
     }
+  });
 
-    const reopened = createSqliteDb({ path: databasePath });
-    const queued = new SqliteEventLoop(reopened).taskQueue.process();
-    expect(queued?.event.executionId).toBe("unrelated-execution");
-    reopened.close();
-    await rm(directory, { recursive: true, force: true });
-  }, 5_000);
+  it("rethrows the recorded error when a failed execution is resumed", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "notation-failed-"));
+    let runs = 0;
+    const deploy = workflow(async function* () {
+      runs += 1;
+      throw new Error("provider rejected the change");
+    });
+    const router = createWorkflowRouter({ deploy });
+    const runtime = new NodeDurableRuntime({
+      deploymentId: "failed-test",
+      databasePath: path.join(directory, "workflows.db"),
+    });
+    try {
+      await expect(
+        runtime.run(router, {
+          workflowId: "deploy",
+          executionId: "failed-execution",
+        }),
+      ).rejects.toThrow("provider rejected the change");
+
+      const resumed = runtime.run(router, {
+        workflowId: "deploy",
+        executionId: "failed-execution",
+      });
+      await expect(resumed).rejects.toThrow("cannot be resumed");
+      await expect(resumed).rejects.toMatchObject({
+        cause: { message: "provider rejected the change" },
+      });
+      expect(runs).toBe(1);
+    } finally {
+      runtime.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("returns when a completed execution is resumed", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "notation-done-"));
+    let runs = 0;
+    const deploy = workflow(async function* () {
+      runs += 1;
+      return "deployed";
+    });
+    const router = createWorkflowRouter({ deploy });
+    const runtime = new NodeDurableRuntime({
+      deploymentId: "completed-test",
+      databasePath: path.join(directory, "workflows.db"),
+    });
+    try {
+      const run = () =>
+        runtime.run(router, {
+          workflowId: "deploy",
+          executionId: "completed-execution",
+        });
+      await expect(run()).resolves.toBe("deployed");
+      await expect(run()).resolves.toBe("deployed");
+      expect(runs).toBe(1);
+    } finally {
+      runtime.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 
   it("canonicalises equivalent entry-point spellings", () => {
     const absolute = path.resolve("infra/api.ts");

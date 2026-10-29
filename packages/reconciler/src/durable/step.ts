@@ -21,10 +21,9 @@ export interface DurableStepRunner extends StepRunner {
  * Namespaces the step keys of `step` so an operation can be written once and
  * replayed at several call sites without its keys colliding.
  *
- * Opening a store is not prefixed: yieldstar derives that key from the store
- * name and store id, which is already unique. The keys a store *handle* takes
- * are caller-supplied and are left alone too — a store outlives the scope
- * that opened it, so its call sites qualify their own keys.
+ * The keys a store handle takes are caller-supplied and are not prefixed: a
+ * store outlives the scope that opened it, so its call sites qualify their
+ * own keys.
  */
 export function scopeStep(
   step: DurableStep,
