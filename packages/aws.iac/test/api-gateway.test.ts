@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { ResourceNotFoundError } from "@notation/resource";
+import { createPlan } from "@notation/reconciler";
+import { MemoryStateBackend } from "@notation/state";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { Api } from "src/resources/api-gateway/api";
 import { Route } from "src/resources/api-gateway/route";
@@ -81,6 +83,41 @@ describe("API Gateway API", () => {
     mockSend(() => ({ ApiId: "api-1", Tags: { [CREATE_TOKEN_TAG]: "hash" } }));
     const untagged = (await api.read!({ ApiId: "api-1" })) as { Tags: unknown };
     expect(untagged.Tags).toBeUndefined();
+  });
+});
+
+describe("API Gateway API drift", () => {
+  it.each([
+    ["no Tags", {}],
+    ["empty Tags", { Tags: {} }],
+  ])("reports no drift for an API with %s", async (_name, tags) => {
+    const config = { Name: "app", ProtocolType: "HTTP", ...tags } as any;
+    const api = new Api("api", { config });
+    const params = await api.getParams();
+    mockSend(() => ({
+      ApiId: "api-1",
+      Name: "app",
+      ProtocolType: "HTTP",
+      Tags: { [CREATE_TOKEN_TAG]: createTokenTagValue(TOKEN) },
+    }));
+
+    const plan = await createPlan({
+      resources: [api],
+      state: new MemoryStateBackend({
+        api: {
+          version: 1,
+          id: "api",
+          type: Api.type,
+          config,
+          params,
+          output: { ...params, ApiId: "api-1" },
+          lastOperation: "create",
+          lastOperationAt: "2026-07-22T00:00:00.000Z",
+        },
+      }),
+    });
+
+    expect(plan.nodes[0]).toMatchObject({ decision: "noop" });
   });
 });
 
