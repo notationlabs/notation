@@ -18,33 +18,24 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v2
+      # Reads the pnpm version from packageManager in package.json.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
         with:
-          version: 8
-
-      - name: Get pnpm store directory
-        shell: bash
-        run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - uses: actions/cache@v3
-        name: Set up pnpm cache
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
+          node-version: 24
+          cache: pnpm
 
       - name: Install
-        run: pnpm install --filter '!@notation/docs-site'
+        run: pnpm install --frozen-lockfile --filter '!@notation/docs-site'
 
       - name: Build
         run: pnpm exec pok build
 
       - name: Install local bin scripts
-        run: pnpm install --filter '!@notation/docs-site'
+        run: pnpm install --frozen-lockfile --filter '!@notation/docs-site'
 
       - name: Test
         run: pnpm exec pok test run
