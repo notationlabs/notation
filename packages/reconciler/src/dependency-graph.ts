@@ -9,19 +9,13 @@ export type DepthLevels<T> = {
   unordered: T[];
 };
 
-function asDependencies(resource: BaseResource): BaseResource[] {
-  return Object.values(resource.dependencies).filter(
-    (dependency): dependency is BaseResource => Boolean(dependency),
-  );
-}
-
 export function buildResourceDepthLevels(
   resources: BaseResource[],
 ): ResourceDepthLevels {
   const { levels, unordered } = buildDepthLevels(
     resources,
     (resource) => resource.id,
-    (resource) => asDependencies(resource).map((dependency) => dependency.id),
+    (resource) => resource.getDependencies().map((dependency) => dependency.id),
   );
 
   if (unordered.length > 0) {

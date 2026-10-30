@@ -8,5 +8,21 @@ export * from "./resource-group";
 export {
   collectResourceGraph,
   getActiveResourceCollection,
+  onEvaluationEnd,
   type ResourceGraph,
 } from "./resource-collection";
+export {
+  ContributionConflictError,
+  mergeContributions,
+  type CollectContext,
+  type ContributeOptions,
+} from "./contributions";
+export {
+  OutputValueKeyError,
+  containsOutputValue,
+  isOutputValue,
+  resolveOutputValues,
+  deployLookup,
+  planLookup,
+  type OutputLookup,
+} from "./output-value";

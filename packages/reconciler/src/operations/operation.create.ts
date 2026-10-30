@@ -2,6 +2,8 @@ import {
   ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
+  deployLookup,
+  resolveOutputValues,
   type BaseResource,
   type DurableObject,
   type ResourceOperationContext,
@@ -75,7 +77,11 @@ export async function* createResourceOperation(
       type: params.resource.type,
       lastOperation: "create",
       lastOperationAt: new Date().toISOString(),
-      config: params.resource.config,
+      // Output values in config are written as the values they stand for.
+      config: resolveOutputValues(
+        params.resource.config,
+        deployLookup,
+      ) as DurableObject,
       params: params.resource.toState(params.resourceParams),
       output: params.resource.toState(params.resource.output),
       dependsOn: params.dependsOn,

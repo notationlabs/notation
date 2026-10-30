@@ -20,8 +20,22 @@ export function isUnknownAfterApply(
 }
 
 /**
- * A field that forces replacement. `known: false` means the desired value is
- * unknown after apply, so the field may force replacement.
+ * Whether the value is unknown after apply, or holds a value that is, at any
+ * depth. A plan marks a value unknown at its own path, so the rest of a map
+ * stays visible.
+ */
+export function containsUnknownAfterApply(value: unknown): boolean {
+  if (isUnknownAfterApply(value)) return true;
+  if (Array.isArray(value)) return value.some(containsUnknownAfterApply);
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).some(containsUnknownAfterApply);
+  }
+  return false;
+}
+
+/**
+ * A field that forces replacement. `known: false` means the desired value, or
+ * part of it, is unknown after apply, so the field may force replacement.
  */
 export type ReplaceField = { name: string; known: boolean };
 
@@ -84,7 +98,7 @@ export function diffParams(
   const replaceFields: ReplaceField[] = [];
   for (const [name, item] of Object.entries(schema)) {
     if (!isComparable(item)) continue;
-    const unknown = isUnknownAfterApply(desiredComparable[name]);
+    const unknown = containsUnknownAfterApply(desiredComparable[name]);
     if (!unknown && !(name in patch)) continue;
 
     // A change anywhere inside the value changes the whole field, and the

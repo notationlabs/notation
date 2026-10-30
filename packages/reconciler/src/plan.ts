@@ -1,5 +1,4 @@
 import {
-  UNKNOWN_AFTER_APPLY,
   diffParams,
   type BaseResource,
   type ParamsDiffDisplay,
@@ -143,33 +142,14 @@ function pick(
   return picked;
 }
 
+/**
+ * The params a plan compares against state. A value that waits on an output
+ * not yet deployed is unknown at its own path (see `BaseResource.planParams`).
+ */
 export async function resolvePlanParams(
   resource: BaseResource,
 ): Promise<Record<string, unknown>> {
-  const hasUnresolvedDependency = Object.values(resource.dependencies).some(
-    (dependency) => dependency && dependency.output == null,
-  );
-  if (!hasUnresolvedDependency) {
-    // Every dependency has an output, so an undefined param is one left
-    // unset, not one waiting on a dependency, and is dropped.
-    const resolved = (await resource.getParams()) as Record<string, unknown>;
-    const params: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(resolved)) {
-      if (value !== undefined) params[key] = value;
-    }
-    return params;
-  }
-
-  const params: Record<string, unknown> = {};
-  const config = resource.config as Record<string, unknown>;
-  for (const [key, item] of Object.entries(resource.schema)) {
-    if (item.propertyType === "computed") continue;
-    params[key] =
-      key in config && config[key] !== undefined
-        ? config[key]
-        : UNKNOWN_AFTER_APPLY;
-  }
-  return params;
+  return resource.planParams();
 }
 
 /**
@@ -177,9 +157,7 @@ export async function resolvePlanParams(
  * resource whose edges have not changed compares equal to its record.
  */
 export function getDependencyIds(resource: BaseResource): string[] {
-  const ids = Object.values(resource.dependencies)
-    .filter((dependency): dependency is BaseResource => Boolean(dependency))
-    .map((dependency) => dependency.id);
+  const ids = resource.getDependencies().map((dependency) => dependency.id);
   return [...new Set(ids)].sort();
 }
 

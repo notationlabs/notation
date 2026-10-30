@@ -105,7 +105,16 @@ function fakeResource(
   type: string,
   dependencies: Record<string, BaseResource> = {},
 ) {
-  return { id, type, config: {}, dependencies } as unknown as BaseResource;
+  return {
+    id,
+    type,
+    config: {},
+    dependencies,
+    getDependencies: () =>
+      Object.values(dependencies).filter((dep): dep is BaseResource =>
+        Boolean(dep),
+      ),
+  } as unknown as BaseResource;
 }
 
 function fakeGroup(type: string, id: string, resources: BaseResource[]) {

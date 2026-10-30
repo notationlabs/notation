@@ -13,6 +13,7 @@ import {
   ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
+  mergeContributions,
   type BaseResource,
   type ResourceType,
 } from "@notation/resource";
@@ -1231,7 +1232,10 @@ describe("dependency edges in state", () => {
   it("destroys an orphan before the desired resource it depends on", async () => {
     const deleted: string[] = [];
     const Role = defineRecorded("test/durable/destroy-role", deleted);
-    const Attachment = defineRecorded("test/durable/destroy-attachment", deleted);
+    const Attachment = defineRecorded(
+      "test/durable/destroy-attachment",
+      deleted,
+    );
     const role = new Role("role");
     const resources: BaseResource[] = [
       role,
@@ -1259,7 +1263,10 @@ describe("dependency edges in state", () => {
     const Policy = defineRecorded("test/durable/kept-policy", deleted);
     const Role = defineRecorded("test/durable/kept-desired-role", deleted);
     const Fn = defineRecorded("test/durable/kept-desired-fn", deleted);
-    const Unregistered = defineRecorded("test/durable/kept-attachment", deleted);
+    const Unregistered = defineRecorded(
+      "test/durable/kept-attachment",
+      deleted,
+    );
     const policy = new Policy("policy");
     const role = new Role("role", { dependencies: { policy } });
     const resources: BaseResource[] = [
@@ -1783,6 +1790,57 @@ describe("replacement", () => {
     ).toMatchObject({
       decision: "drift-replace",
       replaceFields: [{ name: "path", known: true }],
+    });
+    runtime.close();
+  });
+});
+
+describe("contributions and output values", () => {
+  it("deploys a contributor first and fills in its output values", async () => {
+    const created: Record<string, unknown>[] = [];
+    const Queue = resource({ type: "test/durable/queue" })
+      .defineSchema({
+        name: { presence: "required", propertyType: "param", primaryKey: true },
+        arn: { presence: "required", propertyType: "computed" },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          created.push(params);
+          return { name: params.name, arn: `arn:${params.name}` } as any;
+        },
+        delete: async () => undefined,
+      });
+    const Fn = resource({ type: "test/durable/function" })
+      .defineSchema({
+        name: { presence: "required", propertyType: "param", primaryKey: true },
+        env: {
+          presence: "optional",
+          propertyType: "param",
+          collect: mergeContributions,
+        },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          created.push(params);
+        },
+        delete: async () => undefined,
+      });
+    // Listed before the queue, so only the implied edge orders the deploy.
+    const fn = new Fn("fn", { config: { name: "f" } as any });
+    const queue = new Queue("queue", { config: { name: "orders" } as any });
+    fn.contribute({
+      env: { QUEUE: `${(queue as any).outputValue("arn")}/*` },
+    } as any);
+    const runtime = createRuntime([fn, queue], "contributions");
+
+    await runtime.run("contributions-execution");
+    expect(created).toEqual([
+      { name: "orders" },
+      { name: "f", env: { QUEUE: "arn:orders/*" } },
+    ]);
+    expect(await runtime.state.get("fn")).toMatchObject({
+      params: { name: "f", env: { QUEUE: "arn:orders/*" } },
+      dependsOn: ["queue"],
     });
     runtime.close();
   });
