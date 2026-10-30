@@ -160,6 +160,9 @@ importers:
       '@notation/cli':
         specifier: workspace:*
         version: link:../../packages/cli
+      '@notation/core':
+        specifier: workspace:*
+        version: link:../../packages/core
 
   examples/reconciler:
     dependencies:

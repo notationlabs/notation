@@ -2,15 +2,16 @@
   "private": true,
   "name": "lambda",
   "scripts": {
-    "compile": "notation compile infra/index.ts",
-    "dashboard": "notation dashboard",
-    "deploy": "notation deploy infra/index.ts",
-    "destroy": "notation destroy infra/index.ts",
-    "viz": "notation viz infra/index.ts",
-    "watch": "notation watch infra/index.ts"
+    "compile": "notation compile lambdas",
+    "dashboard": "notation dashboard lambdas",
+    "deploy": "notation deploy lambdas",
+    "destroy": "notation destroy lambdas",
+    "viz": "notation viz lambdas",
+    "watch": "notation watch lambdas"
   },
   "dependencies": {
     "@notation/aws": "workspace:*",
-    "@notation/cli": "workspace:*"
+    "@notation/cli": "workspace:*",
+    "@notation/core": "workspace:*"
   }
 }
