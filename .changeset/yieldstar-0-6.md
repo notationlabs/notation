@@ -7,7 +7,7 @@
 "@notation/aws.iac": minor
 ---
 
-Migrate the durable runtime to yieldstar 0.7.0.
+Migrate the durable runtime to yieldstar 0.8.0.
 
 - `--execution-id` now reports the recorded error for a `failed` execution instead of replaying it. Start a new deploy to recover.
 - When the workflow throws, the execution releases its deployment hold.
