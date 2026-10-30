@@ -124,6 +124,7 @@ All schema items carry these fields:
 
 - `immutable` – cannot change after creation (forces replacement).
 - `primaryKey` / `secondaryKey` – together form the compound key used for read/update/delete.
+- `collect` – makes the param collected, and combines what is contributed to it. See [Contributions](#contributions).
 
 **`computed`**
 
@@ -275,6 +276,57 @@ const integration = new LambdaIntegration("todo-api-get-todos-integration", {
 The ID keys the resource in state, so keep it stable. The second argument can be left out when neither `config` nor `dependencies` has a required property.
 
 Dependencies also determine deployment order: a resource is not created until all its dependencies exist.
+
+`resource.dependOn(other)` adds a dependency after construction. It orders the deploy and is recorded in state, but `deriveParams` does not receive it. It follows the same lifetime rules as `contribute`.
+
+## Output values
+
+`resource.outputValue(key)` returns a token for one of the resource's outputs, typed as the output. The token can be placed anywhere in config or in a contribution, including inside a template string:
+
+```ts
+const mapping = new EventSourceMapping("orders-mapping", {
+  config: {
+    EventSourceArn: queue.outputValue("QueueArn"),
+    Description: `Reads ${queue.outputValue("QueueArn")}`,
+  },
+});
+```
+
+A resource whose config or contributions hold a token depends on the resource the token came from. Deploy fills in the real value before it calls the provider. A string that is exactly one token takes the output whole, so a number stays a number. Reading a property of a token gives the token for the path below it.
+
+A token can only be placed. Code that computes with one, such as `arn.split(":")`, belongs in `deriveParams`, which runs at deploy with real outputs. A token cannot be a map key: key the entry by something known now, and put the token inside it.
+
+## Contributions
+
+A param whose schema item has `collect` is collected. Any code can add to it with `contribute` while infra is being evaluated:
+
+```ts
+const policySchema = rolePolicy.defineSchema({
+  PolicyDocument: {
+    propertyType: "param",
+    presence: "required",
+    collect: (items) => ({
+      Version: "2012-10-17",
+      Statement: items.flatMap((item) => item.Statement ?? []),
+    }),
+  },
+});
+
+policy.contribute(
+  { PolicyDocument: { Statement: [grant] } },
+  { by: "orders-mapping" },
+);
+```
+
+`contribute` accepts only collected params. A collected param is optional in config. `collect` receives the value from config first, if there is one, and then every contribution, sorted by content, so moving code never changes the result. `collect` is not called when there are no items, and the param is left unset.
+
+`mergeContributions` is a `collect` rule that merges maps key by key. Two items that set one key to different values conflict, and the error names both contributors. A contributor is named by the `by` option when there is one, and otherwise by the `file:line` of the `contribute` call. Library code that contributes on the user's behalf passes `by`, so the message points at something the user wrote. A value that holds a token is not known at plan, so a conflict with it is found at deploy.
+
+Keep a map structured in the param, so state, diff and plan see each key. Encode it, for example with `sortedJson` from `@notation/utils`, only in `create` and `update`, and decode it in `read`.
+
+Contributions close when evaluation ends: `contribute` and `dependOn` throw from then on. A resource made outside `collectResourceGraph` closes once its params or dependencies are read. `onEvaluationEnd(callback)` registers a callback that runs after evaluation and before the close, for generated code whose values do not exist while modules are still being evaluated. It is an engine mechanism, not user-facing API.
+
+Removing a contributor changes the collected value, and the resource updates on the next deploy. When the API cannot unset a removed field, the provider resets it to the API's default. When there is no default, mark the field `immutable`, so that removing it replaces the resource.
 
 ## Resource groups
 
