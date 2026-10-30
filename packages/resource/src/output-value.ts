@@ -46,7 +46,9 @@ export function isOutputValue(value: unknown): value is OutputValue {
   return value instanceof OutputValue;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+export function isPlainObject(
+  value: unknown,
+): value is Record<string, unknown> {
   if (value === null || typeof value !== "object") return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
@@ -76,6 +78,28 @@ export function containsOutputValue(value: unknown): boolean {
 }
 
 /**
+ * Copies a value, replacing every output value in it with the result of
+ * `onToken`.
+ */
+export function mapOutputValues(
+  value: unknown,
+  onToken: (token: OutputValue) => unknown,
+): unknown {
+  if (isOutputValue(value)) return onToken(value);
+  if (Array.isArray(value)) {
+    return value.map((entry) => mapOutputValues(entry, onToken));
+  }
+  if (isPlainObject(value)) {
+    const mapped: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      mapped[key] = mapOutputValues(entry, onToken);
+    }
+    return mapped;
+  }
+  return value;
+}
+
+/**
  * Replaces every output value that `lookup` knows with its value. Output
  * values that `lookup` does not know are left in place.
  */
@@ -83,21 +107,10 @@ export function resolveOutputValues(
   value: unknown,
   lookup: OutputLookup,
 ): unknown {
-  if (isOutputValue(value)) {
-    const found = lookup(value);
-    return found.known ? found.value : value;
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => resolveOutputValues(entry, lookup));
-  }
-  if (isPlainObject(value)) {
-    const resolved: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) {
-      resolved[key] = resolveOutputValues(entry, lookup);
-    }
-    return resolved;
-  }
-  return value;
+  return mapOutputValues(value, (token) => {
+    const found = lookup(token);
+    return found.known ? found.value : token;
+  });
 }
 
 /**
@@ -136,16 +149,7 @@ function readPath(output: unknown, path: readonly string[]): unknown {
 
 /** Replaces every output value with `UNKNOWN_AFTER_APPLY`, at its own path. */
 export function markUnknownOutputValues(value: unknown): unknown {
-  if (isOutputValue(value)) return UNKNOWN_AFTER_APPLY;
-  if (Array.isArray(value)) return value.map(markUnknownOutputValues);
-  if (isPlainObject(value)) {
-    const marked: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) {
-      marked[key] = markUnknownOutputValues(entry);
-    }
-    return marked;
-  }
-  return value;
+  return mapOutputValues(value, () => UNKNOWN_AFTER_APPLY);
 }
 
 /**
@@ -154,16 +158,10 @@ export function markUnknownOutputValues(value: unknown): unknown {
  * conflict messages can show them.
  */
 export function toCanonicalOutputValues(value: unknown): unknown {
-  if (isOutputValue(value)) return `<output ${describeOutputValue(value)}>`;
-  if (Array.isArray(value)) return value.map(toCanonicalOutputValues);
-  if (isPlainObject(value)) {
-    const canonicalised: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) {
-      canonicalised[key] = toCanonicalOutputValues(entry);
-    }
-    return canonicalised;
-  }
-  return value;
+  return mapOutputValues(
+    value,
+    (token) => `<output ${describeOutputValue(token)}>`,
+  );
 }
 
 function describeOutputValue(token: OutputValue): string {

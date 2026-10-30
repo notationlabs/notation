@@ -3,7 +3,7 @@ import type { DeepPartial } from "./types";
 import type { BaseResource } from "./resource";
 import {
   containsOutputValue,
-  isOutputValue,
+  isPlainObject,
   toCanonicalOutputValues,
 } from "./output-value";
 
@@ -102,16 +102,8 @@ function compare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function isMap(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== "object" || isOutputValue(value)) {
-    return false;
-  }
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
 function cloneMaps(value: unknown): unknown {
-  if (!isMap(value)) return value;
+  if (!isPlainObject(value)) return value;
   const cloned: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
     cloned[key] = cloneMaps(entry);
@@ -158,7 +150,7 @@ export function mergeContributions<T>(
         owners.set(JSON.stringify(entryPath), contributor);
         continue;
       }
-      if (isMap(existing) && isMap(value)) {
+      if (isPlainObject(existing) && isPlainObject(value)) {
         mergeInto(existing, value, contributor, entryPath);
         continue;
       }
