@@ -111,20 +111,17 @@ The group creates the policy resource only when code first reads `lambdaGroup.po
 
 A function's `Environment` is collected: any code can contribute to it, and the contributions are merged key by key. Two contributions that set one key to different values fail the plan, and the error names both contributors.
 
-```ts [@notation/aws.iac]
-type LambdaEnvironment = {
-  Variables?: Record<string, string>;
-  Runtime?: { dispatch?: Record<string, { export: string; match: string }> };
-};
+```ts [infra/lambda.ts]
+external.fn.contribute({
+  Environment: { Variables: { QUEUE_URL: orderQueue.url } },
+});
 ```
 
-`Runtime` holds values that the function reads at runtime. State, diff and plan see `Runtime` as a structured map, so a plan shows a value that waits on an undeployed output as unknown at its own key, and leaves the other keys visible:
+A variable that waits on an undeployed output shows as unknown at its own key in a plan, and the other variables stay visible:
 
 ```
-Environment.Runtime.dispatch["orders-orders-processOrders-mapping"].match = (known after apply)
+Environment.Variables.QUEUE_URL = (known after apply)
 ```
-
-The provider encodes `Runtime` only when it creates or updates the function: it sets one variable, `NOTATION_RUNTIME`, to `Runtime` as JSON with sorted keys. A read decodes the variable again, so a hand-edited value shows as drift on the key that changed. `NOTATION_RUNTIME` is reserved, and setting it in `Variables` fails the deploy.
 
 When the last contribution to `Environment` goes, the next deploy removes the function's variables.
 

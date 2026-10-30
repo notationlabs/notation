@@ -71,8 +71,7 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
 
   /**
    * Invokes the function with the queue's messages. Gives the function's
-   * role permission to read the queue, records the binding in the function's
-   * dispatch entries, and maps the queue to the function.
+   * role permission to read the queue, and maps the queue to the function.
    */
   consume(
     handler: SqsHandler | LambdaGroup,
@@ -92,16 +91,6 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
         ],
       },
     });
-    lambdaGroup.fn.contribute({
-      Environment: {
-        Runtime: {
-          dispatch: {
-            [id]: { export: lambdaGroup.config.handler, match: this.arn },
-          },
-        },
-      },
-    });
-
     return this.add(
       new aws.lambda.LambdaEventSourceMapping(id, {
         config: {

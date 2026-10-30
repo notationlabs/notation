@@ -10,11 +10,9 @@ import { fs } from "@notation/std.iac";
 import { lambdaClient } from "src/utils/aws-clients";
 import {
   LambdaFunction,
-  type LambdaEnvironment,
   type LambdaFunctionInstance,
 } from "src/resources/lambda/lambda";
 import { LambdaIamRole } from "src/resources/lambda/lambda-role";
-import { sortedJson } from "@notation/utils";
 import { ResourceNotFoundError } from "@notation/resource";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
 
@@ -247,7 +245,7 @@ describe("Lambda create token", () => {
 });
 
 describe("Lambda environment", () => {
-  function createLambda(Environment?: LambdaEnvironment) {
+  function createLambda(Environment?: sdk.Environment) {
     const lambda = new LambdaFunction("app", {
       config: {
         FunctionName: "app",
@@ -260,138 +258,30 @@ describe("Lambda environment", () => {
     return lambda;
   }
 
-  function mockGetFunction(Variables?: Record<string, string>) {
-    const response: sdk.GetFunctionResponse = {
-      Configuration: {
-        FunctionName: "app",
-        State: "Active",
-        RevisionId: "rev-1",
-        Environment: Variables ? { Variables } : undefined,
-      },
-    };
-    vi.spyOn(lambdaClient, "send").mockImplementation(async (command) => {
-      if (command instanceof sdk.GetFunctionCommand) return response;
-      throw new Error("unexpected command");
-    });
-  }
-
-  const dispatch = (id: string, match: string) => ({
-    Runtime: { dispatch: { [id]: { export: "handler", match } } },
-  });
-
   it("merges contributions to the environment key by key", async () => {
     const lambda = createLambda({ Variables: { STAGE: "prod" } });
-    lambda.contribute({ Environment: dispatch("orders", "arn:orders") });
-    lambda.contribute({ Environment: dispatch("refunds", "arn:refunds") });
+    lambda.contribute({ Environment: { Variables: { ORDERS: "arn:orders" } } });
+    lambda.contribute({
+      Environment: { Variables: { REFUNDS: "arn:refunds" } },
+    });
 
     expect((await lambda.getParams()).Environment).toEqual({
-      Variables: { STAGE: "prod" },
-      Runtime: {
-        dispatch: {
-          orders: { export: "handler", match: "arn:orders" },
-          refunds: { export: "handler", match: "arn:refunds" },
-        },
+      Variables: {
+        STAGE: "prod",
+        ORDERS: "arn:orders",
+        REFUNDS: "arn:refunds",
       },
     });
   });
 
   it("names both contributors when they set one key to different values", async () => {
     const lambda = createLambda();
-    lambda.contribute({ Environment: dispatch("orders", "arn:a") });
-    lambda.contribute({ Environment: dispatch("orders", "arn:b") });
+    lambda.contribute({ Environment: { Variables: { ORDERS: "arn:a" } } });
+    lambda.contribute({ Environment: { Variables: { ORDERS: "arn:b" } } });
 
     await expect(lambda.getParams()).rejects.toThrow(
-      /lambda\.test\.ts:\d+ and .*lambda\.test\.ts:\d+ both set Environment\.Runtime\.dispatch\.orders\.match/,
+      /lambda\.test\.ts:\d+ and .*lambda\.test\.ts:\d+ both set Environment\.Variables\.ORDERS/,
     );
-  });
-
-  it("encodes the runtime values as one variable of sorted JSON on create", async () => {
-    const lambda = createLambda({ Variables: { STAGE: "prod" } });
-    lambda.contribute({ Environment: dispatch("orders", "arn:orders") });
-    const params = await lambda.getParams();
-    const directory = await mkdtemp(
-      path.join(tmpdir(), "notation-lambda-env-"),
-    );
-    const filePath = path.join(directory, "handler.zip");
-    await writeFile(filePath, "zip bytes");
-    const send = vi
-      .spyOn(lambdaClient, "send")
-      .mockImplementation(async () => ({}));
-
-    await lambda.create({
-      ...params,
-      CodeFilePath: filePath,
-      CodeSha256: await sha256Base64(filePath),
-    });
-    await rm(directory, { recursive: true, force: true });
-
-    const command = send.mock.calls[0]![0] as sdk.CreateFunctionCommand;
-    expect(command.input.Environment).toEqual({
-      Variables: {
-        STAGE: "prod",
-        NOTATION_RUNTIME:
-          '{"dispatch":{"orders":{"export":"handler","match":"arn:orders"}}}',
-      },
-    });
-  });
-
-  it("decodes the runtime variable on read, so an unchanged function has no drift", async () => {
-    const Environment = {
-      Variables: { STAGE: "prod" },
-      ...dispatch("orders", "arn:orders"),
-    };
-    mockGetFunction({
-      STAGE: "prod",
-      NOTATION_RUNTIME: sortedJson.encode(Environment.Runtime),
-    });
-
-    const result = (await createLambda().read!({
-      FunctionName: "app",
-    })) as { Environment?: LambdaEnvironment };
-
-    expect(result.Environment).toEqual(Environment);
-  });
-
-  it("shows a hand-edited runtime variable as drift on the key that changed", async () => {
-    mockGetFunction({
-      NOTATION_RUNTIME: sortedJson.encode(
-        dispatch("orders", "arn:edited").Runtime,
-      ),
-    });
-
-    const result = (await createLambda().read!({
-      FunctionName: "app",
-    })) as { Environment?: LambdaEnvironment };
-
-    expect(result.Environment?.Runtime?.dispatch?.orders?.match).toBe(
-      "arn:edited",
-    );
-  });
-
-  it("keeps a runtime variable that is not JSON among the variables", async () => {
-    mockGetFunction({ NOTATION_RUNTIME: "not json" });
-
-    const result = (await createLambda().read!({
-      FunctionName: "app",
-    })) as { Environment?: LambdaEnvironment };
-
-    expect(result.Environment).toEqual({
-      Variables: { NOTATION_RUNTIME: "not json" },
-    });
-  });
-
-  it("rejects a variable with the reserved name", async () => {
-    const lambda = createLambda({ Variables: { NOTATION_RUNTIME: "x" } });
-    vi.spyOn(lambdaClient, "send").mockImplementation(async () => ({}));
-
-    await expect(
-      lambda.update!(
-        { FunctionName: "app" },
-        { Environment: { Variables: { NOTATION_RUNTIME: "x" } } } as any,
-        {} as any,
-        {} as any,
-      ),
-    ).rejects.toThrow("NOTATION_RUNTIME is reserved");
   });
 
   it("clears the variables when the environment is removed", async () => {
@@ -409,24 +299,5 @@ describe("Lambda environment", () => {
     const command = send.mock
       .calls[0]![0] as sdk.UpdateFunctionConfigurationCommand;
     expect(command.input.Environment).toEqual({ Variables: {} });
-  });
-
-  it("drops the runtime variable when the last contribution is removed", async () => {
-    const send = vi
-      .spyOn(lambdaClient, "send")
-      .mockImplementation(async () => ({}));
-
-    await createLambda().update!(
-      { FunctionName: "app" },
-      { Environment: { Variables: { STAGE: "prod" } } } as any,
-      {} as any,
-      {} as any,
-    );
-
-    const command = send.mock
-      .calls[0]![0] as sdk.UpdateFunctionConfigurationCommand;
-    expect(command.input.Environment).toEqual({
-      Variables: { STAGE: "prod" },
-    });
   });
 });

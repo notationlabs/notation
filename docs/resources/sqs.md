@@ -71,15 +71,12 @@ export const config: LambdaConfig = {
 
 ::
 
-The handler import from a `.fn.ts` file becomes a Lambda group, as it does for [API Gateway routes](api-gateway.md). `consume` then changes three things, and the function's own config doesn't mention the queue:
+The handler import from a `.fn.ts` file becomes a Lambda group, as it does for [API Gateway routes](api-gateway.md). `consume` then changes two things, and the function's own config doesn't mention the queue:
 
 1. **The role's inline policy.** `consume` contributes a statement that allows `sqs:ReceiveMessage`, `sqs:DeleteMessage` and `sqs:GetQueueAttributes` on the queue to the function's [inline policy](lambda.md#inline-policy).
-2. **The function's environment.** `consume` contributes a dispatch entry to `Environment.Runtime.dispatch`, keyed by the mapping's ID: `{ export: "processOrders", match: orderQueue.arn }`.
-3. **An event source mapping**, `orders-orders-processOrders-mapping`, which connects the queue to the function.
+2. **An event source mapping**, `orders-orders-processOrders-mapping`, which connects the queue to the function.
 
 The mapping depends on the policy, even though it reads nothing from it. This matters because AWS checks the role's permissions when it creates the mapping, so the policy has to exist first. Notation retries the create while the new permissions propagate through IAM.
-
-As an aside, nothing reads the dispatch entry at runtime yet: each handler is bundled as its own function. The entry is recorded so that a function with several handlers can choose one by event source.
 
 ### Options
 
@@ -94,14 +91,14 @@ When you remove `batchSize` or `maxBatchingWindow`, Notation sets the mapping ba
 
 ### Several queues
 
-Each queue contributes its own statement and dispatch entry, so two queues can feed one function:
+Each queue contributes its own statement, so two queues can feed one function:
 
 ```ts [infra/orders.ts]
 orderQueue.consume(processOrders);
 refundQueue.consume(processOrders);
 ```
 
-The function's policy then has two statements, and its dispatch map has two entries. When you delete the `refundQueue.consume` line, its statement and entry go with it, and the next deploy updates the policy and the environment.
+The function's policy then has two statements. When you delete the `refundQueue.consume` line, its statement and mapping go with it, and the next deploy updates the policy and deletes the mapping.
 
 A queue can feed a given function once: a second `consume` with the same function throws.
 

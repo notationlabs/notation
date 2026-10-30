@@ -5,7 +5,7 @@ import { expect, test } from "vitest";
 import { lambda as awsLambda } from "@notation/aws.iac";
 import { createPlan } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
-import { collectResourceGraph, UNKNOWN_AFTER_APPLY } from "@notation/resource";
+import { collectResourceGraph } from "@notation/resource";
 import { lambda, type LambdaGroup } from "src/lambda";
 import { queue } from "src/sqs";
 
@@ -59,27 +59,6 @@ test("consume grants the function access to the queue and maps the queue to it",
   );
 });
 
-test("consume records a dispatch entry keyed by the mapping's id", async () => {
-  let fn!: LambdaGroup;
-  let orders!: ReturnType<typeof queue>;
-  await collectResourceGraph(() => {
-    fn = lambda({ id: "process", handler: "processOrders", code });
-    orders = queue({ name: "orders" });
-    orders.consume(fn);
-  });
-
-  expect((await fn.fn.planParams()).Environment).toEqual({
-    Runtime: {
-      dispatch: {
-        "orders-process-mapping": {
-          export: "processOrders",
-          match: UNKNOWN_AFTER_APPLY,
-        },
-      },
-    },
-  });
-});
-
 test("two queues feeding one function each add a statement", async () => {
   let fn!: LambdaGroup;
   let orders!: ReturnType<typeof queue>;
@@ -98,14 +77,6 @@ test("two queues feeding one function each add a statement", async () => {
     readStatement("orders"),
     readStatement("refunds"),
   ]);
-  const environment = (await fn.fn.planParams()).Environment as any;
-  expect(Object.keys(environment.Runtime.dispatch)).toEqual([
-    "orders-process-mapping",
-    "refunds-process-mapping",
-  ]);
-  expect(environment.Runtime.dispatch["orders-process-mapping"].match).toBe(
-    queueArn("orders"),
-  );
 });
 
 test("a function that consumes nothing has no inline policy", async () => {

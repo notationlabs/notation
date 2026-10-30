@@ -340,10 +340,10 @@ The rules for `collect`:
 `mergeContributions` is a `collect` rule for maps. It merges the maps key by key, and fails when two contributions set one key to different values. The error names each contribution by the `file:line` of its `contribute` call, and gives the path of the key:
 
 ```
-Conflicting contributions to orders-processOrders: infra/orders.ts:12 and packages/aws/src/sqs/queue.ts:95 both set Environment.Runtime.dispatch.orders-orders-processOrders-mapping.match, to "a" and "b"
+Conflicting contributions to orders-processOrders: infra/orders.ts:12 and infra/refunds.ts:8 both set Environment.Variables.QUEUE_URL, to "a" and "b"
 ```
 
-Library code that contributes for the user, such as `consume`, keys each entry by a name the user chose, such as the mapping ID. Two calls of the library code then never set the same key, and when the library conflicts with the user's code, the key path names the binding. A value that holds a token is not known at plan, so plan cannot find a conflict with it, and deploy fails instead.
+Library code that contributes a map entry for the user should key the entry by a name the user chose, such as a binding's ID. Two calls of the library code then never set the same key, and when the library conflicts with the user's code, the key path names the binding. A value that holds a token is not known at plan, so plan cannot find a conflict with it, and deploy fails instead.
 
 ### Function contributions
 
@@ -382,7 +382,7 @@ importer.policy.contribute(
 2. **At deploy**, the queue deploys first. Deploy then runs the function with the queue's real output, and collects the result like a plain contribution. The call site, lifetime and conflicts work the same way. The result can only set collected params.
 3. **At plan**, the function receives the same views of its deps as `deriveParams` (see [Unknown values](reconciler.md#unknown-values)). When the queue has no output yet, reading `deps.queue.output` throws, and plan marks every collected param of the policy unknown. When the queue exists, plan uses the function's result.
 
-As an aside, a provider that stores a collected map as one string should still keep the map structured in the param, so state, diff and plan see each key. The provider encodes it only in `create` and `update`, for example with `sortedJson` from `@notation/utils`, and decodes it in `read`. A Lambda's [`Environment.Runtime`](../resources/lambda.md#environment) works this way.
+As an aside, a provider that stores a collected map as one string should still keep the map structured in the param, so state, diff and plan see each key. The provider encodes it only in `create` and `update`, for example with `sortedJson` from `@notation/utils`, and decodes it in `read`.
 
 ### Lifetime
 

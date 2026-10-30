@@ -15,58 +15,22 @@ import { awsCreate } from "src/utils/errors";
 import { runLambdaMutation } from "src/utils/lambda-mutation";
 import { AwsSchema } from "src/utils/types";
 import { fs } from "@notation/std.iac";
-import { sortedJson } from "@notation/utils";
 import { LambdaIamRoleInstance } from "./";
 
 export type LambdaFunctionSchema = AwsSchema<{
   Key: Omit<sdk.GetFunctionRequest, "Qualifier">;
-  CreateParams: Omit<sdk.CreateFunctionRequest, "Code" | "Environment"> &
+  CreateParams: Omit<sdk.CreateFunctionRequest, "Code"> &
     sdk.PutFunctionConcurrencyRequest &
-    LambdaCodeParams &
-    LambdaEnvironmentParams;
+    LambdaCodeParams;
   UpdateParams: Omit<sdk.UpdateFunctionCodeRequest, "ZipFile"> &
-    Omit<sdk.UpdateFunctionConfigurationRequest, "Environment"> &
+    sdk.UpdateFunctionConfigurationRequest &
     sdk.PutFunctionConcurrencyRequest &
     sdk.PutFunctionCodeSigningConfigRequest &
-    LambdaCodeParams &
-    LambdaEnvironmentParams;
-  ReadResult: Omit<
-    NonNullable<sdk.GetFunctionResponse["Configuration"]>,
-    "Environment"
-  > &
+    LambdaCodeParams;
+  ReadResult: NonNullable<sdk.GetFunctionResponse["Configuration"]> &
     NonNullable<sdk.GetFunctionResponse["Code"]> &
-    NonNullable<sdk.GetFunctionResponse["Concurrency"]> &
-    LambdaEnvironmentParams;
+    NonNullable<sdk.GetFunctionResponse["Concurrency"]>;
 }>;
-
-type LambdaEnvironmentParams = { Environment?: LambdaEnvironment };
-
-/**
- * The function's environment. The params hold it as structured maps, so
- * state, diff and plan see each key. `Runtime` is encoded as one variable,
- * `NOTATION_RUNTIME`, only when the function is created or updated.
- */
-export type LambdaEnvironment = {
-  Variables?: Record<string, string>;
-  /** Values the function reads at runtime, merged key by key. */
-  Runtime?: LambdaRuntimeValues;
-};
-
-export type LambdaRuntimeValues = {
-  /**
-   * Which export handles each event source, keyed by the ID of the binding
-   * that connects the source to the function.
-   */
-  dispatch?: Record<string, LambdaDispatchEntry>;
-};
-
-export type LambdaDispatchEntry = {
-  export: string;
-  /** What identifies the event source, such as a queue's ARN. */
-  match: string;
-};
-
-export const RUNTIME_VARIABLE = "NOTATION_RUNTIME";
 
 /**
  * The code is uploaded from a file. The params hold the path and hash of the
@@ -246,7 +210,6 @@ export const LambdaFunction = lambdaFunctionSchema
       const { CodeFilePath, ...functionParams } = params;
       const command = new sdk.CreateFunctionCommand({
         ...functionParams,
-        Environment: encodeEnvironment(params.Environment),
         Tags: token
           ? { ...params.Tags, [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
           : params.Tags,
@@ -306,7 +269,6 @@ export const LambdaFunction = lambdaFunctionSchema
 
         return {
           ...Configuration,
-          Environment: decodeEnvironment(Configuration.Environment),
           Layers: Configuration.Layers?.map((layer) => layer.Arn),
           VpcConfig: Configuration.VpcConfig ? vpcConfig : undefined,
           SnapStart: Configuration.SnapStart ? snapStart : undefined,
@@ -323,13 +285,10 @@ export const LambdaFunction = lambdaFunctionSchema
     },
 
     update: async (key, patch, params) => {
-      const { CodeFilePath, CodeSha256, Environment, ...rest } = patch;
-      const conf: Omit<sdk.UpdateFunctionConfigurationRequest, "FunctionName"> =
-        rest;
-      // Lambda keeps the variables when Environment is omitted, so a removed
-      // Environment is sent as empty variables.
-      if ("Environment" in patch) {
-        conf.Environment = encodeEnvironment(Environment) ?? { Variables: {} };
+      const { CodeFilePath, CodeSha256, ...conf } = patch;
+      // An omitted Environment leaves the variables as they were.
+      if ("Environment" in conf && conf.Environment === undefined) {
+        conf.Environment = { Variables: {} };
       }
 
       // todo: work it out so that these commands be run together. currently errors on:
@@ -370,50 +329,6 @@ export const LambdaFunction = lambdaFunctionSchema
   }));
 
 export type LambdaFunctionInstance = InstanceType<typeof LambdaFunction>;
-
-/**
- * Encodes the environment as AWS takes it: the variables, and the runtime
- * values as one variable of sorted JSON.
- */
-function encodeEnvironment(
-  environment: LambdaEnvironment | undefined,
-): sdk.Environment | undefined {
-  if (!environment) return undefined;
-  const { Variables, Runtime } = environment;
-  if (Variables && RUNTIME_VARIABLE in Variables) {
-    throw new Error(
-      `${RUNTIME_VARIABLE} is reserved for the function's runtime values; set Environment.Runtime instead`,
-    );
-  }
-  if (!Runtime || Object.keys(Runtime).length === 0) return { Variables };
-  return {
-    Variables: { ...Variables, [RUNTIME_VARIABLE]: sortedJson.encode(Runtime) },
-  };
-}
-
-/**
- * Decodes the environment AWS reports into the shape it is configured in. A
- * runtime variable that is not JSON is left among the variables, so it shows
- * as drift.
- */
-function decodeEnvironment(
-  environment: sdk.EnvironmentResponse | undefined,
-): LambdaEnvironment | undefined {
-  const { [RUNTIME_VARIABLE]: encoded, ...variables } =
-    environment?.Variables ?? {};
-  let runtime: LambdaRuntimeValues | undefined;
-  if (encoded !== undefined) {
-    try {
-      runtime = sortedJson.decode(encoded) as LambdaRuntimeValues;
-    } catch {
-      variables[RUNTIME_VARIABLE] = encoded;
-    }
-  }
-  const decoded: LambdaEnvironment = {};
-  if (Object.keys(variables).length > 0) decoded.Variables = variables;
-  if (runtime) decoded.Runtime = runtime;
-  return Object.keys(decoded).length > 0 ? decoded : undefined;
-}
 
 /**
  * Reads the archive to upload. A resumed deploy reuses the params of the
