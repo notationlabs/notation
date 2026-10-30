@@ -58,8 +58,8 @@ export type OrphanDeletionSkippedEvent = {
   resourceType: ResourceType;
   /**
    * The orphans the skipped orphan depends on, directly or through another
-   * orphan. The sweep keeps them in place, because the skipped orphan still
-   * refers to them.
+   * orphan. In destroy, also the desired resources it depends on. These are
+   * kept in place, because the skipped orphan still refers to them.
    */
   keptDependencies: string[];
 };

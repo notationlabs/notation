@@ -1252,6 +1252,80 @@ describe("dependency edges in state", () => {
     expect(await runtime.state.values()).toHaveLength(0);
     runtime.close();
   });
+
+  it("keeps the desired resources an unregistered orphan depends on through destroy", async () => {
+    const deleted: string[] = [];
+    const events: ReconcilerEvent[] = [];
+    const Policy = defineRecorded("test/durable/kept-policy", deleted);
+    const Role = defineRecorded("test/durable/kept-desired-role", deleted);
+    const Fn = defineRecorded("test/durable/kept-desired-fn", deleted);
+    const Unregistered = defineRecorded("test/durable/kept-attachment", deleted);
+    const policy = new Policy("policy");
+    const role = new Role("role", { dependencies: { policy } });
+    const resources: BaseResource[] = [
+      policy,
+      role,
+      new Fn("fn", { dependencies: { role } }),
+      new Unregistered("attachment", { dependencies: { role } }),
+    ];
+    const runtime = createRuntime(resources, "destroy-kept-desired", {
+      registry: createResourceRegistry([Policy, Role, Fn]),
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("deploy-1");
+    resources.length = 3;
+    await runtime.destroy("destroy-1");
+
+    expect(deleted).toEqual(["test/durable/kept-desired-fn"]);
+    expect(
+      events.filter(
+        (event) => event.event === "reconciler.orphan-deletion.skipped",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        workflow: "destroy",
+        resourceId: "attachment",
+        keptDependencies: ["policy", "role"],
+      }),
+    ]);
+    expect(
+      (await runtime.state.values()).map((node) => node.id).sort(),
+    ).toEqual(["attachment", "policy", "role"]);
+    runtime.close();
+  });
+
+  it("names only orphans as kept in deploy, which deletes no desired resource", async () => {
+    const events: ReconcilerEvent[] = [];
+    const Role = defineRecorded("test/durable/deploy-desired-role", []);
+    const Unregistered = defineRecorded("test/durable/deploy-attachment", []);
+    const role = new Role("role");
+    const resources: BaseResource[] = [
+      role,
+      new Unregistered("attachment", { dependencies: { role } }),
+    ];
+    const runtime = createRuntime(resources, "deploy-kept-desired", {
+      registry: createResourceRegistry([Role]),
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("deploy-1");
+    resources.length = 1;
+    await runtime.run("deploy-2");
+
+    expect(
+      events.filter(
+        (event) => event.event === "reconciler.orphan-deletion.skipped",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        workflow: "deploy",
+        resourceId: "attachment",
+        keptDependencies: [],
+      }),
+    ]);
+    runtime.close();
+  });
 });
 
 describe("state from before groups had stable IDs", () => {

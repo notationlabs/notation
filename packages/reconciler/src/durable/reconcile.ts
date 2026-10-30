@@ -232,13 +232,16 @@ export async function* deleteResource(
  * A state node whose type has no registry entry is left in place and surfaced
  * as a warning, because deleting it would need a resource class we cannot
  * resolve. Every orphan it depends on is left in place too, and the warning
- * names them.
+ * names them. In destroy, so is every desired resource it depends on.
+ *
+ * Returns the IDs of the resources kept for a skipped orphan, so that destroy
+ * can leave the desired ones in place.
  */
 export async function* sweepOrphans(
   step: DurableStep,
   opts: DurableWorkflowOptions,
   workflow: "deploy" | "destroy",
-): AsyncGenerator<any, void, any> {
+): AsyncGenerator<any, Set<string>, any> {
   const scope = scopeStep(step, "notation:orphans");
   const resourceById = new Map(
     opts.resources.map((resource) => [resource.id, resource]),
@@ -248,7 +251,17 @@ export async function* sweepOrphans(
     opts.registry ?? createResourceRegistryFromResources(opts.resources);
 
   const orphans = persisted.filter((node) => !resourceById.has(node.id));
-  const orphanById = new Map(orphans.map((node) => [node.id, node]));
+  const edgesById = new Map(
+    orphans.map((node) => [node.id, node.dependsOn ?? []]),
+  );
+  // Destroy deletes the desired set after the sweep, so an edge from a
+  // skipped orphan to a desired resource keeps that resource too. Deploy does
+  // not delete desired resources, so it follows edges between orphans only.
+  if (workflow === "destroy") {
+    for (const resource of opts.resources) {
+      edgesById.set(resource.id, getDependencyIds(resource));
+    }
+  }
   const kept = new Set<string>();
 
   for (const node of orderOrphanDeletes(orphans)) {
@@ -258,7 +271,7 @@ export async function* sweepOrphans(
     // An unregistered orphan warns even when another orphan already keeps
     // it, so that the warnings name every type the sweep could not delete.
     if (!Resource) {
-      const keptDependencies = collectDependencies(node, orphanById);
+      const keptDependencies = collectDependencies(node, edgesById);
       for (const id of keptDependencies) kept.add(id);
 
       const emit = durableEmitter(nodeScope, opts.emit);
@@ -279,6 +292,8 @@ export async function* sweepOrphans(
     resource.setOutput(node.output);
     yield* deleteResource(nodeScope, resource, opts);
   }
+
+  return kept;
 }
 
 /**
@@ -299,19 +314,22 @@ function orderOrphanDeletes(orphans: StateNode[]): StateNode[] {
   return [...unordered, ...levels.reverse().flat()];
 }
 
-/** The orphans that `node` depends on, directly or through other orphans. */
+/**
+ * The resources that `node` depends on, directly or through each other,
+ * among those that `edgesById` holds edges for.
+ */
 function collectDependencies(
   node: StateNode,
-  orphanById: Map<string, StateNode>,
+  edgesById: Map<string, string[]>,
 ): string[] {
   const found = new Set<string>();
   const pending = [...(node.dependsOn ?? [])];
   while (pending.length > 0) {
     const id = pending.pop()!;
-    const dependency = orphanById.get(id);
-    if (found.has(id) || id === node.id || !dependency) continue;
+    const edges = edgesById.get(id);
+    if (found.has(id) || id === node.id || !edges) continue;
     found.add(id);
-    pending.push(...(dependency.dependsOn ?? []));
+    pending.push(...edges);
   }
   return [...found].sort();
 }

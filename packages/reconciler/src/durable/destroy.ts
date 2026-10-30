@@ -12,14 +12,16 @@ export async function* destroy(
 ): AsyncGenerator<any, void, any> {
   yield* withDeploymentHold(step, opts, async function* () {
     // Orphans go first: an orphan can depend on a resource in the desired
-    // set, but no resource in the desired set depends on an orphan.
-    yield* sweepOrphans(step, opts, "destroy");
+    // set, but no resource in the desired set depends on an orphan. The sweep
+    // returns the desired resources that a skipped orphan still depends on.
+    const kept = yield* sweepOrphans(step, opts, "destroy");
 
     // Delete in reverse dependency order, so dependents are gone before the
     // resources they depend on.
     const levels = buildResourceDepthLevels(opts.resources);
     for (let index = levels.length - 1; index >= 0; index -= 1) {
       for (const resource of levels[index]!) {
+        if (kept.has(resource.id)) continue;
         yield* deleteResource(
           scopeStep(
             step,
