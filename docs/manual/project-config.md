@@ -73,14 +73,41 @@ These two commands deploy the same code twice, and each stage gets its own state
 No stage given. Pass --stage, or set defaultStage in notation.config.ts
 ```
 
-Infra code cannot read the stage, so every stage of an entry declares the same resources with the same names. In the starter app, every stage declares a Lambda function named `todos-getTodos` and an IAM role named `todos-getTodos-role`.
+## AWS names
 
-**Deploy each stage to its own AWS account.** The stage does not change resource names, so the second stage in one account asks AWS to create a Lambda function and an IAM role that already exist, and the deploy fails. Choose the account with an AWS profile:
+Each stage of an entry declares the same resources, because infra code cannot read the stage. To keep the stages apart in one AWS account, Notation starts the AWS name of each resource that it names with the app and the stage: `<app>-<stage>-<id>`.
 
-```sh
-AWS_PROFILE=staging notation deploy api --stage staging
-AWS_PROFILE=prod notation deploy api --stage prod
-```
+For example, the starter app declares a Lambda function with the ID `todos-getTodos`. Each stage gets its own function and IAM role:
+
+| Stage  | Lambda function              | IAM role                          |
+| ------ | ---------------------------- | --------------------------------- |
+| `dev`  | `my-app-dev-todos-getTodos`  | `my-app-dev-todos-getTodos-role`  |
+| `prod` | `my-app-prod-todos-getTodos` | `my-app-prod-todos-getTodos-role` |
+
+The names of two apps differ in the same way, so several apps and stages can share one AWS account.
+
+Notation scopes these names:
+
+| Resource               | AWS name                  | Longest name |
+| ---------------------- | ------------------------- | ------------ |
+| Lambda function        | `<app>-<stage>-<id>`      | 64           |
+| IAM role of a function | `<app>-<stage>-<id>-role` | 64           |
+| SQS queue              | `<app>-<stage>-<name>`    | 80           |
+| EventBridge rule       | `<app>-<stage>-<name>`    | 64           |
+| API Gateway API        | `<app>-<stage>-<name>`    | 128          |
+
+Names that only have to be unique inside another resource stay as they are. For example, the inline policy of a role is `<id>-role-policy`, and a function's log group is `/aws/lambda/<function name>`, which already contains the app and the stage.
+
+**A name longer than the service allows is shortened.** Notation cuts the name short and ends it with `-` and an 8-character hash of the full name. For example, the function `warehouse-processIncomingOrderNotificationsFromSuppliers` in the `prod` stage would be named `my-app-prod-warehouse-processIncomingOrderNotificationsFromSuppliers`, which is 68 characters. Lambda allows 64, so Notation names the function and its role:
+
+| Resource        | AWS name                                                           |
+| --------------- | ------------------------------------------------------------------ |
+| Lambda function | `my-app-prod-warehouse-processIncomingOrderNotifications-44f229cc` |
+| IAM role        | `my-app-prod-warehouse-processIncomingOrderNotifications-7da77c57` |
+
+The two names start the same way but end in different hashes, because each hash comes from a different full name. The hash is the same on every deploy, so a shortened name does not change between deploys. A FIFO queue's name keeps its `.fifo` ending after the hash.
+
+The resource IDs in state do not contain the app or the stage. Only the names in AWS do.
 
 ## Deployment identity
 
@@ -134,4 +161,4 @@ Before this config existed, CLI commands took an entry path, and Notation keyed 
 | State key `infra/api.ts`       | State key `my-app:dev:api`        |
 | No config file                 | `notation.config.ts` is required  |
 
-**Notation does not migrate state from the old path key.** The first deploy after the upgrade finds no state under the new key, so it treats every resource as new and tries to create it again. The resources of the old deployment stay in AWS, so AWS rejects the creates of resources with fixed names, such as Lambda functions and IAM roles. Notation no longer manages the old resources. Destroy the old deployment with the previous version of the CLI before you upgrade, or delete its resources by hand afterwards.
+**Notation does not migrate state from the old path key.** The first deploy after the upgrade finds no state under the new key, so it treats every resource as new and tries to create it again. The new deployment starts its [AWS names](#aws-names) with the app and the stage, so its creates do not clash with the old resources. The resources of the old deployment stay in AWS, and Notation no longer manages them. Destroy the old deployment with the previous version of the CLI before you upgrade, or delete its resources by hand afterwards.

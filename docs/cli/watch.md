@@ -29,6 +29,6 @@ notation watch api --stage dev
 
 Restart `watch` after you change `app` or `entries` in `notation.config.ts`.
 
-This gives you a live dev stack on real AWS infrastructure. Each developer can spin up their own ephemeral stack, iterate, and tear it down with `notation destroy`.
+`watch` deploys to real AWS resources. To give each developer their own copy, run `watch` with a stage per developer, such as `--stage dev-alice`, and remove the copy with `notation destroy api --stage dev-alice`. The [AWS names](../manual/project-config.md#aws-names) of each stage start with the app and the stage, so the developers can share one AWS account.
 
 Production deployments use `notation deploy`, not `watch`.

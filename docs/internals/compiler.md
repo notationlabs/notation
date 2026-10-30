@@ -76,10 +76,14 @@ Each named export in a `.fn.ts` file becomes a Lambda function (or other serverl
 After compilation, the resource graph is built by dynamically importing the compiled infrastructure module:
 
 ```ts [packages/core/src/orchestrator/graph.ts]
-return collectResourceGraph(() => import(outFilePath));
+return collectResourceGraph(() => import(outFilePath), {
+  scope: { app: deployment.app, stage: deployment.stage },
+});
 ```
 
 While the compiled entry point is imported, calls such as `lambda({ ... })` add the Lambda function and its associated resources (IAM role, log group, zip package) to the graph.
+
+`scope` holds the app and the stage of the deployment. Resource constructors such as `lambda()` read the scope with `scopedPhysicalName` from `@notation/resource`, and start each AWS name with it: `<app>-<stage>-<id>`. Infra code does not read the scope. `notation viz` builds the graph without a scope, because it deploys nothing and shows only resource IDs.
 
 The reconciler uses the resulting `{ resources, resourceGroups }` object to plan deployments.
 

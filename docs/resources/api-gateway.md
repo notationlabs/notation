@@ -18,6 +18,8 @@ type ApiConfig = {
 };
 ```
 
+`name` keys the API in state. In AWS, the API is named `<app>-<stage>-<name>`, such as `my-app-prod-my-api`. See [AWS names](../manual/project-config.md#aws-names).
+
 ## `router(api)`
 
 ```ts [infra/api.ts]
