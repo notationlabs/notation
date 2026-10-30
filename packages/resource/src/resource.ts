@@ -80,10 +80,14 @@ export interface BaseResource {
   readonly output: {};
   readonly dependencies: Record<string, BaseResource | void>;
   readonly key: {};
+  keyOf(output: {}): {};
   create: (
     params: any,
     context?: ResourceOperationContext,
+    token?: string,
   ) => Promise<{} | void>;
+  findCreated?: (params: any, token: string) => Promise<{} | void>;
+  isUncertainError?: (error: unknown) => boolean;
   read?: (key: any, context?: ResourceOperationContext) => Promise<{}>;
   update?: (
     key: any,
@@ -124,7 +128,13 @@ export abstract class Resource<
   abstract create: (
     params: T["params"],
     context?: ResourceOperationContext,
+    token?: string,
   ) => Promise<T["primaryKey"]>;
+  findCreated?: (
+    params: T["params"],
+    token: string,
+  ) => Promise<T["primaryKey"]>;
+  isUncertainError?: (error: unknown) => boolean;
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -158,12 +168,16 @@ export abstract class Resource<
   }
 
   get key(): T["compoundKey"] {
+    return this.keyOf(this.output);
+  }
+
+  keyOf(output: Partial<T["output"]>): T["compoundKey"] {
     const key = {} as Record<string, any>;
     for (const [k, v] of Object.entries<
       SchemaItem<any> & { primaryKey?: true; secondaryKey?: true }
     >(this.schema)) {
       if (v.primaryKey || v.secondaryKey) {
-        key[k] = (this.output as any)[k];
+        key[k] = (output as any)[k];
       }
     }
     return key;
@@ -217,10 +231,35 @@ export type ResourceOperationsOptions<
   T extends ResourceTypes,
   IntrinsicParams extends Partial<T["params"]>,
 > = {
+  /**
+   * Creates the resource. `token` is unique to the attempt. A resource that
+   * defines `findCreated` with a token records it on the remote resource, for
+   * example as a tag.
+   */
   create: (
     params: T["params"],
     context?: ResourceOperationContext,
+    token?: string,
   ) => Promise<T["primaryKey"]>;
+  /**
+   * Finds the resource that a create attempt with `token` made, and returns
+   * what that create would have returned. Throws `ResourceNotFoundError` when
+   * the attempt made no resource.
+   *
+   * The reconciler calls it after a create attempt with an unknown outcome.
+   * Without it, the reconciler reads a resource whose key is made of params,
+   * and creates again a resource whose key the provider assigns.
+   */
+  findCreated?: (
+    params: T["params"],
+    token: string,
+  ) => Promise<T["primaryKey"]>;
+  /**
+   * Returns true when an error thrown by `create` leaves it unknown whether
+   * the resource was made, such as a timeout. The reconciler looks the
+   * resource up before it creates again. Every other error fails the create.
+   */
+  isUncertainError?: (error: unknown) => boolean;
   read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -338,6 +377,8 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             type = meta.type;
             schema = schema;
             create = opts.create;
+            findCreated = opts.findCreated;
+            isUncertainError = opts.isUncertainError;
             read = opts.read ? opts.read : undefined;
             update = opts.update ? opts.update : undefined;
             delete = opts.delete;

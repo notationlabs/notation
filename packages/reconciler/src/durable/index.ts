@@ -9,7 +9,8 @@
  *   notation:destroy:<id>:*    per-resource deletion steps
  *   notation:orphans:list      the orphan sweep's one read of persisted state
  *   notation:orphans:<id>:*    orphan sweep, per persisted record
- *   *:remote:attempt:<n>       one provider call attempt
+ *   *:create:remote:effect:<n> one create attempt, as a step.effect
+ *   *:remote:attempt:<n>       one read, update or delete attempt
  *   *:remote:retry-delay:<n>   the wait between two attempts
  *   *:emit:<event>[:<operation>:<status>]   event delivery checkpoint
  *   notation:hold:*            deployment hold: inspect/acquire/release
@@ -23,6 +24,10 @@
  *                              in state:create
  *
  * Opening a store has no step key.
+ *
+ * Effect IDs are persisted in the same way. A create attempt's effect ID is
+ * notation:create:<execution id>:<resource id>:<n>, with both IDs
+ * URI-encoded. The resource receives it as the attempt's token.
  *
  * An <id> inside a scope is URI-encoded, so the `:` delimiter is unambiguous.
  * The state: keys are store-handle keys and so are not scope-prefixed: a

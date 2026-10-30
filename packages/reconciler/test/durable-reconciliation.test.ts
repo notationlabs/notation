@@ -1,6 +1,7 @@
 import {
   REDELIVERY_DELAY_BASE,
   WorkflowRunner,
+  type EffectClient,
   type ExecutionLease,
   type HeapClient,
   type Runtime,
@@ -86,7 +87,7 @@ describe("durable execution and replay", () => {
     const runtime = createRuntime(
       [new TestResource("resume")],
       "crash-resume",
-      { crashAfterStep: "notation:deploy:resume:create:remote:attempt:0" },
+      { crashAfterStep: "notation:deploy:resume:create:remote:effect:0" },
     );
 
     await expect(runtime.run("resume-execution")).rejects.toThrow(
@@ -98,6 +99,161 @@ describe("durable execution and replay", () => {
     await runtime.run("resume-execution");
     expect(create).toHaveBeenCalledOnce();
     expect(await runtime.state.get("resume")).toMatchObject({ version: 1 });
+    runtime.close();
+  });
+
+  it("reads a create interrupted before its outcome was recorded instead of creating again", async () => {
+    const create = vi.fn(async () => undefined);
+    const read = vi.fn(async () => ({ name: "app" }));
+    const TestResource = resource({ type: "test/durable/effect-read" })
+      // Cast: a resource declared without API types constrains every schema
+      // key to be a key of an `any` API schema, which no named key satisfies.
+      .defineSchema({
+        name: { presence: "required", propertyType: "param", primaryKey: true },
+      } as any)
+      .defineOperations({ create, read, delete: async () => undefined });
+    const runtime = createRuntime(
+      [new TestResource("looked-up", { config: { name: "app" } as any })],
+      "effect-read",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("lookup-execution")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    expect(create).toHaveBeenCalledOnce();
+
+    await runtime.run("lookup-execution");
+    expect(create).toHaveBeenCalledOnce();
+    // The lookup, then the read after create.
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenNthCalledWith(1, { name: "app" });
+    expect(await runtime.state.get("looked-up")).toMatchObject({
+      output: { name: "app" },
+      version: 1,
+    });
+    runtime.close();
+  });
+
+  it("creates again after an interrupted create when the resource cannot be looked up", async () => {
+    const create = vi.fn(async () => undefined);
+    const TestResource = resource({ type: "test/durable/effect-no-read" })
+      .defineSchema({})
+      .defineOperations({ create, delete: async () => undefined });
+    const runtime = createRuntime(
+      [new TestResource("no-read")],
+      "effect-no-read",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("no-read-execution")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    await runtime.run("no-read-execution");
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(await runtime.state.get("no-read")).toMatchObject({ version: 1 });
+    runtime.close();
+  });
+
+  it("finds a resource made by a create that threw an uncertain error", async () => {
+    const tokens: string[] = [];
+    const create = vi.fn(async (_params: unknown, _context: unknown, token) => {
+      tokens.push(token!);
+      throw new ProviderTimeoutError("socket timed out");
+    });
+    const findCreated = vi.fn(async (_params: unknown, token: string) => ({
+      remoteId: `remote-for-${token}`,
+    }));
+    const TestResource = resource({ type: "test/durable/effect-find" })
+      .defineSchema({
+        remoteId: {
+          presence: "required",
+          propertyType: "computed",
+          primaryKey: true,
+        },
+      } as any)
+      .defineOperations({
+        // Cast: a schema declared without API types infers no primary key.
+        create: create as any,
+        findCreated: findCreated as any,
+        isUncertainError: (error) => error instanceof ProviderTimeoutError,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime([new TestResource("found")], "effect-find");
+
+    await expect(runtime.run("find-execution")).resolves.toMatchObject({
+      status: "suspended",
+    });
+    runtime.advance(1_000);
+    await runtime.run("find-execution");
+
+    expect(create).toHaveBeenCalledOnce();
+    expect(tokens).toEqual(["notation:create:find-execution:found:0"]);
+    expect(findCreated).toHaveBeenCalledWith(
+      {},
+      "notation:create:find-execution:found:0",
+    );
+    expect(await runtime.state.get("found")).toMatchObject({
+      output: { remoteId: "remote-for-notation:create:find-execution:found:0" },
+      version: 1,
+    });
+    runtime.close();
+  });
+
+  it("fails a create that threw an uncertain error when the resource cannot be looked up", async () => {
+    const create = vi.fn(async () => {
+      throw new ProviderTimeoutError("socket timed out");
+    });
+    const TestResource = resource({ type: "test/durable/effect-unfindable" })
+      .defineSchema({})
+      .defineOperations({
+        create,
+        isUncertainError: (error) => error instanceof ProviderTimeoutError,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime(
+      [new TestResource("unfindable")],
+      "effect-unfindable",
+    );
+
+    await expect(runtime.run("unfindable-execution")).rejects.toThrow(
+      "socket timed out",
+    );
+    expect(create).toHaveBeenCalledOnce();
+    runtime.close();
+  });
+
+  it("fails a create whose outcome stays unknown after the attempt limit", async () => {
+    const create = vi.fn(async () => {
+      throw new ProviderTimeoutError("socket timed out");
+    });
+    const findCreated = vi.fn(async () => {
+      throw new Error("access denied");
+    });
+    const TestResource = resource({ type: "test/durable/effect-unknown" })
+      .defineSchema({})
+      .defineOperations({
+        create,
+        findCreated,
+        isUncertainError: (error) => error instanceof ProviderTimeoutError,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime(
+      [new TestResource("unknown")],
+      "effect-unknown",
+      { maxOperationAttempts: 2 },
+    );
+
+    await expect(runtime.run("unknown-execution")).resolves.toMatchObject({
+      status: "suspended",
+    });
+    runtime.advance(1_000);
+    await expect(runtime.run("unknown-execution")).rejects.toMatchObject({
+      name: "WorkflowEffectError",
+      code: "EFFECT_OUTCOME_UNKNOWN",
+    });
+    expect(create).toHaveBeenCalledOnce();
+    expect(findCreated).toHaveBeenCalledOnce();
     runtime.close();
   });
 
@@ -582,7 +738,7 @@ describe("deployment hold", () => {
     const runtime = createRuntime(
       [new Resource("first"), new Resource("second")],
       "hold-replay",
-      { crashAfterStep: "notation:deploy:first:create:remote:attempt:0" },
+      { crashAfterStep: "notation:deploy:first:create:remote:effect:0" },
     );
 
     await expect(runtime.run("replayed-execution")).rejects.toThrow(
@@ -1211,6 +1367,8 @@ function createRuntime(
   options: {
     maxOperationAttempts?: number;
     crashAfterStep?: string;
+    /** Fails the first effect settle, as if the process died after perform. */
+    failFirstSettle?: boolean;
     registry?: ResourceRegistry;
     driftDetection?: boolean;
     dryRun?: boolean;
@@ -1225,7 +1383,9 @@ function createRuntime(
   const runtime: Runtime = {
     clock: sqliteRuntime.clock,
     executions: sqliteRuntime.executions,
-    effects: sqliteRuntime.effects,
+    effects: options.failFirstSettle
+      ? failFirstSettle(sqliteRuntime.effects)
+      : sqliteRuntime.effects,
     heap: options.crashAfterStep
       ? new CrashAfterWriteHeap(sqliteRuntime.heap, options.crashAfterStep)
       : sqliteRuntime.heap,
@@ -1313,6 +1473,10 @@ function createRuntime(
     destroy(executionId: string) {
       return deliver("destroy", executionId);
     },
+    /** Moves the runtime clock forward, so a suspended step is due. */
+    advance(ms: number) {
+      skew += ms;
+    },
     close() {
       database.close();
     },
@@ -1350,6 +1514,24 @@ class CrashAfterWriteHeap implements HeapClient {
     }
     return result;
   }
+}
+
+function failFirstSettle(inner: EffectClient): EffectClient {
+  let failed = false;
+  return {
+    begin: (request) => inner.begin(request),
+    watch: (request) => inner.watch(request),
+    getEffect: (effectId) => inner.getEffect(effectId),
+    settle(request) {
+      if (failed) return inner.settle(request);
+      failed = true;
+      return Promise.reject(new Error("simulated process crash"));
+    },
+  };
+}
+
+class ProviderTimeoutError extends Error {
+  name = "ProviderTimeoutError";
 }
 
 async function readHolder(

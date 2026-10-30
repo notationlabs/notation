@@ -4,7 +4,10 @@ import type {
   ResourceGroupRef,
 } from "@notation/resource";
 import type { StateNode } from "@notation/state";
-import type { DurableStepFn } from "yieldstar";
+import type {
+  DurableStepFn,
+  StepRunner as YieldstarStepRunner,
+} from "yieldstar";
 import type {
   EmitStep,
   OperationLifecycleEvent,
@@ -29,6 +32,7 @@ export type StepRunner = {
     key: string,
     fn: F & DurableStepFn<F>,
   ): AsyncGenerator<unknown, Awaited<ReturnType<F>>, unknown>;
+  effect: YieldstarStepRunner["effect"];
   delay(key: string, ms: number): AsyncGenerator<unknown, void, unknown>;
   scope(prefix: string): StepRunner;
 };
@@ -86,6 +90,8 @@ export type ResolvedResourceParams = ResourceOperationBaseParams & {
 };
 
 export type CreateResourceParams = ResolvedResourceParams & {
+  /** Names the create effects, together with the resource ID. */
+  executionId: string;
   persist: PersistState;
 };
 

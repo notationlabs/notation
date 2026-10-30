@@ -33,6 +33,7 @@ export function scopeStep(
 
   return {
     run: (key, fn) => step.run(scoped(key), fn),
+    effect: (key, descriptor) => step.effect(scoped(key), descriptor),
     delay: (key: string, ms: number) => step.delay(scoped(key), ms),
     store: step.store,
     scope: (nested: string) => scopeStep(step, scoped(nested)),
