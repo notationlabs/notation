@@ -1,8 +1,28 @@
-import { describe, expect, it } from "vitest";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
 import type { NotationConfig } from "src/config/config";
-import { resolveDeployment, resolveDeploymentId } from "src/config/deployment";
+import {
+  resolveDeployment,
+  resolveDeploymentId,
+  resolveEntryPoint,
+} from "src/config/deployment";
 
-const root = "/project";
+const root = realpathSync(
+  mkdtempSync(path.join(tmpdir(), "notation-deployment-")),
+);
+mkdirSync(path.join(root, "infra"));
+writeFileSync(path.join(root, "infra/api.ts"), "");
+writeFileSync(path.join(root, "infra/billing.ts"), "");
+afterAll(() => rmSync(root, { recursive: true, force: true }));
+
 const config: NotationConfig = {
   app: "orders-app",
   entries: { orders: "infra/api.ts", billing: "infra/billing.ts" },
@@ -39,7 +59,7 @@ describe("resolveDeployment", () => {
       app: "orders-app",
       stage: "prod",
       entry: "orders",
-      entryPoint: "/project/infra/api.ts",
+      entryPoint: path.join(root, "infra/api.ts"),
     });
   });
 
@@ -83,5 +103,17 @@ describe("resolveDeployment", () => {
     expect(() =>
       resolveDeployment(project, { entry: "constructor", stage: "prod" }),
     ).toThrow('No entry named "constructor"');
+  });
+});
+
+describe("resolveEntryPoint", () => {
+  it("fails when the entry file does not exist", () => {
+    const missing = {
+      root,
+      config: { ...config, entries: { orders: "infra/gone.ts" } },
+    };
+    expect(() => resolveEntryPoint(missing, "orders")).toThrow(
+      `Entry file not found: ${path.join(root, "infra/gone.ts")}, the file of entry "orders" in notation.config.ts`,
+    );
   });
 });

@@ -120,6 +120,8 @@ defineConfig({ app: "My_App", entries: { api: "infra/api.ts" } });
 
 The CLI checks the same names again when it loads the config, and it also checks the stage given with `--stage`.
 
+The CLI also rejects a config with a field that is not in the table above, such as `stage` instead of `defaultStage`, and a command fails when the file of its entry does not exist.
+
 ## Upgrading from entry paths
 
 Before this config existed, CLI commands took an entry path, and Notation keyed state by that path:

@@ -76,6 +76,11 @@ describe("parseConfig", () => {
       "runtimeModules must be a glob or an array of globs",
     ],
     [{ ...valid, defaultStage: "Dev" }, 'defaultStage "Dev" is not name-safe'],
+    [
+      { ...valid, stage: "dev" },
+      'unknown key "stage". Known keys: app, entries, runtimeModules, defaultStage',
+    ],
+    [{ ...valid, name: "x", entry: "y" }, 'unknown keys "name", "entry"'],
   ])("rejects %j", (config, message) => {
     expect(() => parseConfig(config)).toThrow(message);
   });

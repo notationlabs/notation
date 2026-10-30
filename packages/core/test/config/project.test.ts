@@ -153,6 +153,7 @@ describe("resolving a loaded project", () => {
 
   it("resolves entries against the project root", async () => {
     await mkdir(path.join(root, "infra"));
+    await writeFile(path.join(root, "infra/api.ts"), "");
     process.chdir(path.join(root, "infra"));
     const project = await loadProject();
 

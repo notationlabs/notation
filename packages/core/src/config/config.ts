@@ -45,12 +45,28 @@ export function defineConfig<
   return config as NotationConfig;
 }
 
+const configKeys = [
+  "app",
+  "entries",
+  "runtimeModules",
+  "defaultStage",
+] as const satisfies readonly (keyof NotationConfig)[];
+
 /** Checks a loaded config at runtime, and returns it typed. */
 export function parseConfig(value: unknown): NotationConfig {
   const fail = (message: string): never => {
     throw new Error(`Invalid ${configFileName}: ${message}`);
   };
   if (!isRecord(value)) return fail("the default export must be an object");
+
+  const unknownKeys = Object.keys(value).filter(
+    (key) => !(configKeys as readonly string[]).includes(key),
+  );
+  if (unknownKeys.length > 0) {
+    fail(
+      `unknown ${unknownKeys.length === 1 ? "key" : "keys"} ${unknownKeys.map((key) => JSON.stringify(key)).join(", ")}. Known keys: ${configKeys.join(", ")}`,
+    );
+  }
 
   const { app, entries, runtimeModules, defaultStage } = value;
   assertNameSafe(app, "app");
