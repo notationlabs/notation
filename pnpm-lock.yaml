@@ -176,8 +176,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/utils
       yieldstar:
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.8.2
+        version: 0.8.2
     devDependencies:
       '@types/node':
         specifier: ^22.13.4
@@ -284,11 +284,11 @@ importers:
         specifier: workspace:*
         version: link:../state
       '@yieldstar/core':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.8.2
+        version: 0.8.2
       '@yieldstar/sqlite-runtime':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.8.2
+        version: 0.8.2
       js-base64:
         specifier: ^3.7.7
         version: 3.7.7
@@ -305,8 +305,8 @@ importers:
         specifier: ^1.4.2
         version: 1.4.2(typescript@6.0.3)
       yieldstar:
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.8.2
+        version: 0.8.2
     devDependencies:
       '@types/common-tags':
         specifier: ^1.8.4
@@ -414,18 +414,18 @@ importers:
         specifier: workspace:*
         version: link:../state
       '@yieldstar/core':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.8.2
+        version: 0.8.2
       valibot:
         specifier: ^1.4.2
         version: 1.4.2(typescript@6.0.3)
       yieldstar:
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.8.2
+        version: 0.8.2
     devDependencies:
       '@yieldstar/sqlite-runtime':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.8.2
+        version: 0.8.2
       pino:
         specifier: ^9.9.0
         version: 9.14.0
@@ -3271,11 +3271,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@yieldstar/core@0.8.0':
-    resolution: {integrity: sha512-yZ7jPHszUKGlEWwj5bj7s/vb8XVaLGdjCPTJgBM33z4DlbM+h1ucWKeS0jYxJ5nkYvQetrLA7Zm0HY3dKGKtaQ==}
+  '@yieldstar/core@0.8.2':
+    resolution: {integrity: sha512-CLBPuL8qycGJNAhDBCo1XleGtVLEFx7EXgCuU5C8g60ctaMxbMDb+WGhlhRFIj9ykDuEt32NykUWBLEoTpTzoA==}
 
-  '@yieldstar/sqlite-runtime@0.8.0':
-    resolution: {integrity: sha512-6/MWkRUhDiWJxaLu6pw6e1kx/vm565PVyWjwTXBq3UFLylvaR5xytatABWZ/iKS80ejdc+Bj7OHO3J2CyuwU6g==}
+  '@yieldstar/sqlite-runtime@0.8.2':
+    resolution: {integrity: sha512-2t/I6m2QTEQsaLSr4WQV0OZN+8hMErHJF+0cmTfAQwBpWgZOyD5IlvWENj+tw79escKot/Uq38dwU+ewVn4cgQ==}
     engines: {node: '>=22.6'}
 
   '@yuku-core/binding-android-arm64@0.19.0':
@@ -5314,8 +5314,8 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
-  yieldstar@0.8.0:
-    resolution: {integrity: sha512-b0hS7kxJX0KfMi/YlyixHELYTYZntadQEJEo10JYn39uT+QxmRRVuzPy+R8r8OExnWJmgQnP0agSCsFS9x9xyQ==}
+  yieldstar@0.8.2:
+    resolution: {integrity: sha512-kWIuHHlONsQGhw61F2xGYkylrJ1Qj0TOYYk4XdXh5HbziWy2jhvBFpjmm0/xrt1Os6wni0ZjHG17k1wEfbIhRg==}
 
   yoctocolors@2.1.1:
     resolution: {integrity: sha512-GQHQqAopRhwU8Kt1DDM8NjibDXHC8eoh1erhGAJPEyveY9qqVeXvVikNKrDz69sHowPMorbPUrH/mx8c50eiBQ==}
@@ -7799,13 +7799,13 @@ snapshots:
   '@voidzero-dev/vite-plus-win32-x64-msvc@1.2.0':
     optional: true
 
-  '@yieldstar/core@0.8.0':
+  '@yieldstar/core@0.8.2':
     dependencies:
       '@standard-schema/spec': 1.1.0
 
-  '@yieldstar/sqlite-runtime@0.8.0':
+  '@yieldstar/sqlite-runtime@0.8.2':
     dependencies:
-      '@yieldstar/core': 0.8.0
+      '@yieldstar/core': 0.8.2
       pino: 9.14.0
       uuid: 11.1.1
 
@@ -9716,9 +9716,9 @@ snapshots:
 
   yaml@2.9.0: {}
 
-  yieldstar@0.8.0:
+  yieldstar@0.8.2:
     dependencies:
-      '@yieldstar/core': 0.8.0
+      '@yieldstar/core': 0.8.2
       nanoid: 5.1.16
       pino: 9.14.0
 

@@ -36,3 +36,14 @@ it("maps the same types to never as yieldstar", () => {
   expectTypeOf<ResourceDurable<Value>["fn"]>().toBeNever();
   expectTypeOf<Durable<Value>["fn"]>().toBeNever();
 });
+
+it("matches yieldstar's durable values and keeps array shapes as yieldstar does", () => {
+  expectTypeOf<DurableValue>().toEqualTypeOf<YieldstarDurableValue>();
+  type Value = {
+    mutable: string[];
+    readonly: readonly string[];
+    tuple: [string, Date];
+  };
+  expectTypeOf<ResourceDurable<Value>>().toEqualTypeOf<Durable<Value>>();
+  expectTypeOf<ResourceDurable<Value>>().toEqualTypeOf<Value>();
+});

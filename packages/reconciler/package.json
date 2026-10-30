@@ -25,12 +25,12 @@
   "dependencies": {
     "@notation/resource": "workspace:*",
     "@notation/state": "workspace:*",
-    "@yieldstar/core": "0.8.0",
+    "@yieldstar/core": "0.8.2",
     "valibot": "^1.4.2",
-    "yieldstar": "0.8.0"
+    "yieldstar": "0.8.2"
   },
   "devDependencies": {
-    "@yieldstar/sqlite-runtime": "0.8.0",
+    "@yieldstar/sqlite-runtime": "0.8.2",
     "pino": "^9.9.0"
   }
 }
