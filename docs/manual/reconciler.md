@@ -6,12 +6,18 @@ Use `deploy` and `destroy` when a Node.js application needs durable resource lif
 import { EventEmitter } from "node:events";
 import { ExecutionDispatcher, WorkflowRunner } from "@yieldstar/core";
 import { SqliteRuntime, createSqliteDb } from "@yieldstar/sqlite-runtime/node";
-import { DurableStateBackend, deploy as deployResources, destroy as destroyResources } from "@notation/reconciler/durable";
+import {
+  DurableStateBackend,
+  deploy as deployResources,
+  destroy as destroyResources,
+} from "@notation/reconciler/durable";
 import pino from "pino";
 import { createWorkflowRouter, workflow } from "yieldstar";
 
 const logger = pino();
-const runtime = new SqliteRuntime(createSqliteDb({ path: ".notation/workflows.db" }));
+const runtime = new SqliteRuntime(
+  createSqliteDb({ path: ".notation/workflows.db" }),
+);
 const state = new DurableStateBackend(runtime.stores, "my-application");
 
 export const deploy = workflow(async function* (step, event) {
@@ -30,9 +36,15 @@ export const destroy = workflow(async function* (step, event) {
   });
 });
 
-const runner = new WorkflowRunner(runtime, { router: createWorkflowRouter({ deploy, destroy }), logger });
+const runner = new WorkflowRunner(runtime, {
+  router: createWorkflowRouter({ deploy, destroy }),
+  logger,
+});
 const dispatcher = new ExecutionDispatcher(runtime, {
-  invoker: { workflowEndEmitter: new EventEmitter(), deliver: (event, options) => runner.run(event, options) },
+  invoker: {
+    workflowEndEmitter: new EventEmitter(),
+    deliver: (event, options) => runner.run(event, options),
+  },
   logger,
 });
 dispatcher.start();
@@ -42,7 +54,7 @@ The outer workflow supplies durable step execution, timers, shared stores, waiti
 
 Each live resource is one Yieldstar store. Yieldstar's UUIDv7 store `instanceId` and version are authoritative for conditional update and delete; Notation exposes the version unchanged as the resource state's `version`.
 
-Operations against the same deployment — the `deploymentId` the `DurableStateBackend` is constructed with — are serialized through a deployment hold naming the holding `executionId`. Resume a crashed operation with the same execution ID; use a new globally unique execution ID for every new deploy or destroy. A `failed` execution is final: Yieldstar never runs it again, and the execution releases its hold when it fails. To recover, start a new deploy, which plans from persisted state and skips the resources that already converged. An execution that must wait emits a `reconciler.hold.waiting` event naming the holder before it suspends, which also identifies a crashed holder that should be resumed instead. If you give up on an execution that has not ended, clear its hold with `clearDeploymentHold`.
+Operations against the same deployment — the `deploymentId` the `DurableStateBackend` is constructed with, which the CLI sets to `<app>:<stage>:<entry>` — are serialized through a deployment hold naming the holding `executionId`. Resume a crashed operation with the same execution ID; use a new globally unique execution ID for every new deploy or destroy. A `failed` execution is final: Yieldstar never runs it again, and the execution releases its hold when it fails. To recover, start a new deploy, which plans from persisted state and skips the resources that already converged. An execution that must wait emits a `reconciler.hold.waiting` event naming the holder before it suspends, which also identifies a crashed holder that should be resumed instead. If you give up on an execution that has not ended, clear its hold with `clearDeploymentHold`.
 
 Every value the runtime records must be a Yieldstar 0.8.0 durable value, including provider operation results and resource output. A `Date`, `Map`, `Set` or `bigint` is recorded as it is. A provider that returns a `Buffer` or another class instance fails the step with a `WorkflowValueError` whose code is `INVALID_STEP_VALUE`.
 

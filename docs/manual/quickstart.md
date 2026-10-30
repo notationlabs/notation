@@ -16,13 +16,30 @@ my-app/
 │   └── api.ts
 ├── runtime/
 │   └── todos.fn.ts
+├── notation.config.ts
 ├── package.json
 └── tsconfig.json
 ```
 
 ## 2. Explore the code
 
-The starter template gives you two directories: infrastructure and runtime.
+The starter template gives you a project config and two directories: infrastructure and runtime.
+
+**`notation.config.ts`** – names the app and its entries:
+
+```ts [notation.config.ts]
+import { defineConfig } from "@notation/core";
+
+export default defineConfig({
+  app: "my-app",
+  entries: {
+    api: "infra/api.ts",
+  },
+  defaultStage: "dev",
+});
+```
+
+The entry `api` points to `infra/api.ts`. The npm scripts pass the entry name to the CLI, for example `notation deploy api`. The commands deploy to the stage `dev`, because the config sets `defaultStage`. To deploy to another stage, pass `--stage`, as in `npm run deploy -- --stage prod`. See [Project Config](./project-config.md).
 
 **`infra/api.ts`** – defines the API Gateway and routes:
 
@@ -104,7 +121,7 @@ npm run deploy
   GET https://abc123.execute-api.us-east-1.amazonaws.com/todos/count
 ```
 
-Notation compiles your infrastructure, diffs it against the current state, and deploys resources in dependency order. On first deploy, everything is created.
+Notation compiles your infrastructure, diffs it against the state of the `dev` stage, and deploys resources in dependency order. On first deploy, everything is created.
 
 ```sh
 curl https://abc123.execute-api.us-east-1.amazonaws.com/todos

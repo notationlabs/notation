@@ -26,6 +26,7 @@ export const manual: DocCategory = {
       heading: "Concepts",
       icon: "layers",
       links: [
+        { label: "Project Config", slug: "manual/project-config" },
         { label: "File Conventions", slug: "manual/file-conventions" },
         { label: "End-to-End Types", slug: "manual/types" },
       ],

@@ -1,13 +1,18 @@
 # notation watch
 
 ```sh
-notation watch <entryPoint>
+notation watch <entry> [--stage <stage>]
 ```
+
+| Argument          | Meaning                                                            |
+| ----------------- | ------------------------------------------------------------------ |
+| `<entry>`         | An entry name from `notation.config.ts`, such as `api`.            |
+| `--stage <stage>` | The stage. Defaults to `defaultStage`, and is required without it. |
 
 Hot Infra Replacement – the development workflow.
 
 ```sh
-notation watch infra/api.ts
+notation watch api --stage dev
 ```
 
 ## What it does

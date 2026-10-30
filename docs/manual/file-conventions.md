@@ -6,13 +6,14 @@ Notation uses file naming conventions to determine how modules are compiled and 
 
 ```sh
 my-app/
-├── infra/           # Infrastructure definitions
-│   └── api.ts       # Stack entry point
-├── runtime/         # Lambda handler code
-│   ├── todos.fn.ts  # Handler module
-│   └── utils.ts     # Shared runtime utilities
-├── dist/            # Compiled output (generated)
-├── .notation/       # State (generated)
+├── infra/             # Infrastructure definitions
+│   └── api.ts         # Entry file
+├── runtime/           # Lambda handler code
+│   ├── todos.fn.ts    # Handler module
+│   └── utils.ts       # Shared runtime utilities
+├── dist/              # Compiled output (generated)
+├── .notation/         # State (generated)
+├── notation.config.ts # Project config: app, entries, stages
 ├── package.json
 └── tsconfig.json
 ```
@@ -21,7 +22,14 @@ my-app/
 
 Location: `infra/*.ts`
 
-The entry point passed to CLI commands. Defines your cloud resources.
+An infrastructure module declares cloud resources. An entry file is an infrastructure module that `notation.config.ts` names as an entry, and CLI commands take the entry name:
+
+```ts [notation.config.ts]
+export default defineConfig({
+  app: "my-app",
+  entries: { api: "infra/api.ts" },
+});
+```
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
@@ -32,7 +40,7 @@ const todoRouter = router(todoApi);
 todoRouter.get("/todos", getTodos);
 ```
 
-Infrastructure modules are the top-level units of deployment. Each file in `infra/` represents a stack that can be compiled and deployed independently.
+Each entry is a unit of deployment that compiles and deploys independently of other entries. Other modules in `infra/` can declare resources too, but they deploy only as part of an entry that imports them. See [Project Config](./project-config.md).
 
 ## Runtime modules
 
