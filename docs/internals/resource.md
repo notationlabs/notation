@@ -141,6 +141,8 @@ All schema items carry these fields:
 | `delete`       | yes      | `(key, state, context?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
 | `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                        |
 
+The reconciler records params, read results and state, so each must be a durable value: `null`, a boolean, number or string, `undefined`, an `Error`, or an array or plain object of these. Schema value types pass through `Durable<T>`, which maps a `Date`, a `Buffer` or another class instance to `never`, so a handler that returns one does not compile. Convert a date to an ISO string, and return a file as its path and hash instead of its bytes.
+
 ### Operation errors
 
 Import the errors from `@notation/resource`:
@@ -159,7 +161,7 @@ new ResourceNotFoundError(message: string, options?: { cause?: unknown });
 
 new ResourceOperationPendingError(message: string, {
   retryAfterMs: number;
-  callbackContext?: Readonly<Record<string, unknown>>;
+  callbackContext?: Readonly<DurableObject>;
   cause?: unknown;
 });
 ```
@@ -178,7 +180,7 @@ new ResourceOperationPendingError(message: string, {
 | Option | Type | Required | Meaning |
 | ------ | ---- | -------- | ------- |
 | `retryAfterMs` | `number` | yes | Milliseconds to wait. It must be zero or greater. |
-| `callbackContext` | `Readonly<Record<string, unknown>>` | no | Plain serializable data for the next attempt. |
+| `callbackContext` | `Readonly<DurableObject>` | no | Data for the next attempt. The reconciler records it with the error. If it holds a value that is not durable, such as a `Date`, the next attempt receives `undefined`. |
 | `cause` | `unknown` | no | The provider error that caused this result. |
 
 The default limit is 30 attempts. Set `maxOperationAttempts` in the deploy, plan, or destroy options to change it. Reaching the limit fails the operation.
