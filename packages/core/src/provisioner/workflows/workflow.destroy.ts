@@ -4,11 +4,15 @@ import {
   type ReconcilerEventEmitter,
   type ResourceRegistry,
 } from "@notation/reconciler";
+import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
-import { runDurableWorkflow, type NodeDurableRuntime } from "../durable-runtime";
+import {
+  runDurableWorkflow,
+  type NodeDurableRuntime,
+} from "../durable-runtime";
 
 export type DestroyAppOptions = {
-  entryPoint: string;
+  deployment: Deployment;
   maxOperationAttempts?: number;
   registry?: ResourceRegistry;
   runtime?: NodeDurableRuntime;
@@ -19,7 +23,7 @@ export type DestroyAppOptions = {
 };
 
 export async function destroyApp({
-  entryPoint,
+  deployment,
   maxOperationAttempts,
   registry,
   runtime,
@@ -27,9 +31,9 @@ export async function destroyApp({
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: DestroyAppOptions) {
-  const graph = await getResourceGraph(entryPoint);
+  const graph = await getResourceGraph(deployment.entryPoint);
   await runDurableWorkflow(
-    { entryPoint, workflowId: "destroy", runtime, databasePath, executionId },
+    { deployment, workflowId: "destroy", runtime, databasePath, executionId },
     (step, executionId, runtime) =>
       durable.destroy(step, {
         executionId,

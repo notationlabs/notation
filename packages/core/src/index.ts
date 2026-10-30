@@ -1,3 +1,4 @@
+export * from "./config";
 export * from "./provisioner";
 export * from "./orchestrator/graph";
 export * from "./utils/paths";

@@ -1,13 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const findRoot = (dir: string): string => {
-  if (fs.existsSync(path.join(dir, "package.json"))) return dir;
-  if (dir === path.dirname(dir)) return process.cwd();
-  return findRoot(path.dirname(dir));
+const findUp = (dir: string, file: string): string | undefined => {
+  if (fs.existsSync(path.join(dir, file))) return dir;
+  if (dir === path.dirname(dir)) return undefined;
+  return findUp(path.dirname(dir), file);
 };
 
-const projectRoot = findRoot(process.cwd());
+// The project root holds notation.config.ts. Without one, the nearest
+// package.json marks it, so commands can still report the missing config.
+const projectRoot =
+  findUp(process.cwd(), "notation.config.ts") ??
+  findUp(process.cwd(), "package.json") ??
+  process.cwd();
 
 /** An absolute path from one relative to the project root. */
 export const fromProjectRoot = (p: string) => path.resolve(projectRoot, p);

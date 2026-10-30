@@ -4,11 +4,15 @@ import {
   type ReconcilerEventEmitter,
   type ResourceRegistry,
 } from "@notation/reconciler";
+import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
-import { runDurableWorkflow, type NodeDurableRuntime } from "../durable-runtime";
+import {
+  runDurableWorkflow,
+  type NodeDurableRuntime,
+} from "../durable-runtime";
 
 export type DeployAppOptions = {
-  entryPoint: string;
+  deployment: Deployment;
   driftDetection?: boolean;
   dryRun?: boolean;
   maxOperationAttempts?: number;
@@ -21,7 +25,7 @@ export type DeployAppOptions = {
 };
 
 export async function deployApp({
-  entryPoint,
+  deployment,
   // Defaulted in one place: the reconciler's drift gate treats absent as on.
   driftDetection,
   dryRun = false,
@@ -32,9 +36,9 @@ export async function deployApp({
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: DeployAppOptions): Promise<void> {
-  const graph = await getResourceGraph(entryPoint);
+  const graph = await getResourceGraph(deployment.entryPoint);
   await runDurableWorkflow(
-    { entryPoint, workflowId: "deploy", runtime, databasePath, executionId },
+    { deployment, workflowId: "deploy", runtime, databasePath, executionId },
     (step, executionId, runtime) =>
       durable.deploy(step, {
         executionId,

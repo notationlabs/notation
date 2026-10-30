@@ -8,16 +8,19 @@ import { SqliteRuntime, createSqliteDb } from "@yieldstar/sqlite-runtime/node";
 import pino from "pino";
 import { createWorkflowRouter, workflow } from "yieldstar";
 import { describe, expect, it } from "vitest";
-import {
-  NodeDurableRuntime,
-  resolveDeploymentId,
-} from "src/provisioner/durable-runtime";
+import { NodeDurableRuntime } from "src/provisioner/durable-runtime";
+
+const testDeployment = (entry: string) => ({
+  app: "test",
+  stage: "test",
+  entry,
+});
 
 describe("NodeDurableRuntime", () => {
   it("stays resident across a provider delay and resumes the execution", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "notation-runtime-"));
     const runtime = new NodeDurableRuntime({
-      deploymentId: "resident-wait",
+      deployment: testDeployment("resident-wait"),
       databasePath: path.join(directory, "workflows.db"),
     });
     let attempts = 0;
@@ -93,7 +96,7 @@ describe("NodeDurableRuntime", () => {
           deploy: deployWorkflow(
             new durable.DurableStateBackend(
               crashed.stores,
-              "resume-deployment",
+              "test:test:resume-deployment",
             ),
           ),
         }),
@@ -102,7 +105,7 @@ describe("NodeDurableRuntime", () => {
       await crashed.executions.admit({
         executionId: "resumed-execution",
         workflowId: "deploy",
-        params: { deploymentId: "resume-deployment" },
+        params: { deploymentId: "test:test:resume-deployment" },
         context: new Map(),
       });
       const [lease] = await crashed.executions.claimDue({
@@ -121,7 +124,7 @@ describe("NodeDurableRuntime", () => {
           {
             workflowId: "deploy",
             executionId: "resumed-execution",
-            params: { deploymentId: "resume-deployment" },
+            params: { deploymentId: "test:test:resume-deployment" },
             context: new Map(),
           },
           { lease: lease!, signal: controller.signal },
@@ -132,7 +135,7 @@ describe("NodeDurableRuntime", () => {
       expect(creates).toBe(1);
 
       const runtime = new NodeDurableRuntime({
-        deploymentId: "resume-deployment",
+        deployment: testDeployment("resume-deployment"),
         databasePath,
       });
       try {
@@ -163,7 +166,7 @@ describe("NodeDurableRuntime", () => {
       destroy: completed,
     });
     const first = new NodeDurableRuntime({
-      deploymentId: "first-deployment",
+      deployment: testDeployment("first-deployment"),
       databasePath,
     });
 
@@ -174,7 +177,7 @@ describe("NodeDurableRuntime", () => {
       });
       await expect(first.execution("bound-execution")).resolves.toMatchObject({
         workflowId: "deploy",
-        params: { deploymentId: "first-deployment" },
+        params: { deploymentId: "test:test:first-deployment" },
         status: "completed",
       });
       await expect(
@@ -182,13 +185,15 @@ describe("NodeDurableRuntime", () => {
           workflowId: "destroy",
           executionId: "bound-execution",
         }),
-      ).rejects.toThrow("bound to deployment first-deployment workflow deploy");
+      ).rejects.toThrow(
+        "bound to deployment test:test:first-deployment workflow deploy",
+      );
     } finally {
       first.close();
     }
 
     const second = new NodeDurableRuntime({
-      deploymentId: "second-deployment",
+      deployment: testDeployment("second-deployment"),
       databasePath,
     });
     try {
@@ -197,7 +202,9 @@ describe("NodeDurableRuntime", () => {
           workflowId: "deploy",
           executionId: "bound-execution",
         }),
-      ).rejects.toThrow("bound to deployment first-deployment workflow deploy");
+      ).rejects.toThrow(
+        "bound to deployment test:test:first-deployment workflow deploy",
+      );
     } finally {
       second.close();
       await rm(directory, { recursive: true, force: true });
@@ -211,7 +218,7 @@ describe("NodeDurableRuntime", () => {
     await new SqliteRuntime(database).executions.admit({
       executionId: "due-execution",
       workflowId: "deploy",
-      params: { deploymentId: "first-deployment" },
+      params: { deploymentId: "test:test:first-deployment" },
       context: new Map(),
     });
     database.close();
@@ -221,7 +228,7 @@ describe("NodeDurableRuntime", () => {
       delivered.push(event.executionId);
     });
     const runtime = new NodeDurableRuntime({
-      deploymentId: "second-deployment",
+      deployment: testDeployment("second-deployment"),
       databasePath,
     });
     try {
@@ -230,7 +237,9 @@ describe("NodeDurableRuntime", () => {
           workflowId: "deploy",
           executionId: "due-execution",
         }),
-      ).rejects.toThrow("bound to deployment first-deployment workflow deploy");
+      ).rejects.toThrow(
+        "bound to deployment test:test:first-deployment workflow deploy",
+      );
       expect(delivered).toEqual([]);
       await expect(runtime.execution("due-execution")).resolves.toMatchObject({
         status: "admitted",
@@ -248,7 +257,7 @@ describe("NodeDurableRuntime", () => {
     await new SqliteRuntime(database).executions.admit({
       executionId: "unrelated-execution",
       workflowId: "deploy",
-      params: { deploymentId: "filter-test" },
+      params: { deploymentId: "test:test:filter-test" },
       context: new Map(),
     });
     database.close();
@@ -258,7 +267,7 @@ describe("NodeDurableRuntime", () => {
       delivered.push(event.executionId);
     });
     const runtime = new NodeDurableRuntime({
-      deploymentId: "filter-test",
+      deployment: testDeployment("filter-test"),
       databasePath,
     });
     try {
@@ -285,7 +294,7 @@ describe("NodeDurableRuntime", () => {
     });
     const router = createWorkflowRouter({ deploy });
     const runtime = new NodeDurableRuntime({
-      deploymentId: "failed-test",
+      deployment: testDeployment("failed-test"),
       databasePath: path.join(directory, "workflows.db"),
     });
     try {
@@ -320,7 +329,7 @@ describe("NodeDurableRuntime", () => {
     });
     const router = createWorkflowRouter({ deploy });
     const runtime = new NodeDurableRuntime({
-      deploymentId: "completed-test",
+      deployment: testDeployment("completed-test"),
       databasePath: path.join(directory, "workflows.db"),
     });
     try {
@@ -338,10 +347,16 @@ describe("NodeDurableRuntime", () => {
     }
   });
 
-  it("canonicalises equivalent entry-point spellings", () => {
-    const absolute = path.resolve("infra/api.ts");
-    expect(resolveDeploymentId("infra/api.ts")).toBe("infra/api.ts");
-    expect(resolveDeploymentId("./infra/api.ts")).toBe("infra/api.ts");
-    expect(resolveDeploymentId(absolute)).toBe("infra/api.ts");
+  it("keys the deployment by app, stage and entry", () => {
+    const runtime = new NodeDurableRuntime({
+      deployment: { app: "orders-app", stage: "prod", entry: "orders" },
+      databasePath: ":memory:",
+    });
+    try {
+      expect(runtime.deploymentId).toBe("orders-app:prod:orders");
+      expect(runtime.state.deploymentId).toBe("orders-app:prod:orders");
+    } finally {
+      runtime.close();
+    }
   });
 });

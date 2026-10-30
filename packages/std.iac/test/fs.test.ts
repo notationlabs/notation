@@ -14,7 +14,7 @@ let runtime: NodeDurableRuntime;
 beforeEach(async () => {
   directory = await mkdtemp(path.join(tmpdir(), "notation-std-fs-"));
   runtime = new NodeDurableRuntime({
-    deploymentId: "std-fs",
+    deployment: { app: "std", stage: "test", entry: "fs" },
     databasePath: path.join(directory, "workflows.db"),
   });
 });
@@ -30,7 +30,7 @@ function deploy(
   driftDetection: boolean,
 ) {
   return runDurableWorkflow(
-    { entryPoint: "infra.ts", workflowId: "deploy", runtime, executionId },
+    { workflowId: "deploy", runtime, executionId },
     (step, executionId) =>
       durable.deploy(step, {
         executionId,
