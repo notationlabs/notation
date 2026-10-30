@@ -46,6 +46,6 @@ Operations against the same deployment — the `deploymentId` the `DurableStateB
 
 Every value the runtime records must be a Yieldstar 0.8.0 durable value, including provider operation results and resource output. A `Date`, `Map`, `Set` or `bigint` is recorded as it is. A provider that returns a `Buffer` or another class instance fails the step with a `WorkflowValueError` whose code is `INVALID_STEP_VALUE`.
 
-Pass the complete desired set on every deployment. Persisted resources absent from that set are deleted through the supplied resource registry, in reverse order of the dependencies recorded in their state. Destroy removes current resources in reverse dependency order and then removes any persisted orphans whose resource type is registered.
+Pass the complete desired set on every deployment. Persisted resources absent from that set are deleted through the supplied resource registry, in reverse order of the dependencies recorded in their state. Destroy removes any persisted orphans whose resource type is registered, and then removes current resources in reverse dependency order.
 
 The runnable Node SQLite composition is in `examples/reconciler`.

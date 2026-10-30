@@ -252,14 +252,13 @@ export async function* sweepOrphans(
   const kept = new Set<string>();
 
   for (const node of orderOrphanDeletes(orphans)) {
-    if (kept.has(node.id)) continue;
     const nodeScope = scope.scope(encodeURIComponent(node.id));
 
     const Resource = resolveResourceClass(registry, node.type as ResourceType);
+    // An unregistered orphan warns even when another orphan already keeps
+    // it, so that the warnings name every type the sweep could not delete.
     if (!Resource) {
-      const keptDependencies = collectDependencies(node, orphanById).filter(
-        (id) => !kept.has(id),
-      );
+      const keptDependencies = collectDependencies(node, orphanById);
       for (const id of keptDependencies) kept.add(id);
 
       const emit = durableEmitter(nodeScope, opts.emit);
@@ -274,6 +273,7 @@ export async function* sweepOrphans(
       });
       continue;
     }
+    if (kept.has(node.id)) continue;
 
     const resource = new Resource(node.id, { config: node.config });
     resource.setOutput(node.output);

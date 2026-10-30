@@ -29,19 +29,19 @@ Delete-then-create removes a resource while its dependents still exist. A provid
 
 ## Dependency edges
 
-Each state record stores the IDs of the resources it depends on in `dependsOn`, sorted. Create, update and replace write the edges with the rest of the record. When a resource is a **noop** but its edges differ from those in state, deploy rewrites only `dependsOn`, and does not call the provider. A dry run does not rewrite edges.
+Each state record stores the IDs of the resources it depends on in `dependsOn`, sorted. Create, update and replace write the edges with the rest of the record. When a resource is a **noop** but its edges differ from those in state, deploy rewrites only `dependsOn`, and does not call the provider. The plan still shows the resource as a noop. A dry run does not rewrite edges.
 
 The sweep deletes orphans in reverse order of these edges, as deploy and destroy do for resources in the graph. An edge to a resource that is not an orphan is ignored, including an edge to a resource that is no longer in state. A record written before edges were recorded has no `dependsOn`, and keeps its storage order among the orphans it has no edges to. The next deploy that reaches the resource writes its edges.
 
 Orphans that form a cycle cannot be ordered. They, and the orphans that depend on them, are deleted first, in storage order, so a provider that refuses one of the deletes fails the deploy.
 
-When an orphan's type has no registered class, the sweep keeps the orphan and every orphan it depends on, directly or through another orphan. The `reconciler.orphan-deletion.skipped` warning names those orphans in `keptDependencies`.
+When an orphan's type has no registered class, the sweep keeps the orphan and every orphan it depends on, directly or through another orphan. The `reconciler.orphan-deletion.skipped` warning names those orphans in `keptDependencies`. Each orphan with no registered class emits its own warning, including an orphan that another skipped orphan already keeps.
 
 Dry-run deploy performs decisions and emits lifecycle events without provider mutations or state mutations. When drift detection is enabled, it can still call provider read operations to decide whether a nominal noop has drifted.
 
 ## Destroy flow
 
-`destroy` is a first-class durable operation. It takes the same deployment hold as deploy, deletes desired resources in reverse dependency order, deletes registered persisted orphans, and conditionally removes each resource store only after the provider delete succeeds or reports that the resource is already absent.
+`destroy` is a first-class durable operation. It takes the same deployment hold as deploy, deletes registered persisted orphans, deletes desired resources in reverse dependency order, and conditionally removes each resource store only after the provider delete succeeds or reports that the resource is already absent. Orphans go first, because an orphan can depend on a desired resource, but no desired resource depends on an orphan.
 
 ## Waiting and replay
 

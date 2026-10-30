@@ -1158,6 +1158,100 @@ describe("dependency edges in state", () => {
     );
     runtime.close();
   });
+
+  it("names a shared dependency in the warning of every orphan that keeps it", async () => {
+    const deleted: string[] = [];
+    const events: ReconcilerEvent[] = [];
+    const Role = defineRecorded("test/durable/shared-role", deleted);
+    const Unregistered = defineRecorded("test/durable/shared-skip", deleted);
+    const role = new Role("role");
+    const resources: BaseResource[] = [
+      role,
+      new Unregistered("first", { dependencies: { role } }),
+      new Unregistered("second", { dependencies: { role } }),
+    ];
+    const runtime = createRuntime(resources, "orphan-shared-kept", {
+      registry: createResourceRegistry([Role]),
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("deploy-1");
+    resources.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(deleted).toEqual([]);
+    expect(
+      events.filter(
+        (event) => event.event === "reconciler.orphan-deletion.skipped",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        resourceId: "first",
+        keptDependencies: ["role"],
+      }),
+      expect.objectContaining({
+        resourceId: "second",
+        keptDependencies: ["role"],
+      }),
+    ]);
+    runtime.close();
+  });
+
+  it("warns for an unregistered orphan that another skipped orphan keeps", async () => {
+    const events: ReconcilerEvent[] = [];
+    const Unregistered = defineRecorded("test/durable/chained-skip", []);
+    const inner = new Unregistered("inner");
+    const resources: BaseResource[] = [
+      inner,
+      new Unregistered("outer", { dependencies: { inner } }),
+    ];
+    const runtime = createRuntime(resources, "orphan-chained-kept", {
+      registry: createResourceRegistry([]),
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("deploy-1");
+    resources.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(
+      events.filter(
+        (event) => event.event === "reconciler.orphan-deletion.skipped",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        resourceId: "outer",
+        keptDependencies: ["inner"],
+      }),
+      expect.objectContaining({ resourceId: "inner", keptDependencies: [] }),
+    ]);
+    runtime.close();
+  });
+
+  it("destroys an orphan before the desired resource it depends on", async () => {
+    const deleted: string[] = [];
+    const Role = defineRecorded("test/durable/destroy-role", deleted);
+    const Attachment = defineRecorded("test/durable/destroy-attachment", deleted);
+    const role = new Role("role");
+    const resources: BaseResource[] = [
+      role,
+      new Attachment("attachment", { dependencies: { role } }),
+    ];
+    const runtime = createRuntime(resources, "destroy-orphan-first", {
+      registry: createResourceRegistry([Role, Attachment]),
+    });
+
+    await runtime.run("deploy-1");
+    resources.length = 1;
+    await runtime.destroy("destroy-1");
+
+    expect(deleted).toEqual([
+      "test/durable/destroy-attachment",
+      "test/durable/destroy-role",
+    ]);
+    expect(await runtime.state.values()).toHaveLength(0);
+    runtime.close();
+  });
 });
 
 describe("state from before groups had stable IDs", () => {

@@ -11,6 +11,10 @@ export async function* destroy(
   opts: DurableWorkflowOptions,
 ): AsyncGenerator<any, void, any> {
   yield* withDeploymentHold(step, opts, async function* () {
+    // Orphans go first: an orphan can depend on a resource in the desired
+    // set, but no resource in the desired set depends on an orphan.
+    yield* sweepOrphans(step, opts, "destroy");
+
     // Delete in reverse dependency order, so dependents are gone before the
     // resources they depend on.
     const levels = buildResourceDepthLevels(opts.resources);
@@ -26,7 +30,5 @@ export async function* destroy(
         );
       }
     }
-
-    yield* sweepOrphans(step, opts, "destroy");
   });
 }
