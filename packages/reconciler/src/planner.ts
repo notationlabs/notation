@@ -1,6 +1,9 @@
 import type { BaseResource } from "@notation/resource";
 import type { StateBackend } from "@notation/state";
-import { buildResourceDepthLevels } from "./dependency-graph";
+import {
+  assertDependenciesPresent,
+  buildResourceDepthLevels,
+} from "./dependency-graph";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
 import {
@@ -32,6 +35,7 @@ export async function createPlan({
   );
   const emitStep = toEmitStep(emit);
   const nodes: PlanNode[] = [];
+  assertDependenciesPresent(resources);
 
   for (const level of buildResourceDepthLevels(resources)) {
     for (const resource of level) {
