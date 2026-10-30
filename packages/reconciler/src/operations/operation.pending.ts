@@ -1,18 +1,20 @@
 import {
   ResourceOperationPendingError,
-  type DurableValue,
+  type DurableObject,
   type ResourceOperationContext,
 } from "@notation/resource";
 import type { StepRunner } from "./operation.types";
 
 export const DEFAULT_MAX_OPERATION_ATTEMPTS = 30;
 
-export async function* runPendingOperation<T extends DurableValue | void>(
+export async function* runPendingOperation(
   step: StepRunner,
   key: string,
-  operation: (context?: ResourceOperationContext) => T | Promise<T>,
+  operation: (
+    context?: ResourceOperationContext,
+  ) => Promise<DurableObject | void>,
   maxAttempts = DEFAULT_MAX_OPERATION_ATTEMPTS,
-): AsyncGenerator<unknown, T, unknown> {
+): AsyncGenerator<unknown, DurableObject | void, unknown> {
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
     throw new RangeError("maxOperationAttempts must be a positive integer");
   }

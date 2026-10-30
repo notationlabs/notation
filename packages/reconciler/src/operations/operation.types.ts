@@ -4,6 +4,7 @@ import type {
   ResourceGroupRef,
 } from "@notation/resource";
 import type { StateNode } from "@notation/state";
+import type { DurableStepFn } from "yieldstar";
 import type {
   EmitStep,
   OperationLifecycleEvent,
@@ -23,10 +24,11 @@ export type {
  * sites in a single execution. `createStepRunner` ignores both.
  */
 export type StepRunner = {
-  run<T extends DurableValue | void>(
+  /** The keyed overload of yieldstar's `step.run`. */
+  run<F extends () => unknown>(
     key: string,
-    fn: () => T | Promise<T>,
-  ): AsyncGenerator<unknown, T, unknown>;
+    fn: F & DurableStepFn<F>,
+  ): AsyncGenerator<unknown, Awaited<ReturnType<F>>, unknown>;
   delay(key: string, ms: number): AsyncGenerator<unknown, void, unknown>;
   scope(prefix: string): StepRunner;
 };
