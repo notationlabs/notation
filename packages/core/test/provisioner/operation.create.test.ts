@@ -33,6 +33,7 @@ describe("resource creation", () => {
 
     await runOperation(
       createResourceOperation(step, {
+        executionId: "test-execution",
         resource: testResource,
         resourceParams: await testResource.getParams(),
         persist: async function* (next) {
@@ -45,7 +46,11 @@ describe("resource creation", () => {
     const params = await testResource.getParams();
     const persistedOutput = testResource.toState(readResult);
 
-    expect(createMock.mock.calls[0]).toEqual([params, undefined]);
+    expect(createMock.mock.calls[0]).toEqual([
+      params,
+      undefined,
+      "notation:create:test-execution:test-resource:0",
+    ]);
     expect(persisted).toMatchObject({
       id: testResource.id,
       output: persistedOutput,

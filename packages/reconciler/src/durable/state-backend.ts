@@ -4,15 +4,14 @@ import {
   toStateNode,
   type ResourceSnapshot,
 } from "./stores";
-import type { PersistedResourceState } from "../operations";
 import type { StoreClient } from "./yieldstar";
 
 /**
  * Reads deployment state from outside a workflow, for the planner and for
- * anything reporting on a deployment. Read-only, but for one idempotent
- * create: state writes must be stamped with the workflow step that made them,
- * and this interface has nowhere to carry that step key, so any other write
- * made here would repeat on replay.
+ * anything reporting on a deployment. A read of a resource with no record
+ * creates its store with `null` state, which records nothing. Every other
+ * write goes through a workflow step, which stamps the write with its step
+ * key so that a replay does not repeat it.
  */
 export class DurableStateBackend {
   /** The deployment this backend belongs to; workflows and the deployment
@@ -34,28 +33,12 @@ export class DurableStateBackend {
   }
 
   async get(id: string): Promise<StateNode | undefined> {
-    const snapshot = await this.snapshot(id);
-    return snapshot ? toStateNode(snapshot) : undefined;
+    return toStateNode(await this.snapshot(id));
   }
 
-  snapshot(id: string): Promise<ResourceSnapshot | undefined> {
+  /** The snapshot's state is `null` when the resource has no record. */
+  snapshot(id: string): Promise<ResourceSnapshot> {
     return this.#read(this.storeId(id));
-  }
-
-  /**
-   * Creates a resource's record unless one exists. Repeating it is harmless,
-   * which is what makes it the one write allowed here; a workflow still runs
-   * it as a step, so that a replay does not repeat it.
-   */
-  async createIfAbsent(
-    id: string,
-    initial: PersistedResourceState,
-  ): Promise<void> {
-    await this.#client.getOrCreateStore({
-      definition: resourceStateStore,
-      id: this.storeId(id),
-      initial,
-    });
   }
 
   async values(): Promise<StateNode[]> {
@@ -65,23 +48,10 @@ export class DurableStateBackend {
         .filter((id) => id.startsWith(this.#prefix))
         .map((id) => this.#read(id)),
     );
-    return snapshots
-      .filter((snapshot) => snapshot !== undefined)
-      .map(toStateNode);
+    return snapshots.map(toStateNode).filter((node) => node !== undefined);
   }
 
-  // getStore throws for a missing store, and the error is indistinguishable
-  // from a real failure, so absence is confirmed by listing.
-  async #read(storeId: string): Promise<ResourceSnapshot | undefined> {
-    try {
-      return await this.#client.getStore({
-        definition: resourceStateStore,
-        id: storeId,
-      });
-    } catch (error) {
-      const ids = await this.#client.listStores(resourceStateStore);
-      if (!ids.includes(storeId)) return undefined;
-      throw error;
-    }
+  #read(storeId: string): Promise<ResourceSnapshot> {
+    return this.#client.store(resourceStateStore, storeId).get();
   }
 }

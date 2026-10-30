@@ -29,9 +29,17 @@ function createStepRunnerDouble() {
     return;
   });
 
+  const effect = vi.fn(async function* (
+    _key: string,
+    descriptor: { effectId: string; perform(id: string): Promise<unknown> },
+  ): AsyncGenerator<unknown, unknown, unknown> {
+    return await descriptor.perform(descriptor.effectId);
+  });
+
   // vi.fn erases the generic, so the seam's signature is restored here.
   const runner: StepRunner = {
     run: run as unknown as StepRunner["run"],
+    effect: effect as unknown as StepRunner["effect"],
     delay: delay as unknown as StepRunner["delay"],
     scope: () => runner,
   };
@@ -60,8 +68,16 @@ describe("operation workflows", () => {
       return { remoteId: "abc" };
     });
 
-    const TestResource = resource({ type: "test/service/create" })
-      .defineSchema({})
+    const TestResource = resource<{
+      Key: {};
+      CreateParams: {};
+      UpdateParams: {};
+      ReadResult: { remoteId: string; status: string };
+    }>({ type: "test/service/create" })
+      .defineSchema({
+        remoteId: { propertyType: "computed", presence: "required" },
+        status: { propertyType: "computed", presence: "required" },
+      })
       .defineOperations({
         // Cast: an empty schema declares no primary key to return.
         create: createMock as any,
@@ -73,6 +89,7 @@ describe("operation workflows", () => {
 
     await runOperation(
       createResourceOperation(step, {
+        executionId: "test-execution",
         resource: testResource,
         resourceParams: await testResource.getParams(),
         persist,
@@ -90,18 +107,19 @@ describe("operation workflows", () => {
       lastOperationAt: expect.any(String),
       config: testResource.config,
       params: {},
-      // The resource declares no schema, so nothing survives toState.
-      output: {},
+      output: { remoteId: "abc", status: "ready" },
     });
     expect(createMock).toHaveBeenNthCalledWith(
       1,
       await testResource.getParams(),
       undefined,
+      "notation:create:test-execution:test-create:0",
     );
     expect(createMock).toHaveBeenNthCalledWith(
       2,
       await testResource.getParams(),
       { operationId: "create-123" },
+      "notation:create:test-execution:test-create:1",
     );
     expect(testResource.output).toEqual({ remoteId: "abc", status: "ready" });
     expect(events.map((event) => `${event.operation}:${event.status}`)).toEqual(
@@ -118,8 +136,15 @@ describe("operation workflows", () => {
     const step = createStepRunnerDouble();
 
     let readAttempts = 0;
-    const TestResource = resource({ type: "test/service/read" })
-      .defineSchema({})
+    const TestResource = resource<{
+      Key: {};
+      CreateParams: {};
+      UpdateParams: {};
+      ReadResult: { status: string };
+    }>({ type: "test/service/read" })
+      .defineSchema({
+        status: { propertyType: "computed", presence: "required" },
+      })
       .defineOperations({
         create: (async () => ({})) as any,
         read: async (_key, context) => {
@@ -205,6 +230,7 @@ describe("operation workflows", () => {
     await expect(
       runOperation(
         createResourceOperation(step, {
+          executionId: "test-execution",
           resource: new TestResource("eventually-visible"),
           resourceParams: {},
           persist,
@@ -328,6 +354,7 @@ describe("operation workflows", () => {
     await expect(
       runOperation(
         createResourceOperation(step, {
+          executionId: "test-execution",
           resource: testResource,
           resourceParams: {},
           persist,

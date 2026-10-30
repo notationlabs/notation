@@ -2,6 +2,7 @@ import {
   ResourceNotFoundError,
   ResourceOperationPendingError,
   resource,
+  type DurableObject,
 } from "@notation/resource";
 import { MemoryStateBackend } from "@notation/state";
 import { describe, expect, it } from "vitest";
@@ -175,11 +176,7 @@ describe("createPlan", () => {
       .deriveParams(({ deps }) => ({
         roleName: (deps.role.output as any).name,
       }));
-    const record = (
-      id: string,
-      type: string,
-      params: Record<string, unknown>,
-    ) => ({
+    const record = (id: string, type: string, params: DurableObject) => ({
       version: 1,
       id,
       type,

@@ -1,5 +1,13 @@
-import type { BaseResource, ResourceGroupRef } from "@notation/resource";
+import type {
+  BaseResource,
+  DurableValue,
+  ResourceGroupRef,
+} from "@notation/resource";
 import type { StateNode } from "@notation/state";
+import type {
+  DurableStepFn,
+  StepRunner as YieldstarStepRunner,
+} from "yieldstar";
 import type {
   EmitStep,
   OperationLifecycleEvent,
@@ -19,10 +27,12 @@ export type {
  * sites in a single execution. `createStepRunner` ignores both.
  */
 export type StepRunner = {
-  run<T>(
+  /** The keyed overload of yieldstar's `step.run`. */
+  run<F extends () => unknown>(
     key: string,
-    fn: () => T | Promise<T>,
-  ): AsyncGenerator<unknown, T, unknown>;
+    fn: F & DurableStepFn<F>,
+  ): AsyncGenerator<unknown, Awaited<ReturnType<F>>, unknown>;
+  effect: YieldstarStepRunner["effect"];
   delay(key: string, ms: number): AsyncGenerator<unknown, void, unknown>;
   scope(prefix: string): StepRunner;
 };
@@ -44,7 +54,7 @@ export type PersistedResourceState = Pick<
 > & {
   // Not on StateNode itself, where it arrives through its index signature.
   group: ResourceGroupRef | null;
-  [key: string]: unknown;
+  [key: string]: DurableValue;
 };
 
 /**
@@ -80,6 +90,8 @@ export type ResolvedResourceParams = ResourceOperationBaseParams & {
 };
 
 export type CreateResourceParams = ResolvedResourceParams & {
+  /** Names the create effects, together with the resource ID. */
+  executionId: string;
   persist: PersistState;
 };
 

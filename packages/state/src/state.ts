@@ -1,14 +1,19 @@
+import type { DurableObject, DurableValue } from "@notation/resource";
+
 export type StateNode = {
-  /** The backing store's version of the record, counted from zero. */
+  /**
+   * The backing store's version of the record. The store exists at version 0
+   * before the record is written, so a new record is version 1.
+   */
   version: number;
   id: string;
   type: string;
-  config: Record<string, unknown>;
-  params: Record<string, unknown>;
-  output: Record<string, unknown>;
+  config: DurableObject;
+  params: DurableObject;
+  output: DurableObject;
   lastOperation: "create" | "update";
   lastOperationAt: string;
-  [key: string]: unknown;
+  [key: string]: DurableValue;
 };
 
 /**
@@ -54,10 +59,10 @@ export class MemoryStateBackend implements StateBackend {
   }
 }
 
-// Seeds and reads pass through JSON, so callers see what a persisted backend
-// would return and cannot mutate the backend through a shared reference.
+// Seeds and reads are cloned, so callers cannot mutate the backend through a
+// shared reference.
 function cloneAsPersistedState(
   state: Record<string, StateNode>,
 ): Record<string, StateNode> {
-  return JSON.parse(JSON.stringify(state)) as Record<string, StateNode>;
+  return structuredClone(state);
 }

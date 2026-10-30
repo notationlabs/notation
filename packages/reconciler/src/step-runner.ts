@@ -1,3 +1,4 @@
+import type { EffectDescriptor } from "yieldstar";
 import type { StepRunner } from "./operations";
 
 export async function runOperation<T>(
@@ -12,8 +13,12 @@ export async function runOperation<T>(
 
 export function createStepRunner(): StepRunner {
   const runner: StepRunner = {
-    async *run<T>(_key: string, fn: () => T | Promise<T>) {
-      return await fn();
+    async *run<F extends () => unknown>(_key: string, fn: F) {
+      return (await fn()) as Awaited<ReturnType<F>>;
+    },
+    // Nothing outlives the process, so no attempt is left to look up.
+    async *effect<T>(_key: string, descriptor: EffectDescriptor<T, any>) {
+      return await descriptor.perform(descriptor.effectId);
     },
     async *delay(_key: string, ms: number) {
       await new Promise((resolve) => setTimeout(resolve, ms));

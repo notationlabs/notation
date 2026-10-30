@@ -11,6 +11,9 @@
     "build": "tsup --clean",
     "dev": "tsup --watch"
   },
+  "dependencies": {
+    "@notation/resource": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^22.13.4"
   }

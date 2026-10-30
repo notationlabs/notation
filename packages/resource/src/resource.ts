@@ -18,6 +18,7 @@ import type {
   NoInfer,
 } from "./types";
 import type { ResourceOperationContext } from "./resource-operation";
+import type { DurableObject } from "./durable-value";
 import { toComparableParams } from "./diff-params";
 
 export type { Schema, SchemaItem, DefineResourceApiSchema };
@@ -79,14 +80,14 @@ export interface BaseResource {
   readonly output: {};
   readonly dependencies: Record<string, BaseResource | void>;
   readonly key: {};
+  keyOf(output: {}): {};
   create: (
     params: any,
     context?: ResourceOperationContext,
+    token?: string,
   ) => Promise<{} | void>;
-  read?: (
-    key: any,
-    context?: ResourceOperationContext,
-  ) => Promise<Record<string, any>>;
+  find?: (params: any, token: string) => Promise<{} | void>;
+  read?: (key: any, context?: ResourceOperationContext) => Promise<{}>;
   update?: (
     key: any,
     patch: any,
@@ -99,15 +100,16 @@ export interface BaseResource {
     state: any,
     context?: ResourceOperationContext,
   ) => Promise<void>;
-  getParams(): Promise<{}>;
+  getParams(): Promise<DurableObject>;
   toState(output: {}): {};
+  toResult(result: {}): DurableObject;
   toComparable(output: {}): {};
   setOutput(result: {}): void;
   deriveParams?: (opts: {
     id: string;
     config: any;
     deps: any;
-  }) => Record<string, any> | Promise<Record<string, any>>;
+  }) => DurableObject | Promise<DurableObject>;
 }
 
 export abstract class Resource<
@@ -125,7 +127,9 @@ export abstract class Resource<
   abstract create: (
     params: T["params"],
     context?: ResourceOperationContext,
+    token?: string,
   ) => Promise<T["primaryKey"]>;
+  find?: (params: T["params"], token: string) => Promise<T["primaryKey"]>;
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -159,12 +163,16 @@ export abstract class Resource<
   }
 
   get key(): T["compoundKey"] {
+    return this.keyOf(this.output);
+  }
+
+  keyOf(output: Partial<T["output"]>): T["compoundKey"] {
     const key = {} as Record<string, any>;
     for (const [k, v] of Object.entries<
       SchemaItem<any> & { primaryKey?: true; secondaryKey?: true }
     >(this.schema)) {
       if (v.primaryKey || v.secondaryKey) {
-        key[k] = (this.output as any)[k];
+        key[k] = (output as any)[k];
       }
     }
     return key;
@@ -189,6 +197,17 @@ export abstract class Resource<
     return parsed;
   }
 
+  /**
+   * Copies the properties of a provider result that the schema declares.
+   */
+  toResult(result: {}): DurableObject {
+    const declared = {} as DurableObject;
+    for (const key of Object.keys(this.schema)) {
+      if (key in result) declared[key] = (result as any)[key];
+    }
+    return declared;
+  }
+
   async getParams(): Promise<T["params"]> {
     return {
       ...this.config,
@@ -207,10 +226,26 @@ export type ResourceOperationsOptions<
   T extends ResourceTypes,
   IntrinsicParams extends Partial<T["params"]>,
 > = {
+  /**
+   * Creates the resource. `token` is unique to the attempt. A resource that
+   * defines `find` with a token records it on the remote resource, for
+   * example as a tag.
+   */
   create: (
     params: T["params"],
     context?: ResourceOperationContext,
+    token?: string,
   ) => Promise<T["primaryKey"]>;
+  /**
+   * Finds the resource that a create attempt with `token` made, and returns
+   * what that create would have returned. Throws `ResourceNotFoundError` when
+   * the attempt made no resource.
+   *
+   * The reconciler calls it after a create attempt with an unknown outcome.
+   * Without it, the reconciler reads a resource whose key is made of params,
+   * and creates again a resource whose key the provider assigns.
+   */
+  find?: (params: T["params"], token: string) => Promise<T["primaryKey"]>;
   read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -328,6 +363,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             type = meta.type;
             schema = schema;
             create = opts.create;
+            find = opts.find;
             read = opts.read ? opts.read : undefined;
             update = opts.update ? opts.update : undefined;
             delete = opts.delete;

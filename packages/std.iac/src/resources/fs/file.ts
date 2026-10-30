@@ -1,14 +1,12 @@
-import { fromProjectRoot } from "@notation/core";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { isErrorWithCode } from "@notation/utils";
-import { getSourceSha256 } from "src/utils/hash";
-import * as fs from "node:fs/promises";
+import { getFileSha256, getSourceSha256 } from "src/utils/hash";
 
 export type FileSchema = {
   Key: { filePath: string };
   CreateParams: { filePath: string; sourceSha256: string };
   UpdateParams: { filePath: string; sourceSha256: string };
-  ReadResult: { file: Buffer };
+  ReadResult: { fileSha256: string };
 };
 
 const fileResource = resource<FileSchema>({
@@ -25,10 +23,9 @@ export const fileSchema = fileResource.defineSchema({
     propertyType: "param",
     presence: "required",
   },
-  file: {
+  fileSha256: {
     propertyType: "computed",
     presence: "required",
-    hidden: true,
   },
 } as const);
 
@@ -39,8 +36,8 @@ export const File = fileSchema.defineOperations({
   },
   read: async (config) => {
     try {
-      const file = await fs.readFile(fromProjectRoot(config.filePath));
-      return { ...config, file };
+      const fileSha256 = await getFileSha256(config.filePath);
+      return { ...config, fileSha256 };
     } catch (error) {
       if (isErrorWithCode(error, "ENOENT")) {
         throw new ResourceNotFoundError("File was not found", { cause: error });

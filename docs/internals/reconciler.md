@@ -35,9 +35,9 @@ Dry-run deploy performs decisions and emits lifecycle events without provider mu
 
 ## Waiting and replay
 
-Provider calls are stable durable steps, but provider acknowledgement and the Yieldstar heap checkpoint are not atomic. If the process crashes between them, replay repeats the call, so provider create, update, and delete operations must be idempotent. Event subscribers must likewise tolerate duplicate delivery when a crash occurs before the event checkpoint.
+Provider calls are stable durable steps, but provider acknowledgement and the Yieldstar heap checkpoint are not atomic. If the process crashes between them, replay repeats an update or delete call, so those operations must be idempotent. Each create attempt runs as a yieldstar `step.effect`. After a crash, the reconciler looks the resource up before it calls create again, when the resource can be found; see [Unknown create outcomes](./resource.md#unknown-create-outcomes). Event subscribers must likewise tolerate duplicate delivery when a crash occurs before the event checkpoint.
 
-A resource operation throws `ResourceOperationPendingError` when it has not finished. The error gives the reconciler a delay and optional callback context. The runtime stores the context, waits without keeping the process busy, and calls the same operation again. See [Operation errors](./resource.md#operation-errors) for the complete API.
+A resource operation throws `ResourceOperationPendingError` when it has not finished. The error gives the reconciler a delay and optional callback context. The runtime stores the context, waits without keeping the process busy, and calls the same operation again. From `create`, `update` or `delete`, the error means that the call made no change and can be made again, for example while an IAM role propagates. From `read`, it means that the resource exists and has not reached a stable state, so calling `read` again polls it. See [Operation errors](./resource.md#operation-errors) for the complete API.
 
 Each attempt, delay, event, state read, state write, and hold change has a stable step key. A resumed execution must use the same execution ID. A new deploy or destroy must use a new execution ID.
 
@@ -47,7 +47,7 @@ Each resource is stored under `notation/resource-state` with a deployment-scoped
 
 Deploy and destroy take an exclusive hold on the deployment through one `notation/deployment-hold` store per deployment. `store.take` suspends a competing execution as a durable waiter and wakes it after the holder releases. A waiter that finds the hold already taken when it inspects it emits `reconciler.hold.waiting` naming the holding execution ID, so a wait behind a crashed execution is visible instead of silent; a holder that appears only between that inspection and the `take` suspends the waiter without the event.
 
-A failed or suspended execution keeps its hold, which is what makes resuming it safe. The hold of an execution that will never be resumed is cleared with `clearDeploymentHold` from `@notation/reconciler/durable` — the only supported way out of that state.
+A suspended execution keeps its hold, which is what makes resuming it safe. An execution that ends a delivery with an infrastructure error also keeps its hold, because the dispatcher delivers it again. When the workflow throws, the execution fails permanently and releases its hold under `notation:hold:release-failed`. The hold of a crashed execution that will never be resumed is cleared with `clearDeploymentHold` from `@notation/reconciler/durable`.
 
 ## Events
 

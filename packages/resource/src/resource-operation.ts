@@ -1,5 +1,10 @@
-/** Plain data passed from one attempt of an operation to the next. */
-export type ResourceOperationContext = Readonly<Record<string, unknown>>;
+import type { DurableObject } from "./durable-value";
+
+/**
+ * Data passed from one attempt of an operation to the next. The reconciler
+ * records it with the error, so it must be a durable value.
+ */
+export type ResourceOperationContext = Readonly<DurableObject>;
 
 /**
  * A `read` operation throws this error when no resource exists for its key.
@@ -58,8 +63,30 @@ export class ResourceOperationPendingError extends Error {
   }
 }
 
+/**
+ * A `create` operation throws this error when it cannot tell whether the
+ * provider made the resource, for example after a timeout.
+ *
+ * The reconciler looks the resource up before it calls `create` again. A
+ * resource that cannot be looked up fails the create.
+ */
+export class ResourceCreationUnknownError extends Error {
+  readonly _tag = "ResourceCreationUnknownError" as const;
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ResourceCreationUnknownError";
+  }
+
+  static is(error: unknown): error is ResourceCreationUnknownError {
+    return hasTag(error, "ResourceCreationUnknownError");
+  }
+}
+
 export type ResourceOperationSignal =
-  ResourceNotFoundError | ResourceOperationPendingError;
+  | ResourceNotFoundError
+  | ResourceOperationPendingError
+  | ResourceCreationUnknownError;
 
 function hasTag<T extends string>(
   error: unknown,

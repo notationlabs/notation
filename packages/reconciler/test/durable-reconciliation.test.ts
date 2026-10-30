@@ -1,15 +1,16 @@
 import {
+  REDELIVERY_DELAY_BASE,
   WorkflowRunner,
+  type EffectClient,
+  type ExecutionLease,
   type HeapClient,
-  type WorkflowEvent,
+  type Runtime,
+  type StoreClient,
 } from "@yieldstar/core";
-import {
-  SqliteHeapClient,
-  SqliteStoreClient,
-  createSqliteDb,
-} from "@yieldstar/sqlite-runtime/node";
+import { SqliteRuntime, createSqliteDb } from "@yieldstar/sqlite-runtime/node";
 import {
   resource,
+  ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
   type BaseResource,
@@ -62,9 +63,11 @@ describe("durable execution and replay", () => {
       { maxOperationAttempts: 3 },
     );
 
-    await runtime.run("wait-execution");
+    await expect(runtime.run("wait-execution")).resolves.toMatchObject({
+      status: "suspended",
+      wakeAt: expect.any(Number),
+    });
     expect(attempts).toBe(1);
-    expect(runtime.scheduler.events).toHaveLength(1);
 
     await sleep(PAST_RETRY_MS);
     await runtime.run("wait-execution");
@@ -72,7 +75,7 @@ describe("durable execution and replay", () => {
     expect(await runtime.state.get("pending")).toMatchObject({
       id: "pending",
       lastOperation: "create",
-      version: 0,
+      version: 1,
     });
     runtime.close();
   });
@@ -85,7 +88,7 @@ describe("durable execution and replay", () => {
     const runtime = createRuntime(
       [new TestResource("resume")],
       "crash-resume",
-      { crashAfterStep: "notation:deploy:resume:create:remote:attempt:0" },
+      { crashAfterStep: "notation:deploy:resume:create:remote:effect:0" },
     );
 
     await expect(runtime.run("resume-execution")).rejects.toThrow(
@@ -96,7 +99,188 @@ describe("durable execution and replay", () => {
 
     await runtime.run("resume-execution");
     expect(create).toHaveBeenCalledOnce();
-    expect(await runtime.state.get("resume")).toMatchObject({ version: 0 });
+    expect(await runtime.state.get("resume")).toMatchObject({ version: 1 });
+    runtime.close();
+  });
+
+  it("reads a create interrupted before its outcome was recorded instead of creating again", async () => {
+    const create = vi.fn(async () => undefined);
+    const read = vi.fn(async () => ({ name: "app" }));
+    const TestResource = resource({ type: "test/durable/effect-read" })
+      // Cast: a resource declared without API types constrains every schema
+      // key to be a key of an `any` API schema, which no named key satisfies.
+      .defineSchema({
+        name: { presence: "required", propertyType: "param", primaryKey: true },
+      } as any)
+      .defineOperations({ create, read, delete: async () => undefined });
+    const runtime = createRuntime(
+      [new TestResource("looked-up", { config: { name: "app" } as any })],
+      "effect-read",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("lookup-execution")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    expect(create).toHaveBeenCalledOnce();
+
+    await runtime.run("lookup-execution");
+    expect(create).toHaveBeenCalledOnce();
+    // The lookup, then the read after create.
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenNthCalledWith(1, { name: "app" });
+    expect(await runtime.state.get("looked-up")).toMatchObject({
+      output: { name: "app" },
+      version: 1,
+    });
+    runtime.close();
+  });
+
+  it("creates again after an interrupted create when the resource cannot be looked up", async () => {
+    const create = vi.fn(async () => undefined);
+    const TestResource = resource({ type: "test/durable/effect-no-read" })
+      .defineSchema({})
+      .defineOperations({ create, delete: async () => undefined });
+    const runtime = createRuntime(
+      [new TestResource("no-read")],
+      "effect-no-read",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("no-read-execution")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    await runtime.run("no-read-execution");
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(await runtime.state.get("no-read")).toMatchObject({ version: 1 });
+    runtime.close();
+  });
+
+  it("finds a resource made by a create with an unknown outcome", async () => {
+    const tokens: string[] = [];
+    const create = vi.fn(async (_params: unknown, _context: unknown, token) => {
+      tokens.push(token!);
+      throw new ResourceCreationUnknownError("socket timed out");
+    });
+    const find = vi.fn(async (_params: unknown, token: string) => ({
+      remoteId: `remote-for-${token}`,
+    }));
+    const TestResource = resource({ type: "test/durable/effect-find" })
+      .defineSchema({
+        remoteId: {
+          presence: "required",
+          propertyType: "computed",
+          primaryKey: true,
+        },
+      } as any)
+      .defineOperations({
+        // Cast: a schema declared without API types infers no primary key.
+        create: create as any,
+        find: find as any,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime([new TestResource("found")], "effect-find");
+
+    await expect(runtime.run("find-execution")).resolves.toMatchObject({
+      status: "suspended",
+    });
+    runtime.advance(1_000);
+    await runtime.run("find-execution");
+
+    expect(create).toHaveBeenCalledOnce();
+    expect(tokens).toEqual(["notation:create:find-execution:found:0"]);
+    expect(find).toHaveBeenCalledWith(
+      {},
+      "notation:create:find-execution:found:0",
+    );
+    expect(await runtime.state.get("found")).toMatchObject({
+      output: { remoteId: "remote-for-notation:create:find-execution:found:0" },
+      version: 1,
+    });
+    runtime.close();
+  });
+
+  it("fails a create with an unknown outcome when the resource cannot be looked up", async () => {
+    const create = vi.fn(async () => {
+      throw new ResourceCreationUnknownError("socket timed out");
+    });
+    const TestResource = resource({ type: "test/durable/effect-unfindable" })
+      .defineSchema({})
+      .defineOperations({
+        create,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime(
+      [new TestResource("unfindable")],
+      "effect-unfindable",
+    );
+
+    await expect(runtime.run("unfindable-execution")).rejects.toThrow(
+      "socket timed out",
+    );
+    expect(create).toHaveBeenCalledOnce();
+    runtime.close();
+  });
+
+  it("fails a create whose outcome stays unknown after the attempt limit", async () => {
+    const create = vi.fn(async () => {
+      throw new ResourceCreationUnknownError("socket timed out");
+    });
+    const find = vi.fn(async () => {
+      throw new Error("access denied");
+    });
+    const TestResource = resource({ type: "test/durable/effect-unknown" })
+      .defineSchema({})
+      .defineOperations({
+        create,
+        find,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime(
+      [new TestResource("unknown")],
+      "effect-unknown",
+      { maxOperationAttempts: 2 },
+    );
+
+    await expect(runtime.run("unknown-execution")).resolves.toMatchObject({
+      status: "suspended",
+    });
+    runtime.advance(1_000);
+    await expect(runtime.run("unknown-execution")).rejects.toMatchObject({
+      name: "WorkflowEffectError",
+      code: "EFFECT_OUTCOME_UNKNOWN",
+    });
+    expect(create).toHaveBeenCalledOnce();
+    expect(find).toHaveBeenCalledOnce();
+    runtime.close();
+  });
+
+  it("stops looking up a create with an unknown outcome after the lookup limit", async () => {
+    const create = vi.fn(async () => {
+      throw new ResourceCreationUnknownError("socket timed out");
+    });
+    const find = vi.fn(async () => {
+      throw new Error("access denied");
+    });
+    const TestResource = resource({ type: "test/durable/effect-capped" })
+      .defineSchema({})
+      .defineOperations({
+        create,
+        find,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime([new TestResource("capped")], "capped");
+
+    for (let n = 1; n < 10; n += 1) {
+      await expect(runtime.run("capped-execution")).resolves.toMatchObject({
+        status: "suspended",
+      });
+      runtime.advance(1_000);
+    }
+    await expect(runtime.run("capped-execution")).rejects.toMatchObject({
+      code: "EFFECT_OUTCOME_UNKNOWN",
+    });
+    expect(find).toHaveBeenCalledTimes(9);
     runtime.close();
   });
 
@@ -191,7 +375,7 @@ describe("durable execution and replay", () => {
     await runtime.run("post-write-read-execution");
     expect(reads).toBe(2);
     expect(await runtime.state.get("eventually-readable")).toMatchObject({
-      version: 0,
+      version: 1,
     });
     runtime.close();
   });
@@ -217,6 +401,106 @@ describe("durable execution and replay", () => {
       "resource is absent",
     );
     expect(await runtime.state.get("missing-after-create")).toBeUndefined();
+    runtime.close();
+  });
+});
+
+describe("durable values", () => {
+  it("records a date in provider output as a date", async () => {
+    const DatedResource = resource<{
+      Key: {};
+      CreateParams: {};
+      UpdateParams: {};
+      ReadResult: { CreatedDate: Date };
+    }>({ type: "test/durable/dated" })
+      .defineSchema({
+        CreatedDate: { propertyType: "computed", presence: "required" },
+      })
+      .defineOperations({
+        create: async () => undefined,
+        read: async () => ({
+          CreatedDate: new Date("2026-07-22T00:00:00.000Z"),
+          Undeclared: new Date(),
+        }),
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime([new DatedResource("dated")], "dated");
+
+    await runtime.run("dated-execution");
+
+    expect((await runtime.state.get("dated"))?.output).toEqual({
+      CreatedDate: new Date("2026-07-22T00:00:00.000Z"),
+    });
+    runtime.close();
+  });
+
+  it("rejects a provider output that is not a durable value", async () => {
+    const BytesResource = resource<{
+      Key: {};
+      CreateParams: {};
+      UpdateParams: {};
+      ReadResult: { Payload: string };
+    }>({ type: "test/durable/bytes" })
+      .defineSchema({
+        Payload: { propertyType: "computed", presence: "required" },
+      })
+      .defineOperations({
+        create: async () => undefined,
+        // The type rejects a Buffer, so only an untyped provider can return
+        // one.
+        read: async () => ({ Payload: Buffer.from("bytes") }) as any,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime([new BytesResource("bytes")], "bytes");
+
+    await expect(runtime.run("bytes-execution")).rejects.toMatchObject({
+      name: "WorkflowValueError",
+      code: "INVALID_STEP_VALUE",
+    });
+    expect(await runtime.state.get("bytes")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("passes a date in a callback context to the next attempt", async () => {
+    const contexts: unknown[] = [];
+    const PendingResource = resource({ type: "test/durable/dated-context" })
+      .defineSchema({})
+      .defineOperations({
+        create: async (_params, context) => {
+          contexts.push(context);
+          if (contexts.length === 1) {
+            throw new ResourceOperationPendingError("provider is not ready", {
+              retryAfterMs: RETRY_AFTER_MS,
+              callbackContext: {
+                startedAt: new Date("2026-07-22T00:00:00.000Z"),
+              },
+            });
+          }
+        },
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime(
+      [new PendingResource("dated-context")],
+      "dated-context",
+      { maxOperationAttempts: 3 },
+    );
+
+    await expect(runtime.run("dated-context-execution")).resolves.toMatchObject(
+      { status: "suspended" },
+    );
+    await sleep(PAST_RETRY_MS);
+    await runtime.run("dated-context-execution");
+
+    expect(contexts).toEqual([
+      undefined,
+      { startedAt: new Date("2026-07-22T00:00:00.000Z") },
+    ]);
+    expect((contexts[1] as { startedAt: unknown }).startedAt).toBeInstanceOf(
+      Date,
+    );
+    expect(await runtime.state.get("dated-context")).toMatchObject({
+      version: 1,
+    });
     runtime.close();
   });
 });
@@ -286,7 +570,7 @@ describe("conditional state persistence", () => {
     });
     // The losing write left the other writer's record intact.
     expect(await runtime.state.get("raced")).toMatchObject({
-      version: 1,
+      version: 2,
       lastOperationAt: "1999-01-01T00:00:00.000Z",
     });
     runtime.close();
@@ -317,7 +601,7 @@ describe("conditional state persistence", () => {
       name: "VersionConflict",
       // A conflict names the version the record moved to; only a genuinely
       // absent record may be reported as "missing".
-      message: expect.stringMatching(/expected 0, got 1$/),
+      message: expect.stringMatching(/expected 1, got 2$/),
     });
     // State survives a removal that could not be proven safe.
     expect(await runtime.state.get("delete-raced")).toBeDefined();
@@ -434,70 +718,66 @@ describe("deployment hold", () => {
 
     unblockCreate();
     await first;
-    const wake = runtime.scheduler.events.find(
-      (event) => event.executionId === "deployment-b",
-    );
-    expect(wake).toBeDefined();
-    await runtime.runner.run(wake!, logger);
+    // Releasing the hold wakes the waiting execution.
+    await runtime.run("deployment-b");
 
     expect(create).toHaveBeenCalledOnce();
     expect(await runtime.state.values()).toHaveLength(1);
     runtime.close();
   });
 
-  it("still holds the deployment when a failed execution is resumed", async () => {
-    // The failure has to live in plain generator code. A step that fails
-    // caches a StepError, and a cached StepError is rethrown on replay before
-    // the step's function is reached, so no later work would ever run
-    // uncached. For a resource with persisted state, decideAction reads the
-    // schema outside any step, after the resource's reads have been
-    // checkpointed.
-    let failOnSecond = true;
+  it("releases the deployment hold when the workflow throws", async () => {
+    let failCreate = true;
+    const create = vi.fn(async () => {
+      if (failCreate) throw new Error("create rejected");
+    });
+    const Resource = resource({ type: "test/durable/hold-release" })
+      .defineSchema({})
+      .defineOperations({ create, delete: async () => undefined });
+    const runtime = createRuntime([new Resource("held")], "hold-release");
+
+    await expect(runtime.run("failed-execution")).rejects.toThrow(
+      "create rejected",
+    );
+    expect(await runtime.execution("failed-execution")).toMatchObject({
+      status: "failed",
+    });
+    expect(await readHolder(runtime, "hold-release")).toBeNull();
+
+    failCreate = false;
+    await runtime.run("later-execution");
+    expect(await runtime.state.get("held")).toMatchObject({
+      lastOperation: "create",
+    });
+    runtime.close();
+  });
+
+  it("keeps the deployment hold when a delivery ends with an infrastructure error", async () => {
     const holders: Array<string | null> = [];
     const Resource = resource({ type: "test/durable/hold-replay" })
       .defineSchema({})
       .defineOperations({
         create: async () => {
-          const snapshot = await runtime.storeClient.getStore({
-            definition: durable.deploymentHoldStore,
-            id: "hold-replay",
-          });
-          holders.push(snapshot.state.holder);
+          holders.push(await readHolder(runtime, "hold-replay"));
         },
         delete: async () => undefined,
       });
-
-    const first = new Resource("first");
-    const second = new Resource("second");
-    const third = new Resource("third");
-    const schema = second.schema;
-    Object.defineProperty(second, "schema", {
-      get() {
-        if (failOnSecond) throw new Error("simulated mid-deployment failure");
-        return schema;
-      },
-    });
-    const runtime = createRuntime([first, second, third], "hold-replay");
-    // Persisted state for `second`, so deciding its action reaches the
-    // failure seam in its schema.
-    await seedResourceState(
-      runtime.storeClient,
-      runtime.state.storeId("second"),
-      "second",
+    const runtime = createRuntime(
+      [new Resource("first"), new Resource("second")],
+      "hold-replay",
+      { crashAfterStep: "notation:deploy:first:create:remote:effect:0" },
     );
 
     await expect(runtime.run("replayed-execution")).rejects.toThrow(
-      "simulated mid-deployment failure",
+      "simulated process crash",
     );
-    expect(holders).toEqual(["replayed-execution"]);
+    expect(await readHolder(runtime, "hold-replay")).toBe("replayed-execution");
 
-    failOnSecond = false;
     await runtime.run("replayed-execution");
-
-    // The third resource's create is the first uncached work after the
-    // failure, so it observes whichever hold the resumed execution is running
-    // under. Releasing on the way out of a failure would leave it null here.
+    // The second resource's create is the first uncached work after the
+    // crash, so it observes the hold the resumed execution runs under.
     expect(holders).toEqual(["replayed-execution", "replayed-execution"]);
+    expect(await readHolder(runtime, "hold-replay")).toBeNull();
     runtime.close();
   });
 
@@ -550,11 +830,9 @@ describe("deployment hold clearing", () => {
       .defineSchema({})
       .defineOperations({ create, delete: async () => undefined });
     const runtime = createRuntime([new Resource("held")], "takeover");
-    await runtime.storeClient.getOrCreateStore({
-      definition: durable.deploymentHoldStore,
-      id: "takeover",
-      initial: { holder: "abandoned-execution" },
-    });
+    await runtime.storeClient
+      .store(durable.deploymentHoldStore, "takeover")
+      .update(() => ({ holder: "abandoned-execution" }));
 
     const result = await durable.clearDeploymentHold({
       storeClient: runtime.storeClient,
@@ -573,11 +851,9 @@ describe("deployment hold clearing", () => {
 
   it("refuses to clear a hold that has moved to another execution", async () => {
     const runtime = createRuntime([], "takeover-race");
-    await runtime.storeClient.getOrCreateStore({
-      definition: durable.deploymentHoldStore,
-      id: "takeover-race",
-      initial: { holder: "current-execution" },
-    });
+    await runtime.storeClient
+      .store(durable.deploymentHoldStore, "takeover-race")
+      .update(() => ({ holder: "current-execution" }));
 
     const result = await durable.clearDeploymentHold({
       storeClient: runtime.storeClient,
@@ -586,11 +862,22 @@ describe("deployment hold clearing", () => {
     });
 
     expect(result).toEqual({ cleared: false, holder: "current-execution" });
-    const snapshot = await runtime.storeClient.getStore({
-      definition: durable.deploymentHoldStore,
-      id: "takeover-race",
+    expect(await readHolder(runtime, "takeover-race")).toBe(
+      "current-execution",
+    );
+    runtime.close();
+  });
+
+  it("reports no holder for a deployment that was never deployed", async () => {
+    const runtime = createRuntime([], "never-deployed");
+
+    const result = await durable.clearDeploymentHold({
+      storeClient: runtime.storeClient,
+      deploymentId: "never-deployed",
+      fromExecutionId: "abandoned-execution",
     });
-    expect(snapshot.state.holder).toBe("current-execution");
+
+    expect(result).toEqual({ cleared: false, holder: null });
     runtime.close();
   });
 });
@@ -598,10 +885,7 @@ describe("deployment hold clearing", () => {
 describe("deployment scoping", () => {
   it("scopes store listing to the exact deployment despite prefix-like IDs", async () => {
     const database = createSqliteDb({ path: ":memory:" });
-    const storeClient = new SqliteStoreClient({
-      db: database,
-      schedulerClient: new TestScheduler(),
-    });
+    const storeClient = new SqliteRuntime(database).stores;
     const app = new durable.DurableStateBackend(storeClient, "app");
     const appBlue = new durable.DurableStateBackend(storeClient, "app:blue");
 
@@ -912,8 +1196,8 @@ describe("replacement", () => {
 
     expect(calls).toEqual(["create:/", "delete:/", "create:/service/"]);
     const current = await runtime.state.snapshot("role");
-    expect(current!.state.params).toEqual({ name: "app", path: "/service/" });
-    expect(current!.instanceId).not.toBe(original!.instanceId);
+    expect(current.state!.params).toEqual({ name: "app", path: "/service/" });
+    expect(current.instanceId).not.toBe(original.instanceId);
     expect(
       events.filter(
         (event) =>
@@ -1110,6 +1394,8 @@ function createRuntime(
   options: {
     maxOperationAttempts?: number;
     crashAfterStep?: string;
+    /** Fails the first effect settle, as if the process died after perform. */
+    failFirstSettle?: boolean;
     registry?: ResourceRegistry;
     driftDetection?: boolean;
     dryRun?: boolean;
@@ -1117,15 +1403,22 @@ function createRuntime(
   } = {},
 ) {
   const database = createSqliteDb({ path: ":memory:" });
-  const scheduler = new TestScheduler();
-  const sqliteHeap = new SqliteHeapClient(database);
-  const heap = options.crashAfterStep
-    ? new CrashAfterWriteHeap(sqliteHeap, options.crashAfterStep)
-    : sqliteHeap;
-  const storeClient = new SqliteStoreClient({
-    db: database,
-    schedulerClient: scheduler,
+  let skew = 0;
+  const sqliteRuntime = new SqliteRuntime(database, {
+    clock: () => Date.now() + skew,
   });
+  const runtime: Runtime = {
+    clock: sqliteRuntime.clock,
+    executions: sqliteRuntime.executions,
+    effects: options.failFirstSettle
+      ? failFirstSettle(sqliteRuntime.effects)
+      : sqliteRuntime.effects,
+    heap: options.crashAfterStep
+      ? new CrashAfterWriteHeap(sqliteRuntime.heap, options.crashAfterStep)
+      : sqliteRuntime.heap,
+    stores: sqliteRuntime.stores,
+  };
+  const storeClient = sqliteRuntime.stores;
   const state = new durable.DurableStateBackend(storeClient, deploymentId);
   const deploy = workflow(async function* (step, event) {
     yield* durable.deploy(step, {
@@ -1151,41 +1444,65 @@ function createRuntime(
     });
   });
   const router = createWorkflowRouter({ deploy, destroy });
-  const runner = new WorkflowRunner({
-    router,
-    heapClient: heap,
-    storeClient,
-    schedulerClient: scheduler,
-    logger,
-  });
+  const runner = new WorkflowRunner(runtime, { router, logger });
+
+  /**
+   * Runs one delivery of the execution, admitting it first if it has no
+   * record, and acknowledges the outcome as the dispatcher would. A failed
+   * outcome rejects with the recorded error. A delivery that rejects releases
+   * its lease, and the test clock skips the redelivery delay so the next
+   * call can resume the execution.
+   */
+  async function deliver(workflowId: string, executionId: string) {
+    if (!(await runtime.executions.get(executionId))) {
+      const admission = await runtime.executions.admit({
+        executionId,
+        workflowId,
+        params: {},
+        context: new Map(),
+      });
+      if (admission.status === "rejected") throw new Error(admission.message);
+    }
+    const [lease] = await runtime.executions.claimDue({
+      limit: 1,
+      duration: 60_000,
+      filter: { executionIds: [executionId] },
+    });
+    if (!lease) throw new Error(`Execution ${executionId} is not due`);
+
+    let outcome;
+    try {
+      outcome = await runner.run(
+        { workflowId, executionId, params: {}, context: new Map() },
+        { lease, signal: new AbortController().signal },
+      );
+    } catch (error) {
+      await runtime.executions.release({ lease });
+      skew += REDELIVERY_DELAY_BASE;
+      throw error;
+    }
+    await runtime.executions.acknowledge({ lease, outcome });
+    if (outcome.status === "failed") throw outcome.error;
+    return outcome;
+  }
 
   return {
-    runner,
-    scheduler,
+    runtime,
     state,
     storeClient,
     database,
+    execution(executionId: string) {
+      return runtime.executions.get(executionId);
+    },
     run(executionId: string) {
-      return runner.run(
-        {
-          workflowId: "deploy",
-          executionId,
-          params: {},
-          context: new Map(),
-        },
-        logger,
-      );
+      return deliver("deploy", executionId);
     },
     destroy(executionId: string) {
-      return runner.run(
-        {
-          workflowId: "destroy",
-          executionId,
-          params: {},
-          context: new Map(),
-        },
-        logger,
-      );
+      return deliver("destroy", executionId);
+    },
+    /** Moves the runtime clock forward, so a suspended step is due. */
+    advance(ms: number) {
+      skew += ms;
     },
     close() {
       database.close();
@@ -1193,14 +1510,7 @@ function createRuntime(
   };
 }
 
-class TestScheduler {
-  readonly events: WorkflowEvent[] = [];
-
-  async requestWakeUp(event: WorkflowEvent) {
-    this.events.push(event);
-  }
-}
-
+/** Throws after the named step is recorded, as if the process died there. */
 class CrashAfterWriteHeap implements HeapClient {
   #crashed = false;
 
@@ -1214,39 +1524,63 @@ class CrashAfterWriteHeap implements HeapClient {
   }
 
   async writeStep(params: {
-    executionId: string;
+    lease: ExecutionLease;
     stepKey: string;
     stepAttempt: number;
-    stepDone: boolean;
+    done: boolean;
     stepResponseJson: string;
   }) {
-    await this.inner.writeStep(params);
+    const result = await this.inner.writeStep(params);
     if (
       !this.#crashed &&
       params.stepKey === this.crashAfterStep &&
-      params.stepDone
+      params.done
     ) {
       this.#crashed = true;
       throw new Error("simulated process crash");
     }
+    return result;
   }
 }
 
+function failFirstSettle(inner: EffectClient): EffectClient {
+  let failed = false;
+  return {
+    begin: (request) => inner.begin(request),
+    watch: (request) => inner.watch(request),
+    getEffect: (effectId) => inner.getEffect(effectId),
+    settle(request) {
+      if (failed) return inner.settle(request);
+      failed = true;
+      return Promise.reject(new Error("simulated process crash"));
+    },
+  };
+}
+
+async function readHolder(
+  runtime: ReturnType<typeof createRuntime>,
+  deploymentId: string,
+) {
+  const hold = runtime.storeClient.store(
+    durable.deploymentHoldStore,
+    deploymentId,
+  );
+  return (await hold.get()).state.holder;
+}
+
 function seedResourceState(
-  storeClient: SqliteStoreClient,
+  storeClient: StoreClient,
   storeId: string,
   resourceId: string,
 ) {
-  return storeClient.getOrCreateStore({
-    definition: durable.resourceStateStore,
-    id: storeId,
-    initial: resourceStateRecord(resourceId),
-  });
+  return storeClient
+    .store(durable.resourceStateStore, storeId)
+    .update(() => resourceStateRecord(resourceId));
 }
 
 /** Deletes a resource's store and creates it again, returning the new instance ID. */
 async function recreateResourceState(
-  storeClient: SqliteStoreClient,
+  storeClient: StoreClient,
   storeId: string,
   resourceId: string,
 ) {
@@ -1254,15 +1588,12 @@ async function recreateResourceState(
     definition: durable.resourceStateStore,
     id: storeId,
   });
-  const store = await storeClient.getOrCreateStore({
-    definition: durable.resourceStateStore,
-    id: storeId,
-    initial: {
-      ...resourceStateRecord(resourceId),
-      lastOperationAt: "1999-01-01T00:00:00.000Z",
-    },
-  });
-  return store.instanceId;
+  const store = storeClient.store(durable.resourceStateStore, storeId);
+  await store.update(() => ({
+    ...resourceStateRecord(resourceId),
+    lastOperationAt: "1999-01-01T00:00:00.000Z",
+  }));
+  return (await store.get()).instanceId;
 }
 
 function resourceStateRecord(id: string) {

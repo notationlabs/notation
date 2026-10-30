@@ -1,27 +1,24 @@
-import { setImmediate } from "node:timers/promises";
-import { isDeepStrictEqual } from "node:util";
+import { EventEmitter } from "node:events";
 import {
+  ExecutionDispatcher,
   WorkflowRunner,
-  type WorkflowEvent,
+  waitForExecutionOutcome,
+  type ExecutionRecord,
+  type WorkflowInvoker,
   type WorkflowRouter,
 } from "@yieldstar/core";
-import {
-  SqliteEventLoop,
-  SqliteHeapClient,
-  SqliteSchedulerClient,
-  SqliteStoreClient,
-  SqliteTaskQueueClient,
-  SqliteTimersClient,
-  createSqliteDb,
-} from "@yieldstar/sqlite-runtime/node";
+import { SqliteRuntime, createSqliteDb } from "@yieldstar/sqlite-runtime/node";
 import {
   DurableStateBackend,
   type DurableStep,
 } from "@notation/reconciler/durable";
 import pino, { type Logger } from "pino";
 import { filePaths, toProjectRoot } from "src/utils/paths";
-import * as v from "valibot";
-import { createWorkflowRouter, defineStore, workflow } from "yieldstar";
+import {
+  ExecutionAdmissionError,
+  createWorkflowRouter,
+  workflow,
+} from "yieldstar";
 
 function resolveDatabasePath(): string {
   return process.env.NOTATION_DATABASE_PATH ?? filePaths.database();
@@ -35,6 +32,12 @@ export type NodeDurableRuntimeOptions = {
   deploymentId: string;
   databasePath?: string;
   logger?: Logger;
+  /**
+   * How long a delivery's lease lasts unless renewed, in milliseconds. A
+   * resumed execution whose process was killed waits up to this long for the
+   * old lease to expire.
+   */
+  leaseDuration?: number;
 };
 
 /**
@@ -48,45 +51,35 @@ export type RunWorkflowOptions = {
   executionId: string;
 };
 
-const executionBindingStore = defineStore(
-  "notation/execution-binding",
-  v.object({ deploymentId: v.string(), workflowId: v.string() }),
-);
-
-type ExecutionBinding = v.InferOutput<typeof executionBindingStore.schema>;
-
 /** Resident durable runtime used by Notation application commands. */
 export class NodeDurableRuntime {
   readonly deploymentId: string;
   readonly state: DurableStateBackend;
   readonly #database: ReturnType<typeof createSqliteDb>;
-  readonly #eventLoop: SqliteEventLoop;
-  readonly #heapClient: SqliteHeapClient;
-  readonly #schedulerClient: SqliteSchedulerClient;
-  readonly #storeClient: SqliteStoreClient;
+  readonly #runtime: SqliteRuntime;
   readonly #logger: Logger;
+  readonly #leaseDuration: number | undefined;
   #running = false;
 
   constructor(opts: NodeDurableRuntimeOptions) {
     this.deploymentId = opts.deploymentId;
     this.#logger = opts.logger ?? pino({ level: "silent" });
+    this.#leaseDuration = opts.leaseDuration;
     this.#database = createSqliteDb({
       path: opts.databasePath ?? resolveDatabasePath(),
     });
-    const taskQueueClient = new SqliteTaskQueueClient(this.#database);
-    this.#schedulerClient = new SqliteSchedulerClient({
-      taskQueueClient,
-      timersClient: new SqliteTimersClient(this.#database),
-    });
-    this.#storeClient = new SqliteStoreClient({
-      db: this.#database,
-      schedulerClient: this.#schedulerClient,
-    });
-    this.#heapClient = new SqliteHeapClient(this.#database);
-    this.#eventLoop = new SqliteEventLoop(this.#database);
-    this.state = new DurableStateBackend(this.#storeClient, this.deploymentId);
+    this.#runtime = new SqliteRuntime(this.#database);
+    this.state = new DurableStateBackend(
+      this.#runtime.stores,
+      this.deploymentId,
+    );
   }
 
+  /**
+   * Runs one execution until it ends and returns its result. The dispatcher
+   * delivers only this execution, so this process never resumes another
+   * execution in the same database against its own resources.
+   */
   async run(
     router: WorkflowRouter,
     opts: RunWorkflowOptions,
@@ -95,88 +88,83 @@ export class NodeDurableRuntime {
       throw new Error("NodeDurableRuntime is already running a workflow");
     }
     this.#running = true;
+    const runner = new WorkflowRunner(this.#runtime, {
+      router,
+      logger: this.#logger,
+    });
+    const invoker: WorkflowInvoker = {
+      workflowEndEmitter: new EventEmitter(),
+      deliver: (event, { lease, signal }) =>
+        runner.run(event, { lease, signal, logger: this.#logger }),
+    };
+    const dispatcher = new ExecutionDispatcher(this.#runtime, {
+      invoker,
+      logger: this.#logger,
+      filter: { executionIds: [opts.executionId] },
+      concurrency: 1,
+      leaseDuration: this.#leaseDuration,
+    });
     try {
-      const { executionId } = opts;
-      const runner = new WorkflowRunner({
-        router,
-        heapClient: this.#heapClient,
-        storeClient: this.#storeClient,
-        schedulerClient: this.#schedulerClient,
-        logger: this.#logger,
-      });
-
-      await this.#bindExecution(executionId, opts.workflowId);
-      const result = await this.#driveToCompletion(runner, {
-        workflowId: opts.workflowId,
-        executionId,
-        params: {},
-        context: new Map(),
-      });
-      // Let the queue transaction finish before callers close the shared database.
-      await setImmediate();
-      return result;
+      // Admission runs before the dispatcher starts, because the dispatcher
+      // claims a due execution at once and would deliver one bound to
+      // another workflow or deployment before the check throws.
+      await this.#admit(opts);
+      dispatcher.start();
+      const outcome = await waitForExecutionOutcome(
+        this.#runtime.executions,
+        opts.executionId,
+        { emitter: invoker.workflowEndEmitter },
+      );
+      if (!outcome) {
+        throw new Error(`Execution ${opts.executionId} has no record`);
+      }
+      if (outcome.status === "failed") throw outcome.error;
+      return outcome.result;
     } finally {
+      await dispatcher.stop();
       this.#running = false;
     }
   }
 
-  /**
-   * Runs one execution to completion in-process: the trigger event directly,
-   * then every event the queue produces for it (retries, timer wake-ups),
-   * polling timers between rounds. Tasks queued for other executions are
-   * hidden for the duration and made visible again on the way out, so this
-   * runner never resumes an execution it was not asked to run.
-   */
-  async #driveToCompletion(
-    runner: WorkflowRunner<WorkflowRouter>,
-    event: WorkflowEvent,
-  ): Promise<unknown> {
-    const deferredTaskIds: number[] = [];
-    try {
-      let outcome = await runner.run(event, this.#logger);
-      while (!outcome) {
-        const task = this.#eventLoop.taskQueue.process();
-        if (!task) {
-          this.#eventLoop.timers.processTimers();
-          await new Promise((resolve) => setTimeout(resolve, 10));
-          continue;
-        }
-        if (task.event.executionId !== event.executionId) {
-          deferredTaskIds.push(task.taskId);
-          continue;
-        }
-        try {
-          outcome = await runner.run(task.event, this.#logger);
-        } finally {
-          this.#eventLoop.taskQueue.remove(task.taskId);
-        }
-      }
-      return outcome.result;
-    } finally {
-      for (const taskId of deferredTaskIds) {
-        this.#eventLoop.taskQueue.makeVisible(taskId);
-      }
-    }
+  /** Reads the execution record, for reporting on a run. */
+  execution(executionId: string): Promise<ExecutionRecord | undefined> {
+    return this.#runtime.executions.get(executionId);
   }
 
   /**
-   * Pins an execution ID to its deployment and workflow on first use, so a
-   * reused ID cannot replay one workflow's cached steps inside another.
+   * Admits a new execution, or checks that an existing one belongs to this
+   * deployment and workflow, so a reused ID cannot replay one workflow's
+   * recorded steps inside another.
    */
-  async #bindExecution(executionId: string, workflowId: string): Promise<void> {
-    const expected: ExecutionBinding = {
-      deploymentId: this.deploymentId,
+  async #admit({ workflowId, executionId }: RunWorkflowOptions): Promise<void> {
+    const admission = await this.#runtime.executions.admit({
+      executionId,
       workflowId,
-    };
-    const binding = await this.#storeClient.getOrCreateStore({
-      definition: executionBindingStore,
-      id: executionId,
-      initial: expected,
+      params: { deploymentId: this.deploymentId },
+      context: new Map(),
     });
-    const existing: ExecutionBinding = binding.state;
-    if (!isDeepStrictEqual(existing, expected)) {
+    if (admission.status === "accepted") return;
+    if (admission.code !== "EXECUTION_ID_CONFLICT") {
+      throw new ExecutionAdmissionError(admission.code, admission.message);
+    }
+
+    const record = await this.#runtime.executions.get(executionId);
+    if (!record) throw new Error(admission.message);
+    const deploymentId = record.params?.deploymentId;
+    if (
+      record.workflowId !== workflowId ||
+      deploymentId !== this.deploymentId
+    ) {
       throw new Error(
-        `Execution ${executionId} is bound to deployment ${existing.deploymentId} workflow ${existing.workflowId}, not deployment ${this.deploymentId} workflow ${workflowId}`,
+        `Execution ${executionId} is bound to deployment ${String(deploymentId)} workflow ${record.workflowId}, not deployment ${this.deploymentId} workflow ${workflowId}`,
+      );
+    }
+    // A failed execution never runs again. The next run plans from persisted
+    // state and skips the resources that already converged.
+    if (record.outcome?.status === "failed") {
+      throw new Error(
+        `Execution ${executionId} failed and cannot be resumed. Run ${workflowId} again without --execution-id to start a new execution. ${record.outcome.error.message}`,
+        { cause: record.outcome.error },
       );
     }
   }

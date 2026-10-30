@@ -99,6 +99,7 @@ export async function* reconcileResource(
   });
 
   const shared = {
+    executionId: opts.executionId,
     resource,
     resourceParams: params,
     persistedOutput: session.node?.output,
@@ -251,10 +252,11 @@ async function* openStateSession(
     opts.state.snapshot(resource.id),
   );
   const persist = persistResourceState(step, opts, resource, snapshot);
-  if (!snapshot) return { node: undefined, persist };
+  const node = toStateNode(snapshot);
+  if (!node) return { node: undefined, persist };
 
   return {
-    node: toStateNode(snapshot),
+    node,
     persist,
     remove: removeResourceState(step, opts, resource, snapshot),
   };
@@ -265,26 +267,19 @@ async function* openStateSession(
  * the store stamps the write with the step that made it, so the applied-step
  * ledger and the state change commit together. Replaying then returns the
  * recorded result instead of retrying a compare-and-set that would now fail.
+ *
+ * Create and update take the same path. For a new resource the snapshot has
+ * `null` state, so a writer that created the record first causes a version
+ * conflict.
  */
 function persistResourceState(
   step: DurableStepRunner,
   opts: DurableWorkflowOptions,
   resource: BaseResource,
-  snapshot: ResourceSnapshot | undefined,
+  snapshot: ResourceSnapshot,
 ): PersistState {
   return async function* (next) {
-    if (!snapshot) {
-      // Create-if-absent. A racing writer would win here and this record would
-      // be silently adopted rather than written, which is safe only because a
-      // deployment is held exclusively for the length of the workflow.
-      yield* step.store(resourceStateStore, {
-        id: opts.state.storeId(resource.id),
-        initial: next,
-      });
-      return;
-    }
-
-    const store = yield* step.store(resourceStateStore, {
+    const store = step.store(resourceStateStore, {
       id: opts.state.storeId(resource.id),
     });
     const result = yield* store.updateFrom(
@@ -303,11 +298,9 @@ function persistResourceState(
 }
 
 /**
- * Create-if-absent for a record removed earlier in the same execution. It
- * cannot go through a workflow store: opening a store is a step keyed by the
- * store's ID alone, and the removal already opened this one. Creating a store
- * is exactly what that step does, so running it as a keyed step here is no
- * weaker, and like any create-if-absent it is safe to repeat.
+ * Writes the record of a resource that this execution removed earlier. The
+ * write is unconditional, which is safe only because the deployment hold
+ * keeps every other writer out for the length of the workflow.
  */
 function createResourceState(
   step: DurableStepRunner,
@@ -315,9 +308,10 @@ function createResourceState(
   resource: BaseResource,
 ): PersistState {
   return async function* (next) {
-    yield* step.run("state:create", () =>
-      opts.state.createIfAbsent(resource.id, next),
-    );
+    const store = step.store(resourceStateStore, {
+      id: opts.state.storeId(resource.id),
+    });
+    yield* store.update(`state:create:${resource.id}`, () => next);
   };
 }
 
@@ -328,7 +322,7 @@ function removeResourceState(
   snapshot: ResourceSnapshot,
 ): RemoveState {
   return async function* () {
-    const store = yield* step.store(resourceStateStore, {
+    const store = step.store(resourceStateStore, {
       id: opts.state.storeId(resource.id),
     });
     const result = yield* store.deleteFrom(
@@ -336,12 +330,10 @@ function removeResourceState(
       snapshot,
     );
     if (!result.deleted) {
-      // "conflict" carries the version the record moved to; "not-found" means
-      // the record is genuinely gone, which the message reports as "missing".
       throw new VersionConflict(
         resource.id,
         snapshot.version,
-        result.reason === "conflict" ? result.actualVersion : undefined,
+        result.actualVersion,
       );
     }
   };

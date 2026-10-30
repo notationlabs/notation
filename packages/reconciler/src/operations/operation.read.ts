@@ -1,5 +1,9 @@
 import { ResourceNotFoundError } from "@notation/resource";
-import { decideDriftAction, type DriftRead, type ResourceAction } from "../plan";
+import {
+  decideDriftAction,
+  type DriftRead,
+  type ResourceAction,
+} from "../plan";
 import {
   type ResolvedResourceParams,
   type StepRunner,
@@ -35,7 +39,10 @@ export async function* readResourceOperation(
     const remote = yield* runPendingOperation(
       step,
       "read:remote",
-      (context) => params.resource.read!(params.resource.key, context),
+      async (context) =>
+        params.resource.toResult(
+          await params.resource.read!(params.resource.key, context),
+        ),
       params.maxOperationAttempts,
     );
 

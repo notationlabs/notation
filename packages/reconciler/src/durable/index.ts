@@ -9,15 +9,25 @@
  *   notation:destroy:<id>:*    per-resource deletion steps
  *   notation:orphans:list      the orphan sweep's one read of persisted state
  *   notation:orphans:<id>:*    orphan sweep, per persisted record
- *   *:remote:attempt:<n>       one provider call attempt
+ *   *:create:remote:effect:<n> one create attempt, as a step.effect
+ *   *:remote:attempt:<n>       one read, update or delete attempt
  *   *:remote:retry-delay:<n>   the wait between two attempts
  *   *:emit:<event>[:<operation>:<status>]   event delivery checkpoint
  *   notation:hold:*            deployment hold: inspect/acquire/release
- *   state:persist:<id>         conditional write of a resource record
+ *   state:persist:<id>         conditional create or update of a resource
+ *                              record
  *   state:delete:<id>          conditional removal of one
+ *   state:create:<id>          unconditional write of a record removed
+ *                              earlier in the same execution
  *   *:replace:delete:*         replacement, first half: the delete
  *   *:replace:create:*         replacement, second half: the create, ending
- *                              in state:create, a create-if-absent
+ *                              in state:create
+ *
+ * Opening a store has no step key.
+ *
+ * Effect IDs are persisted in the same way. A create attempt's effect ID is
+ * notation:create:<execution id>:<resource id>:<n>, with both IDs
+ * URI-encoded. The resource receives it as the attempt's token.
  *
  * An <id> inside a scope is URI-encoded, so the `:` delimiter is unambiguous.
  * The state: keys are store-handle keys and so are not scope-prefixed: a
@@ -30,10 +40,8 @@
  *
  *   notation/resource-state    one record per live resource
  *   notation/deployment-hold   one hold per deployment
- *
- * @notation/core's durable runtime persists one more name under the same
- * prefix, notation/execution-binding (see its durable-runtime module).
  */
+import "./errors";
 export { deploy } from "./deploy";
 export { destroy } from "./destroy";
 export {

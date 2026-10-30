@@ -5,6 +5,7 @@ import type {
   PickOptional,
   Simplify,
 } from "./types";
+import type { Durable } from "./durable-value";
 
 /**
  * Structural holder for a value type.
@@ -112,12 +113,18 @@ type MissingValueType<K> = {
 /**
  * Pairs each schema item with its value type, resolved from the API schema.
  * Computed once per resource, when the schema is defined.
+ *
+ * The reconciler records params, read results and state, so each value type
+ * is made durable here. A `Buffer` or another class instance in an API type
+ * becomes `never`, and a provider that returns one does not compile.
  */
 export type ResolveSchema<
   Api extends DefineResourceApiSchema,
   S extends Schema,
 > = {
-  [K in keyof S]: S[K] & { valueType: TypedValue<SchemaItemValue<Api, S, K>> };
+  [K in keyof S]: S[K] & {
+    valueType: TypedValue<Durable<SchemaItemValue<Api, S, K>>>;
+  };
 };
 
 export type ComputedPrimaryKey<S extends ResolvedSchema> = FallbackToVoid<

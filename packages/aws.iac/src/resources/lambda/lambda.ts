@@ -5,28 +5,44 @@ import {
   typed,
 } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-lambda";
+import { fromProjectRoot } from "@notation/core";
+import crypto from "node:crypto";
+import * as nodeFs from "node:fs/promises";
 import { lambdaClient } from "src/utils/aws-clients";
+import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
+import { awsCreate } from "src/utils/errors";
 import { AwsSchema } from "src/utils/types";
 import { fs } from "@notation/std.iac";
 import { LambdaIamRoleInstance } from "./";
 
 export type LambdaFunctionSchema = AwsSchema<{
   Key: Omit<sdk.GetFunctionRequest, "Qualifier">;
-  CreateParams: sdk.CreateFunctionRequest &
-    sdk.PutFunctionConcurrencyRequest & {
-      CodeSha256: string; // not actually a param, but want it to appear in the state for comparison
-    };
-  UpdateParams: sdk.UpdateFunctionCodeRequest &
+  CreateParams: Omit<sdk.CreateFunctionRequest, "Code"> &
+    sdk.PutFunctionConcurrencyRequest &
+    LambdaCodeParams;
+  UpdateParams: Omit<sdk.UpdateFunctionCodeRequest, "ZipFile"> &
     sdk.UpdateFunctionConfigurationRequest &
     sdk.PutFunctionConcurrencyRequest &
     sdk.PutFunctionCodeSigningConfigRequest &
-    Pick<sdk.CreateFunctionRequest, "Code"> & {
-      CodeSha256: string;
-    };
+    LambdaCodeParams;
   ReadResult: NonNullable<sdk.GetFunctionResponse["Configuration"]> &
     NonNullable<sdk.GetFunctionResponse["Code"]> &
     NonNullable<sdk.GetFunctionResponse["Concurrency"]>;
 }>;
+
+/**
+ * The code is uploaded from a file. The params hold the path and hash of the
+ * file instead of its bytes, because the reconciler records params.
+ */
+type LambdaCodeParams = {
+  /** The zip archive to upload, relative to the project root. */
+  CodeFilePath: string;
+  /**
+   * A base64 SHA-256 of the archive. AWS reports the same hash of the
+   * uploaded code, so a read compares equal when the code is unchanged.
+   */
+  CodeSha256: string;
+};
 
 export type LambdaDependencies = {
   role: LambdaIamRoleInstance;
@@ -47,7 +63,7 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
     propertyType: "param",
     presence: "optional",
   },
-  Code: {
+  CodeFilePath: {
     propertyType: "param",
     presence: "required",
     hidden: true,
@@ -185,10 +201,16 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
 
 export const LambdaFunction = lambdaFunctionSchema
   .defineOperations({
-    create: async (params) => {
+    // The create attempt is recorded as a tag, so `find` can tell this
+    // deploy's function from another with the same name.
+    create: awsCreate(async (params, _context, token) => {
+      const { CodeFilePath, ...functionParams } = params;
       const command = new sdk.CreateFunctionCommand({
-        ...params,
-        Code: { ZipFile: params.Code.ZipFile },
+        ...functionParams,
+        Tags: token
+          ? { ...params.Tags, [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
+          : params.Tags,
+        Code: { ZipFile: await readCode(CodeFilePath, params.CodeSha256) },
       });
 
       await runLambdaMutation(() => lambdaClient.send(command));
@@ -200,13 +222,28 @@ export const LambdaFunction = lambdaFunctionSchema
       //   });
       //   await lambdaClient.send(concurrencyCommand);
       // }
+    }),
+
+    // A function without the token was not made by the attempt. Reporting it
+    // as not found makes create fail on the name, instead of taking it over.
+    find: async (params, token) => {
+      try {
+        const { Tags } = await lambdaClient.send(
+          new sdk.GetFunctionCommand({ FunctionName: params.FunctionName }),
+        );
+        if (Tags?.[CREATE_TOKEN_TAG] === createTokenTagValue(token)) return;
+      } catch (error) {
+        if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
+      }
+      throw new ResourceNotFoundError(
+        "No Lambda function has the name and the create token",
+      );
     },
 
     read: async (key) => {
       try {
         const command = new sdk.GetFunctionCommand(key);
-        const { Code, Configuration, Concurrency } =
-          await lambdaClient.send(command);
+        const { Configuration, Concurrency } = await lambdaClient.send(command);
 
         if (Configuration?.State !== "Active") {
           throw new ResourceOperationPendingError(
@@ -233,12 +270,6 @@ export const LambdaFunction = lambdaFunctionSchema
           VpcConfig: Configuration.VpcConfig ? vpcConfig : undefined,
           SnapStart: Configuration.SnapStart ? snapStart : undefined,
           ...Concurrency,
-          Code: {
-            S3Bucket: Code?.Location?.split("/")[0],
-            S3Key: Code?.Location?.split("/")[1],
-            S3ObjectVersion: Code?.Location?.split("/")[2],
-            ZipFile: undefined,
-          },
         };
       } catch (error) {
         if (error instanceof sdk.ResourceNotFoundException) {
@@ -251,7 +282,7 @@ export const LambdaFunction = lambdaFunctionSchema
     },
 
     update: async (key, patch, params) => {
-      const { Code, CodeSha256, ...conf } = patch;
+      const { CodeFilePath, CodeSha256, ...conf } = patch;
       // An omitted Environment leaves the variables as they were.
       if ("Environment" in conf && conf.Environment === undefined) {
         conf.Environment = { Variables: {} };
@@ -271,7 +302,7 @@ export const LambdaFunction = lambdaFunctionSchema
       if (CodeSha256) {
         const codeCommand = new sdk.UpdateFunctionCodeCommand({
           ...key,
-          ZipFile: params.Code.ZipFile,
+          ZipFile: await readCode(params.CodeFilePath, params.CodeSha256),
         });
         await runLambdaMutation(() => lambdaClient.send(codeCommand));
       }
@@ -289,12 +320,31 @@ export const LambdaFunction = lambdaFunctionSchema
   .requireDependencies<LambdaDependencies>()
   .deriveParams(async ({ deps }) => ({
     PackageType: "Zip",
-    Code: { ZipFile: deps.zipFile.output.file },
-    CodeSha256: deps.zipFile.output.sourceSha256,
+    CodeFilePath: deps.zipFile.output.filePath,
+    CodeSha256: deps.zipFile.output.fileSha256,
     Role: deps.role.output.Arn,
   }));
 
 export type LambdaFunctionInstance = InstanceType<typeof LambdaFunction>;
+
+/**
+ * Reads the archive to upload. A resumed deploy reuses the params of the
+ * original run, and the file may have changed since then, so the bytes must
+ * still match the recorded hash.
+ */
+async function readCode(filePath: string, expectedSha256: string) {
+  const code = await nodeFs.readFile(fromProjectRoot(filePath));
+  const actualSha256 = crypto
+    .createHash("sha256")
+    .update(code)
+    .digest("base64");
+  if (actualSha256 !== expectedSha256) {
+    throw new Error(
+      `Lambda code at ${filePath} has SHA-256 ${actualSha256}, but this deploy expects ${expectedSha256}. The file changed after the deploy computed its params; start a new deploy.`,
+    );
+  }
+  return code;
+}
 
 async function runLambdaMutation<T>(mutation: () => Promise<T>): Promise<T> {
   try {

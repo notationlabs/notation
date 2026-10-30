@@ -10,3 +10,12 @@ export const getSourceSha256 = async (filePath: string) => {
     .digest("hex");
   return sourceSha256;
 };
+
+/**
+ * A base64 SHA-256 of the bytes at `filePath`, the form in which AWS reports
+ * a Lambda's `CodeSha256`.
+ */
+export const getFileSha256 = async (filePath: string) => {
+  const file = await fs.readFile(fromProjectRoot(filePath));
+  return crypto.createHash("sha256").update(file).digest("base64");
+};
