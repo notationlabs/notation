@@ -59,16 +59,15 @@ At plan, some resources have not been created yet, so their outputs do not exist
 
 **`deriveParams`.** Plan calls `deriveParams` with a view of each dependency. Reading the view's `output` throws `PendingOutput` when the dependency has no output yet. Plan cannot tell which params depend on that output, so it handles each result like this:
 
-| `deriveParams` at plan                                         | Plan shows                                                              |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| reads no pending output                                        | the params it returns, as known                                         |
-| reads a pending output, even if it catches `PendingOutput`     | every param it would set, and every param not set in config, as unknown |
-| throws any other error                                         | the same as above                                                       |
-| throws `ContributionConflictError` or `OutputValueStringError` | an error: the plan fails, as deploy would                               |
+| `deriveParams` at plan                         | Plan shows                                |
+| ---------------------------------------------- | ----------------------------------------- |
+| reads no pending output                        | the params it returns, as known           |
+| reads a pending output, then returns or throws | every param not set in config, as unknown |
+| throws without reading a pending output        | an error: the plan fails, as deploy would |
 
 A dependency whose output `deriveParams` never reads only orders the deploy, so it does not make any param unknown.
 
-**Function contributions.** Plan runs each function contribution with the same views. When the function reads a pending output or throws, plan marks every collected param of the receiving resource unknown. Otherwise plan uses the function's result.
+**Function contributions.** Plan runs each function contribution with the same views. When the function reads a pending output, whether it then returns or throws, plan marks every collected param of the receiving resource unknown. When it throws without reading one, the plan fails. Otherwise plan uses the function's result.
 
 ## Dependency edges
 
