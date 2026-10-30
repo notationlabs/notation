@@ -16,6 +16,7 @@
   },
   "devDependencies": {
     "@notation/aws": "workspace:*",
+    "@notation/core": "workspace:*",
     "@types/fs-extra": "^11.0.4",
     "@types/which-pm-runs": "^1.0.2"
   }

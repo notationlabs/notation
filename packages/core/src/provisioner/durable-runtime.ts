@@ -13,7 +13,11 @@ import {
   type DurableStep,
 } from "@notation/reconciler/durable";
 import pino, { type Logger } from "pino";
-import { filePaths, toProjectRoot } from "src/utils/paths";
+import { filePaths } from "src/utils/paths";
+import {
+  resolveDeploymentId,
+  type DeploymentIdentity,
+} from "src/config/deployment";
 import {
   ExecutionAdmissionError,
   createWorkflowRouter,
@@ -24,12 +28,8 @@ function resolveDatabasePath(): string {
   return process.env.NOTATION_DATABASE_PATH ?? filePaths.database();
 }
 
-export function resolveDeploymentId(entryPoint: string): string {
-  return toProjectRoot(entryPoint);
-}
-
 export type NodeDurableRuntimeOptions = {
-  deploymentId: string;
+  deployment: DeploymentIdentity;
   databasePath?: string;
   logger?: Logger;
   /**
@@ -53,6 +53,7 @@ export type RunWorkflowOptions = {
 
 /** Resident durable runtime used by Notation application commands. */
 export class NodeDurableRuntime {
+  readonly deployment: DeploymentIdentity;
   readonly deploymentId: string;
   readonly state: DurableStateBackend;
   readonly #database: ReturnType<typeof createSqliteDb>;
@@ -62,7 +63,8 @@ export class NodeDurableRuntime {
   #running = false;
 
   constructor(opts: NodeDurableRuntimeOptions) {
-    this.deploymentId = opts.deploymentId;
+    this.deployment = opts.deployment;
+    this.deploymentId = resolveDeploymentId(opts.deployment);
     this.#logger = opts.logger ?? pino({ level: "silent" });
     this.#leaseDuration = opts.leaseDuration;
     this.#database = createSqliteDb({
@@ -180,13 +182,13 @@ export class NodeDurableRuntime {
 }
 
 /**
- * Runs `fn` with a Node runtime for the entry point's deployment, creating one
- * when the caller did not supply a runtime and closing it again afterwards. A
- * supplied runtime stays open: its lifecycle belongs to the caller.
+ * Runs `fn` with a Node runtime for the deployment, creating one when the
+ * caller did not supply a runtime and closing it again afterwards. A supplied
+ * runtime stays open: its lifecycle belongs to the caller.
  */
 export async function withRuntime<T>(
   opts: {
-    entryPoint: string;
+    deployment?: DeploymentIdentity;
     runtime?: NodeDurableRuntime;
     databasePath?: string;
   },
@@ -197,10 +199,22 @@ export async function withRuntime<T>(
       "Pass either runtime or databasePath, not both: a runtime already owns its database",
     );
   }
+  if (!opts.runtime && !opts.deployment) {
+    throw new Error("Pass either runtime or deployment");
+  }
+  if (
+    opts.runtime &&
+    opts.deployment &&
+    opts.runtime.deploymentId !== resolveDeploymentId(opts.deployment)
+  ) {
+    throw new Error(
+      `The runtime belongs to deployment ${opts.runtime.deploymentId}, not ${resolveDeploymentId(opts.deployment)}`,
+    );
+  }
   const runtime =
     opts.runtime ??
     new NodeDurableRuntime({
-      deploymentId: resolveDeploymentId(opts.entryPoint),
+      deployment: opts.deployment!,
       databasePath: opts.databasePath,
     });
   try {
@@ -212,12 +226,12 @@ export async function withRuntime<T>(
 
 /**
  * Wraps a reconciler generator as a single-workflow router and runs it to
- * completion on the entry point's runtime: one command, one workflow, one
+ * completion on the deployment's runtime: one command, one workflow, one
  * execution.
  */
 export async function runDurableWorkflow(
   opts: {
-    entryPoint: string;
+    deployment?: DeploymentIdentity;
     workflowId: string;
     runtime?: NodeDurableRuntime;
     databasePath?: string;

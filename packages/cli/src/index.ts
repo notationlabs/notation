@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { program } from "commander";
+import { Option, program } from "commander";
 import { compile } from "./compile";
 import { deploy } from "./deploy";
 import { destroy } from "./destroy";
@@ -9,37 +9,69 @@ import { runWithErrorHandling } from "./run-with-error-handling";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
 import { startDashboardServer } from "@notation/dashboard";
-import { NodeDurableRuntime, resolveDeploymentId } from "@notation/core";
+import {
+  NodeDurableRuntime,
+  loadProject,
+  resolveDeployment,
+  resolveEntryPoint,
+} from "@notation/core";
+
+const entryArgument = [
+  "<entry>",
+  "entry name from notation.config.ts",
+] as const;
+const stageOption = [
+  "--stage <stage>",
+  "stage to deploy to (defaults to defaultStage in notation.config.ts)",
+] as const;
 
 program
   .command("compile")
-  .argument("<entryPoint>", "entryPoint")
+  .argument(...entryArgument)
   .description("Compile Notation App")
-  .action(async (entryPoint) => {
-    await compile(entryPoint);
+  .action(async (entry) => {
+    const project = await loadProject();
+    await compile(project, resolveEntryPoint(project, entry));
   });
 
 program
   .command("dashboard")
-  .argument("<entryPoint>", "entryPoint")
+  .argument(...entryArgument)
+  .option(...stageOption)
   .description("Start Notation Dashboard")
-  .action(async (entryPoint) => {
-    const runtime = new NodeDurableRuntime({
-      deploymentId: resolveDeploymentId(entryPoint),
+  .action(async (entry, options) => {
+    const project = await loadProject();
+    const deployment = resolveDeployment(project, {
+      entry,
+      stage: options.stage,
     });
+    const runtime = new NodeDurableRuntime({ deployment });
     await startDashboardServer({ state: runtime.state });
   });
 
 program
   .command("deploy")
-  .argument("<entryPoint>", "entryPoint")
+  .argument(...entryArgument)
+  .option(...stageOption)
   .description("Deploy Notation App")
   .option("--json", "stream reconciler events as NDJSON")
   .option("--execution-id <id>", "resume a durable execution")
   .option("--no-compile", "deploy the existing build without compiling")
   .option("--no-drift-detection", "skip drift detection")
-  .action(async (entryPoint, options) => {
-    await deploy(entryPoint, {
+  .addOption(
+    new Option(
+      "--app <app>",
+      "fail unless the config names this app",
+    ).hideHelp(),
+  )
+  .action(async (entry, options) => {
+    const project = await loadProject();
+    const deployment = resolveDeployment(project, {
+      entry,
+      stage: options.stage,
+      app: options.app,
+    });
+    await deploy(project, deployment, {
       json: options.json,
       executionId: options.executionId,
       compile: options.compile,
@@ -49,12 +81,18 @@ program
 
 program
   .command("destroy")
-  .argument("<entryPoint>", "entryPoint")
+  .argument(...entryArgument)
+  .option(...stageOption)
   .description("Destroy Notation App")
   .option("--json", "stream reconciler events as NDJSON")
   .option("--execution-id <id>", "resume a durable execution")
-  .action(async (entryPoint, options) => {
-    await destroy(entryPoint, {
+  .action(async (entry, options) => {
+    const project = await loadProject();
+    const deployment = resolveDeployment(project, {
+      entry,
+      stage: options.stage,
+    });
+    await destroy(project, deployment, {
       json: options.json,
       executionId: options.executionId,
     });
@@ -62,27 +100,40 @@ program
 
 program
   .command("plan")
-  .argument("<entryPoint>", "entryPoint")
+  .argument(...entryArgument)
+  .option(...stageOption)
   .description("Plan Notation App")
   .option("--json", "print the plan as JSON")
-  .action(async (entryPoint, options) => {
-    await plan(entryPoint, { json: options.json });
+  .action(async (entry, options) => {
+    const project = await loadProject();
+    const deployment = resolveDeployment(project, {
+      entry,
+      stage: options.stage,
+    });
+    await plan(project, deployment, { json: options.json });
   });
 
 program
   .command("viz")
-  .argument("<entryPoint>", "entryPoint")
+  .argument(...entryArgument)
   .description("Visualise Notation App")
-  .action(async (entryPoint) => {
-    await visualise(entryPoint);
+  .action(async (entry) => {
+    const project = await loadProject();
+    await visualise(project, resolveEntryPoint(project, entry));
   });
 
 program
   .command("watch")
-  .argument("<entryPoint>", "entryPoint")
+  .argument(...entryArgument)
+  .option(...stageOption)
   .description("Watch Notation App")
-  .action(async (entryPoint) => {
-    await watch(entryPoint);
+  .action(async (entry, options) => {
+    const project = await loadProject();
+    const deployment = resolveDeployment(project, {
+      entry,
+      stage: options.stage,
+    });
+    await watch(project, deployment);
   });
 
 process.exitCode = await runWithErrorHandling(

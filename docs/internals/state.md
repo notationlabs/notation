@@ -5,8 +5,10 @@ Notation CLI deploy, destroy, plan, and dashboard use Yieldstar stores in `.nota
 Each live resource is a `notation/resource-state` store scoped by deployment and resource ID. A missing store means the resource is absent.
 
 ```ts
-const state = new DurableStateBackend(storeClient, "infra/api.ts");
+const state = new DurableStateBackend(storeClient, "my-app:prod:api");
 ```
+
+The CLI builds the deployment ID from the app, the stage and the entry name, as `<app>:<stage>:<entry>`. See [Project Config](../manual/project-config.md#deployment-identity). State written by older versions under an entry path, such as `infra/api.ts`, is not migrated.
 
 The runtime assigns a UUIDv7 `instanceId` when a store is created and increments its version on update. Conditional workflow updates and deletes compare both values, preventing a stale snapshot from modifying a deleted and recreated resource. The store version is exposed unchanged as `StateNode.version`.
 

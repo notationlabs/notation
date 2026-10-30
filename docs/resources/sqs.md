@@ -23,7 +23,7 @@ type QueueConfig = {
 };
 ```
 
-`name` names the queue and keys it in state, so changing it replaces the queue. A FIFO queue's name must end in `.fifo`, and `fifo` can't change after the queue is created.
+`name` keys the queue in state, so changing it replaces the queue. In AWS, the queue is named `<app>-<stage>-<name>`, such as `my-app-prod-orders`. See [AWS names](../manual/project-config.md#aws-names). A FIFO queue's name must end in `.fifo`, and `fifo` can't change after the queue is created.
 
 The other settings can change in place. When you remove one, Notation sets it back to the value SQS gives a new queue, because SQS can't unset a queue attribute:
 

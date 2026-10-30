@@ -1,13 +1,18 @@
 # notation deploy
 
 ```sh
-notation deploy <entryPoint>
+notation deploy <entry> [--stage <stage>]
 ```
 
-Compiles the stack and runs a durable deploy.
+| Argument          | Meaning                                                            |
+| ----------------- | ------------------------------------------------------------------ |
+| `<entry>`         | An entry name from `notation.config.ts`, such as `api`.            |
+| `--stage <stage>` | The stage. Defaults to `defaultStage`, and is required without it. |
+
+Compiles the entry and runs a durable deploy of it to the stage. Notation keys the state of the deployment by `<app>:<stage>:<entry>`, so each stage of an entry has its own state. See [Project Config](../manual/project-config.md).
 
 ```sh
-notation deploy infra/api.ts
+notation deploy api --stage prod
 ```
 
 ## Event stream
@@ -15,7 +20,7 @@ notation deploy infra/api.ts
 `--json` writes versioned reconciler events to stdout as newline-delimited JSON. Build output, the execution ID, and diagnostics move to stderr.
 
 ```sh
-notation deploy infra/api.ts --json > deploy.ndjson
+notation deploy api --stage prod --json > deploy.ndjson
 ```
 
 ## Durable execution
@@ -23,8 +28,10 @@ notation deploy infra/api.ts --json > deploy.ndjson
 The command prints its execution ID before starting provider work. If the process crashes, resume the same execution with that ID:
 
 ```sh
-notation deploy infra/api.ts --execution-id <id>
+notation deploy api --stage prod --execution-id <id>
 ```
+
+Pass the same entry and stage as the crashed command. Notation rejects an execution ID that belongs to another deployment.
 
 Do not reuse a completed execution ID for a new deploy or for destroy.
 

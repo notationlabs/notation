@@ -2,12 +2,12 @@
   "private": true,
   "name": "sqs-demo",
   "scripts": {
-    "compile": "notation compile infra/orders.ts",
-    "dashboard": "notation dashboard",
-    "deploy": "notation deploy infra/orders.ts",
-    "destroy": "notation destroy infra/orders.ts",
-    "viz": "notation viz infra/orders.ts",
-    "watch": "notation watch infra/orders.ts",
+    "compile": "notation compile orders",
+    "dashboard": "notation dashboard orders",
+    "deploy": "notation deploy orders",
+    "destroy": "notation destroy orders",
+    "viz": "notation viz orders",
+    "watch": "notation watch orders",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -2,6 +2,9 @@ import {
   createLoggerReconcilerSubscriber,
   createNdjsonEventEmitter,
   deployApp,
+  resolveDeploymentId,
+  type Deployment,
+  type Project,
 } from "@notation/core";
 import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
@@ -18,7 +21,8 @@ export type DeployCommandOptions = {
 };
 
 export async function deploy(
-  entryPoint: string,
+  project: Project,
+  deployment: Deployment,
   opts: DeployCommandOptions = {},
 ) {
   const logger = opts.logger ?? defaultLogger;
@@ -27,14 +31,14 @@ export async function deploy(
     : createLoggerReconcilerSubscriber({ logger });
 
   if (opts.compile !== false) {
-    await compile(entryPoint, { logger });
+    await compile(project, deployment.entryPoint, { logger });
   }
-  logger.info(`Deploying ${entryPoint}`);
+  logger.info(`Deploying ${resolveDeploymentId(deployment)}`);
   const executionId = opts.executionId ?? randomUUID();
   logger.info(`Execution ID ${executionId}`);
 
   await deployApp({
-    entryPoint,
+    deployment,
     emit,
     executionId,
     driftDetection: opts.driftDetection,

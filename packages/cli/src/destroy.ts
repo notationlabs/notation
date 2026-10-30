@@ -2,6 +2,9 @@ import {
   createLoggerReconcilerSubscriber,
   createNdjsonEventEmitter,
   destroyApp,
+  resolveDeploymentId,
+  type Deployment,
+  type Project,
 } from "@notation/core";
 import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
@@ -15,7 +18,8 @@ export type DestroyCommandOptions = {
 };
 
 export async function destroy(
-  entryPoint: string,
+  project: Project,
+  deployment: Deployment,
   opts: DestroyCommandOptions = {},
 ) {
   const logger = opts.logger ?? defaultLogger;
@@ -23,10 +27,10 @@ export async function destroy(
     ? createNdjsonEventEmitter(redirectStdoutToStderr().write)
     : createLoggerReconcilerSubscriber({ logger });
 
-  await compile(entryPoint, { logger });
-  logger.info(`Destroying ${entryPoint}\n`);
+  await compile(project, deployment.entryPoint, { logger });
+  logger.info(`Destroying ${resolveDeploymentId(deployment)}\n`);
   const executionId = opts.executionId ?? randomUUID();
   logger.info(`Execution ID ${executionId}`);
 
-  await destroyApp({ entryPoint, emit, executionId });
+  await destroyApp({ deployment, emit, executionId });
 }

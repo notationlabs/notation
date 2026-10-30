@@ -1,13 +1,18 @@
 # notation watch
 
 ```sh
-notation watch <entryPoint>
+notation watch <entry> [--stage <stage>]
 ```
+
+| Argument          | Meaning                                                            |
+| ----------------- | ------------------------------------------------------------------ |
+| `<entry>`         | An entry name from `notation.config.ts`, such as `api`.            |
+| `--stage <stage>` | The stage. Defaults to `defaultStage`, and is required without it. |
 
 Hot Infra Replacement – the development workflow.
 
 ```sh
-notation watch infra/api.ts
+notation watch api --stage dev
 ```
 
 ## What it does
@@ -18,6 +23,12 @@ notation watch infra/api.ts
 4. On change, redeploys – only changed resources are updated (same reconciler as `deploy`).
 5. Queues deploys if one is already in progress.
 
-This gives you a live dev stack on real AWS infrastructure. Each developer can spin up their own ephemeral stack, iterate, and tear it down with `notation destroy`.
+## Changing the config
+
+`watch` reads `notation.config.ts` once, when it starts, and compiles the entry file that the config names at that time. Each redeploy reads the config again, and fails if the config now names another app.
+
+Restart `watch` after you change `app` or `entries` in `notation.config.ts`.
+
+`watch` deploys to real AWS resources. To give each developer their own copy, run `watch` with a stage per developer, such as `--stage dev-alice`, and remove the copy with `notation destroy api --stage dev-alice`. The [AWS names](../manual/project-config.md#aws-names) of each stage start with the app and the stage, so the developers can share one AWS account.
 
 Production deployments use `notation deploy`, not `watch`.

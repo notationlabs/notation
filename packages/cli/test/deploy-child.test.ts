@@ -32,7 +32,7 @@ describe("deployInChild", () => {
     const { spawn, calls } = fakeSpawn([], 0);
 
     await deployInChild({
-      entryPoint: "infra/app.ts",
+      deployment: { app: "orders-app", stage: "prod", entry: "orders" },
       executionId: "exec-1",
       logger: logger(),
       spawn,
@@ -41,7 +41,11 @@ describe("deployInChild", () => {
     expect(calls[0]).toEqual(
       expect.arrayContaining([
         "deploy",
-        "infra/app.ts",
+        "orders",
+        "--stage",
+        "prod",
+        "--app",
+        "orders-app",
         "--json",
         "--no-compile",
         "--no-drift-detection",
@@ -61,7 +65,7 @@ describe("deployInChild", () => {
     const { spawn } = fakeSpawn([JSON.stringify({ version: 1, ...event })], 0);
 
     await deployInChild({
-      entryPoint: "infra/app.ts",
+      deployment: { app: "orders-app", stage: "prod", entry: "orders" },
       executionId: "exec-1",
       logger: log,
       spawn,
@@ -75,7 +79,7 @@ describe("deployInChild", () => {
 
     await expect(
       deployInChild({
-        entryPoint: "infra/app.ts",
+        deployment: { app: "orders-app", stage: "prod", entry: "orders" },
         executionId: "exec-1",
         logger: logger(),
         spawn,
@@ -88,7 +92,7 @@ describe("deployInChild", () => {
     const proc = Object.assign(new EventEmitter(), { pid: 42, kill: vi.fn() });
 
     const deploying = deployInChild({
-      entryPoint: "infra/app.ts",
+      deployment: { app: "orders-app", stage: "prod", entry: "orders" },
       executionId: "exec-1",
       logger: logger(),
       spawn,
@@ -108,7 +112,7 @@ describe("deployInChild", () => {
     const proc = Object.assign(new EventEmitter(), { pid: 42, kill: vi.fn() });
 
     await deployInChild({
-      entryPoint: "infra/app.ts",
+      deployment: { app: "orders-app", stage: "prod", entry: "orders" },
       executionId: "exec-1",
       logger: logger(),
       spawn,
