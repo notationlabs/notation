@@ -124,6 +124,7 @@ All schema items carry these fields:
 
 - `immutable` – cannot change after creation (forces replacement).
 - `primaryKey` / `secondaryKey` – together form the compound key used for read/update/delete.
+- `collect` – makes the param collected, and combines what is contributed to it. See [Contributions](#contributions).
 
 **`computed`**
 
@@ -133,14 +134,14 @@ All schema items carry these fields:
 
 `defineOperations` accepts CRUD handlers and parameter derivation:
 
-| Field          | Required | Signature / Description                                                                                                                      |
-| -------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create`       | yes      | `(params, context?, token?) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key. `token` is unique to the attempt. |
+| Field          | Required | Signature / Description                                                                                                                                                                                       |
+| -------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`       | yes      | `(params, context?, token?) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key. `token` is unique to the attempt.                                                              |
 | `find`         | no       | `(params, token) => Promise<ComputedPrimaryKey<S>>` – find the resource that the create attempt with `token` made, or throw `ResourceNotFoundError`. See [Unknown create outcomes](#unknown-create-outcomes). |
-| `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                         |
-| `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                           |
-| `delete`       | yes      | `(key, state, context?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
-| `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                        |
+| `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                                                                          |
+| `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                                                            |
+| `delete`       | yes      | `(key, state, context?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone.                                                        |
+| `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                                                                         |
 
 The reconciler records params, results and state, so each must be a durable value as yieldstar 0.8.2 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
 
@@ -170,23 +171,23 @@ new ResourceOperationPendingError(message: string, {
 new ResourceCreationUnknownError(message: string, options?: { cause?: unknown });
 ```
 
-| Handler result | Meaning | What the reconciler does |
-| -------------- | ------- | ------------------------ |
-| Return normally | The operation finished. | Continues the deployment. |
-| `throw new ResourceNotFoundError(message, { cause })` | `read` or `delete` found no resource for the given key. | From `read`, treats the resource as absent during planning and drift detection; a read after create or update fails because that operation claimed to have finished. From `delete`, treats the delete as complete, since absence is its goal state. |
-| `throw new ResourceOperationPendingError(message, { retryAfterMs, callbackContext })` | The operation has not finished. | Waits for `retryAfterMs`, then calls the same handler again. It passes `callbackContext` as the handler's final argument. |
-| `throw new ResourceCreationUnknownError(message, { cause })` | `create` cannot tell whether the provider made the resource, for example after a timeout. | Looks the resource up, as described in [Unknown create outcomes](#unknown-create-outcomes). |
-| Throw any other error | The operation failed. | Stops the deployment. |
+| Handler result                                                                        | Meaning                                                                                   | What the reconciler does                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Return normally                                                                       | The operation finished.                                                                   | Continues the deployment.                                                                                                                                                                                                                           |
+| `throw new ResourceNotFoundError(message, { cause })`                                 | `read` or `delete` found no resource for the given key.                                   | From `read`, treats the resource as absent during planning and drift detection; a read after create or update fails because that operation claimed to have finished. From `delete`, treats the delete as complete, since absence is its goal state. |
+| `throw new ResourceOperationPendingError(message, { retryAfterMs, callbackContext })` | The operation has not finished.                                                           | Waits for `retryAfterMs`, then calls the same handler again. It passes `callbackContext` as the handler's final argument.                                                                                                                           |
+| `throw new ResourceCreationUnknownError(message, { cause })`                          | `create` cannot tell whether the provider made the resource, for example after a timeout. | Looks the resource up, as described in [Unknown create outcomes](#unknown-create-outcomes).                                                                                                                                                         |
+| Throw any other error                                                                 | The operation failed.                                                                     | Stops the deployment.                                                                                                                                                                                                                               |
 
 `ResourceNotFoundError` means the resource is absent wherever it is thrown. A `delete` handler may either catch the provider's missing-resource error and return normally, or translate it to `ResourceNotFoundError`; both count as success.
 
 `ResourceOperationPendingError` may be thrown by `create`, `read`, `update`, or `delete`. Its options are:
 
-| Option | Type | Required | Meaning |
-| ------ | ---- | -------- | ------- |
-| `retryAfterMs` | `number` | yes | Milliseconds to wait. It must be zero or greater. |
-| `callbackContext` | `Readonly<DurableObject>` | no | Data for the next attempt. The reconciler records it with the error. If it holds a value that is not durable, such as a `Buffer`, the next attempt receives `undefined`. |
-| `cause` | `unknown` | no | The provider error that caused this result. |
+| Option            | Type                      | Required | Meaning                                                                                                                                                                  |
+| ----------------- | ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `retryAfterMs`    | `number`                  | yes      | Milliseconds to wait. It must be zero or greater.                                                                                                                        |
+| `callbackContext` | `Readonly<DurableObject>` | no       | Data for the next attempt. The reconciler records it with the error. If it holds a value that is not durable, such as a `Buffer`, the next attempt receives `undefined`. |
+| `cause`           | `unknown`                 | no       | The provider error that caused this result.                                                                                                                              |
 
 The default limit is 30 attempts. Set `maxOperationAttempts` in the deploy, plan, or destroy options to change it. Reaching the limit fails the operation.
 
@@ -262,7 +263,7 @@ const LambdaIntegration = defineResource<{ ... }>({ type: "aws/apiGateway/Lambda
   }));
 ```
 
-`requireDependencies` declares typed dependency slots. `deriveParams` receives `{ id, config, deps }` and returns properties computed from dependency outputs. The values are resolved at deploy time after dependencies have been provisioned.
+`requireDependencies` declares typed dependency slots. `deriveParams` receives `{ id, config, deps }` and returns properties computed from dependency outputs. At deploy it runs after its dependencies have been provisioned, with their real outputs. At plan, a dependency that has no output yet throws `PendingOutput` when `deriveParams` reads its `output`; see [Unknown values](reconciler.md#unknown-values).
 
 A resource takes its ID first, then its config and dependencies:
 
@@ -275,6 +276,121 @@ const integration = new LambdaIntegration("todo-api-get-todos-integration", {
 The ID keys the resource in state, so keep it stable. The second argument can be left out when neither `config` nor `dependencies` has a required property.
 
 Dependencies also determine deployment order: a resource is not created until all its dependencies exist.
+
+`resource.dependOn(other)` adds a dependency after construction. It orders the deploy and is recorded in state, but `deriveParams` does not receive it. Like `contribute`, it throws once evaluation ends; see [Lifetime](#lifetime).
+
+## Output values
+
+An output, such as a queue's ARN, does not exist until the provider creates the resource. Infra code still needs to put it in another resource's config. `resource.outputValue(key)` returns a token that stands for the output, typed as the output:
+
+```ts [packages/aws/src/sqs/queue.ts]
+const queue = new aws.sqs.Queue("orders-queue", {
+  config: { QueueName: "orders" },
+});
+
+const mapping = new aws.lambda.LambdaEventSourceMapping("orders-mapping", {
+  config: { EventSourceArn: queue.outputValue("QueueArn") },
+});
+```
+
+The token has two effects:
+
+- `mapping` depends on `queue`, so the queue deploys first.
+- Deploy replaces the token with the queue's real ARN before it calls the provider for `mapping`. A token for a number becomes a number.
+
+**A token can only be placed whole.** Turning it into a string throws `OutputValueStringError`, whether in a template string, with `String()` or with `JSON.stringify`. This matters because a string such as `` `${arn}/*` `` would hide the token, and plan could not tell that the value is unknown. It follows that a token cannot be a map key: key the entry by something known now, and put the token inside it. To compute with an output, use `deriveParams` or a [function contribution](#function-contributions), which receive the real output at deploy.
+
+## Contributions
+
+Some params take values from several places. For example, a Lambda role's inline policy gets one statement from each queue that the function consumes. Each `queue.consume` call adds its statement to the policy, and none of them owns the whole document.
+
+A param is collected when its schema item has `collect`. `collect` receives the values and combines them into the param. The inline policy joins the statements:
+
+```ts [packages/aws.iac/src/resources/lambda/lambda-role-policy.ts]
+PolicyDocument: {
+  propertyType: "param",
+  presence: "required",
+  collect: (items) => ({
+    Version: "2012-10-17",
+    Statement: items.flatMap((item) => item.Statement ?? []),
+  }),
+},
+```
+
+While infra is being evaluated, any code can add to a collected param with `contribute`. `queue.consume` does this:
+
+```ts [packages/aws/src/sqs/queue.ts]
+consume(handler: SqsHandler | LambdaGroup, options: ConsumeOptions = {}) {
+  const lambdaGroup = handler as LambdaGroup;
+  const id = `${this.id}-${lambdaGroup.fn.id}-mapping`;
+
+  lambdaGroup.policy.contribute(
+    { PolicyDocument: { Statement: [this.grant(["ReceiveMessage", "DeleteMessage", "GetQueueAttributes"])] } },
+  );
+  // ...
+}
+```
+
+The rules for `collect`:
+
+- `contribute` accepts only collected params, and a collected param is optional in config.
+- `collect` receives the value from config first, if there is one, and then every contribution sorted by content. So moving a `contribute` call to another file never changes the result.
+- When there is no value in config and no contribution, `collect` is not called and the param is left unset.
+
+`mergeContributions` is a `collect` rule for maps. It merges the maps key by key, and fails when two contributions set one key to different values. The error names each contribution by the `file:line` of its `contribute` call, and gives the path of the key:
+
+```
+Conflicting contributions to orders-processOrders: infra/orders.ts:12 and infra/refunds.ts:8 both set Environment.Variables.QUEUE_URL, to "a" and "b"
+```
+
+Library code that contributes a map entry for the user should key the entry by a name the user chose, such as a binding's ID. Two calls of the library code then never set the same key, and when the library conflicts with the user's code, the key path names the binding. A value that holds a token is not known at plan, so plan cannot find a conflict with it, and deploy fails instead.
+
+### Function contributions
+
+A plain contribution cannot compute with an output value, because the output does not exist while infra is being evaluated. For example, to let a function send to every queue whose name starts with `orders-`, a policy statement needs the queue's ARN with `-*` appended. A function contribution receives the real output at deploy:
+
+```ts [infra/orders.ts]
+import { lambda } from "@notation/aws/lambda";
+import { queue } from "@notation/aws/sqs";
+
+const orderQueue = queue({ name: "orders" });
+const importer = lambda({
+  id: "order-importer",
+  handler: "handler",
+  code: { type: "file", path: "external/importer.mjs" },
+});
+
+importer.policy.contribute(
+  ({ deps }) => ({
+    PolicyDocument: {
+      Statement: [
+        {
+          Effect: "Allow",
+          Action: "sqs:SendMessage",
+          Resource: `${deps.queue.output.QueueArn}-*`, // ← a real string at deploy
+        },
+      ],
+    },
+  }),
+  { deps: { queue: orderQueue.queue } },
+);
+```
+
+`contribute` takes the function and, in `deps`, the resources the function reads. `deps` is typed from those resources, so `deps.queue.output` is the queue's output type.
+
+1. **While infra is evaluated**, `contribute` records the function and its deps. The policy now depends on the queue, and state records the edge.
+2. **At deploy**, the queue deploys first. Deploy then runs the function with the queue's real output, and collects the result like a plain contribution. The call site, lifetime and conflicts work the same way. The result can only set collected params.
+3. **At plan**, the function receives the same views of its deps as `deriveParams` (see [Unknown values](reconciler.md#unknown-values)). When the queue has no output yet, reading `deps.queue.output` throws, and plan marks every collected param of the policy unknown. When the queue exists, plan uses the function's result.
+
+As an aside, a provider that stores a collected map as one string should still keep the map structured in the param, so state, diff and plan see each key. The provider encodes it only in `create` and `update`, for example with `sortedJson` from `@notation/utils`, and decodes it in `read`.
+
+### Lifetime
+
+Contributions close when evaluation ends, and `contribute` and `dependOn` throw from then on. This keeps the params that plan and deploy read the same as the params that the infra code built. A resource made outside `collectResourceGraph` closes once code reads its params or dependencies.
+
+`onEvaluationEnd(callback)` registers a callback that runs after evaluation and before the close, for generated code whose values do not exist while modules are still being evaluated. It is an engine mechanism, not user-facing API.
+
+When you delete a `contribute` call, the collected value changes, and the resource updates on the next deploy. When the API cannot unset a removed field, the provider resets it to the API's default. When there is no default, mark the field `immutable`, so that removing it replaces the resource.
 
 ## Resource groups
 
@@ -312,6 +428,7 @@ Each group derives its ID from a value the user supplies, the same value its res
 | `ApiGroup`      | the API's `name`           | `todo-api`            |
 | `RouteGroup`    | `<api id>-<method>-<path>` | `todo-api-GET-/todos` |
 | `ScheduleGroup` | the schedule's `name`      | `nightly`             |
+| `QueueGroup`    | the queue's `name`         | `orders`              |
 
 `add()` records the group on the resource as `resource.group`, a `{ type, id }` pair. A resource that is in no group has `group: null`. The reconciler persists the pair with each resource's state.
 

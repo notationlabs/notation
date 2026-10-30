@@ -11,6 +11,7 @@ import type {
   State,
   ComputedPrimaryKey,
   CompoundKey,
+  Contributions,
 } from "./resource.schema";
 import type {
   OptionalIfAllPropertiesOptional,
@@ -19,7 +20,26 @@ import type {
 } from "./types";
 import type { ResourceOperationContext } from "./resource-operation";
 import type { DurableObject } from "./durable-value";
-import { toComparableParams } from "./diff-params";
+import { UNKNOWN_AFTER_APPLY, toComparableParams } from "./diff-params";
+import {
+  captureCallSite,
+  sortContributions,
+  type CollectContext,
+  type ContributedValues,
+  type Contribution,
+  type ContributionFunction,
+} from "./contributions";
+import {
+  OutputValue,
+  createPlanViews,
+  deployLookup,
+  forEachOutputValue,
+  markUnknownOutputValues,
+  planLookup,
+  resolveOutputValues,
+  type PlanViews,
+} from "./output-value";
+import { getActiveResourceCollection } from "./resource-collection";
 
 export type { Schema, SchemaItem, DefineResourceApiSchema };
 
@@ -53,6 +73,7 @@ export type ResourceTypes = {
   result: any;
   state: any;
   output: any;
+  collected: any;
 };
 
 export type InferResourceTypes<S extends ResolvedSchema> = {
@@ -62,7 +83,23 @@ export type InferResourceTypes<S extends ResolvedSchema> = {
   result: Result<S>;
   state: State<S>;
   output: Output<S>;
+  collected: Contributions<S>;
 };
+
+/**
+ * The config a resource takes: its params less `Omitted`. Collected params
+ * are optional, because contributions can supply them.
+ */
+export type ConfigParams<
+  T extends ResourceTypes,
+  Omitted extends PropertyKey = never,
+> = Omit<T["params"], Omitted | keyof T["collected"]> &
+  Partial<
+    Pick<
+      T["params"],
+      Exclude<keyof T["collected"], Omitted> & keyof T["params"]
+    >
+  >;
 
 /**
  * Identifies the group a resource belongs to. A group's ID is unique among
@@ -110,6 +147,34 @@ export interface BaseResource {
     config: any;
     deps: any;
   }) => DurableObject | Promise<DurableObject>;
+  /**
+   * Adds values to the resource's collected params, or a function that
+   * returns them from the outputs of `options.deps`. Throws once evaluation
+   * has ended, or once the resource's params have been read.
+   */
+  contribute(values: {}): void;
+  contribute<Deps extends Record<string, BaseResource>>(
+    compute: ContributionFunction<Deps, {}>,
+    options: { deps: Deps },
+  ): void;
+  /**
+   * Makes the resource depend on another after it was constructed. Throws in
+   * the same cases as `contribute`.
+   */
+  dependOn(resource: BaseResource): void;
+  /**
+   * Every resource this one depends on: its declared dependencies, those
+   * added with `dependOn`, the deps of its function contributions, and the
+   * resources whose output values its config and contributions hold.
+   */
+  getDependencies(): BaseResource[];
+  /**
+   * The params as a plan shows them. A value that holds an output not yet
+   * deployed is `UNKNOWN_AFTER_APPLY` at its own path.
+   */
+  planParams(): Promise<Record<string, unknown>>;
+  /** A token for one of the resource's outputs, to place whole in config. */
+  outputValue(key: string): unknown;
 }
 
 export abstract class Resource<
@@ -122,6 +187,12 @@ export abstract class Resource<
   group: ResourceGroupRef | null = null;
   output = null as any as T["output"];
   dependencies = {} as NoInfer<D>;
+  #collection = getActiveResourceCollection();
+  #contributions: Contribution[] = [];
+  #addedDependencies: BaseResource[] = [];
+  // Set once code reads the params or dependencies. A later contribution
+  // would be missing from what was read, so `contribute` throws.
+  #sealed = false;
   abstract type: ResourceType;
   abstract schema: Schema;
   abstract create: (
@@ -208,16 +279,286 @@ export abstract class Resource<
     return declared;
   }
 
+  /**
+   * Returns a token for one of the resource's outputs, typed as the output.
+   * Place it whole in config or in a contribution. The resource holding it
+   * depends on this one, and the real value is filled in at deploy. Turning
+   * it into a string throws: compute with the output in `deriveParams`, or
+   * in a function contribution, which receive real outputs.
+   */
+  outputValue<K extends keyof T["output"] & string>(
+    key: K,
+  ): NonNullable<T["output"][K]> {
+    return new OutputValue(this, [key]) as any;
+  }
+
+  contribute(values: T["collected"]): void;
+  contribute<Deps extends Record<string, BaseResource>>(
+    compute: ContributionFunction<Deps, T["collected"]>,
+    options: { deps: Deps },
+  ): void;
+  contribute(
+    input: unknown,
+    options: { deps?: Record<string, BaseResource> } = {},
+  ): void {
+    const contributor =
+      captureCallSite(Resource.prototype.contribute) ?? "an unknown call site";
+    this.#assertOpen("contribute to");
+
+    if (typeof input === "function") {
+      this.#contributions.push({
+        compute: input as ContributionFunction<any, Record<string, unknown>>,
+        deps: options.deps ?? {},
+        contributor,
+      });
+      return;
+    }
+    this.#contributions.push({
+      values: this.#checkContribution(input as Record<string, unknown>),
+      contributor,
+    });
+  }
+
+  dependOn(resource: BaseResource): void {
+    this.#assertOpen("add a dependency to");
+    this.#addedDependencies.push(resource);
+  }
+
+  getDependencies(): BaseResource[] {
+    this.#sealed = true;
+    const found = new Set<BaseResource>();
+    for (const dependency of Object.values(this.dependencies)) {
+      if (dependency) found.add(dependency as BaseResource);
+    }
+    for (const dependency of this.#addedDependencies) found.add(dependency);
+    const addToken = (token: OutputValue) => found.add(token.resource);
+    forEachOutputValue(this.config, addToken);
+    for (const contribution of this.#contributions) {
+      if ("compute" in contribution) {
+        for (const dependency of Object.values(contribution.deps)) {
+          found.add(dependency);
+        }
+      } else {
+        forEachOutputValue(contribution.values, addToken);
+      }
+    }
+    return [...found];
+  }
+
   async getParams(): Promise<T["params"]> {
-    return {
-      ...this.config,
-      ...(await this.deriveParams({
+    this.#sealed = true;
+    const derivedParams = await this.deriveParams({
+      id: this.id,
+      config: this.config,
+      deps: this.dependencies,
+    });
+    return (await this.#combineParams(derivedParams, false)) as T["params"];
+  }
+
+  /**
+   * At plan, `deriveParams` receives views of its dependencies. Reading the
+   * output of a dependency that has none yet throws `PendingOutput`. When
+   * `deriveParams` reads such an output, the plan cannot tell which params
+   * are known: every param not set in config is unknown. When it reads none,
+   * the plan is exact.
+   */
+  async planParams(): Promise<Record<string, unknown>> {
+    this.#sealed = true;
+    const pending = this.getDependencies().some((dep) => dep.output == null);
+    if (!pending) return withoutUndefined(await this.getParams());
+
+    const views = createPlanViews();
+    const derivedParams = await tryAtPlan(views, () =>
+      this.deriveParams({
         id: this.id,
         config: this.config,
-        deps: this.dependencies,
-      })),
-    };
+        deps: views.of(this.dependencies),
+      }),
+    );
+    if (derivedParams === undefined) return this.#cautiousPlanParams();
+    const params = await this.#combineParams(derivedParams, true);
+    return markUnknownOutputValues(withoutUndefined(params)) as Record<
+      string,
+      unknown
+    >;
   }
+
+  async #cautiousPlanParams(): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = {};
+    const config = this.config as Record<string, unknown>;
+    const contributions = await this.#evaluateContributions(true);
+    for (const [key, item] of Object.entries(this.schema)) {
+      if (item.propertyType === "computed") continue;
+      const value = item.collect
+        ? this.#collect(key, item.collect, config[key], contributions, true)
+        : resolveOutputValues(config[key], planLookup);
+      params[key] =
+        value === undefined
+          ? UNKNOWN_AFTER_APPLY
+          : markUnknownOutputValues(value);
+    }
+    return params;
+  }
+
+  async #combineParams(
+    derivedParams: Record<string, unknown>,
+    plan: boolean,
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = {
+      ...this.config,
+      ...derivedParams,
+    };
+    const contributions = await this.#evaluateContributions(plan);
+    for (const [key, item] of Object.entries(this.schema)) {
+      if (item.propertyType !== "param" || !item.collect) continue;
+      params[key] = this.#collect(
+        key,
+        item.collect,
+        params[key],
+        contributions,
+        plan,
+      );
+    }
+    return resolveOutputValues(
+      params,
+      plan ? planLookup : deployLookup,
+    ) as Record<string, unknown>;
+  }
+
+  /**
+   * Runs function contributions. At deploy each one receives its deps. At
+   * plan each one receives views of its deps. When one reads an output that
+   * does not exist yet, plan cannot tell which params it would set, so
+   * `unknown` is set and `#collect` marks every collected param unknown.
+   */
+  async #evaluateContributions(plan: boolean): Promise<EvaluatedContributions> {
+    const evaluated: EvaluatedContributions = { items: [], unknown: false };
+    for (const contribution of this.#contributions) {
+      if (!("compute" in contribution)) {
+        evaluated.items.push(contribution);
+        continue;
+      }
+      if (!plan) {
+        const values = contribution.compute({ deps: contribution.deps });
+        evaluated.items.push({
+          values: this.#checkContribution(values),
+          contributor: contribution.contributor,
+        });
+        continue;
+      }
+      const views = createPlanViews();
+      const values = await tryAtPlan(views, () =>
+        contribution.compute({ deps: views.of(contribution.deps) }),
+      );
+      if (values === undefined) {
+        evaluated.unknown = true;
+        continue;
+      }
+      evaluated.items.push({
+        values: this.#checkContribution(values),
+        contributor: contribution.contributor,
+      });
+    }
+    return evaluated;
+  }
+
+  /**
+   * Combines a collected param's value from config with its contributions.
+   * Output values are filled in first, so that `collect` compares real
+   * values wherever they are known.
+   */
+  #collect(
+    key: string,
+    collect: (items: any[], context: CollectContext) => unknown,
+    configured: unknown,
+    contributions: EvaluatedContributions,
+    plan: boolean,
+  ): unknown {
+    if (contributions.unknown) return UNKNOWN_AFTER_APPLY;
+    const items = sortContributions(
+      contributions.items
+        .filter((contribution) => contribution.values[key] !== undefined)
+        .map((contribution) => ({
+          value: contribution.values[key],
+          contributor: contribution.contributor,
+        })),
+      (item) => item.value,
+    );
+    if (configured !== undefined) {
+      items.unshift({
+        value: configured,
+        contributor: `the config of ${this.id}`,
+      });
+    }
+    if (items.length === 0) return undefined;
+    const lookup = plan ? planLookup : deployLookup;
+    return collect(
+      items.map((item) => resolveOutputValues(item.value, lookup)),
+      {
+        resourceId: this.id,
+        param: key,
+        contributors: items.map((item) => item.contributor),
+      },
+    );
+  }
+
+  #checkContribution(values: Record<string, unknown>): Record<string, unknown> {
+    const recorded: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(values)) {
+      const item = this.schema[key];
+      if (!item || item.propertyType !== "param" || !item.collect) {
+        throw new Error(
+          `Cannot contribute ${key} to ${this.id}: ${this.type} does not collect it`,
+        );
+      }
+      if (value !== undefined) recorded[key] = value;
+    }
+    return recorded;
+  }
+
+  #assertOpen(action: string): void {
+    const reason = this.#collection?.closed
+      ? "evaluation has ended"
+      : this.#sealed
+        ? "its params have already been read"
+        : undefined;
+    if (!reason) return;
+    throw new Error(
+      `Cannot ${action} ${this.id}: ${reason}. Contributions are accepted only while infra is being evaluated.`,
+    );
+  }
+}
+
+type EvaluatedContributions = {
+  items: ContributedValues[];
+  // Set when a function contribution read a pending output at plan.
+  unknown: boolean;
+};
+
+// Runs code that reads dependency views. Returns undefined when the code read
+// a pending output, whether it then returned or threw. Any other error is the
+// code's own, and deploy would throw it too.
+async function tryAtPlan<T>(
+  views: PlanViews,
+  run: () => T | Promise<T>,
+): Promise<T | undefined> {
+  try {
+    const result = await run();
+    return views.readPending ? undefined : result;
+  } catch (error) {
+    if (views.readPending) return undefined;
+    throw error;
+  }
+}
+
+function withoutUndefined(
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  const defined: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) defined[key] = value;
+  }
+  return defined;
 }
 
 export type DefineResourceMeta = { type: ResourceType };
@@ -281,7 +622,7 @@ export type ResourceDependenciesBuilder<
   ) => ResourceClass<
     T,
     Dependencies,
-    Omit<T["params"], keyof IntrinsicParams | keyof DepAwareParams>
+    ConfigParams<T, keyof IntrinsicParams | keyof DepAwareParams>
   >;
 };
 
@@ -304,7 +645,7 @@ export type ResourceSchemaBuilder<T extends ResourceTypes> = {
   ) => ResourceClass<
     T,
     {},
-    Omit<T["params"], keyof IntrinsicParams>,
+    ConfigParams<T, keyof IntrinsicParams>,
     IntrinsicParams
   >;
 };
@@ -349,13 +690,13 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
         ): ResourceClass<
           T,
           {},
-          Omit<T["params"], keyof IntrinsicParams>,
+          ConfigParams<T, keyof IntrinsicParams>,
           IntrinsicParams
         > {
           class SimpleResource<
             D extends Record<string, BaseResource | void> = {},
-            C extends Record<string, any> = Omit<
-              T["params"],
+            C extends Record<string, any> = ConfigParams<
+              T,
               keyof IntrinsicParams
             >,
           > extends Resource<T, NoInfer<D>, NoInfer<C>> {
@@ -368,7 +709,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             update = opts.update ? opts.update : undefined;
             delete = opts.delete;
 
-            async deriveParams() {
+            async deriveParams(_opts?: { deps: D }) {
               if (!opts.deriveParams) return {};
               return await opts.deriveParams({
                 config: this.config as any as Partial<T["params"]>,
@@ -388,19 +729,19 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
                 ) {
                   return class DependencyAwareResource extends SimpleResource<
                     Dependencies,
-                    Omit<
-                      T["params"],
+                    ConfigParams<
+                      T,
                       keyof DepAwareParams | keyof IntrinsicParams
                     >
                   > {
-                    async deriveParams() {
+                    async deriveParams(opts?: { deps: Dependencies }) {
                       const superParams = await super.deriveParams();
                       return {
                         ...superParams,
                         ...(await deriveParams({
                           id: this.id,
                           config: this.config as T["params"],
-                          deps: this.dependencies,
+                          deps: opts?.deps ?? this.dependencies,
                         })),
                       };
                     }

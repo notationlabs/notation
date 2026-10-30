@@ -22,12 +22,32 @@ export type LambdaConfig = {
 
 export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
   readonly fn: aws.lambda.LambdaFunctionInstance;
+  readonly role: aws.lambda.LambdaIamRoleInstance;
 
   constructor(config: LambdaConfig) {
     assertLambdaId(config.id);
     assertUniqueLambdaId(config.id);
     super("Lambda", config.id, config);
-    this.fn = build(this, config);
+    const { fn, role } = build(this, config);
+    this.fn = fn;
+    this.role = role;
+  }
+
+  /**
+   * The role's inline policy. Its statements are collected: add one with
+   * `policy.contribute({ PolicyDocument: { Statement: [statement] } })`.
+   *
+   * IAM rejects a policy with no statements, so the group adds the policy
+   * only when code first reads `policy` to contribute to it.
+   */
+  get policy(): aws.lambda.LambdaRolePolicyInstance {
+    return this.addOnce(aws.lambda.LambdaRolePolicy, `${this.id}-role-policy`, {
+      config: {
+        RoleName: this.role.config.RoleName,
+        PolicyName: `${this.id}-role-policy`,
+      },
+      dependencies: { role: this.role },
+    });
   }
 }
 
@@ -118,5 +138,5 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
     }),
   );
 
-  return lambdaResource;
+  return { fn: lambdaResource, role };
 };

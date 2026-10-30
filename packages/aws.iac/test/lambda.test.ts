@@ -243,3 +243,61 @@ describe("Lambda create token", () => {
     ).rejects.toSatisfy(ResourceNotFoundError.is);
   });
 });
+
+describe("Lambda environment", () => {
+  function createLambda(Environment?: sdk.Environment) {
+    const lambda = new LambdaFunction("app", {
+      config: {
+        FunctionName: "app",
+        ReservedConcurrentExecutions: 1,
+        Environment,
+      },
+      dependencies: {} as any,
+    });
+    lambda.deriveParams = async () => ({});
+    return lambda;
+  }
+
+  it("merges contributions to the environment key by key", async () => {
+    const lambda = createLambda({ Variables: { STAGE: "prod" } });
+    lambda.contribute({ Environment: { Variables: { ORDERS: "arn:orders" } } });
+    lambda.contribute({
+      Environment: { Variables: { REFUNDS: "arn:refunds" } },
+    });
+
+    expect((await lambda.getParams()).Environment).toEqual({
+      Variables: {
+        STAGE: "prod",
+        ORDERS: "arn:orders",
+        REFUNDS: "arn:refunds",
+      },
+    });
+  });
+
+  it("names both contributors when they set one key to different values", async () => {
+    const lambda = createLambda();
+    lambda.contribute({ Environment: { Variables: { ORDERS: "arn:a" } } });
+    lambda.contribute({ Environment: { Variables: { ORDERS: "arn:b" } } });
+
+    await expect(lambda.getParams()).rejects.toThrow(
+      /lambda\.test\.ts:\d+ and .*lambda\.test\.ts:\d+ both set Environment\.Variables\.ORDERS/,
+    );
+  });
+
+  it("clears the variables when the environment is removed", async () => {
+    const send = vi
+      .spyOn(lambdaClient, "send")
+      .mockImplementation(async () => ({}));
+
+    await createLambda().update!(
+      { FunctionName: "app" },
+      { Environment: undefined } as any,
+      {} as any,
+      {} as any,
+    );
+
+    const command = send.mock
+      .calls[0]![0] as sdk.UpdateFunctionConfigurationCommand;
+    expect(command.input.Environment).toEqual({ Variables: {} });
+  });
+});

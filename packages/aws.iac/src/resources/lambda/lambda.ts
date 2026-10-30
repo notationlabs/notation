@@ -1,4 +1,5 @@
 import {
+  mergeContributions,
   resource,
   ResourceNotFoundError,
   ResourceOperationPendingError,
@@ -11,6 +12,7 @@ import * as nodeFs from "node:fs/promises";
 import { lambdaClient } from "src/utils/aws-clients";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
 import { awsCreate } from "src/utils/errors";
+import { runLambdaMutation } from "src/utils/lambda-mutation";
 import { AwsSchema } from "src/utils/types";
 import { fs } from "@notation/std.iac";
 import { LambdaIamRoleInstance } from "./";
@@ -96,6 +98,7 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
   Environment: {
     propertyType: "param",
     presence: "optional",
+    collect: mergeContributions,
   },
   FileSystemConfigs: {
     propertyType: "param",
@@ -344,34 +347,6 @@ async function readCode(filePath: string, expectedSha256: string) {
     );
   }
   return code;
-}
-
-async function runLambdaMutation<T>(mutation: () => Promise<T>): Promise<T> {
-  try {
-    return await mutation();
-  } catch (error) {
-    if (isIamPropagationFailure(error)) {
-      throw new ResourceOperationPendingError(
-        "Waiting for IAM role to propagate",
-        { retryAfterMs: 1_000, cause: error },
-      );
-    }
-    throw error;
-  }
-}
-
-function isIamPropagationFailure(
-  error: unknown,
-): error is sdk.InvalidParameterValueException {
-  if (!(error instanceof sdk.InvalidParameterValueException)) return false;
-  return (
-    error.message.startsWith(
-      "The role defined for the function cannot be assumed by Lambda.",
-    ) ||
-    error.message.startsWith(
-      "The provided execution role does not have permissions",
-    )
-  );
 }
 
 export type LambdaFunctionConfig = NonNullable<

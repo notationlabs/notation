@@ -1,4 +1,7 @@
-import { buildResourceDepthLevels } from "../dependency-graph";
+import {
+  assertDependenciesPresent,
+  buildResourceDepthLevels,
+} from "../dependency-graph";
 import { withDeploymentHold } from "./deployment-hold";
 import { reconcileResource, sweepOrphans } from "./reconcile";
 import { scopeStep } from "./step";
@@ -9,6 +12,7 @@ export async function* deploy(
   step: DurableStep,
   opts: DurableDeployOptions,
 ): AsyncGenerator<any, void, any> {
+  assertDependenciesPresent(opts.resources);
   yield* withDeploymentHold(step, opts, async function* () {
     // Reconcile in dependency order, so a resource only runs once its
     // dependencies have converged.

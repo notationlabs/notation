@@ -22,5 +22,9 @@
     "@notation/std.iac": "workspace:*",
     "@types/aws-lambda": "^8.10.147",
     "aws-jwt-verify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@notation/reconciler": "workspace:*",
+    "@notation/state": "workspace:*"
   }
 }

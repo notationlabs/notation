@@ -1,12 +1,14 @@
 import type { BaseResource } from "@notation/resource";
 import type { StateBackend } from "@notation/state";
-import { buildResourceDepthLevels } from "./dependency-graph";
+import {
+  assertDependenciesPresent,
+  buildResourceDepthLevels,
+} from "./dependency-graph";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
 import {
   decideAction,
   getDependencyIds,
-  resolvePlanParams,
   type Plan,
   type PlanNode,
 } from "./plan";
@@ -32,12 +34,13 @@ export async function createPlan({
   );
   const emitStep = toEmitStep(emit);
   const nodes: PlanNode[] = [];
+  assertDependenciesPresent(resources);
 
   for (const level of buildResourceDepthLevels(resources)) {
     for (const resource of level) {
       const stateNode = await state.get(resource.id);
       if (stateNode) resource.setOutput(stateNode.output);
-      const params = await resolvePlanParams(resource);
+      const params = await resource.planParams();
       const action = await runOperation(
         applyDriftDetection(createStepRunner(), {
           action: decideAction({ resource, stateNode, params }),

@@ -34,8 +34,7 @@ export const createMermaidFlowChart = (
     .forEach((resource) => drawResource(resource, "  "));
 
   drawn.forEach((resource) => {
-    Object.values(resource.dependencies).forEach((dep) => {
-      if (!dep) return;
+    resource.getDependencies().forEach((dep) => {
       const depNodeId = nodeIds.get(dep.id);
       if (depNodeId) {
         connectionsString += `  ${nodeIds.get(resource.id)} --> ${depNodeId}\n`;

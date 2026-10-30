@@ -1,4 +1,6 @@
 import {
+  UNKNOWN_AFTER_APPLY,
+  mergeContributions,
   ResourceNotFoundError,
   ResourceOperationPendingError,
   resource,
@@ -286,5 +288,68 @@ describe("createPlan", () => {
         replaceFields: [{ name: "boundary", known: true }],
       });
     });
+  });
+
+  it("plans an unknown output value at its own path, and records the implied edge", async () => {
+    // Cast: see above.
+    const Queue = resource({ type: "test/planner/queue" })
+      .defineSchema({
+        name: { presence: "required", propertyType: "param", primaryKey: true },
+        arn: { presence: "required", propertyType: "computed" },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+      });
+    const Fn = resource({ type: "test/planner/function" })
+      .defineSchema({
+        name: { presence: "required", propertyType: "param", primaryKey: true },
+        env: {
+          presence: "optional",
+          propertyType: "param",
+          collect: mergeContributions,
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const queue = new Queue("queue", { config: { name: "orders" } as any });
+    const fn = new Fn("fn", { config: { name: "f" } as any });
+    fn.contribute({ env: { KEEP: "k" } } as any);
+    fn.contribute({ env: { QUEUE: (queue as any).outputValue("arn") } } as any);
+
+    const plan = await createPlan({
+      resources: [fn, queue],
+      state: new MemoryStateBackend({
+        fn: {
+          version: 1,
+          id: "fn",
+          type: Fn.type,
+          config: {},
+          params: { name: "f", env: { KEEP: "k" } },
+          output: { name: "f", env: { KEEP: "k" } },
+          lastOperation: "create",
+          lastOperationAt: "2026-07-22T00:00:00.000Z",
+        },
+      }),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({ id: "queue", decision: "create" }),
+      expect.objectContaining({
+        id: "fn",
+        decision: "update",
+        params: { name: "f", env: { KEEP: "k", QUEUE: UNKNOWN_AFTER_APPLY } },
+        diff: {
+          added: { env: { QUEUE: UNKNOWN_AFTER_APPLY } },
+          deleted: {},
+          updated: {},
+        },
+        dependsOn: ["queue"],
+      }),
+    ]);
   });
 });

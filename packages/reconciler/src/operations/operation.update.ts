@@ -1,4 +1,9 @@
 import {
+  deployLookup,
+  resolveOutputValues,
+  type DurableObject,
+} from "@notation/resource";
+import {
   type StepRunner,
   type UpdateResourceParams,
   emitLifecycleEvent,
@@ -63,7 +68,11 @@ export async function* updateResourceOperation(
       type: params.resource.type,
       lastOperation: "update",
       lastOperationAt: new Date().toISOString(),
-      config: params.resource.config,
+      // State records the real outputs in place of output values.
+      config: resolveOutputValues(
+        params.resource.config,
+        deployLookup,
+      ) as DurableObject,
       params: params.resource.toState(params.resourceParams),
       output: params.resource.toState(params.resource.output),
       dependsOn: params.dependsOn,

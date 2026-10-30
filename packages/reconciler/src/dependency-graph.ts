@@ -9,19 +9,13 @@ export type DepthLevels<T> = {
   unordered: T[];
 };
 
-function asDependencies(resource: BaseResource): BaseResource[] {
-  return Object.values(resource.dependencies).filter(
-    (dependency): dependency is BaseResource => Boolean(dependency),
-  );
-}
-
 export function buildResourceDepthLevels(
   resources: BaseResource[],
 ): ResourceDepthLevels {
   const { levels, unordered } = buildDepthLevels(
     resources,
     (resource) => resource.id,
-    (resource) => asDependencies(resource).map((dependency) => dependency.id),
+    (resource) => resource.getDependencies().map((dependency) => dependency.id),
   );
 
   if (unordered.length > 0) {
@@ -29,6 +23,23 @@ export function buildResourceDepthLevels(
   }
 
   return levels;
+}
+
+/**
+ * Throws when a resource depends on a resource that is not among `resources`
+ * and has no output. The graph ignores such an edge, so nothing would deploy
+ * the dependency, and the dependent would read an output that never arrives.
+ */
+export function assertDependenciesPresent(resources: BaseResource[]): void {
+  const present = new Set(resources);
+  for (const resource of resources) {
+    for (const dependency of resource.getDependencies()) {
+      if (present.has(dependency) || dependency.output != null) continue;
+      throw new Error(
+        `${resource.id} depends on ${dependency.id}, which is not part of this deployment. Add ${dependency.id} to a resource group.`,
+      );
+    }
+  }
 }
 
 /**

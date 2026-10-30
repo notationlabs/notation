@@ -1,6 +1,7 @@
 import { resource, type BaseResource } from "@notation/resource";
 import { describe, expect, it } from "vitest";
 import {
+  assertDependenciesPresent,
   buildDepthLevels,
   buildResourceDepthLevels,
 } from "../src/dependency-graph";
@@ -87,5 +88,54 @@ describe("buildResourceDepthLevels", () => {
     expect(() => buildResourceDepthLevels([a, b])).toThrow(
       "Resource dependency cycle detected",
     );
+  });
+});
+
+describe("assertDependenciesPresent", () => {
+  const Node = resource({ type: "test/graph/node" })
+    .defineSchema({})
+    .defineOperations({
+      create: async () => undefined,
+      delete: async () => undefined,
+    });
+
+  it("throws when a declared dependency is not among the resources", () => {
+    const bucket = new Node("bucket");
+    const policy = new Node("policy", { dependencies: { bucket } });
+
+    expect(() => assertDependenciesPresent([policy])).toThrow(
+      "policy depends on bucket, which is not part of this deployment. Add bucket to a resource group.",
+    );
+  });
+
+  it("throws when a dependency added with dependOn is not among the resources", () => {
+    const bucket = new Node("bucket");
+    const policy = new Node("policy");
+    policy.dependOn(bucket);
+
+    expect(() => assertDependenciesPresent([policy])).toThrow(
+      "policy depends on bucket",
+    );
+  });
+
+  it("accepts an empty optional dependency", () => {
+    const route = new Node("route", { dependencies: { auth: undefined } });
+
+    expect(() => assertDependenciesPresent([route])).not.toThrow();
+  });
+
+  it("accepts a dependency outside the resources whose output is known", () => {
+    const bucket = new Node("bucket");
+    bucket.setOutput({});
+    const policy = new Node("policy", { dependencies: { bucket } });
+
+    expect(() => assertDependenciesPresent([policy])).not.toThrow();
+  });
+
+  it("accepts dependencies that are among the resources", () => {
+    const bucket = new Node("bucket");
+    const policy = new Node("policy", { dependencies: { bucket } });
+
+    expect(() => assertDependenciesPresent([bucket, policy])).not.toThrow();
   });
 });

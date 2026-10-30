@@ -23,9 +23,51 @@ An `undefined` param counts as absent, so an optional param left unset never loo
 
 Replacement deletes the resource and then creates it again, because a resource usually takes its physical name from its params and the new one would collide with the old. Each half is durable: the delete removes the state record, and the create writes a new one with a new instance ID. A crash anywhere in between resumes where it stopped. If the create fails for good, the resource and its record are both gone, and the next deploy plans **create**.
 
-A plan cannot know params derived from a resource that has not been created yet, and marks them unknown. An unknown immutable or key param plans **replace** with the field marked "unknown, may force replacement". The planner treats a replaced resource's output as unknown, so its dependents show the cascade. Deploy decides again for each resource once its dependencies have converged, with real params, so it replaces only what really changed.
+An unknown immutable or key param plans **replace** with the field marked "unknown, may force replacement". The planner treats a replaced resource's output as unknown, so its dependents show the cascade. Deploy decides again for each resource once its dependencies have converged, with real params, so it replaces only what really changed. [Unknown values](#unknown-values) explains when plan marks a param unknown.
 
 Delete-then-create removes a resource while its dependents still exist. A provider that refuses to delete a resource in use fails the deploy.
+
+## Dependency check
+
+Before plan or deploy does anything else, `assertDependenciesPresent` (`packages/reconciler/src/dependency-graph.ts`) checks every dependency of every resource. A resource gets dependencies in four ways:
+
+- declared in its `dependencies`
+- added with `dependOn`
+- held as an output value in its config or contributions
+- named in the `deps` of a function contribution
+
+A dependency must be part of the deployment, because the graph ignores an edge to a resource that is not in it. Without the check, nothing would deploy the dependency, and the dependent would wait on an output that never arrives. So the check fails with:
+
+```
+policy depends on bucket, which is not part of this deployment. Add bucket to a resource group.
+```
+
+Two cases pass:
+
+| Case                                                              | Why it passes                                          |
+| ----------------------------------------------------------------- | ------------------------------------------------------ |
+| An optional dependency left empty, such as a route with no `auth` | An empty slot adds no edge.                            |
+| A dependency outside the deployment whose output is already set   | Its output can be read, so nothing needs to deploy it. |
+
+Destroy does not run the check, so broken infra code cannot block a teardown.
+
+## Unknown values
+
+At plan, some resources have not been created yet, so their outputs do not exist. Plan marks a param that needs one of these outputs as unknown. **The rule from RFC 0002 decides every case below: plan may show more unknowns than deploy finds, but must never show a known value that deploy would change.**
+
+**Output values.** Plan fills in each output value from the outputs in state. When the resource has no output yet, plan marks the value unknown at its own path, and the rest of the map stays visible.
+
+**`deriveParams`.** Plan calls `deriveParams` with a view of each dependency. Reading the view's `output` throws `PendingOutput` when the dependency has no output yet. Plan cannot tell which params depend on that output, so it handles each result like this:
+
+| `deriveParams` at plan                         | Plan shows                                |
+| ---------------------------------------------- | ----------------------------------------- |
+| reads no pending output                        | the params it returns, as known           |
+| reads a pending output, then returns or throws | every param not set in config, as unknown |
+| throws without reading a pending output        | an error: the plan fails, as deploy would |
+
+A dependency whose output `deriveParams` never reads only orders the deploy, so it does not make any param unknown.
+
+**Function contributions.** Plan runs each function contribution with the same views. When the function reads a pending output, whether it then returns or throws, plan marks every collected param of the receiving resource unknown. When it throws without reading one, the plan fails. Otherwise plan uses the function's result.
 
 ## Dependency edges
 

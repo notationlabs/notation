@@ -1,0 +1,21 @@
+{
+  "private": true,
+  "name": "sqs-demo",
+  "scripts": {
+    "compile": "notation compile infra/orders.ts",
+    "dashboard": "notation dashboard",
+    "deploy": "notation deploy infra/orders.ts",
+    "destroy": "notation destroy infra/orders.ts",
+    "viz": "notation viz infra/orders.ts",
+    "watch": "notation watch infra/orders.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@notation/aws": "workspace:*",
+    "@notation/cli": "workspace:*",
+    "@notation/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4"
+  }
+}

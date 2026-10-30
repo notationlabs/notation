@@ -6,6 +6,7 @@ import type {
   Simplify,
 } from "./types";
 import type { Durable } from "./durable-value";
+import type { CollectContext } from "./contributions";
 
 /**
  * Structural holder for a value type.
@@ -50,6 +51,15 @@ export type SchemaItem<T = any> = {
       immutable?: true;
       primaryKey?: true;
       secondaryKey?: true;
+      /**
+       * Makes the param collected: any code can add to it with the
+       * resource's `contribute`, and this rule combines what was added. The
+       * items are the value set in config, if any, followed by every
+       * contribution, sorted by content so that their order never depends
+       * on the order code ran in. `collect` is not called when there are no
+       * items.
+       */
+      collect?: (items: DeepPartial<T>[], context: CollectContext) => T;
     }
   | {
       propertyType: "computed";
@@ -149,6 +159,20 @@ export type Result<S extends ResolvedSchema> = DeepPartial<
 >;
 
 export type Output<S extends ResolvedSchema> = MapSchema<S>;
+
+/**
+ * The values `contribute` accepts: one per collected param, typed as the
+ * items its `collect` rule takes.
+ */
+export type Contributions<S extends ResolvedSchema> = {
+  [
+    K in keyof S as S[K] extends { collect: Function } ? K : never
+  ]?: S[K] extends {
+    collect: (items: (infer Item)[], ...rest: any[]) => any;
+  }
+    ? Item
+    : never;
+};
 
 export type State<S extends ResolvedSchema> = MapSchema<S, { hidden: true }>;
 
