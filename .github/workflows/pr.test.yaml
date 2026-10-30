@@ -28,6 +28,9 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      # The pok CLI runs on Bun.
+      - uses: oven-sh/setup-bun@v2
+
       - name: Install
         run: pnpm install --frozen-lockfile --filter '!@notation/docs-site'
 
