@@ -263,7 +263,7 @@ const LambdaIntegration = defineResource<{ ... }>({ type: "aws/apiGateway/Lambda
   }));
 ```
 
-`requireDependencies` declares typed dependency slots. `deriveParams` receives `{ id, config, deps }` and returns properties computed from dependency outputs. The values are resolved at deploy time after dependencies have been provisioned.
+`requireDependencies` declares typed dependency slots. `deriveParams` receives `{ id, config, deps }` and returns properties computed from dependency outputs. At deploy it runs after its dependencies have been provisioned, with their real outputs. At plan, a dependency that has no output yet throws `PendingOutput` when `deriveParams` reads its `output`; see [Planning](reconciler.md).
 
 A resource takes its ID first, then its config and dependencies:
 
@@ -281,20 +281,17 @@ Dependencies also determine deployment order: a resource is not created until al
 
 ## Output values
 
-`resource.outputValue(key)` returns a token for one of the resource's outputs, typed as the output. The token can be placed anywhere in config or in a contribution, including inside a template string:
+`resource.outputValue(key)` returns a token for one of the resource's outputs, typed as the output. The token can be placed whole anywhere in config or in a contribution:
 
 ```ts
 const mapping = new EventSourceMapping("orders-mapping", {
-  config: {
-    EventSourceArn: queue.outputValue("QueueArn"),
-    Description: `Reads ${queue.outputValue("QueueArn")}`,
-  },
+  config: { EventSourceArn: queue.outputValue("QueueArn") },
 });
 ```
 
-A resource whose config or contributions hold a token depends on the resource the token came from. Deploy fills in the real value before it calls the provider. A string that is exactly one token takes the output whole, so a number stays a number. Reading a property of a token gives the token for the path below it.
+A resource whose config or contributions hold a token depends on the resource the token came from. Deploy replaces the token with the output before it calls the provider, so a number stays a number.
 
-A token can only be placed. Code that computes with one, such as `arn.split(":")`, belongs in `deriveParams`, which runs at deploy with real outputs. A token cannot be a map key: key the entry by something known now, and put the token inside it.
+A token can only be placed whole. Turning it into a string throws, for example in a template string, with `String()` or with `JSON.stringify`. So a token cannot be a map key either: key the entry by something known now, and put the token inside it. Code that computes with an output, such as `` `${arn}/*` `` or `arn.split(":")`, belongs in `deriveParams` or in a [function contribution](#function-contributions), which run at deploy with real outputs.
 
 ## Contributions
 
@@ -321,6 +318,27 @@ policy.contribute(
 `contribute` accepts only collected params. A collected param is optional in config. `collect` receives the value from config first, if there is one, and then every contribution, sorted by content, so moving code never changes the result. `collect` is not called when there are no items, and the param is left unset.
 
 `mergeContributions` is a `collect` rule that merges maps key by key. Two items that set one key to different values conflict, and the error names both contributors. A contributor is named by the `by` option when there is one, and otherwise by the `file:line` of the `contribute` call. Library code that contributes on the user's behalf passes `by`, so the message points at something the user wrote. A value that holds a token is not known at plan, so a conflict with it is found at deploy.
+
+### Function contributions
+
+`contribute` also accepts a function and the resources it reads, as `deps`. The function receives `{ deps }` and returns the values to contribute:
+
+```ts
+fnGroup.policy.contribute(
+  ({ deps }) => ({
+    PolicyDocument: {
+      Statement: [
+        { Effect: "Allow", Action: ["s3:GetObject"], Resource: `${deps.bucket.output.Arn}/*` },
+      ],
+    },
+  }),
+  { by: id, deps: { bucket: this.bucket } },
+);
+```
+
+`deps` is typed from the resources passed. The receiving resource depends on each of them, so they deploy first, and state records the edges. Deploy runs the function with the deps' real outputs and collects its result like a plain contribution, so the `by` option, the call site, lifetime and conflicts work the same way. The result can only set collected params.
+
+At plan, the function receives the same views of its deps as `deriveParams` does (see [Planning](reconciler.md)). When it reads the output of a dep that has no output yet, or throws, plan cannot tell which params it would set, and marks every collected param of the receiving resource unknown. When it reads no such output, plan uses its result.
 
 Keep a map structured in the param, so state, diff and plan see each key. Encode it, for example with `sortedJson` from `@notation/utils`, only in `create` and `update`, and decode it in `read`.
 

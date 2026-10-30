@@ -38,7 +38,9 @@ SQS doesn't let you reuse a deleted queue's name for 60 seconds, so a replacemen
 
 ### `arn` and `url`
 
-`orderQueue.arn` and `orderQueue.url` are output values: they don't exist until AWS creates the queue, but you can place them in another resource's config now. Notation makes that resource depend on the queue and fills in the real value at deploy. See [Contributions](../internals/resource.md#contributions).
+`orderQueue.arn` and `orderQueue.url` are output values: they don't exist until AWS creates the queue, but you can place them in another resource's config now. Notation makes that resource depend on the queue and fills in the real value at deploy. See [Output values](../internals/resource.md#output-values).
+
+An output value can only be placed whole. Turning it into a string, for example in a template string, throws. To build a value from the queue's ARN, contribute a function that receives `orderQueue.queue` as a dep; see [Function contributions](../internals/resource.md#function-contributions).
 
 ## `queue.consume(handler)`
 
