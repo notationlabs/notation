@@ -3,8 +3,13 @@
  * resources, each built on one read of the resource's persisted record and
  * writes conditional on that read.
  */
-import type { BaseResource, ResourceType } from "@notation/resource";
+import type {
+  BaseResource,
+  ResourceGroupRef,
+  ResourceType,
+} from "@notation/resource";
 import { VersionConflict, type StateNode } from "@notation/state";
+import { buildDepthLevels } from "../dependency-graph";
 import {
   createResourceRegistryFromResources,
   resolveResourceClass,
@@ -18,7 +23,7 @@ import {
   type PersistState,
   type RemoveState,
 } from "../operations";
-import { decideAction } from "../plan";
+import { decideAction, getDependencyIds, hasSameEdges } from "../plan";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
@@ -52,6 +57,7 @@ export async function* reconcileResource(
   // other than the ones the decision was taken against. The step also pins
   // the answer across a replay.
   const params = yield* step.run("params", () => resource.getParams());
+  const dependsOn = getDependencyIds(resource);
 
   const emit = durableEmitter(step, opts.emit);
   const session = yield* openStateSession(step, opts, resource);
@@ -103,6 +109,7 @@ export async function* reconcileResource(
     resource,
     resourceParams: params,
     persistedOutput: session.node?.output,
+    dependsOn,
     dryRun: opts.dryRun,
     emit,
     maxOperationAttempts: opts.maxOperationAttempts,
@@ -134,8 +141,32 @@ export async function* reconcileResource(
       yield* replaceResource(step, opts, session, shared);
       return;
     case "noop":
+      if (
+        session.node &&
+        !opts.dryRun &&
+        !hasSameEdges(session.node, dependsOn)
+      ) {
+        yield* rewriteEdges(session, dependsOn);
+      }
       return;
   }
+}
+
+/**
+ * Writes new edges to the record of a resource that is otherwise unchanged.
+ * The rest of the record is written as it was read, and the provider is not
+ * called.
+ */
+async function* rewriteEdges(
+  session: Extract<ResourceStateSession, { node: StateNode }>,
+  dependsOn: string[],
+): AsyncGenerator<any, void, any> {
+  const { version: _, ...record } = session.node;
+  yield* session.persist({
+    ...record,
+    group: (record.group ?? null) as ResourceGroupRef | null,
+    dependsOn,
+  });
 }
 
 /**
@@ -195,9 +226,13 @@ export async function* deleteResource(
 }
 
 /**
- * Deletes persisted resources that are no longer in the desired set. A state
- * node whose type has no registry entry is left in place and surfaced as a
- * warning, because deleting it would need a resource class we cannot resolve.
+ * Deletes persisted resources that are no longer in the desired set, in
+ * reverse order of the edges their records hold.
+ *
+ * A state node whose type has no registry entry is left in place and surfaced
+ * as a warning, because deleting it would need a resource class we cannot
+ * resolve. Every orphan it depends on is left in place too, and the warning
+ * names them.
  */
 export async function* sweepOrphans(
   step: DurableStep,
@@ -212,12 +247,21 @@ export async function* sweepOrphans(
   const registry =
     opts.registry ?? createResourceRegistryFromResources(opts.resources);
 
-  for (const node of persisted) {
-    if (resourceById.has(node.id)) continue;
+  const orphans = persisted.filter((node) => !resourceById.has(node.id));
+  const orphanById = new Map(orphans.map((node) => [node.id, node]));
+  const kept = new Set<string>();
+
+  for (const node of orderOrphanDeletes(orphans)) {
+    if (kept.has(node.id)) continue;
     const nodeScope = scope.scope(encodeURIComponent(node.id));
 
     const Resource = resolveResourceClass(registry, node.type as ResourceType);
     if (!Resource) {
+      const keptDependencies = collectDependencies(node, orphanById).filter(
+        (id) => !kept.has(id),
+      );
+      for (const id of keptDependencies) kept.add(id);
+
       const emit = durableEmitter(nodeScope, opts.emit);
       yield* emit({
         level: "warn",
@@ -226,6 +270,7 @@ export async function* sweepOrphans(
         workflow,
         resourceId: node.id,
         resourceType: node.type as ResourceType,
+        keptDependencies,
       });
       continue;
     }
@@ -234,6 +279,41 @@ export async function* sweepOrphans(
     resource.setOutput(node.output);
     yield* deleteResource(nodeScope, resource, opts);
   }
+}
+
+/**
+ * Orders orphans so that each is deleted before the orphans it depends on.
+ * An edge to a resource that is not an orphan is ignored.
+ *
+ * A record with no edges was written before edges were recorded, and keeps
+ * its storage order among the records it has no edges to. Orphans that form
+ * a cycle, and the orphans that depend on them, cannot be ordered, and are
+ * deleted first, in storage order.
+ */
+function orderOrphanDeletes(orphans: StateNode[]): StateNode[] {
+  const { levels, unordered } = buildDepthLevels(
+    orphans,
+    (node) => node.id,
+    (node) => node.dependsOn ?? [],
+  );
+  return [...unordered, ...levels.reverse().flat()];
+}
+
+/** The orphans that `node` depends on, directly or through other orphans. */
+function collectDependencies(
+  node: StateNode,
+  orphanById: Map<string, StateNode>,
+): string[] {
+  const found = new Set<string>();
+  const pending = [...(node.dependsOn ?? [])];
+  while (pending.length > 0) {
+    const id = pending.pop()!;
+    const dependency = orphanById.get(id);
+    if (found.has(id) || id === node.id || !dependency) continue;
+    found.add(id);
+    pending.push(...(dependency.dependsOn ?? []));
+  }
+  return [...found].sort();
 }
 
 /**

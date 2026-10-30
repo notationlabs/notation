@@ -36,6 +36,7 @@ describe("resource creation", () => {
         executionId: "test-execution",
         resource: testResource,
         resourceParams: await testResource.getParams(),
+        dependsOn: [],
         persist: async function* (next) {
           persisted = next;
         },

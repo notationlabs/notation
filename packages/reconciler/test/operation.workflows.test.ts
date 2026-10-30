@@ -92,6 +92,7 @@ describe("operation workflows", () => {
         executionId: "test-execution",
         resource: testResource,
         resourceParams: await testResource.getParams(),
+        dependsOn: [],
         persist,
         emit: toEmitStep((event) => void events.push(event)),
       }),
@@ -108,6 +109,7 @@ describe("operation workflows", () => {
       config: testResource.config,
       params: {},
       output: { remoteId: "abc", status: "ready" },
+      dependsOn: [],
     });
     expect(createMock).toHaveBeenNthCalledWith(
       1,
@@ -233,6 +235,7 @@ describe("operation workflows", () => {
           executionId: "test-execution",
           resource: new TestResource("eventually-visible"),
           resourceParams: {},
+          dependsOn: [],
           persist,
           emit: toEmitStep(),
         }),
@@ -357,6 +360,7 @@ describe("operation workflows", () => {
           executionId: "test-execution",
           resource: testResource,
           resourceParams: {},
+          dependsOn: [],
           persist,
           emit: toEmitStep((event) => void events.push(event)),
         }),

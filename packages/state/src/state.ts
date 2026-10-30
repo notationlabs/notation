@@ -11,6 +11,11 @@ export type StateNode = {
   config: DurableObject;
   params: DurableObject;
   output: DurableObject;
+  /**
+   * The IDs of the resources this one depends on, sorted. Absent on a record
+   * written before edges were recorded.
+   */
+  dependsOn?: string[];
   lastOperation: "create" | "update";
   lastOperationAt: string;
   [key: string]: DurableValue;

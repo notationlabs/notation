@@ -172,8 +172,25 @@ export async function resolvePlanParams(
   return params;
 }
 
+/**
+ * The resource's edges as state records them. Sorted and deduplicated, so a
+ * resource whose edges have not changed compares equal to its record.
+ */
 export function getDependencyIds(resource: BaseResource): string[] {
-  return Object.values(resource.dependencies)
+  const ids = Object.values(resource.dependencies)
     .filter((dependency): dependency is BaseResource => Boolean(dependency))
     .map((dependency) => dependency.id);
+  return [...new Set(ids)].sort();
+}
+
+export function hasSameEdges(
+  stateNode: StateNode,
+  dependsOn: string[],
+): boolean {
+  const recorded = stateNode.dependsOn;
+  return (
+    recorded !== undefined &&
+    recorded.length === dependsOn.length &&
+    recorded.every((id, index) => id === dependsOn[index])
+  );
 }

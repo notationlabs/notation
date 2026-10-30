@@ -54,6 +54,8 @@ export type PersistedResourceState = Pick<
 > & {
   // Not on StateNode itself, where it arrives through its index signature.
   group: ResourceGroupRef | null;
+  // Required here, though optional on StateNode: every write records edges.
+  dependsOn: string[];
   [key: string]: DurableValue;
 };
 
@@ -92,11 +94,15 @@ export type ResolvedResourceParams = ResourceOperationBaseParams & {
 export type CreateResourceParams = ResolvedResourceParams & {
   /** Names the create effects, together with the resource ID. */
   executionId: string;
+  /** The edges to record with the resource. */
+  dependsOn: string[];
   persist: PersistState;
 };
 
 export type UpdateResourceParams = ResolvedResourceParams & {
   patch: Record<string, unknown>;
+  /** The edges to record with the resource. */
+  dependsOn: string[];
   persist: PersistState;
 };
 

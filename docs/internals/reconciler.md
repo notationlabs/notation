@@ -4,7 +4,7 @@ The reconciler expresses deployment and destruction as Yieldstar async generator
 
 ## Deploy flow
 
-`deploy` takes the deployment hold, walks dependency levels in order, decides an action for every resource, executes provider calls as durable steps, persists the result in a resource store, and deletes registered orphans.
+`deploy` takes the deployment hold, walks dependency levels in order, decides an action for every resource, executes provider calls as durable steps, persists the result in a resource store, and deletes registered orphans in reverse order of the [edges in state](#dependency-edges).
 
 | Condition                                                                                | Decision           |
 | ---------------------------------------------------------------------------------------- | ------------------ |
@@ -26,6 +26,16 @@ Replacement deletes the resource and then creates it again, because a resource u
 A plan cannot know params derived from a resource that has not been created yet, and marks them unknown. An unknown immutable or key param plans **replace** with the field marked "unknown, may force replacement". The planner treats a replaced resource's output as unknown, so its dependents show the cascade. Deploy decides again for each resource once its dependencies have converged, with real params, so it replaces only what really changed.
 
 Delete-then-create removes a resource while its dependents still exist. A provider that refuses to delete a resource in use fails the deploy.
+
+## Dependency edges
+
+Each state record stores the IDs of the resources it depends on in `dependsOn`, sorted. Create, update and replace write the edges with the rest of the record. When a resource is a **noop** but its edges differ from those in state, deploy rewrites only `dependsOn`, and does not call the provider. A dry run does not rewrite edges.
+
+The sweep deletes orphans in reverse order of these edges, as deploy and destroy do for resources in the graph. An edge to a resource that is not an orphan is ignored, including an edge to a resource that is no longer in state. A record written before edges were recorded has no `dependsOn`, and keeps its storage order among the orphans it has no edges to. The next deploy that reaches the resource writes its edges.
+
+Orphans that form a cycle cannot be ordered. They, and the orphans that depend on them, are deleted first, in storage order, so a provider that refuses one of the deletes fails the deploy.
+
+When an orphan's type has no registered class, the sweep keeps the orphan and every orphan it depends on, directly or through another orphan. The `reconciler.orphan-deletion.skipped` warning names those orphans in `keptDependencies`.
 
 Dry-run deploy performs decisions and emits lifecycle events without provider mutations or state mutations. When drift detection is enabled, it can still call provider read operations to decide whether a nominal noop has drifted.
 
@@ -53,12 +63,12 @@ A suspended execution keeps its hold, which is what makes resuming it safe. An e
 
 The durable workflows emit these events:
 
-| Event                                | When                                                |
-| ------------------------------------ | --------------------------------------------------- |
-| `reconciler.deploy.decision`         | After deciding what action to take for a resource   |
-| `reconciler.drift.detected`          | When drift is found between stored and actual state |
-| `reconciler.operation.lifecycle`     | When an operation starts, finishes, skips, or fails |
-| `reconciler.hold.waiting`            | When another execution holds the deployment         |
-| `reconciler.orphan-deletion.skipped` | When no registered class can delete an orphan       |
+| Event                                | When                                                                          |
+| ------------------------------------ | ----------------------------------------------------------------------------- |
+| `reconciler.deploy.decision`         | After deciding what action to take for a resource                             |
+| `reconciler.drift.detected`          | When drift is found between stored and actual state                           |
+| `reconciler.operation.lifecycle`     | When an operation starts, finishes, skips, or fails                           |
+| `reconciler.hold.waiting`            | When another execution holds the deployment                                   |
+| `reconciler.orphan-deletion.skipped` | When no registered class can delete an orphan; names the orphans kept with it |
 
 Lifecycle events cover create, read, update, and delete with `start`, `success`, `error`, `skip`, or `dry-run` status.

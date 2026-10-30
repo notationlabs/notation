@@ -928,6 +928,238 @@ describe("orphan deletion", () => {
   });
 });
 
+describe("dependency edges in state", () => {
+  function defineRecorded(type: string, deleted: string[]) {
+    return resource({ type: type as ResourceType })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => void deleted.push(type),
+      });
+  }
+
+  // Rewrites a record as an earlier version wrote it, with no edges. Written
+  // to SQLite directly, as the store client would validate it against the
+  // current schema.
+  function removeEdges(runtime: ReturnType<typeof createRuntime>, id: string) {
+    const where = {
+      $storeName: durable.resourceStateStore.name,
+      $storeId: runtime.state.storeId(id),
+    };
+    const row = runtime.database
+      .query(
+        "SELECT state FROM stores WHERE store_name = $storeName AND store_id = $storeId",
+      )
+      .get(where) as { state: string };
+    const { dependsOn: _, ...record } = JSON.parse(row.state);
+    runtime.database
+      .query(
+        "UPDATE stores SET state = $state WHERE store_name = $storeName AND store_id = $storeId",
+      )
+      .run({ ...where, $state: JSON.stringify(record) });
+  }
+
+  it("records each resource's dependencies, sorted", async () => {
+    const Recorded = defineRecorded("test/durable/recorded", []);
+    const zip = new Recorded("zip");
+    const role = new Recorded("role");
+    const fn = new Recorded("fn", { dependencies: { zip, role, again: role } });
+    const runtime = createRuntime([zip, role, fn], "edges-recorded");
+
+    await runtime.run("deploy-1");
+
+    expect(await runtime.state.get("fn")).toMatchObject({
+      dependsOn: ["role", "zip"],
+    });
+    expect(await runtime.state.get("role")).toMatchObject({ dependsOn: [] });
+    runtime.close();
+  });
+
+  it("rewrites only the edges of a resource whose edges changed", async () => {
+    const updateSpy = vi.fn(async () => undefined);
+    const Recorded = resource({ type: "test/durable/rewired" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        update: updateSpy,
+        delete: async () => undefined,
+      });
+    const first = new Recorded("first");
+    const second = new Recorded("second");
+    const resources: BaseResource[] = [
+      first,
+      second,
+      new Recorded("dependent", { dependencies: { first } }),
+    ];
+    const runtime = createRuntime(resources, "edges-rewritten");
+
+    await runtime.run("deploy-1");
+    const before = await runtime.state.get("dependent");
+
+    resources[2] = new Recorded("dependent", { dependencies: { second } });
+    await runtime.run("deploy-2");
+    const after = await runtime.state.get("dependent");
+
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(after).toEqual({
+      ...before,
+      version: before!.version + 1,
+      dependsOn: ["second"],
+    });
+    runtime.close();
+  });
+
+  it("leaves a record whose edges are unchanged as it is", async () => {
+    const Recorded = defineRecorded("test/durable/unchanged", []);
+    const role = new Recorded("role");
+    const fn = new Recorded("fn", { dependencies: { role } });
+    const runtime = createRuntime([role, fn], "edges-unchanged");
+
+    await runtime.run("deploy-1");
+    await runtime.run("deploy-2");
+
+    expect(await runtime.state.get("fn")).toMatchObject({ version: 1 });
+    runtime.close();
+  });
+
+  it("does not rewrite edges in a dry run", async () => {
+    const Recorded = defineRecorded("test/durable/dry-edges", []);
+    const role = new Recorded("role");
+    const resources: BaseResource[] = [role, new Recorded("fn")];
+    const options: { dryRun?: boolean } = {};
+    const runtime = createRuntime(resources, "edges-dry-run", options);
+
+    await runtime.run("deploy-1");
+    resources[1] = new Recorded("fn", { dependencies: { role } });
+    options.dryRun = true;
+    await runtime.run("deploy-2");
+
+    expect(await runtime.state.get("fn")).toMatchObject({
+      version: 1,
+      dependsOn: [],
+    });
+    runtime.close();
+  });
+
+  it("writes the edges of a record that predates them on the next deploy", async () => {
+    const Recorded = defineRecorded("test/durable/legacy-edges", []);
+    const role = new Recorded("role");
+    const fn = new Recorded("fn", { dependencies: { role } });
+    const runtime = createRuntime([role, fn], "edges-legacy");
+
+    await runtime.run("deploy-1");
+    removeEdges(runtime, "fn");
+    expect(await runtime.state.get("fn")).not.toHaveProperty("dependsOn");
+
+    await runtime.run("deploy-2");
+
+    expect(await runtime.state.get("fn")).toMatchObject({
+      dependsOn: ["role"],
+    });
+    runtime.close();
+  });
+
+  it("deletes orphans in reverse dependency order, whatever order state lists them in", async () => {
+    const deleted: string[] = [];
+    const Role = defineRecorded("test/durable/role", deleted);
+    const Attachment = defineRecorded("test/durable/attachment", deleted);
+    const Fn = defineRecorded("test/durable/fn", deleted);
+    const LogGroup = defineRecorded("test/durable/log-group", deleted);
+    // State lists records by ID, so the role comes before what depends on it.
+    const role = new Role("a-role");
+    const fn = new Fn("b-fn", { dependencies: { role } });
+    const resources: BaseResource[] = [
+      role,
+      new Attachment("c-attachment", { dependencies: { role } }),
+      fn,
+      new LogGroup("d-log-group", { dependencies: { fn } }),
+    ];
+    const runtime = createRuntime(resources, "orphan-order", {
+      registry: createResourceRegistry([Role, Attachment, Fn, LogGroup]),
+    });
+
+    await runtime.run("deploy-1");
+    resources.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(deleted).toEqual([
+      "test/durable/log-group",
+      "test/durable/fn",
+      "test/durable/attachment",
+      "test/durable/role",
+    ]);
+    expect(await runtime.state.values()).toHaveLength(0);
+    runtime.close();
+  });
+
+  it("ignores an edge to a resource that is no longer in state", async () => {
+    const deleted: string[] = [];
+    const Role = defineRecorded("test/durable/lost-role", deleted);
+    const Fn = defineRecorded("test/durable/lost-fn", deleted);
+    const role = new Role("role");
+    const resources: BaseResource[] = [
+      role,
+      new Fn("fn", { dependencies: { role } }),
+    ];
+    const runtime = createRuntime(resources, "orphan-lost-edge", {
+      registry: createResourceRegistry([Role, Fn]),
+    });
+
+    await runtime.run("deploy-1");
+    await runtime.storeClient.deleteStore({
+      definition: durable.resourceStateStore,
+      id: runtime.state.storeId("role"),
+    });
+    resources.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(deleted).toEqual(["test/durable/lost-fn"]);
+    expect(await runtime.state.values()).toHaveLength(0);
+    runtime.close();
+  });
+
+  it("keeps the dependencies of an orphan it cannot delete, and names them", async () => {
+    const deleted: string[] = [];
+    const events: ReconcilerEvent[] = [];
+    const Role = defineRecorded("test/durable/kept-role", deleted);
+    const Fn = defineRecorded("test/durable/kept-fn", deleted);
+    const Unregistered = defineRecorded("test/durable/unregistered", deleted);
+    const Other = defineRecorded("test/durable/other", deleted);
+    const role = new Role("role");
+    const fn = new Fn("fn", { dependencies: { role } });
+    const resources: BaseResource[] = [
+      role,
+      fn,
+      new Unregistered("attachment", { dependencies: { fn } }),
+      new Other("other"),
+    ];
+    const runtime = createRuntime(resources, "orphan-kept", {
+      registry: createResourceRegistry([Role, Fn, Other]),
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("deploy-1");
+    resources.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(deleted).toEqual(["test/durable/other"]);
+    expect(
+      events.filter(
+        (event) => event.event === "reconciler.orphan-deletion.skipped",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        resourceId: "attachment",
+        keptDependencies: ["fn", "role"],
+      }),
+    ]);
+    expect((await runtime.state.values()).map((node) => node.id)).toEqual(
+      expect.arrayContaining(["attachment", "fn", "role"]),
+    );
+    runtime.close();
+  });
+});
+
 describe("state from before groups had stable IDs", () => {
   const LegacyResource = resource({ type: "test/durable/legacy-group" })
     // Cast: a resource declared without API types constrains every schema
