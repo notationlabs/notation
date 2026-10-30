@@ -204,6 +204,43 @@ describe("NodeDurableRuntime", () => {
     }
   });
 
+  it("does not deliver a due execution that is bound to another deployment", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "notation-due-"));
+    const databasePath = path.join(directory, "workflows.db");
+    const database = createSqliteDb({ path: databasePath });
+    await new SqliteRuntime(database).executions.admit({
+      executionId: "due-execution",
+      workflowId: "deploy",
+      params: { deploymentId: "first-deployment" },
+      context: new Map(),
+    });
+    database.close();
+
+    const delivered: string[] = [];
+    const deploy = workflow(async function* (_step, event) {
+      delivered.push(event.executionId);
+    });
+    const runtime = new NodeDurableRuntime({
+      deploymentId: "second-deployment",
+      databasePath,
+    });
+    try {
+      await expect(
+        runtime.run(createWorkflowRouter({ deploy }), {
+          workflowId: "deploy",
+          executionId: "due-execution",
+        }),
+      ).rejects.toThrow("bound to deployment first-deployment workflow deploy");
+      expect(delivered).toEqual([]);
+      await expect(runtime.execution("due-execution")).resolves.toMatchObject({
+        status: "admitted",
+      });
+    } finally {
+      runtime.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("does not deliver another execution that is ready to run", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "notation-filter-"));
     const databasePath = path.join(directory, "workflows.db");

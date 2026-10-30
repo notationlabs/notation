@@ -104,9 +104,12 @@ export class NodeDurableRuntime {
       concurrency: 1,
       leaseDuration: this.#leaseDuration,
     });
-    dispatcher.start();
     try {
+      // Admission runs before the dispatcher starts, because the dispatcher
+      // claims a due execution at once and would deliver one bound to
+      // another workflow or deployment before the check throws.
       await this.#admit(opts);
+      dispatcher.start();
       const outcome = await waitForExecutionOutcome(
         this.#runtime.executions,
         opts.executionId,
