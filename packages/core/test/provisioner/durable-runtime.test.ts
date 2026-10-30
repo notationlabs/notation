@@ -7,8 +7,11 @@ import { WorkflowRunner } from "@yieldstar/core";
 import { SqliteRuntime, createSqliteDb } from "@yieldstar/sqlite-runtime/node";
 import pino from "pino";
 import { createWorkflowRouter, workflow } from "yieldstar";
-import { describe, expect, it } from "vitest";
-import { NodeDurableRuntime } from "src/provisioner/durable-runtime";
+import { describe, expect, it, vi } from "vitest";
+import {
+  NodeDurableRuntime,
+  withRuntime,
+} from "src/provisioner/durable-runtime";
 
 const testDeployment = (entry: string) => ({
   app: "test",
@@ -358,5 +361,55 @@ describe("NodeDurableRuntime", () => {
     } finally {
       runtime.close();
     }
+  });
+});
+
+describe("withRuntime", () => {
+  const orders = { app: "orders-app", stage: "prod", entry: "orders" };
+
+  it("requires a runtime or a deployment", async () => {
+    const fn = vi.fn(async () => undefined);
+
+    await expect(withRuntime({}, fn)).rejects.toThrow(
+      "Pass either runtime or deployment",
+    );
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("rejects a runtime that belongs to another deployment", async () => {
+    const runtime = new NodeDurableRuntime({
+      deployment: orders,
+      databasePath: ":memory:",
+    });
+    const fn = vi.fn(async () => undefined);
+    try {
+      await expect(
+        withRuntime(
+          { runtime, deployment: { ...orders, stage: "staging" } },
+          fn,
+        ),
+      ).rejects.toThrow(
+        "The runtime belongs to deployment orders-app:prod:orders, not orders-app:staging:orders",
+      );
+      expect(fn).not.toHaveBeenCalled();
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("uses a runtime of the same deployment and leaves it open", async () => {
+    const runtime = new NodeDurableRuntime({
+      deployment: orders,
+      databasePath: ":memory:",
+    });
+
+    await expect(
+      withRuntime({ runtime, deployment: { ...orders } }, async (used) => {
+        expect(used).toBe(runtime);
+        return "done";
+      }),
+    ).resolves.toBe("done");
+    // Closing a closed database throws, so this shows withRuntime left it open.
+    expect(() => runtime.close()).not.toThrow();
   });
 });
