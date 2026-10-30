@@ -9,6 +9,7 @@ import { fromProjectRoot } from "@notation/core";
 import crypto from "node:crypto";
 import * as nodeFs from "node:fs/promises";
 import { lambdaClient } from "src/utils/aws-clients";
+import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
 import { isUncertainAwsError } from "src/utils/errors";
 import { AwsSchema } from "src/utils/types";
 import { fs } from "@notation/std.iac";
@@ -200,10 +201,15 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
 
 export const LambdaFunction = lambdaFunctionSchema
   .defineOperations({
-    create: async (params) => {
+    // The create attempt is recorded as a tag, so findCreated can tell this
+    // deploy's function from another with the same name.
+    create: async (params, _context, token) => {
       const { CodeFilePath, ...functionParams } = params;
       const command = new sdk.CreateFunctionCommand({
         ...functionParams,
+        Tags: token
+          ? { ...params.Tags, [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
+          : params.Tags,
         Code: { ZipFile: await readCode(CodeFilePath, params.CodeSha256) },
       });
 
@@ -216,6 +222,22 @@ export const LambdaFunction = lambdaFunctionSchema
       //   });
       //   await lambdaClient.send(concurrencyCommand);
       // }
+    },
+
+    // A function without the token was not made by the attempt. Reporting it
+    // as not found makes create fail on the name, instead of taking it over.
+    findCreated: async (params, token) => {
+      try {
+        const { Tags } = await lambdaClient.send(
+          new sdk.GetFunctionCommand({ FunctionName: params.FunctionName }),
+        );
+        if (Tags?.[CREATE_TOKEN_TAG] === createTokenTagValue(token)) return;
+      } catch (error) {
+        if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
+      }
+      throw new ResourceNotFoundError(
+        "No Lambda function has the name and the create token",
+      );
     },
 
     isUncertainError: isUncertainAwsError,
