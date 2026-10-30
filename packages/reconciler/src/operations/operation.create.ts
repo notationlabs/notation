@@ -1,4 +1,5 @@
 import {
+  ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
   type BaseResource,
@@ -18,11 +19,11 @@ import {
 } from "./operation.pending";
 import { readResourceOperation } from "./operation.read";
 
-/** How long yieldstar waits before it looks up an uncertain create again. */
+/** How long yieldstar waits before it looks up a create with an unknown outcome again. */
 const CREATE_LOOKUP_RETRY_MS = 1_000;
 
 /**
- * The most attempts one create attempt's effect may end uncertain. It is
+ * The most attempts one create attempt's effect may end unknown. It is
  * capped below `maxOperationAttempts`, because the pending loop runs up to
  * that many create attempts, and each would otherwise multiply it.
  */
@@ -89,8 +90,8 @@ export async function* createResourceOperation(
 /**
  * Runs one create attempt as an effect, so a create whose outcome is unknown
  * is looked up before it runs again. The outcome is unknown when the process
- * stops before the attempt is recorded, or when create throws an error that
- * the resource reports as uncertain. Every other error fails the attempt,
+ * stops before the attempt is recorded, or when create throws
+ * `ResourceCreationUnknownError`. Every other error fails the attempt,
  * including `ResourceOperationPendingError`, which proves that the attempt
  * made nothing and sends the caller to the next attempt.
  *
@@ -105,10 +106,6 @@ async function* createAttempt(
 ): AsyncGenerator<unknown, DurableObject | undefined, any> {
   const { resource, resourceParams } = params;
   const lookup = createdLookup(resource, resourceParams);
-  const uncertain = (error: unknown) =>
-    lookup !== undefined &&
-    !ResourceOperationPendingError.is(error) &&
-    resource.isUncertainError?.(error) === true;
 
   return yield* step.effect(`create:remote:effect:${attempt}`, {
     effectId: [
@@ -131,7 +128,8 @@ async function* createAttempt(
       const key = await resource.create(resourceParams, context, effectId);
       return key ? resource.toResult(key) : undefined;
     },
-    failsOn: (error) => !uncertain(error),
+    failsOn: (error) =>
+      lookup === undefined || !ResourceCreationUnknownError.is(error),
   });
 }
 

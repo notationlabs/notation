@@ -6,7 +6,7 @@ import {
   createTokenTagValue,
   withoutCreateTokenTag,
 } from "src/utils/create-token";
-import { isUncertainAwsError } from "src/utils/errors";
+import { awsCreate } from "src/utils/errors";
 import { findInPages } from "src/utils/paginate";
 import { AwsSchema } from "src/utils/types";
 
@@ -99,14 +99,14 @@ const apiSchema = api.defineSchema({
 export const Api = apiSchema.defineOperations({
   // An API's ID is assigned by AWS, and its name need not be unique, so the
   // create attempt is recorded as a tag for findCreated to search for.
-  async create(params, _context, token) {
+  create: awsCreate(async (params, _context, token) => {
     const tags = token
       ? { ...params.Tags, [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
       : params.Tags;
     const command = new sdk.CreateApiCommand({ ...params, Tags: tags });
     const result = await apiGatewayClient.send(command);
     return { ApiId: result.ApiId! };
-  },
+  }),
   async findCreated(_params, token) {
     const value = createTokenTagValue(token);
     const api = await findInPages(
@@ -117,7 +117,6 @@ export const Api = apiSchema.defineOperations({
     if (api) return { ApiId: api.ApiId! };
     throw new ResourceNotFoundError("No API Gateway API has the create token");
   },
-  isUncertainError: isUncertainAwsError,
   async read(key) {
     try {
       const command = new sdk.GetApiCommand(key);

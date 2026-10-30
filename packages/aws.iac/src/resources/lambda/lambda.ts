@@ -10,7 +10,7 @@ import crypto from "node:crypto";
 import * as nodeFs from "node:fs/promises";
 import { lambdaClient } from "src/utils/aws-clients";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
-import { isUncertainAwsError } from "src/utils/errors";
+import { awsCreate } from "src/utils/errors";
 import { AwsSchema } from "src/utils/types";
 import { fs } from "@notation/std.iac";
 import { LambdaIamRoleInstance } from "./";
@@ -203,7 +203,7 @@ export const LambdaFunction = lambdaFunctionSchema
   .defineOperations({
     // The create attempt is recorded as a tag, so findCreated can tell this
     // deploy's function from another with the same name.
-    create: async (params, _context, token) => {
+    create: awsCreate(async (params, _context, token) => {
       const { CodeFilePath, ...functionParams } = params;
       const command = new sdk.CreateFunctionCommand({
         ...functionParams,
@@ -222,7 +222,7 @@ export const LambdaFunction = lambdaFunctionSchema
       //   });
       //   await lambdaClient.send(concurrencyCommand);
       // }
-    },
+    }),
 
     // A function without the token was not made by the attempt. Reporting it
     // as not found makes create fail on the name, instead of taking it over.
@@ -239,8 +239,6 @@ export const LambdaFunction = lambdaFunctionSchema
         "No Lambda function has the name and the create token",
       );
     },
-
-    isUncertainError: isUncertainAwsError,
 
     read: async (key) => {
       try {

@@ -137,13 +137,12 @@ All schema items carry these fields:
 | -------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `create`       | yes      | `(params, context?, token?) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key. `token` is unique to the attempt. |
 | `findCreated`  | no       | `(params, token) => Promise<ComputedPrimaryKey<S>>` – find the resource that the create attempt with `token` made, or throw `ResourceNotFoundError`. See [Unknown create outcomes](#unknown-create-outcomes). |
-| `isUncertainError` | no   | `(error) => boolean` – return true when an error from `create` leaves it unknown whether the resource was made, such as a timeout.          |
 | `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                         |
 | `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                           |
 | `delete`       | yes      | `(key, state, context?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
 | `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                        |
 
-The reconciler records params, results and state, so each must be a durable value as yieldstar 0.8.0 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
+The reconciler records params, results and state, so each must be a durable value as yieldstar 0.8.2 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
 
 ### Operation errors
 
@@ -151,6 +150,7 @@ Import the errors from `@notation/resource`:
 
 ```ts
 import {
+  ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
 } from "@notation/resource";
@@ -166,6 +166,8 @@ new ResourceOperationPendingError(message: string, {
   callbackContext?: Readonly<DurableObject>;
   cause?: unknown;
 });
+
+new ResourceCreationUnknownError(message: string, options?: { cause?: unknown });
 ```
 
 | Handler result | Meaning | What the reconciler does |
@@ -173,7 +175,7 @@ new ResourceOperationPendingError(message: string, {
 | Return normally | The operation finished. | Continues the deployment. |
 | `throw new ResourceNotFoundError(message, { cause })` | `read` or `delete` found no resource for the given key. | From `read`, treats the resource as absent during planning and drift detection; a read after create or update fails because that operation claimed to have finished. From `delete`, treats the delete as complete, since absence is its goal state. |
 | `throw new ResourceOperationPendingError(message, { retryAfterMs, callbackContext })` | The operation has not finished. | Waits for `retryAfterMs`, then calls the same handler again. It passes `callbackContext` as the handler's final argument. |
-| Throw an error for which `isUncertainError` returns true | `create` may or may not have made the resource. | Looks the resource up, as described in [Unknown create outcomes](#unknown-create-outcomes). |
+| `throw new ResourceCreationUnknownError(message, { cause })` | `create` cannot tell whether the provider made the resource, for example after a timeout. | Looks the resource up, as described in [Unknown create outcomes](#unknown-create-outcomes). |
 | Throw any other error | The operation failed. | Stops the deployment. |
 
 `ResourceNotFoundError` means the resource is absent wherever it is thrown. A `delete` handler may either catch the provider's missing-resource error and return normally, or translate it to `ResourceNotFoundError`; both count as success.
@@ -212,11 +214,11 @@ read: async (key, context) => {
 
 ### Unknown create outcomes
 
-The outcome of a create attempt is unknown when the process stops after `create` returns and before the reconciler records the result, or when `create` throws an error for which `isUncertainError` returns true. The reconciler then looks the resource up before it calls `create` again:
+The outcome of a create attempt is unknown when the process stops after `create` returns and before the reconciler records the result, or when `create` throws `ResourceCreationUnknownError`. The reconciler then looks the resource up before it calls `create` again:
 
 1. A resource with `findCreated` is found by the attempt's token. `create` must record the token on the remote resource, for example as a tag, so that `findCreated` can search for it.
 2. A resource with `read`, whose key is made of params, is read by the key it would have.
-3. Any other resource cannot be found. The reconciler calls `create` again after a stopped process, and fails the deployment on an uncertain error.
+3. Any other resource cannot be found. The reconciler calls `create` again after a stopped process, and fails the deployment on a `ResourceCreationUnknownError`.
 
 When a lookup finds the resource, the reconciler uses what it found as the result of `create`. When it throws, the reconciler looks again after one second. When the outcome is still unknown after 10 attempts, or after `maxOperationAttempts` when it is lower, the deployment fails with a `WorkflowEffectError` with code `EFFECT_OUTCOME_UNKNOWN`.
 
@@ -224,18 +226,26 @@ A lookup must not report a resource as absent while a create for it can still fi
 
 ```ts
 create: async (params, _context, token) => {
-  const result = await client.send(
-    new CreateApiCommand({ ...params, Tags: { ...params.Tags, [TOKEN_TAG]: token! } }),
-  );
-  return { ApiId: result.ApiId! };
+  try {
+    const result = await client.send(
+      new CreateApiCommand({ ...params, Tags: { ...params.Tags, [TOKEN_TAG]: token! } }),
+    );
+    return { ApiId: result.ApiId! };
+  } catch (error) {
+    if (isTimeout(error)) {
+      throw new ResourceCreationUnknownError("CreateApi timed out", { cause: error });
+    }
+    throw error;
+  }
 },
 findCreated: async (_params, token) => {
   const api = await findApiByTag(TOKEN_TAG, token);
   if (!api) throw new ResourceNotFoundError("No API has the token");
   return { ApiId: api.ApiId! };
 },
-isUncertainError: isUncertainAwsError,
 ```
+
+In `@notation/aws.iac`, `awsCreate` wraps a `create` handler and throws `ResourceCreationUnknownError` when an AWS call times out, loses its connection or gets a server error.
 
 ## Dependencies
 

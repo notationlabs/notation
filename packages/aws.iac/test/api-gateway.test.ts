@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
-import { ResourceNotFoundError } from "@notation/resource";
+import {
+  ResourceCreationUnknownError,
+  ResourceNotFoundError,
+} from "@notation/resource";
 import { createPlan } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { Api } from "src/resources/api-gateway/api";
 import { Route } from "src/resources/api-gateway/route";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
-import { isUncertainAwsError } from "src/utils/errors";
+import { awsCallMayHaveTakenEffect } from "src/utils/errors";
 
 const TOKEN = "notation:create:execution-1:api:0";
 
@@ -24,6 +27,37 @@ function mockSend(handler: (command: unknown) => unknown) {
 describe("API Gateway API", () => {
   const api = new Api("api", {
     config: { Name: "app", ProtocolType: "HTTP" } as any,
+  });
+
+  it("reports a create that gets a server error as unknown", async () => {
+    const serverError = { $metadata: { httpStatusCode: 503 } };
+    mockSend(() => {
+      throw serverError;
+    });
+
+    const created = api.create(
+      { Name: "app", ProtocolType: "HTTP" } as any,
+      undefined,
+      TOKEN,
+    );
+
+    await expect(created).rejects.toSatisfy(ResourceCreationUnknownError.is);
+    await expect(created).rejects.toMatchObject({ cause: serverError });
+  });
+
+  it("rethrows a create that gets a client error", async () => {
+    const clientError = { $metadata: { httpStatusCode: 400 } };
+    mockSend(() => {
+      throw clientError;
+    });
+
+    await expect(
+      api.create(
+        { Name: "app", ProtocolType: "HTTP" } as any,
+        undefined,
+        TOKEN,
+      ),
+    ).rejects.toBe(clientError);
   });
 
   it("tags the API with the hash of the create token", async () => {
@@ -153,7 +187,7 @@ describe("API Gateway route", () => {
   });
 });
 
-describe("isUncertainAwsError", () => {
+describe("awsCallMayHaveTakenEffect", () => {
   it.each([
     ["a server error", { $metadata: { httpStatusCode: 503 } }, true],
     [
@@ -170,6 +204,6 @@ describe("isUncertainAwsError", () => {
     ["an error from Notation code", new Error("hash mismatch"), false],
     ["a value that is not an object", "boom", false],
   ])("classifies %s", (_name, error, expected) => {
-    expect(isUncertainAwsError(error)).toBe(expected);
+    expect(awsCallMayHaveTakenEffect(error)).toBe(expected);
   });
 });

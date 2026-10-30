@@ -87,7 +87,6 @@ export interface BaseResource {
     token?: string,
   ) => Promise<{} | void>;
   findCreated?: (params: any, token: string) => Promise<{} | void>;
-  isUncertainError?: (error: unknown) => boolean;
   read?: (key: any, context?: ResourceOperationContext) => Promise<{}>;
   update?: (
     key: any,
@@ -134,7 +133,6 @@ export abstract class Resource<
     params: T["params"],
     token: string,
   ) => Promise<T["primaryKey"]>;
-  isUncertainError?: (error: unknown) => boolean;
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -254,12 +252,6 @@ export type ResourceOperationsOptions<
     params: T["params"],
     token: string,
   ) => Promise<T["primaryKey"]>;
-  /**
-   * Returns true when an error thrown by `create` leaves it unknown whether
-   * the resource was made, such as a timeout. The reconciler looks the
-   * resource up before it creates again. Every other error fails the create.
-   */
-  isUncertainError?: (error: unknown) => boolean;
   read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -378,7 +370,6 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             schema = schema;
             create = opts.create;
             findCreated = opts.findCreated;
-            isUncertainError = opts.isUncertainError;
             read = opts.read ? opts.read : undefined;
             update = opts.update ? opts.update : undefined;
             delete = opts.delete;

@@ -10,6 +10,7 @@ import {
 import { SqliteRuntime, createSqliteDb } from "@yieldstar/sqlite-runtime/node";
 import {
   resource,
+  ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
   type BaseResource,
@@ -155,11 +156,11 @@ describe("durable execution and replay", () => {
     runtime.close();
   });
 
-  it("finds a resource made by a create that threw an uncertain error", async () => {
+  it("finds a resource made by a create with an unknown outcome", async () => {
     const tokens: string[] = [];
     const create = vi.fn(async (_params: unknown, _context: unknown, token) => {
       tokens.push(token!);
-      throw new ProviderTimeoutError("socket timed out");
+      throw new ResourceCreationUnknownError("socket timed out");
     });
     const findCreated = vi.fn(async (_params: unknown, token: string) => ({
       remoteId: `remote-for-${token}`,
@@ -176,7 +177,6 @@ describe("durable execution and replay", () => {
         // Cast: a schema declared without API types infers no primary key.
         create: create as any,
         findCreated: findCreated as any,
-        isUncertainError: (error) => error instanceof ProviderTimeoutError,
         delete: async () => undefined,
       });
     const runtime = createRuntime([new TestResource("found")], "effect-find");
@@ -200,15 +200,14 @@ describe("durable execution and replay", () => {
     runtime.close();
   });
 
-  it("fails a create that threw an uncertain error when the resource cannot be looked up", async () => {
+  it("fails a create with an unknown outcome when the resource cannot be looked up", async () => {
     const create = vi.fn(async () => {
-      throw new ProviderTimeoutError("socket timed out");
+      throw new ResourceCreationUnknownError("socket timed out");
     });
     const TestResource = resource({ type: "test/durable/effect-unfindable" })
       .defineSchema({})
       .defineOperations({
         create,
-        isUncertainError: (error) => error instanceof ProviderTimeoutError,
         delete: async () => undefined,
       });
     const runtime = createRuntime(
@@ -225,7 +224,7 @@ describe("durable execution and replay", () => {
 
   it("fails a create whose outcome stays unknown after the attempt limit", async () => {
     const create = vi.fn(async () => {
-      throw new ProviderTimeoutError("socket timed out");
+      throw new ResourceCreationUnknownError("socket timed out");
     });
     const findCreated = vi.fn(async () => {
       throw new Error("access denied");
@@ -235,7 +234,6 @@ describe("durable execution and replay", () => {
       .defineOperations({
         create,
         findCreated,
-        isUncertainError: (error) => error instanceof ProviderTimeoutError,
         delete: async () => undefined,
       });
     const runtime = createRuntime(
@@ -257,9 +255,9 @@ describe("durable execution and replay", () => {
     runtime.close();
   });
 
-  it("stops looking up an uncertain create after the lookup limit", async () => {
+  it("stops looking up a create with an unknown outcome after the lookup limit", async () => {
     const create = vi.fn(async () => {
-      throw new ProviderTimeoutError("socket timed out");
+      throw new ResourceCreationUnknownError("socket timed out");
     });
     const findCreated = vi.fn(async () => {
       throw new Error("access denied");
@@ -269,7 +267,6 @@ describe("durable execution and replay", () => {
       .defineOperations({
         create,
         findCreated,
-        isUncertainError: (error) => error instanceof ProviderTimeoutError,
         delete: async () => undefined,
       });
     const runtime = createRuntime([new TestResource("capped")], "capped");
@@ -1558,10 +1555,6 @@ function failFirstSettle(inner: EffectClient): EffectClient {
       return Promise.reject(new Error("simulated process crash"));
     },
   };
-}
-
-class ProviderTimeoutError extends Error {
-  name = "ProviderTimeoutError";
 }
 
 async function readHolder(

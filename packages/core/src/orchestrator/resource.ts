@@ -18,6 +18,7 @@ export type {
 
 export {
   Resource,
+  ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
   defineResource,
