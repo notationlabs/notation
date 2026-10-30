@@ -18,10 +18,12 @@
     "@aws-sdk/client-eventbridge": "^3.1080.0",
     "@aws-sdk/client-iam": "^3.1080.0",
     "@aws-sdk/client-lambda": "^3.1080.0",
+    "@aws-sdk/client-sqs": "^3.1080.0",
     "@aws-sdk/client-sts": "^3.1080.0",
     "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/std.iac": "workspace:*",
+    "@notation/utils": "workspace:*",
     "@types/aws-lambda": "^8.10.147"
   },
   "devDependencies": {
