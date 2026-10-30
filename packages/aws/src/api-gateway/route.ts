@@ -6,7 +6,7 @@ import * as aws from "@notation/aws.iac";
 import type { LambdaGroup } from "src/lambda";
 import type { ApiGroup } from "./api";
 import { AuthorizerConfig } from "./auth";
-import { mapAuthConfig, mapAuthType } from "./utils";
+import { authorizerKey, mapAuthConfig, mapAuthType } from "./utils";
 
 type RouteGroupConfig = {
   apiGroup: ApiGroup;
@@ -52,17 +52,17 @@ export class RouteGroup extends aws.AwsResourceGroup {
 
     let authorizer: aws.apiGateway.AuthInstance | undefined;
 
+    // an api allows 10 authorizers, so routes with the same jwt config share one
     if (auth.type != "NONE") {
-      authorizer = this.add(
-        new aws.apiGateway.RouteAuth(
-          `${routeId}-${apiResource.id}-authorizer`,
-          {
-            config: mapAuthConfig(apiResource.id, method, path, auth),
-            dependencies: {
-              api: apiResource,
-            },
+      authorizer = apiGroup.addOnce(
+        aws.apiGateway.RouteAuth,
+        `${apiResource.id}-jwt-authorizer-${authorizerKey(auth)}`,
+        {
+          config: mapAuthConfig(apiResource.id, auth),
+          dependencies: {
+            api: apiResource,
           },
-        ),
+        },
       );
     }
 

@@ -89,3 +89,40 @@ test("a lambda routed from two apis gets an integration per api", () => {
   expect(integrationA.dependencies.api.id).toBe("a");
   expect(integrationB.dependencies.api.id).toBe("b");
 });
+
+test("routes with the same jwt config share one authorizer per api", () => {
+  const handler = lambda({
+    id: "handler",
+    code: { type: "file", path: "src/fns/handler.fn.js" },
+    handler: "handler.fn.js",
+  });
+  const jwt = {
+    type: "jwt" as const,
+    issuer: "https://issuer.example/",
+    audience: ["https://api.example"],
+    scopes: [],
+  };
+  const userApi = api({ name: "user-api" });
+  const routeA = route(userApi, "GET", "/a", jwt, handler);
+  const routeB = route(
+    userApi,
+    "POST",
+    "/b",
+    { ...jwt, scopes: ["write"] },
+    handler,
+  );
+  const routeC = route(
+    userApi,
+    "GET",
+    "/c",
+    { ...jwt, audience: ["other"] },
+    handler,
+  );
+  const routeD = route(api({ name: "other-api" }), "GET", "/a", jwt, handler);
+
+  const authA = routeA.route.dependencies.auth;
+  expect(routeB.route.dependencies.auth).toBe(authA);
+  expect(routeC.route.dependencies.auth).not.toBe(authA);
+  expect(routeD.route.dependencies.auth).not.toBe(authA);
+  expect(authA?.group).toEqual({ type: "API Gateway", id: "user-api" });
+});

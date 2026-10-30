@@ -67,6 +67,8 @@ const authedRouter = router(myApi).withJWTAuthorizer<JWTClaims>({
 authedRouter.get("/user", getUser);
 ```
 
+Routes on one API with the same `issuer` and `audience` share one authorizer. Routes with different `scopes` still share it, because API Gateway checks scopes on the route. An HTTP API allows 10 authorizers, so one API can have 10 distinct issuer and audience pairs.
+
 ### JWTAuthorizerConfig
 
 ```ts [@notation/aws/api-gateway.ts]
@@ -87,7 +89,7 @@ After a create with an unknown outcome, Notation looks the resource up before it
 
 The extra integration or authorizer has no route pointing at it, so traffic is unaffected. Notation does not record it and does not delete it. Deleting the API deletes it.
 
-An extra authorizer counts toward the quota of 10 authorizers per HTTP API. `withJWTAuthorizer` creates one authorizer for each route, so an API near the quota can fail a later authorizer create. You can ask AWS Support to raise the quota, or delete the extra authorizer in the console. An extra integration counts toward the quota of 300 integrations per API.
+An extra authorizer counts toward the quota of 10 authorizers per HTTP API, and an extra integration counts toward the quota of 300 integrations per API. Delete an extra one in the console if an API reaches its quota.
 
 An API can also be created twice. Notation looks for the API's tag with `GetApis` one second after an unknown create. If AWS created the API and `GetApis` does not list it yet, Notation creates a second API. Notation records the second API and does not delete the first. A route created twice fails the deploy on its duplicate route key instead.
 
