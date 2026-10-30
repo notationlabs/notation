@@ -18,7 +18,7 @@ import type {
   NoInfer,
 } from "./types";
 import type { ResourceOperationContext } from "./resource-operation";
-import { toDurable, type DurableObject } from "./durable-value";
+import type { DurableObject } from "./durable-value";
 import { toComparableParams } from "./diff-params";
 
 export type { Schema, SchemaItem, DefineResourceApiSchema };
@@ -189,15 +189,14 @@ export abstract class Resource<
   }
 
   /**
-   * Copies the properties of a provider result that the schema declares, as
-   * durable values.
+   * Copies the properties of a provider result that the schema declares.
    */
   toResult(result: {}): DurableObject {
-    const declared = {} as Record<string, unknown>;
+    const declared = {} as DurableObject;
     for (const key of Object.keys(this.schema)) {
       if (key in result) declared[key] = (result as any)[key];
     }
-    return toDurable(declared) as DurableObject;
+    return declared;
   }
 
   async getParams(): Promise<T["params"]> {

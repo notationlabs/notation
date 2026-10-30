@@ -59,10 +59,10 @@ export class MemoryStateBackend implements StateBackend {
   }
 }
 
-// Seeds and reads pass through JSON, so callers see what a persisted backend
-// would return and cannot mutate the backend through a shared reference.
+// Seeds and reads are cloned, so callers cannot mutate the backend through a
+// shared reference.
 function cloneAsPersistedState(
   state: Record<string, StateNode>,
 ): Record<string, StateNode> {
-  return JSON.parse(JSON.stringify(state)) as Record<string, StateNode>;
+  return structuredClone(state);
 }

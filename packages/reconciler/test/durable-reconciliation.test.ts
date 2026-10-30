@@ -223,7 +223,7 @@ describe("durable execution and replay", () => {
 });
 
 describe("durable values", () => {
-  it("records a date in provider output as an ISO string", async () => {
+  it("records a date in provider output as a date", async () => {
     const DatedResource = resource<{
       Key: {};
       CreateParams: {};
@@ -246,7 +246,7 @@ describe("durable values", () => {
     await runtime.run("dated-execution");
 
     expect((await runtime.state.get("dated"))?.output).toEqual({
-      CreatedDate: "2026-07-22T00:00:00.000Z",
+      CreatedDate: new Date("2026-07-22T00:00:00.000Z"),
     });
     runtime.close();
   });
@@ -278,7 +278,7 @@ describe("durable values", () => {
     runtime.close();
   });
 
-  it("drops a callback context that is not a durable value", async () => {
+  it("passes a date in a callback context to the next attempt", async () => {
     const contexts: unknown[] = [];
     const PendingResource = resource({ type: "test/durable/dated-context" })
       .defineSchema({})
@@ -288,9 +288,9 @@ describe("durable values", () => {
           if (contexts.length === 1) {
             throw new ResourceOperationPendingError("provider is not ready", {
               retryAfterMs: RETRY_AFTER_MS,
-              // The type rejects a Date, so only an untyped provider can
-              // pass one.
-              callbackContext: { startedAt: new Date() } as any,
+              callbackContext: {
+                startedAt: new Date("2026-07-22T00:00:00.000Z"),
+              },
             });
           }
         },
@@ -308,7 +308,13 @@ describe("durable values", () => {
     await sleep(PAST_RETRY_MS);
     await runtime.run("dated-context-execution");
 
-    expect(contexts).toEqual([undefined, undefined]);
+    expect(contexts).toEqual([
+      undefined,
+      { startedAt: new Date("2026-07-22T00:00:00.000Z") },
+    ]);
+    expect((contexts[1] as { startedAt: unknown }).startedAt).toBeInstanceOf(
+      Date,
+    );
     expect(await runtime.state.get("dated-context")).toMatchObject({
       version: 1,
     });

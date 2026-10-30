@@ -1,8 +1,6 @@
 import type {
   Durable as ResourceDurable,
   DurableValue,
-  Encodable,
-  ToDurable,
 } from "@notation/resource";
 import type { Durable, DurableValue as YieldstarDurableValue } from "yieldstar";
 import { expectTypeOf, it } from "vitest";
@@ -12,20 +10,29 @@ it("accepts the durable values of @notation/resource as yieldstar durable values
   expectTypeOf<YieldstarDurableValue>().toExtend<DurableValue>();
 });
 
+it("keeps dates, maps, sets and bigints as yieldstar does", () => {
+  type Value = {
+    date: Date;
+    dates: Date[];
+    map: Map<string, Date>;
+    set: Set<number>;
+    big: bigint;
+  };
+  expectTypeOf<ResourceDurable<Value>["date"]>().toEqualTypeOf<Date>();
+  expectTypeOf<Durable<Value>["date"]>().toEqualTypeOf<Date>();
+  expectTypeOf<ResourceDurable<Value>["dates"]>().toEqualTypeOf<Date[]>();
+  expectTypeOf<ResourceDurable<Value>["map"]>().toEqualTypeOf<
+    Map<string, Date>
+  >();
+  expectTypeOf<ResourceDurable<Value>["set"]>().toEqualTypeOf<Set<number>>();
+  expectTypeOf<ResourceDurable<Value>["big"]>().toEqualTypeOf<bigint>();
+  expectTypeOf<ResourceDurable<Value>>().toExtend<Durable<Value>>();
+});
+
 it("maps the same types to never as yieldstar", () => {
-  type Value = { date: Date; bytes: Uint8Array; fn: () => void };
-  expectTypeOf<ResourceDurable<Value>["date"]>().toBeNever();
-  expectTypeOf<Durable<Value>["date"]>().toBeNever();
+  type Value = { bytes: Uint8Array; fn: () => void };
   expectTypeOf<Buffer>().not.toExtend<ResourceDurable<Uint8Array>>();
   expectTypeOf<Buffer>().not.toExtend<Durable<Uint8Array>>();
   expectTypeOf<ResourceDurable<Value>["fn"]>().toBeNever();
-});
-
-it("maps dates to strings in recorded types and keeps them in provider results", () => {
-  type Value = { date: Date; dates: Date[]; bytes: Uint8Array };
-  expectTypeOf<ToDurable<Value>["date"]>().toEqualTypeOf<string>();
-  expectTypeOf<ToDurable<Value>["dates"]>().toEqualTypeOf<string[]>();
-  expectTypeOf<Encodable<Value>["date"]>().toEqualTypeOf<Date>();
-  expectTypeOf<Buffer>().not.toExtend<Encodable<Uint8Array>>();
-  expectTypeOf<ToDurable<Value>>().toExtend<Durable<ToDurable<Value>>>();
+  expectTypeOf<Durable<Value>["fn"]>().toBeNever();
 });

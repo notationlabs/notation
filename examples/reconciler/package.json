@@ -13,7 +13,7 @@
     "@notation/reconciler": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/utils": "workspace:*",
-    "yieldstar": "0.6.1"
+    "yieldstar": "0.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
