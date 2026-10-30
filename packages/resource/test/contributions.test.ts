@@ -246,16 +246,11 @@ describe("contribution lifetime", () => {
 });
 
 describe("output values", () => {
-  it("places an output value in config and in a template string", async () => {
+  it("places an output value whole in config and in a contribution", async () => {
     const queue = new Queue("orders", { config: { QueueName: "orders" } });
     const policy = new Policy("policy", { config: { PolicyName: "p" } });
     policy.contribute({
-      PolicyDocument: {
-        Statement: [
-          grant(queue.outputValue("QueueArn")),
-          grant(`${queue.outputValue("QueueArn")}/*`),
-        ],
-      },
+      PolicyDocument: { Statement: [grant(queue.outputValue("QueueArn"))] },
     });
 
     expect(policy.getDependencies()).toEqual([queue]);
@@ -270,7 +265,6 @@ describe("output values", () => {
     });
     expect((await policy.getParams()).PolicyDocument.Statement).toEqual([
       grant("arn:q"),
-      grant("arn:q/*"),
     ]);
   });
 
@@ -291,26 +285,69 @@ describe("output values", () => {
     expect(await holder.getParams()).toEqual({ size: 3 });
   });
 
-  it("gives tokens for nested paths", async () => {
+  it("throws when an output value is turned into a string", () => {
     const queue = new Queue("orders", { config: { QueueName: "orders" } });
-    const fn = new Fn("fn", {
-      config: {
-        FunctionName: "f",
-        Role: (queue.outputValue("QueueUrl") as any).nested.path,
-      },
-    });
-    queue.setOutput({ QueueUrl: { nested: { path: "deep" } } } as any);
-    expect((await fn.getParams()).Role).toBe("deep");
+    const arn = queue.outputValue("QueueArn");
+    const message =
+      "an output value can't be turned into a string; place it whole, or compute with it in a function that receives deps";
+    expect(() => `${arn}/*`).toThrow(message);
+    expect(() => String(arn)).toThrow(message);
+    expect(() => arn + "").toThrow(message);
+    expect(() => JSON.stringify({ arn })).toThrow(message);
+    expect(() => `${arn}`).toThrow("Output orders.QueueArn: an output value");
   });
 
-  it("rejects an output value as a map key", () => {
+  it("throws when an output value is a map key", () => {
     const queue = new Queue("orders", { config: { QueueName: "orders" } });
     const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
     expect(() =>
       fn.contribute({
         Environment: { Variables: { [queue.outputValue("QueueArn")]: "x" } },
       }),
-    ).toThrow("is used as a map key");
+    ).toThrow("can't be turned into a string");
+  });
+
+  it("names output values in conflict messages", async () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
+    fn.contribute(
+      { Environment: { Variables: { Q: queue.outputValue("QueueArn") } } },
+      { by: "a" },
+    );
+    fn.contribute({ Environment: { Variables: { Q: "other" } } }, { by: "b" });
+    queue.setOutput({ QueueUrl: "url", QueueName: "orders", QueueArn: "arn" });
+    await expect(fn.getParams()).rejects.toThrow(
+      'a and b both set Environment.Variables.Q, to "arn" and "other"',
+    );
+  });
+
+  it("sorts contributions holding output values the same whatever order tokens were made in", async () => {
+    const build = async (order: string[]) => {
+      const queues = Object.fromEntries(
+        order.map((name) => [
+          name,
+          new Queue(name, { config: { QueueName: name } }),
+        ]),
+      );
+      const policy = new Policy("policy", { config: { PolicyName: "p" } });
+      for (const name of ["b", "a"]) {
+        policy.contribute({
+          PolicyDocument: {
+            Statement: [grant(queues[name]!.outputValue("QueueArn"))],
+          },
+        });
+      }
+      for (const name of order) {
+        queues[name]!.setOutput({
+          QueueUrl: name,
+          QueueName: name,
+          QueueArn: `arn:${name}`,
+        });
+      }
+      return (await policy.getParams()).PolicyDocument.Statement;
+    };
+    expect(await build(["a", "b"])).toEqual([grant("arn:a"), grant("arn:b")]);
+    expect(await build(["b", "a"])).toEqual([grant("arn:a"), grant("arn:b")]);
   });
 
   it("adds dependencies after construction with dependOn", () => {
@@ -318,6 +355,125 @@ describe("output values", () => {
     const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
     fn.dependOn(queue);
     expect(fn.getDependencies()).toEqual([queue]);
+  });
+});
+
+describe("function contributions", () => {
+  const deployed = (name: string) => {
+    const queue = new Queue(name, { config: { QueueName: name } });
+    queue.setOutput({ QueueUrl: name, QueueName: name, QueueArn: `arn:${name}` });
+    return queue;
+  };
+
+  const contributeRead = (
+    policy: InstanceType<typeof Policy>,
+    queue: InstanceType<typeof Queue>,
+  ) =>
+    policy.contribute(
+      ({ deps }) => ({
+        PolicyDocument: {
+          Statement: [grant(`${deps.queue.output.QueueArn}/*`)],
+        },
+      }),
+      { by: "reader", deps: { queue } },
+    );
+
+  it("runs with real outputs at deploy", async () => {
+    const queue = deployed("orders");
+    const policy = new Policy("policy", { config: { PolicyName: "p" } });
+    contributeRead(policy, queue);
+    policy.contribute({ PolicyDocument: { Statement: [grant("plain")] } });
+    expect((await policy.getParams()).PolicyDocument.Statement).toEqual([
+      grant("arn:orders/*"),
+      grant("plain"),
+    ]);
+  });
+
+  it("makes the declared deps dependencies of the receiving resource", () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    const policy = new Policy("policy", { config: { PolicyName: "p" } });
+    contributeRead(policy, queue);
+    expect(policy.getDependencies()).toEqual([queue]);
+  });
+
+  it("plans the collected param unknown when a dep has no output", async () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    const policy = new Policy("policy", { config: { PolicyName: "p" } });
+    contributeRead(policy, queue);
+    policy.contribute({ PolicyDocument: { Statement: [grant("plain")] } });
+    expect(await policy.planParams()).toEqual({
+      PolicyName: "p",
+      PolicyDocument: UNKNOWN_AFTER_APPLY,
+    });
+  });
+
+  it("plans exactly when its deps have outputs", async () => {
+    const pending = new Queue("pending", { config: { QueueName: "pending" } });
+    const policy = new Policy("policy", { config: { PolicyName: "p" } });
+    policy.dependOn(pending);
+    contributeRead(policy, deployed("orders"));
+    expect(await policy.planParams()).toEqual({
+      PolicyName: "p",
+      PolicyDocument: {
+        Version: "2012-10-17",
+        Statement: [grant("arn:orders/*")],
+      },
+    });
+  });
+
+  it("plans the collected param unknown when the function catches the pending read", async () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    const policy = new Policy("policy", { config: { PolicyName: "p" } });
+    policy.contribute(
+      ({ deps }) => {
+        let arn = "guess";
+        try {
+          arn = deps.queue.output.QueueArn;
+        } catch {}
+        return { PolicyDocument: { Statement: [grant(arn)] } };
+      },
+      { deps: { queue } },
+    );
+    expect((await policy.planParams()).PolicyDocument).toEqual(
+      UNKNOWN_AFTER_APPLY,
+    );
+  });
+
+  it("finds conflicts in function results", async () => {
+    const queue = deployed("orders");
+    const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
+    fn.contribute(
+      ({ deps }) => ({
+        Environment: { Variables: { Q: deps.queue.output.QueueArn } },
+      }),
+      { by: "first", deps: { queue } },
+    );
+    fn.contribute({ Environment: { Variables: { Q: "other" } } }, { by: "second" });
+    await expect(fn.getParams()).rejects.toThrow(ContributionConflictError);
+    await expect(fn.planParams()).rejects.toThrow(ContributionConflictError);
+  });
+
+  it("rejects a result that sets a param that is not collected", async () => {
+    const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
+    fn.contribute(() => ({ Role: "other" }) as any, { deps: {} });
+    await expect(fn.getParams()).rejects.toThrow(
+      "Cannot contribute Role to fn: test/contributions/function does not collect it",
+    );
+  });
+
+  it("records the call site and closes with the other contributions", async () => {
+    const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
+    fn.contribute(() => ({ Environment: { Variables: { MODE: "a" } } }), {
+      deps: {},
+    });
+    fn.contribute({ Environment: { Variables: { MODE: "b" } } }, { by: "b" });
+    const error = await fn.getParams().catch((caught) => caught);
+    expect(error.message).toMatch(
+      /packages\/resource\/test\/contributions\.test\.ts:\d+ and b both set|b and packages\/resource\/test\/contributions\.test\.ts:\d+ both set/,
+    );
+    expect(() =>
+      fn.contribute(() => ({}), { deps: {} }),
+    ).toThrow("its params have already been read");
   });
 });
 
@@ -351,7 +507,7 @@ describe("plan params", () => {
     const fn = fnWith();
     fn.contribute({ Environment: { Variables: { KNOWN: "k" } } });
     fn.contribute({
-      Environment: { Variables: { QUEUE: `${queue.outputValue("QueueArn")}` } },
+      Environment: { Variables: { QUEUE: queue.outputValue("QueueArn") } },
     });
 
     expect(await fn.planParams()).toEqual({
@@ -392,7 +548,7 @@ describe("plan params", () => {
     });
   });
 
-  it("gives deriveParams tokens for a dependency's output", async () => {
+  it("plans cautiously when deriveParams reads a pending output", async () => {
     const Derived = LogGroup.requireDependencies<{
       fn: InstanceType<typeof Fn>;
     }>().deriveParams(({ deps }) => ({
@@ -408,63 +564,53 @@ describe("plan params", () => {
     });
   });
 
-  it("knows every param when an ordering-only dependency is not read", async () => {
+  it("plans cautiously when deriveParams catches the pending read", async () => {
+    const Caught = LogGroup.requireDependencies<{
+      fn: InstanceType<typeof Fn>;
+    }>().deriveParams(({ deps }) => {
+      let name = "guess";
+      try {
+        name = deps.fn.output.FunctionName;
+      } catch {}
+      return { logGroupName: name };
+    });
+    const logGroup = new Caught("logs", { dependencies: { fn: fnWith() } });
+    expect(await logGroup.planParams()).toEqual({
+      logGroupName: UNKNOWN_AFTER_APPLY,
+      retention: UNKNOWN_AFTER_APPLY,
+    });
+  });
+
+  it("plans exactly when deriveParams reads no pending output", async () => {
     const Ordered = LogGroup.requireDependencies<{
       fn: InstanceType<typeof Fn>;
-    }>().deriveParams(() => ({ logGroupName: "fixed" }));
+    }>().deriveParams(({ deps }) => ({ logGroupName: `logs-${deps.fn.id}` }));
     const logGroup = new Ordered("logs", { dependencies: { fn: fnWith() } });
-    expect(await logGroup.planParams()).toEqual({ logGroupName: "fixed" });
+    expect(await logGroup.planParams()).toEqual({ logGroupName: "logs-fn" });
   });
 
-  it("falls back to the cautious answer when a token is taken apart", async () => {
-    const Mangled = LogGroup.requireDependencies<{
+  it("reads outputs from state in deriveParams at plan", async () => {
+    const Derived = LogGroup.requireDependencies<{
       fn: InstanceType<typeof Fn>;
-    }>().deriveParams(({ deps }) => ({
-      logGroupName: deps.fn.output.FunctionArn.split(":")[1]!,
-    }));
-    const logGroup = new Mangled("logs", {
-      config: { retention: 7 },
-      dependencies: { fn: fnWith() },
-    });
-    expect(await logGroup.planParams()).toEqual({
-      logGroupName: UNKNOWN_AFTER_APPLY,
-      retention: 7,
-    });
-  });
-
-  it("falls back to the cautious answer when no token reaches a param", async () => {
-    const Dropped = LogGroup.requireDependencies<{
-      fn: InstanceType<typeof Fn>;
-    }>().deriveParams(({ deps }) => ({
-      logGroupName: deps.fn.output.FunctionArn ? "a" : "b",
-    }));
-    const logGroup = new Dropped("logs", { dependencies: { fn: fnWith() } });
-    expect(await logGroup.planParams()).toEqual({
-      logGroupName: UNKNOWN_AFTER_APPLY,
-      retention: UNKNOWN_AFTER_APPLY,
-    });
-  });
-
-  it("falls back to the cautious answer when a token is computed with as a string", async () => {
-    const Computed = LogGroup.requireDependencies<{
-      fn: InstanceType<typeof Fn>;
+      other: InstanceType<typeof Fn>;
     }>().deriveParams(({ deps }) => ({
       logGroupName: `/aws/lambda/${deps.fn.output.FunctionName}`,
-      retention: `${deps.fn.output.FunctionArn}`.split(":").length,
     }));
-    const logGroup = new Computed("logs", { dependencies: { fn: fnWith() } });
+    const fn = fnWith();
+    fn.setOutput({ FunctionName: "f", Role: "r", FunctionArn: "arn" });
+    const logGroup = new Derived("logs", {
+      dependencies: { fn, other: fnWith() },
+    });
     expect(await logGroup.planParams()).toEqual({
-      logGroupName: UNKNOWN_AFTER_APPLY,
-      retention: UNKNOWN_AFTER_APPLY,
+      logGroupName: "/aws/lambda/f",
     });
   });
 
   it("falls back to the cautious answer when deriveParams throws", async () => {
     const Throws = LogGroup.requireDependencies<{
       fn: InstanceType<typeof Fn>;
-    }>().deriveParams(({ deps }) => {
-      if (!deps.fn.output.FunctionArn.startsWith("arn:")) throw new Error("no");
-      return { logGroupName: "x" };
+    }>().deriveParams(() => {
+      throw new Error("no");
     });
     const logGroup = new Throws("logs", {
       config: { retention: 1 },

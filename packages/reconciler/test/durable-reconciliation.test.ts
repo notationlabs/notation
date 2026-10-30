@@ -1828,12 +1828,60 @@ describe("contributions and output values", () => {
     // Listed before the queue, so only the implied edge orders the deploy.
     const fn = new Fn("fn", { config: { name: "f" } as any });
     const queue = new Queue("queue", { config: { name: "orders" } as any });
-    fn.contribute({
-      env: { QUEUE: `${(queue as any).outputValue("arn")}/*` },
-    } as any);
+    fn.contribute({ env: { QUEUE: (queue as any).outputValue("arn") } } as any);
     const runtime = createRuntime([fn, queue], "contributions");
 
     await runtime.run("contributions-execution");
+    expect(created).toEqual([
+      { name: "orders" },
+      { name: "f", env: { QUEUE: "arn:orders" } },
+    ]);
+    expect(await runtime.state.get("fn")).toMatchObject({
+      params: { name: "f", env: { QUEUE: "arn:orders" } },
+      dependsOn: ["queue"],
+    });
+    runtime.close();
+  });
+
+  it("deploys the deps of a function contribution first and runs it with their outputs", async () => {
+    const created: Record<string, unknown>[] = [];
+    const Queue = resource({ type: "test/durable/queue" })
+      .defineSchema({
+        name: { presence: "required", propertyType: "param", primaryKey: true },
+        arn: { presence: "required", propertyType: "computed" },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          created.push(params);
+          return { name: params.name, arn: `arn:${params.name}` } as any;
+        },
+        delete: async () => undefined,
+      });
+    const Fn = resource({ type: "test/durable/function" })
+      .defineSchema({
+        name: { presence: "required", propertyType: "param", primaryKey: true },
+        env: {
+          presence: "optional",
+          propertyType: "param",
+          collect: mergeContributions,
+        },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          created.push(params);
+        },
+        delete: async () => undefined,
+      });
+    // Listed before the queue, so only the declared deps order the deploy.
+    const fn = new Fn("fn", { config: { name: "f" } as any });
+    const queue = new Queue("queue", { config: { name: "orders" } as any });
+    fn.contribute(
+      ({ deps }) => ({ env: { QUEUE: `${(deps.queue.output as any).arn}/*` } }),
+      { deps: { queue } },
+    );
+    const runtime = createRuntime([fn, queue], "function-contributions");
+
+    await runtime.run("function-contributions-execution");
     expect(created).toEqual([
       { name: "orders" },
       { name: "f", env: { QUEUE: "arn:orders/*" } },

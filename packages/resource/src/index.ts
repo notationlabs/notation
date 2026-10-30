@@ -16,9 +16,12 @@ export {
   mergeContributions,
   type CollectContext,
   type ContributeOptions,
+  type ContributionFunction,
 } from "./contributions";
 export {
-  OutputValueKeyError,
+  OutputValue,
+  OutputValueStringError,
+  PendingOutput,
   containsOutputValue,
   isOutputValue,
   resolveOutputValues,

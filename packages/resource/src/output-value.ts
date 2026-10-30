@@ -1,114 +1,49 @@
 import type { BaseResource } from "./resource";
 import { UNKNOWN_AFTER_APPLY } from "./diff-params";
 
-/** Where an output value comes from: a path into a resource's output. */
-export type OutputValueRef = {
-  readonly resource: BaseResource;
-  readonly path: readonly string[];
-  readonly placeholder: string;
-};
+export class OutputValueStringError extends Error {
+  constructor(output: string) {
+    super(
+      `Output ${output}: an output value can't be turned into a string; place it whole, or compute with it in a function that receives deps`,
+    );
+    this.name = "OutputValueStringError";
+  }
+}
+
+/**
+ * Stands for a path into a resource's output, which deploy fills in. It can
+ * only be placed whole in config or in a contribution. Turning it into a
+ * string throws, because the string would not hold the value.
+ */
+export class OutputValue {
+  constructor(
+    readonly resource: BaseResource,
+    readonly path: readonly string[],
+  ) {}
+
+  [Symbol.toPrimitive](): never {
+    throw new OutputValueStringError(describeOutputValue(this));
+  }
+
+  toString(): never {
+    throw new OutputValueStringError(describeOutputValue(this));
+  }
+
+  toJSON(): never {
+    throw new OutputValueStringError(describeOutputValue(this));
+  }
+}
 
 /**
  * Finds the value an output value stands for. `known: false` means the
  * output does not exist yet, so the value stays a token.
  */
 export type OutputLookup = (
-  ref: OutputValueRef,
+  token: OutputValue,
 ) => { known: true; value: unknown } | { known: false };
 
-export class OutputValueKeyError extends Error {
-  constructor(output: string) {
-    super(
-      `Output ${output} is used as a map key. Output values can only be placed in values: key the entry by something known now, and put the output value inside it.`,
-    );
-    this.name = "OutputValueKeyError";
-  }
-}
-
-const REF = Symbol("notation.outputValue");
-const PLACEHOLDER = /⟦\d+:[^⟦⟧]*⟧/g;
-
-// Properties that code reads to find out what a value is. A token has none
-// of them, so it is not thenable, and test matchers and printers treat it as
-// a plain object.
-const NOT_PATHS = new Set([
-  "then",
-  "constructor",
-  "asymmetricMatch",
-  "$$typeof",
-  "nodeType",
-]);
-
-const refsByPlaceholder = new Map<string, OutputValueRef>();
-const tokensByResource = new WeakMap<BaseResource, Map<string, unknown>>();
-let nextPlaceholder = 0;
-
-/**
- * Returns the token for a path into a resource's output. The token is typed
- * as the value it stands for, so it can be placed anywhere in config. Turned
- * into a string, it becomes a placeholder, so it can also sit inside a
- * template string. Reading a property of the token gives the token for the
- * path below it. The same path always gives the same token.
- */
-export function createOutputValue(
-  resource: BaseResource,
-  path: readonly string[],
-): any {
-  let tokens = tokensByResource.get(resource);
-  if (!tokens) {
-    tokens = new Map();
-    tokensByResource.set(resource, tokens);
-  }
-  const pathKey = JSON.stringify(path);
-  const existing = tokens.get(pathKey);
-  if (existing) return existing;
-
-  const placeholder = `⟦${nextPlaceholder++}:${[resource.id, ...path].join(".")}⟧`;
-  const ref: OutputValueRef = { resource, path: [...path], placeholder };
-  refsByPlaceholder.set(placeholder, ref);
-  const toPlaceholder = () => placeholder;
-
-  const token = new Proxy(Object.create(null), {
-    get(_target, property) {
-      if (property === REF) return ref;
-      if (property === Symbol.toPrimitive) return toPlaceholder;
-      if (typeof property === "symbol") return undefined;
-      if (
-        property === "toString" ||
-        property === "toJSON" ||
-        property === "valueOf"
-      ) {
-        return toPlaceholder;
-      }
-      if (NOT_PATHS.has(property)) return undefined;
-      return createOutputValue(resource, [...path, property]);
-    },
-    has: (_target, property) => property === REF,
-    ownKeys: () => [],
-    set: () => false,
-    defineProperty: () => false,
-    deleteProperty: () => false,
-  });
-  tokens.set(pathKey, token);
-  return token;
-}
-
-export function getOutputValueRef(value: unknown): OutputValueRef | undefined {
-  if (value === null || typeof value !== "object") return undefined;
-  return (value as Record<symbol, OutputValueRef | undefined>)[REF];
-}
-
-export function isOutputValue(value: unknown): boolean {
-  return getOutputValueRef(value) !== undefined;
-}
-
-function placeholderRefs(text: string): OutputValueRef[] {
-  const refs: OutputValueRef[] = [];
-  for (const match of text.matchAll(PLACEHOLDER)) {
-    const ref = refsByPlaceholder.get(match[0]);
-    if (ref) refs.push(ref);
-  }
-  return refs;
+export function isOutputValue(value: unknown): value is OutputValue {
+  return value instanceof OutputValue;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -117,20 +52,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
-/**
- * Walks a value and calls `visit` for every output value in it: each token,
- * and each placeholder inside a string.
- */
+/** Walks a value and calls `visit` for every output value in it. */
 export function forEachOutputValue(
   value: unknown,
-  visit: (ref: OutputValueRef) => void,
+  visit: (token: OutputValue) => void,
 ): void {
-  const ref = getOutputValueRef(value);
-  if (ref) return visit(ref);
-  if (typeof value === "string") {
-    for (const found of placeholderRefs(value)) visit(found);
-    return;
-  }
+  if (isOutputValue(value)) return visit(value);
   if (Array.isArray(value)) {
     for (const entry of value) forEachOutputValue(entry, visit);
     return;
@@ -149,34 +76,23 @@ export function containsOutputValue(value: unknown): boolean {
 }
 
 /**
- * Replaces every output value that `lookup` knows with its value. A string
- * that is exactly one placeholder takes the value whole, so a number stays a
- * number; a placeholder inside a longer string is replaced by its text.
- * Output values that `lookup` does not know are left in place.
- *
- * Throws when an output value is a map key, because a key must be known to
- * merge maps and to diff them.
+ * Replaces every output value that `lookup` knows with its value. Output
+ * values that `lookup` does not know are left in place.
  */
 export function resolveOutputValues(
   value: unknown,
   lookup: OutputLookup,
 ): unknown {
-  const ref = getOutputValueRef(value);
-  if (ref) {
-    const found = lookup(ref);
+  if (isOutputValue(value)) {
+    const found = lookup(value);
     return found.known ? found.value : value;
   }
-  if (typeof value === "string") return resolveString(value, lookup);
   if (Array.isArray(value)) {
     return value.map((entry) => resolveOutputValues(entry, lookup));
   }
   if (isPlainObject(value)) {
     const resolved: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
-      const keyRef = placeholderRefs(key)[0];
-      if (keyRef) {
-        throw new OutputValueKeyError(describeRef(keyRef));
-      }
       resolved[key] = resolveOutputValues(entry, lookup);
     }
     return resolved;
@@ -184,52 +100,29 @@ export function resolveOutputValues(
   return value;
 }
 
-function resolveString(text: string, lookup: OutputLookup): unknown {
-  if (!text.includes("⟦")) return text;
-  const whole = refsByPlaceholder.get(text);
-  if (whole) {
-    const found = lookup(whole);
-    return found.known ? found.value : text;
-  }
-  return text.replace(PLACEHOLDER, (placeholder) => {
-    const ref = refsByPlaceholder.get(placeholder);
-    if (!ref) return placeholder;
-    const found = lookup(ref);
-    if (!found.known) return placeholder;
-    if (found.value === undefined || found.value === null) {
-      throw new Error(
-        `Output ${describeRef(ref)} is ${found.value}, so it cannot be interpolated into "${text}"`,
-      );
-    }
-    return typeof found.value === "string"
-      ? found.value
-      : JSON.stringify(found.value);
-  });
-}
-
 /**
  * Finds output values in the resource's output. The output must exist: a
  * resource holding an output value depends on the resource it came from, so
  * that resource has been deployed first.
  */
-export const deployLookup: OutputLookup = (ref) => {
-  const output = ref.resource.output as Record<string, unknown> | null;
+export const deployLookup: OutputLookup = (token) => {
+  const output = token.resource.output as Record<string, unknown> | null;
   if (output == null) {
     throw new Error(
-      `Output ${describeRef(ref)} was read before ${ref.resource.id} was deployed`,
+      `Output ${describeOutputValue(token)} was read before ${token.resource.id} was deployed`,
     );
   }
-  return { known: true, value: readPath(output, ref.path) };
+  return { known: true, value: readPath(output, token.path) };
 };
 
 /**
  * Finds output values in the resource's output when it has one, such as the
  * output a plan reads from state, and leaves the rest unknown.
  */
-export const planLookup: OutputLookup = (ref) => {
-  const output = ref.resource.output as Record<string, unknown> | null;
+export const planLookup: OutputLookup = (token) => {
+  const output = token.resource.output as Record<string, unknown> | null;
   if (output == null) return { known: false };
-  return { known: true, value: readPath(output, ref.path) };
+  return { known: true, value: readPath(output, token.path) };
 };
 
 function readPath(output: unknown, path: readonly string[]): unknown {
@@ -241,65 +134,27 @@ function readPath(output: unknown, path: readonly string[]): unknown {
   return value;
 }
 
-export type UnknownMarking = {
-  value: unknown;
-  // The output values left in place, which the marking made unknown.
-  refs: Set<OutputValueRef>;
-  // Whether a string holds part of a placeholder: code took a token apart,
-  // so the value cannot be trusted.
-  mangled: boolean;
-};
-
-/**
- * Replaces every value that holds an output value with `UNKNOWN_AFTER_APPLY`,
- * at its own path, so the rest of the value stays known.
- */
-export function markUnknownOutputValues(value: unknown): UnknownMarking {
-  const refs = new Set<OutputValueRef>();
-  let mangled = false;
-
-  const mark = (entry: unknown): unknown => {
-    const ref = getOutputValueRef(entry);
-    if (ref) {
-      refs.add(ref);
-      return UNKNOWN_AFTER_APPLY;
+/** Replaces every output value with `UNKNOWN_AFTER_APPLY`, at its own path. */
+export function markUnknownOutputValues(value: unknown): unknown {
+  if (isOutputValue(value)) return UNKNOWN_AFTER_APPLY;
+  if (Array.isArray(value)) return value.map(markUnknownOutputValues);
+  if (isPlainObject(value)) {
+    const marked: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      marked[key] = markUnknownOutputValues(entry);
     }
-    if (typeof entry === "string") {
-      const found = placeholderRefs(entry);
-      for (const foundRef of found) refs.add(foundRef);
-      const rest = entry.replace(PLACEHOLDER, (placeholder) =>
-        refsByPlaceholder.has(placeholder) ? "" : placeholder,
-      );
-      if (rest.includes("⟦") || rest.includes("⟧")) mangled = true;
-      return found.length > 0 ? UNKNOWN_AFTER_APPLY : entry;
-    }
-    if (Array.isArray(entry)) return entry.map(mark);
-    if (isPlainObject(entry)) {
-      const marked: Record<string, unknown> = {};
-      for (const [key, nested] of Object.entries(entry)) {
-        marked[key] = mark(nested);
-      }
-      return marked;
-    }
-    return entry;
-  };
-
-  return { value: mark(value), refs, mangled };
+    return marked;
+  }
+  return value;
 }
 
 /**
  * Writes output values in a form that depends only on the resource ID and
- * path, so contributions sort the same whatever order tokens were made in.
+ * path, so contributions sort the same whatever order code ran in, and
+ * conflict messages can show them.
  */
 export function toCanonicalOutputValues(value: unknown): unknown {
-  const ref = getOutputValueRef(value);
-  if (ref) return canonical(ref);
-  if (typeof value === "string") {
-    return value.replace(PLACEHOLDER, (placeholder) => {
-      const found = refsByPlaceholder.get(placeholder);
-      return found ? canonical(found) : placeholder;
-    });
-  }
+  if (isOutputValue(value)) return `<output ${describeOutputValue(value)}>`;
   if (Array.isArray(value)) return value.map(toCanonicalOutputValues);
   if (isPlainObject(value)) {
     const canonicalised: Record<string, unknown> = {};
@@ -311,32 +166,48 @@ export function toCanonicalOutputValues(value: unknown): unknown {
   return value;
 }
 
-function canonical(ref: OutputValueRef): string {
-  return `⟦${describeRef(ref)}⟧`;
-}
-
-function describeRef(ref: OutputValueRef): string {
-  return [ref.resource.id, ...ref.path].join(".");
+function describeOutputValue(token: OutputValue): string {
+  return [token.resource.id, ...token.path].join(".");
 }
 
 /**
- * A view of a resource's output whose fields are tokens, for the plan of a
- * dependent whose dependency has no output yet. `onRead` is called with each
- * token read from it.
+ * Thrown by a plan view of a dependency whose output does not exist yet, when
+ * code reads the output.
  */
-export function createOutputProxy(
-  resource: BaseResource,
-  onRead: (ref: OutputValueRef) => void,
-): Record<string, unknown> {
-  return new Proxy(Object.create(null), {
-    get(_target, property) {
-      if (typeof property === "symbol" || NOT_PATHS.has(property)) {
-        return undefined;
+export class PendingOutput extends Error {
+  constructor(readonly resource: BaseResource) {
+    super(`The output of ${resource.id} is not known until it is deployed`);
+    this.name = "PendingOutput";
+  }
+}
+
+/**
+ * Gives views of dependencies for code that runs at plan. A view of a
+ * dependency with no output throws `PendingOutput` when its output is read.
+ * `readPending` is set by such a read, so a plan still knows of it when the
+ * code catches the error.
+ */
+export function createPlanViews() {
+  const views = {
+    readPending: false,
+    of<Deps extends Record<string, BaseResource | void>>(deps: Deps): Deps {
+      const viewed: Record<string, BaseResource | void> = {};
+      for (const [name, dep] of Object.entries(deps)) {
+        viewed[name] = dep && dep.output == null ? pendingView(dep) : dep;
       }
-      const token = createOutputValue(resource, [property]);
-      onRead(getOutputValueRef(token)!);
-      return token;
+      return viewed as Deps;
     },
-    ownKeys: () => [],
-  });
+  };
+
+  const pendingView = (dep: BaseResource): BaseResource =>
+    Object.create(dep, {
+      output: {
+        get() {
+          views.readPending = true;
+          throw new PendingOutput(dep);
+        },
+      },
+    });
+
+  return views;
 }

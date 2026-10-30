@@ -1,5 +1,6 @@
 import { sortedJson } from "@notation/utils";
 import type { DeepPartial } from "./types";
+import type { BaseResource } from "./resource";
 import {
   containsOutputValue,
   isOutputValue,
@@ -23,10 +24,27 @@ export type CollectContext = {
   contributors: string[];
 };
 
-export type Contribution = {
+/**
+ * A contribution computed from the outputs of `deps`. At deploy it receives
+ * the deps; at plan, views of them whose output throws when it is not known
+ * yet.
+ */
+export type ContributionFunction<Deps, Values> = (context: {
+  deps: Deps;
+}) => Values;
+
+export type ContributedValues = {
   values: Record<string, unknown>;
   contributor: string;
 };
+
+export type Contribution =
+  | ContributedValues
+  | {
+      compute: ContributionFunction<any, Record<string, unknown>>;
+      deps: Record<string, BaseResource>;
+      contributor: string;
+    };
 
 export class ContributionConflictError extends Error {
   constructor(
