@@ -22,7 +22,6 @@ import type { ResourceOperationContext } from "./resource-operation";
 import type { DurableObject } from "./durable-value";
 import { UNKNOWN_AFTER_APPLY, toComparableParams } from "./diff-params";
 import {
-  ContributionConflictError,
   captureCallSite,
   sortContributions,
   type CollectContext,
@@ -32,13 +31,13 @@ import {
 } from "./contributions";
 import {
   OutputValue,
-  OutputValueStringError,
   createPlanViews,
   deployLookup,
   forEachOutputValue,
   markUnknownOutputValues,
   planLookup,
   resolveOutputValues,
+  type PlanViews,
 } from "./output-value";
 import { getActiveResourceCollection } from "./resource-collection";
 
@@ -353,16 +352,15 @@ export abstract class Resource<
       config: this.config,
       deps: this.dependencies,
     });
-    return this.#combineParams(derivedParams, false) as T["params"];
+    return (await this.#combineParams(derivedParams, false)) as T["params"];
   }
 
   /**
    * At plan, `deriveParams` receives views of its dependencies. Reading the
    * output of a dependency that has none yet throws `PendingOutput`. When
-   * `deriveParams` reads such an output, or throws, the plan cannot tell
-   * which params are known: every param deriveParams would set, and every
-   * param not set in config, is unknown. When it reads none, the plan is
-   * exact.
+   * `deriveParams` reads such an output, the plan cannot tell which params
+   * are known: every param not set in config is unknown. When it reads none,
+   * the plan is exact.
    */
   async planParams(): Promise<Record<string, unknown>> {
     this.#sealed = true;
@@ -370,41 +368,27 @@ export abstract class Resource<
     if (!pending) return withoutUndefined(await this.getParams());
 
     const views = createPlanViews();
-    let derivedParams: Record<string, unknown>;
-    try {
-      derivedParams = await this.deriveParams({
+    const derivedParams = await tryAtPlan(views, () =>
+      this.deriveParams({
         id: this.id,
         config: this.config,
         deps: views.of(this.dependencies),
-      });
-    } catch (error) {
-      if (isMisuse(error)) throw error;
-      return this.#cautiousPlanParams();
-    }
-    if (views.readPending) {
-      return this.#cautiousPlanParams(Object.keys(derivedParams));
-    }
-    const params = this.#combineParams(derivedParams, true);
+      }),
+    );
+    if (derivedParams === undefined) return this.#cautiousPlanParams();
+    const params = await this.#combineParams(derivedParams, true);
     return markUnknownOutputValues(withoutUndefined(params)) as Record<
       string,
       unknown
     >;
   }
 
-  /**
-   * @param derived Keys deriveParams returned. They are unknown even when
-   * config also sets them, as the derived value replaces the config value.
-   */
-  #cautiousPlanParams(derived: string[] = []): Record<string, unknown> {
+  async #cautiousPlanParams(): Promise<Record<string, unknown>> {
     const params: Record<string, unknown> = {};
     const config = this.config as Record<string, unknown>;
-    const contributions = this.#evaluateContributions(true);
+    const contributions = await this.#evaluateContributions(true);
     for (const [key, item] of Object.entries(this.schema)) {
       if (item.propertyType === "computed") continue;
-      if (derived.includes(key)) {
-        params[key] = UNKNOWN_AFTER_APPLY;
-        continue;
-      }
       const value = item.collect
         ? this.#collect(key, item.collect, config[key], contributions, true)
         : resolveOutputValues(config[key], planLookup);
@@ -416,15 +400,15 @@ export abstract class Resource<
     return params;
   }
 
-  #combineParams(
+  async #combineParams(
     derivedParams: Record<string, unknown>,
     plan: boolean,
-  ): Record<string, unknown> {
+  ): Promise<Record<string, unknown>> {
     const params: Record<string, unknown> = {
       ...this.config,
       ...derivedParams,
     };
-    const contributions = this.#evaluateContributions(plan);
+    const contributions = await this.#evaluateContributions(plan);
     for (const [key, item] of Object.entries(this.schema)) {
       if (item.propertyType !== "param" || !item.collect) continue;
       params[key] = this.#collect(
@@ -444,11 +428,10 @@ export abstract class Resource<
   /**
    * Runs function contributions. At deploy each one receives its deps. At
    * plan each one receives views of its deps. When one reads an output that
-   * does not exist yet, or throws, plan cannot tell which params it would
-   * set, so `unknown` is set and `#collect` marks every collected param
-   * unknown.
+   * does not exist yet, plan cannot tell which params it would set, so
+   * `unknown` is set and `#collect` marks every collected param unknown.
    */
-  #evaluateContributions(plan: boolean): EvaluatedContributions {
+  async #evaluateContributions(plan: boolean): Promise<EvaluatedContributions> {
     const evaluated: EvaluatedContributions = { items: [], unknown: false };
     for (const contribution of this.#contributions) {
       if (!("compute" in contribution)) {
@@ -464,15 +447,10 @@ export abstract class Resource<
         continue;
       }
       const views = createPlanViews();
-      let values: Record<string, unknown>;
-      try {
-        values = contribution.compute({ deps: views.of(contribution.deps) });
-      } catch (error) {
-        if (isMisuse(error)) throw error;
-        evaluated.unknown = true;
-        continue;
-      }
-      if (views.readPending) {
+      const values = await tryAtPlan(views, () =>
+        contribution.compute({ deps: views.of(contribution.deps) }),
+      );
+      if (values === undefined) {
         evaluated.unknown = true;
         continue;
       }
@@ -553,17 +531,24 @@ export abstract class Resource<
 
 type EvaluatedContributions = {
   items: ContributedValues[];
-  // Set when a function contribution read a pending output or threw at plan.
+  // Set when a function contribution read a pending output at plan.
   unknown: boolean;
 };
 
-// Deploy would throw these errors too, so plan fails with them instead of
-// marking params unknown.
-function isMisuse(error: unknown): boolean {
-  return (
-    error instanceof ContributionConflictError ||
-    error instanceof OutputValueStringError
-  );
+// Runs code that reads dependency views. Returns undefined when the code read
+// a pending output, whether it then returned or threw. Any other error is the
+// code's own, and deploy would throw it too.
+async function tryAtPlan<T>(
+  views: PlanViews,
+  run: () => T | Promise<T>,
+): Promise<T | undefined> {
+  try {
+    const result = await run();
+    return views.readPending ? undefined : result;
+  } catch (error) {
+    if (views.readPending) return undefined;
+    throw error;
+  }
 }
 
 function withoutUndefined(

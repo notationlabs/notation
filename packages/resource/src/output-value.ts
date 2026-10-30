@@ -209,3 +209,5 @@ export function createPlanViews() {
 
   return views;
 }
+
+export type PlanViews = ReturnType<typeof createPlanViews>;

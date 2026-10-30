@@ -439,6 +439,19 @@ describe("function contributions", () => {
     );
   });
 
+  it("fails plan when the function throws without a pending read", async () => {
+    const pending = new Queue("pending", { config: { QueueName: "pending" } });
+    const policy = new Policy("policy", { config: { PolicyName: "p" } });
+    policy.dependOn(pending);
+    policy.contribute(
+      () => {
+        throw new Error("no");
+      },
+      { deps: {} },
+    );
+    await expect(policy.planParams()).rejects.toThrow("no");
+  });
+
   it("finds conflicts in function results", async () => {
     const queue = deployed("orders");
     const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
@@ -606,7 +619,7 @@ describe("plan params", () => {
     });
   });
 
-  it("falls back to the cautious answer when deriveParams throws", async () => {
+  it("fails plan when deriveParams throws without a pending read", async () => {
     const Throws = LogGroup.requireDependencies<{
       fn: InstanceType<typeof Fn>;
     }>().deriveParams(() => {
@@ -616,10 +629,7 @@ describe("plan params", () => {
       config: { retention: 1 },
       dependencies: { fn: fnWith() },
     });
-    expect(await logGroup.planParams()).toEqual({
-      logGroupName: UNKNOWN_AFTER_APPLY,
-      retention: 1,
-    });
+    await expect(logGroup.planParams()).rejects.toThrow("no");
   });
 
   it("runs deriveParams unchanged at deploy", async () => {
