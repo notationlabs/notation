@@ -3,6 +3,7 @@ import * as sdk from "@aws-sdk/client-iam";
 import { iamClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
 import type { PolicyDocument, PolicyStatement } from "src/templates/iam.policy";
+import type { LambdaIamRoleInstance } from "./lambda-role";
 
 export type { PolicyDocument, PolicyStatement };
 
@@ -16,6 +17,10 @@ type LambdaRolePolicyParams = Omit<
   "PolicyDocument"
 > & {
   PolicyDocument: PolicyDocument;
+};
+
+export type LambdaRolePolicyDependencies = {
+  role: LambdaIamRoleInstance;
 };
 
 export type LambdaRolePolicySchema = AwsSchema<{
@@ -53,40 +58,45 @@ const lambdaRolePolicySchema = lambdaRolePolicy.defineSchema({
   },
 } as const);
 
-export const LambdaRolePolicy = lambdaRolePolicySchema.defineOperations({
-  create: async (params) => {
-    await putRolePolicy(params);
-  },
-  read: async (key) => {
-    try {
-      const result = await iamClient.send(new sdk.GetRolePolicyCommand(key));
-      return {
-        RoleName: result.RoleName!,
-        PolicyName: result.PolicyName!,
-        PolicyDocument: decodePolicyDocument(result.PolicyDocument!),
-      };
-    } catch (error) {
-      if (error instanceof sdk.NoSuchEntityException) {
-        throw new ResourceNotFoundError("Lambda role policy was not found", {
-          cause: error,
-        });
+// RoleName is config rather than derived from the role's output, so a plan
+// knows the primary key before the role is deployed.
+export const LambdaRolePolicy = lambdaRolePolicySchema
+  .defineOperations({
+    create: async (params) => {
+      await putRolePolicy(params);
+    },
+    read: async (key) => {
+      try {
+        const result = await iamClient.send(new sdk.GetRolePolicyCommand(key));
+        return {
+          RoleName: result.RoleName!,
+          PolicyName: result.PolicyName!,
+          PolicyDocument: decodePolicyDocument(result.PolicyDocument!),
+        };
+      } catch (error) {
+        if (error instanceof sdk.NoSuchEntityException) {
+          throw new ResourceNotFoundError("Lambda role policy was not found", {
+            cause: error,
+          });
+        }
+        throw error;
       }
-      throw error;
-    }
-  },
-  // PutRolePolicy replaces the whole document, so a removed statement is
-  // removed from AWS too.
-  update: async (key, _patch, params) => {
-    await putRolePolicy({ ...params, ...key });
-  },
-  delete: async (key) => {
-    try {
-      await iamClient.send(new sdk.DeleteRolePolicyCommand(key));
-    } catch (error) {
-      if (!(error instanceof sdk.NoSuchEntityException)) throw error;
-    }
-  },
-});
+    },
+    // PutRolePolicy replaces the whole document, so a removed statement is
+    // removed from AWS too.
+    update: async (key, _patch, params) => {
+      await putRolePolicy({ ...params, ...key });
+    },
+    delete: async (key) => {
+      try {
+        await iamClient.send(new sdk.DeleteRolePolicyCommand(key));
+      } catch (error) {
+        if (!(error instanceof sdk.NoSuchEntityException)) throw error;
+      }
+    },
+  })
+  .requireDependencies<LambdaRolePolicyDependencies>()
+  .deriveParams(() => ({}));
 
 export type LambdaRolePolicyInstance = InstanceType<typeof LambdaRolePolicy>;
 

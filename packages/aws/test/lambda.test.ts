@@ -18,6 +18,19 @@ test("resource ids and names embed the id", () => {
   expect(group.fn.config.FunctionName).toBe("get-todos");
 });
 
+test("the policy's role name is known at plan before the role is deployed", async () => {
+  const group = lambda({ id: "get-todos", handler: "getTodos", code });
+  group.policy.contribute({
+    PolicyDocument: {
+      Statement: [{ Effect: "Allow", Action: ["s3:GetObject"], Resource: "*" }],
+    },
+  });
+  expect(await group.policy.planParams()).toMatchObject({
+    RoleName: "get-todos-role",
+  });
+  expect(group.policy.getDependencies()).toContain(group.role);
+});
+
 test("the group is identified by the id", () => {
   const group = lambda({ id: "get-todos", handler: "getTodos", code });
   expect(group.id).toBe("get-todos");

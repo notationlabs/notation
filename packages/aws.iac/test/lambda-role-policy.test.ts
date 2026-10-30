@@ -7,6 +7,7 @@ import {
   LambdaRolePolicy,
   type PolicyStatement,
 } from "src/resources/lambda/lambda-role-policy";
+import { LambdaIamRole } from "src/resources/lambda/lambda-role";
 
 const orders: PolicyStatement = {
   Effect: "Allow",
@@ -19,9 +20,12 @@ const refunds: PolicyStatement = {
   Resource: "arn:aws:sqs:eu-west-2:123456789012:refunds",
 };
 
-function createPolicy() {
+function createPolicy(
+  role = new LambdaIamRole("app-role", { config: { RoleName: "app-role" } }),
+) {
   return new LambdaRolePolicy("app-role-policy", {
     config: { RoleName: "app-role", PolicyName: "app-role-policy" },
+    dependencies: { role },
   });
 }
 
@@ -114,11 +118,14 @@ describe("LambdaRolePolicy drift detection", () => {
       }
       throw new Error("unexpected command");
     });
-    const policy = createPolicy();
+    const role = new LambdaIamRole("app-role", {
+      config: { RoleName: "app-role" },
+    });
+    const policy = createPolicy(role);
     policy.contribute({ PolicyDocument: { Statement: [orders] } });
     const params = await policy.getParams();
     const plan = await createPlan({
-      resources: [policy],
+      resources: [role, policy],
       state: new MemoryStateBackend({
         "app-role-policy": {
           version: 1,
@@ -132,7 +139,7 @@ describe("LambdaRolePolicy drift detection", () => {
         },
       }),
     });
-    return plan.nodes[0];
+    return plan.nodes.find((node) => node.id === "app-role-policy");
   }
 
   it("does not report an unchanged document as drifted", async () => {
