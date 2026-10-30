@@ -141,7 +141,7 @@ All schema items carry these fields:
 | `delete`       | yes      | `(key, state, context?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
 | `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                        |
 
-The reconciler records params, results and state, so each must be a durable value: `null`, a boolean, number or string, `undefined`, an `Error`, or an array or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares and turns each `Date` into an ISO 8601 string. Output and state types show these dates as strings. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
+The reconciler records params, results and state, so each must be a durable value as yieldstar 0.7.0 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
 
 ### Operation errors
 
@@ -180,7 +180,7 @@ new ResourceOperationPendingError(message: string, {
 | Option | Type | Required | Meaning |
 | ------ | ---- | -------- | ------- |
 | `retryAfterMs` | `number` | yes | Milliseconds to wait. It must be zero or greater. |
-| `callbackContext` | `Readonly<DurableObject>` | no | Data for the next attempt. The reconciler records it with the error. If it holds a value that is not durable, such as a `Date`, the next attempt receives `undefined`. |
+| `callbackContext` | `Readonly<DurableObject>` | no | Data for the next attempt. The reconciler records it with the error. If it holds a value that is not durable, such as a `Buffer`, the next attempt receives `undefined`. |
 | `cause` | `unknown` | no | The provider error that caused this result. |
 
 The default limit is 30 attempts. Set `maxOperationAttempts` in the deploy, plan, or destroy options to change it. Reaching the limit fails the operation.
