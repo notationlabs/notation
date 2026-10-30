@@ -1,6 +1,7 @@
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/utils/aws-clients";
+import { isUncertainAwsError } from "src/utils/errors";
 import { ApiInstance, LambdaIntegrationInstance } from ".";
 import { AwsSchema } from "src/utils/types";
 import { AuthInstance } from "./auth";
@@ -91,6 +92,26 @@ export const Route = routeSchema
 
       return { RouteId: result.RouteId! };
     },
+    // A route key is unique within an API, so it finds the route that a
+    // create attempt made.
+    findCreated: async (params) => {
+      let nextToken: string | undefined;
+      do {
+        const page = await apiGatewayClient.send(
+          new sdk.GetRoutesCommand({
+            ApiId: params.ApiId,
+            NextToken: nextToken,
+          }),
+        );
+        const route = page.Items?.find(
+          (item) => item.RouteKey === params.RouteKey,
+        );
+        if (route) return { RouteId: route.RouteId! };
+        nextToken = page.NextToken;
+      } while (nextToken);
+      throw new ResourceNotFoundError("No API Gateway route has the route key");
+    },
+    isUncertainError: isUncertainAwsError,
     read: async (key) => {
       try {
         const command = new sdk.GetRouteCommand(key);

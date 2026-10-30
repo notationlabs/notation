@@ -26,3 +26,4 @@ Migrate the durable runtime to yieldstar 0.8.0.
 - The Zip and File outputs replace `file` with `fileSha256`.
 - The Lambda's `Code` param is replaced by `CodeFilePath`.
 - The Lambda's `CodeSha256` param holds a base64 SHA-256 of the uploaded bytes instead of a hex SHA-256 of the source. Drift detection no longer reports every Lambda. On the first deploy after the upgrade, each Lambda uploads its code once.
+- An API Gateway API is tagged `notation:create-token` with a hash of its create token, and its read leaves the tag out of `Tags`. After a create with an unknown outcome, the API is found by the tag, and a route by its route key. An API, route or Lambda create that times out, loses its connection or gets a server error is looked up instead of failing the deploy.

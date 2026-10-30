@@ -9,6 +9,7 @@ import { fromProjectRoot } from "@notation/core";
 import crypto from "node:crypto";
 import * as nodeFs from "node:fs/promises";
 import { lambdaClient } from "src/utils/aws-clients";
+import { isUncertainAwsError } from "src/utils/errors";
 import { AwsSchema } from "src/utils/types";
 import { fs } from "@notation/std.iac";
 import { LambdaIamRoleInstance } from "./";
@@ -216,6 +217,8 @@ export const LambdaFunction = lambdaFunctionSchema
       //   await lambdaClient.send(concurrencyCommand);
       // }
     },
+
+    isUncertainError: isUncertainAwsError,
 
     read: async (key) => {
       try {
