@@ -128,7 +128,7 @@ describe("LambdaIamRole drift detection", () => {
   });
 });
 
-describe("LambdaIamRole read", () => {
+describe("LambdaIamRole result", () => {
   it("returns the declared fields, with dates as ISO strings", async () => {
     mockGetRole(
       getRoleResponse({
@@ -143,7 +143,7 @@ describe("LambdaIamRole read", () => {
       config: { RoleName: "app-role" },
     });
 
-    const result = await role.read!({ RoleName: "app-role" });
+    const result = role.toResult(await role.read!({ RoleName: "app-role" }));
 
     expect(result).toMatchObject({
       CreateDate: "2026-07-22T00:00:00.000Z",

@@ -60,8 +60,16 @@ describe("operation workflows", () => {
       return { remoteId: "abc" };
     });
 
-    const TestResource = resource({ type: "test/service/create" })
-      .defineSchema({})
+    const TestResource = resource<{
+      Key: {};
+      CreateParams: {};
+      UpdateParams: {};
+      ReadResult: { remoteId: string; status: string };
+    }>({ type: "test/service/create" })
+      .defineSchema({
+        remoteId: { propertyType: "computed", presence: "required" },
+        status: { propertyType: "computed", presence: "required" },
+      })
       .defineOperations({
         // Cast: an empty schema declares no primary key to return.
         create: createMock as any,
@@ -90,8 +98,7 @@ describe("operation workflows", () => {
       lastOperationAt: expect.any(String),
       config: testResource.config,
       params: {},
-      // The resource declares no schema, so nothing survives toState.
-      output: {},
+      output: { remoteId: "abc", status: "ready" },
     });
     expect(createMock).toHaveBeenNthCalledWith(
       1,
@@ -118,8 +125,15 @@ describe("operation workflows", () => {
     const step = createStepRunnerDouble();
 
     let readAttempts = 0;
-    const TestResource = resource({ type: "test/service/read" })
-      .defineSchema({})
+    const TestResource = resource<{
+      Key: {};
+      CreateParams: {};
+      UpdateParams: {};
+      ReadResult: { status: string };
+    }>({ type: "test/service/read" })
+      .defineSchema({
+        status: { propertyType: "computed", presence: "required" },
+      })
       .defineOperations({
         create: (async () => ({})) as any,
         read: async (_key, context) => {

@@ -141,7 +141,7 @@ All schema items carry these fields:
 | `delete`       | yes      | `(key, state, context?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
 | `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                        |
 
-The reconciler records params, read results and state, so each must be a durable value: `null`, a boolean, number or string, `undefined`, an `Error`, or an array or plain object of these. Schema value types pass through `Durable<T>`, which maps a `Date`, a `Buffer` or another class instance to `never`, so a handler that returns one does not compile. Convert a date to an ISO string, and return a file as its path and hash instead of its bytes.
+The reconciler records params, results and state, so each must be a durable value: `null`, a boolean, number or string, `undefined`, an `Error`, or an array or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares and turns each `Date` into an ISO 8601 string. Output and state types show these dates as strings. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
 
 ### Operation errors
 

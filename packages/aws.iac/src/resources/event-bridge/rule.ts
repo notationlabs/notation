@@ -1,6 +1,5 @@
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { AwsSchema } from "src/utils/types";
-import { pickDeclared } from "src/utils/read-result";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/utils/aws-clients";
 import { LambdaFunctionInstance } from "../lambda";
@@ -106,10 +105,10 @@ export const EventBridgeRule = eventBridgeRuleSchema
             eventBridgeClient.send(listRuleTargetsCommand),
           ]);
 
-        return pickDeclared(eventBridgeRuleSchema.schema, {
+        return {
           ...ruleDescriptionResult,
           ...listRuleTargetsResult,
-        });
+        };
       } catch (error) {
         if (error instanceof sdk.ResourceNotFoundException) {
           throw new ResourceNotFoundError("EventBridge rule was not found", {

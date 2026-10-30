@@ -3,7 +3,6 @@ import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { ApiInstance, LambdaIntegrationInstance } from ".";
 import { AwsSchema } from "src/utils/types";
-import { pickDeclared } from "src/utils/read-result";
 import { AuthInstance } from "./auth";
 
 type RouteSdkSchema = AwsSchema<{
@@ -96,7 +95,7 @@ export const Route = routeSchema
       try {
         const command = new sdk.GetRouteCommand(key);
         const result = await apiGatewayClient.send(command);
-        return { ...key, ...pickDeclared(routeSchema.schema, result) };
+        return { ...key, ...result };
       } catch (error) {
         if (error instanceof sdk.NotFoundException) {
           throw new ResourceNotFoundError("API Gateway route was not found", {

@@ -1,6 +1,5 @@
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { AwsSchema } from "src/utils/types";
-import { pickDeclared } from "src/utils/read-result";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { ApiInstance } from "./api";
@@ -63,7 +62,7 @@ export const RouteAuth = apiSchema
       try {
         const command = new sdk.GetAuthorizerCommand(key);
         const output = await apiGatewayClient.send(command);
-        return pickDeclared(apiSchema.schema, output);
+        return output;
       } catch (error) {
         if (error instanceof sdk.NotFoundException) {
           throw new ResourceNotFoundError(

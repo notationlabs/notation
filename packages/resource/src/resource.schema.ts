@@ -5,7 +5,7 @@ import type {
   PickOptional,
   Simplify,
 } from "./types";
-import type { Durable } from "./durable-value";
+import type { Encodable, ToDurable } from "./durable-value";
 
 /**
  * Structural holder for a value type.
@@ -114,21 +114,26 @@ type MissingValueType<K> = {
  * Pairs each schema item with its value type, resolved from the API schema.
  * Computed once per resource, when the schema is defined.
  *
- * The reconciler records params, read results and state, so each value type
- * is made durable here. A `Date` or `Buffer` in an API type becomes `never`,
- * and a provider that returns one does not compile.
+ * The reconciler records params, read results and state as durable values.
+ * `valueType` is the recorded type, with each `Date` as an ISO 8601 string.
+ * `resultType` is the type a provider may return, which can still hold a
+ * `Date`. Any other value that cannot be recorded, such as a `Buffer`, is
+ * `never` in both.
  */
 export type ResolveSchema<
   Api extends DefineResourceApiSchema,
   S extends Schema,
 > = {
-  [K in keyof S]: S[K] & {
-    valueType: TypedValue<Durable<SchemaItemValue<Api, S, K>>>;
-  };
+  [K in keyof S]: ResolveItem<S[K], SchemaItemValue<Api, S, K>>;
+};
+
+type ResolveItem<Item, V> = Item & {
+  valueType: TypedValue<ToDurable<V>>;
+  resultType: TypedValue<Encodable<V>>;
 };
 
 export type ComputedPrimaryKey<S extends ResolvedSchema> = FallbackToVoid<
-  MapSchema<S, { propertyType: "param" }, "primaryKey">
+  MapSchema<S, { propertyType: "param" }, "primaryKey", "resultType">
 >;
 
 type FallbackToVoid<T> = {} extends T ? void : T;
@@ -145,7 +150,7 @@ export type Params<S extends ResolvedSchema> = MapSchema<
 >;
 
 export type Result<S extends ResolvedSchema> = DeepPartial<
-  MapSchema<S, { propertyType: "param" }>
+  MapSchema<S, { propertyType: "param" }, any, "resultType">
 >;
 
 export type Output<S extends ResolvedSchema> = MapSchema<S>;
@@ -200,11 +205,13 @@ export type SchemaFromApi<
  * Makes optional fields optional.
  * Excludes properties matching the `ExcludeConditions` type.
  * When `IncludeKey` is given, keeps only items that have that property.
+ * `TypeKey` names the item property that holds the value type.
  */
 export type MapSchema<
   S extends ResolvedSchema,
   ExcludeConditions = never,
   IncludeKey = any,
+  TypeKey extends "valueType" | "resultType" = "valueType",
 > = Simplify<
   {
     [
@@ -213,7 +220,7 @@ export type MapSchema<
         : IncludeKey extends keyof S[K]
           ? K
           : never
-    ]: S[K]["valueType"]["_output"];
+    ]: S[K][TypeKey]["_output"];
   } & {
     [
       K in keyof S as S[K] extends ExcludeConditions
@@ -223,6 +230,6 @@ export type MapSchema<
             ? K
             : never
           : never
-    ]?: S[K]["valueType"]["_output"];
+    ]?: S[K][TypeKey]["_output"];
   }
 >;

@@ -223,21 +223,58 @@ describe("durable execution and replay", () => {
 });
 
 describe("durable values", () => {
-  it("rejects a provider output that is not a durable value", async () => {
-    const DatedResource = resource({ type: "test/durable/dated" })
-      .defineSchema({})
+  it("records a date in provider output as an ISO string", async () => {
+    const DatedResource = resource<{
+      Key: {};
+      CreateParams: {};
+      UpdateParams: {};
+      ReadResult: { CreatedDate: Date };
+    }>({ type: "test/durable/dated" })
+      .defineSchema({
+        CreatedDate: { propertyType: "computed", presence: "required" },
+      })
       .defineOperations({
         create: async () => undefined,
-        read: async () => ({ CreatedDate: new Date() }),
+        read: async () => ({
+          CreatedDate: new Date("2026-07-22T00:00:00.000Z"),
+          Undeclared: new Date(),
+        }),
         delete: async () => undefined,
       });
     const runtime = createRuntime([new DatedResource("dated")], "dated");
 
-    await expect(runtime.run("dated-execution")).rejects.toMatchObject({
+    await runtime.run("dated-execution");
+
+    expect((await runtime.state.get("dated"))?.output).toEqual({
+      CreatedDate: "2026-07-22T00:00:00.000Z",
+    });
+    runtime.close();
+  });
+
+  it("rejects a provider output that is not a durable value", async () => {
+    const BytesResource = resource<{
+      Key: {};
+      CreateParams: {};
+      UpdateParams: {};
+      ReadResult: { Payload: string };
+    }>({ type: "test/durable/bytes" })
+      .defineSchema({
+        Payload: { propertyType: "computed", presence: "required" },
+      })
+      .defineOperations({
+        create: async () => undefined,
+        // The type rejects a Buffer, so only an untyped provider can return
+        // one.
+        read: async () => ({ Payload: Buffer.from("bytes") }) as any,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime([new BytesResource("bytes")], "bytes");
+
+    await expect(runtime.run("bytes-execution")).rejects.toMatchObject({
       name: "WorkflowValueError",
       code: "INVALID_STEP_VALUE",
     });
-    expect(await runtime.state.get("dated")).toBeUndefined();
+    expect(await runtime.state.get("bytes")).toBeUndefined();
     runtime.close();
   });
 

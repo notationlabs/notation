@@ -18,7 +18,7 @@ import type {
   NoInfer,
 } from "./types";
 import type { ResourceOperationContext } from "./resource-operation";
-import type { DurableObject } from "./durable-value";
+import { toDurable, type DurableObject } from "./durable-value";
 import { toComparableParams } from "./diff-params";
 
 export type { Schema, SchemaItem, DefineResourceApiSchema };
@@ -83,11 +83,8 @@ export interface BaseResource {
   create: (
     params: any,
     context?: ResourceOperationContext,
-  ) => Promise<DurableObject | void>;
-  read?: (
-    key: any,
-    context?: ResourceOperationContext,
-  ) => Promise<DurableObject>;
+  ) => Promise<{} | void>;
+  read?: (key: any, context?: ResourceOperationContext) => Promise<{}>;
   update?: (
     key: any,
     patch: any,
@@ -102,6 +99,7 @@ export interface BaseResource {
   ) => Promise<void>;
   getParams(): Promise<DurableObject>;
   toState(output: {}): {};
+  toResult(result: {}): DurableObject;
   toComparable(output: {}): {};
   setOutput(result: {}): void;
   deriveParams?: (opts: {
@@ -190,6 +188,18 @@ export abstract class Resource<
     return parsed;
   }
 
+  /**
+   * Copies the properties of a provider result that the schema declares, as
+   * durable values.
+   */
+  toResult(result: {}): DurableObject {
+    const declared = {} as Record<string, unknown>;
+    for (const key of Object.keys(this.schema)) {
+      if (key in result) declared[key] = (result as any)[key];
+    }
+    return toDurable(declared) as DurableObject;
+  }
+
   async getParams(): Promise<T["params"]> {
     return {
       ...this.config,
@@ -264,12 +274,7 @@ export type ResourceClass<
   >() => ResourceDependenciesBuilder<T, IntrinsicParams, Dependencies>;
 };
 
-export type ResourceSchemaBuilder<
-  T extends ResourceTypes,
-  S extends Schema = Schema,
-> = {
-  /** The schema that was passed to `defineSchema`. */
-  schema: S;
+export type ResourceSchemaBuilder<T extends ResourceTypes> = {
   defineOperations: <IntrinsicParams extends Partial<T["params"]> = {}>(
     opts: ResourceOperationsOptions<T, IntrinsicParams>,
   ) => ResourceClass<
@@ -291,10 +296,7 @@ export type ResourceBuilder<ApiSchema extends DefineResourceApiSchema> = {
       >,
   >(
     schema: S,
-  ) => ResourceSchemaBuilder<
-    InferResourceTypes<ResolveSchema<ApiSchema, S>>,
-    S
-  >;
+  ) => ResourceSchemaBuilder<InferResourceTypes<ResolveSchema<ApiSchema, S>>>;
 };
 
 export function defineResource<ApiSchema extends DefineResourceApiSchema>(
@@ -311,17 +313,13 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
         >,
     >(
       schema: S,
-    ): ResourceSchemaBuilder<
-      InferResourceTypes<ResolveSchema<ApiSchema, S>>,
-      S
-    > {
+    ): ResourceSchemaBuilder<InferResourceTypes<ResolveSchema<ApiSchema, S>>> {
       type T = InferResourceTypes<ResolveSchema<ApiSchema, S>>;
       // The cast skips re-relating this literal to ResourceSchemaBuilder:
       // defineOperations restates the declared signature verbatim, and
       // structurally verifying the deferred conditionals inside it costs
       // ~350ms of check time in every program that includes this file.
       const builder = {
-        schema,
         defineOperations<IntrinsicParams extends Partial<T["params"]> = {}>(
           opts: ResourceOperationsOptions<T, IntrinsicParams>,
         ): ResourceClass<
@@ -391,8 +389,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
         },
       };
       return builder as ResourceSchemaBuilder<
-        InferResourceTypes<ResolveSchema<ApiSchema, S>>,
-        S
+        InferResourceTypes<ResolveSchema<ApiSchema, S>>
       >;
     },
   };

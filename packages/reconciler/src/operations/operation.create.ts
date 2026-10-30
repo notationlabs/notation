@@ -22,7 +22,13 @@ export async function* createResourceOperation(
     const computedPrimaryKey = yield* runPendingOperation(
       step,
       "create:remote",
-      (context) => params.resource.create(params.resourceParams, context),
+      async (context) => {
+        const key = await params.resource.create(
+          params.resourceParams,
+          context,
+        );
+        return key ? params.resource.toResult(key) : undefined;
+      },
       params.maxOperationAttempts,
     );
 

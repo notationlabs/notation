@@ -3,7 +3,6 @@ import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { ApiInstance } from "./api";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
-import { pickDeclared } from "src/utils/read-result";
 
 export type StageSchema = AwsSchema<{
   Key: sdk.DeleteStageRequest;
@@ -80,7 +79,7 @@ export const Stage = stageSchema
       try {
         const command = new sdk.GetStageCommand(key);
         const output = await apiGatewayClient.send(command);
-        return pickDeclared(stageSchema.schema, output);
+        return output;
       } catch (error) {
         if (error instanceof sdk.NotFoundException) {
           throw new ResourceNotFoundError("API Gateway stage was not found", {
