@@ -365,6 +365,9 @@ importers:
       '@notation/aws':
         specifier: workspace:*
         version: link:../aws
+      '@notation/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/fs-extra':
         specifier: ^11.0.4
         version: 11.0.4
