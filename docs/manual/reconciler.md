@@ -6,18 +6,12 @@ Use `deploy` and `destroy` when a Node.js application needs durable resource lif
 import { EventEmitter } from "node:events";
 import { ExecutionDispatcher, WorkflowRunner } from "@yieldstar/core";
 import { SqliteRuntime, createSqliteDb } from "@yieldstar/sqlite-runtime/node";
-import {
-  DurableStateBackend,
-  deploy as deployResources,
-  destroy as destroyResources,
-} from "@notation/reconciler/durable";
+import { DurableStateBackend, deploy as deployResources, destroy as destroyResources } from "@notation/reconciler/durable";
 import pino from "pino";
 import { createWorkflowRouter, workflow } from "yieldstar";
 
 const logger = pino();
-const runtime = new SqliteRuntime(
-  createSqliteDb({ path: ".notation/workflows.db" }),
-);
+const runtime = new SqliteRuntime(createSqliteDb({ path: ".notation/workflows.db" }));
 const state = new DurableStateBackend(runtime.stores, "my-application");
 
 export const deploy = workflow(async function* (step, event) {
@@ -36,15 +30,9 @@ export const destroy = workflow(async function* (step, event) {
   });
 });
 
-const runner = new WorkflowRunner(runtime, {
-  router: createWorkflowRouter({ deploy, destroy }),
-  logger,
-});
+const runner = new WorkflowRunner(runtime, { router: createWorkflowRouter({ deploy, destroy }), logger });
 const dispatcher = new ExecutionDispatcher(runtime, {
-  invoker: {
-    workflowEndEmitter: new EventEmitter(),
-    deliver: (event, options) => runner.run(event, options),
-  },
+  invoker: { workflowEndEmitter: new EventEmitter(), deliver: (event, options) => runner.run(event, options) },
   logger,
 });
 dispatcher.start();
