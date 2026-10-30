@@ -104,9 +104,9 @@ async function* createAttempt(
   context: ResourceOperationContext | undefined,
 ): AsyncGenerator<unknown, DurableObject | undefined, any> {
   const { resource, resourceParams } = params;
-  const lookUp = createdLookup(resource);
+  const lookup = createdLookup(resource, resourceParams);
   const uncertain = (error: unknown) =>
-    lookUp !== undefined &&
+    lookup !== undefined &&
     !ResourceOperationPendingError.is(error) &&
     resource.isUncertainError?.(error) === true;
 
@@ -126,8 +126,7 @@ async function* createAttempt(
       params.maxOperationAttempts ?? DEFAULT_MAX_OPERATION_ATTEMPTS,
       MAX_CREATE_LOOKUP_ATTEMPTS,
     ),
-    lookup: (effectId) =>
-      lookUp ? lookUp(resourceParams, effectId) : notFound(),
+    lookup: lookup ?? (async () => ({ status: "not-found" })),
     perform: async (effectId) => {
       const key = await resource.create(resourceParams, context, effectId);
       return key ? resource.toResult(key) : undefined;
@@ -136,11 +135,6 @@ async function* createAttempt(
   });
 }
 
-type CreatedLookup = (
-  resourceParams: Record<string, unknown>,
-  token: string,
-) => Promise<EffectLookup<DurableObject | undefined>>;
-
 /**
  * Chooses how to find the resource that a create attempt made, or returns
  * undefined when it cannot be found. A resource with `findCreated` searches
@@ -148,45 +142,48 @@ type CreatedLookup = (
  * key. A resource whose key the provider assigns, with no `findCreated`,
  * cannot be found.
  */
-function createdLookup(resource: BaseResource): CreatedLookup | undefined {
-  if (resource.findCreated) {
-    const findCreated = resource.findCreated;
-    return async (resourceParams, token) => {
-      try {
-        const key = await findCreated(resourceParams, token);
-        return {
-          status: "settled",
-          result: key ? resource.toResult(key) : undefined,
-        };
-      } catch (error) {
-        if (ResourceNotFoundError.is(error)) return { status: "not-found" };
-        throw error;
-      }
-    };
+function createdLookup(
+  resource: BaseResource,
+  resourceParams: Record<string, unknown>,
+) {
+  const findCreated = resource.findCreated;
+  if (findCreated) {
+    return settledUnlessNotFound(async (token) => {
+      const key = await findCreated(resourceParams, token);
+      return key ? resource.toResult(key) : undefined;
+    });
   }
 
-  if (resource.read && !hasComputedPrimaryKey(resource)) {
-    const read = resource.read;
-    return async (resourceParams) => {
+  const read = resource.read;
+  if (read && !hasComputedPrimaryKey(resource)) {
+    return settledUnlessNotFound(async () => {
       try {
         await read(resource.keyOf(resourceParams));
-        return { status: "settled", result: undefined };
       } catch (error) {
-        if (ResourceNotFoundError.is(error)) return { status: "not-found" };
         // A pending read reports a resource that exists and has not finished.
-        if (ResourceOperationPendingError.is(error)) {
-          return { status: "settled", result: undefined };
-        }
-        throw error;
+        if (!ResourceOperationPendingError.is(error)) throw error;
       }
-    };
+      return undefined;
+    });
   }
 
   return undefined;
 }
 
-async function notFound(): Promise<EffectLookup<never>> {
-  return { status: "not-found" };
+/** Wraps a search as a yieldstar lookup that reports not-found on `ResourceNotFoundError`. */
+function settledUnlessNotFound(
+  find: (token: string) => Promise<DurableObject | undefined>,
+) {
+  return async (
+    token: string,
+  ): Promise<EffectLookup<DurableObject | undefined>> => {
+    try {
+      return { status: "settled", result: await find(token) };
+    } catch (error) {
+      if (ResourceNotFoundError.is(error)) return { status: "not-found" };
+      throw error;
+    }
+  };
 }
 
 function hasComputedPrimaryKey(resource: BaseResource) {
