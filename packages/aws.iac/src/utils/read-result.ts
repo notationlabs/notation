@@ -1,10 +1,6 @@
 import type { Schema } from "@notation/resource";
 
-/**
- * Copies the properties of an SDK response that the schema declares. The
- * reconciler records each read result, and a response also holds `$metadata`
- * and undeclared fields, some of which are dates that cannot be recorded.
- */
+/** Copies the properties of `response` that `schema` declares. */
 export function pickDeclared<S extends Schema, T extends object>(
   schema: S,
   response: T,
