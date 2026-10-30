@@ -218,7 +218,7 @@ The outcome of a create attempt is unknown when the process stops after `create`
 2. A resource with `read`, whose key is made of params, is read by the key it would have.
 3. Any other resource cannot be found. The reconciler calls `create` again after a stopped process, and fails the deployment on an uncertain error.
 
-When a lookup finds the resource, the reconciler uses what it found as the result of `create`. When it throws, the reconciler looks again after one second. When the outcome is still unknown after `maxOperationAttempts` attempts, the deployment fails with a `WorkflowEffectError` with code `EFFECT_OUTCOME_UNKNOWN`.
+When a lookup finds the resource, the reconciler uses what it found as the result of `create`. When it throws, the reconciler looks again after one second. When the outcome is still unknown after 10 attempts, or after `maxOperationAttempts` when it is lower, the deployment fails with a `WorkflowEffectError` with code `EFFECT_OUTCOME_UNKNOWN`.
 
 A lookup must not report a resource as absent while a create for it can still finish. A provider whose reads are eventually consistent can break this rule.
 

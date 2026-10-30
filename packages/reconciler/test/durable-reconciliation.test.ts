@@ -257,6 +257,36 @@ describe("durable execution and replay", () => {
     runtime.close();
   });
 
+  it("stops looking up an uncertain create after the lookup limit", async () => {
+    const create = vi.fn(async () => {
+      throw new ProviderTimeoutError("socket timed out");
+    });
+    const findCreated = vi.fn(async () => {
+      throw new Error("access denied");
+    });
+    const TestResource = resource({ type: "test/durable/effect-capped" })
+      .defineSchema({})
+      .defineOperations({
+        create,
+        findCreated,
+        isUncertainError: (error) => error instanceof ProviderTimeoutError,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime([new TestResource("capped")], "capped");
+
+    for (let n = 1; n < 10; n += 1) {
+      await expect(runtime.run("capped-execution")).resolves.toMatchObject({
+        status: "suspended",
+      });
+      runtime.advance(1_000);
+    }
+    await expect(runtime.run("capped-execution")).rejects.toMatchObject({
+      code: "EFFECT_OUTCOME_UNKNOWN",
+    });
+    expect(findCreated).toHaveBeenCalledTimes(9);
+    runtime.close();
+  });
+
   it("resumes after a crash following the delete checkpoint", async () => {
     const remove = vi.fn(async () => undefined);
     const TestResource = resource({ type: "test/durable/destroy-resume" })

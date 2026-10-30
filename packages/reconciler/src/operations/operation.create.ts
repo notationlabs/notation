@@ -21,6 +21,13 @@ import { readResourceOperation } from "./operation.read";
 /** How long yieldstar waits before it looks up an uncertain create again. */
 const CREATE_LOOKUP_RETRY_MS = 1_000;
 
+/**
+ * The most attempts one create attempt's effect may end uncertain. It is
+ * capped below `maxOperationAttempts`, because the pending loop runs up to
+ * that many create attempts, and each would otherwise multiply it.
+ */
+const MAX_CREATE_LOOKUP_ATTEMPTS = 10;
+
 export async function* createResourceOperation(
   step: StepRunner,
   params: CreateResourceParams,
@@ -115,7 +122,10 @@ async function* createAttempt(
       ? { params: resourceParams, context }
       : { params: resourceParams }) as DurableObject,
     retryIn: CREATE_LOOKUP_RETRY_MS,
-    maxAttempts: params.maxOperationAttempts ?? DEFAULT_MAX_OPERATION_ATTEMPTS,
+    maxAttempts: Math.min(
+      params.maxOperationAttempts ?? DEFAULT_MAX_OPERATION_ATTEMPTS,
+      MAX_CREATE_LOOKUP_ATTEMPTS,
+    ),
     lookup: (effectId) =>
       lookUp ? lookUp(resourceParams, effectId) : notFound(),
     perform: async (effectId) => {
