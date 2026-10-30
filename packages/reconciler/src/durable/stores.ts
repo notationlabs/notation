@@ -28,6 +28,8 @@ const resourceRecordSchema = v.objectWithRest(
     config: durableRecord,
     params: durableRecord,
     output: durableRecord,
+    // Optional, because a record written before edges were recorded has none.
+    dependsOn: v.optional(v.array(v.string())),
     // Only the operations that leave a record behind: delete removes the
     // store, and drift repair persists as "update".
     lastOperation: v.picklist(["create", "update"]),
@@ -56,8 +58,11 @@ export const deploymentHoldStore = defineStore(
 );
 
 // The schema validates exactly the record operations persist; drift between
-// the two is a type error here.
-({}) as ResourceRecord satisfies PersistedResourceState;
+// the two is a type error here. `dependsOn` is optional in the schema only,
+// because a record written before edges were recorded has none.
+({}) as ResourceRecord &
+  Pick<PersistedResourceState, "dependsOn"> satisfies PersistedResourceState;
+({}) as PersistedResourceState satisfies ResourceRecord;
 
 export type DeploymentHoldState = v.InferOutput<
   typeof deploymentHoldStore.schema

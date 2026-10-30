@@ -66,6 +66,7 @@ export async function* updateResourceOperation(
       config: params.resource.config,
       params: params.resource.toState(params.resourceParams),
       output: params.resource.toState(params.resource.output),
+      dependsOn: params.dependsOn,
     });
 
     yield* emitLifecycleEvent(params, "update", "success");

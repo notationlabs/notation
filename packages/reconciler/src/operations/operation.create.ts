@@ -78,6 +78,7 @@ export async function* createResourceOperation(
       config: params.resource.config,
       params: params.resource.toState(params.resourceParams),
       output: params.resource.toState(params.resource.output),
+      dependsOn: params.dependsOn,
     });
 
     yield* emitLifecycleEvent(params, "create", "success");

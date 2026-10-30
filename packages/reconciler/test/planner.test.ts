@@ -24,6 +24,7 @@ describe("createPlan", () => {
         config: {},
         params: {},
         output: {},
+        dependsOn: ["orphan-role"],
         lastOperation: "create",
         lastOperationAt: "2026-07-22T00:00:00.000Z",
       },
@@ -37,7 +38,11 @@ describe("createPlan", () => {
 
     expect(plan.nodes).toEqual([
       expect.objectContaining({ id: "desired", decision: "create" }),
-      expect.objectContaining({ id: "orphan", decision: "delete-orphan" }),
+      expect.objectContaining({
+        id: "orphan",
+        decision: "delete-orphan",
+        dependsOn: ["orphan-role"],
+      }),
     ]);
   });
 

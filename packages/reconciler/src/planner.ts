@@ -76,7 +76,7 @@ export async function createPlan({
       type: stateNode.type,
       decision: "delete-orphan",
       params: stateNode.params,
-      dependsOn: [],
+      dependsOn: stateNode.dependsOn ?? [],
     });
   }
 

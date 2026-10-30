@@ -26,6 +26,7 @@ describe("logger reconciler subscriber", () => {
       workflow: "deploy",
       resourceId: "resource-2",
       resourceType: "test/service/subscriber",
+      keptDependencies: [],
     });
     await emit({
       level: "warn",
