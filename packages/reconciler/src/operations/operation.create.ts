@@ -105,7 +105,7 @@ async function* createAttempt(
   context: ResourceOperationContext | undefined,
 ): AsyncGenerator<unknown, DurableObject | undefined, any> {
   const { resource, resourceParams } = params;
-  const lookup = createdLookup(resource, resourceParams);
+  const lookup = getLookupFunction(resource, resourceParams);
 
   return yield* step.effect(`create:remote:effect:${attempt}`, {
     effectId: [
@@ -134,20 +134,20 @@ async function* createAttempt(
 }
 
 /**
- * Chooses how to find the resource that a create attempt made, or returns
- * undefined when it cannot be found. A resource with `findCreated` searches
- * by the attempt's token. A resource whose key is all params is read by that
- * key. A resource whose key the provider assigns, with no `findCreated`,
- * cannot be found.
+ * Returns the effect's lookup for a resource's create, or undefined when the
+ * resource cannot be found:
+ * 1. With `find`, it searches for the attempt's token.
+ * 2. With `read` and a key made only of params, it reads that key.
+ * 3. Otherwise there is no lookup.
  */
-function createdLookup(
+function getLookupFunction(
   resource: BaseResource,
   resourceParams: Record<string, unknown>,
 ) {
-  const findCreated = resource.findCreated;
-  if (findCreated) {
+  const find = resource.find;
+  if (find) {
     return settledUnlessNotFound(async (token) => {
-      const key = await findCreated(resourceParams, token);
+      const key = await find(resourceParams, token);
       return key ? resource.toResult(key) : undefined;
     });
   }
@@ -170,13 +170,13 @@ function createdLookup(
 
 /** Wraps a search as a yieldstar lookup that reports not-found on `ResourceNotFoundError`. */
 function settledUnlessNotFound(
-  find: (token: string) => Promise<DurableObject | undefined>,
+  search: (token: string) => Promise<DurableObject | undefined>,
 ) {
   return async (
     token: string,
   ): Promise<EffectLookup<DurableObject | undefined>> => {
     try {
-      return { status: "settled", result: await find(token) };
+      return { status: "settled", result: await search(token) };
     } catch (error) {
       if (ResourceNotFoundError.is(error)) return { status: "not-found" };
       throw error;

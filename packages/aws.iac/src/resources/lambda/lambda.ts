@@ -201,7 +201,7 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
 
 export const LambdaFunction = lambdaFunctionSchema
   .defineOperations({
-    // The create attempt is recorded as a tag, so findCreated can tell this
+    // The create attempt is recorded as a tag, so `find` can tell this
     // deploy's function from another with the same name.
     create: awsCreate(async (params, _context, token) => {
       const { CodeFilePath, ...functionParams } = params;
@@ -226,7 +226,7 @@ export const LambdaFunction = lambdaFunctionSchema
 
     // A function without the token was not made by the attempt. Reporting it
     // as not found makes create fail on the name, instead of taking it over.
-    findCreated: async (params, token) => {
+    find: async (params, token) => {
       try {
         const { Tags } = await lambdaClient.send(
           new sdk.GetFunctionCommand({ FunctionName: params.FunctionName }),

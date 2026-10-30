@@ -162,7 +162,7 @@ describe("durable execution and replay", () => {
       tokens.push(token!);
       throw new ResourceCreationUnknownError("socket timed out");
     });
-    const findCreated = vi.fn(async (_params: unknown, token: string) => ({
+    const find = vi.fn(async (_params: unknown, token: string) => ({
       remoteId: `remote-for-${token}`,
     }));
     const TestResource = resource({ type: "test/durable/effect-find" })
@@ -176,7 +176,7 @@ describe("durable execution and replay", () => {
       .defineOperations({
         // Cast: a schema declared without API types infers no primary key.
         create: create as any,
-        findCreated: findCreated as any,
+        find: find as any,
         delete: async () => undefined,
       });
     const runtime = createRuntime([new TestResource("found")], "effect-find");
@@ -189,7 +189,7 @@ describe("durable execution and replay", () => {
 
     expect(create).toHaveBeenCalledOnce();
     expect(tokens).toEqual(["notation:create:find-execution:found:0"]);
-    expect(findCreated).toHaveBeenCalledWith(
+    expect(find).toHaveBeenCalledWith(
       {},
       "notation:create:find-execution:found:0",
     );
@@ -226,14 +226,14 @@ describe("durable execution and replay", () => {
     const create = vi.fn(async () => {
       throw new ResourceCreationUnknownError("socket timed out");
     });
-    const findCreated = vi.fn(async () => {
+    const find = vi.fn(async () => {
       throw new Error("access denied");
     });
     const TestResource = resource({ type: "test/durable/effect-unknown" })
       .defineSchema({})
       .defineOperations({
         create,
-        findCreated,
+        find,
         delete: async () => undefined,
       });
     const runtime = createRuntime(
@@ -251,7 +251,7 @@ describe("durable execution and replay", () => {
       code: "EFFECT_OUTCOME_UNKNOWN",
     });
     expect(create).toHaveBeenCalledOnce();
-    expect(findCreated).toHaveBeenCalledOnce();
+    expect(find).toHaveBeenCalledOnce();
     runtime.close();
   });
 
@@ -259,14 +259,14 @@ describe("durable execution and replay", () => {
     const create = vi.fn(async () => {
       throw new ResourceCreationUnknownError("socket timed out");
     });
-    const findCreated = vi.fn(async () => {
+    const find = vi.fn(async () => {
       throw new Error("access denied");
     });
     const TestResource = resource({ type: "test/durable/effect-capped" })
       .defineSchema({})
       .defineOperations({
         create,
-        findCreated,
+        find,
         delete: async () => undefined,
       });
     const runtime = createRuntime([new TestResource("capped")], "capped");
@@ -280,7 +280,7 @@ describe("durable execution and replay", () => {
     await expect(runtime.run("capped-execution")).rejects.toMatchObject({
       code: "EFFECT_OUTCOME_UNKNOWN",
     });
-    expect(findCreated).toHaveBeenCalledTimes(9);
+    expect(find).toHaveBeenCalledTimes(9);
     runtime.close();
   });
 

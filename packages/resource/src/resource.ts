@@ -86,7 +86,7 @@ export interface BaseResource {
     context?: ResourceOperationContext,
     token?: string,
   ) => Promise<{} | void>;
-  findCreated?: (params: any, token: string) => Promise<{} | void>;
+  find?: (params: any, token: string) => Promise<{} | void>;
   read?: (key: any, context?: ResourceOperationContext) => Promise<{}>;
   update?: (
     key: any,
@@ -129,10 +129,7 @@ export abstract class Resource<
     context?: ResourceOperationContext,
     token?: string,
   ) => Promise<T["primaryKey"]>;
-  findCreated?: (
-    params: T["params"],
-    token: string,
-  ) => Promise<T["primaryKey"]>;
+  find?: (params: T["params"], token: string) => Promise<T["primaryKey"]>;
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -231,7 +228,7 @@ export type ResourceOperationsOptions<
 > = {
   /**
    * Creates the resource. `token` is unique to the attempt. A resource that
-   * defines `findCreated` with a token records it on the remote resource, for
+   * defines `find` with a token records it on the remote resource, for
    * example as a tag.
    */
   create: (
@@ -248,10 +245,7 @@ export type ResourceOperationsOptions<
    * Without it, the reconciler reads a resource whose key is made of params,
    * and creates again a resource whose key the provider assigns.
    */
-  findCreated?: (
-    params: T["params"],
-    token: string,
-  ) => Promise<T["primaryKey"]>;
+  find?: (params: T["params"], token: string) => Promise<T["primaryKey"]>;
   read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -369,7 +363,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             type = meta.type;
             schema = schema;
             create = opts.create;
-            findCreated = opts.findCreated;
+            find = opts.find;
             read = opts.read ? opts.read : undefined;
             update = opts.update ? opts.update : undefined;
             delete = opts.delete;

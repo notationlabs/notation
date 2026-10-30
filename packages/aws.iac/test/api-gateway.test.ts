@@ -92,7 +92,7 @@ describe("API Gateway API", () => {
       };
     });
 
-    await expect(api.findCreated!({} as any, TOKEN)).resolves.toEqual({
+    await expect(api.find!({} as any, TOKEN)).resolves.toEqual({
       ApiId: "api-1",
     });
   });
@@ -100,7 +100,7 @@ describe("API Gateway API", () => {
   it("reports no API when none has the create token", async () => {
     mockSend(() => ({ Items: [{ ApiId: "other", Tags: {} }] }));
 
-    await expect(api.findCreated!({} as any, TOKEN)).rejects.toSatisfy(
+    await expect(api.find!({} as any, TOKEN)).rejects.toSatisfy(
       ResourceNotFoundError.is,
     );
   });
@@ -170,7 +170,7 @@ describe("API Gateway route", () => {
     }));
 
     await expect(
-      route.findCreated!({ ApiId: "api-1", RouteKey: "GET /todos" }, TOKEN),
+      route.find!({ ApiId: "api-1", RouteKey: "GET /todos" }, TOKEN),
     ).resolves.toEqual({ RouteId: "r-2" });
     expect((send.mock.calls[0]![0] as sdk.GetRoutesCommand).input).toEqual({
       ApiId: "api-1",
@@ -182,7 +182,7 @@ describe("API Gateway route", () => {
     mockSend(() => ({ Items: [{ RouteId: "r-1", RouteKey: "POST /todos" }] }));
 
     await expect(
-      route.findCreated!({ ApiId: "api-1", RouteKey: "GET /todos" }, TOKEN),
+      route.find!({ ApiId: "api-1", RouteKey: "GET /todos" }, TOKEN),
     ).rejects.toSatisfy(ResourceNotFoundError.is);
   });
 });

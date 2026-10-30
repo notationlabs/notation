@@ -98,7 +98,7 @@ const apiSchema = api.defineSchema({
 
 export const Api = apiSchema.defineOperations({
   // An API's ID is assigned by AWS, and its name need not be unique, so the
-  // create attempt is recorded as a tag for findCreated to search for.
+  // create attempt is recorded as a tag for `find` to search for.
   create: awsCreate(async (params, _context, token) => {
     const tags = token
       ? { ...params.Tags, [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
@@ -107,7 +107,7 @@ export const Api = apiSchema.defineOperations({
     const result = await apiGatewayClient.send(command);
     return { ApiId: result.ApiId! };
   }),
-  async findCreated(_params, token) {
+  async find(_params, token) {
     const value = createTokenTagValue(token);
     const api = await findInPages(
       (NextToken) =>

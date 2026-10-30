@@ -218,7 +218,7 @@ describe("Lambda create token", () => {
     mockTags({ [CREATE_TOKEN_TAG]: createTokenTagValue(TOKEN) });
 
     await expect(
-      lambda.findCreated!({ FunctionName: "app" } as any, TOKEN),
+      lambda.find!({ FunctionName: "app" } as any, TOKEN),
     ).resolves.toBeUndefined();
   });
 
@@ -226,7 +226,7 @@ describe("Lambda create token", () => {
     mockTags({ team: "web" });
 
     await expect(
-      lambda.findCreated!({ FunctionName: "app" } as any, TOKEN),
+      lambda.find!({ FunctionName: "app" } as any, TOKEN),
     ).rejects.toSatisfy(ResourceNotFoundError.is);
   });
 
@@ -239,7 +239,7 @@ describe("Lambda create token", () => {
     });
 
     await expect(
-      lambda.findCreated!({ FunctionName: "app" } as any, TOKEN),
+      lambda.find!({ FunctionName: "app" } as any, TOKEN),
     ).rejects.toSatisfy(ResourceNotFoundError.is);
   });
 });

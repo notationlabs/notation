@@ -136,7 +136,7 @@ All schema items carry these fields:
 | Field          | Required | Signature / Description                                                                                                                      |
 | -------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `create`       | yes      | `(params, context?, token?) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key. `token` is unique to the attempt. |
-| `findCreated`  | no       | `(params, token) => Promise<ComputedPrimaryKey<S>>` – find the resource that the create attempt with `token` made, or throw `ResourceNotFoundError`. See [Unknown create outcomes](#unknown-create-outcomes). |
+| `find`         | no       | `(params, token) => Promise<ComputedPrimaryKey<S>>` – find the resource that the create attempt with `token` made, or throw `ResourceNotFoundError`. See [Unknown create outcomes](#unknown-create-outcomes). |
 | `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                         |
 | `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                           |
 | `delete`       | yes      | `(key, state, context?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
@@ -216,7 +216,7 @@ read: async (key, context) => {
 
 The outcome of a create attempt is unknown when the process stops after `create` returns and before the reconciler records the result, or when `create` throws `ResourceCreationUnknownError`. The reconciler then looks the resource up before it calls `create` again:
 
-1. A resource with `findCreated` is found by the attempt's token. `create` must record the token on the remote resource, for example as a tag, so that `findCreated` can search for it.
+1. A resource with `find` is found by the attempt's token. `create` must record the token on the remote resource, for example as a tag, so that `find` can search for it.
 2. A resource with `read`, whose key is made of params, is read by the key it would have.
 3. Any other resource cannot be found. The reconciler calls `create` again after a stopped process, and fails the deployment on a `ResourceCreationUnknownError`.
 
@@ -238,7 +238,7 @@ create: async (params, _context, token) => {
     throw error;
   }
 },
-findCreated: async (_params, token) => {
+find: async (_params, token) => {
   const api = await findApiByTag(TOKEN_TAG, token);
   if (!api) throw new ResourceNotFoundError("No API has the token");
   return { ApiId: api.ApiId! };

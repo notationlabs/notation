@@ -95,7 +95,7 @@ export const Route = routeSchema
     }),
     // A route key is unique within an API, so it finds the route that a
     // create attempt made.
-    findCreated: async (params) => {
+    find: async (params) => {
       const route = await findInPages(
         (NextToken) =>
           apiGatewayClient.send(
