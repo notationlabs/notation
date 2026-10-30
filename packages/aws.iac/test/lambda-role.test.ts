@@ -127,3 +127,31 @@ describe("LambdaIamRole drift detection", () => {
     });
   });
 });
+
+describe("LambdaIamRole read", () => {
+  it("returns the declared fields, with dates as ISO strings", async () => {
+    mockGetRole(
+      getRoleResponse({
+        RoleLastUsed: {
+          LastUsedDate: new Date("2026-07-23T00:00:00.000Z"),
+          Region: "eu-west-2",
+        },
+        Tags: [{ Key: "team", Value: "platform" }],
+      }),
+    );
+    const role = new LambdaIamRole("role", {
+      config: { RoleName: "app-role" },
+    });
+
+    const result = await role.read!({ RoleName: "app-role" });
+
+    expect(result).toMatchObject({
+      CreateDate: "2026-07-22T00:00:00.000Z",
+      RoleLastUsed: {
+        LastUsedDate: "2026-07-23T00:00:00.000Z",
+        Region: "eu-west-2",
+      },
+    });
+    expect(result).not.toHaveProperty("Tags");
+  });
+});

@@ -240,6 +240,43 @@ describe("durable values", () => {
     expect(await runtime.state.get("dated")).toBeUndefined();
     runtime.close();
   });
+
+  it("drops a callback context that is not a durable value", async () => {
+    const contexts: unknown[] = [];
+    const PendingResource = resource({ type: "test/durable/dated-context" })
+      .defineSchema({})
+      .defineOperations({
+        create: async (_params, context) => {
+          contexts.push(context);
+          if (contexts.length === 1) {
+            throw new ResourceOperationPendingError("provider is not ready", {
+              retryAfterMs: RETRY_AFTER_MS,
+              // The type rejects a Date, so only an untyped provider can
+              // pass one.
+              callbackContext: { startedAt: new Date() } as any,
+            });
+          }
+        },
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime(
+      [new PendingResource("dated-context")],
+      "dated-context",
+      { maxOperationAttempts: 3 },
+    );
+
+    await expect(runtime.run("dated-context-execution")).resolves.toMatchObject(
+      { status: "suspended" },
+    );
+    await sleep(PAST_RETRY_MS);
+    await runtime.run("dated-context-execution");
+
+    expect(contexts).toEqual([undefined, undefined]);
+    expect(await runtime.state.get("dated-context")).toMatchObject({
+      version: 1,
+    });
+    runtime.close();
+  });
 });
 
 describe("dependency ordering", () => {

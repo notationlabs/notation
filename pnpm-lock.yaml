@@ -461,6 +461,9 @@ importers:
         specifier: 0.8.2
         version: 0.8.2
     devDependencies:
+      '@notation/reconciler':
+        specifier: workspace:*
+        version: link:../reconciler
       '@types/node':
         specifier: ^22.13.4
         version: 22.13.4

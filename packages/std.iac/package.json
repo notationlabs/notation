@@ -19,6 +19,7 @@
     "fflate": "0.8.2"
   },
   "devDependencies": {
+    "@notation/reconciler": "workspace:*",
     "@types/node": "^22.13.4"
   }
 }
