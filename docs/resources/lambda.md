@@ -58,7 +58,7 @@ The plugin strips runtime-only code (imports, side effects) that would be unsafe
 
 ## IDs
 
-Every Lambda function has an ID. It names the function and the resources that support it (`<id>`, `<id>-role`, `<id>-zip`, `<id>-policy` and `<id>-log-group`), and keys them in state. Changing an ID replaces the function, so choose one that stays the same when you move or rename files.
+Every Lambda function has an ID. It names the function and the resources that support it (`<id>`, `<id>-role`, `<id>-zip`, `<id>-policy`, `<id>-role-policy` and `<id>-log-group`), and keys them in state. Changing an ID replaces the function, so choose one that stays the same when you move or rename files.
 
 In a `.fn.ts` file, set `id` in the `config` export. Each handler gets the ID `<id>-<handler>`, so with `id: "todos"` the `getTodos` handler becomes the function `todos-getTodos`. Compilation fails if `config` has no `id`, or if `<id>-<handler>` isn't name-safe.
 
@@ -88,6 +88,45 @@ export const config: LambdaConfig = {
   timeout: 30,
 };
 ```
+
+## Inline policy
+
+A Lambda group's `policy` is an inline policy on the function's role, named `<id>-role-policy`. Other code adds statements to it with `contribute`, and the statements from every contribution are joined into one policy document. For example, to let the `external` function from above send to an [SQS queue](sqs.md):
+
+```ts [infra/lambda.ts]
+external.policy.contribute({
+  PolicyDocument: {
+    Statement: [
+      { Effect: "Allow", Action: "sqs:SendMessage", Resource: orderQueue.arn },
+    ],
+  },
+});
+```
+
+[`queue.consume`](sqs.md#queueconsumehandler) uses the same policy for the read permission it adds.
+
+IAM rejects a policy with no statements, so a function that nothing contributes to has no inline policy. The group adds the policy the first time code reads `policy`. A role's inline policies share a limit of 10,240 characters.
+
+## Environment
+
+A function's `Environment` is collected: any code can contribute to it, and the contributions are merged key by key. Two contributions that set one key to different values fail the plan, and the error names both contributors.
+
+```ts [@notation/aws.iac]
+type LambdaEnvironment = {
+  Variables?: Record<string, string>;
+  Runtime?: { dispatch?: Record<string, { export: string; match: string }> };
+};
+```
+
+`Runtime` holds values that the function reads at runtime. State, diff and plan see `Runtime` as a structured map, so a plan shows a value that waits on an undeployed output as unknown at its own key, and leaves the other keys visible:
+
+```
+Environment.Runtime.dispatch["orders-orders-processOrders-mapping"].match = (known after apply)
+```
+
+The provider encodes `Runtime` only when it creates or updates the function: it sets one variable, `NOTATION_RUNTIME`, to `Runtime` as JSON with sorted keys. A read decodes the variable again, so a hand-edited value shows as drift on the key that changed. `NOTATION_RUNTIME` is reserved, and setting it in `Variables` fails the deploy.
+
+When the last contribution to `Environment` goes, the next deploy removes the function's variables.
 
 ## Runtime defaults
 

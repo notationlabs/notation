@@ -11,6 +11,7 @@ export const resources: DocCategory = {
         { label: "Lambda", slug: "resources/lambda" },
         { label: "API Gateway", slug: "resources/api-gateway" },
         { label: "EventBridge", slug: "resources/event-bridge" },
+        { label: "SQS", slug: "resources/sqs" },
       ],
     },
   ],

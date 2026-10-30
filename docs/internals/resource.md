@@ -364,6 +364,7 @@ Each group derives its ID from a value the user supplies, the same value its res
 | `ApiGroup`      | the API's `name`           | `todo-api`            |
 | `RouteGroup`    | `<api id>-<method>-<path>` | `todo-api-GET-/todos` |
 | `ScheduleGroup` | the schedule's `name`      | `nightly`             |
+| `QueueGroup`    | the queue's `name`         | `orders`              |
 
 `add()` records the group on the resource as `resource.group`, a `{ type, id }` pair. A resource that is in no group has `group: null`. The reconciler persists the pair with each resource's state.
 
