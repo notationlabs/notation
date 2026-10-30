@@ -77,7 +77,7 @@ export async function* createResourceOperation(
       type: params.resource.type,
       lastOperation: "create",
       lastOperationAt: new Date().toISOString(),
-      // Output values in config are written as the values they stand for.
+      // State records the real outputs in place of output values.
       config: resolveOutputValues(
         params.resource.config,
         deployLookup,

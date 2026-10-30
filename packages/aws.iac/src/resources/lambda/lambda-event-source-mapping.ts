@@ -102,8 +102,8 @@ const TRANSITIONAL_STATES = new Set([
 
 export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
   .defineOperations({
-    // AWS assigns the UUID, so the create attempt is recorded as a tag for
-    // `find` to search for.
+    // AWS assigns the UUID, so create tags the mapping with the create
+    // attempt, and `find` searches for that tag.
     create: awsCreate(async (params, _context, token) => {
       const command = new sdk.CreateEventSourceMappingCommand({
         ...params,

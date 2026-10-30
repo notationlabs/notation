@@ -37,7 +37,8 @@ export async function collectResourceGraph(
   activeCollection = collection;
   try {
     await evaluate();
-    // A callback may register another, which runs after the ones before it.
+    // A callback can register another callback, which joins the end of the
+    // queue.
     while (collection.endOfEvaluation.length > 0) {
       await collection.endOfEvaluation.shift()!();
     }

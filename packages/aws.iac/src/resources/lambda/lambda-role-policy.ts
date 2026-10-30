@@ -8,8 +8,8 @@ export type { PolicyDocument, PolicyStatement };
 
 /**
  * An inline policy of a Lambda's role. The params hold the policy document
- * as a structured map, so each statement is compared, and it is encoded only
- * in the API calls.
+ * as a structured map, so diff and plan compare each statement. The provider
+ * encodes it as JSON only in API calls.
  */
 type LambdaRolePolicyParams = Omit<
   sdk.PutRolePolicyRequest,
@@ -90,8 +90,8 @@ export const LambdaRolePolicy = lambdaRolePolicySchema.defineOperations({
 
 export type LambdaRolePolicyInstance = InstanceType<typeof LambdaRolePolicy>;
 
-// IAM rejects a document with no statements, so the error names the policy
-// instead of reporting a malformed document.
+// IAM rejects a document with no statements as malformed, without naming the
+// policy, so this throws a clearer error first.
 async function putRolePolicy(params: LambdaRolePolicyParams) {
   if (params.PolicyDocument.Statement.length === 0) {
     throw new Error(

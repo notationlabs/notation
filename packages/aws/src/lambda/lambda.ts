@@ -37,8 +37,8 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
    * The role's inline policy. Its statements are collected: add one with
    * `policy.contribute({ PolicyDocument: { Statement: [statement] } })`.
    *
-   * IAM rejects a policy with no statements, so the policy is added to the
-   * group the first time it is read, by code that is about to contribute.
+   * IAM rejects a policy with no statements, so the group adds the policy
+   * only when code first reads `policy` to contribute to it.
    */
   get policy(): aws.lambda.LambdaRolePolicyInstance {
     return this.addOnce(

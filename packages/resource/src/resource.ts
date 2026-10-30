@@ -159,8 +159,8 @@ export interface BaseResource {
     options: { deps: Deps },
   ): void;
   /**
-   * Makes the resource depend on another after it was constructed. The same
-   * lifetime rules apply as to `contribute`.
+   * Makes the resource depend on another after it was constructed. Throws in
+   * the same cases as `contribute`.
    */
   dependOn(resource: BaseResource): void;
   /**
@@ -191,8 +191,8 @@ export abstract class Resource<
   #collection = getActiveResourceCollection();
   #contributions: Contribution[] = [];
   #addedDependencies: BaseResource[] = [];
-  // Set once the params or edges have been read. A contribution after that
-  // would be left out of what was read.
+  // Set once code reads the params or dependencies. A later contribution
+  // would be missing from what was read, so `contribute` throws.
   #sealed = false;
   abstract type: ResourceType;
   abstract schema: Schema;
@@ -442,10 +442,11 @@ export abstract class Resource<
   }
 
   /**
-   * Runs function contributions. At deploy they receive their deps. At plan
-   * they receive views of their deps, and one that reads an output not known
-   * yet, or throws, leaves `unknown` set. Which params it would contribute to
-   * is not known then, so every collected param is unknown.
+   * Runs function contributions. At deploy each one receives its deps. At
+   * plan each one receives views of its deps. When one reads an output that
+   * does not exist yet, or throws, plan cannot tell which params it would
+   * set, so `unknown` is set and `#collect` marks every collected param
+   * unknown.
    */
   #evaluateContributions(plan: boolean): EvaluatedContributions {
     const evaluated: EvaluatedContributions = { items: [], unknown: false };
@@ -552,12 +553,12 @@ export abstract class Resource<
 
 type EvaluatedContributions = {
   items: ContributedValues[];
-  // Set when a function contribution could not run at plan.
+  // Set when a function contribution read a pending output or threw at plan.
   unknown: boolean;
 };
 
-// Errors that deploy would also throw, so plan reports them instead of
-// planning cautiously.
+// Deploy would throw these errors too, so plan fails with them instead of
+// marking params unknown.
 function isMisuse(error: unknown): boolean {
   return (
     error instanceof ContributionConflictError ||

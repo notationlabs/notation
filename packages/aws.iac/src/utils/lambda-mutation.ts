@@ -2,8 +2,9 @@ import * as sdk from "@aws-sdk/client-lambda";
 import { ResourceOperationPendingError } from "@notation/resource";
 
 /**
- * Runs a Lambda API call, and reports a failure that IAM propagation causes
- * as pending, so the reconciler retries it.
+ * Runs a Lambda API call. When the call fails because a new role has not
+ * propagated through IAM yet, throws a pending error so the reconciler
+ * retries.
  */
 export async function runLambdaMutation<T>(
   mutation: () => Promise<T>,

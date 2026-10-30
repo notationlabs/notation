@@ -326,8 +326,8 @@ export const LambdaFunction = lambdaFunctionSchema
       const { CodeFilePath, CodeSha256, Environment, ...rest } = patch;
       const conf: Omit<sdk.UpdateFunctionConfigurationRequest, "FunctionName"> =
         rest;
-      // An omitted Environment leaves the variables as they were, so a
-      // removed one is sent as no variables.
+      // Lambda keeps the variables when Environment is omitted, so a removed
+      // Environment is sent as empty variables.
       if ("Environment" in patch) {
         conf.Environment = encodeEnvironment(Environment) ?? { Variables: {} };
       }
