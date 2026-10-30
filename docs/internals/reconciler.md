@@ -44,10 +44,10 @@ policy depends on bucket, which is not part of this deployment. Add bucket to a 
 
 Two cases pass:
 
-| Case | Why it passes |
-| --- | --- |
-| An optional dependency left empty, such as a route with no `auth` | An empty slot adds no edge. |
-| A dependency outside the deployment whose output is already set | Its output can be read, so nothing needs to deploy it. |
+| Case                                                              | Why it passes                                          |
+| ----------------------------------------------------------------- | ------------------------------------------------------ |
+| An optional dependency left empty, such as a route with no `auth` | An empty slot adds no edge.                            |
+| A dependency outside the deployment whose output is already set   | Its output can be read, so nothing needs to deploy it. |
 
 Destroy does not run the check, so broken infra code cannot block a teardown.
 
@@ -59,12 +59,12 @@ At plan, some resources have not been created yet, so their outputs do not exist
 
 **`deriveParams`.** Plan calls `deriveParams` with a view of each dependency. Reading the view's `output` throws `PendingOutput` when the dependency has no output yet. Plan cannot tell which params depend on that output, so it handles each result like this:
 
-| `deriveParams` at plan | Plan shows |
-| --- | --- |
-| reads no pending output | the params it returns, as known |
-| reads a pending output, even if it catches `PendingOutput` | every param it would set, and every param not set in config, as unknown |
-| throws any other error | the same as above |
-| throws `ContributionConflictError` or `OutputValueStringError` | an error: the plan fails, as deploy would |
+| `deriveParams` at plan                                         | Plan shows                                                              |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| reads no pending output                                        | the params it returns, as known                                         |
+| reads a pending output, even if it catches `PendingOutput`     | every param it would set, and every param not set in config, as unknown |
+| throws any other error                                         | the same as above                                                       |
+| throws `ContributionConflictError` or `OutputValueStringError` | an error: the plan fails, as deploy would                               |
 
 A dependency whose output `deriveParams` never reads only orders the deploy, so it does not make any param unknown.
 

@@ -134,14 +134,14 @@ All schema items carry these fields:
 
 `defineOperations` accepts CRUD handlers and parameter derivation:
 
-| Field          | Required | Signature / Description                                                                                                                      |
-| -------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create`       | yes      | `(params, context?, token?) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key. `token` is unique to the attempt. |
+| Field          | Required | Signature / Description                                                                                                                                                                                       |
+| -------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`       | yes      | `(params, context?, token?) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key. `token` is unique to the attempt.                                                              |
 | `find`         | no       | `(params, token) => Promise<ComputedPrimaryKey<S>>` – find the resource that the create attempt with `token` made, or throw `ResourceNotFoundError`. See [Unknown create outcomes](#unknown-create-outcomes). |
-| `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                         |
-| `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                           |
-| `delete`       | yes      | `(key, state, context?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
-| `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                        |
+| `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                                                                          |
+| `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                                                            |
+| `delete`       | yes      | `(key, state, context?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone.                                                        |
+| `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                                                                         |
 
 The reconciler records params, results and state, so each must be a durable value as yieldstar 0.8.2 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
 
@@ -171,23 +171,23 @@ new ResourceOperationPendingError(message: string, {
 new ResourceCreationUnknownError(message: string, options?: { cause?: unknown });
 ```
 
-| Handler result | Meaning | What the reconciler does |
-| -------------- | ------- | ------------------------ |
-| Return normally | The operation finished. | Continues the deployment. |
-| `throw new ResourceNotFoundError(message, { cause })` | `read` or `delete` found no resource for the given key. | From `read`, treats the resource as absent during planning and drift detection; a read after create or update fails because that operation claimed to have finished. From `delete`, treats the delete as complete, since absence is its goal state. |
-| `throw new ResourceOperationPendingError(message, { retryAfterMs, callbackContext })` | The operation has not finished. | Waits for `retryAfterMs`, then calls the same handler again. It passes `callbackContext` as the handler's final argument. |
-| `throw new ResourceCreationUnknownError(message, { cause })` | `create` cannot tell whether the provider made the resource, for example after a timeout. | Looks the resource up, as described in [Unknown create outcomes](#unknown-create-outcomes). |
-| Throw any other error | The operation failed. | Stops the deployment. |
+| Handler result                                                                        | Meaning                                                                                   | What the reconciler does                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Return normally                                                                       | The operation finished.                                                                   | Continues the deployment.                                                                                                                                                                                                                           |
+| `throw new ResourceNotFoundError(message, { cause })`                                 | `read` or `delete` found no resource for the given key.                                   | From `read`, treats the resource as absent during planning and drift detection; a read after create or update fails because that operation claimed to have finished. From `delete`, treats the delete as complete, since absence is its goal state. |
+| `throw new ResourceOperationPendingError(message, { retryAfterMs, callbackContext })` | The operation has not finished.                                                           | Waits for `retryAfterMs`, then calls the same handler again. It passes `callbackContext` as the handler's final argument.                                                                                                                           |
+| `throw new ResourceCreationUnknownError(message, { cause })`                          | `create` cannot tell whether the provider made the resource, for example after a timeout. | Looks the resource up, as described in [Unknown create outcomes](#unknown-create-outcomes).                                                                                                                                                         |
+| Throw any other error                                                                 | The operation failed.                                                                     | Stops the deployment.                                                                                                                                                                                                                               |
 
 `ResourceNotFoundError` means the resource is absent wherever it is thrown. A `delete` handler may either catch the provider's missing-resource error and return normally, or translate it to `ResourceNotFoundError`; both count as success.
 
 `ResourceOperationPendingError` may be thrown by `create`, `read`, `update`, or `delete`. Its options are:
 
-| Option | Type | Required | Meaning |
-| ------ | ---- | -------- | ------- |
-| `retryAfterMs` | `number` | yes | Milliseconds to wait. It must be zero or greater. |
-| `callbackContext` | `Readonly<DurableObject>` | no | Data for the next attempt. The reconciler records it with the error. If it holds a value that is not durable, such as a `Buffer`, the next attempt receives `undefined`. |
-| `cause` | `unknown` | no | The provider error that caused this result. |
+| Option            | Type                      | Required | Meaning                                                                                                                                                                  |
+| ----------------- | ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `retryAfterMs`    | `number`                  | yes      | Milliseconds to wait. It must be zero or greater.                                                                                                                        |
+| `callbackContext` | `Readonly<DurableObject>` | no       | Data for the next attempt. The reconciler records it with the error. If it holds a value that is not durable, such as a `Buffer`, the next attempt receives `undefined`. |
+| `cause`           | `unknown`                 | no       | The provider error that caused this result.                                                                                                                              |
 
 The default limit is 30 attempts. Set `maxOperationAttempts` in the deploy, plan, or destroy options to change it. Reaching the limit fails the operation.
 
@@ -284,7 +284,9 @@ Dependencies also determine deployment order: a resource is not created until al
 An output, such as a queue's ARN, does not exist until the provider creates the resource. Infra code still needs to put it in another resource's config. `resource.outputValue(key)` returns a token that stands for the output, typed as the output:
 
 ```ts [packages/aws/src/sqs/queue.ts]
-const queue = new aws.sqs.Queue("orders-queue", { config: { QueueName: "orders" } });
+const queue = new aws.sqs.Queue("orders-queue", {
+  config: { QueueName: "orders" },
+});
 
 const mapping = new aws.lambda.LambdaEventSourceMapping("orders-mapping", {
   config: { EventSourceArn: queue.outputValue("QueueArn") },
@@ -338,10 +340,10 @@ The rules for `collect`:
 
 `mergeContributions` is a `collect` rule for maps. It merges the maps key by key, and fails when two contributions set one key to different values. The error names both contributors:
 
-| Contributor called with | Named in the error as |
-| --- | --- |
-| `{ by: "orders-orders-processOrders-mapping" }` | `orders-orders-processOrders-mapping` |
-| no `by` | the `file:line` of the `contribute` call |
+| Contributor called with                         | Named in the error as                    |
+| ----------------------------------------------- | ---------------------------------------- |
+| `{ by: "orders-orders-processOrders-mapping" }` | `orders-orders-processOrders-mapping`    |
+| no `by`                                         | the `file:line` of the `contribute` call |
 
 Library code that contributes for the user, such as `consume`, passes `by`, so the error names something the user wrote rather than a line inside the library. A value that holds a token is not known at plan, so plan cannot find a conflict with it, and deploy fails instead.
 
