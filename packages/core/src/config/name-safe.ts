@@ -23,12 +23,12 @@ export type IsNameSafe<S extends string> = S extends ""
     : AllNameChars<S>;
 
 /**
- * `S` when it is name-safe: `[a-z0-9-]`, 1 to 32 characters, with no leading
- * or trailing hyphen. Otherwise a message type that `S` is not assignable to.
- * A widened `string` passes, and is left to the runtime check.
+ * `S` when it is a name-safe string literal: `[a-z0-9-]`, 1 to 32 characters,
+ * with no leading or trailing hyphen. Otherwise a message type that `S` is not
+ * assignable to. A widened `string` is rejected.
  */
 export type NameSafe<S extends string> = string extends S
-  ? S
+  ? "a name must be a string literal"
   : IsNameSafe<S> extends true
     ? S
     : `"${S}" is not name-safe`;

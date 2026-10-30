@@ -6,7 +6,6 @@ describe("defineConfig", () => {
     const config = {
       app: "orders-app",
       entries: { orders: "infra/api.ts" },
-      runtimeModules: "src/**/*.fn.ts",
       defaultStage: "dev",
     } as const;
     expect(defineConfig(config)).toBe(config);
@@ -37,7 +36,21 @@ describe("defineConfig", () => {
     defineConfig({
       app: "a".repeat(32) as "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       entries: { orders: "infra/api.ts", "orders-worker": "infra/worker.ts" },
-      runtimeModules: ["src/**/*.fn.ts"],
+    });
+  });
+
+  it("rejects widened strings at compile time", () => {
+    const app: string = "orders-app";
+    const entries: Record<string, string> = { orders: "infra/api.ts" };
+    defineConfig({
+      // @ts-expect-error
+      app,
+      entries: { orders: "infra/api.ts" },
+    });
+    defineConfig({
+      app: "orders-app",
+      // @ts-expect-error
+      entries,
     });
   });
 });
@@ -51,7 +64,6 @@ describe("parseConfig", () => {
   it("accepts a valid config", () => {
     const config = {
       ...valid,
-      runtimeModules: ["src/**/*.fn.ts"],
       defaultStage: "dev",
     };
     expect(parseConfig(config)).toBe(config);
@@ -71,14 +83,10 @@ describe("parseConfig", () => {
       { ...valid, entries: { orders: 1 } },
       'entry "orders" must be a path to an entry file',
     ],
-    [
-      { ...valid, runtimeModules: [1] },
-      "runtimeModules must be a glob or an array of globs",
-    ],
     [{ ...valid, defaultStage: "Dev" }, 'defaultStage "Dev" is not name-safe'],
     [
       { ...valid, stage: "dev" },
-      'unknown key "stage". Known keys: app, entries, runtimeModules, defaultStage',
+      'unknown key "stage". Known keys: app, entries, defaultStage',
     ],
     [{ ...valid, name: "x", entry: "y" }, 'unknown keys "name", "entry"'],
   ])("rejects %j", (config, message) => {

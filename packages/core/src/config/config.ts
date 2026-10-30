@@ -7,19 +7,19 @@ export type NotationConfig = {
   app: string;
   /** Maps entry names to entry files, relative to the project root. */
   entries: Record<string, string>;
-  /** Glob, or globs, of the runtime modules, relative to the project root. */
-  runtimeModules?: string | string[];
   /** The stage to use when a command is given no `--stage`. */
   defaultStage?: string;
 };
 
-type EntriesInput<E extends Record<string, string>> = {
-  [K in keyof E]: K extends string
-    ? IsNameSafe<K> extends true
-      ? E[K]
-      : `"${K}" is not name-safe`
-    : never;
-};
+type EntriesInput<E extends Record<string, string>> = string extends keyof E
+  ? "entry names must be string literals"
+  : {
+      [K in keyof E]: K extends string
+        ? IsNameSafe<K> extends true
+          ? E[K]
+          : `"${K}" is not name-safe`
+        : never;
+    };
 
 export type NotationConfigInput<
   App extends string,
@@ -28,7 +28,6 @@ export type NotationConfigInput<
 > = {
   app: NameSafe<App>;
   entries: EntriesInput<Entries>;
-  runtimeModules?: string | string[];
   defaultStage?: NameSafe<Stage>;
 };
 
@@ -48,7 +47,6 @@ export function defineConfig<
 const configKeys = [
   "app",
   "entries",
-  "runtimeModules",
   "defaultStage",
 ] as const satisfies readonly (keyof NotationConfig)[];
 
@@ -68,7 +66,7 @@ export function parseConfig(value: unknown): NotationConfig {
     );
   }
 
-  const { app, entries, runtimeModules, defaultStage } = value;
+  const { app, entries, defaultStage } = value;
   assertNameSafe(app, "app");
 
   if (!isRecord(entries)) return fail("entries must be an object");
@@ -79,17 +77,6 @@ export function parseConfig(value: unknown): NotationConfig {
     if (typeof entries[name] !== "string" || entries[name] === "") {
       fail(`entry ${JSON.stringify(name)} must be a path to an entry file`);
     }
-  }
-
-  if (
-    runtimeModules !== undefined &&
-    typeof runtimeModules !== "string" &&
-    !(
-      Array.isArray(runtimeModules) &&
-      runtimeModules.every((glob) => typeof glob === "string")
-    )
-  ) {
-    fail("runtimeModules must be a glob or an array of globs");
   }
 
   if (defaultStage !== undefined) assertNameSafe(defaultStage, "defaultStage");

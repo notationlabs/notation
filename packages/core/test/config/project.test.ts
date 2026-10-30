@@ -44,7 +44,6 @@ import { defineConfig } from "@notation/core/config";
 export default defineConfig({
   app: "orders-app",
   entries: { orders: "infra/api.ts" },
-  runtimeModules: "src/**/*.fn.ts",
   defaultStage: "dev",
 });
 `;
@@ -58,7 +57,6 @@ describe("loadProject", () => {
       config: {
         app: "orders-app",
         entries: { orders: "infra/api.ts" },
-        runtimeModules: "src/**/*.fn.ts",
         defaultStage: "dev",
       },
     });

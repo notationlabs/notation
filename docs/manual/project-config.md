@@ -118,6 +118,8 @@ defineConfig({ app: "My_App", entries: { api: "infra/api.ts" } });
 // Type '"My_App"' is not assignable to type '"\"My_App\" is not name-safe"'.
 ```
 
+Write each name as a string literal. A name typed as `string`, such as one read from a variable declared `const app: string`, fails the compile-time check.
+
 The CLI checks the same names again when it loads the config, and it also checks the stage given with `--stage`.
 
 The CLI also rejects a config with a field that is not in the table above, such as `stage` instead of `defaultStage`, and a command fails when the file of its entry does not exist.
