@@ -341,9 +341,10 @@ export abstract class Resource<
 
   /**
    * At plan, a dependency without an output gives tokens for its fields to
-   * `deriveParams`. When code takes a token apart, or reads a dependency and
-   * no token reaches a param, or `deriveParams` throws, the plan cannot tell
-   * which params are known, and every param not set in config is unknown.
+   * `deriveParams`, which records the fields it reads. When `deriveParams`
+   * reads one, or throws, or a param holds a token taken apart, the plan
+   * cannot tell which params are known, and every param not set in config is
+   * unknown.
    */
   async planParams(): Promise<Record<string, unknown>> {
     this.#sealed = true;
@@ -363,8 +364,9 @@ export abstract class Resource<
     }
 
     let params: Record<string, unknown>;
+    const derived: string[] = [];
     try {
-      params = await this.#resolveParams(planLookup, deps as D);
+      params = await this.#resolveParams(planLookup, deps as D, derived);
     } catch (error) {
       if (
         error instanceof ContributionConflictError ||
@@ -375,21 +377,28 @@ export abstract class Resource<
       return this.#cautiousPlanParams();
     }
 
+    // A token turned into a string and then computed with, such as
+    // `${arn}`.split(":").length, leaves no placeholder behind, so any read
+    // makes everything deriveParams returns untrustworthy, including its keys.
+    if (read.length > 0) return this.#cautiousPlanParams(derived);
     const marking = markUnknownOutputValues(withoutUndefined(params));
-    const reached =
-      read.length === 0 ||
-      [...marking.refs].some((placed) =>
-        read.some((ref) => isWithin(placed, ref)),
-      );
-    if (marking.mangled || !reached) return this.#cautiousPlanParams();
+    if (marking.mangled) return this.#cautiousPlanParams(derived);
     return marking.value as Record<string, unknown>;
   }
 
-  #cautiousPlanParams(): Record<string, unknown> {
+  /**
+   * @param derived Keys deriveParams returned. They are unknown even when
+   * config also sets them, as the derived value replaces the config value.
+   */
+  #cautiousPlanParams(derived: string[] = []): Record<string, unknown> {
     const params: Record<string, unknown> = {};
     const config = this.config as Record<string, unknown>;
     for (const [key, item] of Object.entries(this.schema)) {
       if (item.propertyType === "computed") continue;
+      if (derived.includes(key)) {
+        params[key] = UNKNOWN_AFTER_APPLY;
+        continue;
+      }
       const value = item.collect
         ? this.#collect(key, item.collect, config[key], planLookup)
         : resolveOutputValues(config[key], planLookup);
@@ -404,10 +413,17 @@ export abstract class Resource<
   async #resolveParams(
     lookup: OutputLookup,
     deps: D,
+    derived: string[] = [],
   ): Promise<Record<string, unknown>> {
+    const derivedParams = await this.deriveParams({
+      id: this.id,
+      config: this.config,
+      deps,
+    });
+    derived.push(...Object.keys(derivedParams));
     const params: Record<string, unknown> = {
       ...this.config,
-      ...(await this.deriveParams({ id: this.id, config: this.config, deps })),
+      ...derivedParams,
     };
     for (const [key, item] of Object.entries(this.schema)) {
       if (item.propertyType !== "param" || !item.collect) continue;
@@ -474,14 +490,6 @@ function withoutUndefined(
     if (value !== undefined) defined[key] = value;
   }
   return defined;
-}
-
-/** Whether `placed` is the output value `ref`, or a path below it. */
-function isWithin(placed: OutputValueRef, ref: OutputValueRef): boolean {
-  return (
-    placed.resource === ref.resource &&
-    ref.path.every((key, index) => placed.path[index] === key)
-  );
 }
 
 /**

@@ -445,6 +445,20 @@ describe("plan params", () => {
     });
   });
 
+  it("falls back to the cautious answer when a token is computed with as a string", async () => {
+    const Computed = LogGroup.requireDependencies<{
+      fn: InstanceType<typeof Fn>;
+    }>().deriveParams(({ deps }) => ({
+      logGroupName: `/aws/lambda/${deps.fn.output.FunctionName}`,
+      retention: `${deps.fn.output.FunctionArn}`.split(":").length,
+    }));
+    const logGroup = new Computed("logs", { dependencies: { fn: fnWith() } });
+    expect(await logGroup.planParams()).toEqual({
+      logGroupName: UNKNOWN_AFTER_APPLY,
+      retention: UNKNOWN_AFTER_APPLY,
+    });
+  });
+
   it("falls back to the cautious answer when deriveParams throws", async () => {
     const Throws = LogGroup.requireDependencies<{
       fn: InstanceType<typeof Fn>;
