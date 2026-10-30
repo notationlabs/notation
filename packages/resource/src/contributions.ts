@@ -7,15 +7,6 @@ import {
   toCanonicalOutputValues,
 } from "./output-value";
 
-export type ContributeOptions = {
-  /**
-   * Names the contributor in conflict messages, in place of the call site.
-   * Library code that contributes on the user's behalf passes something the
-   * user wrote, such as the ID of the binding it creates.
-   */
-  by?: string;
-};
-
 /** What a collected param's `collect` receives besides the items. */
 export type CollectContext = {
   resourceId: string;

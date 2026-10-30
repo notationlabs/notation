@@ -297,17 +297,11 @@ describe("Lambda environment", () => {
 
   it("names both contributors when they set one key to different values", async () => {
     const lambda = createLambda();
-    lambda.contribute(
-      { Environment: dispatch("orders", "arn:a") },
-      { by: "a" },
-    );
-    lambda.contribute(
-      { Environment: dispatch("orders", "arn:b") },
-      { by: "b" },
-    );
+    lambda.contribute({ Environment: dispatch("orders", "arn:a") });
+    lambda.contribute({ Environment: dispatch("orders", "arn:b") });
 
     await expect(lambda.getParams()).rejects.toThrow(
-      /a and b both set Environment\.Runtime\.dispatch\.orders\.match/,
+      /lambda\.test\.ts:\d+ and .*lambda\.test\.ts:\d+ both set Environment\.Runtime\.dispatch\.orders\.match/,
     );
   });
 

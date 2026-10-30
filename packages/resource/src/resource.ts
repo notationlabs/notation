@@ -26,7 +26,6 @@ import {
   captureCallSite,
   sortContributions,
   type CollectContext,
-  type ContributeOptions,
   type ContributedValues,
   type Contribution,
   type ContributionFunction,
@@ -154,10 +153,10 @@ export interface BaseResource {
    * returns them from the outputs of `options.deps`. Throws once evaluation
    * has ended, or once the resource's params have been read.
    */
-  contribute(values: {}, options?: ContributeOptions): void;
+  contribute(values: {}): void;
   contribute<Deps extends Record<string, BaseResource>>(
     compute: ContributionFunction<Deps, {}>,
-    options: ContributeOptions & { deps: Deps },
+    options: { deps: Deps },
   ): void;
   /**
    * Makes the resource depend on another after it was constructed. The same
@@ -294,19 +293,17 @@ export abstract class Resource<
     return new OutputValue(this, [key]) as any;
   }
 
-  contribute(values: T["collected"], options?: ContributeOptions): void;
+  contribute(values: T["collected"]): void;
   contribute<Deps extends Record<string, BaseResource>>(
     compute: ContributionFunction<Deps, T["collected"]>,
-    options: ContributeOptions & { deps: Deps },
+    options: { deps: Deps },
   ): void;
   contribute(
     input: unknown,
-    options: ContributeOptions & { deps?: Record<string, BaseResource> } = {},
+    options: { deps?: Record<string, BaseResource> } = {},
   ): void {
     const contributor =
-      options.by ??
-      captureCallSite(Resource.prototype.contribute) ??
-      "an unknown call site";
+      captureCallSite(Resource.prototype.contribute) ?? "an unknown call site";
     this.#assertOpen("contribute to");
 
     if (typeof input === "function") {
@@ -412,7 +409,9 @@ export abstract class Resource<
         ? this.#collect(key, item.collect, config[key], contributions, true)
         : resolveOutputValues(config[key], planLookup);
       params[key] =
-        value === undefined ? UNKNOWN_AFTER_APPLY : markUnknownOutputValues(value);
+        value === undefined
+          ? UNKNOWN_AFTER_APPLY
+          : markUnknownOutputValues(value);
     }
     return params;
   }

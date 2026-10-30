@@ -326,7 +326,6 @@ consume(handler: SqsHandler | LambdaGroup, options: ConsumeOptions = {}) {
 
   lambdaGroup.policy.contribute(
     { PolicyDocument: { Statement: [this.grant(["ReceiveMessage", "DeleteMessage", "GetQueueAttributes"])] } },
-    { by: id },
   );
   // ...
 }
@@ -338,14 +337,13 @@ The rules for `collect`:
 - `collect` receives the value from config first, if there is one, and then every contribution sorted by content. So moving a `contribute` call to another file never changes the result.
 - When there is no value in config and no contribution, `collect` is not called and the param is left unset.
 
-`mergeContributions` is a `collect` rule for maps. It merges the maps key by key, and fails when two contributions set one key to different values. The error names both contributors:
+`mergeContributions` is a `collect` rule for maps. It merges the maps key by key, and fails when two contributions set one key to different values. The error names each contribution by the `file:line` of its `contribute` call, and gives the path of the key:
 
-| Contributor called with                         | Named in the error as                    |
-| ----------------------------------------------- | ---------------------------------------- |
-| `{ by: "orders-orders-processOrders-mapping" }` | `orders-orders-processOrders-mapping`    |
-| no `by`                                         | the `file:line` of the `contribute` call |
+```
+Conflicting contributions to orders-processOrders: infra/orders.ts:12 and packages/aws/src/sqs/queue.ts:95 both set Environment.Runtime.dispatch.orders-orders-processOrders-mapping.match, to "a" and "b"
+```
 
-Library code that contributes for the user, such as `consume`, passes `by`, so the error names something the user wrote rather than a line inside the library. A value that holds a token is not known at plan, so plan cannot find a conflict with it, and deploy fails instead.
+Library code that contributes for the user, such as `consume`, keys each entry by a name the user chose, such as the mapping ID. Two calls of the library code then never set the same key, and when the library conflicts with the user's code, the key path names the binding. A value that holds a token is not known at plan, so plan cannot find a conflict with it, and deploy fails instead.
 
 ### Function contributions
 
@@ -381,7 +379,7 @@ importer.policy.contribute(
 `contribute` takes the function and, in `deps`, the resources the function reads. `deps` is typed from those resources, so `deps.queue.output` is the queue's output type.
 
 1. **While infra is evaluated**, `contribute` records the function and its deps. The policy now depends on the queue, and state records the edge.
-2. **At deploy**, the queue deploys first. Deploy then runs the function with the queue's real output, and collects the result like a plain contribution. The `by` option, the call site, lifetime and conflicts work the same way. The result can only set collected params.
+2. **At deploy**, the queue deploys first. Deploy then runs the function with the queue's real output, and collects the result like a plain contribution. The call site, lifetime and conflicts work the same way. The result can only set collected params.
 3. **At plan**, the function receives the same views of its deps as `deriveParams` (see [Unknown values](reconciler.md#unknown-values)). When the queue has no output yet, reading `deps.queue.output` throws, and plan marks every collected param of the policy unknown. When the queue exists, plan uses the function's result.
 
 As an aside, a provider that stores a collected map as one string should still keep the map structured in the param, so state, diff and plan see each key. The provider encodes it only in `create` and `update`, for example with `sortedJson` from `@notation/utils`, and decodes it in `read`. A Lambda's [`Environment.Runtime`](../resources/lambda.md#environment) works this way.

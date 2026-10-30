@@ -15,7 +15,6 @@ export {
   ContributionConflictError,
   mergeContributions,
   type CollectContext,
-  type ContributeOptions,
   type ContributionFunction,
 } from "./contributions";
 export {

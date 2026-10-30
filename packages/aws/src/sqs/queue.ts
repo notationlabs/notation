@@ -85,32 +85,22 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
       throw new Error(`Queue ${this.id} already feeds ${lambdaGroup.fn.id}`);
     }
 
-    lambdaGroup.policy.contribute(
-      {
-        PolicyDocument: {
-          Statement: [
-            this.grant([
-              "ReceiveMessage",
-              "DeleteMessage",
-              "GetQueueAttributes",
-            ]),
-          ],
-        },
+    lambdaGroup.policy.contribute({
+      PolicyDocument: {
+        Statement: [
+          this.grant(["ReceiveMessage", "DeleteMessage", "GetQueueAttributes"]),
+        ],
       },
-      { by: id },
-    );
-    lambdaGroup.fn.contribute(
-      {
-        Environment: {
-          Runtime: {
-            dispatch: {
-              [id]: { export: lambdaGroup.config.handler, match: this.arn },
-            },
+    });
+    lambdaGroup.fn.contribute({
+      Environment: {
+        Runtime: {
+          dispatch: {
+            [id]: { export: lambdaGroup.config.handler, match: this.arn },
           },
         },
       },
-      { by: id },
-    );
+    });
 
     return this.add(
       new aws.lambda.LambdaEventSourceMapping(id, {

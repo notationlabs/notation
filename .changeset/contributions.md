@@ -8,9 +8,9 @@
 Collected params: several pieces of code can add to one param.
 
 - A schema item with `collect` makes its param collected. `collect` combines the config value and every contribution, sorted by content.
-- `resource.contribute(values, { by })` adds to a collected param while infra is evaluated. Contributions close when evaluation ends.
-- `resource.contribute(({ deps }) => values, { by, deps })` adds values computed from the real outputs of `deps` at deploy. The resource depends on `deps`.
-- `mergeContributions` merges maps key by key. Two contributions that set one key to different values throw `ContributionConflictError`, which names both contributors.
+- `resource.contribute(values)` adds to a collected param while infra is evaluated. Contributions close when evaluation ends.
+- `resource.contribute(({ deps }) => values, { deps })` adds values computed from the real outputs of `deps` at deploy. The resource depends on `deps`.
+- `mergeContributions` merges maps key by key. Two contributions that set one key to different values throw `ContributionConflictError`, which names the `file:line` of both `contribute` calls.
 
 Output values: config can hold a resource's output before the resource exists.
 

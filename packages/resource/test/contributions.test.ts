@@ -148,16 +148,13 @@ describe("collected params", () => {
 
   it("fails on two values for one key, naming both contributors", async () => {
     const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
-    fn.contribute(
-      { Environment: { Variables: { MODE: "a" } } },
-      { by: "orders-mapping" },
-    );
+    fn.contribute({ Environment: { Variables: { MODE: "a" } } });
     fn.contribute({ Environment: { Variables: { MODE: "b" } } });
 
     const error = await fn.getParams().catch((caught) => caught);
     expect(error).toBeInstanceOf(ContributionConflictError);
     expect(error.message).toMatch(
-      /^Conflicting contributions to fn: orders-mapping and packages\/resource\/test\/contributions\.test\.ts:\d+ both set Environment\.Variables\.MODE, to "a" and "b"$/,
+      /^Conflicting contributions to fn: packages\/resource\/test\/contributions\.test\.ts:\d+ and packages\/resource\/test\/contributions\.test\.ts:\d+ both set Environment\.Variables\.MODE, to "a" and "b"$/,
     );
   });
 
@@ -310,14 +307,13 @@ describe("output values", () => {
   it("names output values in conflict messages", async () => {
     const queue = new Queue("orders", { config: { QueueName: "orders" } });
     const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
-    fn.contribute(
-      { Environment: { Variables: { Q: queue.outputValue("QueueArn") } } },
-      { by: "a" },
-    );
-    fn.contribute({ Environment: { Variables: { Q: "other" } } }, { by: "b" });
+    fn.contribute({
+      Environment: { Variables: { Q: queue.outputValue("QueueArn") } },
+    });
+    fn.contribute({ Environment: { Variables: { Q: "other" } } });
     queue.setOutput({ QueueUrl: "url", QueueName: "orders", QueueArn: "arn" });
     await expect(fn.getParams()).rejects.toThrow(
-      'a and b both set Environment.Variables.Q, to "arn" and "other"',
+      'both set Environment.Variables.Q, to "arn" and "other"',
     );
   });
 
@@ -361,7 +357,11 @@ describe("output values", () => {
 describe("function contributions", () => {
   const deployed = (name: string) => {
     const queue = new Queue(name, { config: { QueueName: name } });
-    queue.setOutput({ QueueUrl: name, QueueName: name, QueueArn: `arn:${name}` });
+    queue.setOutput({
+      QueueUrl: name,
+      QueueName: name,
+      QueueArn: `arn:${name}`,
+    });
     return queue;
   };
 
@@ -375,7 +375,7 @@ describe("function contributions", () => {
           Statement: [grant(`${deps.queue.output.QueueArn}/*`)],
         },
       }),
-      { by: "reader", deps: { queue } },
+      { deps: { queue } },
     );
 
   it("runs with real outputs at deploy", async () => {
@@ -446,9 +446,9 @@ describe("function contributions", () => {
       ({ deps }) => ({
         Environment: { Variables: { Q: deps.queue.output.QueueArn } },
       }),
-      { by: "first", deps: { queue } },
+      { deps: { queue } },
     );
-    fn.contribute({ Environment: { Variables: { Q: "other" } } }, { by: "second" });
+    fn.contribute({ Environment: { Variables: { Q: "other" } } });
     await expect(fn.getParams()).rejects.toThrow(ContributionConflictError);
     await expect(fn.planParams()).rejects.toThrow(ContributionConflictError);
   });
@@ -466,14 +466,14 @@ describe("function contributions", () => {
     fn.contribute(() => ({ Environment: { Variables: { MODE: "a" } } }), {
       deps: {},
     });
-    fn.contribute({ Environment: { Variables: { MODE: "b" } } }, { by: "b" });
+    fn.contribute({ Environment: { Variables: { MODE: "b" } } });
     const error = await fn.getParams().catch((caught) => caught);
     expect(error.message).toMatch(
-      /packages\/resource\/test\/contributions\.test\.ts:\d+ and b both set|b and packages\/resource\/test\/contributions\.test\.ts:\d+ both set/,
+      /^Conflicting contributions to fn: packages\/resource\/test\/contributions\.test\.ts:\d+ and packages\/resource\/test\/contributions\.test\.ts:\d+ both set/,
     );
-    expect(() =>
-      fn.contribute(() => ({}), { deps: {} }),
-    ).toThrow("its params have already been read");
+    expect(() => fn.contribute(() => ({}), { deps: {} })).toThrow(
+      "its params have already been read",
+    );
   });
 });
 
