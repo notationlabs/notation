@@ -1,4 +1,5 @@
 export * from "./types";
+export * from "./durable-value";
 export * from "./resource.schema";
 export * from "./resource";
 export * from "./diff-params";

@@ -5,6 +5,7 @@ import { LambdaFunctionInstance } from "../lambda";
 import { getLambdaInvocationUri } from "src/templates/arn";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
+import { pickDeclared } from "src/utils/read-result";
 
 export type LambdaIntegrationSchema = AwsSchema<{
   Key: sdk.DeleteIntegrationRequest;
@@ -120,7 +121,7 @@ export const LambdaIntegration = integrationSchema
       try {
         const command = new sdk.GetIntegrationCommand(key);
         const output = await apiGatewayClient.send(command);
-        return output;
+        return pickDeclared(integrationSchema.schema, output);
       } catch (error) {
         if (error instanceof sdk.NotFoundException) {
           throw new ResourceNotFoundError(

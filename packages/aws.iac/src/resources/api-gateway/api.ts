@@ -2,12 +2,16 @@ import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
+import { pickDeclared } from "src/utils/read-result";
 
 type ApiSdkSchema = AwsSchema<{
   Key: sdk.DeleteApiRequest;
   CreateParams: sdk.CreateApiRequest;
   UpdateParams: sdk.UpdateApiRequest;
-  ReadResult: sdk.GetApiResponse;
+  ReadResult: Omit<sdk.GetApiResponse, "CreatedDate"> & {
+    // An ISO 8601 string, because the reconciler cannot record a Date.
+    CreatedDate?: string;
+  };
 }>;
 
 const api = resource<ApiSdkSchema>({
@@ -101,7 +105,11 @@ export const Api = apiSchema.defineOperations({
       const result = await apiGatewayClient.send(command);
       // todo: check types or correct or if RouteKey is actually in result
       // if not, need to pass the original params to read
-      return { RouteKey: "", ...result };
+      return {
+        RouteKey: "",
+        ...pickDeclared(apiSchema.schema, result),
+        CreatedDate: result.CreatedDate?.toISOString(),
+      };
     } catch (error) {
       if (error instanceof sdk.NotFoundException) {
         throw new ResourceNotFoundError("API Gateway API was not found", {

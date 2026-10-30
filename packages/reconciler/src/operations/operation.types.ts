@@ -1,4 +1,8 @@
-import type { BaseResource, ResourceGroupRef } from "@notation/resource";
+import type {
+  BaseResource,
+  DurableValue,
+  ResourceGroupRef,
+} from "@notation/resource";
 import type { StateNode } from "@notation/state";
 import type {
   EmitStep,
@@ -19,7 +23,7 @@ export type {
  * sites in a single execution. `createStepRunner` ignores both.
  */
 export type StepRunner = {
-  run<T>(
+  run<T extends DurableValue | void>(
     key: string,
     fn: () => T | Promise<T>,
   ): AsyncGenerator<unknown, T, unknown>;
@@ -44,7 +48,7 @@ export type PersistedResourceState = Pick<
 > & {
   // Not on StateNode itself, where it arrives through its index signature.
   group: ResourceGroupRef | null;
-  [key: string]: unknown;
+  [key: string]: DurableValue;
 };
 
 /**

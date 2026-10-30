@@ -1,11 +1,8 @@
+import type { DurableValue } from "@notation/resource";
 import type { StateNode } from "@notation/state";
 import * as v from "valibot";
 import type { PersistedResourceState } from "../operations";
-import {
-  defineStore,
-  type DurableValue,
-  type StoreSnapshot,
-} from "./yieldstar";
+import { defineStore, type StoreSnapshot } from "./yieldstar";
 
 // Store names are persisted identifiers, like the step keys mapped in
 // index.ts: renaming one orphans every record stored under the old name.

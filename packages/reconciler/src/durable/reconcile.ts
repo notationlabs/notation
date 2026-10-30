@@ -23,7 +23,6 @@ import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
   toStateNode,
-  type ResourceRecord,
   type ResourceSnapshot,
 } from "./stores";
 import type { DurableDeployOptions, DurableWorkflowOptions } from "./types";
@@ -285,9 +284,7 @@ function persistResourceState(
     const result = yield* store.updateFrom(
       `state:persist:${resource.id}`,
       snapshot,
-      // Yieldstar rejects a record that is not a durable value when it
-      // writes the record.
-      () => next as ResourceRecord,
+      () => next,
     );
     if (!result.updated) {
       throw new VersionConflict(
@@ -313,10 +310,7 @@ function createResourceState(
     const store = step.store(resourceStateStore, {
       id: opts.state.storeId(resource.id),
     });
-    yield* store.update(
-      `state:create:${resource.id}`,
-      () => next as ResourceRecord,
-    );
+    yield* store.update(`state:create:${resource.id}`, () => next);
   };
 }
 

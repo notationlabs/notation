@@ -2,6 +2,7 @@ import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-iam";
 import { iamClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
+import { pickDeclared } from "src/utils/read-result";
 import { lambdaTrustPolicy } from "src/templates/iam.policy";
 
 export type LambdaIamRoleSchema = AwsSchema<{
@@ -13,14 +14,20 @@ export type LambdaIamRoleSchema = AwsSchema<{
 
 /**
  * The role as GetRole reports it, with each param in the shape it is
- * configured in, so a read can be compared with params.
+ * configured in, so a read can be compared with params. Dates are ISO 8601
+ * strings, because the reconciler cannot record a Date.
  */
 type LambdaIamRoleReadResult = Omit<
   sdk.Role,
-  "AssumeRolePolicyDocument" | "PermissionsBoundary"
+  | "AssumeRolePolicyDocument"
+  | "PermissionsBoundary"
+  | "CreateDate"
+  | "RoleLastUsed"
 > & {
   AssumeRolePolicyDocument?: string;
   PermissionsBoundary?: string;
+  CreateDate?: string;
+  RoleLastUsed?: { LastUsedDate?: string; Region?: string };
 };
 
 const lambdaIamRole = resource<LambdaIamRoleSchema>({
@@ -112,14 +119,24 @@ export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
 });
 
 function toReadResult(role: sdk.Role): LambdaIamRoleReadResult {
-  const { AssumeRolePolicyDocument, PermissionsBoundary, ...rest } = role;
+  const {
+    AssumeRolePolicyDocument,
+    PermissionsBoundary,
+    CreateDate,
+    RoleLastUsed,
+  } = role;
   return {
-    ...rest,
+    ...pickDeclared(lambdaIamRoleSchema.schema, role),
     AssumeRolePolicyDocument:
       AssumeRolePolicyDocument === undefined
         ? undefined
         : decodePolicyDocument(AssumeRolePolicyDocument),
     PermissionsBoundary: PermissionsBoundary?.PermissionsBoundaryArn,
+    CreateDate: CreateDate?.toISOString(),
+    RoleLastUsed: RoleLastUsed && {
+      ...RoleLastUsed,
+      LastUsedDate: RoleLastUsed.LastUsedDate?.toISOString(),
+    },
   };
 }
 

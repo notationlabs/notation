@@ -1,3 +1,5 @@
+import type { DurableObject, DurableValue } from "@notation/resource";
+
 export type StateNode = {
   /**
    * The backing store's version of the record. The store exists at version 0
@@ -6,12 +8,12 @@ export type StateNode = {
   version: number;
   id: string;
   type: string;
-  config: Record<string, unknown>;
-  params: Record<string, unknown>;
-  output: Record<string, unknown>;
+  config: DurableObject;
+  params: DurableObject;
+  output: DurableObject;
   lastOperation: "create" | "update";
   lastOperationAt: string;
-  [key: string]: unknown;
+  [key: string]: DurableValue;
 };
 
 /**

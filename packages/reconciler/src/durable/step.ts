@@ -3,6 +3,7 @@ import type {
   ReconcilerEvent,
   ReconcilerEventEmitter,
 } from "../events";
+import type { DurableValue } from "@notation/resource";
 import type { StepRunner } from "../operations";
 import type { DurableStep } from "./yieldstar";
 
@@ -32,8 +33,16 @@ export function scopeStep(
   const scoped = (key: string) => `${prefix}:${key}`;
 
   return {
-    run: ((key: string, fn: any) =>
-      step.run(scoped(key), fn)) as DurableStepRunner["run"],
+    run: <T extends DurableValue | void>(
+      key: string,
+      fn: () => T | Promise<T>,
+    ) =>
+      // Yieldstar types the result by the function it runs, which here is
+      // any durable value; the result is the `T` that `fn` returned.
+      step.run<() => DurableValue | void | Promise<DurableValue | void>>(
+        scoped(key),
+        fn,
+      ) as AsyncGenerator<unknown, T, unknown>,
     delay: (key: string, ms: number) => step.delay(scoped(key), ms),
     store: step.store,
     scope: (nested: string) => scopeStep(step, scoped(nested)),

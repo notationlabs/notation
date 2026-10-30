@@ -1,12 +1,13 @@
 import {
   ResourceOperationPendingError,
+  type DurableValue,
   type ResourceOperationContext,
 } from "@notation/resource";
 import type { StepRunner } from "./operation.types";
 
 export const DEFAULT_MAX_OPERATION_ATTEMPTS = 30;
 
-export async function* runPendingOperation<T>(
+export async function* runPendingOperation<T extends DurableValue | void>(
   step: StepRunner,
   key: string,
   operation: (context?: ResourceOperationContext) => T | Promise<T>,

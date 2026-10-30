@@ -3,7 +3,7 @@ import { resource, ResourceNotFoundError } from "@notation/resource";
 import { isErrorWithCode } from "@notation/utils";
 import * as fs from "node:fs/promises";
 import { zip } from "src/utils/zip";
-import { getSourceSha256 } from "src/utils/hash";
+import { getFileSha256, getSourceSha256 } from "src/utils/hash";
 
 export type ZipSchema = {
   Key: { sourceFilePath: string };
@@ -17,7 +17,7 @@ export type ZipSchema = {
     filePath: string;
     sourceSha256: string;
   };
-  ReadResult: { file: Buffer };
+  ReadResult: { fileSha256: string };
 };
 
 const zipResource = resource<ZipSchema>({
@@ -39,10 +39,9 @@ export const zipSchema = zipResource.defineSchema({
     propertyType: "param",
     presence: "required",
   },
-  file: {
+  fileSha256: {
     propertyType: "computed",
     presence: "required",
-    hidden: true,
   },
 } as const);
 
@@ -54,8 +53,8 @@ export const Zip = zipSchema.defineOperations({
   },
   read: async (params) => {
     try {
-      const file = await fs.readFile(fromProjectRoot(params.filePath));
-      return { ...params, file };
+      const fileSha256 = await getFileSha256(params.filePath);
+      return { ...params, fileSha256 };
     } catch (error) {
       if (isErrorWithCode(error, "ENOENT")) {
         throw new ResourceNotFoundError("Zip archive was not found", {

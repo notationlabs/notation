@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-iam";
 import { createPlan } from "@notation/reconciler";
+import type { DurableObject } from "@notation/resource";
 import { MemoryStateBackend } from "@notation/state";
 import { iamClient } from "src/utils/aws-clients";
 import { LambdaIamRole } from "src/resources/lambda/lambda-role";
@@ -44,7 +45,7 @@ function mockGetRole(response: sdk.GetRoleResponse) {
 }
 
 // Plans a role whose state matches its config, as after a successful create.
-async function planUnchangedRole(config: Record<string, unknown>) {
+async function planUnchangedRole(config: DurableObject) {
   const role = new LambdaIamRole("role", { config: config as any });
   const params = await role.getParams();
   const plan = await createPlan({
