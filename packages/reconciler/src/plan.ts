@@ -143,16 +143,6 @@ function pick(
 }
 
 /**
- * The params a plan compares against state. A value that waits on an output
- * not yet deployed is unknown at its own path (see `BaseResource.planParams`).
- */
-export async function resolvePlanParams(
-  resource: BaseResource,
-): Promise<Record<string, unknown>> {
-  return resource.planParams();
-}
-
-/**
  * The resource's edges as state records them. Sorted and deduplicated, so a
  * resource whose edges have not changed compares equal to its record.
  */

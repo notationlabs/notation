@@ -9,7 +9,6 @@ import { applyDriftDetection } from "./operations";
 import {
   decideAction,
   getDependencyIds,
-  resolvePlanParams,
   type Plan,
   type PlanNode,
 } from "./plan";
@@ -41,7 +40,7 @@ export async function createPlan({
     for (const resource of level) {
       const stateNode = await state.get(resource.id);
       if (stateNode) resource.setOutput(stateNode.output);
-      const params = await resolvePlanParams(resource);
+      const params = await resource.planParams();
       const action = await runOperation(
         applyDriftDetection(createStepRunner(), {
           action: decideAction({ resource, stateNode, params }),
