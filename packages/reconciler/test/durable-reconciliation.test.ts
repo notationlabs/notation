@@ -1,6 +1,7 @@
 import {
   REDELIVERY_DELAY_BASE,
   WorkflowRunner,
+  type EffectClient,
   type ExecutionLease,
   type HeapClient,
   type Runtime,
@@ -86,7 +87,7 @@ describe("durable execution and replay", () => {
     const runtime = createRuntime(
       [new TestResource("resume")],
       "crash-resume",
-      { crashAfterStep: "notation:deploy:resume:create:remote:attempt:0" },
+      { crashAfterStep: "notation:deploy:resume:create:remote:effect:0" },
     );
 
     await expect(runtime.run("resume-execution")).rejects.toThrow(
@@ -98,6 +99,59 @@ describe("durable execution and replay", () => {
     await runtime.run("resume-execution");
     expect(create).toHaveBeenCalledOnce();
     expect(await runtime.state.get("resume")).toMatchObject({ version: 1 });
+    runtime.close();
+  });
+
+  it("looks up a create interrupted before its effect settled instead of creating again", async () => {
+    const create = vi.fn(async () => undefined);
+    const read = vi.fn(async () => ({ name: "app" }));
+    const TestResource = resource({ type: "test/durable/effect-lookup" })
+      // Cast: a resource declared without API types constrains every schema
+      // key to be a key of an `any` API schema, which no named key satisfies.
+      .defineSchema({
+        name: { presence: "required", propertyType: "param", primaryKey: true },
+      } as any)
+      .defineOperations({ create, read, delete: async () => undefined });
+    const runtime = createRuntime(
+      [new TestResource("looked-up", { config: { name: "app" } as any })],
+      "effect-lookup",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("lookup-execution")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    expect(create).toHaveBeenCalledOnce();
+
+    await runtime.run("lookup-execution");
+    expect(create).toHaveBeenCalledOnce();
+    // The lookup, then the read after create.
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenNthCalledWith(1, { name: "app" });
+    expect(await runtime.state.get("looked-up")).toMatchObject({
+      output: { name: "app" },
+      version: 1,
+    });
+    runtime.close();
+  });
+
+  it("creates again after an interrupted create when the resource has no read", async () => {
+    const create = vi.fn(async () => undefined);
+    const TestResource = resource({ type: "test/durable/effect-no-read" })
+      .defineSchema({})
+      .defineOperations({ create, delete: async () => undefined });
+    const runtime = createRuntime(
+      [new TestResource("no-read")],
+      "effect-no-read",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("no-read-execution")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    await runtime.run("no-read-execution");
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(await runtime.state.get("no-read")).toMatchObject({ version: 1 });
     runtime.close();
   });
 
@@ -576,7 +630,7 @@ describe("deployment hold", () => {
     const runtime = createRuntime(
       [new Resource("first"), new Resource("second")],
       "hold-replay",
-      { crashAfterStep: "notation:deploy:first:create:remote:attempt:0" },
+      { crashAfterStep: "notation:deploy:first:create:remote:effect:0" },
     );
 
     await expect(runtime.run("replayed-execution")).rejects.toThrow(
@@ -1205,6 +1259,8 @@ function createRuntime(
   options: {
     maxOperationAttempts?: number;
     crashAfterStep?: string;
+    /** Fails the first effect settle, as if the process died after perform. */
+    failFirstSettle?: boolean;
     registry?: ResourceRegistry;
     driftDetection?: boolean;
     dryRun?: boolean;
@@ -1219,7 +1275,9 @@ function createRuntime(
   const runtime: Runtime = {
     clock: sqliteRuntime.clock,
     executions: sqliteRuntime.executions,
-    effects: sqliteRuntime.effects,
+    effects: options.failFirstSettle
+      ? failFirstSettle(sqliteRuntime.effects)
+      : sqliteRuntime.effects,
     heap: options.crashAfterStep
       ? new CrashAfterWriteHeap(sqliteRuntime.heap, options.crashAfterStep)
       : sqliteRuntime.heap,
@@ -1344,6 +1402,20 @@ class CrashAfterWriteHeap implements HeapClient {
     }
     return result;
   }
+}
+
+function failFirstSettle(inner: EffectClient): EffectClient {
+  let failed = false;
+  return {
+    begin: (request) => inner.begin(request),
+    watch: (request) => inner.watch(request),
+    getEffect: (effectId) => inner.getEffect(effectId),
+    settle(request) {
+      if (failed) return inner.settle(request);
+      failed = true;
+      return Promise.reject(new Error("simulated process crash"));
+    },
+  };
 }
 
 async function readHolder(

@@ -33,6 +33,7 @@ describe("resource creation", () => {
 
     await runOperation(
       createResourceOperation(step, {
+        executionId: "test-execution",
         resource: testResource,
         resourceParams: await testResource.getParams(),
         persist: async function* (next) {
