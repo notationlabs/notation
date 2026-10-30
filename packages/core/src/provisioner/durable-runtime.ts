@@ -14,7 +14,11 @@ import {
 } from "@notation/reconciler/durable";
 import pino, { type Logger } from "pino";
 import { filePaths, toProjectRoot } from "src/utils/paths";
-import { createWorkflowRouter, workflow } from "yieldstar";
+import {
+  ExecutionAdmissionError,
+  createWorkflowRouter,
+  workflow,
+} from "yieldstar";
 
 function resolveDatabasePath(): string {
   return process.env.NOTATION_DATABASE_PATH ?? filePaths.database();
@@ -138,7 +142,7 @@ export class NodeDurableRuntime {
     });
     if (admission.status === "accepted") return;
     if (admission.code !== "EXECUTION_ID_CONFLICT") {
-      throw new Error(admission.message);
+      throw new ExecutionAdmissionError(admission.code, admission.message);
     }
 
     const record = await this.#runtime.executions.get(executionId);
