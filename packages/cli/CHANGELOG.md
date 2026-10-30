@@ -1,5 +1,15 @@
 # @notation/cli
 
+## 0.16.0
+
+### Patch Changes
+
+- Updated dependencies [19a9d2e]
+- Updated dependencies [7d01d51]
+  - @notation/core@0.16.0
+  - @notation/dashboard@0.16.0
+  - @notation/esbuild-plugins@0.16.0
+
 ## 0.15.0
 
 ### Minor Changes

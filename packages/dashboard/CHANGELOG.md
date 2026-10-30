@@ -1,5 +1,13 @@
 # @notation/dashboard
 
+## 0.16.0
+
+### Patch Changes
+
+- Updated dependencies [35196ff]
+- Updated dependencies [7d01d51]
+  - @notation/state@0.16.0
+
 ## 0.15.0
 
 ### Minor Changes

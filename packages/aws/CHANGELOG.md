@@ -1,5 +1,34 @@
 # @notation/aws
 
+## 0.16.0
+
+### Minor Changes
+
+- 19a9d2e: SQS queues:
+
+  - `queue({ name })` from `@notation/aws/sqs` creates a queue, with `arn` and `url` output values.
+  - `queue.consume(handler)` invokes a function with the queue's messages. It grants the function's role read access and creates an event source mapping.
+  - `queue.grant(actions)` returns a policy statement for the queue.
+
+  Lambda:
+
+  - A Lambda group's `policy` is an inline role policy that other code adds statements to. The group creates it the first time code reads `policy`.
+  - A Lambda group exposes its `role`.
+  - `Environment` is collected and merged key by key.
+
+  `@notation/aws.iac` adds `lambda.LambdaRolePolicy`, `lambda.LambdaEventSourceMapping` and `sqs.Queue`.
+
+- 5ed5981: Routes on one API with the same JWT issuer and audience share one authorizer instead of one authorizer per route. The authorizer ID changes from `<route id>-<api>-authorizer` to `<api>-jwt-authorizer-<hash>`, and its name from `<api>_<method>_<path>_authorizer` to `<api>_jwt_<hash>`. On the first deploy after the upgrade, each API creates the shared authorizer, points its routes at it and deletes the per-route authorizers. An API that already has 10 authorizers fails the create, because the old authorizers are deleted after it. Ask AWS Support to raise the quota for that API before the upgrade.
+
+### Patch Changes
+
+- Updated dependencies [19a9d2e]
+- Updated dependencies [19a9d2e]
+- Updated dependencies [7d01d51]
+  - @notation/aws.iac@0.16.0
+  - @notation/resource@0.16.0
+  - @notation/std.iac@0.16.0
+
 ## 0.15.0
 
 ### Minor Changes
