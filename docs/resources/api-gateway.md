@@ -78,6 +78,17 @@ type JWTAuthorizerConfig = {
 };
 ```
 
+## Integrations and authorizers after an unknown create
+
+After a create with an unknown outcome, Notation looks the resource up before it creates it again. An API is found by its `notation:create-token` tag, a route by its route key and a Lambda function by its name and the tag. An integration or authorizer has no tag and no unique key, so Notation cannot look it up. It is created again in two cases:
+
+1. The process stops after AWS creates the integration or authorizer and before Notation records it. The next run creates it again.
+2. `CreateIntegration` or `CreateAuthorizer` times out or gets a server error after AWS has created it. The deploy fails, and the next deploy creates it again.
+
+The extra integration or authorizer has no route pointing at it, so traffic is unaffected. Notation does not record it and does not delete it. Deleting the API deletes it.
+
+An extra authorizer counts toward the quota of 10 authorizers per HTTP API. `withJWTAuthorizer` creates one authorizer for each route, so an API near the quota can fail a later authorizer create. You can ask AWS Support to raise the quota, or delete the extra authorizer in the console. An extra integration counts toward the quota of 300 integrations per API.
+
 ## Full example
 
 Infrastructure and runtime side-by-side:
