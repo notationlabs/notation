@@ -168,15 +168,15 @@ function getLookupFunction(
   return undefined;
 }
 
-/** Wraps a search as a yieldstar lookup that reports not-found on `ResourceNotFoundError`. */
+/** Wraps `lookup` in yieldstar's lookup shape, reporting not-found on `ResourceNotFoundError`. */
 function settledUnlessNotFound(
-  search: (token: string) => Promise<DurableObject | undefined>,
+  lookup: (token: string) => Promise<DurableObject | undefined>,
 ) {
   return async (
     token: string,
   ): Promise<EffectLookup<DurableObject | undefined>> => {
     try {
-      return { status: "settled", result: await search(token) };
+      return { status: "settled", result: await lookup(token) };
     } catch (error) {
       if (ResourceNotFoundError.is(error)) return { status: "not-found" };
       throw error;
