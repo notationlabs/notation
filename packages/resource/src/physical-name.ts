@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { getActiveResourceCollection } from "./resource-collection";
 
 /** The part of a deployment's identity that scopes physical names. */
@@ -19,12 +18,23 @@ export type PhysicalNameRule = {
 
 const HASH_LENGTH = 8;
 
+// 32-bit FNV-1a, as 8 hex characters. This package does not depend on Node,
+// so it cannot use node:crypto.
+function fnv1a(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(HASH_LENGTH, "0");
+}
+
 /**
  * Makes the physical name of a resource: `<app>-<stage>-<name>`, or `name`
  * when there is no scope.
  *
  * When the result is longer than `rule.maxLength`, it is cut short and ends
- * in `-` and the first 8 hex characters of the SHA-256 of the full name, so
+ * in `-` and the 8 hex characters of the FNV-1a hash of the full name, so
  * shortened names stay unique and the same on every deploy.
  */
 export function physicalName(
@@ -40,10 +50,7 @@ export function physicalName(
   if (full.length <= rule.maxLength) return full;
 
   const body = full.slice(0, full.length - ending.length);
-  const hash = createHash("sha256")
-    .update(full)
-    .digest("hex")
-    .slice(0, HASH_LENGTH);
+  const hash = fnv1a(full);
   const room = rule.maxLength - ending.length - HASH_LENGTH - 1;
   if (room < 1) {
     throw new Error(

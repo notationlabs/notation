@@ -36,7 +36,10 @@ export async function deployApp({
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: DeployAppOptions): Promise<void> {
-  const graph = await getResourceGraph(deployment.entryPoint);
+  const graph = await getResourceGraph(deployment.entryPoint, {
+    app: deployment.app,
+    stage: deployment.stage,
+  });
   await runDurableWorkflow(
     { deployment, workflowId: "deploy", runtime, databasePath, executionId },
     (step, executionId, runtime) =>

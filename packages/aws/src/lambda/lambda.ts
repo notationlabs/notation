@@ -2,12 +2,14 @@ import * as aws from "@notation/aws.iac";
 import * as std from "@notation/std.iac";
 import { getActiveResourceCollection } from "@notation/resource";
 import path from "path";
+import { awsName } from "src/naming";
 import { assertLambdaId, type NameSafe } from "./lambda-id";
 
 export type LambdaConfig = {
   /**
    * Names the function and its role, zip, policy and log group, and keys them
-   * in state. Changing it replaces the function, so keep it stable.
+   * in state. The function is named `<app>-<stage>-<id>` in AWS. Changing the
+   * id replaces the function, so keep it stable.
    *
    * Must be name-safe: 1 to 59 letters, digits, hyphens or underscores.
    */
@@ -101,7 +103,7 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
   const role = functionGroup.add(
     new aws.lambda.LambdaIamRole(`${lambdaId}-role`, {
       config: {
-        RoleName: `${lambdaId}-role`,
+        RoleName: awsName("iamRole", `${lambdaId}-role`),
       },
     }),
   );
@@ -118,7 +120,7 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
   const lambdaResource = functionGroup.add(
     new aws.lambda.LambdaFunction(lambdaId, {
       config: {
-        FunctionName: lambdaId,
+        FunctionName: awsName("lambdaFunction", lambdaId),
         Handler: `${fileName}.${config.handler}`,
         Runtime: runtime,
         // todo: make this configurable and remove it as a default

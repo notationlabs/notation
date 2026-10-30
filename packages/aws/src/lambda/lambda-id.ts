@@ -4,20 +4,17 @@
  *
  * The ID is embedded in resource IDs (`<id>`, `<id>-role`, `<id>-zip`,
  * `<id>-policy`, `<id>-role-policy`, `<id>-log-group`) and in AWS names, so
- * it has to satisfy the strictest of them:
+ * its characters have to be valid in all of them:
  *
- * - Lambda `FunctionName` is the ID itself: `[a-zA-Z0-9-_]`, at most 64 chars.
- * - IAM `RoleName` is `<id>-role`: at most 64 chars, so the ID gets 59.
+ * - Lambda `FunctionName` (`<app>-<stage>-<id>`): `[a-zA-Z0-9-_]`.
+ * - IAM `RoleName` (`<app>-<stage>-<id>-role`): `[\w+=,.@-]`.
  * - The EventBridge target `Id` is the function name: `[.\-_A-Za-z0-9]`.
  * - Lambda permission `StatementId`s embed the function name: `[0-9A-Za-z_-]`.
  *
- * The role name is the tightest length limit. The other suffixes (`-zip`,
- * `-policy`, `-log-group`) and the API Gateway integration and permission IDs
- * only appear in resource IDs, which have no length limit, and the other AWS
- * names have room to spare: the EventBridge permission `StatementId`
- * (`LambdaEventBridgeRulePermission-<id>`) allows 100 chars, the inline
- * policy name (`<id>-role-policy`) 128 and the log group name
- * (`/aws/lambda/<id>`) 512.
+ * The function and role names are shortened with a hash when they pass 64
+ * characters (see `src/naming.ts`). The limit of 59 is the room the role name
+ * had before names were scoped by app and stage; the inline policy name
+ * (`<id>-role-policy`) allows 128.
  *
  * Upper case is allowed because Lambda allows it, and because compiled IDs
  * (`<module id>-<handler>`) contain camelCase handler names. IAM role names

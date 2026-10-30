@@ -1,10 +1,12 @@
 import * as aws from "@notation/aws.iac";
 import type { SqsHandler } from "src/shared/lambda.handler";
 import type { LambdaGroup } from "src/lambda";
+import { awsName } from "src/naming";
 
 export type QueueConfig = {
   /**
-   * Names the queue, and keys it in state. Changing it replaces the queue.
+   * Names the queue, and keys it in state. The queue is named
+   * `<app>-<stage>-<name>` in AWS. Changing the name replaces the queue.
    * A FIFO queue's name ends in `.fifo`.
    */
   name: string;
@@ -47,7 +49,7 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
     this.queue = this.add(
       new aws.sqs.Queue(`${config.name}-queue`, {
         config: {
-          QueueName: config.name,
+          QueueName: awsName("sqsQueue", config.name),
           FifoQueue: config.fifo,
           VisibilityTimeout: config.visibilityTimeout,
           MessageRetentionPeriod: config.messageRetentionPeriod,

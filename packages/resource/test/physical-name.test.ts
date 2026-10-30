@@ -80,3 +80,10 @@ it("does not scope names outside a collection", () => {
     "get-orders",
   );
 });
+
+// Changing the hash renames, and so replaces, every shortened resource.
+it("uses a hash that does not change between releases", () => {
+  expect(physicalName(scope, "a".repeat(60), { maxLength: 64 })).toBe(
+    `orders-app-prod-${"a".repeat(39)}-0623bc13`,
+  );
+});
