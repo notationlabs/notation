@@ -263,7 +263,7 @@ const LambdaIntegration = defineResource<{ ... }>({ type: "aws/apiGateway/Lambda
   }));
 ```
 
-`requireDependencies` declares typed dependency slots. `deriveParams` receives `{ id, config, deps }` and returns properties computed from dependency outputs. At deploy it runs after its dependencies have been provisioned, with their real outputs. At plan, a dependency that has no output yet throws `PendingOutput` when `deriveParams` reads its `output`; see [Planning](reconciler.md).
+`requireDependencies` declares typed dependency slots. `deriveParams` receives `{ id, config, deps }` and returns properties computed from dependency outputs. At deploy it runs after its dependencies have been provisioned, with their real outputs. At plan, a dependency that has no output yet throws `PendingOutput` when `deriveParams` reads its `output`; see [Unknown values](reconciler.md#unknown-values).
 
 A resource takes its ID first, then its config and dependencies:
 
@@ -277,74 +277,120 @@ The ID keys the resource in state, so keep it stable. The second argument can be
 
 Dependencies also determine deployment order: a resource is not created until all its dependencies exist.
 
-`resource.dependOn(other)` adds a dependency after construction. It orders the deploy and is recorded in state, but `deriveParams` does not receive it. It follows the same lifetime rules as `contribute`.
+`resource.dependOn(other)` adds a dependency after construction. It orders the deploy and is recorded in state, but `deriveParams` does not receive it. Like `contribute`, it throws once evaluation ends; see [Lifetime](#lifetime).
 
 ## Output values
 
-`resource.outputValue(key)` returns a token for one of the resource's outputs, typed as the output. The token can be placed whole anywhere in config or in a contribution:
+An output, such as a queue's ARN, does not exist until the provider creates the resource. Infra code still needs to put it in another resource's config. `resource.outputValue(key)` returns a token that stands for the output, typed as the output:
 
-```ts
-const mapping = new EventSourceMapping("orders-mapping", {
+```ts [packages/aws/src/sqs/queue.ts]
+const queue = new aws.sqs.Queue("orders-queue", { config: { QueueName: "orders" } });
+
+const mapping = new aws.lambda.LambdaEventSourceMapping("orders-mapping", {
   config: { EventSourceArn: queue.outputValue("QueueArn") },
 });
 ```
 
-A resource whose config or contributions hold a token depends on the resource the token came from. Deploy replaces the token with the output before it calls the provider, so a number stays a number.
+The token has two effects:
 
-A token can only be placed whole. Turning it into a string throws, for example in a template string, with `String()` or with `JSON.stringify`. So a token cannot be a map key either: key the entry by something known now, and put the token inside it. Code that computes with an output, such as `` `${arn}/*` `` or `arn.split(":")`, belongs in `deriveParams` or in a [function contribution](#function-contributions), which run at deploy with real outputs.
+- `mapping` depends on `queue`, so the queue deploys first.
+- Deploy replaces the token with the queue's real ARN before it calls the provider for `mapping`. A token for a number becomes a number.
+
+**A token can only be placed whole.** Turning it into a string throws `OutputValueStringError`, whether in a template string, with `String()` or with `JSON.stringify`. This matters because a string such as `` `${arn}/*` `` would hide the token, and plan could not tell that the value is unknown. It follows that a token cannot be a map key: key the entry by something known now, and put the token inside it. To compute with an output, use `deriveParams` or a [function contribution](#function-contributions), which receive the real output at deploy.
 
 ## Contributions
 
-A param whose schema item has `collect` is collected. Any code can add to it with `contribute` while infra is being evaluated:
+Some params take values from several places. For example, a Lambda role's inline policy gets one statement from each queue that the function consumes. Each `queue.consume` call adds its statement to the policy, and none of them owns the whole document.
 
-```ts
-const policySchema = rolePolicy.defineSchema({
-  PolicyDocument: {
-    propertyType: "param",
-    presence: "required",
-    collect: (items) => ({
-      Version: "2012-10-17",
-      Statement: items.flatMap((item) => item.Statement ?? []),
-    }),
-  },
-});
+A param is collected when its schema item has `collect`. `collect` receives the values and combines them into the param. The inline policy joins the statements:
 
-policy.contribute(
-  { PolicyDocument: { Statement: [grant] } },
-  { by: "orders-mapping" },
-);
+```ts [packages/aws.iac/src/resources/lambda/lambda-role-policy.ts]
+PolicyDocument: {
+  propertyType: "param",
+  presence: "required",
+  collect: (items) => ({
+    Version: "2012-10-17",
+    Statement: items.flatMap((item) => item.Statement ?? []),
+  }),
+},
 ```
 
-`contribute` accepts only collected params. A collected param is optional in config. `collect` receives the value from config first, if there is one, and then every contribution, sorted by content, so moving code never changes the result. `collect` is not called when there are no items, and the param is left unset.
+While infra is being evaluated, any code can add to a collected param with `contribute`. `queue.consume` does this:
 
-`mergeContributions` is a `collect` rule that merges maps key by key. Two items that set one key to different values conflict, and the error names both contributors. A contributor is named by the `by` option when there is one, and otherwise by the `file:line` of the `contribute` call. Library code that contributes on the user's behalf passes `by`, so the message points at something the user wrote. A value that holds a token is not known at plan, so a conflict with it is found at deploy.
+```ts [packages/aws/src/sqs/queue.ts]
+consume(handler: SqsHandler | LambdaGroup, options: ConsumeOptions = {}) {
+  const lambdaGroup = handler as LambdaGroup;
+  const id = `${this.id}-${lambdaGroup.fn.id}-mapping`;
+
+  lambdaGroup.policy.contribute(
+    { PolicyDocument: { Statement: [this.grant(["ReceiveMessage", "DeleteMessage", "GetQueueAttributes"])] } },
+    { by: id },
+  );
+  // ...
+}
+```
+
+The rules for `collect`:
+
+- `contribute` accepts only collected params, and a collected param is optional in config.
+- `collect` receives the value from config first, if there is one, and then every contribution sorted by content. So moving a `contribute` call to another file never changes the result.
+- When there is no value in config and no contribution, `collect` is not called and the param is left unset.
+
+`mergeContributions` is a `collect` rule for maps. It merges the maps key by key, and fails when two contributions set one key to different values. The error names both contributors:
+
+| Contributor called with | Named in the error as |
+| --- | --- |
+| `{ by: "orders-orders-processOrders-mapping" }` | `orders-orders-processOrders-mapping` |
+| no `by` | the `file:line` of the `contribute` call |
+
+Library code that contributes for the user, such as `consume`, passes `by`, so the error names something the user wrote rather than a line inside the library. A value that holds a token is not known at plan, so plan cannot find a conflict with it, and deploy fails instead.
 
 ### Function contributions
 
-`contribute` also accepts a function and the resources it reads, as `deps`. The function receives `{ deps }` and returns the values to contribute:
+A plain contribution cannot compute with an output value, because the output does not exist while infra is being evaluated. For example, to let a function send to every queue whose name starts with `orders-`, a policy statement needs the queue's ARN with `-*` appended. A function contribution receives the real output at deploy:
 
-```ts
-fnGroup.policy.contribute(
+```ts [infra/orders.ts]
+import { lambda } from "@notation/aws/lambda";
+import { queue } from "@notation/aws/sqs";
+
+const orderQueue = queue({ name: "orders" });
+const importer = lambda({
+  id: "order-importer",
+  handler: "handler",
+  code: { type: "file", path: "external/importer.mjs" },
+});
+
+importer.policy.contribute(
   ({ deps }) => ({
     PolicyDocument: {
       Statement: [
-        { Effect: "Allow", Action: ["s3:GetObject"], Resource: `${deps.bucket.output.Arn}/*` },
+        {
+          Effect: "Allow",
+          Action: "sqs:SendMessage",
+          Resource: `${deps.queue.output.QueueArn}-*`, // ← a real string at deploy
+        },
       ],
     },
   }),
-  { by: id, deps: { bucket: this.bucket } },
+  { deps: { queue: orderQueue.queue } },
 );
 ```
 
-`deps` is typed from the resources passed. The receiving resource depends on each of them, so they deploy first, and state records the edges. Deploy runs the function with the deps' real outputs and collects its result like a plain contribution, so the `by` option, the call site, lifetime and conflicts work the same way. The result can only set collected params.
+`contribute` takes the function and, in `deps`, the resources the function reads. `deps` is typed from those resources, so `deps.queue.output` is the queue's output type.
 
-At plan, the function receives the same views of its deps as `deriveParams` does (see [Planning](reconciler.md)). When it reads the output of a dep that has no output yet, or throws, plan cannot tell which params it would set, and marks every collected param of the receiving resource unknown. When it reads no such output, plan uses its result.
+1. **While infra is evaluated**, `contribute` records the function and its deps. The policy now depends on the queue, and state records the edge.
+2. **At deploy**, the queue deploys first. Deploy then runs the function with the queue's real output, and collects the result like a plain contribution. The `by` option, the call site, lifetime and conflicts work the same way. The result can only set collected params.
+3. **At plan**, the function receives the same views of its deps as `deriveParams` (see [Unknown values](reconciler.md#unknown-values)). When the queue has no output yet, reading `deps.queue.output` throws, and plan marks every collected param of the policy unknown. When the queue exists, plan uses the function's result.
 
-Keep a map structured in the param, so state, diff and plan see each key. Encode it, for example with `sortedJson` from `@notation/utils`, only in `create` and `update`, and decode it in `read`.
+As an aside, a provider that stores a collected map as one string should still keep the map structured in the param, so state, diff and plan see each key. The provider encodes it only in `create` and `update`, for example with `sortedJson` from `@notation/utils`, and decodes it in `read`. A Lambda's [`Environment.Runtime`](../resources/lambda.md#environment) works this way.
 
-Contributions close when evaluation ends: `contribute` and `dependOn` throw from then on. A resource made outside `collectResourceGraph` closes once its params or dependencies are read. `onEvaluationEnd(callback)` registers a callback that runs after evaluation and before the close, for generated code whose values do not exist while modules are still being evaluated. It is an engine mechanism, not user-facing API.
+### Lifetime
 
-Removing a contributor changes the collected value, and the resource updates on the next deploy. When the API cannot unset a removed field, the provider resets it to the API's default. When there is no default, mark the field `immutable`, so that removing it replaces the resource.
+Contributions close when evaluation ends, and `contribute` and `dependOn` throw from then on. This keeps the params that plan and deploy read the same as the params that the infra code built. A resource made outside `collectResourceGraph` closes once code reads its params or dependencies.
+
+`onEvaluationEnd(callback)` registers a callback that runs after evaluation and before the close, for generated code whose values do not exist while modules are still being evaluated. It is an engine mechanism, not user-facing API.
+
+When you delete a `contribute` call, the collected value changes, and the resource updates on the next deploy. When the API cannot unset a removed field, the provider resets it to the API's default. When there is no default, mark the field `immutable`, so that removing it replaces the resource.
 
 ## Resource groups
 

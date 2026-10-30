@@ -105,7 +105,7 @@ external.policy.contribute({
 
 [`queue.consume`](sqs.md#queueconsumehandler) uses the same policy for the read permission it adds.
 
-IAM rejects a policy with no statements, so a function that nothing contributes to has no inline policy. The group adds the policy the first time code reads `policy`. A role's inline policies share a limit of 10,240 characters.
+The group creates the policy resource only when code first reads `lambdaGroup.policy`. This matters because IAM rejects a policy with no statements, so a function that nothing contributes to must have no inline policy. A role's inline policies share a limit of 10,240 characters.
 
 ## Environment
 
