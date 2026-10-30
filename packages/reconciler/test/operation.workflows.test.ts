@@ -29,17 +29,9 @@ function createStepRunnerDouble() {
     return;
   });
 
-  const effect = vi.fn(async function* <T>(
-    _key: string,
-    descriptor: { effectId: string; perform(effectId: string): Promise<T> },
-  ): AsyncGenerator<unknown, T, unknown> {
-    return await descriptor.perform(descriptor.effectId);
-  });
-
   // vi.fn erases the generic, so the seam's signature is restored here.
   const runner: StepRunner = {
     run: run as unknown as StepRunner["run"],
-    effect: effect as unknown as StepRunner["effect"],
     delay: delay as unknown as StepRunner["delay"],
     scope: () => runner,
   };
@@ -89,7 +81,6 @@ describe("operation workflows", () => {
 
     await runOperation(
       createResourceOperation(step, {
-        executionId: "test-execution",
         resource: testResource,
         resourceParams: await testResource.getParams(),
         persist,
@@ -118,26 +109,6 @@ describe("operation workflows", () => {
       2,
       await testResource.getParams(),
       { operationId: "create-123" },
-    );
-    expect(step.effect).toHaveBeenNthCalledWith(
-      1,
-      "create:remote:effect:0",
-      expect.objectContaining({
-        effectId: "notation:create:test-execution:test-create:0",
-        input: { params: {} },
-      }),
-    );
-    expect(step.effect).toHaveBeenNthCalledWith(
-      2,
-      "create:remote:effect:1",
-      expect.objectContaining({
-        effectId: "notation:create:test-execution:test-create:1",
-        input: { params: {}, context: { operationId: "create-123" } },
-      }),
-    );
-    expect(step.delay).toHaveBeenCalledExactlyOnceWith(
-      "create:remote:retry-delay:0",
-      25,
     );
     expect(testResource.output).toEqual({ remoteId: "abc", status: "ready" });
     expect(events.map((event) => `${event.operation}:${event.status}`)).toEqual(
@@ -248,7 +219,6 @@ describe("operation workflows", () => {
     await expect(
       runOperation(
         createResourceOperation(step, {
-          executionId: "test-execution",
           resource: new TestResource("eventually-visible"),
           resourceParams: {},
           persist,
@@ -372,7 +342,6 @@ describe("operation workflows", () => {
     await expect(
       runOperation(
         createResourceOperation(step, {
-          executionId: "test-execution",
           resource: testResource,
           resourceParams: {},
           persist,

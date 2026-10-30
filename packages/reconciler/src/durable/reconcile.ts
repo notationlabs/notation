@@ -99,7 +99,6 @@ export async function* reconcileResource(
   });
 
   const shared = {
-    executionId: opts.executionId,
     resource,
     resourceParams: params,
     persistedOutput: session.node?.output,
