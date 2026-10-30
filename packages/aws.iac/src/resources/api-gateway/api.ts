@@ -7,6 +7,7 @@ import {
   withoutCreateTokenTag,
 } from "src/utils/create-token";
 import { isUncertainAwsError } from "src/utils/errors";
+import { findInPages } from "src/utils/paginate";
 import { AwsSchema } from "src/utils/types";
 
 type ApiSdkSchema = AwsSchema<{
@@ -108,17 +109,12 @@ export const Api = apiSchema.defineOperations({
   },
   async findCreated(_params, token) {
     const value = createTokenTagValue(token);
-    let nextToken: string | undefined;
-    do {
-      const page = await apiGatewayClient.send(
-        new sdk.GetApisCommand({ NextToken: nextToken }),
-      );
-      const api = page.Items?.find(
-        (item) => item.Tags?.[CREATE_TOKEN_TAG] === value,
-      );
-      if (api) return { ApiId: api.ApiId! };
-      nextToken = page.NextToken;
-    } while (nextToken);
+    const api = await findInPages(
+      (NextToken) =>
+        apiGatewayClient.send(new sdk.GetApisCommand({ NextToken })),
+      (item) => item.Tags?.[CREATE_TOKEN_TAG] === value,
+    );
+    if (api) return { ApiId: api.ApiId! };
     throw new ResourceNotFoundError("No API Gateway API has the create token");
   },
   isUncertainError: isUncertainAwsError,
