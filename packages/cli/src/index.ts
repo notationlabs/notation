@@ -9,8 +9,12 @@ import { runWithErrorHandling } from "./run-with-error-handling";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
 import { startDashboardServer } from "@notation/dashboard";
-import { NodeDurableRuntime } from "@notation/core";
-import { loadDeployment, loadEntryPoint } from "./config";
+import {
+  NodeDurableRuntime,
+  loadProject,
+  resolveDeployment,
+  resolveEntryPoint,
+} from "@notation/core";
 
 const entryArgument = [
   "<entry>",
@@ -26,7 +30,8 @@ program
   .argument(...entryArgument)
   .description("Compile Notation App")
   .action(async (entry) => {
-    await compile(await loadEntryPoint(entry));
+    const project = await loadProject();
+    await compile(project, resolveEntryPoint(project, entry));
   });
 
 program
@@ -35,7 +40,11 @@ program
   .option(...stageOption)
   .description("Start Notation Dashboard")
   .action(async (entry, options) => {
-    const deployment = await loadDeployment({ entry, stage: options.stage });
+    const project = await loadProject();
+    const deployment = resolveDeployment(project, {
+      entry,
+      stage: options.stage,
+    });
     const runtime = new NodeDurableRuntime({ deployment });
     await startDashboardServer({ state: runtime.state });
   });
@@ -50,8 +59,12 @@ program
   .option("--no-compile", "deploy the existing build without compiling")
   .option("--no-drift-detection", "skip drift detection")
   .action(async (entry, options) => {
-    const deployment = await loadDeployment({ entry, stage: options.stage });
-    await deploy(deployment, {
+    const project = await loadProject();
+    const deployment = resolveDeployment(project, {
+      entry,
+      stage: options.stage,
+    });
+    await deploy(project, deployment, {
       json: options.json,
       executionId: options.executionId,
       compile: options.compile,
@@ -67,8 +80,12 @@ program
   .option("--json", "stream reconciler events as NDJSON")
   .option("--execution-id <id>", "resume a durable execution")
   .action(async (entry, options) => {
-    const deployment = await loadDeployment({ entry, stage: options.stage });
-    await destroy(deployment, {
+    const project = await loadProject();
+    const deployment = resolveDeployment(project, {
+      entry,
+      stage: options.stage,
+    });
+    await destroy(project, deployment, {
       json: options.json,
       executionId: options.executionId,
     });
@@ -81,8 +98,12 @@ program
   .description("Plan Notation App")
   .option("--json", "print the plan as JSON")
   .action(async (entry, options) => {
-    const deployment = await loadDeployment({ entry, stage: options.stage });
-    await plan(deployment, { json: options.json });
+    const project = await loadProject();
+    const deployment = resolveDeployment(project, {
+      entry,
+      stage: options.stage,
+    });
+    await plan(project, deployment, { json: options.json });
   });
 
 program
@@ -90,7 +111,8 @@ program
   .argument(...entryArgument)
   .description("Visualise Notation App")
   .action(async (entry) => {
-    await visualise(await loadEntryPoint(entry));
+    const project = await loadProject();
+    await visualise(project, resolveEntryPoint(project, entry));
   });
 
 program
@@ -99,7 +121,12 @@ program
   .option(...stageOption)
   .description("Watch Notation App")
   .action(async (entry, options) => {
-    await watch(await loadDeployment({ entry, stage: options.stage }));
+    const project = await loadProject();
+    const deployment = resolveDeployment(project, {
+      entry,
+      stage: options.stage,
+    });
+    await watch(project, deployment);
   });
 
 process.exitCode = await runWithErrorHandling(

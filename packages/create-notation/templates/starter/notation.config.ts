@@ -1,4 +1,4 @@
-import { defineConfig } from "@notation/core";
+import { defineConfig } from "@notation/core/config";
 
 export default defineConfig({
   app: "notation-starter",

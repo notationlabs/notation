@@ -1,6 +1,6 @@
 import chokidar from "chokidar";
 import { randomUUID } from "node:crypto";
-import { filePaths, type Deployment } from "@notation/core";
+import { filePaths, type Deployment, type Project } from "@notation/core";
 import { compile } from "./compile";
 import { deployInChild } from "./deploy-child";
 import { defaultLogger, type Logger } from "./logger";
@@ -8,10 +8,11 @@ import { defaultLogger, type Logger } from "./logger";
 const dotFilesRe = /(^|[\/\\])\../;
 
 export async function watch(
+  project: Project,
   deployment: Deployment,
   logger: Logger = defaultLogger,
 ) {
-  await compile(deployment.entryPoint, { watch: true, logger });
+  await compile(project, deployment.entryPoint, { watch: true, logger });
 
   const watcher = chokidar.watch(filePaths.dist.dir(), {
     ignored: dotFilesRe,

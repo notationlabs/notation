@@ -28,7 +28,7 @@ The starter template gives you a project config and two directories: infrastruct
 **`notation.config.ts`** – names the app and its entries:
 
 ```ts [notation.config.ts]
-import { defineConfig } from "@notation/core";
+import { defineConfig } from "@notation/core/config";
 
 export default defineConfig({
   app: "my-app",

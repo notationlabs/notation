@@ -3,6 +3,7 @@ import {
   planApp,
   resolveDeploymentId,
   type Deployment,
+  type Project,
   type Plan,
   type PlanNode,
 } from "@notation/core";
@@ -27,6 +28,7 @@ const decisionSymbols: Record<PlanNode["decision"], string> = {
 };
 
 export async function plan(
+  project: Project,
   deployment: Deployment,
   opts: PlanCommandOptions = {},
 ) {
@@ -36,7 +38,7 @@ export async function plan(
     let result: Plan;
     const { restore } = redirectStdoutToStderr();
     try {
-      await compile(deployment.entryPoint, { logger });
+      await compile(project, deployment.entryPoint, { logger });
       result = await planApp({ deployment, emit });
     } finally {
       restore();
@@ -45,7 +47,7 @@ export async function plan(
     return;
   }
 
-  await compile(deployment.entryPoint, { logger });
+  await compile(project, deployment.entryPoint, { logger });
   logger.info(`Planning ${resolveDeploymentId(deployment)}\n`);
   const result = await planApp({ deployment, emit });
   printPlanSummary(result, logger);

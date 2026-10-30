@@ -7,7 +7,7 @@ Every Notation project has a `notation.config.ts` at its root. The config names 
 The starter app from the [Quick Start](./quickstart.md) has this config:
 
 ```ts [notation.config.ts]
-import { defineConfig } from "@notation/core";
+import { defineConfig } from "@notation/core/config";
 
 export default defineConfig({
   app: "my-app",
@@ -24,7 +24,15 @@ export default defineConfig({
 | `entries`      | Yes      | Maps each entry name to an entry file, relative to the project root. |
 | `defaultStage` | No       | The stage that a command uses when you pass no `--stage`.            |
 
-The CLI looks for `notation.config.ts` in the current directory and then in each parent directory. The directory that holds the config is the project root, so you can run commands from any directory inside the project. A command fails if it finds no config.
+The directory that holds the config is the project root. The CLI resolves entries, writes `dist` and keeps `.notation/workflows.db` relative to the project root, so you can run commands from any directory inside the project.
+
+To find the project root, the CLI starts in the current directory and moves up one parent at a time:
+
+1. If the directory holds `notation.config.ts`, it is the project root.
+2. If the directory holds a `package.json` but no config, the search stops, and the command fails because the project has no config.
+3. Otherwise the CLI moves to the parent directory.
+
+The search never passes the nearest `package.json`, so a config in a parent package, such as the root of a monorepo, never applies to a package inside it. Put the config next to the `package.json` of the package that you deploy.
 
 ## Entries
 

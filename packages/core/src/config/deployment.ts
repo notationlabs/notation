@@ -1,7 +1,7 @@
 import path from "node:path";
-import { fromProjectRoot } from "src/utils/paths";
-import { configFileName, type NotationConfig } from "./config";
+import { configFileName } from "./config";
 import { assertNameSafe } from "./name-safe";
+import type { Project } from "./project";
 
 /** What a deployment is: an entry of an app, deployed to a stage. */
 export type DeploymentIdentity = {
@@ -24,23 +24,16 @@ export function resolveDeploymentId(identity: DeploymentIdentity): string {
   return `${identity.app}:${identity.stage}:${identity.entry}`;
 }
 
-/**
- * Resolves an entry name to the absolute path of its entry file.
- * @param root The directory of the config. Defaults to the project root.
- */
-export function resolveEntryPoint(
-  config: NotationConfig,
-  entry: string,
-  root?: string,
-): string {
-  if (!Object.hasOwn(config.entries, entry)) {
-    const names = Object.keys(config.entries).join(", ");
+/** Resolves an entry name to the absolute path of its entry file. */
+export function resolveEntryPoint(project: Project, entry: string): string {
+  const { entries } = project.config;
+  if (!Object.hasOwn(entries, entry)) {
+    const names = Object.keys(entries).join(", ");
     throw new Error(
       `No entry named ${JSON.stringify(entry)} in ${configFileName}. Entries: ${names}`,
     );
   }
-  const file = config.entries[entry]!;
-  return root ? path.resolve(root, file) : fromProjectRoot(file);
+  return path.resolve(project.root, entries[entry]!);
 }
 
 /**
@@ -48,15 +41,14 @@ export function resolveEntryPoint(
  * stage falls back to the config's `defaultStage`.
  */
 export function resolveDeployment(
-  config: NotationConfig,
+  project: Project,
   opts: {
     entry: string;
     stage?: string;
-    /** The directory of the config. Defaults to the project root. */
-    root?: string;
   },
 ): Deployment {
-  const entryPoint = resolveEntryPoint(config, opts.entry, opts.root);
+  const { config } = project;
+  const entryPoint = resolveEntryPoint(project, opts.entry);
   const stage = opts.stage ?? config.defaultStage;
   if (stage === undefined) {
     throw new Error(

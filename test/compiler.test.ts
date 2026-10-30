@@ -12,11 +12,7 @@ beforeAll(async () => {
 });
 
 it("generates infra and runtime modules matching source file structure", async () => {
-  const expected = [
-    "dist/infra/api.mjs",
-    "dist/notation.config.mjs",
-    "dist/runtime/todos.fn/index.mjs",
-  ];
+  const expected = ["dist/infra/api.mjs", "dist/runtime/todos.fn/index.mjs"];
   const actual = await glob("dist/**/*.{js,mjs,zip}", { cwd });
   expect(actual.sort()).toEqual(expected);
 });
