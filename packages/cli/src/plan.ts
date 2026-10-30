@@ -1,6 +1,8 @@
 import {
   createLoggerReconcilerSubscriber,
   planApp,
+  resolveDeploymentId,
+  type Deployment,
   type Plan,
   type PlanNode,
 } from "@notation/core";
@@ -24,18 +26,18 @@ const decisionSymbols: Record<PlanNode["decision"], string> = {
   noop: " ",
 };
 
-export async function plan(entryPoint: string, opts: PlanCommandOptions = {}) {
+export async function plan(
+  deployment: Deployment,
+  opts: PlanCommandOptions = {},
+) {
   const logger = opts.logger ?? defaultLogger;
   const emit = createLoggerReconcilerSubscriber({ logger });
   if (opts.json) {
     let result: Plan;
     const { restore } = redirectStdoutToStderr();
     try {
-      await compile(entryPoint, { logger });
-      result = await planApp({
-        entryPoint,
-        emit,
-      });
+      await compile(deployment.entryPoint, { logger });
+      result = await planApp({ deployment, emit });
     } finally {
       restore();
     }
@@ -43,12 +45,9 @@ export async function plan(entryPoint: string, opts: PlanCommandOptions = {}) {
     return;
   }
 
-  await compile(entryPoint, { logger });
-  logger.info(`Planning ${entryPoint}\n`);
-  const result = await planApp({
-    entryPoint,
-    emit,
-  });
+  await compile(deployment.entryPoint, { logger });
+  logger.info(`Planning ${resolveDeploymentId(deployment)}\n`);
+  const result = await planApp({ deployment, emit });
   printPlanSummary(result, logger);
 }
 

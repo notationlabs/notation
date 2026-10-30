@@ -1,6 +1,14 @@
+import type { Deployment } from "@notation/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-type AppOptions = { entryPoint: string; executionId: string };
+type AppOptions = { deployment: Deployment; executionId: string };
+
+const deployment: Deployment = {
+  app: "orders-app",
+  stage: "prod",
+  entry: "orders",
+  entryPoint: "/project/infra/app.ts",
+};
 
 const { deployApp, destroyApp } = vi.hoisted(() => ({
   deployApp: vi.fn(async (_opts: AppOptions) => undefined),
@@ -12,6 +20,7 @@ vi.mock("@notation/core", () => ({
   createNdjsonEventEmitter: () => () => undefined,
   deployApp,
   destroyApp,
+  resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}:${d.entry}`,
 }));
 vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
 
@@ -29,12 +38,12 @@ describe.each([
   it("resumes the execution named by --execution-id", async () => {
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-    await run("infra/app.ts", { executionId: "crashed-execution", logger });
+    await run(deployment, { executionId: "crashed-execution", logger });
 
     expect(app).toHaveBeenCalledOnce();
     expect(app).toHaveBeenCalledWith(
       expect.objectContaining({
-        entryPoint: "infra/app.ts",
+        deployment,
         executionId: "crashed-execution",
       }),
     );
@@ -44,8 +53,8 @@ describe.each([
   it("starts a new execution and prints its ID before running it", async () => {
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-    await run("infra/app.ts", { logger });
-    await run("infra/app.ts", { logger });
+    await run(deployment, { logger });
+    await run(deployment, { logger });
 
     const [first, second] = app.mock.calls.map(([opts]) => opts.executionId);
     expect(first).toMatch(/^[0-9a-f-]{36}$/);
@@ -69,7 +78,7 @@ describe("deploy options", () => {
     deployApp.mockClear();
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-    await deploy("infra/app.ts", {
+    await deploy(deployment, {
       compile: false,
       driftDetection: false,
       logger,
@@ -86,7 +95,7 @@ describe("deploy options", () => {
     vi.mocked(compile).mockClear();
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-    await deploy("infra/app.ts", { logger });
+    await deploy(deployment, { logger });
 
     expect(compile).toHaveBeenCalledOnce();
   });

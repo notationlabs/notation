@@ -1,5 +1,6 @@
 import {
   createLoggerReconcilerSubscriber,
+  type DeploymentIdentity,
   type ReconcilerEventEmitter,
 } from "@notation/core";
 import { spawn as nodeSpawn } from "node:child_process";
@@ -7,7 +8,7 @@ import { createInterface } from "node:readline";
 import type { Logger } from "./logger";
 
 export type DeployChildOptions = {
-  entryPoint: string;
+  deployment: DeploymentIdentity;
   executionId: string;
   logger: Logger;
   spawn?: typeof nodeSpawn;
@@ -23,7 +24,7 @@ const forwardedSignals = ["SIGINT", "SIGTERM"] as const;
  * child's stdout; its logs pass through on stderr.
  */
 export function deployInChild({
-  entryPoint,
+  deployment,
   executionId,
   logger,
   spawn = nodeSpawn,
@@ -34,7 +35,9 @@ export function deployInChild({
     ...process.execArgv,
     process.argv[1]!,
     "deploy",
-    entryPoint,
+    deployment.entry,
+    "--stage",
+    deployment.stage,
     "--json",
     "--no-compile",
     "--no-drift-detection",
