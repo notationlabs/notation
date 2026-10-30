@@ -59,9 +59,8 @@ async function* acquireDeploymentHold(
 function releaseDeploymentHold(
   hold: WorkflowStore<DeploymentHoldState>,
   executionId: string,
-  key: string,
 ) {
-  return hold.update(key, (draft) => {
+  return hold.update("notation:hold:release", (draft) => {
     if (draft.holder === executionId) draft.holder = null;
   });
 }
@@ -92,14 +91,10 @@ export async function* withDeploymentHold(
     yield* body();
   } catch (error) {
     if (InfrastructureError.is(error)) throw error;
-    yield* releaseDeploymentHold(
-      hold,
-      opts.executionId,
-      "notation:hold:release-failed",
-    );
+    yield* releaseDeploymentHold(hold, opts.executionId);
     throw error;
   }
-  yield* releaseDeploymentHold(hold, opts.executionId, "notation:hold:release");
+  yield* releaseDeploymentHold(hold, opts.executionId);
 }
 
 export type DeploymentHoldClearance =

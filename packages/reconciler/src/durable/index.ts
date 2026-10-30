@@ -12,8 +12,7 @@
  *   *:remote:attempt:<n>       one provider call attempt
  *   *:remote:retry-delay:<n>   the wait between two attempts
  *   *:emit:<event>[:<operation>:<status>]   event delivery checkpoint
- *   notation:hold:*            deployment hold: inspect/acquire/release,
- *                              and release-failed when the workflow throws
+ *   notation:hold:*            deployment hold: inspect/acquire/release
  *   state:persist:<id>         conditional create or update of a resource
  *                              record
  *   state:delete:<id>          conditional removal of one
