@@ -23,6 +23,12 @@ notation watch api --stage dev
 4. On change, redeploys – only changed resources are updated (same reconciler as `deploy`).
 5. Queues deploys if one is already in progress.
 
+## Changing the config
+
+`watch` reads `notation.config.ts` once, when it starts, and compiles the entry file that the config names at that time. Each redeploy reads the config again, and fails if the config now names another app.
+
+Restart `watch` after you change `app` or `entries` in `notation.config.ts`.
+
 This gives you a live dev stack on real AWS infrastructure. Each developer can spin up their own ephemeral stack, iterate, and tear it down with `notation destroy`.
 
 Production deployments use `notation deploy`, not `watch`.

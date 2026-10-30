@@ -52,9 +52,16 @@ export function resolveDeployment(
   opts: {
     entry: string;
     stage?: string;
+    /** The app the caller expects. Fails when the config names another. */
+    app?: string;
   },
 ): Deployment {
   const { config } = project;
+  if (opts.app !== undefined && opts.app !== config.app) {
+    throw new Error(
+      `${configFileName} names app ${JSON.stringify(config.app)}, not the expected app ${JSON.stringify(opts.app)}`,
+    );
+  }
   const entryPoint = resolveEntryPoint(project, opts.entry);
   const stage = opts.stage ?? config.defaultStage;
   if (stage === undefined) {

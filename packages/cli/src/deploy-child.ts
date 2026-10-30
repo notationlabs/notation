@@ -22,6 +22,10 @@ const forwardedSignals = ["SIGINT", "SIGTERM"] as const;
  * graph and the module cache live and die with the child, so a long-lived
  * parent (watch) never accumulates them. Events arrive as NDJSON on the
  * child's stdout; its logs pass through on stderr.
+ *
+ * The child loads the config again and resolves the deployment from the
+ * entry and stage. It fails when the config now names another app, so the
+ * child never deploys a deployment other than the parent's.
  */
 export function deployInChild({
   deployment,
@@ -38,6 +42,8 @@ export function deployInChild({
     deployment.entry,
     "--stage",
     deployment.stage,
+    "--app",
+    deployment.app,
     "--json",
     "--no-compile",
     "--no-drift-detection",

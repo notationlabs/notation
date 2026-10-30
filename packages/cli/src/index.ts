@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { program } from "commander";
+import { Option, program } from "commander";
 import { compile } from "./compile";
 import { deploy } from "./deploy";
 import { destroy } from "./destroy";
@@ -58,11 +58,18 @@ program
   .option("--execution-id <id>", "resume a durable execution")
   .option("--no-compile", "deploy the existing build without compiling")
   .option("--no-drift-detection", "skip drift detection")
+  .addOption(
+    new Option(
+      "--app <app>",
+      "fail unless the config names this app",
+    ).hideHelp(),
+  )
   .action(async (entry, options) => {
     const project = await loadProject();
     const deployment = resolveDeployment(project, {
       entry,
       stage: options.stage,
+      app: options.app,
     });
     await deploy(project, deployment, {
       json: options.json,

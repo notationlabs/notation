@@ -44,6 +44,8 @@ describe("deployInChild", () => {
         "orders",
         "--stage",
         "prod",
+        "--app",
+        "orders-app",
         "--json",
         "--no-compile",
         "--no-drift-detection",

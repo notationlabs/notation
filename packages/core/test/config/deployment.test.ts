@@ -99,6 +99,28 @@ describe("resolveDeployment", () => {
     );
   });
 
+  it("fails when the config names another app than the expected one", () => {
+    expect(() =>
+      resolveDeployment(project, {
+        entry: "orders",
+        stage: "prod",
+        app: "billing-app",
+      }),
+    ).toThrow(
+      'notation.config.ts names app "orders-app", not the expected app "billing-app"',
+    );
+  });
+
+  it("accepts the expected app", () => {
+    expect(
+      resolveDeployment(project, {
+        entry: "orders",
+        stage: "prod",
+        app: "orders-app",
+      }).app,
+    ).toBe("orders-app");
+  });
+
   it("does not resolve inherited properties as entries", () => {
     expect(() =>
       resolveDeployment(project, { entry: "constructor", stage: "prod" }),
