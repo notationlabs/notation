@@ -41,16 +41,12 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
    * only when code first reads `policy` to contribute to it.
    */
   get policy(): aws.lambda.LambdaRolePolicyInstance {
-    return this.addOnce(
-      aws.lambda.LambdaRolePolicy,
-      `${this.id}-role-policy`,
-      {
-        config: {
-          RoleName: this.role.outputValue("RoleName"),
-          PolicyName: `${this.id}-role-policy`,
-        },
+    return this.addOnce(aws.lambda.LambdaRolePolicy, `${this.id}-role-policy`, {
+      config: {
+        RoleName: this.role.outputValue("RoleName"),
+        PolicyName: `${this.id}-role-policy`,
       },
-    );
+    });
   }
 }
 
