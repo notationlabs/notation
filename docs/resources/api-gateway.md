@@ -89,6 +89,8 @@ The extra integration or authorizer has no route pointing at it, so traffic is u
 
 An extra authorizer counts toward the quota of 10 authorizers per HTTP API. `withJWTAuthorizer` creates one authorizer for each route, so an API near the quota can fail a later authorizer create. You can ask AWS Support to raise the quota, or delete the extra authorizer in the console. An extra integration counts toward the quota of 300 integrations per API.
 
+An API can also be created twice. Notation looks for the API's tag with `GetApis` one second after an unknown create. If AWS created the API and `GetApis` does not list it yet, Notation creates a second API. Notation records the second API and does not delete the first. A route created twice fails the deploy on its duplicate route key instead.
+
 ## Full example
 
 Infrastructure and runtime side-by-side:
