@@ -2,6 +2,7 @@ import path from "node:path";
 import fse from "fs-extra";
 import { execSync } from "node:child_process";
 import whichPmRuns from "which-pm-runs";
+import { setConfigApp, toNameSafe } from "./app-name";
 
 const dirname = path.dirname(new URL(import.meta.url).pathname);
 const packageManager = whichPmRuns()?.name || "npm";
@@ -41,11 +42,9 @@ export async function scaffoldApp(appName: string) {
 
   const configPath = path.join(appDir, "notation.config.ts");
   const config = await fse.readFile(configPath, "utf8");
-  await fse.writeFile(
-    configPath,
-    config.replace('app: "notation-starter"', `app: "${toNameSafe(appName)}"`),
-    { encoding: "utf8" },
-  );
+  await fse.writeFile(configPath, setConfigApp(config, toNameSafe(appName)), {
+    encoding: "utf8",
+  });
 
   console.log(`Installing dependencies with ${packageManager}...`);
 
@@ -61,18 +60,6 @@ export async function scaffoldApp(appName: string) {
   console.log(`➜ cd ${appName}`);
   console.log(`➜ ${getPmRunCommand(packageManager)} viz`);
   console.log(`➜ ${getPmRunCommand(packageManager)} deploy`);
-}
-
-// The app name must be name-safe: 1 to 32 characters from a-z, 0-9 and "-",
-// with no leading or trailing "-".
-function toNameSafe(name: string) {
-  const safe = path
-    .basename(name)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .slice(0, 32)
-    .replace(/^-+|-+$/g, "");
-  return safe || "notation-app";
 }
 
 function getPmInstallCommand(pm: string) {
