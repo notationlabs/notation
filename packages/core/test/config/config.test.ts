@@ -30,6 +30,11 @@ describe("defineConfig", () => {
     });
     defineConfig({
       // @ts-expect-error
+      app: "orders--app",
+      entries: { orders: "infra/api.ts" },
+    });
+    defineConfig({
+      // @ts-expect-error
       app: "a".repeat(33) as "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       entries: { orders: "infra/api.ts" },
     });

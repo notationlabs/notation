@@ -18,13 +18,13 @@ type AllNameChars<S extends string, N extends unknown[] = []> = S extends ""
 
 export type IsNameSafe<S extends string> = S extends ""
   ? false
-  : S extends `-${string}` | `${string}-`
+  : S extends `-${string}` | `${string}-` | `${string}--${string}`
     ? false
     : AllNameChars<S>;
 
 /**
  * `S` when it is a name-safe string literal: `[a-z0-9-]`, 1 to 32 characters,
- * with no leading or trailing hyphen. Otherwise a message type that `S` is not
+ * with no leading, trailing or double hyphen. Otherwise a message type that `S` is not
  * assignable to. A widened `string` is rejected.
  */
 export type NameSafe<S extends string> = string extends S
@@ -33,7 +33,8 @@ export type NameSafe<S extends string> = string extends S
     ? S
     : `"${S}" is not name-safe`;
 
-const nameSafeRe = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+// AWS names join app, stage and id with "--", so a name must not contain "--".
+const nameSafeRe = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export function isNameSafe(value: unknown): value is string {
   return (
@@ -53,6 +54,6 @@ export function assertNameSafe(
 ): asserts value is string {
   if (isNameSafe(value)) return;
   throw new Error(
-    `${label} ${JSON.stringify(value)} is not name-safe: use 1 to ${maxNameLength} characters from a-z, 0-9 and "-", with no leading or trailing "-"`,
+    `${label} ${JSON.stringify(value)} is not name-safe: use 1 to ${maxNameLength} characters from a-z, 0-9 and "-", with no leading, trailing or double "-"`,
   );
 }

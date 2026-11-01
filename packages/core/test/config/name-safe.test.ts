@@ -18,6 +18,7 @@ describe("isNameSafe", () => {
     "-dev",
     "dev-",
     "-",
+    "orders--app",
     "a".repeat(33),
     "ünicode",
     undefined,
@@ -30,7 +31,7 @@ describe("isNameSafe", () => {
 describe("assertNameSafe", () => {
   it("names the value and the rule", () => {
     expect(() => assertNameSafe("Prod", "stage")).toThrow(
-      'stage "Prod" is not name-safe: use 1 to 32 characters from a-z, 0-9 and "-", with no leading or trailing "-"',
+      'stage "Prod" is not name-safe: use 1 to 32 characters from a-z, 0-9 and "-", with no leading, trailing or double "-"',
     );
   });
 

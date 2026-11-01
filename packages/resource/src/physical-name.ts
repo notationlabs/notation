@@ -30,8 +30,10 @@ function fnv1a(text: string): string {
 }
 
 /**
- * Makes the physical name of a resource: `<app>-<stage>-<name>`, or `name`
- * when there is no scope.
+ * Makes the physical name of a resource: `<app>--<stage>--<name>`, or `name`
+ * when there is no scope. App and stage names cannot contain `--`, so the
+ * first `--` ends the app and the second ends the stage. Two scopes therefore
+ * never produce the same name.
  *
  * When the result is longer than `rule.maxLength`, it is cut short and ends
  * in `-` and the 8 hex characters of the FNV-1a hash of the full name, so
@@ -46,7 +48,7 @@ export function physicalName(
     rule.requiredEnding && name.endsWith(rule.requiredEnding)
       ? rule.requiredEnding
       : "";
-  const full = scope ? `${scope.app}-${scope.stage}-${name}` : name;
+  const full = scope ? `${scope.app}--${scope.stage}--${name}` : name;
   if (full.length <= rule.maxLength) return full;
 
   const body = full.slice(0, full.length - ending.length);

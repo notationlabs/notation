@@ -27,7 +27,7 @@ type ScheduleConfig = {
 };
 ```
 
-`name` keys the schedule in state. In AWS, the EventBridge rule is named `<app>-<stage>-<name>`, such as `my-app-prod-log-every-minute`. See [AWS names](../manual/project-config.md#aws-names).
+`name` keys the schedule in state. In AWS, the EventBridge rule is named `<app>--<stage>--<name>`, such as `my-app--prod--log-every-minute`. See [AWS names](../manual/project-config.md#aws-names).
 
 ## Schedule types
 

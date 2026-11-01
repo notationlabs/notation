@@ -5,7 +5,7 @@ const scope = { app: "orders-app", stage: "prod" };
 
 it("prefixes the name with the app and stage", () => {
   expect(physicalName(scope, "get-orders", { maxLength: 64 })).toBe(
-    "orders-app-prod-get-orders",
+    "orders-app--prod--get-orders",
   );
 });
 
@@ -16,9 +16,9 @@ it("leaves the name as it is without a scope", () => {
 });
 
 it("keeps a name of exactly the maximum length", () => {
-  const name = "x".repeat(64 - "orders-app-prod-".length);
+  const name = "x".repeat(64 - "orders-app--prod--".length);
   expect(physicalName(scope, name, { maxLength: 64 })).toBe(
-    `orders-app-prod-${name}`,
+    `orders-app--prod--${name}`,
   );
 });
 
@@ -26,7 +26,7 @@ it("shortens a long name and ends it with a hash of the full name", () => {
   const name = `${"a".repeat(50)}-role`;
   const result = physicalName(scope, name, { maxLength: 64 });
   expect(result).toHaveLength(64);
-  expect(result).toMatch(/^orders-app-prod-a+-[0-9a-f]{8}$/);
+  expect(result).toMatch(/^orders-app--prod--a+-[0-9a-f]{8}$/);
   expect(physicalName(scope, name, { maxLength: 64 })).toBe(result);
 });
 
@@ -47,11 +47,11 @@ it("gives different names to stages whose long names share a prefix", () => {
 });
 
 it("does not leave a separator before the hash", () => {
-  // The cut falls just after the hyphen in "orders-app-prod-ab-".
+  // The cut falls just after the hyphen in "orders-app--prod--ab-".
   const result = physicalName(scope, `ab-${"c".repeat(60)}`, {
-    maxLength: 28,
+    maxLength: 30,
   });
-  expect(result).toMatch(/^orders-app-prod-ab-[0-9a-f]{8}$/);
+  expect(result).toMatch(/^orders-app--prod--ab-[0-9a-f]{8}$/);
 });
 
 it("keeps a required ending at the end of a shortened name", () => {
@@ -61,7 +61,7 @@ it("keeps a required ending at the end of a shortened name", () => {
     requiredEnding: ".fifo",
   });
   expect(result).toHaveLength(80);
-  expect(result).toMatch(/^orders-app-prod-q+-[0-9a-f]{8}\.fifo$/);
+  expect(result).toMatch(/^orders-app--prod--q+-[0-9a-f]{8}\.fifo$/);
 });
 
 it("scopes names by the app and stage of the active collection", async () => {
@@ -72,7 +72,7 @@ it("scopes names by the app and stage of the active collection", async () => {
     },
     { scope },
   );
-  expect(name).toBe("orders-app-prod-get-orders");
+  expect(name).toBe("orders-app--prod--get-orders");
 });
 
 it("does not scope names outside a collection", () => {
@@ -84,6 +84,6 @@ it("does not scope names outside a collection", () => {
 // Changing the hash renames, and so replaces, every shortened resource.
 it("uses a hash that does not change between releases", () => {
   expect(physicalName(scope, "a".repeat(60), { maxLength: 64 })).toBe(
-    `orders-app-prod-${"a".repeat(39)}-0623bc13`,
+    `orders-app--prod--${"a".repeat(37)}-386c3ec7`,
   );
 });

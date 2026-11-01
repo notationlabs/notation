@@ -75,35 +75,35 @@ No stage given. Pass --stage, or set defaultStage in notation.config.ts
 
 ## AWS names
 
-Each stage of an entry declares the same resources, because infra code cannot read the stage. To keep the stages apart in one AWS account, Notation starts the AWS name of each resource that it names with the app and the stage: `<app>-<stage>-<id>`.
+Each stage of an entry declares the same resources, because infra code cannot read the stage. To keep the stages apart in one AWS account, Notation starts the AWS name of each resource that it names with the app and the stage: `<app>--<stage>--<id>`. The parts are joined with `--` because app and stage names cannot contain `--`. Two different apps or stages therefore never produce the same AWS name.
 
 For example, the starter app declares a Lambda function with the ID `todos-getTodos`. Each stage gets its own function and IAM role:
 
-| Stage  | Lambda function              | IAM role                          |
-| ------ | ---------------------------- | --------------------------------- |
-| `dev`  | `my-app-dev-todos-getTodos`  | `my-app-dev-todos-getTodos-role`  |
-| `prod` | `my-app-prod-todos-getTodos` | `my-app-prod-todos-getTodos-role` |
+| Stage  | Lambda function                | IAM role                            |
+| ------ | ------------------------------ | ----------------------------------- |
+| `dev`  | `my-app--dev--todos-getTodos`  | `my-app--dev--todos-getTodos-role`  |
+| `prod` | `my-app--prod--todos-getTodos` | `my-app--prod--todos-getTodos-role` |
 
 The names of two apps differ in the same way, so several apps and stages can share one AWS account.
 
 Notation scopes these names:
 
-| Resource               | AWS name                  | Longest name |
-| ---------------------- | ------------------------- | ------------ |
-| Lambda function        | `<app>-<stage>-<id>`      | 64           |
-| IAM role of a function | `<app>-<stage>-<id>-role` | 64           |
-| SQS queue              | `<app>-<stage>-<name>`    | 80           |
-| EventBridge rule       | `<app>-<stage>-<name>`    | 64           |
-| API Gateway API        | `<app>-<stage>-<name>`    | 128          |
+| Resource               | AWS name                    | Longest name |
+| ---------------------- | --------------------------- | ------------ |
+| Lambda function        | `<app>--<stage>--<id>`      | 64           |
+| IAM role of a function | `<app>--<stage>--<id>-role` | 64           |
+| SQS queue              | `<app>--<stage>--<name>`    | 80           |
+| EventBridge rule       | `<app>--<stage>--<name>`    | 64           |
+| API Gateway API        | `<app>--<stage>--<name>`    | 128          |
 
 Names that only have to be unique inside another resource stay as they are. For example, the inline policy of a role is `<id>-role-policy`, and a function's log group is `/aws/lambda/<function name>`, which already contains the app and the stage.
 
-**A name longer than the service allows is shortened.** Notation cuts the name short and ends it with `-` and an 8-character hash of the full name. For example, the function `warehouse-processIncomingOrderNotificationsFromSuppliers` in the `prod` stage would be named `my-app-prod-warehouse-processIncomingOrderNotificationsFromSuppliers`, which is 68 characters. Lambda allows 64, so Notation names the function and its role:
+**A name longer than the service allows is shortened.** Notation cuts the name short and ends it with `-` and an 8-character hash of the full name. For example, the function `warehouse-processIncomingOrderNotificationsFromSuppliers` in the `prod` stage would be named `my-app--prod--warehouse-processIncomingOrderNotificationsFromSuppliers`, which is 70 characters. Lambda allows 64, so Notation names the function and its role:
 
 | Resource        | AWS name                                                           |
 | --------------- | ------------------------------------------------------------------ |
-| Lambda function | `my-app-prod-warehouse-processIncomingOrderNotifications-44f229cc` |
-| IAM role        | `my-app-prod-warehouse-processIncomingOrderNotifications-7da77c57` |
+| Lambda function | `my-app--prod--warehouse-processIncomingOrderNotificatio-9bed4260` |
+| IAM role        | `my-app--prod--warehouse-processIncomingOrderNotificatio-cf8fdd43` |
 
 The two names start the same way but end in different hashes, because each hash comes from a different full name. The hash is the same on every deploy, so a shortened name does not change between deploys. A FIFO queue's name keeps its `.fifo` ending after the hash.
 
@@ -129,7 +129,8 @@ The app, entry names and stages must be name-safe:
 
 - 1 to 32 characters,
 - only lowercase letters `a-z`, digits `0-9` and hyphens `-`,
-- no hyphen at the start or the end.
+- no hyphen at the start or the end,
+- no two hyphens in a row. AWS names use `--` to separate the app and the stage.
 
 | Name        | Valid | Reason                   |
 | ----------- | ----- | ------------------------ |
@@ -137,6 +138,7 @@ The app, entry names and stages must be name-safe:
 | `prod-eu-1` | Yes   |                          |
 | `My_App`    | No    | Uppercase letter and `_` |
 | `-preview`  | No    | Starts with a hyphen     |
+| `my--app`   | No    | Two hyphens in a row     |
 
 `defineConfig` checks the app, the entry names and `defaultStage` at compile time, so your editor reports a bad name before you run a command:
 

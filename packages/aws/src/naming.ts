@@ -18,7 +18,7 @@ const rules = {
 } satisfies Record<string, PhysicalNameRule>;
 
 /**
- * Makes the AWS name of a resource from its id: `<app>-<stage>-<id>`,
+ * Makes the AWS name of a resource from its id: `<app>--<stage>--<id>`,
  * shortened with a hash when it is too long for the service.
  */
 export function awsName(kind: keyof typeof rules, id: string): string {

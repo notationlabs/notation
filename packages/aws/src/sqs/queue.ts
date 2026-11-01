@@ -6,7 +6,7 @@ import { awsName } from "src/naming";
 export type QueueConfig = {
   /**
    * Names the queue, and keys it in state. The queue is named
-   * `<app>-<stage>-<name>` in AWS. Changing the name replaces the queue.
+   * `<app>--<stage>--<name>` in AWS. Changing the name replaces the queue.
    * A FIFO queue's name ends in `.fifo`.
    */
   name: string;

@@ -6,8 +6,8 @@
  * `<id>-policy`, `<id>-role-policy`, `<id>-log-group`) and in AWS names, so
  * its characters have to be valid in all of them:
  *
- * - Lambda `FunctionName` (`<app>-<stage>-<id>`): `[a-zA-Z0-9-_]`.
- * - IAM `RoleName` (`<app>-<stage>-<id>-role`): `[\w+=,.@-]`.
+ * - Lambda `FunctionName` (`<app>--<stage>--<id>`): `[a-zA-Z0-9-_]`.
+ * - IAM `RoleName` (`<app>--<stage>--<id>-role`): `[\w+=,.@-]`.
  * - The EventBridge target `Id` is the function name: `[.\-_A-Za-z0-9]`.
  * - Lambda permission `StatementId`s embed the function name: `[0-9A-Za-z_-]`.
  *

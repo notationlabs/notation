@@ -8,7 +8,7 @@ import { assertLambdaId, type NameSafe } from "./lambda-id";
 export type LambdaConfig = {
   /**
    * Names the function and its role, zip, policy and log group, and keys them
-   * in state. The function is named `<app>-<stage>-<id>` in AWS. Changing the
+   * in state. The function is named `<app>--<stage>--<id>` in AWS. Changing the
    * id replaces the function, so keep it stable.
    *
    * Must be name-safe: 1 to 59 letters, digits, hyphens or underscores.

@@ -83,7 +83,7 @@ return collectResourceGraph(() => import(outFilePath), {
 
 While the compiled entry point is imported, calls such as `lambda({ ... })` add the Lambda function and its associated resources (IAM role, log group, zip package) to the graph.
 
-`scope` holds the app and the stage of the deployment. Resource constructors such as `lambda()` read the scope with `scopedPhysicalName` from `@notation/resource`, and start each AWS name with it: `<app>-<stage>-<id>`. Infra code does not read the scope. `notation viz` builds the graph without a scope, because it deploys nothing and shows only resource IDs.
+`scope` holds the app and the stage of the deployment. Resource constructors such as `lambda()` read the scope with `scopedPhysicalName` from `@notation/resource`, and start each AWS name with it: `<app>--<stage>--<id>`. Infra code does not read the scope. `notation viz` builds the graph without a scope, because it deploys nothing and shows only resource IDs.
 
 The reconciler uses the resulting `{ resources, resourceGroups }` object to plan deployments.
 
