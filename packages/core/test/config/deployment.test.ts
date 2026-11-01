@@ -12,6 +12,7 @@ import type { NotationConfig } from "src/config/config";
 import {
   resolveDeployment,
   resolveDeploymentId,
+  resolveDeploymentIdentity,
   resolveEntryPoint,
 } from "src/config/deployment";
 
@@ -131,6 +132,24 @@ describe("resolveDeployment", () => {
     expect(() =>
       resolveDeployment(project, { entry: "constructor", stage: "prod" }),
     ).toThrow('No entry named "constructor"');
+  });
+});
+
+describe("resolveDeploymentIdentity", () => {
+  const missing = {
+    config: { ...config, entries: { orders: "infra/gone.ts" } },
+  };
+
+  it("does not need the entry file to exist", () => {
+    expect(
+      resolveDeploymentIdentity(missing, { entry: "orders", stage: "prod" }),
+    ).toEqual({ app: "orders-app", stage: "prod", entry: "orders" });
+  });
+
+  it("fails when the config does not name the entry", () => {
+    expect(() =>
+      resolveDeploymentIdentity(missing, { entry: "billing", stage: "prod" }),
+    ).toThrow('No entry named "billing"');
   });
 });
 

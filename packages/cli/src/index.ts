@@ -13,6 +13,7 @@ import {
   NodeDurableRuntime,
   loadProject,
   resolveDeployment,
+  resolveDeploymentIdentity,
   resolveEntryPoint,
 } from "@notation/core";
 
@@ -41,7 +42,7 @@ program
   .description("Start Notation Dashboard")
   .action(async (entry, options) => {
     const project = await loadProject();
-    const deployment = resolveDeployment(project, {
+    const deployment = resolveDeploymentIdentity(project, {
       entry,
       stage: options.stage,
     });

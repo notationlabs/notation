@@ -25,8 +25,7 @@ export function resolveDeploymentId(identity: DeploymentIdentity): string {
   return `${identity.app}:${identity.stage}:${identity.entry}`;
 }
 
-/** Resolves an entry name to the absolute path of its entry file. */
-export function resolveEntryPoint(project: Project, entry: string): string {
+function assertEntryName(project: Project, entry: string) {
   const { entries } = project.config;
   if (!Object.hasOwn(entries, entry)) {
     const names = Object.keys(entries).join(", ");
@@ -34,7 +33,12 @@ export function resolveEntryPoint(project: Project, entry: string): string {
       `No entry named ${JSON.stringify(entry)} in ${configFileName}. Entries: ${names}`,
     );
   }
-  const entryPoint = fromProjectRoot(entries[entry]!);
+}
+
+/** Resolves an entry name to the absolute path of its entry file. */
+export function resolveEntryPoint(project: Project, entry: string): string {
+  assertEntryName(project, entry);
+  const entryPoint = fromProjectRoot(project.config.entries[entry]!);
   if (!fs.existsSync(entryPoint)) {
     throw new Error(
       `Entry file not found: ${entryPoint}, the file of entry ${JSON.stringify(entry)} in ${configFileName}`,
@@ -43,26 +47,30 @@ export function resolveEntryPoint(project: Project, entry: string): string {
   return entryPoint;
 }
 
+export type ResolveDeploymentOptions = {
+  entry: string;
+  stage?: string;
+  /** The app the caller expects. Fails when the config names another. */
+  app?: string;
+};
+
 /**
- * Resolves the deployment of an entry, named in the config, to a stage. The
- * stage falls back to the config's `defaultStage`.
+ * Resolves the identity of an entry's deployment to a stage. The stage falls
+ * back to the config's `defaultStage`. The entry must be named in the config,
+ * but its file does not have to exist, so commands that only read state still
+ * work after the file is deleted.
  */
-export function resolveDeployment(
+export function resolveDeploymentIdentity(
   project: Project,
-  opts: {
-    entry: string;
-    stage?: string;
-    /** The app the caller expects. Fails when the config names another. */
-    app?: string;
-  },
-): Deployment {
+  opts: ResolveDeploymentOptions,
+): DeploymentIdentity {
   const { config } = project;
   if (opts.app !== undefined && opts.app !== config.app) {
     throw new Error(
       `${configFileName} names app ${JSON.stringify(config.app)}, not the expected app ${JSON.stringify(opts.app)}`,
     );
   }
-  const entryPoint = resolveEntryPoint(project, opts.entry);
+  assertEntryName(project, opts.entry);
   const stage = opts.stage ?? config.defaultStage;
   if (stage === undefined) {
     throw new Error(
@@ -70,5 +78,17 @@ export function resolveDeployment(
     );
   }
   assertNameSafe(stage, "stage");
-  return { app: config.app, stage, entry: opts.entry, entryPoint };
+  return { app: config.app, stage, entry: opts.entry };
+}
+
+/**
+ * Resolves the deployment of an entry to a stage, as
+ * `resolveDeploymentIdentity` does, and adds the path of the entry file.
+ */
+export function resolveDeployment(
+  project: Project,
+  opts: ResolveDeploymentOptions,
+): Deployment {
+  const identity = resolveDeploymentIdentity(project, opts);
+  return { ...identity, entryPoint: resolveEntryPoint(project, opts.entry) };
 }
