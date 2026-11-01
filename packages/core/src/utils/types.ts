@@ -1,8 +1,5 @@
-export type IfAllPropertiesOptional<T, Y, N> = T extends Partial<T>
-  ? Partial<T> extends T
-    ? Y
-    : N
-  : N;
+export type IfAllPropertiesOptional<T, Y, N> =
+  T extends Partial<T> ? (Partial<T> extends T ? Y : N) : N;
 
 /**
  * @typeParam K - The record key

@@ -24,8 +24,8 @@ const forwardedSignals = ["SIGINT", "SIGTERM"] as const;
  * child's stdout; its logs pass through on stderr.
  *
  * The child loads the config again and resolves the deployment from the
- * entry and stage. It fails when the config now names another app, so the
- * child never deploys a deployment other than the parent's.
+ * entry and stage. `watch` stops when the config changes, so the child reads
+ * the same config as the parent.
  */
 export function deployInChild({
   deployment,
@@ -42,8 +42,6 @@ export function deployInChild({
     deployment.entry,
     "--stage",
     deployment.stage,
-    "--app",
-    deployment.app,
     "--json",
     "--no-compile",
     "--no-drift-detection",

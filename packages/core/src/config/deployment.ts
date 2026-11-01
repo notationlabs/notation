@@ -50,8 +50,6 @@ export function resolveEntryPoint(project: Project, entry: string): string {
 export type ResolveDeploymentOptions = {
   entry: string;
   stage?: string;
-  /** The app the caller expects. Fails when the config names another. */
-  app?: string;
 };
 
 /**
@@ -65,11 +63,6 @@ export function resolveDeploymentIdentity(
   opts: ResolveDeploymentOptions,
 ): DeploymentIdentity {
   const { config } = project;
-  if (opts.app !== undefined && opts.app !== config.app) {
-    throw new Error(
-      `${configFileName} names app ${JSON.stringify(config.app)}, not the expected app ${JSON.stringify(opts.app)}`,
-    );
-  }
   assertEntryName(project, opts.entry);
   const stage = opts.stage ?? config.defaultStage;
   if (stage === undefined) {

@@ -1,15 +1,34 @@
 import chokidar from "chokidar";
 import { randomUUID } from "node:crypto";
-import { filePaths, type Deployment } from "@notation/core";
+import { once } from "node:events";
+import {
+  configFileName,
+  filePaths,
+  fromProjectRoot,
+  type Deployment,
+} from "@notation/core";
 import { compile } from "./compile";
 import { deployInChild } from "./deploy-child";
 import { defaultLogger, type Logger } from "./logger";
 
 const dotFilesRe = /(^|[\/\\])\../;
 
+export type WatchOptions = {
+  logger?: Logger;
+  exit?: (code: number) => void;
+};
+
+/**
+ * Compiles the entry in watch mode and redeploys on each rebuild. Resolves
+ * once the watchers are ready.
+ *
+ * `watch` uses the config it started with. When `notation.config.ts` changes,
+ * `watch` waits for a running deploy to finish and then exits with code 1, so
+ * the user restarts it with the new config.
+ */
 export async function watch(
   deployment: Deployment,
-  logger: Logger = defaultLogger,
+  { logger = defaultLogger, exit = process.exit }: WatchOptions = {},
 ) {
   await compile(deployment.entryPoint, { watch: true, logger });
 
@@ -17,11 +36,16 @@ export async function watch(
     ignored: dotFilesRe,
     persistent: true,
   });
+  const configWatcher = chokidar.watch(fromProjectRoot(configFileName), {
+    ignoreInitial: true,
+  });
 
   watcher.on("all", debounceDeploy);
+  configWatcher.on("all", stop);
 
   let isDeploying = false;
   let deployQueued = false;
+  let stopping = false;
   let timeoutId: NodeJS.Timeout;
   const debounceTime = 500;
 
@@ -35,6 +59,7 @@ export async function watch(
   }
 
   function triggerDeploy() {
+    if (stopping) return;
     if (isDeploying) {
       deployQueued = true;
       return;
@@ -49,7 +74,9 @@ export async function watch(
     deployInChild({ deployment, executionId, logger })
       .then(() => {
         isDeploying = false;
-        if (deployQueued) {
+        if (stopping) {
+          void close();
+        } else if (deployQueued) {
           deployQueued = false;
           triggerDeploy();
         }
@@ -57,6 +84,24 @@ export async function watch(
       .catch((err) => {
         logger.error(err);
         isDeploying = false;
+        if (stopping) void close();
       });
   }
+
+  function stop() {
+    if (stopping) return;
+    stopping = true;
+    clearTimeout(timeoutId);
+    logger.error(
+      `${configFileName} changed. Restart watch to use the new config.`,
+    );
+    if (!isDeploying) void close();
+  }
+
+  async function close() {
+    await Promise.all([watcher.close(), configWatcher.close()]);
+    exit(1);
+  }
+
+  await Promise.all([once(watcher, "ready"), once(configWatcher, "ready")]);
 }
