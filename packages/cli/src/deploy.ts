@@ -4,7 +4,6 @@ import {
   deployApp,
   resolveDeploymentId,
   type Deployment,
-  type Project,
 } from "@notation/core";
 import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
@@ -21,7 +20,6 @@ export type DeployCommandOptions = {
 };
 
 export async function deploy(
-  project: Project,
   deployment: Deployment,
   opts: DeployCommandOptions = {},
 ) {
@@ -31,7 +29,7 @@ export async function deploy(
     : createLoggerReconcilerSubscriber({ logger });
 
   if (opts.compile !== false) {
-    await compile(project, deployment.entryPoint, { logger });
+    await compile(deployment.entryPoint, { logger });
   }
   logger.info(`Deploying ${resolveDeploymentId(deployment)}`);
   const executionId = opts.executionId ?? randomUUID();

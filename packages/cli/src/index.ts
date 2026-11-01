@@ -31,7 +31,7 @@ program
   .description("Compile Notation App")
   .action(async (entry) => {
     const project = await loadProject();
-    await compile(project, resolveEntryPoint(project, entry));
+    await compile(resolveEntryPoint(project, entry));
   });
 
 program
@@ -71,7 +71,7 @@ program
       stage: options.stage,
       app: options.app,
     });
-    await deploy(project, deployment, {
+    await deploy(deployment, {
       json: options.json,
       executionId: options.executionId,
       compile: options.compile,
@@ -92,7 +92,7 @@ program
       entry,
       stage: options.stage,
     });
-    await destroy(project, deployment, {
+    await destroy(deployment, {
       json: options.json,
       executionId: options.executionId,
     });
@@ -110,7 +110,7 @@ program
       entry,
       stage: options.stage,
     });
-    await plan(project, deployment, { json: options.json });
+    await plan(deployment, { json: options.json });
   });
 
 program
@@ -119,7 +119,7 @@ program
   .description("Visualise Notation App")
   .action(async (entry) => {
     const project = await loadProject();
-    await visualise(project, resolveEntryPoint(project, entry));
+    await visualise(resolveEntryPoint(project, entry));
   });
 
 program
@@ -133,7 +133,7 @@ program
       entry,
       stage: options.stage,
     });
-    await watch(project, deployment);
+    await watch(deployment);
   });
 
 process.exitCode = await runWithErrorHandling(

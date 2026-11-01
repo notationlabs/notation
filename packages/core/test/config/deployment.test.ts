@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { NotationConfig } from "src/config/config";
 import {
   resolveDeployment,
@@ -21,13 +21,19 @@ const root = realpathSync(
 mkdirSync(path.join(root, "infra"));
 writeFileSync(path.join(root, "infra/api.ts"), "");
 writeFileSync(path.join(root, "infra/billing.ts"), "");
-afterAll(() => rmSync(root, { recursive: true, force: true }));
+writeFileSync(path.join(root, "notation.config.ts"), "");
+const cwd = process.cwd();
+beforeAll(() => process.chdir(root));
+afterAll(() => {
+  process.chdir(cwd);
+  rmSync(root, { recursive: true, force: true });
+});
 
 const config: NotationConfig = {
   app: "orders-app",
   entries: { orders: "infra/api.ts", billing: "infra/billing.ts" },
 };
-const project = { root, config };
+const project = { config };
 
 describe("resolveDeploymentId", () => {
   it("keys a deployment by app, stage and entry", () => {
@@ -65,7 +71,7 @@ describe("resolveDeployment", () => {
 
   it("falls back to the default stage", () => {
     const deployment = resolveDeployment(
-      { root, config: { ...config, defaultStage: "dev" } },
+      { config: { ...config, defaultStage: "dev" } },
       { entry: "billing" },
     );
     expect(deployment.stage).toBe("dev");
@@ -73,7 +79,7 @@ describe("resolveDeployment", () => {
 
   it("prefers the given stage to the default stage", () => {
     const deployment = resolveDeployment(
-      { root, config: { ...config, defaultStage: "dev" } },
+      { config: { ...config, defaultStage: "dev" } },
       { entry: "billing", stage: "staging" },
     );
     expect(deployment.stage).toBe("staging");
@@ -131,7 +137,6 @@ describe("resolveDeployment", () => {
 describe("resolveEntryPoint", () => {
   it("fails when the entry file does not exist", () => {
     const missing = {
-      root,
       config: { ...config, entries: { orders: "infra/gone.ts" } },
     };
     expect(() => resolveEntryPoint(missing, "orders")).toThrow(

@@ -1,12 +1,7 @@
-import type { Deployment, Project } from "@notation/core";
+import type { Deployment } from "@notation/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type AppOptions = { deployment: Deployment; executionId: string };
-
-const project: Project = {
-  root: "/project",
-  config: { app: "orders-app", entries: { orders: "infra/app.ts" } },
-};
 
 const deployment: Deployment = {
   app: "orders-app",
@@ -43,7 +38,7 @@ describe.each([
   it("resumes the execution named by --execution-id", async () => {
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-    await run(project, deployment, {
+    await run(deployment, {
       executionId: "crashed-execution",
       logger,
     });
@@ -61,8 +56,8 @@ describe.each([
   it("starts a new execution and prints its ID before running it", async () => {
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-    await run(project, deployment, { logger });
-    await run(project, deployment, { logger });
+    await run(deployment, { logger });
+    await run(deployment, { logger });
 
     const [first, second] = app.mock.calls.map(([opts]) => opts.executionId);
     expect(first).toMatch(/^[0-9a-f-]{36}$/);
@@ -86,7 +81,7 @@ describe("deploy options", () => {
     deployApp.mockClear();
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-    await deploy(project, deployment, {
+    await deploy(deployment, {
       compile: false,
       driftDetection: false,
       logger,
@@ -103,7 +98,7 @@ describe("deploy options", () => {
     vi.mocked(compile).mockClear();
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-    await deploy(project, deployment, { logger });
+    await deploy(deployment, { logger });
 
     expect(compile).toHaveBeenCalledOnce();
   });

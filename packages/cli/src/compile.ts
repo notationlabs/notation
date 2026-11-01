@@ -1,4 +1,3 @@
-import path from "node:path";
 import chokidar from "chokidar";
 import { glob } from "glob";
 import esbuild from "esbuild";
@@ -6,7 +5,7 @@ import {
   functionInfraPlugin,
   functionRuntimePlugin,
 } from "@notation/esbuild-plugins";
-import { filePaths, type Project } from "@notation/core";
+import { filePaths, fromProjectRoot } from "@notation/core";
 import { defaultLogger, type Logger } from "./logger";
 
 export type CompileOptions = {
@@ -14,52 +13,40 @@ export type CompileOptions = {
   logger?: Logger;
 };
 
-export async function compile(
-  project: Project,
-  entryPoint: string,
-  opts: CompileOptions = {},
-) {
+export async function compile(entryPoint: string, opts: CompileOptions = {}) {
   const watch = opts.watch ?? false;
   const logger = opts.logger ?? defaultLogger;
 
   logger.info(`${watch ? "Watching" : "Compiling"} infrastructure`, entryPoint);
-  await compileInfra(project, entryPoint, watch);
+  await compileInfra(entryPoint, watch);
 
   logger.info(`${watch ? "Watching" : "Compiling"} functions`);
 
   // @todo: fnEntryPoints could be an output of compileInfra
-  const fnEntryPoints = await glob(
-    path.join(project.root, "runtime/**/*.fn.ts"),
-  );
+  const fnEntryPoints = await glob(fromProjectRoot("runtime/**/*.fn.ts"));
   let disposeFnCompiler = await compileFns(fnEntryPoints, watch);
 
   if (!watch) return;
 
   chokidar
     .watch("**/*.fn.ts", {
-      cwd: project.root,
+      cwd: fromProjectRoot("."),
       ignored: /node_modules/,
       persistent: true,
     })
     .on("all", async () => {
       if (disposeFnCompiler) disposeFnCompiler();
-      const fnEntryPoints = await glob(
-        path.join(project.root, "runtime/**/*.fn.ts"),
-      );
+      const fnEntryPoints = await glob(fromProjectRoot("runtime/**/*.fn.ts"));
       disposeFnCompiler = await compileFns(fnEntryPoints, watch);
     });
 }
 
-export async function compileInfra(
-  project: Project,
-  entryPoint: string,
-  watch: boolean = false,
-) {
+export async function compileInfra(entryPoint: string, watch: boolean = false) {
   const context = await esbuild.context({
     entryPoints: [entryPoint],
     plugins: [functionInfraPlugin()],
     outdir: filePaths.dist.dir(),
-    outbase: project.root,
+    outbase: fromProjectRoot("."),
     outExtension: { ".js": ".mjs" },
     bundle: true,
     format: "esm",

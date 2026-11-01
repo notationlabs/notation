@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadProject } from "src/config/project";
+import { projectRoot } from "src/utils/paths";
 import { resolveDeployment, resolveEntryPoint } from "src/config/deployment";
 
 const originalCwd = process.cwd();
@@ -53,7 +54,6 @@ describe("loadProject", () => {
     await writeConfig(ordersConfig);
 
     await expect(loadProject()).resolves.toEqual({
-      root,
       config: {
         app: "orders-app",
         entries: { orders: "infra/api.ts" },
@@ -67,7 +67,10 @@ describe("loadProject", () => {
     await mkdir(path.join(root, "infra"));
     process.chdir(path.join(root, "infra"));
 
-    await expect(loadProject()).resolves.toMatchObject({ root });
+    await expect(loadProject()).resolves.toMatchObject({
+      config: { app: "orders-app" },
+    });
+    expect(projectRoot()).toBe(root);
   });
 
   it("bundles the config's relative imports", async () => {

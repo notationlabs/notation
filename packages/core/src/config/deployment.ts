@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import path from "node:path";
+import { fromProjectRoot } from "src/utils/paths";
 import { configFileName } from "./config";
 import { assertNameSafe } from "./name-safe";
 import type { Project } from "./project";
@@ -34,7 +34,7 @@ export function resolveEntryPoint(project: Project, entry: string): string {
       `No entry named ${JSON.stringify(entry)} in ${configFileName}. Entries: ${names}`,
     );
   }
-  const entryPoint = path.resolve(project.root, entries[entry]!);
+  const entryPoint = fromProjectRoot(entries[entry]!);
   if (!fs.existsSync(entryPoint)) {
     throw new Error(
       `Entry file not found: ${entryPoint}, the file of entry ${JSON.stringify(entry)} in ${configFileName}`,

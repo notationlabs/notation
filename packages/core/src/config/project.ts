@@ -5,10 +5,11 @@ import esbuild from "esbuild";
 import { filePaths, projectRoot } from "src/utils/paths";
 import { configFileName, parseConfig, type NotationConfig } from "./config";
 
-/** A project: its root directory and its loaded config. */
+/**
+ * A loaded project. The project root is not stored here: every path resolves
+ * against `projectRoot()`, so there is one source for it.
+ */
 export type Project = {
-  /** Absolute path of the project root, the directory of the config. */
-  root: string;
   config: NotationConfig;
 };
 
@@ -38,7 +39,7 @@ export async function loadProject(): Promise<Project> {
       logLevel: "silent",
     });
     const module = await import(pathToFileURL(outfile).href);
-    return { root, config: parseConfig(module.default) };
+    return { config: parseConfig(module.default) };
   } finally {
     await fs.rm(outfile, { force: true });
   }
