@@ -52,8 +52,9 @@ const configKeys = [
 
 /** Checks a loaded config at runtime, and returns it typed. */
 export function parseConfig(value: unknown): NotationConfig {
+  const prefix = `Invalid ${configFileName}:`;
   const fail = (message: string): never => {
-    throw new Error(`Invalid ${configFileName}: ${message}`);
+    throw new Error(`${prefix} ${message}`);
   };
   if (!isRecord(value)) return fail("the default export must be an object");
 
@@ -67,19 +68,20 @@ export function parseConfig(value: unknown): NotationConfig {
   }
 
   const { app, entries, defaultStage } = value;
-  assertNameSafe(app, "app");
+  assertNameSafe(app, `${prefix} app`);
 
   if (!isRecord(entries)) return fail("entries must be an object");
   const entryNames = Object.keys(entries);
   if (entryNames.length === 0) fail("entries must name at least one entry");
   for (const name of entryNames) {
-    assertNameSafe(name, "entry name");
+    assertNameSafe(name, `${prefix} entry name`);
     if (typeof entries[name] !== "string" || entries[name] === "") {
       fail(`entry ${JSON.stringify(name)} must be a path to an entry file`);
     }
   }
 
-  if (defaultStage !== undefined) assertNameSafe(defaultStage, "defaultStage");
+  if (defaultStage !== undefined)
+    assertNameSafe(defaultStage, `${prefix} defaultStage`);
 
   return value as NotationConfig;
 }

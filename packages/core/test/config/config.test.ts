@@ -95,6 +95,8 @@ describe("parseConfig", () => {
     ],
     [{ ...valid, name: "x", entry: "y" }, 'unknown keys "name", "entry"'],
   ])("rejects %j", (config, message) => {
-    expect(() => parseConfig(config)).toThrow(message);
+    expect(() => parseConfig(config)).toThrow(
+      `Invalid notation.config.ts: ${message}`,
+    );
   });
 });
