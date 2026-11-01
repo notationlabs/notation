@@ -1,5 +1,5 @@
 /**
- * Lambda IDs are name-safe: 1 to 59 ASCII letters, digits, hyphens and
+ * Lambda IDs are name-safe: 1 to 64 ASCII letters, digits, hyphens and
  * underscores.
  *
  * The ID is embedded in resource IDs (`<id>`, `<id>-role`, `<id>-zip`,
@@ -11,9 +11,9 @@
  * - The EventBridge target `Id` is the function name: `[.\-_A-Za-z0-9]`.
  * - Lambda permission `StatementId`s embed the function name: `[0-9A-Za-z_-]`.
  *
- * The function and role names are shortened with a hash when they pass 64
- * characters (see `src/naming.ts`). The limit of 59 is the room the role name
- * had before names were scoped by app and stage; the inline policy name
+ * The limit of 64 is the Lambda `FunctionName` limit. The function and role
+ * names add the app and stage, and are shortened with a hash when they pass
+ * 64 characters (see `src/naming.ts`). The inline policy name
  * (`<id>-role-policy`) allows 128.
  *
  * Upper case is allowed because Lambda allows it, and because compiled IDs
@@ -21,7 +21,7 @@
  * are unique regardless of case, so two IDs that differ only in case count as
  * duplicates.
  */
-export const LAMBDA_ID_MAX_LENGTH = 59; // 64 - "-role".length
+export const LAMBDA_ID_MAX_LENGTH = 64;
 
 const LAMBDA_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 

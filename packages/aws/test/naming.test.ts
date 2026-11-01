@@ -33,12 +33,16 @@ test("AWS names start with the app and stage", async () => {
     };
   });
 
-  expect(declared.fn.fn.config.FunctionName).toBe("orders-app--prod--get-orders");
+  expect(declared.fn.fn.config.FunctionName).toBe(
+    "orders-app--prod--get-orders",
+  );
   expect(declared.fn.role.config.RoleName).toBe(
     "orders-app--prod--get-orders-role",
   );
   expect(declared.api.api.config.Name).toBe("orders-app--prod--orders-api");
-  expect(declared.queue.queue.config.QueueName).toBe("orders-app--prod--orders");
+  expect(declared.queue.queue.config.QueueName).toBe(
+    "orders-app--prod--orders",
+  );
   expect(declared.schedule.rule.config.Name).toBe("orders-app--prod--nightly");
 });
 
@@ -62,7 +66,9 @@ test("a long function and role name is shortened to 64 characters", async () => 
   const fn = await collect(() => lambda({ id, handler: "handler", code }));
 
   expect(fn.fn.config.FunctionName).toHaveLength(64);
-  expect(fn.fn.config.FunctionName).toMatch(/^orders-app--prod--x+-[0-9a-f]{8}$/);
+  expect(fn.fn.config.FunctionName).toMatch(
+    /^orders-app--prod--x+-[0-9a-f]{8}$/,
+  );
   expect(fn.role.config.RoleName).toHaveLength(64);
   expect(fn.role.config.RoleName).not.toBe(fn.fn.config.FunctionName);
 });

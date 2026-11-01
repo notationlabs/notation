@@ -11,7 +11,7 @@ export type LambdaConfig = {
    * in state. The function is named `<app>--<stage>--<id>` in AWS. Changing the
    * id replaces the function, so keep it stable.
    *
-   * Must be name-safe: 1 to 59 letters, digits, hyphens or underscores.
+   * Must be name-safe: 1 to 64 letters, digits, hyphens or underscores.
    */
   id: string;
   handler: string;
