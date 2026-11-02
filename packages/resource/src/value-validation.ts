@@ -24,9 +24,7 @@ export type ValidationSubject = {
   declaredAt?: string;
 };
 
-/**
- * Thrown when a value fails its schema item's validator.
- */
+/** Thrown when a value fails its schema item's validator. */
 export class ValueValidationError extends Error {
   readonly _tag = "ValueValidationError" as const;
   readonly resourceId: string;
@@ -142,8 +140,8 @@ export function validateValues(
       }
     }
   } catch (error) {
-    // The sync failure is thrown, so nothing awaits the async checks
-    // started before it.
+    // Nothing awaits the async checks started before this failure, so their
+    // rejections are handled here.
     for (const promise of pending) promise.catch(() => {});
     throw error;
   }

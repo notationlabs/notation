@@ -66,8 +66,8 @@ export async function* updateResourceOperation(
         ...readResult,
       });
     } catch (error) {
-      // The update was made, so it is recorded with the outputs known
-      // without the read.
+      // Only a validation error is deferred. The update was made, so it is
+      // recorded with the outputs known before the read.
       if (!ValueValidationError.is(error)) throw error;
       deferredError = error;
       params.resource.setOutput({
@@ -94,7 +94,8 @@ export async function* updateResourceOperation(
       output: params.resource.toState(params.resource.output),
       dependsOn: params.dependsOn,
     });
-    // Thrown only once the record is written, as for create.
+    // Thrown only once the record is written, so that state still records
+    // the update.
     if (deferredError) throw deferredError;
 
     yield* emitLifecycleEvent(params, "update", "success");

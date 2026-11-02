@@ -77,8 +77,8 @@ export async function* createResourceOperation(
         ...readResult,
       });
     } catch (error) {
-      // The resource exists, so it is recorded with the outputs known
-      // without the read.
+      // Only a validation error is deferred. The resource exists, so it is
+      // recorded with the outputs known before the read.
       if (!ValueValidationError.is(error)) throw error;
       deferredError = error;
     }
