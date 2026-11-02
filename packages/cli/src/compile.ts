@@ -53,6 +53,9 @@ export async function compileInfra(entryPoint: string, watch: boolean = false) {
     platform: "node",
     treeShaking: true,
     packages: "external",
+    // With source maps enabled, a resource's declaredAt names the user's
+    // source file and line, not the bundle's.
+    sourcemap: true,
   });
 
   if (watch) {
