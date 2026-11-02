@@ -1,12 +1,8 @@
 import chokidar from "chokidar";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import {
-  configFileName,
-  filePaths,
-  fromProjectRoot,
-  type Deployment,
-} from "@notation/core";
+import path from "node:path";
+import { configPath, filePaths, type Deployment } from "@notation/core";
 import { compile } from "./compile";
 import { deployInChild } from "./deploy-child";
 import { defaultLogger, type Logger } from "./logger";
@@ -22,7 +18,7 @@ export type WatchOptions = {
  * Compiles the entry in watch mode and redeploys on each rebuild. Resolves
  * once the watchers are ready.
  *
- * `watch` uses the config it started with. When `notation.config.ts` changes,
+ * `watch` uses the config it started with. When the config file changes,
  * `watch` waits for a running deploy to finish and then exits with code 1, so
  * the user restarts it with the new config.
  */
@@ -36,7 +32,7 @@ export async function watch(
     ignored: dotFilesRe,
     persistent: true,
   });
-  const configWatcher = chokidar.watch(fromProjectRoot(configFileName), {
+  const configWatcher = chokidar.watch(configPath(), {
     ignoreInitial: true,
   });
 
@@ -93,7 +89,7 @@ export async function watch(
     stopping = true;
     clearTimeout(timeoutId);
     logger.error(
-      `${configFileName} changed. Restart watch to use the new config.`,
+      `${path.basename(configPath())} changed. Restart watch to use the new config.`,
     );
     if (!isDeploying) void close();
   }

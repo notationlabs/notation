@@ -2,11 +2,11 @@
   "private": true,
   "name": "notation-starter",
   "scripts": {
-    "compile": "notation compile api",
-    "dashboard": "notation dashboard api",
-    "deploy": "notation deploy api",
-    "destroy": "notation destroy api",
-    "viz": "notation viz api",
-    "watch": "notation watch api"
+    "compile": "notation compile",
+    "dashboard": "notation dashboard",
+    "deploy": "notation deploy",
+    "destroy": "notation destroy",
+    "viz": "notation viz",
+    "watch": "notation watch"
   }
 }

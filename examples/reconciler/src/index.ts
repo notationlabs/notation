@@ -6,7 +6,7 @@ import { createWorkflowRouter, workflow } from "yieldstar";
 import { StaticSite } from "./static-site";
 
 const runtime = new NodeDurableRuntime({
-  deployment: { app: "static-sites", stage: "dev", entry: "sites" },
+  deployment: { app: "static-sites", stage: "dev" },
   databasePath: "sites.db",
 });
 

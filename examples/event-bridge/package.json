@@ -2,12 +2,12 @@
   "private": true,
   "name": "schedule-demo",
   "scripts": {
-    "compile": "notation compile schedule",
-    "dashboard": "notation dashboard schedule",
-    "deploy": "notation deploy schedule",
-    "destroy": "notation destroy schedule",
-    "viz": "notation viz schedule",
-    "watch": "notation watch schedule",
+    "compile": "notation compile",
+    "dashboard": "notation dashboard",
+    "deploy": "notation deploy",
+    "destroy": "notation destroy",
+    "viz": "notation viz",
+    "watch": "notation watch",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -6,7 +6,6 @@ type AppOptions = { deployment: Deployment; executionId: string };
 const deployment: Deployment = {
   app: "orders-app",
   stage: "prod",
-  entry: "orders",
   entryPoint: "/project/infra/app.ts",
 };
 
@@ -20,7 +19,7 @@ vi.mock("@notation/core", () => ({
   createNdjsonEventEmitter: () => () => undefined,
   deployApp,
   destroyApp,
-  resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}:${d.entry}`,
+  resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}`,
 }));
 vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
 

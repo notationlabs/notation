@@ -1,4 +1,5 @@
 import {
+  configPath,
   createLoggerReconcilerSubscriber,
   type DeploymentIdentity,
   type ReconcilerEventEmitter,
@@ -23,8 +24,8 @@ const forwardedSignals = ["SIGINT", "SIGTERM"] as const;
  * parent (watch) never accumulates them. Events arrive as NDJSON on the
  * child's stdout; its logs pass through on stderr.
  *
- * The child loads the config again and resolves the deployment from the
- * entry and stage. `watch` stops when the config changes, so the child reads
+ * The child loads the same config file again and resolves the deployment
+ * from the stage. `watch` stops when the config changes, so the child reads
  * the same config as the parent.
  */
 export function deployInChild({
@@ -39,7 +40,8 @@ export function deployInChild({
     ...process.execArgv,
     process.argv[1]!,
     "deploy",
-    deployment.entry,
+    "--config",
+    configPath(),
     "--stage",
     deployment.stage,
     "--json",

@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadProject } from "src/config/project";
-import { projectRoot } from "src/utils/paths";
+import { projectRoot, setConfigFile } from "src/utils/paths";
 import { resolveDeployment, resolveEntryPoint } from "src/config/deployment";
 
 const originalCwd = process.cwd();
@@ -44,7 +44,7 @@ import { defineConfig } from "@notation/core/config";
 
 export default defineConfig({
   app: "orders-app",
-  entries: { orders: "infra/api.ts" },
+  entry: "infra/api.ts",
   defaultStage: "dev",
 });
 `;
@@ -56,7 +56,7 @@ describe("loadProject", () => {
     await expect(loadProject()).resolves.toEqual({
       config: {
         app: "orders-app",
-        entries: { orders: "infra/api.ts" },
+        entry: "infra/api.ts",
         defaultStage: "dev",
       },
     });
@@ -80,7 +80,7 @@ describe("loadProject", () => {
     );
     await writeConfig(`
       import { app } from "./app-name";
-      export default { app, entries: { orders: "infra/api.ts" } };
+      export default { app, entry: "infra/api.ts" };
     `);
 
     await expect(loadProject()).resolves.toMatchObject({
@@ -134,13 +134,13 @@ describe("loadProject", () => {
 
   it("fails when the project has no config", async () => {
     await expect(loadProject()).rejects.toThrow(
-      `No notation.config.ts found in ${root}`,
+      `Config file not found: ${path.join(root, "notation.config.ts")}`,
     );
   });
 
   it("checks names at runtime", async () => {
     await writeConfig(`
-      export default { app: "Orders_App", entries: { orders: "infra/api.ts" } };
+      export default { app: "Orders_App", entry: "infra/api.ts" };
     `);
 
     await expect(loadProject()).rejects.toThrow(
@@ -158,16 +158,50 @@ describe("resolving a loaded project", () => {
     process.chdir(path.join(root, "infra"));
     const project = await loadProject();
 
-    expect(resolveEntryPoint(project, "orders")).toBe(
-      path.join(root, "infra/api.ts"),
-    );
-    expect(
-      resolveDeployment(project, { entry: "orders", stage: "prod" }),
-    ).toEqual({
+    expect(resolveEntryPoint(project)).toBe(path.join(root, "infra/api.ts"));
+    expect(resolveDeployment(project, { stage: "prod" })).toEqual({
       app: "orders-app",
       stage: "prod",
-      entry: "orders",
       entryPoint: path.join(root, "infra/api.ts"),
     });
+  });
+});
+
+describe("a config given by path", () => {
+  afterEach(() => setConfigFile(undefined));
+
+  it("loads that file in place of notation.config.ts", async () => {
+    await writeConfig(ordersConfig);
+    await mkdir(path.join(root, "jobs"));
+    await writeFile(
+      path.join(root, "jobs/jobs.config.ts"),
+      ordersConfig.replace("orders-app", "jobs-app"),
+    );
+    setConfigFile("jobs/jobs.config.ts");
+
+    await expect(loadProject()).resolves.toMatchObject({
+      config: { app: "jobs-app" },
+    });
+    expect(projectRoot()).toBe(path.join(root, "jobs"));
+  });
+
+  it("names the file in errors", async () => {
+    await writeFile(
+      path.join(root, "jobs.config.ts"),
+      `export default { app: "jobs-app" };`,
+    );
+    setConfigFile("jobs.config.ts");
+
+    await expect(loadProject()).rejects.toThrow(
+      "Invalid jobs.config.ts: entry must be a path to an entry file",
+    );
+  });
+
+  it("fails when the file does not exist", async () => {
+    setConfigFile("missing.config.ts");
+
+    await expect(loadProject()).rejects.toThrow(
+      `Config file not found: ${path.join(root, "missing.config.ts")}`,
+    );
   });
 });

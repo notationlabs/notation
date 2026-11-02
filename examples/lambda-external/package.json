@@ -2,12 +2,12 @@
   "private": true,
   "name": "lambda",
   "scripts": {
-    "compile": "notation compile lambdas",
-    "dashboard": "notation dashboard lambdas",
-    "deploy": "notation deploy lambdas",
-    "destroy": "notation destroy lambdas",
-    "viz": "notation viz lambdas",
-    "watch": "notation watch lambdas"
+    "compile": "notation compile",
+    "dashboard": "notation dashboard",
+    "deploy": "notation deploy",
+    "destroy": "notation destroy",
+    "viz": "notation viz",
+    "watch": "notation watch"
   },
   "dependencies": {
     "@notation/aws": "workspace:*",

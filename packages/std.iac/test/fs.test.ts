@@ -14,7 +14,7 @@ let runtime: NodeDurableRuntime;
 beforeEach(async () => {
   directory = await mkdtemp(path.join(tmpdir(), "notation-std-fs-"));
   runtime = new NodeDurableRuntime({
-    deployment: { app: "std", stage: "test", entry: "fs" },
+    deployment: { app: "std", stage: "test" },
     databasePath: path.join(directory, "workflows.db"),
   });
 });

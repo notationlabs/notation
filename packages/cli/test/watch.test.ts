@@ -22,7 +22,6 @@ import { watch } from "../src/watch";
 const deployment: Deployment = {
   app: "orders-app",
   stage: "dev",
-  entry: "orders",
   entryPoint: "infra/api.ts",
 };
 

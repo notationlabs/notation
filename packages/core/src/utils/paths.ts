@@ -20,19 +20,35 @@ export function findProjectRoot(dir: string): string {
 }
 
 const roots = new Map<string, string>();
+let configFile: string | undefined;
 
 /**
- * The project root of the current working directory. Every path in a project
- * resolves against it: the config, the entries, `dist` and the state database.
+ * Uses the config at `file` in place of the one found from the working
+ * directory, so the project root becomes the config's directory. `undefined`
+ * goes back to searching from the working directory.
  */
-export function projectRoot(): string {
+export function setConfigFile(file: string | undefined) {
+  configFile = file === undefined ? undefined : path.resolve(file);
+}
+
+/** The absolute path of the project's config file. */
+export function configPath(): string {
+  if (configFile !== undefined) return configFile;
   const cwd = process.cwd();
   let root = roots.get(cwd);
   if (root === undefined) {
     root = findProjectRoot(cwd);
     roots.set(cwd, root);
   }
-  return root;
+  return path.join(root, configFileName);
+}
+
+/**
+ * The directory that holds the config. Every path in a project resolves
+ * against it: the entry, `dist` and the state database.
+ */
+export function projectRoot(): string {
+  return path.dirname(configPath());
 }
 
 /** An absolute path from one relative to the project root. */

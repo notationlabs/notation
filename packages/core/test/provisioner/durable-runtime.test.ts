@@ -13,11 +13,7 @@ import {
   withRuntime,
 } from "src/provisioner/durable-runtime";
 
-const testDeployment = (entry: string) => ({
-  app: "test",
-  stage: "test",
-  entry,
-});
+const testDeployment = (stage: string) => ({ app: "test", stage });
 
 describe("NodeDurableRuntime", () => {
   it("stays resident across a provider delay and resumes the execution", async () => {
@@ -99,7 +95,7 @@ describe("NodeDurableRuntime", () => {
           deploy: deployWorkflow(
             new durable.DurableStateBackend(
               crashed.stores,
-              "test:test:resume-deployment",
+              "test:resume-deployment",
             ),
           ),
         }),
@@ -108,7 +104,7 @@ describe("NodeDurableRuntime", () => {
       await crashed.executions.admit({
         executionId: "resumed-execution",
         workflowId: "deploy",
-        params: { deploymentId: "test:test:resume-deployment" },
+        params: { deploymentId: "test:resume-deployment" },
         context: new Map(),
       });
       const [lease] = await crashed.executions.claimDue({
@@ -127,7 +123,7 @@ describe("NodeDurableRuntime", () => {
           {
             workflowId: "deploy",
             executionId: "resumed-execution",
-            params: { deploymentId: "test:test:resume-deployment" },
+            params: { deploymentId: "test:resume-deployment" },
             context: new Map(),
           },
           { lease: lease!, signal: controller.signal },
@@ -180,7 +176,7 @@ describe("NodeDurableRuntime", () => {
       });
       await expect(first.execution("bound-execution")).resolves.toMatchObject({
         workflowId: "deploy",
-        params: { deploymentId: "test:test:first-deployment" },
+        params: { deploymentId: "test:first-deployment" },
         status: "completed",
       });
       await expect(
@@ -189,7 +185,7 @@ describe("NodeDurableRuntime", () => {
           executionId: "bound-execution",
         }),
       ).rejects.toThrow(
-        "bound to deployment test:test:first-deployment workflow deploy",
+        "bound to deployment test:first-deployment workflow deploy",
       );
     } finally {
       first.close();
@@ -206,7 +202,7 @@ describe("NodeDurableRuntime", () => {
           executionId: "bound-execution",
         }),
       ).rejects.toThrow(
-        "bound to deployment test:test:first-deployment workflow deploy",
+        "bound to deployment test:first-deployment workflow deploy",
       );
     } finally {
       second.close();
@@ -221,7 +217,7 @@ describe("NodeDurableRuntime", () => {
     await new SqliteRuntime(database).executions.admit({
       executionId: "due-execution",
       workflowId: "deploy",
-      params: { deploymentId: "test:test:first-deployment" },
+      params: { deploymentId: "test:first-deployment" },
       context: new Map(),
     });
     database.close();
@@ -241,7 +237,7 @@ describe("NodeDurableRuntime", () => {
           executionId: "due-execution",
         }),
       ).rejects.toThrow(
-        "bound to deployment test:test:first-deployment workflow deploy",
+        "bound to deployment test:first-deployment workflow deploy",
       );
       expect(delivered).toEqual([]);
       await expect(runtime.execution("due-execution")).resolves.toMatchObject({
@@ -260,7 +256,7 @@ describe("NodeDurableRuntime", () => {
     await new SqliteRuntime(database).executions.admit({
       executionId: "unrelated-execution",
       workflowId: "deploy",
-      params: { deploymentId: "test:test:filter-test" },
+      params: { deploymentId: "test:filter-test" },
       context: new Map(),
     });
     database.close();
@@ -350,14 +346,14 @@ describe("NodeDurableRuntime", () => {
     }
   });
 
-  it("keys the deployment by app, stage and entry", () => {
+  it("keys the deployment by app and stage", () => {
     const runtime = new NodeDurableRuntime({
-      deployment: { app: "orders-app", stage: "prod", entry: "orders" },
+      deployment: { app: "orders-app", stage: "prod" },
       databasePath: ":memory:",
     });
     try {
-      expect(runtime.deploymentId).toBe("orders-app:prod:orders");
-      expect(runtime.state.deploymentId).toBe("orders-app:prod:orders");
+      expect(runtime.deploymentId).toBe("orders-app:prod");
+      expect(runtime.state.deploymentId).toBe("orders-app:prod");
     } finally {
       runtime.close();
     }
@@ -365,7 +361,7 @@ describe("NodeDurableRuntime", () => {
 });
 
 describe("withRuntime", () => {
-  const orders = { app: "orders-app", stage: "prod", entry: "orders" };
+  const orders = { app: "orders-app", stage: "prod" };
 
   it("requires a runtime or a deployment", async () => {
     const fn = vi.fn(async () => undefined);
@@ -389,7 +385,7 @@ describe("withRuntime", () => {
           fn,
         ),
       ).rejects.toThrow(
-        "The runtime belongs to deployment orders-app:prod:orders, not orders-app:staging:orders",
+        "The runtime belongs to deployment orders-app:prod, not orders-app:staging",
       );
       expect(fn).not.toHaveBeenCalled();
     } finally {

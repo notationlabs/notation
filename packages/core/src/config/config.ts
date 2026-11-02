@@ -1,58 +1,48 @@
-import { assertNameSafe, type IsNameSafe, type NameSafe } from "./name-safe";
+import { assertNameSafe, type NameSafe } from "./name-safe";
 
 export const configFileName = "notation.config.ts";
 
 export type NotationConfig = {
-  /** Names the app. Part of the deployment ID of every entry. */
+  /** Names the app. Part of the deployment ID and of every AWS name. */
   app: string;
-  /** Maps entry names to entry files, relative to the project root. */
-  entries: Record<string, string>;
+  /** The entry file, relative to the directory of the config. */
+  entry: string;
   /** The stage to use when a command is given no `--stage`. */
   defaultStage?: string;
 };
 
-type EntriesInput<E extends Record<string, string>> = string extends keyof E
-  ? "entry names must be string literals"
-  : {
-      [K in keyof E]: K extends string
-        ? IsNameSafe<K> extends true
-          ? E[K]
-          : `"${K}" is not name-safe`
-        : never;
-    };
-
-export type NotationConfigInput<
-  App extends string,
-  Entries extends Record<string, string>,
-  Stage extends string,
-> = {
+export type NotationConfigInput<App extends string, Stage extends string> = {
   app: NameSafe<App>;
-  entries: EntriesInput<Entries>;
+  entry: string;
   defaultStage?: NameSafe<Stage>;
 };
 
 /**
  * Declares the project config, the default export of `notation.config.ts`.
- * `app`, the entry names and `defaultStage` are checked as name-safe at
- * compile time.
+ * `app` and `defaultStage` are checked as name-safe at compile time.
  */
 export function defineConfig<
   const App extends string,
-  const Entries extends Record<string, string>,
   const Stage extends string = never,
->(config: NotationConfigInput<App, Entries, Stage>): NotationConfig {
+>(config: NotationConfigInput<App, Stage>): NotationConfig {
   return config as NotationConfig;
 }
 
 const configKeys = [
   "app",
-  "entries",
+  "entry",
   "defaultStage",
 ] as const satisfies readonly (keyof NotationConfig)[];
 
-/** Checks a loaded config at runtime, and returns it typed. */
-export function parseConfig(value: unknown): NotationConfig {
-  const prefix = `Invalid ${configFileName}:`;
+/**
+ * Checks a loaded config at runtime, and returns it typed. `fileName` starts
+ * every error message.
+ */
+export function parseConfig(
+  value: unknown,
+  fileName: string = configFileName,
+): NotationConfig {
+  const prefix = `Invalid ${fileName}:`;
   const fail = (message: string): never => {
     throw new Error(`${prefix} ${message}`);
   };
@@ -67,17 +57,11 @@ export function parseConfig(value: unknown): NotationConfig {
     );
   }
 
-  const { app, entries, defaultStage } = value;
+  const { app, entry, defaultStage } = value;
   assertNameSafe(app, `${prefix} app`);
 
-  if (!isRecord(entries)) return fail("entries must be an object");
-  const entryNames = Object.keys(entries);
-  if (entryNames.length === 0) fail("entries must name at least one entry");
-  for (const name of entryNames) {
-    assertNameSafe(name, `${prefix} entry name`);
-    if (typeof entries[name] !== "string" || entries[name] === "") {
-      fail(`entry ${JSON.stringify(name)} must be a path to an entry file`);
-    }
+  if (typeof entry !== "string" || entry === "") {
+    fail("entry must be a path to an entry file");
   }
 
   if (defaultStage !== undefined)

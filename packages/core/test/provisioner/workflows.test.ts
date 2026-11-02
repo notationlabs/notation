@@ -12,7 +12,6 @@ vi.mock("src/orchestrator/graph", () => ({ getResourceGraph }));
 const deployment = {
   app: "orders-app",
   stage: "prod",
-  entry: "orders",
   entryPoint: "/project/infra/orders.ts",
 };
 
