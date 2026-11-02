@@ -174,4 +174,13 @@ describe("LambdaRolePolicy drift detection", () => {
     });
     expect(node).toMatchObject({ decision: "drift-update" });
   });
+
+  it("rejects a statement that has both Action and NotAction", async () => {
+    await expect(
+      planUnchanged({
+        Version: "2012-10-17",
+        Statement: [{ ...orders, NotAction: "sqs:DeleteMessage" }],
+      }),
+    ).rejects.toMatchObject({ _tag: "ValueValidationError" });
+  });
 });

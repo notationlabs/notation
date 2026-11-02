@@ -55,12 +55,12 @@ const policyStatementValue = v.intersect([
     ),
   }),
   v.union([
-    v.object({ Action: stringOrStrings }),
-    v.object({ NotAction: stringOrStrings }),
+    v.object({ Action: stringOrStrings, NotAction: v.optional(v.never()) }),
+    v.object({ NotAction: stringOrStrings, Action: v.optional(v.never()) }),
   ]),
   v.union([
-    v.object({ Resource: stringOrStrings }),
-    v.object({ NotResource: stringOrStrings }),
+    v.object({ Resource: stringOrStrings, NotResource: v.optional(v.never()) }),
+    v.object({ NotResource: stringOrStrings, Resource: v.optional(v.never()) }),
   ]),
 ]);
 
