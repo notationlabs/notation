@@ -24,7 +24,8 @@
     "@notation/resource": "workspace:*",
     "@notation/std.iac": "workspace:*",
     "@notation/utils": "workspace:*",
-    "@types/aws-lambda": "^8.10.147"
+    "@types/aws-lambda": "^8.10.147",
+    "valibot": "^1.4.2"
   },
   "devDependencies": {
     "@notation/reconciler": "workspace:*",
