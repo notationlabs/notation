@@ -13,7 +13,12 @@ import {
   type LambdaFunctionInstance,
 } from "src/resources/lambda/lambda";
 import { LambdaIamRole } from "src/resources/lambda/lambda-role";
-import { ResourceNotFoundError } from "@notation/resource";
+import {
+  ResourceNotFoundError,
+  UNKNOWN_AFTER_APPLY,
+  isUnknownAfterApply,
+  validateValues,
+} from "@notation/resource";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
 import { decodeRuntime, encodeRuntime, runtimeVariable } from "src/shared";
 
@@ -554,9 +559,66 @@ describe("Lambda environment", () => {
         {} as any,
       ),
     ).rejects.toThrow(
-      /Lambda function app is \d+ bytes, over Lambda's limit of 4096 bytes.*Split the runtime module/,
+      /Lambda function app: the environment is \d+ bytes, over Lambda's limit of 4096 bytes.*Split the runtime module/,
     );
     expect(send).not.toHaveBeenCalled();
+  });
+
+  function largeDispatch(apiId: unknown) {
+    const dispatch: Record<string, unknown> = {};
+    for (let i = 0; i < 100; i++) {
+      dispatch[`todo-api-GET-/todos/${i}`] = {
+        export: `getTodo${i}`,
+        match: { apiId, routeKey: `GET /todos/${i}` },
+      };
+    }
+    return dispatch;
+  }
+
+  it("rejects an oversized environment at plan, when the API ID is not known yet", async () => {
+    const lambda = createLambda();
+    const Environment = {
+      Runtime: { dispatch: largeDispatch(UNKNOWN_AFTER_APPLY) },
+    };
+
+    expect(() =>
+      validateValues(lambda, { Environment }, "plan", isUnknownAfterApply),
+    ).toThrow(/Variables: the environment is \d+ bytes, over Lambda's limit/);
+  });
+
+  it("accepts an environment under the limit at plan", async () => {
+    const lambda = createLambda();
+    const Environment = {
+      Runtime: {
+        dispatch: {
+          "todo-api-GET-/todos": {
+            export: "getTodos",
+            match: { apiId: UNKNOWN_AFTER_APPLY, routeKey: "GET /todos" },
+          },
+        },
+      },
+    };
+
+    expect(() =>
+      validateValues(lambda, { Environment }, "plan", isUnknownAfterApply),
+    ).not.toThrow();
+  });
+
+  it("clears the variables when an update sets an empty environment", async () => {
+    const send = vi
+      .spyOn(lambdaClient, "send")
+      .mockImplementation(async () => ({}));
+
+    await createLambda().update!(
+      { FunctionName: "app" },
+      { Environment: {} } as any,
+      { FunctionName: "app" } as any,
+      {} as any,
+    );
+
+    const command = send.mock
+      .calls[0]![0] as sdk.UpdateFunctionConfigurationCommand;
+    expect(command.input.Environment).toEqual({ Variables: {} });
   });
 });
 
