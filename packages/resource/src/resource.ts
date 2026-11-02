@@ -23,6 +23,7 @@ import type { DurableObject } from "./durable-value";
 import { UNKNOWN_AFTER_APPLY, toComparableParams } from "./diff-params";
 import {
   captureCallSite,
+  captureCallSiteLazily,
   sortContributions,
   type CollectContext,
   type ContributedValues,
@@ -188,7 +189,7 @@ export abstract class Resource<
 > implements BaseResource {
   config: C;
   id: string;
-  readonly declaredAt?: string;
+  declare readonly declaredAt?: string;
   group: ResourceGroupRef | null = null;
   output = null as any as T["output"];
   dependencies = {} as NoInfer<D>;
@@ -235,7 +236,15 @@ export abstract class Resource<
     this.id = id;
     this.config = config || ({} as C);
     this.dependencies = dependencies || ({} as D);
-    this.declaredAt = captureCallSite(new.target, { skipLibraryFrames: true });
+    const declaredAt = captureCallSiteLazily(new.target, {
+      skipLibraryFrames: true,
+    });
+    // An own enumerable getter, so that a copy made with spread syntax keeps
+    // the call site, as it would with a plain field.
+    Object.defineProperty(this, "declaredAt", {
+      get: declaredAt,
+      enumerable: true,
+    });
     return this;
   }
 
