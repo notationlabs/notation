@@ -1,4 +1,5 @@
 import { resource } from "src";
+import { boolean, number, string } from "./validators";
 
 export type TestSchema = {
   Key: {
@@ -28,31 +29,37 @@ export type TestSchema = {
 
 export const testSchema = {
   primaryKey: {
+    value: string(),
     presence: "required",
     propertyType: "computed",
     primaryKey: true,
   },
   optionalSecondaryKey: {
+    value: number(),
     presence: "optional",
     propertyType: "param",
     secondaryKey: true,
     immutable: true,
   },
   requiredParam: {
+    value: string(),
     presence: "required",
     propertyType: "param",
   },
   volatileComputed: {
+    value: string(),
     presence: "required",
     propertyType: "computed",
     volatile: true,
   },
   hiddenParam: {
+    value: string(),
     presence: "required",
     propertyType: "param",
     hidden: true,
   },
   intrinsicParam: {
+    value: boolean(),
     presence: "required",
     propertyType: "param",
   },

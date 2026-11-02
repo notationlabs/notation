@@ -31,6 +31,7 @@ import {
 } from "./contributions";
 import {
   OutputValue,
+  containsOutputValue,
   createPlanViews,
   deployLookup,
   forEachOutputValue,
@@ -40,6 +41,7 @@ import {
   type PlanViews,
 } from "./output-value";
 import { getActiveResourceCollection } from "./resource-collection";
+import { assertParamFields, validateValues } from "./value-validation";
 
 export type { Schema, SchemaItem, DefineResourceApiSchema };
 
@@ -112,6 +114,8 @@ export interface BaseResource {
   readonly schema: Schema;
   readonly config: any;
   id: string;
+  /** `file:line` of the code that declared the resource, when known. */
+  readonly declaredAt?: string;
   /** The group the resource was added to, or null if it is in none. */
   group: ResourceGroupRef | null;
   readonly output: {};
@@ -184,6 +188,7 @@ export abstract class Resource<
 > implements BaseResource {
   config: C;
   id: string;
+  readonly declaredAt?: string;
   group: ResourceGroupRef | null = null;
   output = null as any as T["output"];
   dependencies = {} as NoInfer<D>;
@@ -230,7 +235,36 @@ export abstract class Resource<
     this.id = id;
     this.config = config || ({} as C);
     this.dependencies = dependencies || ({} as D);
+    this.declaredAt = captureCallSite(new.target);
     return this;
+  }
+
+  /**
+   * Checks config when the resource is declared: every field is a param, and
+   * every value passes its validator. A value that holds an output value is
+   * checked at deploy, once the output exists. A subclass calls this at the
+   * end of its constructor, when the schema has been set.
+   *
+   * An async validator cannot throw from the constructor. Its result is
+   * awaited when the resource graph has been collected, and is otherwise
+   * left to plan and deploy.
+   */
+  protected checkDeclaration(): void {
+    if (declarationChecksSkipped) return;
+    const config = this.config as Record<string, unknown>;
+    assertParamFields(this, config);
+    const pending = validateValues(
+      this,
+      config,
+      "declaration",
+      containsOutputValue,
+    );
+    if (!pending) return;
+    if (this.#collection && !this.#collection.closed) {
+      this.#collection.pendingValidations.push(pending);
+    } else {
+      pending.catch(() => {});
+    }
   }
 
   get key(): T["compoundKey"] {
@@ -529,6 +563,23 @@ export abstract class Resource<
   }
 }
 
+let declarationChecksSkipped = false;
+
+/**
+ * Constructs resources without checking their config. The reconciler uses it
+ * to rebuild a resource from state, whose config was checked when it was
+ * declared and may not pass a validator that has changed since.
+ */
+export function withoutDeclarationChecks<T>(construct: () => T): T {
+  const previous = declarationChecksSkipped;
+  declarationChecksSkipped = true;
+  try {
+    return construct();
+  } finally {
+    declarationChecksSkipped = previous;
+  }
+}
+
 type EvaluatedContributions = {
   items: ContributedValues[];
   // Set when a function contribution read a pending output at plan.
@@ -661,7 +712,7 @@ export type ResourceBuilder<ApiSchema extends DefineResourceApiSchema> = {
       >,
   >(
     schema: S,
-  ) => ResourceSchemaBuilder<InferResourceTypes<ResolveSchema<ApiSchema, S>>>;
+  ) => ResourceSchemaBuilder<InferResourceTypes<ResolveSchema<S>>>;
 };
 
 export function defineResource<ApiSchema extends DefineResourceApiSchema>(
@@ -676,10 +727,8 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
           Fallback<ApiSchema["UpdateParams"], ApiSchema["CreateParams"]>,
           Fallback<ApiSchema["ReadResult"], {}>
         >,
-    >(
-      schema: S,
-    ): ResourceSchemaBuilder<InferResourceTypes<ResolveSchema<ApiSchema, S>>> {
-      type T = InferResourceTypes<ResolveSchema<ApiSchema, S>>;
+    >(schema: S): ResourceSchemaBuilder<InferResourceTypes<ResolveSchema<S>>> {
+      type T = InferResourceTypes<ResolveSchema<S>>;
       // The cast skips re-relating this literal to ResourceSchemaBuilder:
       // defineOperations restates the declared signature verbatim, and
       // structurally verifying the deferred conditionals inside it costs
@@ -708,6 +757,14 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             read = opts.read ? opts.read : undefined;
             update = opts.update ? opts.update : undefined;
             delete = opts.delete;
+
+            constructor(
+              id: string,
+              args?: { config?: NoInfer<C>; dependencies?: NoInfer<D> },
+            ) {
+              super(id, args);
+              this.checkDeclaration();
+            }
 
             async deriveParams(_opts?: { deps: D }) {
               if (!opts.deriveParams) return {};
@@ -755,7 +812,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
         },
       };
       return builder as ResourceSchemaBuilder<
-        InferResourceTypes<ResolveSchema<ApiSchema, S>>
+        InferResourceTypes<ResolveSchema<S>>
       >;
     },
   };

@@ -1,29 +1,12 @@
 import type {
   DeepPartial,
-  Fallback,
   OmitOptional,
   PickOptional,
   Simplify,
 } from "./types";
 import type { Durable } from "./durable-value";
 import type { CollectContext } from "./contributions";
-
-/**
- * Structural holder for a value type.
- *
- * Used as a phantom type carrier: schema value types are resolved from the
- * resource's API schema, so items only carry metadata. Where a narrower type
- * than the API's is wanted, `valueType: typed<T>()` overrides it. Any zod
- * type is also structurally assignable, so zod validators can be used as
- * overrides without this package depending on zod.
- */
-export type TypedValue<T> = { _output: T };
-
-/**
- * Phantom value-type override for a schema item.
- * Purely type-level; carries no runtime information.
- */
-export const typed = <T>(): TypedValue<T> => ({}) as TypedValue<T>;
+import type { StandardSchemaV1 } from "./standard-schema";
 
 export type DefineResourceApiSchema = {
   Key: any;
@@ -33,14 +16,16 @@ export type DefineResourceApiSchema = {
 };
 
 /**
- * A schema item is metadata about one property of a resource.
- *
- * Its value type is taken from the resource's API schema (see
- * {@link ResolveSchema}); `valueType` is only needed to override that, or to
- * type properties that exist in no API type.
+ * A schema item describes one property of a resource: what it does in the
+ * engine, and the validator for its value.
  */
 export type SchemaItem<T = any> = {
-  valueType?: TypedValue<T>;
+  /**
+   * Validates the property's value. Any Standard Schema can be used. Its
+   * output type is the property's type, and must be assignable to the type
+   * the resource's API schema gives the property.
+   */
+  value: StandardSchemaV1<unknown, T>;
   presence: "required" | "optional";
   sensitive?: true;
   hidden?: true;
@@ -73,67 +58,24 @@ export type Schema = Record<string, SchemaItem<any>>;
 /**
  * A schema whose items all carry a resolved value type.
  *
- * Deliberately loose (the mappers read `valueType` and the metadata flags
+ * Deliberately loose (the mappers read `resolvedType` and the metadata flags
  * conditionally): schema safety is enforced where schemas are authored, via
  * {@link SchemaFromApi}, not in the type plumbing downstream of it.
  */
 export type ResolvedSchema = Record<string, any>;
 
-type UpdateParamsOf<Api extends DefineResourceApiSchema> = Fallback<
-  Api["UpdateParams"],
-  Api["CreateParams"]
->;
-
-type ReadResultOf<Api extends DefineResourceApiSchema> = Fallback<
-  Api["ReadResult"],
-  {}
->;
-
 /**
- * The value type of schema item `K`: an explicit `valueType` override wins,
- * otherwise the type comes from the API schema (params take precedence over
- * read results, since read results often widen param types).
- */
-type SchemaItemValue<
-  Api extends DefineResourceApiSchema,
-  S extends Schema,
-  K extends keyof S,
-> = S[K] extends { valueType: TypedValue<infer T> }
-  ? T
-  : K extends keyof Api["CreateParams"]
-    ? Exclude<Api["CreateParams"][K], undefined>
-    : K extends keyof Api["Key"]
-      ? Exclude<Api["Key"][K], undefined>
-      : K extends keyof UpdateParamsOf<Api>
-        ? Exclude<UpdateParamsOf<Api>[K], undefined>
-        : K extends keyof ReadResultOf<Api>
-          ? Exclude<ReadResultOf<Api>[K], undefined>
-          : MissingValueType<K>;
-
-/**
- * Marker for schema keys found in no API schema type and lacking a
- * `valueType` override. Deliberately unusable, so the mistake surfaces at
- * the first use of the property rather than silently typing it `unknown`.
- */
-type MissingValueType<K> = {
-  error: "Schema key not found in API schema types; add it there or set an explicit valueType";
-  key: K;
-};
-
-/**
- * Pairs each schema item with its value type, resolved from the API schema.
- * Computed once per resource, when the schema is defined.
+ * Pairs each schema item with its value type, the output type of its
+ * validator. Computed once per resource, when the schema is defined.
  *
  * The reconciler records params, read results and state, so each value type
- * is made durable here. A `Buffer` or another class instance in an API type
- * becomes `never`, and a provider that returns one does not compile.
+ * is made durable here. A `Buffer` or another class instance in a validator's
+ * output type becomes `never`, and a provider that returns one does not compile.
  */
-export type ResolveSchema<
-  Api extends DefineResourceApiSchema,
-  S extends Schema,
-> = {
+export type ResolveSchema<S extends Schema> = {
   [K in keyof S]: S[K] & {
-    valueType: TypedValue<Durable<SchemaItemValue<Api, S, K>>>;
+    /** Type-level only: no schema item has this property at runtime. */
+    resolvedType: Durable<StandardSchemaV1.InferOutput<S[K]["value"]>>;
   };
 };
 
@@ -179,7 +121,7 @@ export type State<S extends ResolvedSchema> = MapSchema<S, { hidden: true }>;
 /**
  * What a schema must look like for a given API schema: propertyType,
  * presence and mutability are forced per key by where (and how) the key
- * appears in the API types. A `valueType` override, when given, must stay
+ * appears in the API types. The output type of each item's validator must be
  * assignable to the API's type for that key.
  */
 export type SchemaFromApi<
@@ -220,7 +162,7 @@ export type SchemaFromApi<
 };
 
 /**
- * Maps `valueType` to its output type.
+ * Maps each item to its resolved value type.
  * Makes optional fields optional.
  * Excludes properties matching the `ExcludeConditions` type.
  * When `IncludeKey` is given, keeps only items that have that property.
@@ -237,7 +179,7 @@ export type MapSchema<
         : IncludeKey extends keyof S[K]
           ? K
           : never
-    ]: S[K]["valueType"]["_output"];
+    ]: S[K]["resolvedType"];
   } & {
     [
       K in keyof S as S[K] extends ExcludeConditions
@@ -247,6 +189,6 @@ export type MapSchema<
             ? K
             : never
           : never
-    ]?: S[K]["valueType"]["_output"];
+    ]?: S[K]["resolvedType"];
   }
 >;
