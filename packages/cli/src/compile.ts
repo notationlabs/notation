@@ -48,6 +48,8 @@ export async function compile(entryPoint: string, opts: CompileOptions = {}) {
 
   if (!watch) return;
 
+  let updating = Promise.resolve();
+
   // esbuild watches the files each bundle imports. This watcher picks up
   // modules that start or stop being runtime modules.
   chokidar
@@ -58,18 +60,20 @@ export async function compile(entryPoint: string, opts: CompileOptions = {}) {
         (stats?.isFile() === true &&
           !matchesRuntimeModules(file, runtimeModules)),
     })
-    .on("all", async () => {
-      let found: RuntimeModuleEntry[];
-      try {
-        found = await findRuntimeModules(runtimeModules);
-      } catch (error) {
-        logger.error(error);
-        return;
-      }
-      if (sameModules(found, modules)) return;
-      modules = found;
-      await disposeRuntime();
-      disposeRuntime = await compileRuntimeModules(modules, watch);
+    .on("all", () => {
+      // Updates run one at a time, so two events never dispose the same
+      // contexts.
+      updating = updating.then(async () => {
+        try {
+          const found = await findRuntimeModules(runtimeModules);
+          if (sameModules(found, modules)) return;
+          modules = found;
+          await disposeRuntime();
+          disposeRuntime = await compileRuntimeModules(modules, watch);
+        } catch (error) {
+          logger.error(error);
+        }
+      });
     });
 }
 
