@@ -72,8 +72,9 @@ export class ValueValidationError extends Error {
 
 /**
  * Thrown when values do not have the fields that the schema expects: a param
- * that the schema does not have as a param, a create result field that the
- * schema has but not as computed, or a required output that is missing.
+ * that the schema does not have as a param, a required param that is missing,
+ * a create result field that the schema has but not as computed, or a
+ * required output that is missing.
  */
 export class SchemaStructureError extends Error {
   readonly _tag = "SchemaStructureError" as const;
@@ -243,9 +244,9 @@ function formatIssue(
 }
 
 /**
- * Checks params at plan or deploy: every field is a param, and every value
- * passes its validator. Values unknown until apply are treated as described
- * in `validateValues`.
+ * Checks params at plan or deploy: every field is a param, every required
+ * param has a value, and every value passes its validator. Values unknown
+ * until apply are treated as described in `validateValues`.
  */
 export async function validateParams(
   subject: ValidationSubject,
@@ -253,6 +254,7 @@ export async function validateParams(
   point: "plan" | "deploy",
 ): Promise<void> {
   assertParamFields(subject, params);
+  assertRequiredParams(subject, params);
   await validateValues(subject, params, point, isUnknownAfterApply);
 }
 
@@ -271,6 +273,32 @@ export function assertParamFields(
       subject,
       "these fields are not params in its schema",
       extra,
+    );
+  }
+}
+
+/**
+ * Throws unless every required param has a value. Config is not checked with
+ * this, because `deriveParams` can set a required param that config leaves
+ * out.
+ */
+export function assertRequiredParams(
+  subject: ValidationSubject,
+  params: Record<string, unknown>,
+): void {
+  const missing = Object.entries(subject.schema)
+    .filter(
+      ([field, item]) =>
+        item.propertyType === "param" &&
+        item.presence === "required" &&
+        params[field] === undefined,
+    )
+    .map(([field]) => field);
+  if (missing.length > 0) {
+    throw new SchemaStructureError(
+      subject,
+      "these required params are missing",
+      missing,
     );
   }
 }

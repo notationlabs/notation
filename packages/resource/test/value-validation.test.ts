@@ -4,6 +4,7 @@ import {
   ValueValidationError,
   assertComputedFields,
   assertRequiredOutputs,
+  validateParams,
   UNKNOWN_AFTER_APPLY,
   collectResourceGraph,
   isUnknownAfterApply,
@@ -483,6 +484,16 @@ describe("validation helpers", () => {
       "these required outputs are missing: Arn",
     );
     assertRequiredOutputs(subject, { RoleName: "role", Arn: "arn" });
+  });
+
+  it("checks that required params are present at plan and deploy", async () => {
+    await expect(
+      validateParams(subject, { MaxSessionDuration: 3600 }, "plan"),
+    ).rejects.toThrow("these required params are missing: RoleName");
+    await expect(
+      validateParams(subject, { RoleName: undefined }, "deploy"),
+    ).rejects.toThrow("these required params are missing: RoleName");
+    await validateParams(subject, { RoleName: UNKNOWN_AFTER_APPLY }, "plan");
   });
 });
 
