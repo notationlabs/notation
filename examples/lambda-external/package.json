@@ -7,7 +7,8 @@
     "deploy": "notation deploy",
     "destroy": "notation destroy",
     "viz": "notation viz",
-    "watch": "notation watch"
+    "watch": "notation watch",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@notation/aws": "workspace:*",

@@ -4,5 +4,5 @@ import { externalJsLambda } from "./lambda";
 export const myschedule = schedule({
   name: "my-schedule",
   schedule: rate(1, "minute"),
-  handler: externalJsLambda,
+  handler: { resource: externalJsLambda, export: "handler" },
 });
