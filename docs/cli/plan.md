@@ -4,12 +4,12 @@
 notation plan [--config <path>] [--stage <stage>]
 ```
 
-| Argument          | Meaning                                                            |
-| ----------------- | ------------------------------------------------------------------ |
-| `--config <path>` | The config file. Defaults to the nearest `notation.config.ts`.     |
-| `--stage <stage>` | The stage. Defaults to `defaultStage`, and is required without it. |
+| Option            | Meaning                                                     |
+| ----------------- | ----------------------------------------------------------- |
+| `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
+| `--stage <stage>` | The stage. Default: `defaultStage`.                         |
 
-Compiles the entry and reports the changes a deploy to the stage would make:
+Compiles the entry file and shows what a deploy to the stage would change:
 
 ```sh
 notation plan --stage prod

@@ -22,7 +22,7 @@ my-app/
 
 Location: `infra/*.ts`
 
-An infrastructure module declares cloud resources. The entry file is the infrastructure module that `notation.config.ts` names in `entry`:
+An infrastructure module declares cloud resources. The entry file is the module that `notation.config.ts` names in `entry`:
 
 ```ts [notation.config.ts]
 export default defineConfig({
@@ -40,7 +40,7 @@ const todoRouter = router(todoApi);
 todoRouter.get("/todos", getTodos);
 ```
 
-The CLI compiles and deploys the entry file as one unit. Other modules in `infra/` can declare resources too, but they deploy only when the entry file imports them. To deploy another part of the project separately, give it its own config. See [Project Config](./project-config.md).
+The CLI deploys the entry file and the modules that it imports. To deploy part of a project separately, give that part its own config. See [Project Config](./project-config.md).
 
 ## Runtime modules
 

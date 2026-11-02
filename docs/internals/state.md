@@ -8,7 +8,7 @@ Each live resource is a `notation/resource-state` store scoped by deployment and
 const state = new DurableStateBackend(storeClient, "my-app:prod");
 ```
 
-The CLI builds the deployment ID from the app and the stage, as `<app>:<stage>`. See [Project Config](../manual/project-config.md#deployment-identity). State written by older versions under an entry path, such as `infra/api.ts`, is not migrated.
+The CLI sets the deployment ID to `<app>:<stage>`. See [State key](../manual/project-config.md#state-key).
 
 The runtime assigns a UUIDv7 `instanceId` when a store is created and increments its version on update. Conditional workflow updates and deletes compare both values, preventing a stale snapshot from modifying a deleted and recreated resource. The store version is exposed unchanged as `StateNode.version`.
 

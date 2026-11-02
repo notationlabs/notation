@@ -37,7 +37,7 @@ export default defineConfig({
 });
 ```
 
-The CLI compiles and deploys the entry file, `infra/api.ts`. The npm scripts run the CLI without arguments, for example `notation deploy`. The commands deploy to the stage `dev`, because the config sets `defaultStage`. To deploy to another stage, pass `--stage`, as in `npm run deploy -- --stage prod`. See [Project Config](./project-config.md).
+The CLI deploys `infra/api.ts` to the `dev` stage. To deploy to another stage, pass `--stage`: `npm run deploy -- --stage prod`. See [Project Config](./project-config.md).
 
 **`infra/api.ts`** – defines the API Gateway and routes:
 

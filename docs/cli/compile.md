@@ -4,11 +4,11 @@
 notation compile [--config <path>]
 ```
 
-| Argument          | Meaning                                                        |
-| ----------------- | -------------------------------------------------------------- |
-| `--config <path>` | The config file. Defaults to the nearest `notation.config.ts`. |
+| Option            | Meaning                                                     |
+| ----------------- | ----------------------------------------------------------- |
+| `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
 
-Compiles the entry file and its runtime modules to `dist/` without deploying. Compiling does not depend on a stage, so `compile` takes no `--stage`. Two compilation passes:
+Compiles the entry file and its runtime modules to `dist/`. The output is the same for every stage, so `compile` takes no `--stage`. There are two passes:
 
 1. **Infrastructure compilation** – esbuild bundles the infra entry point with the `function-infra-plugin`. This plugin intercepts `.fn.ts` imports and replaces handler exports with Lambda resource declarations:
 

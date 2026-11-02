@@ -60,7 +60,7 @@ The plugin strips runtime-only code (imports, side effects) that would be unsafe
 
 Every Lambda function has an ID. It names the function and the resources that support it (`<id>`, `<id>-role`, `<id>-zip`, `<id>-policy`, `<id>-role-policy` and `<id>-log-group`), and keys them in state. Changing an ID replaces the function, so choose one that stays the same when you move or rename files.
 
-In AWS, the function is named `<app>--<stage>--<id>` and its role `<app>--<stage>--<id>-role`, so each stage of the app gets its own function and role. A name longer than 64 characters is shortened with a hash. See [AWS names](../manual/project-config.md#aws-names).
+In AWS, the function is named `<app>--<stage>--<id>` and its role `<app>--<stage>--<id>-role`. A name longer than 64 characters is shortened. See [AWS names](../manual/project-config.md#aws-names).
 
 In a `.fn.ts` file, set `id` in the `config` export. Each handler gets the ID `<id>-<handler>`, so with `id: "todos"` the `getTodos` handler becomes the function `todos-getTodos`. Compilation fails if `config` has no `id`, or if `<id>-<handler>` isn't name-safe.
 

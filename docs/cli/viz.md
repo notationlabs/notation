@@ -4,11 +4,11 @@
 notation viz [--config <path>]
 ```
 
-| Argument          | Meaning                                                        |
-| ----------------- | -------------------------------------------------------------- |
-| `--config <path>` | The config file. Defaults to the nearest `notation.config.ts`. |
+| Option            | Meaning                                                     |
+| ----------------- | ----------------------------------------------------------- |
+| `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
 
-Generates a visual graph of the entry's resources and their dependencies. Outputs a Mermaid Live Editor URL.
+Generates a graph of the entry file's resources and their dependencies. Outputs a Mermaid Live Editor URL.
 
 ```sh
 notation viz

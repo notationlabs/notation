@@ -4,12 +4,12 @@
 notation dashboard [--config <path>] [--stage <stage>]
 ```
 
-| Argument          | Meaning                                                            |
-| ----------------- | ------------------------------------------------------------------ |
-| `--config <path>` | The config file. Defaults to the nearest `notation.config.ts`.     |
-| `--stage <stage>` | The stage. Defaults to `defaultStage`, and is required without it. |
+| Option            | Meaning                                                     |
+| ----------------- | ----------------------------------------------------------- |
+| `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
+| `--stage <stage>` | The stage. Default: `defaultStage`.                         |
 
-Starts a local web dashboard for observing the resource state of the entry's deployment to the stage. The entry must be named in `notation.config.ts`, but its file does not have to exist.
+Starts a local web dashboard that shows the state of the deployment to the stage. The entry file doesn't have to exist.
 
 ```sh
 notation dashboard --stage dev

@@ -4,12 +4,12 @@
 notation destroy [--config <path>] [--stage <stage>]
 ```
 
-| Argument          | Meaning                                                            |
-| ----------------- | ------------------------------------------------------------------ |
-| `--config <path>` | The config file. Defaults to the nearest `notation.config.ts`.     |
-| `--stage <stage>` | The stage. Defaults to `defaultStage`, and is required without it. |
+| Option            | Meaning                                                     |
+| ----------------- | ----------------------------------------------------------- |
+| `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
+| `--stage <stage>` | The stage. Default: `defaultStage`.                         |
 
-Compiles the entry and runs a durable destroy of its deployment to the stage. Resources are removed in reverse dependency order, then registered persisted orphans are removed.
+Compiles the entry file and destroys the deployment to the stage. Resources are removed in reverse dependency order, then registered persisted orphans are removed.
 
 ```sh
 notation destroy --stage prod
