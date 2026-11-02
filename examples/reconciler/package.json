@@ -13,7 +13,8 @@
     "@notation/reconciler": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/utils": "workspace:*",
-    "yieldstar": "0.8.2"
+    "yieldstar": "0.8.2",
+    "valibot": "^1.4.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",

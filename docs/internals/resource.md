@@ -10,7 +10,7 @@ A resource is defined using the `defineResource` builder. The full chain looks l
 
 ```ts
 import { defineResource } from "@notation/resource";
-import { z } from "zod";
+import * as v from "valibot";
 
 const LambdaFunction = defineResource<{
   Key: { FunctionName: string };
@@ -27,30 +27,30 @@ const LambdaFunction = defineResource<{
     // params – input properties
     FunctionName: {
       propertyType: "param",
-      valueType: z.string(),
+      value: v.string(),
       presence: "required",
       immutable: true,
     },
     Runtime: {
       propertyType: "param",
-      valueType: z.string(),
+      value: v.string(),
       presence: "required",
     },
     Handler: {
       propertyType: "param",
-      valueType: z.string(),
+      value: v.string(),
       presence: "required",
     },
     MemorySize: {
       propertyType: "param",
-      valueType: z.number(),
+      value: v.number(),
       presence: "optional",
     },
 
     // computed – populated by the cloud provider after creation
     FunctionArn: {
       propertyType: "computed",
-      valueType: z.string(),
+      value: v.string(),
       presence: "required",
       primaryKey: true,
     },
@@ -99,24 +99,24 @@ Every field in the schema is a `SchemaItem`. Each item has a `propertyType` that
 
 ```ts
 // param – input, set when defining the resource
-FunctionName: { propertyType: "param", valueType: z.string(), presence: "required", immutable: true }
+FunctionName: { propertyType: "param", value: v.string(), presence: "required", immutable: true }
 
 // computed – output, set by the cloud provider after creation
-FunctionArn: { propertyType: "computed", valueType: z.string(), presence: "required", primaryKey: true }
+FunctionArn: { propertyType: "computed", value: v.string(), presence: "required", primaryKey: true }
 ```
 
 ### Common fields
 
 All schema items carry these fields:
 
-| Field          | Type                       | Description                                                      |
-| -------------- | -------------------------- | ---------------------------------------------------------------- |
-| `propertyType` | `"param" \| "computed"`    | Role of the field.                                               |
-| `valueType`    | `ZodType`                  | Zod validator for type checking and serialisation.               |
-| `presence`     | `"required" \| "optional"` | Whether the field must be provided.                              |
-| `sensitive`    | `true?`                    | Redacted in logs.                                                |
-| `hidden`       | `true?`                    | Excluded from CLI display and state output.                      |
-| `volatile`     | `true?`                    | Expected to change between reads; excluded from diff comparison. |
+| Field          | Type                       | Description                                                       |
+| -------------- | -------------------------- | ----------------------------------------------------------------- |
+| `propertyType` | `"param" \| "computed"`    | Role of the field.                                                |
+| `value`        | `StandardSchemaV1`         | Validator for the field's value. See [Value types](#value-types). |
+| `presence`     | `"required" \| "optional"` | Whether the field must be provided.                               |
+| `sensitive`    | `true?`                    | Redacted in logs.                                                 |
+| `hidden`       | `true?`                    | Excluded from CLI display and state output.                       |
+| `volatile`     | `true?`                    | Expected to change between reads; excluded from diff comparison.  |
 
 ### Flags by property type
 
@@ -129,6 +129,38 @@ All schema items carry these fields:
 **`computed`**
 
 - `primaryKey` – identifies the resource (e.g. `FunctionArn` returned by `create`).
+
+### Value types
+
+Every schema item has a required `value`, which can be any [Standard Schema](https://standardschema.dev): a valibot, Zod, ArkType or Effect schema, for example. The engine calls only `~standard.validate`, so it depends on no validator library.
+
+The validator's output type is the field's type. TypeScript checks it against the type the API schema gives the field, so a validator that does not match the API type does not compile:
+
+```ts
+MaxSessionDuration: { propertyType: "param", presence: "optional", value: v.string() }
+//                    ^ error: string is not number
+```
+
+A field that needs a narrower type than the API's, such as one of a few strings, uses a narrower validator. Its output must still be assignable to the API's type.
+
+The engine validates values at four points:
+
+| Point       | What is validated                                                                                                                                                                       |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Declaration | The resource's config, in its constructor. A value that holds an [output value](#output-values) is skipped. An async validator's result is awaited when `collectResourceGraph` ends.    |
+| Plan        | Every param the plan knows. A value that is unknown until apply is skipped.                                                                                                             |
+| Deploy      | Every param deploy knows, before it changes anything. Then each resource's full params, just before its own operation, which checks the values that come from other resources' outputs. |
+| Read        | Every field of a `read` result. A malformed read fails the plan or deploy, so that it is never compared with params.                                                                    |
+
+An invalid value raises `ValueValidationError`. Its message names the resource, the field and the `file:line` that declared the resource, and its `issues` list what the validator reported.
+
+The engine also checks the fields of values against the schema, and raises `SchemaStructureError` when:
+
+- config or params hold a field that is not a param in the schema;
+- `create` returns a field that is not computed;
+- a required computed field has no value after create or update.
+
+The last two can only be found after the provider has made its change. The reconciler writes the resource's record first, so that state still tracks the resource, and then fails.
 
 ## Operations
 

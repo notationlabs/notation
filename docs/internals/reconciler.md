@@ -4,7 +4,7 @@ The reconciler expresses deployment and destruction as Yieldstar async generator
 
 ## Deploy flow
 
-`deploy` takes the deployment hold, walks dependency levels in order, decides an action for every resource, executes provider calls as durable steps, persists the result in a resource store, and deletes registered orphans in reverse order of the [edges in state](#dependency-edges).
+`deploy` first [validates](resource.md#value-types) every param it knows, so that a malformed value fails before any change. It then takes the deployment hold, walks dependency levels in order, decides an action for every resource, executes provider calls as durable steps, persists the result in a resource store, and deletes registered orphans in reverse order of the [edges in state](#dependency-edges).
 
 | Condition                                                                                | Decision           |
 | ---------------------------------------------------------------------------------------- | ------------------ |
