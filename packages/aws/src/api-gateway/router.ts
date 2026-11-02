@@ -1,16 +1,11 @@
-import type {
-  ApiGatewayHandler,
-  JWTAuthorizedApiGatewayHandler,
-} from "src/shared";
-import type { LambdaGroup } from "src/lambda";
+import type { RuntimeRef } from "src/lambda";
 import { route } from "./route";
 import type { ApiGroup } from "./api";
 import { AuthorizerConfig, JWTAuthorizerConfig, NO_AUTH } from "./auth";
 
 export const router = (apiGroup: ApiGroup) => {
   const createRouteCallback =
-    (method: string) =>
-    (path: `/${string}`, handler: ApiGatewayHandler | LambdaGroup) => {
+    (method: string) => (path: `/${string}`, handler: RuntimeRef) => {
       return route(apiGroup, method, path, NO_AUTH, handler);
     };
 
@@ -37,10 +32,7 @@ class AuthorizedRouteBuilder {
 
   private createJWTAuthorizedRouteCallback =
     <ClaimsType>(method: string, authorizer: JWTAuthorizerConfig) =>
-    (
-      path: `/${string}`,
-      handler: JWTAuthorizedApiGatewayHandler<ClaimsType>,
-    ) => {
+    (path: `/${string}`, handler: RuntimeRef) => {
       return route(this.apiGroup, method, path, authorizer, handler);
     };
 

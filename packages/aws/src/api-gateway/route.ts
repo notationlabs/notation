@@ -1,9 +1,5 @@
-import type {
-  ApiGatewayHandler,
-  JWTAuthorizedApiGatewayHandler,
-} from "src/shared";
 import * as aws from "@notation/aws.iac";
-import type { LambdaGroup } from "src/lambda";
+import { assertRuntimeRef, type RuntimeRef } from "src/lambda";
 import type { ApiGroup } from "./api";
 import { AuthorizerConfig } from "./auth";
 import { authorizerKey, mapAuthConfig, mapAuthType } from "./utils";
@@ -13,17 +9,19 @@ type RouteGroupConfig = {
   method: string;
   path: `/${string}`;
   auth: AuthorizerConfig;
-  lambdaGroup: LambdaGroup;
+  handler: RuntimeRef;
 };
 
 export class RouteGroup extends aws.AwsResourceGroup {
   readonly route: aws.apiGateway.RouteInstance;
 
-  constructor({ apiGroup, method, path, auth, lambdaGroup }: RouteGroupConfig) {
+  constructor({ apiGroup, method, path, auth, handler }: RouteGroupConfig) {
     const apiResource = apiGroup.api;
     const routeId = `${apiResource.id}-${method}-${path}`;
+    const routeKey = `${method} ${path}`;
     super("API Gateway/Route", routeId);
 
+    const lambdaGroup = handler.resource;
     const lambdaResource = lambdaGroup.fn;
 
     // a lambda needs one integration and permission per api, however many
@@ -50,6 +48,11 @@ export class RouteGroup extends aws.AwsResourceGroup {
       },
     );
 
+    lambdaGroup.addDispatchEntry(routeId, {
+      export: handler.export,
+      match: { apiId: apiResource.outputValue("ApiId"), routeKey },
+    });
+
     let authorizer: aws.apiGateway.AuthInstance | undefined;
 
     // an api allows 10 authorizers, so routes with the same jwt config share one
@@ -70,7 +73,7 @@ export class RouteGroup extends aws.AwsResourceGroup {
       new aws.apiGateway.Route(routeId, {
         config: {
           AuthorizationScopes: auth.scopes,
-          RouteKey: `${method} ${path}`,
+          RouteKey: routeKey,
           AuthorizationType: mapAuthType(auth),
         },
         dependencies: {
@@ -83,19 +86,17 @@ export class RouteGroup extends aws.AwsResourceGroup {
   }
 }
 
+/**
+ * Routes requests for `method` and `path` on the API to an export of a
+ * runtime module.
+ */
 export const route = (
   apiGroup: ApiGroup,
   method: string, // todo: http methods only
   path: `/${string}`,
   auth: AuthorizerConfig,
-  handler:
-    ApiGatewayHandler | JWTAuthorizedApiGatewayHandler<any> | LambdaGroup,
-) =>
-  new RouteGroup({
-    apiGroup,
-    method,
-    path,
-    auth,
-    // at compile time, a runtime handler import becomes a lambda group
-    lambdaGroup: handler as LambdaGroup,
-  });
+  handler: RuntimeRef,
+) => {
+  assertRuntimeRef(handler, "route()");
+  return new RouteGroup({ apiGroup, method, path, auth, handler });
+};

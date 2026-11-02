@@ -7,38 +7,28 @@ import type {
   EventBridgeHandler,
   JWTAuthorizedApiGatewayHandler,
 } from "src/shared/lambda.handler";
+import type { RuntimeRef } from "src/lambda";
+
+/**
+ * Infra imports a runtime module through a generated module, whose exports
+ * are `RuntimeRef`s. TypeScript types the import from the original module,
+ * so each handler is also typed as a `RuntimeRef`, for infra to pass to APIs
+ * such as `route()`. The function itself has no `resource` or `export`.
+ */
+type Handled<H> = H & RuntimeRef;
+
+const wrap = <H extends (...args: any[]) => any>(handler: H): Handled<H> =>
+  (async (...args: Parameters<H>) => handler(...args)) as unknown as Handled<H>;
 
 export const handle = {
-  apiRequest:
-    (handler: ApiGatewayHandler): ApiGatewayHandler =>
-    async (...args) =>
-      handler(...args),
-  jwtAuthorizedApiRequest:
-    <T>(
-      handler: JWTAuthorizedApiGatewayHandler<T>,
-    ): JWTAuthorizedApiGatewayHandler<T> =>
-    async (...args) =>
-      handler(...args),
-  eventBridgeScheduledEvent:
-    (
-      handler: EventBridgeHandler<"Scheduled Event", any>,
-    ): EventBridgeHandler<"Scheduled Event", any> =>
-    async (...args) =>
-      handler(...args),
-  dynamoDbStream:
-    (handler: DynamoDbStreamHandler): DynamoDbStreamHandler =>
-    async (...args) =>
-      handler(...args),
-  dynamoDbBatch:
-    (handler: DynamoDbBatchHandler): DynamoDbBatchHandler =>
-    async (...args) =>
-      handler(...args),
-  sqsEvent:
-    (handler: SqsHandler): SqsHandler =>
-    async (...args) =>
-      handler(...args),
-  sqsBatch:
-    (handler: SqsBatchHandler): SqsBatchHandler =>
-    async (...args) =>
-      handler(...args),
+  apiRequest: (handler: ApiGatewayHandler) => wrap(handler),
+  jwtAuthorizedApiRequest: <T>(handler: JWTAuthorizedApiGatewayHandler<T>) =>
+    wrap(handler),
+  eventBridgeScheduledEvent: (
+    handler: EventBridgeHandler<"Scheduled Event", any>,
+  ) => wrap(handler),
+  dynamoDbStream: (handler: DynamoDbStreamHandler) => wrap(handler),
+  dynamoDbBatch: (handler: DynamoDbBatchHandler) => wrap(handler),
+  sqsEvent: (handler: SqsHandler) => wrap(handler),
+  sqsBatch: (handler: SqsBatchHandler) => wrap(handler),
 };

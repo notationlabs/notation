@@ -16,9 +16,8 @@
  * 64 characters (see `src/naming.ts`). The inline policy name
  * (`<id>-role-policy`) allows 128.
  *
- * Upper case is allowed because Lambda allows it, and because compiled IDs
- * (`<module id>-<handler>`) contain camelCase handler names. IAM role names
- * are unique regardless of case, so two IDs that differ only in case count as
+ * Upper case is allowed because Lambda allows it. IAM role names are unique
+ * regardless of case, so two IDs that differ only in case count as
  * duplicates.
  */
 export const LAMBDA_ID_MAX_LENGTH = 64;
