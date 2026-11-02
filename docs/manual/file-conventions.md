@@ -70,7 +70,7 @@ export const resource: LambdaResource = {
 };
 ```
 
-`resource.service` selects the type of resource. `"aws/lambda"` is the only service so far. The other fields configure the resource; see [Lambda Resource](./function-config.md).
+`resource.service` selects the type of resource. `"aws/lambda"` is the only service so far, and any other value fails the build. The other fields configure the resource; see [Lambda Resource](./function-config.md).
 
 `runtime/utils.ts` doesn't match `**/*.fn.ts`, so it is an ordinary module. A file that matches a glob and has no `resource` export is also an ordinary module. Runtime modules can import ordinary modules as shared code, and Notation bundles that code into each runtime module that imports it.
 
@@ -101,4 +101,4 @@ todoRouter.get("/todos/count", getTodoCount);
 
 **The runtime module's code never runs at deploy time.** When the compiler builds the infra code, it replaces `runtime/todos.fn.ts` with a generated module. The generated module declares the Lambda function, and exports a reference for each export of the runtime module: `{ resource, export: "getTodos" }`. The `api.get("/todos")` call above runs only in the Lambda function. See [Compiler](../internals/compiler.md).
 
-A runtime module can't contain infra code. A file that still exports `config` in place of `resource` fails the build with a message to rename the export.
+A runtime module can't contain infra code. A file that still exports the old `config` object, with a `service` property, in place of `resource` fails the build with a message to rename the export. A `config` export of any other shape is ordinary code.

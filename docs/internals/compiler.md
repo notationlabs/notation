@@ -9,29 +9,32 @@ Source: `@notation/esbuild-plugins`, `@notation/core`
 Notation compiles the project in two passes:
 
 1. **Infrastructure pass** – bundles the infra entry point with `infraPlugin`. Evaluating the bundle produces the resource graph.
-2. **Runtime pass** – bundles each runtime module separately, as the code for one function.
+2. **Runtime pass** – bundles each runtime module that the infra pass replaced, as the code for one function. The bundles build at the same time.
 
 The infra pass determines what infrastructure resources should be provisioned; the runtime pass produces the code artefacts that run on them.
 
 ## Runtime modules
 
-A file is a runtime module when it matches a `runtimeModules` glob and exports `resource`. Both passes use the same rule:
+A file is a runtime module when it matches a `runtimeModules` glob and exports `resource`. Only the infra pass applies this rule. It reports the runtime modules it replaced, and the runtime pass bundles exactly those, so the two passes can't disagree.
 
-| Function                             | Package                     | Does                                                                                    |
-| ------------------------------------ | --------------------------- | --------------------------------------------------------------------------------------- |
-| `resolveRuntimeModules(config)`      | `@notation/core`            | Returns the config's globs as an array, or the default `["**/*.fn.ts"]`                 |
-| `matchesRuntimeModules(path, globs)` | `@notation/esbuild-plugins` | Checks a path against the globs. Paths in `node_modules/` and `dist/` never match       |
-| `parseRuntimeModule(source, path)`   | `@notation/esbuild-plugins` | Reads `resource` and the export names, or returns `undefined` if there is no `resource` |
+| Function                             | Package                     | Does                                                                                               |
+| ------------------------------------ | --------------------------- | -------------------------------------------------------------------------------------------------- |
+| `resolveRuntimeModules(config)`      | `@notation/core`            | Returns the config's globs as an array, or the default `["**/*.fn.ts"]`                            |
+| `matchesRuntimeModules(path, globs)` | `@notation/esbuild-plugins` | Checks a path against the globs with `minimatch`. Paths in `node_modules/` and `dist/` never match |
+| `parseRuntimeModule(source, path)`   | `@notation/esbuild-plugins` | Reads `resource` and the export names, or returns `undefined` if there is no `resource`            |
 
 `parseRuntimeModule` reads the source with the TypeScript parser and never runs it. So `resource` must be an object literal with literal values, and it must have a `service` and an `id`. The parser fails on:
 
-- a `config` export with no `resource` export, with a message to rename it,
-- `export default` and `export *`, because the generated module needs a name for each export,
+- a `config` export in the old shape (an object literal with a `service` property) and no `resource` export, with a message to rename it. Any other `config` export is ordinary code,
+- a `service` that isn't supported. The supported services are listed in `supportedServices`; at present only `aws/lambda`,
+- an `id` that isn't name-safe: 1 to 64 letters, digits, hyphens or underscores,
+- `export default`, `export =`, `export *`, `export namespace` and `export import`, because the generated module needs a name for each export,
+- string export names, such as `export { a as "a-b" }`, and export names that start with `__notation`, because the generated module declares each export as a `const`,
 - a `resource.code` field, because the compiler sets `code`.
 
 ## The infra plugin
 
-`infraPlugin` is an esbuild plugin. During the infra pass, it replaces each runtime module that infra imports with a generated module. Files that match the globs but don't export `resource` load unchanged.
+`infraPlugin` is an esbuild plugin. During the infra pass, it replaces each runtime module that infra imports with a generated module. Files that match the globs but don't export `resource` load unchanged. After each build without errors, the plugin calls `onRuntimeModules` with the path and service of each module it replaced. `compileInfra` returns that list, and `compileRuntimeModules` bundles it.
 
 ### The transformation
 
@@ -74,10 +77,10 @@ export const createTodo = {
 
 ### How it works
 
-1. `resource.service` has the form `<platform>/<service>`. The generated module imports the factory `<service>` from `@notation/<platform>/<service>`, so `"aws/lambda"` gives `lambda` from `@notation/aws/lambda`.
+1. `resource.service` has the form `<platform>/<service>`, and must be a supported service. The generated module imports the factory `<service>` from `@notation/<platform>/<service>`, so `"aws/lambda"` gives `lambda` from `@notation/aws/lambda`.
 2. The generated module calls the factory once. It passes every field of `resource` except `service`, and adds `code`, which points at the runtime bundle.
 3. For each other export, the generated module exports a reference: `{ resource, export: "<name>" }`.
-4. The generated names start with `__notation`, so they never clash with the module's export names.
+4. The generated names start with `__notation`. The parser rejects export names with that prefix, so they never clash with the module's export names.
 
 **None of the runtime module's code is kept.** In the example, `fetchTodos()` runs only in the Lambda function, never at deploy time. The plugin also lists the runtime module in `watchFiles`, so watch mode rebuilds the infra bundle when the module's exports or `resource` change.
 
@@ -113,10 +116,11 @@ The reconciler uses the resulting `{ resources, resourceGroups }` object to plan
 
 In watch mode (`notation watch`), esbuild runs in `context.watch()` mode for both passes. Changes to source files trigger incremental rebuilds.
 
-The CLI also watches for structural changes to the project:
+After each infra rebuild, the CLI compares the replaced runtime modules with the previous list. When the list changes, it stops the runtime builds and starts one for each module in the new list:
 
-- **New runtime modules** – a file that starts to match the globs and export `resource` gets its own runtime build
-- **Removed runtime modules** – a file that is deleted, or stops exporting `resource`, loses its runtime build; the reconciler deletes its resources once infra no longer imports it
-- **Config changes** – trigger a re-evaluation of the infrastructure graph
+- **New runtime modules** – a module that infra starts to import, or that starts to export `resource`, gets its own runtime build
+- **Removed runtime modules** – a module that infra stops importing, or that stops exporting `resource`, loses its runtime build; the reconciler deletes its resources
+
+A change to the config file makes `notation watch` exit, so you restart it with the new config.
 
 Together this gives you a live development loop: save a file, and Notation recompiles, re-evaluates the graph, and deploys the diff.

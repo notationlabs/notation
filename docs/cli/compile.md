@@ -10,7 +10,7 @@ notation compile [--config <path>]
 
 Compiles the entry file and its runtime modules to `dist/`. The output is the same for every stage, so `compile` takes no `--stage`. There are two passes:
 
-1. **Infrastructure compilation** – esbuild bundles the infra entry point to `dist/infra/<entry>.mjs`. When the entry imports a [runtime module](../manual/file-conventions.md#runtime-modules), the compiler replaces the module with a generated module that declares its resource:
+1. **Infrastructure compilation** – esbuild bundles the infra entry point to `dist/infra/<entry>.mjs`. When the entry imports a [runtime module](../manual/file-conventions.md#runtime-modules), the compiler replaces the module with a generated module that declares its resource. The generated module below is simplified. The real module uses names that start with `__notation`, such as `__notationResource`, so they don't clash with the module's exports:
 
 ::code-group
 
@@ -33,6 +33,6 @@ export const getTodos = { resource, export: "getTodos" };
 
 ::
 
-2. **Runtime compilation** – the compiler finds the files that match `runtimeModules` and export `resource`, and bundles each one to `dist/<module path>/index.mjs`. The bundle exports one `handler`, which sends each event to an export of the module. See [Dispatch](../resources/lambda.md#dispatch).
+2. **Runtime compilation** – the compiler bundles each runtime module that the first pass replaced to `dist/<module path>/index.mjs`. A runtime module that the entry doesn't import isn't bundled. The bundle exports one `handler`, which sends each event to an export of the module. See [Dispatch](../resources/lambda.md#dispatch).
 
-A file that matches `runtimeModules` and exports `config` in place of `resource` fails the build with a message to rename the export.
+A file that matches `runtimeModules` and exports the old `config` object, with a `service` property, in place of `resource` fails the build with a message to rename the export.
