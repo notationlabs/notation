@@ -2417,6 +2417,46 @@ describe("value validation at deploy", () => {
     runtime.close();
   });
 
+  it("reads a recorded resource again when a required output is missing", async () => {
+    let arn: string | undefined;
+    const Role = defineRole({ read: async () => ({ arn }) });
+    const runtime = createRuntime(
+      [new Role("role", { config: { name: "role" } })],
+      "recover-outputs",
+    );
+    await runtime.run("recover-outputs-1").catch(() => {});
+
+    const error = await runtime.run("recover-outputs-2").catch((e) => e);
+    expect(error).toMatchObject({
+      name: "SchemaStructureError",
+      fields: ["arn"],
+    });
+
+    arn = "arn:role";
+    await runtime.run("recover-outputs-3");
+    expect(await runtime.state.get("role")).toMatchObject({
+      output: { arn: "arn:role" },
+    });
+    runtime.close();
+  });
+
+  it("fails every deploy while a resource with no read lacks a required output", async () => {
+    const Role = defineRole();
+    const runtime = createRuntime(
+      [new Role("role", { config: { name: "role" } })],
+      "missing-outputs",
+    );
+    await runtime.run("missing-outputs-1").catch(() => {});
+
+    const error = await runtime.run("missing-outputs-2").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "SchemaStructureError",
+      fields: ["arn"],
+    });
+    runtime.close();
+  });
+
   it("deletes an orphan whose recorded config no longer passes its validator", async () => {
     let strict = false;
     const deleteSpy = vi.fn(async () => undefined);

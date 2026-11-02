@@ -4,6 +4,8 @@
  * writes conditional on that read.
  */
 import {
+  SchemaStructureError,
+  assertRequiredOutputs,
   validateParams,
   withoutDeclarationChecks,
   type BaseResource,
@@ -20,6 +22,7 @@ import {
   applyDriftDetection,
   createResourceOperation,
   deleteResourceOperation,
+  readResourceOperation,
   updateResourceOperation,
   type CreateResourceParams,
   type PersistState,
@@ -144,15 +147,69 @@ export async function* reconcileResource(
       yield* replaceResource(step, opts, session, shared);
       return;
     case "noop":
-      if (
-        session.node &&
-        !opts.dryRun &&
-        !hasSameEdges(session.node, dependsOn)
-      ) {
+      if (!session.node) return;
+      if (findMissingOutputs(resource, session.node.output)) {
+        yield* recoverOutputs(step, opts, session, shared);
+        return;
+      }
+      if (!opts.dryRun && !hasSameEdges(session.node, dependsOn)) {
         yield* rewriteEdges(session, dependsOn);
       }
       return;
   }
+}
+
+function findMissingOutputs(
+  resource: BaseResource,
+  output: Record<string, unknown>,
+): SchemaStructureError | undefined {
+  try {
+    assertRequiredOutputs(resource, output);
+  } catch (error) {
+    if (SchemaStructureError.is(error)) return error;
+    throw error;
+  }
+  return undefined;
+}
+
+/**
+ * Handles a record that lacks a required output. Create and update write the
+ * record before they fail on a missing output, so a later deploy can decide
+ * noop for it, and its dependents would read the output as undefined. The
+ * resource is read again, and the record is written with what the read
+ * returns. The deploy fails while an output is still missing.
+ */
+async function* recoverOutputs(
+  step: DurableStepRunner,
+  opts: DurableDeployOptions,
+  session: Extract<ResourceStateSession, { node: StateNode }>,
+  shared: Omit<CreateResourceParams, "persist">,
+): AsyncGenerator<any, void, any> {
+  const { resource } = shared;
+  if (resource.read) {
+    const readStep = step.scope("output-read");
+    const readResult = yield* readResourceOperation(readStep, {
+      resource,
+      resourceParams: shared.resourceParams,
+      persistedOutput: session.node.output,
+      // No dryRun, as for the drift read.
+      emit: durableEmitter(readStep, opts.emit),
+      maxOperationAttempts: shared.maxOperationAttempts,
+    });
+    resource.setOutput({ ...session.node.output, ...readResult });
+  }
+
+  const missing = findMissingOutputs(resource, resource.output);
+  if (!opts.dryRun && resource.read) {
+    const { version: _, ...record } = session.node;
+    yield* session.persist({
+      ...record,
+      group: (record.group ?? null) as ResourceGroupRef | null,
+      output: resource.toState(resource.output),
+      dependsOn: shared.dependsOn,
+    });
+  }
+  if (missing) throw missing;
 }
 
 /**

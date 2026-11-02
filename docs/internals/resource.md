@@ -163,9 +163,10 @@ The engine also checks the fields of values against the schema, and raises `Sche
 
 - config or params hold a field that is not a param in the schema;
 - `create` returns a field that the schema has but not as computed;
+- params leave out a required param, at plan and deploy;
 - a required computed field has no value after create or update.
 
-The last two can only be found after the provider has made its change. So can an invalid value in a `create` result, and a malformed read after create or update. In each case the reconciler writes the resource's record first, so that state still tracks the resource, and then fails. When the read is malformed, the record holds the params and the outputs known without the read.
+The last two can only be found after the provider has made its change. So can an invalid value in a `create` result, and a malformed read after create or update. In each case the reconciler writes the resource's record first, so that state still tracks the resource, and then fails. When the read is malformed, the record holds the params and the outputs known without the read. When a later deploy finds no change for a resource whose record lacks a required output, it reads the resource again and writes the record with what the read returns. While the output is still missing, or when the resource has no `read`, every deploy fails, so that dependents never receive the output as undefined.
 
 ### Values that hold unknowns
 
