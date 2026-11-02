@@ -342,6 +342,7 @@ A param is collected when its schema item has `collect`. `collect` receives the 
 PolicyDocument: {
   propertyType: "param",
   presence: "required",
+  value: policyDocumentValue,
   collect: (items) => ({
     Version: "2012-10-17",
     Statement: items.flatMap((item) => item.Statement ?? []),
