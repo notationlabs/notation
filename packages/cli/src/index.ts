@@ -12,10 +12,12 @@ import { startDashboardServer } from "@notation/dashboard";
 import {
   NodeDurableRuntime,
   loadProject,
+  readExecutionDeployment,
   resolveDeployment,
   resolveDeploymentIdentity,
   resolveEntryPoint,
   setConfigFile,
+  type Project,
 } from "@notation/core";
 
 const configOption = [
@@ -61,10 +63,11 @@ program
   .option("--no-drift-detection", "skip drift detection")
   .action(async (options) => {
     const project = await load(options);
-    const deployment = resolveDeployment(project, { stage: options.stage });
+    const deployment = await resolveResumableDeployment(project, options);
     await deploy(deployment, {
       json: options.json,
       executionId: options.executionId,
+      resumeCommand: resumeCommand("deploy", options),
       compile: options.compile,
       driftDetection: options.driftDetection,
     });
@@ -79,10 +82,11 @@ program
   .option("--execution-id <id>", "resume a durable execution")
   .action(async (options) => {
     const project = await load(options);
-    const deployment = resolveDeployment(project, { stage: options.stage });
+    const deployment = await resolveResumableDeployment(project, options);
     await destroy(deployment, {
       json: options.json,
       executionId: options.executionId,
+      resumeCommand: resumeCommand("destroy", options),
     });
   });
 
@@ -121,6 +125,30 @@ program
 function load(options: { config?: string }) {
   if (options.config !== undefined) setConfigFile(options.config);
   return loadProject();
+}
+
+// An execution that already exists saved its stage when it started, so the
+// stage comes from the execution. An ID with no execution starts a new one.
+async function resolveResumableDeployment(
+  project: Project,
+  options: { stage?: string; executionId?: string },
+) {
+  const saved =
+    options.executionId === undefined
+      ? undefined
+      : await readExecutionDeployment(options.executionId);
+  return resolveDeployment(project, {
+    stage: options.stage,
+    execution: saved && { id: options.executionId!, deployment: saved },
+  });
+}
+
+// The command to print for resuming a crash. It omits --stage, because the
+// stage comes from the execution.
+function resumeCommand(command: string, options: { config?: string }) {
+  const config =
+    options.config === undefined ? "" : ` --config ${options.config}`;
+  return `notation ${command}${config}`;
 }
 
 process.exitCode = await runWithErrorHandling(

@@ -13,6 +13,8 @@ import { redirectStdoutToStderr } from "./stdio";
 export type DeployCommandOptions = {
   json?: boolean;
   executionId?: string;
+  // Printed with the execution ID, such as `notation deploy`.
+  resumeCommand?: string;
   // Off when the caller (e.g. watch) has already compiled.
   compile?: boolean;
   driftDetection?: boolean;
@@ -34,6 +36,11 @@ export async function deploy(
   logger.info(`Deploying ${resolveDeploymentId(deployment)}`);
   const executionId = opts.executionId ?? randomUUID();
   logger.info(`Execution ID ${executionId}`);
+  if (opts.resumeCommand) {
+    logger.info(
+      `To resume after a crash, run ${opts.resumeCommand} --execution-id ${executionId}`,
+    );
+  }
 
   await deployApp({
     deployment,

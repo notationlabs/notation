@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import {
   ExecutionDispatcher,
   WorkflowRunner,
@@ -15,6 +16,7 @@ import {
 import pino, { type Logger } from "pino";
 import { filePaths } from "src/utils/paths";
 import {
+  parseDeploymentId,
   resolveDeploymentId,
   type DeploymentIdentity,
 } from "src/config/deployment";
@@ -178,6 +180,34 @@ export class NodeDurableRuntime {
       );
     }
     this.#database.close();
+  }
+}
+
+/**
+ * Reads the deployment saved with an execution when it started. Returns
+ * `undefined` when there is no execution with the ID, or when its saved state
+ * key is not `<app>:<stage>`.
+ */
+export async function readExecutionDeployment(
+  executionId: string,
+  opts: { databasePath?: string } = {},
+): Promise<DeploymentIdentity | undefined> {
+  const databasePath = opts.databasePath ?? resolveDatabasePath();
+  // Opening the database would create it, so a project that has never
+  // deployed would get an empty database from a lookup.
+  if (databasePath !== ":memory:" && !fs.existsSync(databasePath)) {
+    return undefined;
+  }
+  const database = createSqliteDb({ path: databasePath });
+  try {
+    const record = await new SqliteRuntime(database).executions.get(
+      executionId,
+    );
+    const deploymentId = record?.params?.deploymentId;
+    if (typeof deploymentId !== "string") return undefined;
+    return parseDeploymentId(deploymentId);
+  } finally {
+    database.close();
   }
 }
 

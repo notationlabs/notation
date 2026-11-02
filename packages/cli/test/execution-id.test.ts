@@ -52,6 +52,20 @@ describe.each([
     expect(logger.info).toHaveBeenCalledWith("Execution ID crashed-execution");
   });
 
+  it("prints the command that resumes the execution", async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    await run(deployment, {
+      executionId: "new-execution",
+      resumeCommand: "notation deploy --config jobs.config.ts",
+      logger,
+    });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      "To resume after a crash, run notation deploy --config jobs.config.ts --execution-id new-execution",
+    );
+  });
+
   it("starts a new execution and prints its ID before running it", async () => {
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 

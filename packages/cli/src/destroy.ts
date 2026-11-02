@@ -13,6 +13,8 @@ import { redirectStdoutToStderr } from "./stdio";
 export type DestroyCommandOptions = {
   json?: boolean;
   executionId?: string;
+  // Printed with the execution ID, such as `notation deploy`.
+  resumeCommand?: string;
   logger?: Logger;
 };
 
@@ -29,6 +31,11 @@ export async function destroy(
   logger.info(`Destroying ${resolveDeploymentId(deployment)}\n`);
   const executionId = opts.executionId ?? randomUUID();
   logger.info(`Execution ID ${executionId}`);
+  if (opts.resumeCommand) {
+    logger.info(
+      `To resume after a crash, run ${opts.resumeCommand} --execution-id ${executionId}`,
+    );
+  }
 
   await destroyApp({ deployment, emit, executionId });
 }

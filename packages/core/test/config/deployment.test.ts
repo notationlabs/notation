@@ -10,6 +10,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { NotationConfig } from "src/config/config";
 import {
+  parseDeploymentId,
   resolveDeployment,
   resolveDeploymentId,
   resolveDeploymentIdentity,
@@ -82,6 +83,55 @@ describe("resolveDeployment", () => {
   it("checks the given stage", () => {
     expect(() => resolveDeployment(project, { stage: "-prod" })).toThrow(
       'stage "-prod" is not name-safe',
+    );
+  });
+});
+
+describe("parseDeploymentId", () => {
+  it("reads the app and stage from a state key", () => {
+    expect(parseDeploymentId("orders-app:prod")).toEqual({
+      app: "orders-app",
+      stage: "prod",
+    });
+  });
+
+  it.each(["infra/api.ts", "orders-app", "orders-app:prod:eu", "Orders:prod"])(
+    "returns undefined for %s",
+    (deploymentId) => {
+      expect(parseDeploymentId(deploymentId)).toBeUndefined();
+    },
+  );
+});
+
+describe("resolveDeployment of a resumed execution", () => {
+  const execution = {
+    id: "crashed-execution",
+    deployment: { app: "orders-app", stage: "prod" },
+  };
+  const withDefault = { config: { ...config, defaultStage: "dev" } };
+
+  it("takes the stage from the execution, not the default stage", () => {
+    expect(resolveDeployment(withDefault, { execution }).stage).toBe("prod");
+  });
+
+  it("accepts a given stage that matches the execution", () => {
+    expect(resolveDeployment(project, { stage: "prod", execution }).stage).toBe(
+      "prod",
+    );
+  });
+
+  it("rejects a given stage that does not match the execution", () => {
+    expect(() =>
+      resolveDeployment(withDefault, { stage: "dev", execution }),
+    ).toThrow(
+      "Execution crashed-execution is for stage prod, not dev. Leave out --stage, or pass --stage prod",
+    );
+  });
+
+  it("rejects a config with another app", () => {
+    const jobs = { config: { ...config, app: "orders-jobs" } };
+    expect(() => resolveDeployment(jobs, { execution })).toThrow(
+      "Execution crashed-execution is for app orders-app, but notation.config.ts has app orders-jobs. Pass --config with the config of app orders-app",
     );
   });
 });

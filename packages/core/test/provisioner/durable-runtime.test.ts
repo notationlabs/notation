@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,6 +11,7 @@ import { createWorkflowRouter, workflow } from "yieldstar";
 import { describe, expect, it, vi } from "vitest";
 import {
   NodeDurableRuntime,
+  readExecutionDeployment,
   withRuntime,
 } from "src/provisioner/durable-runtime";
 
@@ -356,6 +358,54 @@ describe("NodeDurableRuntime", () => {
       expect(runtime.state.deploymentId).toBe("orders-app:prod");
     } finally {
       runtime.close();
+    }
+  });
+});
+
+describe("readExecutionDeployment", () => {
+  it("reads the deployment saved with an execution", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "notation-read-"));
+    const databasePath = path.join(directory, "workflows.db");
+    const database = createSqliteDb({ path: databasePath });
+    const executions = new SqliteRuntime(database).executions;
+    for (const [executionId, deploymentId] of [
+      ["staged", "orders-app:prod"],
+      ["unstaged", "infra/api.ts"],
+    ]) {
+      await executions.admit({
+        executionId: executionId!,
+        workflowId: "deploy",
+        params: { deploymentId },
+        context: new Map(),
+      });
+    }
+    database.close();
+
+    try {
+      await expect(
+        readExecutionDeployment("staged", { databasePath }),
+      ).resolves.toEqual({ app: "orders-app", stage: "prod" });
+      await expect(
+        readExecutionDeployment("unstaged", { databasePath }),
+      ).resolves.toBeUndefined();
+      await expect(
+        readExecutionDeployment("unknown", { databasePath }),
+      ).resolves.toBeUndefined();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not create a database that does not exist", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "notation-read-"));
+    const databasePath = path.join(directory, "workflows.db");
+    try {
+      await expect(
+        readExecutionDeployment("unknown", { databasePath }),
+      ).resolves.toBeUndefined();
+      expect(existsSync(databasePath)).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
     }
   });
 });

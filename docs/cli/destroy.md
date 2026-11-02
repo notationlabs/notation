@@ -21,11 +21,13 @@ notation destroy --stage prod
 notation destroy --stage prod --json > destroy.ndjson
 ```
 
-The command prints its execution ID. Resume a crashed destroy with the same ID so checkpointed work can be replayed:
+The command prints its execution ID. Resume a crashed destroy with the same ID, so that Notation replays the checkpointed work:
 
 ```sh
-notation destroy --stage prod --execution-id <id>
+notation destroy --execution-id <id>
 ```
+
+The stage comes from the execution, as it does for a resumed deploy. See [notation deploy](./deploy.md#durable-execution).
 
 Retryable deletes suspend on durable SQLite timers. Resource state is removed only after the provider delete succeeds or reports that the resource is already absent.
 

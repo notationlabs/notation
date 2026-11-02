@@ -25,16 +25,19 @@ notation deploy --stage prod --json > deploy.ndjson
 
 ## Durable execution
 
-The command prints its execution ID before starting provider work. If the process crashes, resume the same execution with that ID:
+The command prints its execution ID before it starts provider work, and the command that resumes the execution:
 
 ```sh
-notation deploy --stage prod --execution-id <id>
+Execution ID 0195f0c2-7d1e-7b4a-9c3e-2f6a8b1d4e70
+To resume after a crash, run notation deploy --execution-id 0195f0c2-7d1e-7b4a-9c3e-2f6a8b1d4e70
 ```
 
-When a deploy starts, Notation saves the execution ID with the state key `<app>:<stage>`. When you resume with `--execution-id`, the command builds its own state key from the `app` in the config and the `--stage` value, and compares it with the saved key. If the keys differ, the command fails:
+When a deploy starts, Notation saves the state key `<app>:<stage>` with the execution. When you resume, the command reads the stage from the saved key, so you don't pass `--stage`. The command still needs the config, because the config names the entry file. If you deployed with `--config`, the printed command includes it.
+
+The command fails if the config's `app` is not the saved app, or if you pass a `--stage` that is not the saved stage:
 
 ```sh
-Execution <id> is bound to deployment my-app:prod workflow deploy, not deployment my-app:dev workflow deploy
+Execution <id> is for stage prod, not dev. Leave out --stage, or pass --stage prod
 ```
 
 Do not reuse a completed execution ID for a new deploy or for destroy.
