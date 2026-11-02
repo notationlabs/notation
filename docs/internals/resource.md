@@ -143,6 +143,8 @@ MaxSessionDuration: { propertyType: "param", presence: "optional", value: v.stri
 
 A field that needs a narrower type than the API's, such as one of a few strings, uses a narrower validator. Its output must still be assignable to the API's type.
 
+The engine only checks values. It keeps the value it was given, not the validator's output. So the validator's input type must also be assignable to the field's type, and a validator that transforms its input, such as `v.pipe(v.string(), v.transform(Number))`, does not compile. A default that a validator fills in for an optional field, such as `v.optional(v.string(), "x")`, still compiles but is not applied.
+
 The engine validates values at four points:
 
 | Point       | What is validated                                                                                                                                                                       |
@@ -157,7 +159,7 @@ An invalid value raises `ValueValidationError`. Its message names the resource, 
 The engine also checks the fields of values against the schema, and raises `SchemaStructureError` when:
 
 - config or params hold a field that is not a param in the schema;
-- `create` returns a field that is not computed;
+- `create` returns a field that the schema has but not as computed;
 - a required computed field has no value after create or update.
 
 The last two can only be found after the provider has made its change. The reconciler writes the resource's record first, so that state still tracks the resource, and then fails.

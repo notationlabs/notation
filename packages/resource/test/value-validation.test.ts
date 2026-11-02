@@ -8,6 +8,7 @@ import {
   resource,
   validateValues,
   withoutDeclarationChecks,
+  type StandardSchemaV1,
 } from "src";
 import { async, check, number, string } from "./validators";
 
@@ -57,6 +58,32 @@ describe("schema item types", () => {
         propertyType: "param",
         presence: "optional",
         value: string(),
+      },
+      Arn: { propertyType: "computed", presence: "required", value: string() },
+    });
+  });
+
+  it("rejects a validator that transforms its input", () => {
+    const parseNumber: StandardSchemaV1<string, number> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (value) => ({ value: Number(value) }),
+      },
+    };
+    resource<RoleApi>({ type: "test/validation/transform" }).defineSchema({
+      RoleName: {
+        propertyType: "param",
+        presence: "required",
+        value: string(),
+        primaryKey: true,
+        immutable: true,
+      },
+      // @ts-expect-error the input type string is not number
+      MaxSessionDuration: {
+        propertyType: "param",
+        presence: "optional",
+        value: parseNumber,
       },
       Arn: { propertyType: "computed", presence: "required", value: string() },
     });

@@ -7,7 +7,7 @@ import type { StandardSchemaV1 } from "src";
 export function check<T>(
   test: (value: unknown) => boolean,
   message: string,
-): StandardSchemaV1<unknown, T> {
+): StandardSchemaV1<T, T> {
   return {
     "~standard": {
       version: 1,
@@ -38,8 +38,8 @@ export const object = <T>() =>
 
 /** Wraps a validator so that it resolves its result asynchronously. */
 export function async<T>(
-  inner: StandardSchemaV1<unknown, T>,
-): StandardSchemaV1<unknown, T> {
+  inner: StandardSchemaV1<T, T>,
+): StandardSchemaV1<T, T> {
   return {
     "~standard": {
       ...inner["~standard"],

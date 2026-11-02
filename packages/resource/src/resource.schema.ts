@@ -24,8 +24,14 @@ export type SchemaItem<T = any> = {
    * Validates the property's value. Any Standard Schema can be used. Its
    * output type is the property's type, and must be assignable to the type
    * the resource's API schema gives the property.
+   *
+   * The engine checks values with the validator but keeps the values it was
+   * given, not the validator's output. So the validator's input type must
+   * also be assignable to the property's type, and a validator that
+   * transforms its input does not compile. A default that a validator fills
+   * in for an optional property is not applied either.
    */
-  value: StandardSchemaV1<unknown, T>;
+  value: StandardSchemaV1<T, T>;
   presence: "required" | "optional";
   sensitive?: true;
   hidden?: true;
