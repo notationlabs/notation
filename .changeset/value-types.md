@@ -22,6 +22,6 @@ The engine validates config when a resource is declared, known params at plan, k
 
 The engine also raises `SchemaStructureError` when params hold a field that is not a param, when `create` returns a field that is not computed, or when a required computed field is missing after create or update.
 
-The aws.iac resources now reject values that AWS would reject: a value not in the SDK's list for an enum field, an SQS queue attribute outside its range, a `TimeoutInMillis` that is not an integer, and a role policy document that does not follow the IAM policy grammar. `InvocationType` is removed from `LambdaApiPermission` and the EventBridge Lambda permission, because `AddPermission` does not accept it and the SDK dropped it.
+The aws.iac resources now reject values that AWS would reject: a value not in the SDK's list for an enum field, an SQS queue attribute outside its range, a `TimeoutInMillis` that is not an integer, and a role policy document that does not follow the IAM policy grammar. `InvocationType` is removed from `LambdaApiPermission` and `LambdaEventBridgeRulePermission`, because `AddPermission` does not accept it and the SDK dropped it.
 
 Known limit: string-union fields are checked against the SDK's list of values. A value that AWS adds after the pinned SDK version, such as a new Lambda runtime, fails validation. A read that returns such a value fails the plan until RFC 0009 makes malformed reads recoverable.
