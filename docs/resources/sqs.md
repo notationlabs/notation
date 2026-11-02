@@ -71,7 +71,7 @@ export const resource: LambdaResource = {
 
 ::
 
-`processOrders` is an export of the runtime module `runtime/orders.fn.ts`, so in infra code it is a `RuntimeRef`: the module's Lambda group, plus the name of the export. See [Lambda](lambda.md#runtime-modules). `consume` then changes three things, and the function's own config doesn't mention the queue:
+`processOrders` is an export of the runtime module `runtime/orders.fn.ts`, so in infra code it is a `RuntimeRef`: the module's Lambda group, plus the name of the export. See [Lambda](lambda.md#runtime-modules). `consume` also takes a Lambda group from [`lambda()`](lambda.md#lambdaconfig), and then adds no dispatch entry. `consume` then changes three things, and the function's own config doesn't mention the queue:
 
 1. **The role's inline policy.** `consume` contributes a statement that allows `sqs:ReceiveMessage`, `sqs:DeleteMessage` and `sqs:GetQueueAttributes` on the queue to the function's [inline policy](lambda.md#inline-policy).
 2. **An event source mapping**, `orders-orders-mapping`, which connects the queue to the function.
