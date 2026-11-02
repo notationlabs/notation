@@ -135,6 +135,24 @@ describe("schema item types", () => {
   });
 });
 
+const AsyncRole = resource<RoleApi>({ type: "test/validation/async" })
+  .defineSchema({
+    RoleName: {
+      propertyType: "param",
+      presence: "required",
+      value: async(string()),
+      primaryKey: true,
+      immutable: true,
+    },
+    MaxSessionDuration: {
+      propertyType: "param",
+      presence: "optional",
+      value: number(),
+    },
+    Arn: { propertyType: "computed", presence: "required", value: string() },
+  })
+  .defineOperations(operations);
+
 describe("validation at declaration", () => {
   it("throws for an invalid config value, naming the resource, field and call site", () => {
     const error = catchError(
@@ -156,7 +174,7 @@ describe("validation at declaration", () => {
       /^packages\/resource\/test\/value-validation\.test\.ts:\d+$/,
     );
     expect(error.message).toMatch(
-      /^Invalid MaxSessionDuration for orders-role \(test\/validation\/role\) at declaration, declared at packages\/resource\/test\/value-validation\.test\.ts:\d+: Expected a number$/,
+      /^Invalid MaxSessionDuration for orders-role \(test\/validation\/role\) when declared at packages\/resource\/test\/value-validation\.test\.ts:\d+: Expected a number$/,
     );
   });
 
@@ -190,23 +208,6 @@ describe("validation at declaration", () => {
   });
 
   it("fails collection when an async validator rejects config", async () => {
-    const AsyncRole = resource<RoleApi>({ type: "test/validation/async" })
-      .defineSchema({
-        RoleName: {
-          propertyType: "param",
-          presence: "required",
-          value: async(string()),
-          primaryKey: true,
-          immutable: true,
-        },
-        Arn: {
-          propertyType: "computed",
-          presence: "required",
-          value: string(),
-        },
-      })
-      .defineOperations(operations);
-
     const collected = collectResourceGraph(() => {
       new AsyncRole("role", { config: { RoleName: 7 as any } });
     });
@@ -215,6 +216,50 @@ describe("validation at declaration", () => {
       field: "RoleName",
       point: "declaration",
     });
+  });
+
+  it("does not leave a rejection unhandled while evaluation runs", async () => {
+    const unhandled = watchUnhandledRejections();
+    try {
+      const collected = collectResourceGraph(async () => {
+        new AsyncRole("role", { config: { RoleName: 7 as any } });
+        await wait(20);
+      });
+      await expect(collected).rejects.toMatchObject({
+        name: "ValueValidationError",
+        field: "RoleName",
+      });
+      await wait(0);
+    } finally {
+      unhandled.stop();
+    }
+    expect(unhandled.reasons).toEqual([]);
+  });
+
+  it("does not leave an async check unhandled when a sync check throws", async () => {
+    const unhandled = watchUnhandledRejections();
+    try {
+      expect(
+        () =>
+          new AsyncRole("role", {
+            config: { RoleName: 7 as any, MaxSessionDuration: "x" as any },
+          }),
+      ).toThrow(ValueValidationError);
+      await wait(20);
+    } finally {
+      unhandled.stop();
+    }
+    expect(unhandled.reasons).toEqual([]);
+  });
+
+  it("is skipped when collection turns declaration checks off", async () => {
+    await collectResourceGraph(
+      () => {
+        new Role("restored", { config: { RoleName: 1 as any } });
+        new AsyncRole("async", { config: { RoleName: 7 as any } });
+      },
+      { declarationChecks: false },
+    );
   });
 
   it("is skipped inside withoutDeclarationChecks", () => {
@@ -264,6 +309,33 @@ describe("validation helpers", () => {
     ).toEqual(["Tags.0: Expected a string", "Too long"]);
   });
 
+  it("leaves the validator's messages out for a sensitive field", () => {
+    const sensitive = {
+      ...subject,
+      schema: {
+        ...subject.schema,
+        RoleName: {
+          ...subject.schema.RoleName,
+          sensitive: true as const,
+          value: {
+            "~standard": {
+              version: 1 as const,
+              vendor: "test",
+              validate: (value: unknown) => ({
+                issues: [{ message: `Too long: ${value}`, path: ["Secret"] }],
+              }),
+            },
+          },
+        },
+      },
+    };
+    const error = catchError(() =>
+      validateValues(sensitive, { RoleName: "hunter2" }, "plan"),
+    );
+    expect(error.issues).toEqual(["Secret: Invalid sensitive value"]);
+    expect(error.message).not.toContain("hunter2");
+  });
+
   it("checks that a create result holds only computed fields", () => {
     expect(() =>
       assertComputedFields(subject, { Arn: "arn", RoleName: "role" }),
@@ -288,4 +360,21 @@ function catchError(run: () => unknown): any {
     return error;
   }
   throw new Error("Expected an error");
+}
+
+// The package has no Node types, so the globals are reached untyped.
+const node = globalThis as any;
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => node.setTimeout(resolve, ms));
+}
+
+function watchUnhandledRejections() {
+  const reasons: unknown[] = [];
+  const listener = (reason: unknown) => reasons.push(reason);
+  node.process.on("unhandledRejection", listener);
+  return {
+    reasons,
+    stop: () => node.process.off("unhandledRejection", listener),
+  };
 }

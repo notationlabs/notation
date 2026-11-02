@@ -58,25 +58,76 @@ function display(value: unknown): string {
 /**
  * Returns `file:line` of the code that called `below`, relative to the
  * working directory when it is inside it.
+ *
+ * With `skipLibraryFrames`, frames in node_modules and in the source or build
+ * of the @notation packages are skipped, so a resource that a library helper
+ * declares is reported at the user's code that called the helper. When every
+ * frame is skipped, the first is returned.
  */
-export function captureCallSite(below: Function): string | undefined {
+export function captureCallSite(
+  below: Function,
+  opts: { skipLibraryFrames?: boolean } = {},
+): string | undefined {
   const holder: { stack?: string } = {};
-  const capture = (Error as { captureStackTrace?: Function }).captureStackTrace;
+  const ErrorClass = Error as {
+    captureStackTrace?: Function;
+    stackTraceLimit?: number;
+  };
+  const capture = ErrorClass.captureStackTrace;
   if (!capture) return undefined;
-  capture(holder, below);
-  const frame = holder.stack?.split("\n")[1];
-  const match = frame?.match(/\(?([^\s()]+):(\d+):\d+\)?\s*$/);
-  if (!match) return undefined;
-
-  let file = match[1]!;
-  if (file.startsWith("file://")) {
-    file = decodeURIComponent(file.slice("file://".length));
+  const limit = ErrorClass.stackTraceLimit;
+  // Library frames can fill the default limit of 10 before the user's frame.
+  if (opts.skipLibraryFrames) ErrorClass.stackTraceLimit = 100;
+  try {
+    capture(holder, below);
+  } finally {
+    ErrorClass.stackTraceLimit = limit;
   }
+
+  const sites = (holder.stack?.split("\n").slice(1) ?? [])
+    .map(parseFrame)
+    .filter((site) => site !== undefined);
+  const site = opts.skipLibraryFrames
+    ? (sites.find((site) => !isLibraryFile(site.file)) ?? sites[0])
+    : sites[0];
+  if (!site) return undefined;
+
+  let file = site.file;
   const cwd = (
     globalThis as { process?: { cwd?: () => string } }
   ).process?.cwd?.();
   if (cwd && file.startsWith(`${cwd}/`)) file = file.slice(cwd.length + 1);
-  return `${file}:${match[2]}`;
+  return `${file}:${site.line}`;
+}
+
+function parseFrame(frame: string): { file: string; line: string } | undefined {
+  const match = frame.match(/\(?([^\s()]+):(\d+):\d+\)?\s*$/);
+  if (!match) return undefined;
+  let file = match[1]!;
+  if (file.startsWith("file://")) {
+    file = decodeURIComponent(file.slice("file://".length));
+  }
+  return { file, line: match[2]! };
+}
+
+// The directory that holds the @notation packages: node_modules/@notation
+// when installed, or the repository's packages directory when linked from a
+// workspace. This file is at <packages>/resource/{src,dist}/<file>, and the
+// first frame of a stack captured here gives its path.
+const notationPackagesDir = (() => {
+  const holder: { stack?: string } = {};
+  (Error as { captureStackTrace?: Function }).captureStackTrace?.(holder);
+  const site = parseFrame(holder.stack?.split("\n")[1] ?? "");
+  return site?.file.split("/").slice(0, -3).join("/");
+})();
+
+function isLibraryFile(file: string): boolean {
+  if (file.includes("/node_modules/") || file.startsWith("node:")) return true;
+  if (!notationPackagesDir || !file.startsWith(`${notationPackagesDir}/`)) {
+    return false;
+  }
+  const inPackage = file.slice(notationPackagesDir.length + 1);
+  return /^[^/]+\/(src|dist)\//.test(inPackage);
 }
 
 /**

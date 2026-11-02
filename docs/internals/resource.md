@@ -154,7 +154,9 @@ The engine validates values at four points:
 | Deploy      | Every param deploy knows, before it changes anything. Then each resource's full params, just before its own operation, which checks the values that come from other resources' outputs. |
 | Read        | Every field of a `read` result. A malformed read fails the plan or deploy, so that it is never compared with params.                                                                    |
 
-An invalid value raises `ValueValidationError`. Its message names the resource, the field and the `file:line` that declared the resource, and its `issues` list what the validator reported.
+An invalid value raises `ValueValidationError`. Its message names the resource, the field and the `file:line` that declared the resource, and its `issues` list what the validator reported. For a `sensitive` field, each issue keeps its path but has a generic message, because a validator's message can include the value. The `file:line` is the first frame of the call stack outside node_modules and the @notation packages, so a resource that a library helper declares is reported at the user's code that called the helper.
+
+Destroy and `notation viz` collect the graph with `collectResourceGraph(evaluate, { declarationChecks: false })`, so that config which fails its checks does not block them.
 
 The engine also checks the fields of values against the schema, and raises `SchemaStructureError` when:
 

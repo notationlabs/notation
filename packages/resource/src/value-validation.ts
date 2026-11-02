@@ -31,7 +31,11 @@ export class ValueValidationError extends Error {
   readonly field: string;
   readonly point: ValidationPoint;
   readonly declaredAt?: string;
-  /** One line per issue the validator reported, prefixed by its path. */
+  /**
+   * One line per issue the validator reported, prefixed by its path. For a
+   * sensitive field the line holds a generic message in place of the
+   * validator's, which can include the value.
+   */
   readonly issues: string[];
 
   constructor(opts: {
@@ -42,12 +46,15 @@ export class ValueValidationError extends Error {
     declaredAt?: string;
     issues: string[];
   }) {
+    const resource = `${opts.resourceId} (${opts.resourceType})`;
+    const site = opts.declaredAt ? `, declared at ${opts.declaredAt}` : "";
     const subject =
       opts.point === "read"
-        ? `The read of ${opts.resourceId} (${opts.resourceType}) returned an invalid ${opts.field}`
-        : `Invalid ${opts.field} for ${opts.resourceId} (${opts.resourceType}) at ${opts.point}`;
-    const site = opts.declaredAt ? `, declared at ${opts.declaredAt}` : "";
-    super(`${subject}${site}: ${opts.issues.join("; ")}`);
+        ? `The read of ${resource} returned an invalid ${opts.field}${site}`
+        : opts.point === "declaration"
+          ? `Invalid ${opts.field} for ${resource} when declared${opts.declaredAt ? ` at ${opts.declaredAt}` : ""}`
+          : `Invalid ${opts.field} for ${resource} at ${opts.point}${site}`;
+    super(`${subject}: ${opts.issues.join("; ")}`);
     this.name = "ValueValidationError";
     this.resourceId = opts.resourceId;
     this.resourceType = opts.resourceType;
@@ -64,8 +71,8 @@ export class ValueValidationError extends Error {
 
 /**
  * Thrown when values do not have the fields that the schema expects: a param
- * that the schema does not have as a param, a create result field that is not
- * computed, or a required output that is missing.
+ * that the schema does not have as a param, a create result field that the
+ * schema has but not as computed, or a required output that is missing.
  */
 export class SchemaStructureError extends Error {
   readonly _tag = "SchemaStructureError" as const;
@@ -106,17 +113,24 @@ export function validateValues(
   skip: (value: unknown) => boolean = () => false,
 ): void | Promise<void> {
   const pending: Promise<void>[] = [];
-  for (const [field, value] of Object.entries(values)) {
-    const item = subject.schema[field];
-    if (!item || value === undefined || skip(value)) continue;
-    const result = item.value["~standard"].validate(value);
-    if (result instanceof Promise) {
-      pending.push(
-        result.then((settled) => assertValid(subject, field, point, settled)),
-      );
-    } else {
-      assertValid(subject, field, point, result);
+  try {
+    for (const [field, value] of Object.entries(values)) {
+      const item = subject.schema[field];
+      if (!item || value === undefined || skip(value)) continue;
+      const result = item.value["~standard"].validate(value);
+      if (result instanceof Promise) {
+        pending.push(
+          result.then((settled) => assertValid(subject, field, point, settled)),
+        );
+      } else {
+        assertValid(subject, field, point, result);
+      }
     }
+  } catch (error) {
+    // The sync failure is thrown, so nothing awaits the async checks
+    // started before it.
+    for (const promise of pending) promise.catch(() => {});
+    throw error;
   }
   if (pending.length > 0) return Promise.all(pending).then(() => undefined);
 }
@@ -128,23 +142,28 @@ function assertValid(
   result: StandardSchemaV1.Result<unknown>,
 ): void {
   if (!result.issues) return;
+  const sensitive = subject.schema[field]?.sensitive === true;
   throw new ValueValidationError({
     resourceId: subject.id,
     resourceType: subject.type,
     field,
     point,
     declaredAt: subject.declaredAt,
-    issues: result.issues.map(formatIssue),
+    issues: result.issues.map((issue) => formatIssue(issue, sensitive)),
   });
 }
 
-function formatIssue(issue: StandardSchemaV1.Issue): string {
+function formatIssue(
+  issue: StandardSchemaV1.Issue,
+  sensitive: boolean,
+): string {
+  const message = sensitive ? "Invalid sensitive value" : issue.message;
   const path = (issue.path ?? [])
     .map((segment) =>
       String(typeof segment === "object" ? segment.key : segment),
     )
     .join(".");
-  return path ? `${path}: ${issue.message}` : issue.message;
+  return path ? `${path}: ${message}` : message;
 }
 
 /**

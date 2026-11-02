@@ -235,7 +235,7 @@ export abstract class Resource<
     this.id = id;
     this.config = config || ({} as C);
     this.dependencies = dependencies || ({} as D);
-    this.declaredAt = captureCallSite(new.target);
+    this.declaredAt = captureCallSite(new.target, { skipLibraryFrames: true });
     return this;
   }
 
@@ -250,7 +250,11 @@ export abstract class Resource<
    * left to plan and deploy.
    */
   protected checkDeclaration(): void {
-    if (declarationChecksSkipped) return;
+    if (
+      declarationChecksSkipped ||
+      this.#collection?.declarationChecks === false
+    )
+      return;
     const config = this.config as Record<string, unknown>;
     assertParamFields(this, config);
     const pending = validateValues(
@@ -260,10 +264,11 @@ export abstract class Resource<
       containsOutputValue,
     );
     if (!pending) return;
+    // Handled now, so that a rejection before collection awaits it is not
+    // reported as unhandled. Collection still fails with it.
+    pending.catch(() => {});
     if (this.#collection && !this.#collection.closed) {
       this.#collection.pendingValidations.push(pending);
-    } else {
-      pending.catch(() => {});
     }
   }
 
