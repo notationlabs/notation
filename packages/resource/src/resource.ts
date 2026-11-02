@@ -251,11 +251,7 @@ export abstract class Resource<
    * left to plan and deploy.
    */
   protected checkDeclaration(): void {
-    if (
-      declarationChecksSkipped ||
-      this.#collection?.declarationChecks === false
-    )
-      return;
+    if (this.#collection?.declarationChecks === false) return;
     const config = this.config as Record<string, unknown>;
     assertParamFields(this, config);
     const pending = validateValues(this, config, "declaration", isOutputValue);
@@ -561,23 +557,6 @@ export abstract class Resource<
     throw new Error(
       `Cannot ${action} ${this.id}: ${reason}. Contributions are accepted only while infra is being evaluated.`,
     );
-  }
-}
-
-let declarationChecksSkipped = false;
-
-/**
- * Constructs resources without checking their config. The reconciler uses it
- * to rebuild a resource from state, whose config was checked when it was
- * declared and may not pass a validator that has changed since.
- */
-export function withoutDeclarationChecks<T>(construct: () => T): T {
-  const previous = declarationChecksSkipped;
-  declarationChecksSkipped = true;
-  try {
-    return construct();
-  } finally {
-    declarationChecksSkipped = previous;
   }
 }
 

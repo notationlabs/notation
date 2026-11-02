@@ -6,8 +6,8 @@
 import {
   SchemaStructureError,
   assertRequiredOutputs,
+  collectResourceGraph,
   validateParams,
-  withoutDeclarationChecks,
   type BaseResource,
   type ResourceGroupRef,
   type ResourceType,
@@ -348,8 +348,14 @@ export async function* sweepOrphans(
     }
     if (kept.has(node.id)) continue;
 
-    const resource = withoutDeclarationChecks(
-      () => new Resource(node.id, { config: node.config }),
+    // The recorded config was checked when it was declared, and may not pass
+    // a validator that has changed since.
+    let resource!: BaseResource;
+    await collectResourceGraph(
+      () => {
+        resource = new Resource(node.id, { config: node.config });
+      },
+      { declarationChecks: false },
     );
     resource.setOutput(node.output);
     yield* deleteResource(nodeScope, resource, opts);

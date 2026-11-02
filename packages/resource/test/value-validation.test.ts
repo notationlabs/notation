@@ -10,7 +10,6 @@ import {
   isUnknownAfterApply,
   resource,
   validateValues,
-  withoutDeclarationChecks,
   type StandardSchemaV1,
 } from "src";
 import { async, check, number, string } from "./validators";
@@ -262,19 +261,6 @@ describe("validation at declaration", () => {
         new AsyncRole("async", { config: { RoleName: 7 as any } });
       },
       { declarationChecks: false },
-    );
-  });
-
-  it("is skipped inside withoutDeclarationChecks", () => {
-    const role = withoutDeclarationChecks(
-      () =>
-        new Role("restored", {
-          config: { RoleName: "restored", MaxSessionDuration: "x" as any },
-        }),
-    );
-    expect(role.config.MaxSessionDuration).toBe("x");
-    expect(() => new Role("next", { config: { RoleName: 1 as any } })).toThrow(
-      ValueValidationError,
     );
   });
 });
