@@ -2100,9 +2100,10 @@ describe("value validation at deploy", () => {
         delete: async () => undefined,
       })
       .requireDependencies<{ role: BaseResource }>()
-      .deriveParams(({ deps }) => ({
-        memory: strict && deps.role.output.arn === "arn:role" ? 1.5 : 128,
-      }));
+      .deriveParams(({ deps }) => {
+        const { arn } = deps.role.output as { arn?: string };
+        return { memory: strict && arn === "arn:role" ? 1.5 : 128 };
+      });
     const resources: BaseResource[] = [];
     const runtime = createRuntime(resources, "validate-state-outputs");
     const declare = (boundary?: string) => {
@@ -2204,6 +2205,93 @@ describe("value validation at deploy", () => {
     expect(await runtime.state.get("role")).toMatchObject({
       version: 1,
       params: { boundary: "arn:boundary" },
+    });
+    runtime.close();
+  });
+
+  it("records the resource, then fails, when the read after create is malformed", async () => {
+    const create = vi.fn(async () => ({ arn: "arn:role" }));
+    const Role = defineRole({
+      create,
+      read: async () => ({ name: "role", boundary: 7, arn: "arn:role" }),
+    });
+    const runtime = createRuntime(
+      [new Role("role", { config: { name: "role" } })],
+      "validate-create-read",
+    );
+
+    const error = await runtime.run("validate-create-read-1").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "ValueValidationError",
+      resourceId: "role",
+      field: "boundary",
+      point: "read",
+    });
+    expect(create).toHaveBeenCalledOnce();
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "create",
+      params: { name: "role" },
+      output: { name: "role", arn: "arn:role" },
+    });
+    runtime.close();
+  });
+
+  it("records the update, then fails, when the read after update is malformed", async () => {
+    let remote: Record<string, unknown> = { name: "role", arn: "arn:role" };
+    const update = vi.fn(async () => undefined);
+    const Fn = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; memory: number };
+      UpdateParams: { memory: number };
+      ReadResult: { arn: string };
+    }>({ type: "test/durable/validated-updated" })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          primaryKey: true,
+          immutable: true,
+        },
+        memory: {
+          propertyType: "param",
+          presence: "required",
+          value: v.number(),
+        },
+        arn: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create: async () => undefined,
+        read: async () => remote as any,
+        update,
+        delete: async () => undefined,
+      });
+    const resources: BaseResource[] = [
+      new Fn("fn", { config: { name: "fn", memory: 128 } }),
+    ];
+    const runtime = createRuntime(resources, "validate-update-read");
+    remote = { name: "fn", memory: 128, arn: "arn:fn" };
+    await runtime.run("validate-update-read-1");
+
+    resources[0] = new Fn("fn", { config: { name: "fn", memory: 256 } });
+    remote = { name: "fn", memory: "256", arn: "arn:fn" };
+    const error = await runtime.run("validate-update-read-2").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "ValueValidationError",
+      field: "memory",
+      point: "read",
+    });
+    expect(update).toHaveBeenCalledOnce();
+    expect(await runtime.state.get("fn")).toMatchObject({
+      lastOperation: "update",
+      params: { memory: 256 },
+      output: { memory: 256, arn: "arn:fn" },
     });
     runtime.close();
   });

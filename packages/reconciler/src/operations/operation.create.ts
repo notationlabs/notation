@@ -2,6 +2,7 @@ import {
   ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
+  ValueValidationError,
   assertComputedFields,
   assertRequiredOutputs,
   deployLookup,
@@ -61,19 +62,26 @@ export async function* createResourceOperation(
       });
     }
 
-    const readResult = yield* readResourceOperation(step, {
-      resource: params.resource,
-      resourceParams: params.resourceParams,
-      persistedOutput: params.persistedOutput,
-      emit: params.emit,
-      maxOperationAttempts: params.maxOperationAttempts,
-    });
-
-    params.resource.setOutput({
-      ...params.resource.output,
-      ...readResult,
-    });
-    const structureError = catchError(() => {
+    let deferredError: unknown;
+    try {
+      const readResult = yield* readResourceOperation(step, {
+        resource: params.resource,
+        resourceParams: params.resourceParams,
+        persistedOutput: params.persistedOutput,
+        emit: params.emit,
+        maxOperationAttempts: params.maxOperationAttempts,
+      });
+      params.resource.setOutput({
+        ...params.resource.output,
+        ...readResult,
+      });
+    } catch (error) {
+      // The resource exists, so it is recorded with the outputs known
+      // without the read.
+      if (!ValueValidationError.is(error)) throw error;
+      deferredError = error;
+    }
+    deferredError ??= catchError(() => {
       if (computedPrimaryKey) {
         assertComputedFields(params.resource, computedPrimaryKey);
       }
@@ -97,7 +105,7 @@ export async function* createResourceOperation(
     });
     // Thrown only once the record is written, so that state still tracks
     // the resource that create made.
-    if (structureError) throw structureError;
+    if (deferredError) throw deferredError;
 
     yield* emitLifecycleEvent(params, "create", "success");
   } catch (err) {

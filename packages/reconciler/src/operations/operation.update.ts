@@ -1,4 +1,5 @@
 import {
+  ValueValidationError,
   assertRequiredOutputs,
   deployLookup,
   resolveOutputValues,
@@ -51,19 +52,30 @@ export async function* updateResourceOperation(
       ...params.resourceParams,
     });
 
-    const readResult = yield* readResourceOperation(step, {
-      resource: params.resource,
-      resourceParams: params.resourceParams,
-      persistedOutput: params.persistedOutput,
-      emit: params.emit,
-      maxOperationAttempts: params.maxOperationAttempts,
-    });
-
-    params.resource.setOutput({
-      ...params.resource.output,
-      ...readResult,
-    });
-    const structureError = catchError(() =>
+    let deferredError: unknown;
+    try {
+      const readResult = yield* readResourceOperation(step, {
+        resource: params.resource,
+        resourceParams: params.resourceParams,
+        persistedOutput: params.persistedOutput,
+        emit: params.emit,
+        maxOperationAttempts: params.maxOperationAttempts,
+      });
+      params.resource.setOutput({
+        ...params.resource.output,
+        ...readResult,
+      });
+    } catch (error) {
+      // The update was made, so it is recorded with the outputs known
+      // without the read.
+      if (!ValueValidationError.is(error)) throw error;
+      deferredError = error;
+      params.resource.setOutput({
+        ...params.persistedOutput,
+        ...params.resource.output,
+      });
+    }
+    deferredError ??= catchError(() =>
       assertRequiredOutputs(params.resource, params.resource.output),
     );
 
@@ -83,7 +95,7 @@ export async function* updateResourceOperation(
       dependsOn: params.dependsOn,
     });
     // Thrown only once the record is written, as for create.
-    if (structureError) throw structureError;
+    if (deferredError) throw deferredError;
 
     yield* emitLifecycleEvent(params, "update", "success");
   } catch (err) {

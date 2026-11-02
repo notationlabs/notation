@@ -164,7 +164,7 @@ The engine also checks the fields of values against the schema, and raises `Sche
 - `create` returns a field that the schema has but not as computed;
 - a required computed field has no value after create or update.
 
-The last two can only be found after the provider has made its change. The reconciler writes the resource's record first, so that state still tracks the resource, and then fails.
+The last two can only be found after the provider has made its change. So can a malformed read after create or update. In each case the reconciler writes the resource's record first, so that state still tracks the resource, and then fails. When the read is malformed, the record holds the params and the outputs known without the read.
 
 ## Operations
 
