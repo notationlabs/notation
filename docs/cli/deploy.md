@@ -1,18 +1,18 @@
 # notation deploy
 
 ```sh
-notation deploy <entry> [--stage <stage>]
+notation deploy [--config <path>] [--stage <stage>]
 ```
 
 | Argument          | Meaning                                                            |
 | ----------------- | ------------------------------------------------------------------ |
-| `<entry>`         | An entry name from `notation.config.ts`, such as `api`.            |
+| `--config <path>` | The config file. Defaults to the nearest `notation.config.ts`.     |
 | `--stage <stage>` | The stage. Defaults to `defaultStage`, and is required without it. |
 
-Compiles the entry and runs a durable deploy of it to the stage. Notation keys the state of the deployment by `<app>:<stage>:<entry>`, so each stage of an entry has its own state. See [Project Config](../manual/project-config.md).
+Compiles the entry file and runs a durable deploy of it to the stage. Notation keys the state of the deployment by `<app>:<stage>`, so each stage of an app has its own state. See [Project Config](../manual/project-config.md).
 
 ```sh
-notation deploy api --stage prod
+notation deploy --stage prod
 ```
 
 ## Event stream
@@ -20,7 +20,7 @@ notation deploy api --stage prod
 `--json` writes versioned reconciler events to stdout as newline-delimited JSON. Build output, the execution ID, and diagnostics move to stderr.
 
 ```sh
-notation deploy api --stage prod --json > deploy.ndjson
+notation deploy --stage prod --json > deploy.ndjson
 ```
 
 ## Durable execution
@@ -28,10 +28,10 @@ notation deploy api --stage prod --json > deploy.ndjson
 The command prints its execution ID before starting provider work. If the process crashes, resume the same execution with that ID:
 
 ```sh
-notation deploy api --stage prod --execution-id <id>
+notation deploy --stage prod --execution-id <id>
 ```
 
-Pass the same entry and stage as the crashed command. Notation rejects an execution ID that belongs to another deployment.
+Pass the same config and stage as the crashed command. Notation rejects an execution ID that belongs to another deployment.
 
 Do not reuse a completed execution ID for a new deploy or for destroy.
 

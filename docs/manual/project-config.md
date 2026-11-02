@@ -1,6 +1,6 @@
 # Project Config
 
-Every Notation project has a `notation.config.ts` at its root. The config names the app and its entries, and the CLI uses these names, together with a stage, to identify each deployment.
+Every Notation project has a `notation.config.ts` at its root. The config names the app and its entry file, and the CLI uses the app, together with a stage, to identify each deployment.
 
 ## The config file
 
@@ -11,20 +11,18 @@ import { defineConfig } from "@notation/core/config";
 
 export default defineConfig({
   app: "my-app",
-  entries: {
-    api: "infra/api.ts",
-  },
+  entry: "infra/api.ts",
   defaultStage: "dev",
 });
 ```
 
-| Field          | Required | Meaning                                                              |
-| -------------- | -------- | -------------------------------------------------------------------- |
-| `app`          | Yes      | The name of the app. Notation never reads it from `package.json`.    |
-| `entries`      | Yes      | Maps each entry name to an entry file, relative to the project root. |
-| `defaultStage` | No       | The stage that a command uses when you pass no `--stage`.            |
+| Field          | Required | Meaning                                                           |
+| -------------- | -------- | ----------------------------------------------------------------- |
+| `app`          | Yes      | The name of the app. Notation never reads it from `package.json`. |
+| `entry`        | Yes      | The entry file, relative to the project root.                     |
+| `defaultStage` | No       | The stage that a command uses when you pass no `--stage`.         |
 
-The directory that holds the config is the project root. The CLI resolves entries, writes `dist` and keeps `.notation/workflows.db` relative to the project root, so you can run commands from any directory inside the project.
+The directory that holds the config is the project root. The CLI resolves the entry file, writes `dist` and keeps `.notation/workflows.db` relative to the project root, so you can run commands from any directory inside the project.
 
 To find the project root, the CLI starts in the current directory and moves up one parent at a time:
 
@@ -34,37 +32,46 @@ To find the project root, the CLI starts in the current directory and moves up o
 
 The search never passes the nearest `package.json`, so a config in a parent package, such as the root of a monorepo, never applies to a package inside it. Put the config next to the `package.json` of the package that you deploy.
 
-## Entries
+## The entry
 
-An entry is an infrastructure module that Notation compiles and deploys as one unit. In the config above, the entry `api` points to `infra/api.ts`.
+The entry file is the infrastructure module that Notation compiles and deploys. In the config above, the entry is `infra/api.ts`. The entry file can import other infrastructure modules, and their resources deploy with it.
 
-CLI commands take the entry name, not the file path:
+CLI commands take no entry argument, because the config names the entry:
 
 ```sh
-notation deploy api
+notation deploy
 ```
 
-A project can have several entries, and each entry deploys separately:
+To move or rename the entry file, change `entry`. The state key does not contain the path, so the deployment keeps its state.
 
-```ts [notation.config.ts]
+## Several entry points
+
+A config has one entry. To deploy two parts of a project separately, such as an API and a set of scheduled jobs, give each part its own config, and choose a config with `--config`:
+
+```ts [jobs.config.ts]
 export default defineConfig({
-  app: "my-app",
-  entries: {
-    api: "infra/api.ts",
-    jobs: "infra/schedule.ts", // ← deployed with `notation deploy jobs`
-  },
+  app: "my-app-jobs",
+  entry: "infra/schedule.ts",
+  defaultStage: "dev",
 });
 ```
 
-To move or rename an entry file, change its path in `entries`. The entry name stays the same, so the deployment keeps its state.
+```sh
+notation deploy                          # uses notation.config.ts, app my-app
+notation deploy --config jobs.config.ts  # uses jobs.config.ts, app my-app-jobs
+```
+
+With `--config`, the CLI does not search for a config. The project root is the directory that holds the given file, and the entry resolves against that directory.
+
+**Each config needs its own `app`.** The app and the stage form the state key and the start of every AWS name, as the next sections show. Two configs with the same app and the same stage would read and write the same state, and would create resources with the same names.
 
 ## Stages
 
-A stage is one deployed copy of an entry, such as `dev`, `staging` or `prod`. You choose the stage with `--stage`:
+A stage is one deployed copy of the app, such as `dev`, `staging` or `prod`. You choose the stage with `--stage`:
 
 ```sh
-notation deploy api --stage staging
-notation deploy api --stage prod
+notation deploy --stage staging
+notation deploy --stage prod
 ```
 
 These two commands deploy the same code twice, and each stage gets its own state. Without `--stage`, a command uses `defaultStage`. If the config has no `defaultStage`, the `deploy`, `plan`, `destroy`, `watch` and `dashboard` commands must pass `--stage`:
@@ -75,7 +82,7 @@ No stage given. Pass --stage, or set defaultStage in notation.config.ts
 
 ## AWS names
 
-Each stage of an entry declares the same resources, because infra code cannot read the stage. To keep the stages apart in one AWS account, Notation starts the AWS name of each resource that it names with the app and the stage: `<app>--<stage>--<id>`. The parts are joined with `--` because app and stage names cannot contain `--`. Two different apps or stages therefore never produce the same AWS name.
+Each stage of an app declares the same resources, because infra code cannot read the stage. To keep the stages apart in one AWS account, Notation starts the AWS name of each resource that it names with the app and the stage: `<app>--<stage>--<id>`. The parts are joined with `--` because app and stage names cannot contain `--`. Two different apps or stages therefore never produce the same AWS name.
 
 For example, the starter app declares a Lambda function with the ID `todos-getTodos`. Each stage gets its own function and IAM role:
 
@@ -111,21 +118,21 @@ The resource IDs in state do not contain the app or the stage. Only the names in
 
 ## Deployment identity
 
-Notation identifies a deployment by its app, its stage and its entry name. The three names form the key of the deployment's state, `<app>:<stage>:<entry>`:
+Notation identifies a deployment by its app and its stage. The two names form the key of the deployment's state, `<app>:<stage>`:
 
-| Command                             | State key          |
-| ----------------------------------- | ------------------ |
-| `notation deploy api --stage dev`   | `my-app:dev:api`   |
-| `notation deploy api --stage prod`  | `my-app:prod:api`  |
-| `notation deploy jobs --stage prod` | `my-app:prod:jobs` |
+| Command                                                | State key          |
+| ------------------------------------------------------ | ------------------ |
+| `notation deploy --stage dev`                          | `my-app:dev`       |
+| `notation deploy --stage prod`                         | `my-app:prod`      |
+| `notation deploy --config jobs.config.ts --stage prod` | `my-app-jobs:prod` |
 
-The state key is important because it decides which state a command reads and writes. Two commands with the same key update the same resources. Two commands with different keys keep separate state, and each one deploys its own copy of the resources. None of the three names come from the file layout, so moving files does not change the key.
+The state key is important because it decides which state a command reads and writes. Two commands with the same key update the same resources. Two commands with different keys keep separate state, and each one deploys its own copy of the resources. Neither name comes from the file layout, so moving files does not change the key.
 
-All stages keep their state in the same database, `.notation/workflows.db`, under their own keys. See [State](../internals/state.md).
+All deployments of a project root keep their state in the same database, `.notation/workflows.db`, under their own keys. See [State](../internals/state.md).
 
 ## Name rules
 
-The app, entry names and stages must be name-safe:
+The app and stages must be name-safe:
 
 - 1 to 32 characters,
 - only lowercase letters `a-z`, digits `0-9` and hyphens `-`,
@@ -140,10 +147,10 @@ The app, entry names and stages must be name-safe:
 | `-preview`  | No    | Starts with a hyphen     |
 | `my--app`   | No    | Two hyphens in a row     |
 
-`defineConfig` checks the app, the entry names and `defaultStage` at compile time, so your editor reports a bad name before you run a command:
+`defineConfig` checks the app and `defaultStage` at compile time, so your editor reports a bad name before you run a command:
 
 ```ts
-defineConfig({ app: "My_App", entries: { api: "infra/api.ts" } });
+defineConfig({ app: "My_App", entry: "infra/api.ts" });
 // Type '"My_App"' is not assignable to type '"\"My_App\" is not name-safe"'.
 ```
 
@@ -151,16 +158,16 @@ Write each name as a string literal. A name typed as `string`, such as one read 
 
 The CLI checks the same names again when it loads the config, and it also checks the stage given with `--stage`.
 
-The CLI also rejects a config with a field that is not in the table above, such as `stage` instead of `defaultStage`, and a command fails when the file of its entry does not exist.
+The CLI also rejects a config with a field that is not in the table above, such as `stage` instead of `defaultStage`, and a command fails when the entry file does not exist.
 
 ## Upgrading from entry paths
 
 Before this config existed, CLI commands took an entry path, and Notation keyed state by that path:
 
-| Before                         | After                             |
-| ------------------------------ | --------------------------------- |
-| `notation deploy infra/api.ts` | `notation deploy api --stage dev` |
-| State key `infra/api.ts`       | State key `my-app:dev:api`        |
-| No config file                 | `notation.config.ts` is required  |
+| Before                         | After                            |
+| ------------------------------ | -------------------------------- |
+| `notation deploy infra/api.ts` | `notation deploy --stage dev`    |
+| State key `infra/api.ts`       | State key `my-app:dev`           |
+| No config file                 | `notation.config.ts` is required |
 
 **Notation does not migrate state from the old path key.** The first deploy after the upgrade finds no state under the new key, so it treats every resource as new and tries to create it again. The new deployment starts its [AWS names](#aws-names) with the app and the stage, so its creates do not clash with the old resources. The resources of the old deployment stay in AWS, and Notation no longer manages them. Destroy the old deployment with the previous version of the CLI before you upgrade, or delete its resources by hand afterwards.

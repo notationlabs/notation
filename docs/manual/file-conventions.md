@@ -13,7 +13,7 @@ my-app/
 │   └── utils.ts       # Shared runtime utilities
 ├── dist/              # Compiled output (generated)
 ├── .notation/         # State (generated)
-├── notation.config.ts # Project config: app, entries, stages
+├── notation.config.ts # Project config: app, entry, default stage
 ├── package.json
 └── tsconfig.json
 ```
@@ -22,12 +22,12 @@ my-app/
 
 Location: `infra/*.ts`
 
-An infrastructure module declares cloud resources. An entry file is an infrastructure module that `notation.config.ts` names as an entry, and CLI commands take the entry name:
+An infrastructure module declares cloud resources. The entry file is the infrastructure module that `notation.config.ts` names in `entry`:
 
 ```ts [notation.config.ts]
 export default defineConfig({
   app: "my-app",
-  entries: { api: "infra/api.ts" },
+  entry: "infra/api.ts",
 });
 ```
 
@@ -40,7 +40,7 @@ const todoRouter = router(todoApi);
 todoRouter.get("/todos", getTodos);
 ```
 
-Each entry is a unit of deployment that compiles and deploys independently of other entries. Other modules in `infra/` can declare resources too, but they deploy only as part of an entry that imports them. See [Project Config](./project-config.md).
+The CLI compiles and deploys the entry file as one unit. Other modules in `infra/` can declare resources too, but they deploy only when the entry file imports them. To deploy another part of the project separately, give it its own config. See [Project Config](./project-config.md).
 
 ## Runtime modules
 

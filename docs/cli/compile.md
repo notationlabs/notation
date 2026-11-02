@@ -1,12 +1,12 @@
 # notation compile
 
 ```sh
-notation compile <entry>
+notation compile [--config <path>]
 ```
 
-| Argument  | Meaning                                                 |
-| --------- | ------------------------------------------------------- |
-| `<entry>` | An entry name from `notation.config.ts`, such as `api`. |
+| Argument          | Meaning                                                        |
+| ----------------- | -------------------------------------------------------------- |
+| `--config <path>` | The config file. Defaults to the nearest `notation.config.ts`. |
 
 Compiles the entry file and its runtime modules to `dist/` without deploying. Compiling does not depend on a stage, so `compile` takes no `--stage`. Two compilation passes:
 
