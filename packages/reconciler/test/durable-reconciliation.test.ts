@@ -2071,6 +2071,68 @@ describe("value validation at deploy", () => {
     runtime.close();
   });
 
+  it("checks values from outputs in state before the first change", async () => {
+    let strict = false;
+    const createRole = vi.fn(async () => ({ arn: "arn:role" }));
+    const Role = defineRole({ create: createRole });
+    const Fn = resource<FnApi>({ type: "test/durable/validated-fn" })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          primaryKey: true,
+          immutable: true,
+        },
+        memory: {
+          propertyType: "param",
+          presence: "required",
+          value: v.pipe(v.number(), v.integer()),
+        },
+        role: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+      })
+      .requireDependencies<{ role: BaseResource }>()
+      .deriveParams(({ deps }) => ({
+        memory: strict && deps.role.output.arn === "arn:role" ? 1.5 : 128,
+      }));
+    const resources: BaseResource[] = [];
+    const runtime = createRuntime(resources, "validate-state-outputs");
+    const declare = (boundary?: string) => {
+      const role = new Role("role", { config: { name: "role", boundary } });
+      const fn = new Fn("fn", {
+        config: { name: "fn", role: role.outputValue("arn") },
+        dependencies: { role },
+      });
+      resources.splice(0, resources.length, role, fn);
+    };
+    declare();
+    await runtime.run("validate-state-outputs-1");
+
+    strict = true;
+    declare("arn:boundary");
+    const error = await runtime.run("validate-state-outputs-2").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "ValueValidationError",
+      resourceId: "fn",
+      field: "memory",
+      point: "deploy",
+    });
+    expect(createRole).toHaveBeenCalledOnce();
+    expect(await runtime.state.get("role")).toMatchObject({
+      params: { name: "role" },
+    });
+    runtime.close();
+  });
+
   it("checks a value from another resource's output just before its operation", async () => {
     const createFn = vi.fn(async () => undefined);
     const Role = defineRole({ create: async () => ({ arn: 42 }) as any });
