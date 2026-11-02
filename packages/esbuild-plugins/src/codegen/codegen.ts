@@ -25,10 +25,13 @@ export function createResourceModule(
   const lines = [
     `import { ${service} as __notationFactory } from "@notation/${platform}/${service}";`,
     `const __notationResource = __notationFactory(${printValue(factoryConfig)});`,
-    ...exports.map(
-      (name) =>
-        `export const ${name} = { resource: __notationResource, export: ${JSON.stringify(name)} };`,
-    ),
+    ...exports.map((name, index) => {
+      const ref = `{ resource: __notationResource, export: ${JSON.stringify(name)} }`;
+      if (!reservedWords.has(name)) return `export const ${name} = ${ref};`;
+      // A reserved word is a valid export name but not a valid variable name.
+      const local = `__notationRef${index}`;
+      return `const ${local} = ${ref};\nexport { ${local} as ${name} };`;
+    }),
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -48,6 +51,55 @@ export function createRuntimeEntry(modulePath: string, service: string) {
     ``,
   ].join("\n");
 }
+
+const reservedWords = new Set([
+  "await",
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "enum",
+  "export",
+  "extends",
+  "false",
+  "finally",
+  "for",
+  "function",
+  "if",
+  "implements",
+  "import",
+  "in",
+  "instanceof",
+  "interface",
+  "let",
+  "new",
+  "null",
+  "package",
+  "private",
+  "protected",
+  "public",
+  "return",
+  "static",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "typeof",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield",
+]);
 
 function splitService(service: string) {
   const [platform, name] = service.split("/");

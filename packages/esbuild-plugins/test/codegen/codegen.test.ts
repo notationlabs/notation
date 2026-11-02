@@ -26,6 +26,21 @@ it("creates a resource module", () => {
   );
 });
 
+it("exports a reference under a reserved word through an alias", () => {
+  const source = createResourceModule(
+    {
+      resource: { service: "aws/lambda", id: "todos" },
+      exports: ["getTodos", "delete"],
+    },
+    "dist/runtime/todos/index.mjs",
+  );
+
+  expect(source).toContain(
+    `const __notationRef1 = { resource: __notationResource, export: "delete" };\nexport { __notationRef1 as delete };`,
+  );
+  expect(source).toContain(`export const getTodos = `);
+});
+
 it("creates a runtime entry that dispatches to the module's exports", () => {
   expect(createRuntimeEntry("/project/runtime/todos.ts", "aws/lambda")).toBe(
     [
