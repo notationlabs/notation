@@ -9,7 +9,7 @@ export default defineConfig({
     "src/sqs/index.ts",
     "src/shared/index.ts",
   ],
-  splitting: false,
+  splitting: true,
   dts: true,
   format: ["esm"],
   platform: "node",

@@ -24,6 +24,8 @@
     "glob": "^13.0.6"
   },
   "devDependencies": {
+    "@notation/aws": "workspace:*",
+    "@notation/resource": "workspace:*",
     "@types/which-pm-runs": "^1.0.2"
   }
 }
