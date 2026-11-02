@@ -297,7 +297,7 @@ export const LambdaFunction = lambdaFunctionSchema
       const { CodeFilePath, Environment, ...functionParams } = params;
       const command = new sdk.CreateFunctionCommand({
         ...functionParams,
-        Environment: encodeEnvironment(Environment),
+        Environment: encodeEnvironment(params.FunctionName, Environment),
         Tags: token
           ? { ...params.Tags, [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
           : params.Tags,
@@ -379,7 +379,12 @@ export const LambdaFunction = lambdaFunctionSchema
         rest;
       // An omitted Environment leaves the variables as they were.
       if ("Environment" in patch) {
-        conf.Environment = encodeEnvironment(Environment) ?? { Variables: {} };
+        conf.Environment = encodeEnvironment(
+          params.FunctionName,
+          Environment,
+        ) ?? {
+          Variables: {},
+        };
       }
 
       // todo: work it out so that these commands be run together. currently errors on:
@@ -440,7 +445,14 @@ async function readCode(filePath: string, expectedSha256: string) {
   return code;
 }
 
+/**
+ * Lambda's limit on a function's environment variables. Lambda measures the
+ * variables as one JSON object.
+ */
+export const LAMBDA_ENVIRONMENT_MAX_BYTES = 4096;
+
 function encodeEnvironment(
+  functionName: string,
   environment: LambdaEnvironment | undefined,
 ): sdk.Environment | undefined {
   if (!environment) return undefined;
@@ -451,21 +463,40 @@ function encodeEnvironment(
     );
   }
   if (Runtime === undefined) return { Variables };
-  return {
+  const encoded = {
     Variables: { ...Variables, [runtimeVariable]: encodeRuntime(Runtime) },
   };
+  const size = Buffer.byteLength(JSON.stringify(encoded.Variables));
+  if (size > LAMBDA_ENVIRONMENT_MAX_BYTES) {
+    const runtimeSize = Buffer.byteLength(encoded.Variables[runtimeVariable]);
+    throw new Error(
+      `The environment of Lambda function ${functionName} is ${size} bytes, over Lambda's limit of ${LAMBDA_ENVIRONMENT_MAX_BYTES} bytes. ${runtimeVariable}, which holds the routes and queues that the function handles, is ${runtimeSize} bytes of it. Split the runtime module into smaller modules, so that each function handles fewer routes and queues.`,
+    );
+  }
+  return encoded;
 }
 
+// Keys that would hold undefined are left out: the drift diff counts an
+// undefined key as a change, so the read would never match the params.
+// A runtime variable that doesn't decode stays in `Variables`, so drift shows
+// it and the next update replaces it.
 function decodeEnvironment(
   environment: sdk.EnvironmentResponse | undefined,
 ): (LambdaEnvironment & { Error?: sdk.EnvironmentError }) | undefined {
   const encoded = environment?.Variables?.[runtimeVariable];
   if (!environment || encoded === undefined) return environment;
+  let runtime: LambdaRuntime;
+  try {
+    runtime = decodeRuntime(encoded);
+  } catch {
+    return environment;
+  }
   const { [runtimeVariable]: _, ...variables } = environment.Variables!;
+  const { Variables: __, ...rest } = environment;
   return {
-    ...environment,
-    Variables: Object.keys(variables).length > 0 ? variables : undefined,
-    Runtime: decodeRuntime(encoded),
+    ...rest,
+    ...(Object.keys(variables).length > 0 && { Variables: variables }),
+    Runtime: runtime,
   };
 }
 

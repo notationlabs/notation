@@ -27,10 +27,7 @@ export type PolicyStatement = {
   Effect: "Allow" | "Deny";
   Principal?: PolicyPrincipal;
   NotPrincipal?: PolicyPrincipal;
-  Condition?: Record<
-    string,
-    Record<string, ConditionValue | ConditionValue[]>
-  >;
+  Condition?: Record<string, Record<string, ConditionValue | ConditionValue[]>>;
 } & (
   | { Action: StringOrStrings; NotAction?: never }
   | { NotAction: StringOrStrings; Action?: never }

@@ -38,11 +38,82 @@ export type ScheduledInvocation<Event = unknown> = {
   event: Event;
 };
 
+/**
+ * Encodes the runtime map for the environment variable. Lambda allows 4 KB
+ * for all of a function's variables, so the encoding is compact:
+ *
+ * - `r` holds routes as `[export, apiId]`, or `[export, apiId, routeKey]`
+ *   when the route key can't be read back from the entry's key.
+ * - `q` holds queue subscriptions as `[export, queueArn]`.
+ * - `o` holds outputs.
+ */
 export function encodeRuntime(runtime: LambdaRuntime): string {
-  return sortedJson.encode(runtime);
+  const encoded: EncodedRuntime = {};
+  for (const [key, entry] of Object.entries(runtime.dispatch ?? {})) {
+    const { export: name, match } = entry;
+    if ("queueArn" in match) {
+      (encoded.q ??= {})[key] = [name, match.queueArn];
+    } else {
+      (encoded.r ??= {})[key] =
+        routeKeyOf(key) === match.routeKey
+          ? [name, match.apiId]
+          : [name, match.apiId, match.routeKey];
+    }
+  }
+  if (runtime.outputs !== undefined) encoded.o = runtime.outputs;
+  return sortedJson.encode(encoded);
 }
 
+/** Throws when `text` is not a runtime map that `encodeRuntime` made. */
 export function decodeRuntime(text: string | undefined): LambdaRuntime {
   if (!text) return {};
-  return sortedJson.decode(text) as LambdaRuntime;
+  const encoded = sortedJson.decode(text) as EncodedRuntime;
+  if (!isRecord(encoded)) throw invalidRuntime();
+  const runtime: LambdaRuntime = {};
+  const dispatch: Record<string, DispatchEntry> = {};
+  for (const [key, entry] of Object.entries(encoded.r ?? {})) {
+    if (!isStrings(entry, 2) && !isStrings(entry, 3)) throw invalidRuntime();
+    const routeKey = entry[2] ?? routeKeyOf(key);
+    if (routeKey === undefined) throw invalidRuntime();
+    dispatch[key] = { export: entry[0], match: { apiId: entry[1], routeKey } };
+  }
+  for (const [key, entry] of Object.entries(encoded.q ?? {})) {
+    if (!isStrings(entry, 2)) throw invalidRuntime();
+    dispatch[key] = { export: entry[0], match: { queueArn: entry[1] } };
+  }
+  if (Object.keys(dispatch).length > 0) runtime.dispatch = dispatch;
+  if (encoded.o !== undefined) {
+    if (!isRecord(encoded.o)) throw invalidRuntime();
+    runtime.outputs = encoded.o;
+  }
+  return runtime;
+}
+
+type EncodedRuntime = {
+  r?: Record<string, [string, string] | [string, string, string]>;
+  q?: Record<string, [string, string]>;
+  o?: Record<string, unknown>;
+};
+
+// A route adds its entry under `<api resource id>-<method>-<path>`, which
+// holds the route key `<method> <path>`. The path runs from the first `/`.
+function routeKeyOf(key: string): string | undefined {
+  const match = /-([A-Z]+)-(\/.*)$/.exec(key);
+  return match ? `${match[1]} ${match[2]}` : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStrings(value: unknown, length: number): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length === length &&
+    value.every((item) => typeof item === "string")
+  );
+}
+
+function invalidRuntime() {
+  return new Error(`${runtimeVariable} does not hold a valid runtime map`);
 }
