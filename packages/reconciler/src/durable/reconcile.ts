@@ -3,10 +3,12 @@
  * resources, each built on one read of the resource's persisted record and
  * writes conditional on that read.
  */
-import type {
-  BaseResource,
-  ResourceGroupRef,
-  ResourceType,
+import {
+  validateParams,
+  withoutDeclarationChecks,
+  type BaseResource,
+  type ResourceGroupRef,
+  type ResourceType,
 } from "@notation/resource";
 import { VersionConflict, type StateNode } from "@notation/state";
 import { buildDepthLevels } from "../dependency-graph";
@@ -57,6 +59,7 @@ export async function* reconcileResource(
   // other than the ones the decision was taken against. The step also pins
   // the answer across a replay.
   const params = yield* step.run("params", () => resource.getParams());
+  await validateParams(resource, params, "deploy");
   const dependsOn = getDependencyIds(resource);
 
   const emit = durableEmitter(step, opts.emit);
@@ -288,7 +291,9 @@ export async function* sweepOrphans(
     }
     if (kept.has(node.id)) continue;
 
-    const resource = new Resource(node.id, { config: node.config });
+    const resource = withoutDeclarationChecks(
+      () => new Resource(node.id, { config: node.config }),
+    );
     resource.setOutput(node.output);
     yield* deleteResource(nodeScope, resource, opts);
   }

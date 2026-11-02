@@ -1,6 +1,8 @@
 import {
   ResourceNotFoundError,
   ResourceOperationPendingError,
+  SchemaStructureError,
+  ValueValidationError,
 } from "@notation/resource";
 import { VersionConflict } from "@notation/state";
 import { registerErrorClass } from "./yieldstar";
@@ -13,3 +15,5 @@ registerErrorClass(
   ResourceOperationPendingError,
 );
 registerErrorClass("ResourceNotFoundError", ResourceNotFoundError);
+registerErrorClass("ValueValidationError", ValueValidationError);
+registerErrorClass("SchemaStructureError", SchemaStructureError);

@@ -1,4 +1,4 @@
-import type { BaseResource } from "@notation/resource";
+import { validateParams, type BaseResource } from "@notation/resource";
 import type { StateBackend } from "@notation/state";
 import {
   assertDependenciesPresent,
@@ -41,6 +41,7 @@ export async function createPlan({
       const stateNode = await state.get(resource.id);
       if (stateNode) resource.setOutput(stateNode.output);
       const params = await resource.planParams();
+      await validateParams(resource, params, "plan");
       const action = await runOperation(
         applyDriftDetection(createStepRunner(), {
           action: decideAction({ resource, stateNode, params }),

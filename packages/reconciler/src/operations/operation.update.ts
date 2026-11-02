@@ -1,4 +1,5 @@
 import {
+  assertRequiredOutputs,
   deployLookup,
   resolveOutputValues,
   type DurableObject,
@@ -11,6 +12,7 @@ import {
 } from "./operation.types";
 import { runPendingOperation } from "./operation.pending";
 import { readResourceOperation } from "./operation.read";
+import { catchError } from "./catch-error";
 
 export async function* updateResourceOperation(
   step: StepRunner,
@@ -61,6 +63,9 @@ export async function* updateResourceOperation(
       ...params.resource.output,
       ...readResult,
     });
+    const structureError = catchError(() =>
+      assertRequiredOutputs(params.resource, params.resource.output),
+    );
 
     yield* params.persist({
       id: params.resource.id,
@@ -77,6 +82,8 @@ export async function* updateResourceOperation(
       output: params.resource.toState(params.resource.output),
       dependsOn: params.dependsOn,
     });
+    // Thrown only once the record is written, as for create.
+    if (structureError) throw structureError;
 
     yield* emitLifecycleEvent(params, "update", "success");
   } catch (err) {

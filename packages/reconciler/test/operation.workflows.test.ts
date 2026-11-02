@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { describe, expect, it, vi } from "vitest";
 import {
   resource,
@@ -75,8 +76,16 @@ describe("operation workflows", () => {
       ReadResult: { remoteId: string; status: string };
     }>({ type: "test/service/create" })
       .defineSchema({
-        remoteId: { propertyType: "computed", presence: "required" },
-        status: { propertyType: "computed", presence: "required" },
+        remoteId: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+        },
+        status: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+        },
       })
       .defineOperations({
         // Cast: an empty schema declares no primary key to return.
@@ -145,7 +154,11 @@ describe("operation workflows", () => {
       ReadResult: { status: string };
     }>({ type: "test/service/read" })
       .defineSchema({
-        status: { propertyType: "computed", presence: "required" },
+        status: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+        },
       })
       .defineOperations({
         create: (async () => ({})) as any,

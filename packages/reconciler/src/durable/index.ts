@@ -5,6 +5,8 @@
  * Step keys are persisted: a resumed execution matches its cached work by
  * key, so changing one re-executes the work behind it. The shapes in use are:
  *
+ *   notation:validate          deploy's check of known params, before
+ *                              any change
  *   notation:deploy:<id>:*     per-resource reconciliation steps
  *   notation:destroy:<id>:*    per-resource deletion steps
  *   notation:orphans:list      the orphan sweep's one read of persisted state

@@ -1,3 +1,4 @@
+import { validateParams, type BaseResource } from "@notation/resource";
 import {
   assertDependenciesPresent,
   buildResourceDepthLevels,
@@ -13,6 +14,12 @@ export async function* deploy(
   opts: DurableDeployOptions,
 ): AsyncGenerator<any, void, any> {
   assertDependenciesPresent(opts.resources);
+  // A step, so that a resumed execution does not run every resource's
+  // deriveParams again.
+  yield* step.run("notation:validate", async () => {
+    await validateKnownParams(opts.resources);
+    return null;
+  });
   yield* withDeploymentHold(step, opts, async function* () {
     // Reconcile in dependency order, so a resource only runs once its
     // dependencies have converged.
@@ -31,4 +38,15 @@ export async function* deploy(
 
     yield* sweepOrphans(step, opts, "deploy");
   });
+}
+
+/**
+ * Checks every value deploy knows before it changes anything. A value that
+ * comes from an output that does not exist yet is checked later, just before
+ * the operation of the resource that holds it.
+ */
+async function validateKnownParams(resources: BaseResource[]): Promise<void> {
+  for (const resource of resources) {
+    await validateParams(resource, await resource.planParams(), "deploy");
+  }
 }
