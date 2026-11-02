@@ -15,6 +15,8 @@ import {
 import { LambdaIamRole } from "src/resources/lambda/lambda-role";
 import { ResourceNotFoundError } from "@notation/resource";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
+import { runtimeVariable } from "src/shared";
+import { sortedJson } from "@notation/utils";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -204,6 +206,29 @@ describe("Lambda code", () => {
     );
   });
 
+  it("encodes the runtime map into one variable on create", async () => {
+    const lambda = await createLambda();
+    const runtime = {
+      dispatch: {
+        "orders-app-mapping": {
+          export: "processOrders",
+          match: { queueArn: "arn:orders" },
+        },
+      },
+    };
+    lambda.contribute({ Environment: { Runtime: runtime } });
+    const send = vi
+      .spyOn(lambdaClient, "send")
+      .mockImplementation(async () => ({}));
+
+    await lambda.create(await lambda.getParams());
+
+    const command = send.mock.calls[0]![0] as sdk.CreateFunctionCommand;
+    expect(command.input.Environment).toEqual({
+      Variables: { [runtimeVariable]: sortedJson.encode(runtime) },
+    });
+  });
+
   it("does not create the function when the archive changed after params were computed", async () => {
     const lambda = await createLambda();
     const params = await lambda.getParams();
@@ -344,5 +369,129 @@ describe("Lambda environment", () => {
     const command = send.mock
       .calls[0]![0] as sdk.UpdateFunctionConfigurationCommand;
     expect(command.input.Environment).toEqual({ Variables: {} });
+  });
+
+  const runtime = {
+    dispatch: {
+      "todo-api-GET-/todos": {
+        export: "getTodos",
+        match: { apiId: "api-1", routeKey: "GET /todos" },
+      },
+    },
+  };
+
+  it("merges dispatch entries from several contributors", async () => {
+    const lambda = createLambda();
+    lambda.contribute({
+      Environment: { Runtime: { dispatch: runtime.dispatch } },
+    });
+    lambda.contribute({
+      Environment: {
+        Runtime: {
+          dispatch: {
+            "orders-app-mapping": {
+              export: "processOrders",
+              match: { queueArn: "arn:orders" },
+            },
+          },
+        },
+      },
+    });
+
+    expect((await lambda.getParams()).Environment?.Runtime?.dispatch).toEqual({
+      ...runtime.dispatch,
+      "orders-app-mapping": {
+        export: "processOrders",
+        match: { queueArn: "arn:orders" },
+      },
+    });
+  });
+
+  it("encodes the runtime map into one variable on update", async () => {
+    const send = vi
+      .spyOn(lambdaClient, "send")
+      .mockImplementation(async () => ({}));
+
+    await createLambda().update!(
+      { FunctionName: "app" },
+      {
+        Environment: { Variables: { STAGE: "prod" }, Runtime: runtime },
+      } as any,
+      {} as any,
+      {} as any,
+    );
+
+    const command = send.mock
+      .calls[0]![0] as sdk.UpdateFunctionConfigurationCommand;
+    expect(command.input.Environment).toEqual({
+      Variables: {
+        STAGE: "prod",
+        [runtimeVariable]: sortedJson.encode(runtime),
+      },
+    });
+  });
+
+  it("rejects a variable that uses the reserved name", async () => {
+    vi.spyOn(lambdaClient, "send").mockImplementation(async () => ({}));
+
+    await expect(
+      createLambda().update!(
+        { FunctionName: "app" },
+        {
+          Environment: {
+            Variables: { [runtimeVariable]: "{}" },
+            Runtime: runtime,
+          },
+        } as any,
+        {} as any,
+        {} as any,
+      ),
+    ).rejects.toThrow(`${runtimeVariable} is reserved`);
+  });
+
+  it("decodes the runtime map on read", async () => {
+    vi.spyOn(lambdaClient, "send").mockImplementation(async () => ({
+      Configuration: {
+        FunctionName: "app",
+        State: "Active",
+        RevisionId: "rev-1",
+        Environment: {
+          Variables: {
+            STAGE: "prod",
+            [runtimeVariable]: sortedJson.encode(runtime),
+          },
+        },
+      },
+    }));
+
+    const result: any = await createLambda().read!(
+      { FunctionName: "app" },
+      {} as any,
+    );
+
+    expect(result.Environment).toEqual({
+      Variables: { STAGE: "prod" },
+      Runtime: runtime,
+    });
+  });
+
+  it("reads an environment that holds only the runtime map without variables", async () => {
+    vi.spyOn(lambdaClient, "send").mockImplementation(async () => ({
+      Configuration: {
+        FunctionName: "app",
+        State: "Active",
+        RevisionId: "rev-1",
+        Environment: {
+          Variables: { [runtimeVariable]: sortedJson.encode(runtime) },
+        },
+      },
+    }));
+
+    const result: any = await createLambda().read!(
+      { FunctionName: "app" },
+      {} as any,
+    );
+
+    expect(result.Environment).toEqual({ Runtime: runtime });
   });
 });

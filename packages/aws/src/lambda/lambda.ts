@@ -1,6 +1,7 @@
 import * as aws from "@notation/aws.iac";
 import * as std from "@notation/std.iac";
 import { getActiveResourceCollection } from "@notation/resource";
+import type { DispatchEntry } from "@notation/aws.iac/shared";
 import path from "path";
 import { awsName } from "src/naming";
 import { assertLambdaId, type NameSafe } from "./lambda-id";
@@ -14,13 +15,26 @@ export type LambdaConfig = {
    * Must be name-safe: 1 to 64 letters, digits, hyphens or underscores.
    */
   id: string;
-  handler: string;
+  /**
+   * The bundle to deploy. It must export `handler`, which Lambda calls with
+   * every event.
+   */
   code: {
     type: "file" | "zip";
     path: string;
   };
   runtime?: aws.lambda.LambdaFunctionConfig["Runtime"];
+  /** Seconds the function may run for each event. Lambda's default is 3. */
+  timeout?: number;
+  /** Megabytes of memory for the function. Lambda's default is 128. */
+  memory?: number;
 };
+
+/**
+ * One export of a runtime module: the module's Lambda, and the name of the
+ * export to invoke. Infra APIs such as `route()` and `schedule()` take one.
+ */
+export type RuntimeRef = { resource: LambdaGroup; export: string };
 
 export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
   readonly fn: aws.lambda.LambdaFunctionInstance;
@@ -51,6 +65,34 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
       dependencies: { role: this.role },
     });
   }
+
+  /**
+   * Adds an entry to the function's dispatch map, which sends events that
+   * match the entry to one export. `bindingId` is the ID of the binding that
+   * adds the entry, such as a route or an event source mapping.
+   */
+  addDispatchEntry(bindingId: string, entry: DispatchEntry): void {
+    this.fn.contribute({
+      Environment: { Runtime: { dispatch: { [bindingId]: entry } } },
+    });
+  }
+}
+
+/**
+ * Checks that `value` is a `RuntimeRef`. `caller` names the infra API in the
+ * error.
+ */
+export function assertRuntimeRef(
+  value: unknown,
+  caller: string,
+): asserts value is RuntimeRef {
+  const ref = value as Partial<RuntimeRef> | undefined;
+  if (ref?.resource instanceof LambdaGroup && typeof ref.export === "string") {
+    return;
+  }
+  throw new Error(
+    `${caller} expects an export of a runtime module, or { resource, export } with resource from lambda(). A runtime module is one that exports \`resource\`.`,
+  );
 }
 
 /**
@@ -121,8 +163,10 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
     new aws.lambda.LambdaFunction(lambdaId, {
       config: {
         FunctionName: awsName("lambdaFunction", lambdaId),
-        Handler: `${fileName}.${config.handler}`,
+        Handler: `${fileName}.handler`,
         Runtime: runtime,
+        Timeout: config.timeout,
+        MemorySize: config.memory,
         // todo: make this configurable and remove it as a default
         ReservedConcurrentExecutions: 1,
       },

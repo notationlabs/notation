@@ -1,6 +1,5 @@
 import * as aws from "@notation/aws.iac";
-import type { SqsHandler } from "src/shared/lambda.handler";
-import type { LambdaGroup } from "src/lambda";
+import { assertRuntimeRef, type RuntimeRef } from "src/lambda";
 import { awsName } from "src/naming";
 
 export type QueueConfig = {
@@ -72,19 +71,25 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
   }
 
   /**
-   * Invokes the function with the queue's messages. Gives the function's
-   * role permission to read the queue, and maps the queue to the function.
+   * Invokes an export of a runtime module with the queue's messages. Gives
+   * the function's role permission to read the queue, and maps the queue to
+   * the function.
    */
   consume(
-    handler: SqsHandler | LambdaGroup,
+    handler: RuntimeRef,
     options: ConsumeOptions = {},
   ): aws.lambda.LambdaEventSourceMappingInstance {
-    // at compile time, a runtime handler import becomes a lambda group
-    const lambdaGroup = handler as LambdaGroup;
+    assertRuntimeRef(handler, "queue.consume()");
+    const lambdaGroup = handler.resource;
     const id = `${this.id}-${lambdaGroup.fn.id}-mapping`;
     if (this.resources.some((resource) => resource.id === id)) {
       throw new Error(`Queue ${this.id} already feeds ${lambdaGroup.fn.id}`);
     }
+
+    lambdaGroup.addDispatchEntry(id, {
+      export: handler.export,
+      match: { queueArn: this.arn },
+    });
 
     lambdaGroup.policy.contribute({
       PolicyDocument: {
