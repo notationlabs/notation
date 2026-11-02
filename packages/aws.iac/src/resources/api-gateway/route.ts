@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/utils/aws-clients";
@@ -29,59 +30,76 @@ export const routeSchema = route.defineSchema({
     propertyType: "computed",
     presence: "required",
     primaryKey: true,
+    value: v.string(),
   },
   ApiId: {
     propertyType: "param",
     presence: "required",
     secondaryKey: true,
+    value: v.string(),
   },
   ApiKeyRequired: {
     propertyType: "param",
     presence: "optional",
+    value: v.boolean(),
   },
   ApiGatewayManaged: {
     propertyType: "computed",
     presence: "optional",
+    value: v.boolean(),
   },
   AuthorizationScopes: {
     propertyType: "param",
     presence: "optional",
+    value: v.array(v.string()),
   },
   AuthorizationType: {
     propertyType: "param",
     presence: "optional",
+    value: v.enum(sdk.AuthorizationType),
   },
   AuthorizerId: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   ModelSelectionExpression: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   OperationName: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   RequestModels: {
     propertyType: "param",
     presence: "optional",
+    value: v.record(v.string(), v.string()),
   },
   RequestParameters: {
     propertyType: "param",
     presence: "optional",
+    value: v.record(
+      v.string(),
+      v.object({ Required: v.optional(v.boolean()) }),
+    ),
   },
   RouteKey: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
   },
   RouteResponseSelectionExpression: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   Target: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
 } as const);
 

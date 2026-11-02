@@ -57,6 +57,51 @@ it("reads VPC and SnapStart config in the shape they are configured in", async (
   expect(result.SnapStart).toEqual({ ApplyOn: "PublishedVersions" });
 });
 
+describe("Lambda config values", () => {
+  function declare(config: Record<string, unknown>) {
+    return () =>
+      new LambdaFunction("app", {
+        config: {
+          FunctionName: "app",
+          ReservedConcurrentExecutions: 1,
+          ...config,
+        } as any,
+        dependencies: {} as any,
+      });
+  }
+
+  it("rejects a memory size that is not a number when the function is declared", () => {
+    expect(declare({ MemorySize: Number(undefined) })).toThrow(
+      expect.objectContaining({
+        _tag: "ValueValidationError",
+        field: "MemorySize",
+        point: "declaration",
+      }),
+    );
+  });
+
+  it("rejects a runtime that Lambda does not have", () => {
+    expect(declare({ Runtime: "nodejs99.x" })).toThrow(/Runtime/);
+  });
+
+  it("rejects a code signing policy other than Warn or Enforce", () => {
+    expect(declare({ CodeSigningPolicy: "Audit" })).toThrow(
+      /CodeSigningPolicy/,
+    );
+  });
+
+  it("accepts valid config", () => {
+    expect(
+      declare({
+        MemorySize: 512,
+        Runtime: "nodejs22.x",
+        Architectures: ["arm64"],
+        Environment: { Variables: { STAGE: "prod" } },
+      }),
+    ).not.toThrow();
+  });
+});
+
 describe("Lambda code", () => {
   let directory: string;
   let filePath: string;

@@ -3,10 +3,14 @@
  * resources, each built on one read of the resource's persisted record and
  * writes conditional on that read.
  */
-import type {
-  BaseResource,
-  ResourceGroupRef,
-  ResourceType,
+import {
+  SchemaStructureError,
+  assertRequiredOutputs,
+  collectResourceGraph,
+  validateParams,
+  type BaseResource,
+  type ResourceGroupRef,
+  type ResourceType,
 } from "@notation/resource";
 import { VersionConflict, type StateNode } from "@notation/state";
 import { buildDepthLevels } from "../dependency-graph";
@@ -18,6 +22,7 @@ import {
   applyDriftDetection,
   createResourceOperation,
   deleteResourceOperation,
+  readResourceOperation,
   updateResourceOperation,
   type CreateResourceParams,
   type PersistState,
@@ -57,6 +62,7 @@ export async function* reconcileResource(
   // other than the ones the decision was taken against. The step also pins
   // the answer across a replay.
   const params = yield* step.run("params", () => resource.getParams());
+  await validateParams(resource, params, "deploy");
   const dependsOn = getDependencyIds(resource);
 
   const emit = durableEmitter(step, opts.emit);
@@ -141,15 +147,69 @@ export async function* reconcileResource(
       yield* replaceResource(step, opts, session, shared);
       return;
     case "noop":
-      if (
-        session.node &&
-        !opts.dryRun &&
-        !hasSameEdges(session.node, dependsOn)
-      ) {
+      if (!session.node) return;
+      if (findMissingOutputs(resource, session.node.output)) {
+        yield* recoverOutputs(step, opts, session, shared);
+        return;
+      }
+      if (!opts.dryRun && !hasSameEdges(session.node, dependsOn)) {
         yield* rewriteEdges(session, dependsOn);
       }
       return;
   }
+}
+
+function findMissingOutputs(
+  resource: BaseResource,
+  output: Record<string, unknown>,
+): SchemaStructureError | undefined {
+  try {
+    assertRequiredOutputs(resource, output);
+  } catch (error) {
+    if (SchemaStructureError.is(error)) return error;
+    throw error;
+  }
+  return undefined;
+}
+
+/**
+ * Handles a record that lacks a required output. Create and update write the
+ * record before they fail on a missing output, so a later deploy can decide
+ * noop for it, and its dependents would read the output as undefined. The
+ * resource is read again, and the record is written with what the read
+ * returns. The deploy fails while an output is still missing.
+ */
+async function* recoverOutputs(
+  step: DurableStepRunner,
+  opts: DurableDeployOptions,
+  session: Extract<ResourceStateSession, { node: StateNode }>,
+  shared: Omit<CreateResourceParams, "persist">,
+): AsyncGenerator<any, void, any> {
+  const { resource } = shared;
+  if (resource.read) {
+    const readStep = step.scope("output-read");
+    const readResult = yield* readResourceOperation(readStep, {
+      resource,
+      resourceParams: shared.resourceParams,
+      persistedOutput: session.node.output,
+      // No dryRun, as for the drift read.
+      emit: durableEmitter(readStep, opts.emit),
+      maxOperationAttempts: shared.maxOperationAttempts,
+    });
+    resource.setOutput({ ...session.node.output, ...readResult });
+  }
+
+  const missing = findMissingOutputs(resource, resource.output);
+  if (!opts.dryRun && resource.read) {
+    const { version: _, ...record } = session.node;
+    yield* session.persist({
+      ...record,
+      group: (record.group ?? null) as ResourceGroupRef | null,
+      output: resource.toState(resource.output),
+      dependsOn: shared.dependsOn,
+    });
+  }
+  if (missing) throw missing;
 }
 
 /**
@@ -288,7 +348,15 @@ export async function* sweepOrphans(
     }
     if (kept.has(node.id)) continue;
 
-    const resource = new Resource(node.id, { config: node.config });
+    // The recorded config was checked when it was declared, and may not pass
+    // a validator that has changed since.
+    let resource!: BaseResource;
+    await collectResourceGraph(
+      () => {
+        resource = new Resource(node.id, { config: node.config });
+      },
+      { declarationChecks: false },
+    );
     resource.setOutput(node.output);
     yield* deleteResource(nodeScope, resource, opts);
   }

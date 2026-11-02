@@ -1,8 +1,9 @@
+import * as v from "valibot";
 import { AwsSchema } from "src/utils/types";
 import * as sdk from "@aws-sdk/client-lambda";
 import { LambdaFunctionInstance } from "../lambda";
 import { EventBridgeRuleInstance } from "./rule";
-import { resource, typed } from "@notation/resource";
+import { resource } from "@notation/resource";
 import { lambdaClient } from "src/utils/aws-clients";
 
 // TODO: much of the lambda permission types can be shared between event-bridge and api-gateway (other than the dependencies part):
@@ -29,58 +30,65 @@ const LambdaEventBridgeRulePermissionSchema =
       propertyType: "param",
       presence: "required",
       primaryKey: true,
+      value: v.string(),
     },
     StatementId: {
       propertyType: "param",
       presence: "required",
       secondaryKey: true,
+      value: v.string(),
     },
     Qualifier: {
       propertyType: "param",
       presence: "optional",
       secondaryKey: true,
+      value: v.string(),
     },
     RevisionId: {
       propertyType: "param",
       presence: "optional",
       secondaryKey: true,
+      value: v.string(),
     },
     Action: {
       propertyType: "param",
       presence: "required",
+      value: v.string(),
     },
     Principal: {
       propertyType: "param",
       presence: "required",
+      value: v.string(),
     },
     FunctionUrlAuthType: {
       propertyType: "param",
       presence: "optional",
-    },
-    InvocationType: {
-      propertyType: "param",
-      presence: "optional",
+      value: v.enum(sdk.FunctionUrlAuthType),
     },
     Policy: {
-      valueType: typed<string>(),
       propertyType: "computed",
       presence: "optional",
+      value: v.string(),
     },
     PrincipalOrgID: {
       propertyType: "param",
       presence: "optional",
+      value: v.string(),
     },
     SourceArn: {
       propertyType: "param",
       presence: "optional",
+      value: v.string(),
     },
     EventSourceToken: {
       propertyType: "param",
       presence: "optional",
+      value: v.string(),
     },
     SourceAccount: {
       propertyType: "param",
       presence: "optional",
+      value: v.string(),
     },
     // Todo: why does this solve the compile error at the top level?
   } as const);

@@ -1,15 +1,46 @@
 import { describe, expect, test } from "vitest";
 import { UNKNOWN_AFTER_APPLY, diffParams, type Schema } from "src";
+import { object, string } from "./validators";
 
 const schema: Schema = {
-  name: { propertyType: "param", presence: "required", primaryKey: true },
-  region: { propertyType: "param", presence: "required", secondaryKey: true },
-  path: { propertyType: "param", presence: "optional", immutable: true },
-  description: { propertyType: "param", presence: "optional" },
-  tags: { propertyType: "param", presence: "optional", immutable: true },
-  token: { propertyType: "param", presence: "optional", volatile: true },
-  secret: { propertyType: "param", presence: "optional", hidden: true },
-  arn: { propertyType: "computed", presence: "required" },
+  name: {
+    propertyType: "param",
+    presence: "required",
+    value: string(),
+    primaryKey: true,
+  },
+  region: {
+    propertyType: "param",
+    presence: "required",
+    value: string(),
+    secondaryKey: true,
+  },
+  path: {
+    propertyType: "param",
+    presence: "optional",
+    value: string(),
+    immutable: true,
+  },
+  description: { propertyType: "param", presence: "optional", value: string() },
+  tags: {
+    propertyType: "param",
+    presence: "optional",
+    value: object<Record<string, string>>(),
+    immutable: true,
+  },
+  token: {
+    propertyType: "param",
+    presence: "optional",
+    value: string(),
+    volatile: true,
+  },
+  secret: {
+    propertyType: "param",
+    presence: "optional",
+    value: string(),
+    hidden: true,
+  },
+  arn: { propertyType: "computed", presence: "required", value: string() },
 };
 
 const previous = {

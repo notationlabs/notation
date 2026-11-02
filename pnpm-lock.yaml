@@ -178,6 +178,9 @@ importers:
       '@notation/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      valibot:
+        specifier: ^1.4.2
+        version: 1.4.2(typescript@7.0.2)
       yieldstar:
         specifier: 0.8.2
         version: 0.8.2
@@ -268,6 +271,9 @@ importers:
       '@types/aws-lambda':
         specifier: ^8.10.147
         version: 8.10.147
+      valibot:
+        specifier: ^1.4.2
+        version: 1.4.2(typescript@7.0.2)
     devDependencies:
       '@notation/reconciler':
         specifier: workspace:*
@@ -501,6 +507,9 @@ importers:
       fflate:
         specifier: 0.8.2
         version: 0.8.2
+      valibot:
+        specifier: ^1.4.2
+        version: 1.4.2(typescript@7.0.2)
     devDependencies:
       '@notation/reconciler':
         specifier: workspace:*
@@ -9615,6 +9624,10 @@ snapshots:
   valibot@1.4.2(typescript@6.0.3):
     optionalDependencies:
       typescript: 6.0.3
+
+  valibot@1.4.2(typescript@7.0.2):
+    optionalDependencies:
+      typescript: 7.0.2
 
   vfile-message@4.0.3:
     dependencies:

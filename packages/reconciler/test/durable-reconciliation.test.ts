@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import {
   REDELIVERY_DELAY_BASE,
   WorkflowRunner,
@@ -13,6 +14,8 @@ import {
   ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
+  SchemaStructureError,
+  ValueValidationError,
   mergeContributions,
   type BaseResource,
   type ResourceType,
@@ -111,7 +114,12 @@ describe("durable execution and replay", () => {
       // Cast: a resource declared without API types constrains every schema
       // key to be a key of an `any` API schema, which no named key satisfies.
       .defineSchema({
-        name: { presence: "required", propertyType: "param", primaryKey: true },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
       } as any)
       .defineOperations({ create, read, delete: async () => undefined });
     const runtime = createRuntime(
@@ -169,6 +177,7 @@ describe("durable execution and replay", () => {
     const TestResource = resource({ type: "test/durable/effect-find" })
       .defineSchema({
         remoteId: {
+          value: v.string(),
           presence: "required",
           propertyType: "computed",
           primaryKey: true,
@@ -415,7 +424,11 @@ describe("durable values", () => {
       ReadResult: { CreatedDate: Date };
     }>({ type: "test/durable/dated" })
       .defineSchema({
-        CreatedDate: { propertyType: "computed", presence: "required" },
+        CreatedDate: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.date(),
+        },
       })
       .defineOperations({
         create: async () => undefined,
@@ -443,7 +456,11 @@ describe("durable values", () => {
       ReadResult: { Payload: string };
     }>({ type: "test/durable/bytes" })
       .defineSchema({
-        Payload: { propertyType: "computed", presence: "required" },
+        Payload: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+        },
       })
       .defineOperations({
         create: async () => undefined,
@@ -541,7 +558,11 @@ describe("conditional state persistence", () => {
       // Cast: a resource declared without API types constrains every schema
       // key to be a key of an `any` API schema, which no named key satisfies.
       .defineSchema({
-        name: { presence: "required", propertyType: "param" },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          value: v.string(),
+        },
       } as any)
       .defineOperations({
         create: async () => undefined,
@@ -618,7 +639,11 @@ describe("conditional state persistence", () => {
       // Cast: see "rejects a state write whose snapshot another writer has
       // moved past".
       .defineSchema({
-        name: { presence: "required", propertyType: "param" },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          value: v.string(),
+        },
       } as any)
       .defineOperations({
         create: async () => undefined,
@@ -1340,7 +1365,7 @@ describe("state from before groups had stable IDs", () => {
     // Cast: a resource declared without API types constrains every schema
     // key to be a key of an `any` API schema, which no named key satisfies.
     .defineSchema({
-      name: { presence: "required", propertyType: "param" },
+      name: { presence: "required", propertyType: "param", value: v.string() },
     } as any)
     .defineOperations({
       create: async () => undefined,
@@ -1431,10 +1456,14 @@ describe("drift detection and repair", () => {
       // Cast: a resource declared without API types constrains every schema
       // key to be a key of an `any` API schema, which no named key satisfies.
       .defineSchema({
-        name: { presence: "required", propertyType: "param" },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          value: v.string(),
+        },
       } as any)
       .defineOperations({
-        create: (async () => remote) as any,
+        create: async () => undefined,
         read: async () => remote,
         update: updateSpy,
         delete: async () => undefined,
@@ -1503,10 +1532,14 @@ describe("drift detection and repair", () => {
     const read = vi.fn(async () => remote);
     const DryRunDriftResource = resource({ type: "test/durable/dry-run-drift" })
       .defineSchema({
-        name: { presence: "required", propertyType: "param" },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          value: v.string(),
+        },
       } as any)
       .defineOperations({
-        create: (async () => remote) as any,
+        create: async () => undefined,
         read,
         update: async () => undefined,
         delete: async () => undefined,
@@ -1557,8 +1590,13 @@ describe("replacement", () => {
         // Cast: a resource declared without API types constrains every schema
         // key to be a key of an `any` API schema, which no named key satisfies.
         .defineSchema({
-          name: { presence: "required", propertyType: "param" },
+          name: {
+            presence: "required",
+            propertyType: "param",
+            value: v.string(),
+          },
           path: {
+            value: v.string(),
             presence: "required",
             propertyType: "param",
             immutable: true,
@@ -1688,7 +1726,12 @@ describe("replacement", () => {
     let failCreate = false;
     const Role = resource({ type: "test/durable/replace-failed" })
       .defineSchema({
-        path: { presence: "required", propertyType: "param", immutable: true },
+        path: {
+          presence: "required",
+          propertyType: "param",
+          immutable: true,
+          value: v.string(),
+        },
       } as any)
       .defineOperations({
         create: async (params: any) => {
@@ -1800,20 +1843,35 @@ describe("contributions and output values", () => {
     const created: Record<string, unknown>[] = [];
     const Queue = resource({ type: "test/durable/queue" })
       .defineSchema({
-        name: { presence: "required", propertyType: "param", primaryKey: true },
-        arn: { presence: "required", propertyType: "computed" },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+        arn: {
+          presence: "required",
+          propertyType: "computed",
+          value: v.string(),
+        },
       } as any)
       .defineOperations({
         create: async (params: any) => {
           created.push(params);
-          return { name: params.name, arn: `arn:${params.name}` } as any;
+          return { arn: `arn:${params.name}` } as any;
         },
         delete: async () => undefined,
       });
     const Fn = resource({ type: "test/durable/function" })
       .defineSchema({
-        name: { presence: "required", propertyType: "param", primaryKey: true },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
         env: {
+          value: v.record(v.string(), v.string()),
           presence: "optional",
           propertyType: "param",
           collect: mergeContributions,
@@ -1847,20 +1905,35 @@ describe("contributions and output values", () => {
     const created: Record<string, unknown>[] = [];
     const Queue = resource({ type: "test/durable/queue" })
       .defineSchema({
-        name: { presence: "required", propertyType: "param", primaryKey: true },
-        arn: { presence: "required", propertyType: "computed" },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+        arn: {
+          presence: "required",
+          propertyType: "computed",
+          value: v.string(),
+        },
       } as any)
       .defineOperations({
         create: async (params: any) => {
           created.push(params);
-          return { name: params.name, arn: `arn:${params.name}` } as any;
+          return { arn: `arn:${params.name}` } as any;
         },
         delete: async () => undefined,
       });
     const Fn = resource({ type: "test/durable/function" })
       .defineSchema({
-        name: { presence: "required", propertyType: "param", primaryKey: true },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
         env: {
+          value: v.record(v.string(), v.string()),
           presence: "optional",
           propertyType: "param",
           collect: mergeContributions,
@@ -1890,6 +1963,536 @@ describe("contributions and output values", () => {
       params: { name: "f", env: { QUEUE: "arn:orders/*" } },
       dependsOn: ["queue"],
     });
+    runtime.close();
+  });
+});
+
+describe("value validation at deploy", () => {
+  type RoleApi = {
+    Key: { name: string };
+    CreateParams: { name: string; boundary?: string };
+    UpdateParams: { boundary?: string };
+    ReadResult: { arn: string };
+  };
+  type FnApi = {
+    Key: { name: string };
+    CreateParams: { name: string; memory: number; role: string };
+    UpdateParams: { memory: number; role: string };
+    ReadResult: {};
+  };
+
+  function defineRole(
+    operations: {
+      create?: () => Promise<any>;
+      read?: () => Promise<any>;
+      update?: () => Promise<void>;
+    } = {},
+  ) {
+    return resource<RoleApi>({ type: "test/durable/validated-role" })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          primaryKey: true,
+          immutable: true,
+        },
+        boundary: {
+          propertyType: "param",
+          presence: "optional",
+          value: v.string(),
+          immutable: true,
+        },
+        arn: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create: operations.create ?? (async () => undefined),
+        read: operations.read,
+        update: operations.update ?? (async () => undefined),
+        delete: async () => undefined,
+      });
+  }
+
+  function defineFn(
+    create: () => Promise<void>,
+    memory: () => number,
+    roleValue: v.GenericSchema<string> = v.string(),
+  ) {
+    return resource<FnApi>({ type: "test/durable/validated-fn" })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          primaryKey: true,
+          immutable: true,
+        },
+        memory: {
+          propertyType: "param",
+          presence: "required",
+          value: v.pipe(v.number(), v.integer()),
+        },
+        role: {
+          propertyType: "param",
+          presence: "required",
+          value: roleValue,
+        },
+      })
+      .defineOperations({
+        create,
+        delete: async () => undefined,
+      })
+      .requireDependencies<{ role: BaseResource }>()
+      .deriveParams(() => ({ memory: memory() }));
+  }
+
+  it("checks every known value before the first change", async () => {
+    const createRole = vi.fn(async () => ({ arn: "arn:role" }));
+    const createFn = vi.fn(async () => undefined);
+    const Role = defineRole({ create: createRole });
+    const Fn = defineFn(createFn, () => Number(undefined));
+    const role = new Role("role", { config: { name: "role" } });
+    const fn = new Fn("fn", {
+      config: { name: "fn", role: role.outputValue("arn") },
+      dependencies: { role },
+    });
+    const runtime = createRuntime([role, fn], "validate-known");
+
+    const error = await runtime.run("validate-known-execution").catch((e) => e);
+
+    expect(ValueValidationError.is(error)).toBe(true);
+    expect(error).toMatchObject({
+      resourceId: "fn",
+      field: "memory",
+      point: "deploy",
+    });
+    expect(createRole).not.toHaveBeenCalled();
+    expect(await runtime.state.values()).toHaveLength(0);
+    runtime.close();
+  });
+
+  it("checks values from outputs in state before the first change", async () => {
+    let strict = false;
+    const createRole = vi.fn(async () => ({ arn: "arn:role" }));
+    const Role = defineRole({ create: createRole });
+    const Fn = resource<FnApi>({ type: "test/durable/validated-fn" })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          primaryKey: true,
+          immutable: true,
+        },
+        memory: {
+          propertyType: "param",
+          presence: "required",
+          value: v.pipe(v.number(), v.integer()),
+        },
+        role: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+      })
+      .requireDependencies<{ role: BaseResource }>()
+      .deriveParams(({ deps }) => {
+        const { arn } = deps.role.output as { arn?: string };
+        return { memory: strict && arn === "arn:role" ? 1.5 : 128 };
+      });
+    const resources: BaseResource[] = [];
+    const runtime = createRuntime(resources, "validate-state-outputs");
+    const declare = (boundary?: string) => {
+      const role = new Role("role", { config: { name: "role", boundary } });
+      const fn = new Fn("fn", {
+        config: { name: "fn", role: role.outputValue("arn") },
+        dependencies: { role },
+      });
+      resources.splice(0, resources.length, role, fn);
+    };
+    declare();
+    await runtime.run("validate-state-outputs-1");
+
+    strict = true;
+    declare("arn:boundary");
+    const error = await runtime.run("validate-state-outputs-2").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "ValueValidationError",
+      resourceId: "fn",
+      field: "memory",
+      point: "deploy",
+    });
+    expect(createRole).toHaveBeenCalledOnce();
+    expect(await runtime.state.get("role")).toMatchObject({
+      params: { name: "role" },
+    });
+    runtime.close();
+  });
+
+  it("checks a value from another resource's output just before its operation", async () => {
+    const createFn = vi.fn(async () => undefined);
+    const Role = defineRole({ create: async () => ({ arn: "role-arn" }) });
+    const Fn = defineFn(
+      createFn,
+      () => 128,
+      v.pipe(v.string(), v.startsWith("arn:")),
+    );
+    const role = new Role("role", { config: { name: "role" } });
+    const fn = new Fn("fn", {
+      config: { name: "fn", role: role.outputValue("arn") },
+      dependencies: { role },
+    });
+    const runtime = createRuntime([role, fn], "validate-output");
+
+    const error = await runtime
+      .run("validate-output-execution")
+      .catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "ValueValidationError",
+      resourceId: "fn",
+      field: "role",
+      point: "deploy",
+    });
+    expect(createFn).not.toHaveBeenCalled();
+    expect(await runtime.state.get("role")).toMatchObject({
+      output: { arn: "role-arn" },
+    });
+    expect(await runtime.state.get("fn")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("fails on a malformed read rather than comparing it", async () => {
+    let remote: Record<string, unknown> = {
+      name: "role",
+      boundary: "arn:boundary",
+      arn: "arn:role",
+    };
+    const update = vi.fn(async () => undefined);
+    const Role = defineRole({
+      create: async () => ({ arn: "arn:role" }),
+      read: async () => remote,
+      update,
+    });
+    const runtime = createRuntime(
+      [
+        new Role("role", {
+          config: { name: "role", boundary: "arn:boundary" },
+        }),
+      ],
+      "validate-read",
+      { driftDetection: true },
+    );
+    await runtime.run("validate-read-1");
+
+    remote = {
+      ...remote,
+      boundary: { type: "Policy", arn: "arn:boundary" },
+    };
+    const error = await runtime.run("validate-read-2").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "ValueValidationError",
+      resourceId: "role",
+      field: "boundary",
+      point: "read",
+    });
+    expect(error.message).toMatch(
+      /^The read of role \(test\/durable\/validated-role\) returned an invalid boundary/,
+    );
+    expect(update).not.toHaveBeenCalled();
+    expect(await runtime.state.get("role")).toMatchObject({
+      version: 1,
+      params: { boundary: "arn:boundary" },
+    });
+    runtime.close();
+  });
+
+  it("records the resource, then fails, when the read after create is malformed", async () => {
+    const create = vi.fn(async () => ({ arn: "arn:role" }));
+    const Role = defineRole({
+      create,
+      read: async () => ({ name: "role", boundary: 7, arn: "arn:role" }),
+    });
+    const runtime = createRuntime(
+      [new Role("role", { config: { name: "role" } })],
+      "validate-create-read",
+    );
+
+    const error = await runtime.run("validate-create-read-1").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "ValueValidationError",
+      resourceId: "role",
+      field: "boundary",
+      point: "read",
+    });
+    expect(create).toHaveBeenCalledOnce();
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "create",
+      params: { name: "role" },
+      output: { name: "role", arn: "arn:role" },
+    });
+    runtime.close();
+  });
+
+  it("records the update, then fails, when the read after update is malformed", async () => {
+    let remote: Record<string, unknown> = { name: "role", arn: "arn:role" };
+    const update = vi.fn(async () => undefined);
+    const Fn = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; memory: number };
+      UpdateParams: { memory: number };
+      ReadResult: { arn: string };
+    }>({ type: "test/durable/validated-updated" })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          primaryKey: true,
+          immutable: true,
+        },
+        memory: {
+          propertyType: "param",
+          presence: "required",
+          value: v.number(),
+        },
+        arn: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create: async () => undefined,
+        read: async () => remote as any,
+        update,
+        delete: async () => undefined,
+      });
+    const resources: BaseResource[] = [
+      new Fn("fn", { config: { name: "fn", memory: 128 } }),
+    ];
+    const runtime = createRuntime(resources, "validate-update-read");
+    remote = { name: "fn", memory: 128, arn: "arn:fn" };
+    await runtime.run("validate-update-read-1");
+
+    resources[0] = new Fn("fn", { config: { name: "fn", memory: 256 } });
+    remote = { name: "fn", memory: "256", arn: "arn:fn" };
+    const error = await runtime.run("validate-update-read-2").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "ValueValidationError",
+      field: "memory",
+      point: "read",
+    });
+    expect(update).toHaveBeenCalledOnce();
+    expect(await runtime.state.get("fn")).toMatchObject({
+      lastOperation: "update",
+      params: { memory: 256 },
+      output: { memory: 256, arn: "arn:fn" },
+    });
+    runtime.close();
+  });
+
+  it("records the resource, then fails, when create returns a param", async () => {
+    const Role = defineRole({
+      create: async () => ({ name: "role", arn: "arn:role" }) as any,
+    });
+    const runtime = createRuntime(
+      [new Role("role", { config: { name: "role" } })],
+      "validate-create-result",
+    );
+
+    const error = await runtime.run("validate-create-result-1").catch((e) => e);
+
+    expect(SchemaStructureError.is(error)).toBe(true);
+    expect(error.message).toMatch(
+      /create returned fields that are not computed in its schema: name$/,
+    );
+    expect(await runtime.state.get("role")).toMatchObject({
+      output: { arn: "arn:role" },
+    });
+    runtime.close();
+  });
+
+  it("records the resource, then fails, when a create result value is invalid", async () => {
+    const Role = defineRole({ create: async () => ({ arn: 42 }) as any });
+    const runtime = createRuntime(
+      [new Role("role", { config: { name: "role" } })],
+      "validate-create-value",
+    );
+
+    const error = await runtime.run("validate-create-value-1").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "ValueValidationError",
+      resourceId: "role",
+      field: "arn",
+      point: "create",
+    });
+    expect(error.message).toMatch(
+      /^The create of role \(test\/durable\/validated-role\) returned an invalid arn/,
+    );
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "create",
+      output: { arn: 42 },
+    });
+    runtime.close();
+  });
+
+  it("checks a computed key from create before the read uses it", async () => {
+    const read = vi.fn(async (key: { id: unknown }) => {
+      if (typeof key.id !== "string") throw new Error("malformed key");
+      return { id: key.id };
+    });
+    const Queue = resource<{
+      Key: { id: string };
+      CreateParams: { name: string };
+      UpdateParams: {};
+      ReadResult: {};
+    }>({ type: "test/durable/validated-queue" })
+      .defineSchema({
+        id: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+          primaryKey: true,
+        },
+        name: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          immutable: true,
+        },
+      })
+      .defineOperations({
+        create: async () => ({ id: 42 }) as any,
+        read,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime(
+      [new Queue("queue", { config: { name: "queue" } })],
+      "validate-create-key",
+    );
+
+    const error = await runtime.run("validate-create-key-1").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "ValueValidationError",
+      field: "id",
+      point: "create",
+    });
+    expect(read).not.toHaveBeenCalled();
+    expect(await runtime.state.get("queue")).toMatchObject({
+      lastOperation: "create",
+      output: { id: 42 },
+    });
+    runtime.close();
+  });
+
+  it("records the resource, then fails, when a required output is missing", async () => {
+    const Role = defineRole();
+    const runtime = createRuntime(
+      [new Role("role", { config: { name: "role" } })],
+      "validate-outputs",
+    );
+
+    const error = await runtime.run("validate-outputs-1").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "SchemaStructureError",
+      fields: ["arn"],
+    });
+    expect(await runtime.state.get("role")).toMatchObject({ id: "role" });
+    runtime.close();
+  });
+
+  it("reads a recorded resource again when a required output is missing", async () => {
+    let arn: string | undefined;
+    const Role = defineRole({ read: async () => ({ arn }) });
+    const runtime = createRuntime(
+      [new Role("role", { config: { name: "role" } })],
+      "recover-outputs",
+    );
+    await runtime.run("recover-outputs-1").catch(() => {});
+
+    const error = await runtime.run("recover-outputs-2").catch((e) => e);
+    expect(error).toMatchObject({
+      name: "SchemaStructureError",
+      fields: ["arn"],
+    });
+
+    arn = "arn:role";
+    await runtime.run("recover-outputs-3");
+    expect(await runtime.state.get("role")).toMatchObject({
+      output: { arn: "arn:role" },
+    });
+    runtime.close();
+  });
+
+  it("fails every deploy while a resource with no read lacks a required output", async () => {
+    const Role = defineRole();
+    const runtime = createRuntime(
+      [new Role("role", { config: { name: "role" } })],
+      "missing-outputs",
+    );
+    await runtime.run("missing-outputs-1").catch(() => {});
+
+    const error = await runtime.run("missing-outputs-2").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "SchemaStructureError",
+      fields: ["arn"],
+    });
+    runtime.close();
+  });
+
+  it("deletes an orphan whose recorded config no longer passes its validator", async () => {
+    let strict = false;
+    const deleteSpy = vi.fn(async () => undefined);
+    const Orphan = resource<{
+      Key: { name: string };
+      CreateParams: { name: string };
+      UpdateParams: {};
+      ReadResult: {};
+    }>({ type: "test/durable/validated-orphan" })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          value: v.pipe(
+            v.string(),
+            v.check(() => !strict, "Rejected"),
+          ),
+          primaryKey: true,
+          immutable: true,
+        },
+      })
+      .defineOperations({ create: async () => undefined, delete: deleteSpy });
+    const resources: BaseResource[] = [
+      new Orphan("orphan", { config: { name: "orphan" } }),
+    ];
+    const runtime = createRuntime(resources, "validate-orphan", {
+      registry: createResourceRegistry([Orphan]),
+    });
+    await runtime.run("validate-orphan-1");
+
+    strict = true;
+    resources.length = 0;
+    await runtime.run("validate-orphan-2");
+
+    expect(deleteSpy).toHaveBeenCalledOnce();
+    expect(await runtime.state.get("orphan")).toBeUndefined();
     runtime.close();
   });
 });

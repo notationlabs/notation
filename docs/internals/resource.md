@@ -10,7 +10,7 @@ A resource is defined using the `defineResource` builder. The full chain looks l
 
 ```ts
 import { defineResource } from "@notation/resource";
-import { z } from "zod";
+import * as v from "valibot";
 
 const LambdaFunction = defineResource<{
   Key: { FunctionName: string };
@@ -27,30 +27,30 @@ const LambdaFunction = defineResource<{
     // params – input properties
     FunctionName: {
       propertyType: "param",
-      valueType: z.string(),
+      value: v.string(),
       presence: "required",
       immutable: true,
     },
     Runtime: {
       propertyType: "param",
-      valueType: z.string(),
+      value: v.string(),
       presence: "required",
     },
     Handler: {
       propertyType: "param",
-      valueType: z.string(),
+      value: v.string(),
       presence: "required",
     },
     MemorySize: {
       propertyType: "param",
-      valueType: z.number(),
+      value: v.number(),
       presence: "optional",
     },
 
     // computed – populated by the cloud provider after creation
     FunctionArn: {
       propertyType: "computed",
-      valueType: z.string(),
+      value: v.string(),
       presence: "required",
       primaryKey: true,
     },
@@ -99,24 +99,24 @@ Every field in the schema is a `SchemaItem`. Each item has a `propertyType` that
 
 ```ts
 // param – input, set when defining the resource
-FunctionName: { propertyType: "param", valueType: z.string(), presence: "required", immutable: true }
+FunctionName: { propertyType: "param", value: v.string(), presence: "required", immutable: true }
 
 // computed – output, set by the cloud provider after creation
-FunctionArn: { propertyType: "computed", valueType: z.string(), presence: "required", primaryKey: true }
+FunctionArn: { propertyType: "computed", value: v.string(), presence: "required", primaryKey: true }
 ```
 
 ### Common fields
 
 All schema items carry these fields:
 
-| Field          | Type                       | Description                                                      |
-| -------------- | -------------------------- | ---------------------------------------------------------------- |
-| `propertyType` | `"param" \| "computed"`    | Role of the field.                                               |
-| `valueType`    | `ZodType`                  | Zod validator for type checking and serialisation.               |
-| `presence`     | `"required" \| "optional"` | Whether the field must be provided.                              |
-| `sensitive`    | `true?`                    | Redacted in logs.                                                |
-| `hidden`       | `true?`                    | Excluded from CLI display and state output.                      |
-| `volatile`     | `true?`                    | Expected to change between reads; excluded from diff comparison. |
+| Field          | Type                       | Description                                                       |
+| -------------- | -------------------------- | ----------------------------------------------------------------- |
+| `propertyType` | `"param" \| "computed"`    | Role of the field.                                                |
+| `value`        | `StandardSchemaV1`         | Validator for the field's value. See [Value types](#value-types). |
+| `presence`     | `"required" \| "optional"` | Whether the field must be provided.                               |
+| `sensitive`    | `true?`                    | Redacted in logs.                                                 |
+| `hidden`       | `true?`                    | Excluded from CLI display and state output.                       |
+| `volatile`     | `true?`                    | Expected to change between reads; excluded from diff comparison.  |
 
 ### Flags by property type
 
@@ -129,6 +129,65 @@ All schema items carry these fields:
 **`computed`**
 
 - `primaryKey` – identifies the resource (e.g. `FunctionArn` returned by `create`).
+
+### Value types
+
+Every schema item has a required `value`, which can be any [Standard Schema](https://standardschema.dev): a valibot, Zod, ArkType or Effect schema, for example. The engine calls only `~standard.validate`, so it depends on no validator library.
+
+The validator's output type is the field's type. TypeScript checks it against the type the API schema gives the field, so a validator that does not match the API type does not compile:
+
+```ts
+MaxSessionDuration: { propertyType: "param", presence: "optional", value: v.string() }
+//                    ^ error: string is not number
+```
+
+A field that needs a narrower type than the API's, such as one of a few strings, uses a narrower validator. Its output must still be assignable to the API's type.
+
+The engine only checks values. It keeps the value it was given, not the validator's output. So the validator's input type must also be assignable to the field's type, and a validator that transforms its input, such as `v.pipe(v.string(), v.transform(Number))`, does not compile. A default that a validator fills in for an optional field, such as `v.optional(v.string(), "x")`, still compiles but is not applied.
+
+The engine validates values at five points:
+
+| Point       | What is validated                                                                                                                                                                                                                   |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Declaration | The resource's config, in its constructor. [Output values](#output-values) are not known yet; see [Values that hold unknowns](#values-that-hold-unknowns). An async validator's result is awaited when `collectResourceGraph` ends. |
+| Plan        | Every param the plan knows. Values that are unknown until apply are treated as described in [Values that hold unknowns](#values-that-hold-unknowns).                                                                                |
+| Deploy      | Every param deploy knows, before it changes anything. Then each resource's full params, just before its own operation, which checks the values that come from other resources' outputs.                                             |
+| Create      | Every field of a `create` result. The reconciler records the resource, then fails the deploy.                                                                                                                                       |
+| Read        | Every field of a `read` result. A malformed read fails the plan or deploy, so that it is never compared with params.                                                                                                                |
+
+An invalid value raises `ValueValidationError`. Its message names the resource, the field and the `file:line` that declared the resource, and its `issues` list what the validator reported. For a `sensitive` field, each issue keeps its path but has a generic message, because a validator's message can include the value. The `file:line` is the first frame of the call stack outside node_modules and the @notation packages, so a resource that a library helper declares is reported at the user's code that called the helper. The CLI bundles infra code with source maps and turns on Node's source map support, so the `file:line` names the user's source file, not the bundle.
+
+Destroy and `notation viz` collect the graph with `collectResourceGraph(evaluate, { declarationChecks: false })`, so that config which fails its checks does not block them.
+
+The engine also checks the fields of values against the schema, and raises `SchemaStructureError` when:
+
+- config or params hold a field that is not a param in the schema;
+- `create` returns a field that the schema has but not as computed;
+- params leave out a required param, at plan and deploy;
+- a required computed field has no value after create or update.
+
+The last two can only be found after the provider has made its change. So can an invalid value in a `create` result, and a malformed read after create or update. In each case the reconciler writes the resource's record first, so that state still tracks the resource, and then fails. When the read is malformed, the record holds the params and the outputs known without the read. When a later deploy finds no change for a resource whose record lacks a required output, it reads the resource again and writes the record with what the read returns. While the output is still missing, or when the resource has no `read`, every deploy fails, so that dependents never receive the output as undefined.
+
+### Values that hold unknowns
+
+At declaration, output values are not known yet. At plan, and before deploy changes anything, some values are unknown until apply. A field whose value is unknown as a whole is not validated. A field that holds unknowns, such as a policy document with one output ARN, is validated with the unknowns in place. The engine then drops each issue that the unknowns could cause:
+
+- an issue whose path points at an unknown value, or inside one;
+- an issue whose path points at a parent of an unknown value, such as a failed union or object check;
+- an issue with no path, which is at the root of the field.
+
+The other issues are reported. When the validator throws on a field that holds unknowns, the engine treats the field as valid. Just before the resource's own operation, every value is known, and the whole field is validated.
+
+A check over a whole field reports its issue with no path. So when any part of the field is unknown, the check does not run at declaration or plan, only just before the operation. This applies to a union or `v.check` on the field itself, such as a check that a policy document has either `Action` or `NotAction`. Put such a check on the smallest object it applies to, such as each statement, so that it runs for the parts of the field that are known:
+
+```ts
+const statement = v.union([
+  v.object({ Action: stringOrStrings, NotAction: v.optional(v.never()) }),
+  v.object({ NotAction: stringOrStrings, Action: v.optional(v.never()) }),
+]);
+```
+
+An issue in a statement that holds an unknown is still dropped, because the statement is a parent of the unknown.
 
 ## Operations
 
@@ -310,6 +369,7 @@ A param is collected when its schema item has `collect`. `collect` receives the 
 PolicyDocument: {
   propertyType: "param",
   presence: "required",
+  value: policyDocumentValue,
   collect: (items) => ({
     Version: "2012-10-17",
     Statement: items.flatMap((item) => item.Statement ?? []),

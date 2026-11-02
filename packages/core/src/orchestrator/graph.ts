@@ -19,6 +19,9 @@ type ResourceGraph = {
 export async function getResourceGraph(
   entryPoint: string,
   scope?: NameScope,
+  // False for code that does not use config, such as destroy and viz, so
+  // that config which fails its checks does not block it.
+  opts: { declarationChecks?: boolean } = {},
 ): Promise<ResourceGraph> {
   const outFilePath = filePaths.dist.infra(entryPoint);
 
@@ -27,6 +30,6 @@ export async function getResourceGraph(
     async () => {
       await import(`${outFilePath}?${Date.now()}`);
     },
-    { scope },
+    { scope, declarationChecks: opts.declarationChecks },
   );
 }

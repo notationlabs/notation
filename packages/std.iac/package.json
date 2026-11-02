@@ -16,7 +16,8 @@
     "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/utils": "workspace:*",
-    "fflate": "0.8.2"
+    "fflate": "0.8.2",
+    "valibot": "^1.4.2"
   },
   "devDependencies": {
     "@notation/reconciler": "workspace:*",

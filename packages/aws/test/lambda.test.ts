@@ -128,3 +128,10 @@ test("NameSafe accepts name-safe literals and rejects the rest", () => {
   // @ts-expect-error a plain string can't be checked
   lambda({ id, handler: "h", code });
 });
+
+test("resources declared by the helper are reported at the caller's line", () => {
+  const group = lambda({ id: "declared", handler: "h", code });
+  for (const resource of group.resources) {
+    expect(resource.declaredAt).toMatch(/(^|\/)test\/lambda\.test\.ts:\d+$/);
+  }
+});

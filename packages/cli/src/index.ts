@@ -20,6 +20,11 @@ import {
   type Project,
 } from "@notation/core";
 
+// Maps stack frames in the compiled infra bundle back to the user's source,
+// so a resource's declaredAt names the source file. Only modules loaded after
+// this call are mapped, and the bundle is imported later.
+process.setSourceMapsEnabled(true);
+
 const configOption = [
   "--config <path>",
   "config file to use (defaults to the nearest notation.config.ts)",

@@ -11,7 +11,7 @@ export type {
   MapSchema,
   DeepPartial,
   Simplify,
-  TypedValue,
+  StandardSchemaV1,
   OmitOptional,
   PickOptional,
 } from "@notation/resource";

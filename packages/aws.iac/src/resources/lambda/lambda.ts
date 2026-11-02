@@ -3,9 +3,9 @@ import {
   resource,
   ResourceNotFoundError,
   ResourceOperationPendingError,
-  typed,
 } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-lambda";
+import * as v from "valibot";
 import { fromProjectRoot } from "@notation/core";
 import crypto from "node:crypto";
 import * as nodeFs from "node:fs/promises";
@@ -59,146 +59,193 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
   FunctionName: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
     primaryKey: true,
   },
   Architectures: {
     propertyType: "param",
     presence: "optional",
+    value: v.array(v.enum(sdk.Architecture)),
   },
   CodeFilePath: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
     hidden: true,
   },
   CodeSha256: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
   },
   CodeSigningConfigArn: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   CodeSigningPolicy: {
-    valueType: typed<"Warn" | "Enforce">(),
     propertyType: "param",
     presence: "optional",
+    value: v.picklist(["Warn", "Enforce"]),
   },
   DeadLetterConfig: {
     propertyType: "param",
     presence: "optional",
+    value: v.object({ TargetArn: v.optional(v.string()) }),
   },
   Description: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   EphemeralStorage: {
     propertyType: "param",
     presence: "optional",
+    value: v.object({ Size: v.number() }),
   },
   Environment: {
     propertyType: "param",
     presence: "optional",
+    value: v.object({
+      Variables: v.optional(v.record(v.string(), v.string())),
+    }),
     collect: mergeContributions,
   },
   FileSystemConfigs: {
     propertyType: "param",
     presence: "optional",
+    value: v.array(v.object({ Arn: v.string(), LocalMountPath: v.string() })),
   },
   FunctionArn: {
     propertyType: "computed",
     presence: "required",
+    value: v.string(),
   },
   Handler: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   ImageConfig: {
     propertyType: "param",
     presence: "optional",
+    value: v.object({
+      EntryPoint: v.optional(v.array(v.string())),
+      Command: v.optional(v.array(v.string())),
+      WorkingDirectory: v.optional(v.string()),
+    }),
   },
   ImageUri: {
     propertyType: "computed",
     presence: "optional",
+    value: v.string(),
   },
   KMSKeyArn: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   Layers: {
     propertyType: "param",
     presence: "optional",
+    value: v.array(v.string()),
   },
   LoggingConfig: {
     propertyType: "param",
     presence: "optional",
+    value: v.object({
+      LogFormat: v.optional(v.enum(sdk.LogFormat)),
+      ApplicationLogLevel: v.optional(v.enum(sdk.ApplicationLogLevel)),
+      SystemLogLevel: v.optional(v.enum(sdk.SystemLogLevel)),
+      LogGroup: v.optional(v.string()),
+    }),
   },
   MemorySize: {
     propertyType: "param",
     presence: "optional",
+    value: v.number(),
   },
   PackageType: {
     propertyType: "param",
     presence: "optional",
+    value: v.enum(sdk.PackageType),
     immutable: true,
   },
   Publish: {
     propertyType: "param",
     presence: "optional",
+    value: v.boolean(),
   },
   ReservedConcurrentExecutions: {
     propertyType: "param",
     presence: "required",
+    value: v.number(),
   },
   RevisionId: {
     propertyType: "computed",
     presence: "required",
+    value: v.string(),
     volatile: true,
   },
   Role: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
   },
   Runtime: {
     propertyType: "param",
     presence: "optional",
+    value: v.enum(sdk.Runtime),
   },
   SigningConfigArn: {
-    valueType: typed<string>(),
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   SigningJobArn: {
     propertyType: "computed",
     presence: "optional",
+    value: v.string(),
   },
   SigningProfileVersionArn: {
     propertyType: "computed",
     presence: "optional",
+    value: v.string(),
   },
   SnapStart: {
     propertyType: "param",
     presence: "optional",
+    value: v.object({ ApplyOn: v.optional(v.enum(sdk.SnapStartApplyOn)) }),
   },
   State: {
     propertyType: "computed",
     presence: "required",
+    value: v.enum(sdk.State),
   },
   Tags: {
     propertyType: "param",
     presence: "optional",
+    value: v.record(v.string(), v.string()),
     immutable: true,
   },
   Timeout: {
     propertyType: "param",
     presence: "optional",
+    value: v.number(),
   },
   TracingConfig: {
     propertyType: "param",
     presence: "optional",
+    value: v.object({ Mode: v.optional(v.enum(sdk.TracingMode)) }),
   },
   VpcConfig: {
     propertyType: "param",
     presence: "optional",
+    value: v.object({
+      SubnetIds: v.optional(v.array(v.string())),
+      SecurityGroupIds: v.optional(v.array(v.string())),
+      Ipv6AllowedForDualStack: v.optional(v.boolean()),
+    }),
   },
 } as const);
 

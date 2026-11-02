@@ -1,4 +1,4 @@
-import { ResourceNotFoundError } from "@notation/resource";
+import { ResourceNotFoundError, validateValues } from "@notation/resource";
 import {
   decideDriftAction,
   type DriftRead,
@@ -45,6 +45,10 @@ export async function* readResourceOperation(
         ),
       params.maxOperationAttempts,
     );
+    // RFC 0009 will keep a resource whose read is malformed as it is. Until
+    // then the read fails, so that a malformed read is never compared with
+    // params, where it could plan a replacement.
+    if (remote) await validateValues(params.resource, remote, "read");
 
     const mergedOutput = {
       ...params.resourceParams,

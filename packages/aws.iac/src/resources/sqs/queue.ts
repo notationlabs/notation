@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import {
   resource,
   ResourceNotFoundError,
@@ -50,41 +51,57 @@ const queue = resource<QueueSchema>({
   type: "aws/sqs/Queue",
 });
 
+const seconds = (max: number) =>
+  v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(max));
+
 const queueSchema = queue.defineSchema({
   QueueUrl: {
     propertyType: "computed",
     presence: "required",
     primaryKey: true,
+    value: v.string(),
   },
   QueueArn: {
     propertyType: "computed",
     presence: "required",
+    value: v.string(),
   },
   QueueName: {
     propertyType: "param",
     presence: "required",
     immutable: true,
+    value: v.string(),
   },
   FifoQueue: {
     propertyType: "param",
     presence: "optional",
     immutable: true,
+    value: v.boolean(),
   },
   VisibilityTimeout: {
     propertyType: "param",
     presence: "optional",
+    value: seconds(43_200),
   },
   MessageRetentionPeriod: {
     propertyType: "param",
     presence: "optional",
+    value: v.pipe(
+      v.number(),
+      v.integer(),
+      v.minValue(60),
+      v.maxValue(1_209_600),
+    ),
   },
   DelaySeconds: {
     propertyType: "param",
     presence: "optional",
+    value: seconds(900),
   },
   ReceiveMessageWaitTimeSeconds: {
     propertyType: "param",
     presence: "optional",
+    value: seconds(20),
   },
 } as const);
 

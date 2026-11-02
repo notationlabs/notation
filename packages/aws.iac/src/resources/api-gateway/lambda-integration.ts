@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { ApiInstance } from "./api";
@@ -27,85 +28,105 @@ const integrationSchema = integration.defineSchema({
     propertyType: "computed",
     presence: "required",
     primaryKey: true,
+    value: v.string(),
   },
   ApiId: {
     propertyType: "param",
     presence: "required",
     secondaryKey: true,
+    value: v.string(),
   },
   ApiGatewayManaged: {
     propertyType: "computed",
     presence: "optional",
+    value: v.boolean(),
   },
   ConnectionId: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   ConnectionType: {
     propertyType: "param",
     presence: "optional",
+    value: v.enum(sdk.ConnectionType),
   },
   ContentHandlingStrategy: {
     propertyType: "param",
     presence: "optional",
+    value: v.enum(sdk.ContentHandlingStrategy),
   },
   CredentialsArn: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   Description: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   IntegrationMethod: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   IntegrationSubtype: {
     propertyType: "param",
     presence: "optional",
     immutable: true,
+    value: v.string(),
   },
   IntegrationType: {
     propertyType: "param",
     presence: "required",
     immutable: true,
+    value: v.enum(sdk.IntegrationType),
   },
   IntegrationUri: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   PassthroughBehavior: {
     propertyType: "param",
     presence: "optional",
+    value: v.enum(sdk.PassthroughBehavior),
   },
   PayloadFormatVersion: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   RequestParameters: {
     propertyType: "param",
     presence: "optional",
+    value: v.record(v.string(), v.string()),
   },
   RequestTemplates: {
     propertyType: "param",
     presence: "optional",
+    value: v.record(v.string(), v.string()),
   },
   ResponseParameters: {
     propertyType: "param",
     presence: "optional",
+    value: v.record(v.string(), v.record(v.string(), v.string())),
   },
   TemplateSelectionExpression: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   TimeoutInMillis: {
     propertyType: "param",
     presence: "optional",
+    value: v.pipe(v.number(), v.integer()),
   },
   TlsConfig: {
     propertyType: "param",
     presence: "optional",
+    value: v.object({ ServerNameToVerify: v.optional(v.string()) }),
   },
 } as const);
 

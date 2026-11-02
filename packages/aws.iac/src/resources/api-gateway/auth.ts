@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { AwsSchema } from "src/utils/types";
 import { resource, ResourceNotFoundError } from "@notation/resource";
@@ -19,32 +20,43 @@ const authorizer = resource<AuthorizerSdkSchema>({
   type: "aws/apiGateway/Authorizer",
 });
 
+const jwtConfiguration = v.object({
+  Audience: v.optional(v.array(v.string())),
+  Issuer: v.optional(v.string()),
+});
+
 const apiSchema = authorizer.defineSchema({
   ApiId: {
     presence: "required",
     propertyType: "param",
     secondaryKey: true,
+    value: v.string(),
   },
   AuthorizerId: {
     propertyType: "computed",
     presence: "required",
     primaryKey: true,
+    value: v.string(),
   },
   Name: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
   },
   AuthorizerType: {
     propertyType: "param",
     presence: "required",
+    value: v.enum(sdk.AuthorizerType),
   },
   IdentitySource: {
     presence: "required",
     propertyType: "param",
+    value: v.array(v.string()),
   },
   JwtConfiguration: {
     propertyType: "param",
     presence: "optional",
+    value: jwtConfiguration,
   },
 } as const);
 

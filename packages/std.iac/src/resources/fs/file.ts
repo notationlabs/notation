@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { isErrorWithCode } from "@notation/utils";
 import { getFileSha256, getSourceSha256 } from "src/utils/hash";
@@ -17,15 +18,18 @@ export const fileSchema = fileResource.defineSchema({
   filePath: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
     primaryKey: true,
   },
   sourceSha256: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
   },
   fileSha256: {
     propertyType: "computed",
     presence: "required",
+    value: v.string(),
   },
 } as const);
 

@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-iam";
 import { iamClient } from "src/utils/aws-clients";
@@ -31,47 +32,60 @@ const lambdaIamRoleSchema = lambdaIamRole.defineSchema({
   RoleName: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
     primaryKey: true,
   },
   Arn: {
     propertyType: "computed",
     presence: "required",
+    value: v.string(),
   },
   AssumeRolePolicyDocument: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
     immutable: true,
   },
   CreateDate: {
     propertyType: "computed",
     presence: "required",
+    value: v.date(),
     volatile: true,
   },
   Description: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   MaxSessionDuration: {
     propertyType: "param",
     presence: "optional",
+    value: v.number(),
   },
   Path: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
     immutable: true,
   },
   PermissionsBoundary: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
     immutable: true,
   },
   RoleId: {
     propertyType: "computed",
     presence: "required",
+    value: v.string(),
   },
   RoleLastUsed: {
     propertyType: "computed",
     presence: "optional",
+    value: v.object({
+      LastUsedDate: v.optional(v.date()),
+      Region: v.optional(v.string()),
+    }),
   },
 } as const);
 

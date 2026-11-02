@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { isErrorWithCode } from "@notation/utils";
 
@@ -17,11 +18,13 @@ export const StaticSite = staticSite
     siteDirectory: {
       propertyType: "param",
       presence: "required",
+      value: v.string(),
       primaryKey: true,
     },
     html: {
       propertyType: "param",
       presence: "required",
+      value: v.string(),
     },
   } as const)
   .defineOperations({

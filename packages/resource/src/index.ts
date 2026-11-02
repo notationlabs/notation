@@ -5,6 +5,8 @@ export * from "./resource";
 export * from "./diff-params";
 export * from "./resource-operation";
 export * from "./resource-group";
+export * from "./standard-schema";
+export * from "./value-validation";
 export {
   collectResourceGraph,
   getActiveResourceCollection,

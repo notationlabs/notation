@@ -2,8 +2,11 @@ import {
   ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
+  assertComputedFields,
+  assertRequiredOutputs,
   deployLookup,
   resolveOutputValues,
+  validateValues,
   type BaseResource,
   type DurableObject,
   type ResourceOperationContext,
@@ -20,6 +23,7 @@ import {
   retryPending,
 } from "./operation.pending";
 import { readResourceOperation } from "./operation.read";
+import { firstDeferredError } from "./deferred-checks";
 
 /** How long yieldstar waits before it looks up a create with an unknown outcome again. */
 const CREATE_LOOKUP_RETRY_MS = 1_000;
@@ -58,18 +62,32 @@ export async function* createResourceOperation(
       });
     }
 
-    const readResult = yield* readResourceOperation(step, {
-      resource: params.resource,
-      resourceParams: params.resourceParams,
-      persistedOutput: params.persistedOutput,
-      emit: params.emit,
-      maxOperationAttempts: params.maxOperationAttempts,
-    });
-
-    params.resource.setOutput({
-      ...params.resource.output,
-      ...readResult,
-    });
+    // The create result is checked before the read, because the read uses
+    // its key. When a check fails, the resource still exists, so it is
+    // recorded with the outputs known at that point.
+    const deferredError = yield* firstDeferredError([
+      async function* () {
+        if (!computedPrimaryKey) return;
+        assertComputedFields(params.resource, computedPrimaryKey);
+        await validateValues(params.resource, computedPrimaryKey, "create");
+      },
+      async function* () {
+        const readResult = yield* readResourceOperation(step, {
+          resource: params.resource,
+          resourceParams: params.resourceParams,
+          persistedOutput: params.persistedOutput,
+          emit: params.emit,
+          maxOperationAttempts: params.maxOperationAttempts,
+        });
+        params.resource.setOutput({
+          ...params.resource.output,
+          ...readResult,
+        });
+      },
+      async function* () {
+        assertRequiredOutputs(params.resource, params.resource.output);
+      },
+    ]);
 
     yield* params.persist({
       id: params.resource.id,
@@ -86,6 +104,9 @@ export async function* createResourceOperation(
       output: params.resource.toState(params.resource.output),
       dependsOn: params.dependsOn,
     });
+    // Thrown only once the record is written, so that state still tracks
+    // the resource that create made.
+    if (deferredError) throw deferredError;
 
     yield* emitLifecycleEvent(params, "create", "success");
   } catch (err) {

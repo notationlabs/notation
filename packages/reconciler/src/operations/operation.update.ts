@@ -1,4 +1,5 @@
 import {
+  assertRequiredOutputs,
   deployLookup,
   resolveOutputValues,
   type DurableObject,
@@ -11,6 +12,7 @@ import {
 } from "./operation.types";
 import { runPendingOperation } from "./operation.pending";
 import { readResourceOperation } from "./operation.read";
+import { firstDeferredError } from "./deferred-checks";
 
 export async function* updateResourceOperation(
   step: StepRunner,
@@ -49,18 +51,34 @@ export async function* updateResourceOperation(
       ...params.resourceParams,
     });
 
-    const readResult = yield* readResourceOperation(step, {
-      resource: params.resource,
-      resourceParams: params.resourceParams,
-      persistedOutput: params.persistedOutput,
-      emit: params.emit,
-      maxOperationAttempts: params.maxOperationAttempts,
-    });
-
-    params.resource.setOutput({
-      ...params.resource.output,
-      ...readResult,
-    });
+    // When a check fails, the update was still made, so it is recorded with
+    // the outputs known at that point.
+    const deferredError = yield* firstDeferredError([
+      async function* () {
+        try {
+          const readResult = yield* readResourceOperation(step, {
+            resource: params.resource,
+            resourceParams: params.resourceParams,
+            persistedOutput: params.persistedOutput,
+            emit: params.emit,
+            maxOperationAttempts: params.maxOperationAttempts,
+          });
+          params.resource.setOutput({
+            ...params.resource.output,
+            ...readResult,
+          });
+        } catch (error) {
+          params.resource.setOutput({
+            ...params.persistedOutput,
+            ...params.resource.output,
+          });
+          throw error;
+        }
+      },
+      async function* () {
+        assertRequiredOutputs(params.resource, params.resource.output);
+      },
+    ]);
 
     yield* params.persist({
       id: params.resource.id,
@@ -77,6 +95,9 @@ export async function* updateResourceOperation(
       output: params.resource.toState(params.resource.output),
       dependsOn: params.dependsOn,
     });
+    // Thrown only once the record is written, so that state still records
+    // the update.
+    if (deferredError) throw deferredError;
 
     yield* emitLifecycleEvent(params, "update", "success");
   } catch (err) {

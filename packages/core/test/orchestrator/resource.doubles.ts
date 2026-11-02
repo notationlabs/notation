@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { resource } from "src";
 
 export type TestSchema = {
@@ -28,31 +29,37 @@ export type TestSchema = {
 
 export const testSchema = {
   primaryKey: {
+    value: v.string(),
     presence: "required",
     propertyType: "computed",
     primaryKey: true,
   },
   optionalSecondaryKey: {
+    value: v.number(),
     presence: "optional",
     propertyType: "param",
     secondaryKey: true,
     immutable: true,
   },
   requiredParam: {
+    value: v.string(),
     presence: "required",
     propertyType: "param",
   },
   volatileComputed: {
+    value: v.string(),
     presence: "required",
     propertyType: "computed",
     volatile: true,
   },
   hiddenParam: {
+    value: v.string(),
     presence: "required",
     propertyType: "param",
     hidden: true,
   },
   intrinsicParam: {
+    value: v.boolean(),
     presence: "required",
     propertyType: "param",
   },

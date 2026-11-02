@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { ApiInstance } from "./api";
@@ -19,53 +20,77 @@ const stage = resource<StageSchema>({
   type: "aws/apiGateway/Stage",
 });
 
+const accessLogSettings = v.object({
+  DestinationArn: v.optional(v.string()),
+  Format: v.optional(v.string()),
+});
+
+const routeSettings = v.object({
+  DataTraceEnabled: v.optional(v.boolean()),
+  DetailedMetricsEnabled: v.optional(v.boolean()),
+  LoggingLevel: v.optional(v.enum(sdk.LoggingLevel)),
+  ThrottlingBurstLimit: v.optional(v.number()),
+  ThrottlingRateLimit: v.optional(v.number()),
+});
+
 const stageSchema = stage.defineSchema({
   StageName: {
     propertyType: "param",
     presence: "required",
     primaryKey: true,
+    value: v.string(),
   },
   ApiId: {
     propertyType: "param",
     presence: "required",
     secondaryKey: true,
+    value: v.string(),
   },
   AccessLogSettings: {
     propertyType: "param",
     presence: "optional",
+    value: accessLogSettings,
   },
   AutoDeploy: {
     propertyType: "param",
     presence: "optional",
+    value: v.boolean(),
   },
   ClientCertificateId: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   DefaultRouteSettings: {
     propertyType: "param",
     presence: "optional",
+    value: routeSettings,
   },
   DeploymentId: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   Description: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   RouteSettings: {
     propertyType: "param",
     presence: "optional",
+    value: v.record(v.string(), routeSettings),
   },
   StageVariables: {
     propertyType: "param",
     presence: "optional",
+    value: v.record(v.string(), v.string()),
   },
   Tags: {
     propertyType: "param",
     presence: "optional",
     immutable: true,
+    value: v.record(v.string(), v.string()),
   },
 } as const);
 

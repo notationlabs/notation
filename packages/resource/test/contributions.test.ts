@@ -8,6 +8,7 @@ import {
   onEvaluationEnd,
   resource,
 } from "src";
+import { number, object, string } from "./validators";
 
 type Statement = { Effect: string; Action: string[]; Resource: string };
 type PolicyDocument = { Version: string; Statement: Statement[] };
@@ -21,11 +22,21 @@ const Queue = resource<{
   .defineSchema({
     QueueUrl: {
       propertyType: "computed",
+      value: string(),
       presence: "required",
       primaryKey: true,
     },
-    QueueName: { propertyType: "param", presence: "required", immutable: true },
-    QueueArn: { propertyType: "computed", presence: "required" },
+    QueueName: {
+      propertyType: "param",
+      presence: "required",
+      value: string(),
+      immutable: true,
+    },
+    QueueArn: {
+      propertyType: "computed",
+      presence: "required",
+      value: string(),
+    },
   })
   .defineOperations({
     create: async () => ({ QueueUrl: "url" }),
@@ -41,12 +52,14 @@ const Policy = resource<{
   .defineSchema({
     PolicyName: {
       propertyType: "param",
+      value: string(),
       presence: "required",
       primaryKey: true,
       immutable: true,
     },
     PolicyDocument: {
       propertyType: "param",
+      value: object<PolicyDocument>(),
       presence: "required",
       collect: (items) => ({
         Version: "2012-10-17",
@@ -77,17 +90,23 @@ const Fn = resource<{
   .defineSchema({
     FunctionName: {
       propertyType: "param",
+      value: string(),
       presence: "required",
       primaryKey: true,
       immutable: true,
     },
     Environment: {
       propertyType: "param",
+      value: object<Environment>(),
       presence: "optional",
       collect: mergeContributions,
     },
-    Role: { propertyType: "param", presence: "required" },
-    FunctionArn: { propertyType: "computed", presence: "required" },
+    Role: { propertyType: "param", presence: "required", value: string() },
+    FunctionArn: {
+      propertyType: "computed",
+      presence: "required",
+      value: string(),
+    },
   })
   .defineOperations({
     create: async () => undefined,
@@ -268,7 +287,7 @@ describe("output values", () => {
   it("keeps an output value that is not a string whole", async () => {
     const Counter = resource({ type: "test/contributions/counter" })
       .defineSchema({
-        size: { propertyType: "param", presence: "required" },
+        size: { propertyType: "param", presence: "required", value: number() },
       } as any)
       .defineOperations({
         create: async () => undefined,
@@ -500,11 +519,16 @@ describe("plan params", () => {
     .defineSchema({
       logGroupName: {
         propertyType: "param",
+        value: string(),
         presence: "required",
         primaryKey: true,
         immutable: true,
       },
-      retention: { propertyType: "param", presence: "optional" },
+      retention: {
+        propertyType: "param",
+        presence: "optional",
+        value: number(),
+      },
     })
     .defineOperations({
       create: async () => undefined,

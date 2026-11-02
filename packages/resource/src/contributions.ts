@@ -58,25 +58,107 @@ function display(value: unknown): string {
 /**
  * Returns `file:line` of the code that called `below`, relative to the
  * working directory when it is inside it.
+ *
+ * With `skipLibraryFrames`, frames in node_modules and in the source or build
+ * of the @notation packages are skipped, so a resource that a library helper
+ * declares is reported at the user's code that called the helper. When every
+ * frame is skipped, the first is returned.
  */
-export function captureCallSite(below: Function): string | undefined {
-  const holder: { stack?: string } = {};
-  const capture = (Error as { captureStackTrace?: Function }).captureStackTrace;
-  if (!capture) return undefined;
-  capture(holder, below);
-  const frame = holder.stack?.split("\n")[1];
-  const match = frame?.match(/\(?([^\s()]+):(\d+):\d+\)?\s*$/);
-  if (!match) return undefined;
+export function captureCallSite(
+  below: Function,
+  opts: { skipLibraryFrames?: boolean } = {},
+): string | undefined {
+  return captureCallSiteLazily(below, opts)();
+}
 
-  let file = match[1]!;
-  if (file.startsWith("file://")) {
-    file = decodeURIComponent(file.slice("file://".length));
+/**
+ * Captures the stack now, and returns a function that finds the call site in
+ * it on its first call. V8 formats a captured stack only when it is first
+ * read, and formatting is the costly part, most of all with source maps on.
+ */
+export function captureCallSiteLazily(
+  below: Function,
+  opts: { skipLibraryFrames?: boolean } = {},
+): () => string | undefined {
+  const holder: { stack?: string } = {};
+  const ErrorClass = Error as {
+    captureStackTrace?: Function;
+    stackTraceLimit?: number;
+  };
+  const capture = ErrorClass.captureStackTrace;
+  if (!capture) return () => undefined;
+  const limit = ErrorClass.stackTraceLimit;
+  // Library frames can fill the default limit of 10 before the user's frame.
+  if (opts.skipLibraryFrames) ErrorClass.stackTraceLimit = 100;
+  try {
+    capture(holder, below);
+  } finally {
+    ErrorClass.stackTraceLimit = limit;
   }
+
+  let found = false;
+  let callSite: string | undefined;
+  return () => {
+    if (!found) {
+      callSite = findCallSite(holder.stack, opts.skipLibraryFrames);
+      found = true;
+    }
+    return callSite;
+  };
+}
+
+function findCallSite(
+  stack: string | undefined,
+  skipLibraryFrames: boolean | undefined,
+): string | undefined {
+  const sites = (stack?.split("\n").slice(1) ?? [])
+    .map(parseFrame)
+    .filter((site) => site !== undefined);
+  const site = skipLibraryFrames
+    ? (sites.find((site) => !isLibraryFile(site.file)) ?? sites[0])
+    : sites[0];
+  if (!site) return undefined;
+
+  let file = site.file;
   const cwd = (
     globalThis as { process?: { cwd?: () => string } }
   ).process?.cwd?.();
   if (cwd && file.startsWith(`${cwd}/`)) file = file.slice(cwd.length + 1);
-  return `${file}:${match[2]}`;
+  return `${file}:${site.line}`;
+}
+
+function parseFrame(frame: string): { file: string; line: string } | undefined {
+  const match = frame.match(/\(?([^\s()]+):(\d+):\d+\)?\s*$/);
+  if (!match) return undefined;
+  let file = match[1]!;
+  if (file.startsWith("file://")) {
+    file = decodeURIComponent(file.slice("file://".length));
+  }
+  return { file, line: match[2]! };
+}
+
+// The directory that holds the @notation packages: node_modules/@notation
+// when installed, or the repository's packages directory when linked from a
+// workspace. The first frame of a stack captured here gives the path of this
+// file, which is expected at <packages>/resource/{src,dist}/<file>. At any
+// other path the directory is unset, and only node_modules frames are
+// skipped, because a directory derived from another layout could hold the
+// user's code.
+const notationPackagesDir = (() => {
+  const holder: { stack?: string } = {};
+  (Error as { captureStackTrace?: Function }).captureStackTrace?.(holder);
+  const file = parseFrame(holder.stack?.split("\n")[1] ?? "")?.file;
+  const match = file?.match(/^(.+)\/resource\/(?:src|dist)\/[^/]+$/);
+  return match?.[1];
+})();
+
+function isLibraryFile(file: string): boolean {
+  if (file.includes("/node_modules/") || file.startsWith("node:")) return true;
+  if (!notationPackagesDir || !file.startsWith(`${notationPackagesDir}/`)) {
+    return false;
+  }
+  const inPackage = file.slice(notationPackagesDir.length + 1);
+  return /^[^/]+\/(src|dist)\//.test(inPackage);
 }
 
 /**

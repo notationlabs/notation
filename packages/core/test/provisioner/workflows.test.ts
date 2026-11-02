@@ -25,8 +25,17 @@ it.each([
   ["destroyApp", () => destroyApp({ deployment, executionId: "e" })],
 ])("%s evaluates infra with the deployment's app and stage", async (_, run) => {
   await expect(run()).rejects.toThrow("stop after evaluation");
-  expect(getResourceGraph).toHaveBeenCalledWith(deployment.entryPoint, {
-    app: "orders-app",
-    stage: "prod",
+  expect(getResourceGraph.mock.calls[0]?.slice(0, 2)).toEqual([
+    deployment.entryPoint,
+    { app: "orders-app", stage: "prod" },
+  ]);
+});
+
+it("destroyApp evaluates infra without declaration checks", async () => {
+  await expect(destroyApp({ deployment, executionId: "e" })).rejects.toThrow(
+    "stop after evaluation",
+  );
+  expect(getResourceGraph.mock.calls[0]?.[2]).toEqual({
+    declarationChecks: false,
   });
 });

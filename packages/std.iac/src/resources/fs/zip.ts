@@ -1,4 +1,5 @@
 import { fromProjectRoot } from "@notation/core";
+import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { isErrorWithCode } from "@notation/utils";
 import * as fs from "node:fs/promises";
@@ -28,20 +29,24 @@ export const zipSchema = zipResource.defineSchema({
   sourceFilePath: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
     primaryKey: true,
   },
   filePath: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
     secondaryKey: true,
   },
   sourceSha256: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
   },
   fileSha256: {
     propertyType: "computed",
     presence: "required",
+    value: v.string(),
   },
 } as const);
 

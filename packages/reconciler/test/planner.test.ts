@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import {
   UNKNOWN_AFTER_APPLY,
   mergeContributions,
@@ -161,8 +162,18 @@ describe("createPlan", () => {
     // key to be a key of an `any` API schema, which no named key satisfies.
     const Role = resource({ type: "test/planner/role" })
       .defineSchema({
-        name: { presence: "required", propertyType: "param", primaryKey: true },
-        path: { presence: "required", propertyType: "param", immutable: true },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+        path: {
+          presence: "required",
+          propertyType: "param",
+          immutable: true,
+          value: v.string(),
+        },
       } as any)
       .defineOperations({
         create: async () => undefined,
@@ -172,8 +183,16 @@ describe("createPlan", () => {
     // No update: any change replaces it.
     const Attachment = resource({ type: "test/planner/attachment" })
       .defineSchema({
-        roleName: { presence: "required", propertyType: "param" },
-        policyArn: { presence: "required", propertyType: "param" },
+        roleName: {
+          presence: "required",
+          propertyType: "param",
+          value: v.string(),
+        },
+        policyArn: {
+          presence: "required",
+          propertyType: "param",
+          value: v.string(),
+        },
       } as any)
       .defineOperations({
         create: async () => undefined,
@@ -232,9 +251,20 @@ describe("createPlan", () => {
     // Cast: see above.
     const Role = resource({ type: "test/planner/role-fields" })
       .defineSchema({
-        name: { presence: "required", propertyType: "param", primaryKey: true },
-        path: { presence: "optional", propertyType: "param", immutable: true },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+        path: {
+          presence: "optional",
+          propertyType: "param",
+          immutable: true,
+          value: v.string(),
+        },
         boundary: {
+          value: v.string(),
           presence: "optional",
           propertyType: "param",
           immutable: true,
@@ -294,8 +324,17 @@ describe("createPlan", () => {
     // Cast: see above.
     const Queue = resource({ type: "test/planner/queue" })
       .defineSchema({
-        name: { presence: "required", propertyType: "param", primaryKey: true },
-        arn: { presence: "required", propertyType: "computed" },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+        arn: {
+          presence: "required",
+          propertyType: "computed",
+          value: v.string(),
+        },
       } as any)
       .defineOperations({
         create: async () => undefined,
@@ -303,8 +342,14 @@ describe("createPlan", () => {
       });
     const Fn = resource({ type: "test/planner/function" })
       .defineSchema({
-        name: { presence: "required", propertyType: "param", primaryKey: true },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
         env: {
+          value: v.record(v.string(), v.string()),
           presence: "optional",
           propertyType: "param",
           collect: mergeContributions,
@@ -351,5 +396,138 @@ describe("createPlan", () => {
         dependsOn: ["queue"],
       }),
     ]);
+  });
+
+  describe("value validation", () => {
+    const Fn = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; memory: number };
+      UpdateParams: { memory: number };
+      ReadResult: {};
+    }>({ type: "test/planner/validated-fn" })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          value: v.string(),
+          primaryKey: true,
+          immutable: true,
+        },
+        memory: {
+          presence: "required",
+          propertyType: "param",
+          value: v.pipe(v.number(), v.integer()),
+        },
+      })
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        read: async () => remote,
+        delete: async () => undefined,
+        deriveParams: () => ({ memory }),
+      });
+    let memory = 128;
+    let remote: Record<string, unknown> = {};
+    const state = () =>
+      new MemoryStateBackend({
+        fn: {
+          version: 1,
+          id: "fn",
+          type: Fn.type,
+          config: {},
+          params: { name: "fn", memory: 128 },
+          output: { name: "fn", memory: 128 },
+          lastOperation: "create",
+          lastOperationAt: "2026-07-22T00:00:00.000Z",
+        },
+      });
+
+    it("rejects a known value that fails its validator", async () => {
+      memory = 1.5;
+      const plan = createPlan({
+        resources: [new Fn("fn", { config: { name: "fn" } })],
+        state: state(),
+      });
+      await expect(plan).rejects.toMatchObject({
+        name: "ValueValidationError",
+        resourceId: "fn",
+        field: "memory",
+        point: "plan",
+      });
+    });
+
+    it("rejects an invalid known value next to an unknown output value", async () => {
+      // Cast: see above.
+      const Queue = resource({ type: "test/planner/validated-queue" })
+        .defineSchema({
+          name: {
+            presence: "required",
+            propertyType: "param",
+            primaryKey: true,
+            value: v.string(),
+          },
+          arn: {
+            presence: "required",
+            propertyType: "computed",
+            value: v.string(),
+          },
+        } as any)
+        .defineOperations({
+          create: async () => undefined,
+          delete: async () => undefined,
+        });
+      const Env = resource({ type: "test/planner/validated-env" })
+        .defineSchema({
+          name: {
+            presence: "required",
+            propertyType: "param",
+            primaryKey: true,
+            value: v.string(),
+          },
+          env: {
+            value: v.record(v.string(), v.string()),
+            presence: "optional",
+            propertyType: "param",
+            collect: mergeContributions,
+          },
+        } as any)
+        .defineOperations({
+          create: async () => undefined,
+          delete: async () => undefined,
+        });
+      const queue = new Queue("queue", { config: { name: "orders" } as any });
+      const env = new Env("env", { config: { name: "env" } as any });
+      env.contribute({
+        env: { QUEUE: (queue as any).outputValue("arn") },
+      } as any);
+      env.contribute({ env: { PORT: 8080 } } as any);
+
+      const plan = createPlan({
+        resources: [env, queue],
+        state: new MemoryStateBackend(),
+        driftDetection: false,
+      });
+      await expect(plan).rejects.toMatchObject({
+        name: "ValueValidationError",
+        resourceId: "env",
+        field: "env",
+        point: "plan",
+        issues: [expect.stringMatching(/^PORT: Invalid type/)],
+      });
+    });
+
+    it("rejects a malformed read rather than planning drift from it", async () => {
+      memory = 128;
+      remote = { name: "fn", memory: "128" };
+      const plan = createPlan({
+        resources: [new Fn("fn", { config: { name: "fn" } })],
+        state: state(),
+      });
+      await expect(plan).rejects.toMatchObject({
+        name: "ValueValidationError",
+        field: "memory",
+        point: "read",
+      });
+    });
   });
 });

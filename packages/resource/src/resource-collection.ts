@@ -13,6 +13,10 @@ export type ResourceCollection = {
   // collection are rejected from then on.
   closed: boolean;
   endOfEvaluation: Array<() => unknown | Promise<unknown>>;
+  // Checks of config by async validators, started when resources were
+  // declared. Collection fails with the first that fails.
+  pendingValidations: Promise<void>[];
+  declarationChecks: boolean;
   // The app and stage that resource packages put in physical names. Unset
   // when the graph is collected without a deployment, as `notation viz` does.
   scope?: NameScope;
@@ -20,6 +24,12 @@ export type ResourceCollection = {
 
 export type CollectOptions = {
   scope?: NameScope;
+  /**
+   * Whether resources check their config when declared. Defaults to true.
+   * Code that does not use config, such as destroy, turns the checks off so
+   * that config which fails them does not block it.
+   */
+  declarationChecks?: boolean;
 };
 
 let activeCollection: ResourceCollection | undefined;
@@ -44,6 +54,8 @@ export async function collectResourceGraph(
     graph: { resourceGroups: [], resources: [] },
     closed: false,
     endOfEvaluation: [],
+    pendingValidations: [],
+    declarationChecks: opts.declarationChecks ?? true,
     scope: opts.scope,
   };
 
@@ -55,6 +67,7 @@ export async function collectResourceGraph(
     while (collection.endOfEvaluation.length > 0) {
       await collection.endOfEvaluation.shift()!();
     }
+    await Promise.all(collection.pendingValidations);
     return collection.graph;
   } finally {
     collection.closed = true;

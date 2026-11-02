@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-iam";
 import { iamClient } from "src/utils/aws-clients";
@@ -29,6 +30,46 @@ export type LambdaRolePolicySchema = AwsSchema<{
   ReadResult: LambdaRolePolicyParams;
 }>;
 
+const stringOrStrings = v.union([v.string(), v.array(v.string())]);
+
+const principalValue = v.union([
+  v.literal("*"),
+  v.record(v.string(), stringOrStrings),
+]);
+
+const conditionValue = v.union([v.string(), v.number(), v.boolean()]);
+
+// Accepts the IAM policy grammar, since a read returns whatever document IAM
+// holds, including one edited outside Notation.
+const policyStatementValue = v.intersect([
+  v.object({
+    Sid: v.optional(v.string()),
+    Effect: v.picklist(["Allow", "Deny"]),
+    Principal: v.optional(principalValue),
+    NotPrincipal: v.optional(principalValue),
+    Condition: v.optional(
+      v.record(
+        v.string(),
+        v.record(v.string(), v.union([conditionValue, v.array(conditionValue)])),
+      ),
+    ),
+  }),
+  v.union([
+    v.object({ Action: stringOrStrings, NotAction: v.optional(v.never()) }),
+    v.object({ NotAction: stringOrStrings, Action: v.optional(v.never()) }),
+  ]),
+  v.union([
+    v.object({ Resource: stringOrStrings, NotResource: v.optional(v.never()) }),
+    v.object({ NotResource: stringOrStrings, Resource: v.optional(v.never()) }),
+  ]),
+]);
+
+const policyDocumentValue = v.object({
+  Version: v.optional(v.picklist(["2012-10-17", "2008-10-17"])),
+  Id: v.optional(v.string()),
+  Statement: v.array(policyStatementValue),
+});
+
 const lambdaRolePolicy = resource<LambdaRolePolicySchema>({
   type: "aws/lambda/LambdaRolePolicy",
 });
@@ -37,16 +78,19 @@ const lambdaRolePolicySchema = lambdaRolePolicy.defineSchema({
   RoleName: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
     primaryKey: true,
   },
   PolicyName: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
     secondaryKey: true,
   },
   PolicyDocument: {
     propertyType: "param",
     presence: "required",
+    value: policyDocumentValue,
     // Statements are concatenated in the order the engine sorts them into,
     // so the document does not depend on the order code ran in.
     collect: (items) => ({
@@ -116,7 +160,15 @@ async function putRolePolicy(params: LambdaRolePolicyParams) {
   );
 }
 
-/** IAM returns policy documents URL-encoded (RFC 3986). */
+/**
+ * IAM returns policy documents URL-encoded (RFC 3986). A single statement
+ * object is put in an array, so it compares equal to the same statement in
+ * config.
+ */
 function decodePolicyDocument(document: string): PolicyDocument {
-  return JSON.parse(decodeURIComponent(document));
+  const decoded = JSON.parse(decodeURIComponent(document));
+  if (decoded?.Statement && !Array.isArray(decoded.Statement)) {
+    decoded.Statement = [decoded.Statement];
+  }
+  return decoded;
 }
