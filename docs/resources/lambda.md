@@ -32,7 +32,7 @@ todoRouter.post("/todos", createTodo);
 
 ::
 
-When infra imports `runtime/todos.fn.ts`, the compiler replaces the module with a generated one:
+When infra imports `runtime/todos.fn.ts`, the compiler replaces the module with a generated one. The module below is simplified: the real one gives its import and its resource aliased names, so they can't clash with the names of the module's exports.
 
 ```ts [generated module]
 import { lambda } from "@notation/aws/lambda";
@@ -54,13 +54,13 @@ export const createTodo = { resource, export: "createTodo" };
 - the **CloudWatch log group** `todos-log-group`, with 30-day retention,
 - the **zip package** `todos-zip` of the bundle.
 
-Each export of the generated module is a `RuntimeRef`: the Lambda group, plus the name of the export to call. Infra APIs such as `router.get`, `queue.consume` and `schedule` take a `RuntimeRef`.
+Each export of the generated module is a `RuntimeRef`: the Lambda group, plus the name of the export to call. Infra APIs such as `router.get`, `queue.consume` and `schedule` take a `RuntimeRef`, or a Lambda group from [`lambda()`](#lambdaconfig).
 
 ```ts [@notation/aws/lambda]
 type RuntimeRef = { resource: LambdaGroup; export: string };
 ```
 
-TypeScript types the import from the original module, so `handle.*` returns the handler type and `RuntimeRef` together. Infra code can read `getTodos.resource` without a cast.
+TypeScript types the import from the original module, so `handle.*` returns the handler type and `RuntimeRef` together. Infra code can read `getTodos.resource` without a cast. Each infra API checks the handler type: `router.get` takes an API request handler, and `queue.consume` takes an SQS handler. A router with a JWT authorizer takes only handlers for the same claims type.
 
 ## IDs
 
@@ -92,7 +92,7 @@ export const handler = createDispatcher(mod);
 | SQS messages         | The export that the dispatch map gives for the queue's ARN       |
 | Any other event      | The module's only handler, if the module has exactly one         |
 
-An HTTP API request or SQS message with no entry in the map also goes to the module's only handler. If the module has several handlers, the function throws an error that describes the event.
+A handler is an export made with `handle.*`. Other exported functions, such as helpers, don't count. An HTTP API request or SQS message with no entry in the map also goes to the module's only handler. If the module has several handlers, the function throws an error that describes the event.
 
 A request for `GET /todos` and a request for `POST /todos` have the same shape, so the function can't tell from the event which handler to call. Only infra knows which route goes to which export. So each route adds an entry to the function's **dispatch map**:
 
@@ -110,6 +110,8 @@ A request for `GET /todos` and a request for `POST /todos` have the same shape, 
 ```
 
 The map is keyed by the ID of the route, or of the event source mapping for a queue. Notation stores the map in the function's `NOTATION_RUNTIME` environment variable, and `createDispatcher` reads it when the function starts. A plan shows each entry as a change to `Environment.Runtime`.
+
+The variable holds a compact encoding of the map, which leaves out the route key when the entry's key already contains it. Lambda limits a function's environment variables to 4 KB in total, and the map counts towards the limit. Each entry takes about 30 bytes, plus the length of its ID and of the export's name. A queue's entry also holds the queue's ARN. If the variables pass 4 KB, the deploy fails with an error that names the function. Split the runtime module into smaller modules, so that each function serves fewer routes and queues.
 
 A schedule adds no entry. Instead, the EventBridge rule sends `{ "export": "<name>", "event": <the EventBridge event> }`, and `createDispatcher` calls the named export with the EventBridge event.
 
@@ -129,6 +131,7 @@ export const external = lambda({
 ```ts [@notation/aws/lambda]
 type LambdaConfig = {
   id: string;
+  handler?: string; // default "handler"
   code: { type: "file" | "zip"; path: string };
   runtime?: string; // default "nodejs22.x"
   timeout?: number;
@@ -136,15 +139,15 @@ type LambdaConfig = {
 };
 ```
 
-The code must export `handler`. Lambda calls `<file name>.handler`, so for `external/lambda.mjs` the handler is `lambda.handler`.
+Lambda calls `<file name>.<handler>`, so for `external/lambda.mjs` with the default `handler`, Lambda calls `lambda.handler`.
 
-`lambda()` returns a Lambda group, not a `RuntimeRef`. To pass the function to an infra API, wrap it in a reference:
+`lambda()` returns a Lambda group. Infra APIs take the group in place of a `RuntimeRef`:
 
 ```ts [infra/api.ts]
-helloRouter.get("/hello", { resource: external, export: "handler" });
+helloRouter.get("/hello", external);
 ```
 
-The code doesn't use `createDispatcher`, so it ignores the dispatch map. A schedule still sends `{ export, event }`, so a handler for a schedule reads the EventBridge event from `event.event`.
+The code doesn't use `createDispatcher`, so a bare group adds no entry to the dispatch map, and a schedule sends the EventBridge event as it is.
 
 ## Inline policy
 

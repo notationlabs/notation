@@ -33,7 +33,7 @@ myRouter.get("/users", getUsers);
 myRouter.post("/users", createUser);
 ```
 
-`getUsers` and `createUser` are exports of the runtime module `runtime/users.fn.ts`. In infra code, each one is a `RuntimeRef`: the module's Lambda function, plus the name of the export. See [Lambda](lambda.md#runtime-modules).
+`getUsers` and `createUser` are exports of the runtime module `runtime/users.fn.ts`. In infra code, each one is a `RuntimeRef`: the module's Lambda function, plus the name of the export. See [Lambda](lambda.md#runtime-modules). The router methods take only API request handlers, made with `handle.apiRequest`, or a Lambda group from [`lambda()`](lambda.md#lambdaconfig).
 
 ### Available methods
 

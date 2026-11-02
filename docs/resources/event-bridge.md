@@ -15,7 +15,7 @@ eventBridge.schedule({
 });
 ```
 
-`logEvent` is an export of the runtime module `runtime/log-event.fn.ts`, so in infra code it is a `RuntimeRef`: the module's Lambda function, plus the name of the export. See [Lambda](lambda.md#runtime-modules). `schedule` creates an EventBridge rule that targets the function, and the permission that lets the rule invoke it.
+`logEvent` is an export of the runtime module `runtime/log-event.fn.ts`, so in infra code it is a `RuntimeRef`: the module's Lambda function, plus the name of the export. See [Lambda](lambda.md#runtime-modules). `handler` can also be a Lambda group from [`lambda()`](lambda.md#lambdaconfig). `schedule` creates an EventBridge rule that targets the function, and the permission that lets the rule invoke it.
 
 ### Config
 
@@ -23,11 +23,11 @@ eventBridge.schedule({
 type ScheduleConfig = {
   name: string;
   schedule: Schedule;
-  handler: RuntimeRef;
+  handler: EventBridgeScheduleHandler | LambdaGroup;
 };
 ```
 
-The rule doesn't send the EventBridge event to the function as it is. It sends `{ "export": "logEvent", "event": <the EventBridge event> }`, so the function knows which export to call. The function's dispatcher calls `logEvent` with the EventBridge event. See [Dispatch](lambda.md#dispatch).
+For a runtime module's export, the rule doesn't send the EventBridge event to the function as it is. It sends `{ "export": "logEvent", "event": <the EventBridge event> }`, so the function knows which export to call. The function's dispatcher calls `logEvent` with the EventBridge event. See [Dispatch](lambda.md#dispatch). For a Lambda group from `lambda()`, the rule sends the EventBridge event as it is.
 
 `name` keys the schedule in state. In AWS, the EventBridge rule is named `<app>--<stage>--<name>`, such as `my-app--prod--log-every-minute`. See [AWS names](../manual/project-config.md#aws-names).
 

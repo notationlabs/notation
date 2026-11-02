@@ -7,5 +7,5 @@ import type { LambdaConfig } from "src/lambda";
  */
 export type LambdaResource = { service: "aws/lambda" } & Omit<
   LambdaConfig,
-  "code"
+  "code" | "handler"
 >;

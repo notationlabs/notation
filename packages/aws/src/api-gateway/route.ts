@@ -1,5 +1,5 @@
 import * as aws from "@notation/aws.iac";
-import { assertRuntimeRef, type RuntimeRef } from "src/lambda";
+import { resolveLambdaTarget, type LambdaTarget } from "src/lambda";
 import type { ApiGroup } from "./api";
 import { AuthorizerConfig } from "./auth";
 import { authorizerKey, mapAuthConfig, mapAuthType } from "./utils";
@@ -9,7 +9,7 @@ type RouteGroupConfig = {
   method: string;
   path: `/${string}`;
   auth: AuthorizerConfig;
-  handler: RuntimeRef;
+  handler: LambdaTarget<unknown>;
 };
 
 export class RouteGroup extends aws.AwsResourceGroup {
@@ -19,9 +19,10 @@ export class RouteGroup extends aws.AwsResourceGroup {
     const apiResource = apiGroup.api;
     const routeId = `${apiResource.id}-${method}-${path}`;
     const routeKey = `${method} ${path}`;
+    const target = resolveLambdaTarget(handler, "route()");
     super("API Gateway/Route", routeId);
 
-    const lambdaGroup = handler.resource;
+    const lambdaGroup = target.group;
     const lambdaResource = lambdaGroup.fn;
 
     // a lambda needs one integration and permission per api, however many
@@ -48,10 +49,12 @@ export class RouteGroup extends aws.AwsResourceGroup {
       },
     );
 
-    lambdaGroup.addDispatchEntry(routeId, {
-      export: handler.export,
-      match: { apiId: apiResource.outputValue("ApiId"), routeKey },
-    });
+    if (target.export !== undefined) {
+      lambdaGroup.addDispatchEntry(routeId, {
+        export: target.export,
+        match: { apiId: apiResource.outputValue("ApiId"), routeKey },
+      });
+    }
 
     let authorizer: aws.apiGateway.AuthInstance | undefined;
 
@@ -88,15 +91,14 @@ export class RouteGroup extends aws.AwsResourceGroup {
 
 /**
  * Routes requests for `method` and `path` on the API to an export of a
- * runtime module.
+ * runtime module, or to a Lambda group from `lambda()`.
  */
 export const route = (
   apiGroup: ApiGroup,
   method: string, // todo: http methods only
   path: `/${string}`,
   auth: AuthorizerConfig,
-  handler: RuntimeRef,
+  handler: LambdaTarget<unknown>,
 ) => {
-  assertRuntimeRef(handler, "route()");
   return new RouteGroup({ apiGroup, method, path, auth, handler });
 };

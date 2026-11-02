@@ -3,11 +3,12 @@ import { collectResourceGraph } from "@notation/resource";
 import { NO_AUTH, api, router } from "src/api-gateway";
 import { route } from "src/api-gateway/route";
 import { lambda, type LambdaGroup } from "src/lambda";
+import { runtimeRef } from "./runtime-ref";
+import type { RuntimeRef } from "src/lambda";
+import type { JWTAuthorizedApiGatewayHandler, SqsHandler } from "src/shared";
 
-const ref = (resource: LambdaGroup, name = "handler") => ({
-  resource,
-  export: name,
-});
+const ref = (resource: LambdaGroup, name = "handler") =>
+  runtimeRef(resource, name);
 
 test("route resource group idempotency snapshot", () => {
   const apiResourceGroup = api({ name: "api" });
@@ -199,6 +200,55 @@ test("route rejects a value that is not a reference to a runtime export", () => 
     code: { type: "file", path: "src/fns/todos.js" },
   });
   expect(() =>
-    route(api({ name: "todo-api" }), "GET", "/todos", NO_AUTH, fn as any),
+    route(api({ name: "todo-api" }), "GET", "/todos", NO_AUTH, {
+      resource: {},
+      export: "getTodos",
+    } as any),
   ).toThrow("route() expects an export of a runtime module");
+});
+
+test("a route to a lambda group from lambda() adds no dispatch entry", async () => {
+  let fn!: LambdaGroup;
+  await collectResourceGraph(() => {
+    fn = lambda({
+      id: "hello",
+      handler: "main",
+      code: { type: "file", path: "external/hello.mjs" },
+    });
+    router(api({ name: "hello-api" })).get("/hello", fn);
+  });
+
+  fn.role.setOutput({ Arn: "arn:role" } as any);
+  fn.fn.dependencies.zipFile.setOutput({
+    filePath: "hello.zip",
+    fileSha256: "sha",
+  } as any);
+
+  expect(fn.fn.config.Handler).toBe("hello.main");
+  expect((await fn.fn.getParams()).Environment).toBeUndefined();
+});
+
+test("router methods take only handlers of API requests", () => {
+  const fn = lambda({
+    id: "todos",
+    code: { type: "file", path: "src/fns/todos.js" },
+  });
+  const todoRouter = router(api({ name: "todo-api" }));
+  const sqsHandler = runtimeRef(fn, "process") as RuntimeRef & SqsHandler;
+  const claimsHandler = runtimeRef(fn, "me") as RuntimeRef &
+    JWTAuthorizedApiGatewayHandler<{ sub: string }>;
+  const otherClaimsHandler = runtimeRef(fn, "other") as RuntimeRef &
+    JWTAuthorizedApiGatewayHandler<{ id: number }>;
+  const authed = todoRouter.withJWTAuthorizer<{ sub: string }>({
+    type: "jwt",
+    issuer: "https://issuer",
+    audience: ["app"],
+    scopes: [],
+  });
+
+  // @ts-expect-error an SQS handler can't serve a route
+  todoRouter.get("/a", sqsHandler);
+  authed.get("/me", claimsHandler);
+  // @ts-expect-error the claims type must match the authorizer's
+  authed.get("/b", otherClaimsHandler);
 });

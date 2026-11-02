@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-lambda";
-import { createPlan } from "@notation/reconciler";
+import { createPlan, decideDriftAction } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
 import { fs } from "@notation/std.iac";
 import { lambdaClient } from "src/utils/aws-clients";
@@ -15,8 +15,7 @@ import {
 import { LambdaIamRole } from "src/resources/lambda/lambda-role";
 import { ResourceNotFoundError } from "@notation/resource";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
-import { runtimeVariable } from "src/shared";
-import { sortedJson } from "@notation/utils";
+import { decodeRuntime, encodeRuntime, runtimeVariable } from "src/shared";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -225,7 +224,7 @@ describe("Lambda code", () => {
 
     const command = send.mock.calls[0]![0] as sdk.CreateFunctionCommand;
     expect(command.input.Environment).toEqual({
-      Variables: { [runtimeVariable]: sortedJson.encode(runtime) },
+      Variables: { [runtimeVariable]: encodeRuntime(runtime) },
     });
   });
 
@@ -426,7 +425,7 @@ describe("Lambda environment", () => {
     expect(command.input.Environment).toEqual({
       Variables: {
         STAGE: "prod",
-        [runtimeVariable]: sortedJson.encode(runtime),
+        [runtimeVariable]: encodeRuntime(runtime),
       },
     });
   });
@@ -458,7 +457,7 @@ describe("Lambda environment", () => {
         Environment: {
           Variables: {
             STAGE: "prod",
-            [runtimeVariable]: sortedJson.encode(runtime),
+            [runtimeVariable]: encodeRuntime(runtime),
           },
         },
       },
@@ -482,7 +481,7 @@ describe("Lambda environment", () => {
         State: "Active",
         RevisionId: "rev-1",
         Environment: {
-          Variables: { [runtimeVariable]: sortedJson.encode(runtime) },
+          Variables: { [runtimeVariable]: encodeRuntime(runtime) },
         },
       },
     }));
@@ -493,5 +492,113 @@ describe("Lambda environment", () => {
     );
 
     expect(result.Environment).toEqual({ Runtime: runtime });
+  });
+
+  function mockRead(Variables: Record<string, string>) {
+    vi.spyOn(lambdaClient, "send").mockImplementation(async () => ({
+      Configuration: {
+        FunctionName: "app",
+        State: "Active",
+        RevisionId: "rev-1",
+        Environment: { Variables },
+      },
+    }));
+  }
+
+  async function driftDecision(lambda: LambdaFunctionInstance) {
+    const params = await lambda.getParams();
+    const output = await lambda.read!({ FunctionName: "app" }, {} as any);
+    return decideDriftAction({
+      resource: lambda,
+      params,
+      driftRead: { kind: "present", output: output as any },
+    }).decision;
+  }
+
+  it("reports no drift when the function holds only the runtime map", async () => {
+    const lambda = createLambda();
+    lambda.contribute({ Environment: { Runtime: runtime } });
+    mockRead({ [runtimeVariable]: encodeRuntime(runtime) });
+
+    expect(await driftDecision(lambda)).toBe("noop");
+  });
+
+  it("reports drift when the runtime variable is not a valid runtime map", async () => {
+    const lambda = createLambda();
+    lambda.contribute({ Environment: { Runtime: runtime } });
+    mockRead({ [runtimeVariable]: "{not json" });
+
+    const result: any = await lambda.read!({ FunctionName: "app" }, {} as any);
+
+    expect(result.Environment).toEqual({
+      Variables: { [runtimeVariable]: "{not json" },
+    });
+    expect(await driftDecision(lambda)).toBe("drift-update");
+  });
+
+  it("rejects an environment over Lambda's 4 KB limit", async () => {
+    const send = vi.spyOn(lambdaClient, "send");
+    const dispatch: Record<string, unknown> = {};
+    for (let i = 0; i < 100; i++) {
+      dispatch[`todo-api-GET-/todos/${i}`] = {
+        export: `getTodo${i}`,
+        match: { apiId: "api-1", routeKey: `GET /todos/${i}` },
+      };
+    }
+
+    await expect(
+      createLambda().update!(
+        { FunctionName: "app" },
+        { Environment: { Runtime: { dispatch } } } as any,
+        { FunctionName: "app" } as any,
+        {} as any,
+      ),
+    ).rejects.toThrow(
+      /Lambda function app is \d+ bytes, over Lambda's limit of 4096 bytes.*Split the runtime module/,
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("runtime map encoding", () => {
+  it("leaves out a route key that the entry's key holds", () => {
+    const runtime = {
+      dispatch: {
+        "todo-api-GET-/todos/{id}": {
+          export: "getTodo",
+          match: { apiId: "api-1", routeKey: "GET /todos/{id}" },
+        },
+      },
+    };
+
+    expect(encodeRuntime(runtime)).toBe(
+      '{"r":{"todo-api-GET-/todos/{id}":["getTodo","api-1"]}}',
+    );
+    expect(decodeRuntime(encodeRuntime(runtime))).toEqual(runtime);
+  });
+
+  it("keeps a route key that the entry's key doesn't hold", () => {
+    const runtime = {
+      dispatch: {
+        "custom-binding": {
+          export: "getTodo",
+          match: { apiId: "api-1", routeKey: "GET /todos" },
+        },
+        "orders-app-mapping": {
+          export: "processOrders",
+          match: { queueArn: "arn:orders" },
+        },
+      },
+      outputs: { table: "todos" },
+    };
+
+    expect(decodeRuntime(encodeRuntime(runtime))).toEqual(runtime);
+  });
+
+  it("rejects text that is not a runtime map", () => {
+    expect(() => decodeRuntime('{"r":{"a":[1]}}')).toThrow(
+      `${runtimeVariable} does not hold a valid runtime map`,
+    );
+    expect(() => decodeRuntime("[]")).toThrow();
   });
 });

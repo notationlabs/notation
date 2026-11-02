@@ -2,7 +2,7 @@
 
 `@notation/aws/lambda.fn` exports typed handler wrappers for each Lambda event source.
 
-A handler is an export of a [runtime module](./file-conventions.md#runtime-modules). The examples below leave out the module's `resource` export. All the handlers in one module run in one Lambda function, which sends each event to the right handler. See [Dispatch](../resources/lambda.md#dispatch).
+A handler is an export of a [runtime module](./file-conventions.md#runtime-modules). The examples below leave out the module's `resource` export. All the handlers in one module run in one Lambda function, which sends each event to the right handler. See [Dispatch](../resources/lambda.md#dispatch). Export each handler through a `handle.*` wrapper: the wrapper marks the function as a handler, and gives infra code the handler's type.
 
 ## `handle.apiRequest`
 

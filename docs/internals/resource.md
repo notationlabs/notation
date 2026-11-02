@@ -380,8 +380,8 @@ PolicyDocument: {
 While infra is being evaluated, any code can add to a collected param with `contribute`. `queue.consume` does this:
 
 ```ts [packages/aws/src/sqs/queue.ts]
-consume(handler: RuntimeRef, options: ConsumeOptions = {}) {
-  const lambdaGroup = handler.resource;
+consume(handler: LambdaTarget<SqsHandler | SqsBatchHandler>, options: ConsumeOptions = {}) {
+  const lambdaGroup = resolveLambdaTarget(handler, "queue.consume()").group;
   const id = `${this.id}-${lambdaGroup.fn.id}-mapping`;
 
   lambdaGroup.policy.contribute(
@@ -483,7 +483,7 @@ Each group derives its ID from a value the user supplies, the same value its res
 
 | Group           | ID                         | Example               |
 | --------------- | -------------------------- | --------------------- |
-| `LambdaGroup`   | the lambda's `id`          | `get-todos`           |
+| `LambdaGroup`   | the lambda's `id`          | `todos`               |
 | `ApiGroup`      | the API's `name`           | `todo-api`            |
 | `RouteGroup`    | `<api id>-<method>-<path>` | `todo-api-GET-/todos` |
 | `ScheduleGroup` | the schedule's `name`      | `nightly`             |

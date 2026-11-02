@@ -50,7 +50,10 @@ const policyStatementValue = v.intersect([
     Condition: v.optional(
       v.record(
         v.string(),
-        v.record(v.string(), v.union([conditionValue, v.array(conditionValue)])),
+        v.record(
+          v.string(),
+          v.union([conditionValue, v.array(conditionValue)]),
+        ),
       ),
     ),
   }),
