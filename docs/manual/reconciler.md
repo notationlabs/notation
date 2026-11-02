@@ -42,7 +42,17 @@ The outer workflow supplies durable step execution, timers, shared stores, waiti
 
 Each live resource is one Yieldstar store. Yieldstar's UUIDv7 store `instanceId` and version are authoritative for conditional update and delete; Notation exposes the version unchanged as the resource state's `version`.
 
-Operations against the same deployment — the `deploymentId` the `DurableStateBackend` is constructed with, which the CLI sets to `<app>:<stage>` — are serialized through a deployment hold naming the holding `executionId`. Resume a crashed operation with the same execution ID; use a new globally unique execution ID for every new deploy or destroy. A `failed` execution is final: Yieldstar never runs it again, and the execution releases its hold when it fails. To recover, start a new deploy, which plans from persisted state and skips the resources that already converged. An execution that must wait emits a `reconciler.hold.waiting` event naming the holder before it suspends, which also identifies a crashed holder that should be resumed instead. If you give up on an execution that has not ended, clear its hold with `clearDeploymentHold`.
+Each deployment has a `deploymentId`. You pass the `deploymentId` to the `DurableStateBackend` constructor. The CLI sets it to `<app>:<stage>`. Only one deploy or destroy can run against a deployment at a time. Each deployment has a hold, which records the `executionId` of the execution that owns the deployment:
+
+1. When an execution starts, it takes the hold.
+2. If another execution has the hold, the new execution emits a `reconciler.hold.waiting` event and suspends. The event names the execution that has the hold.
+3. When the execution completes or fails, it releases the hold.
+
+Resume a crashed execution with the same execution ID. Give every new deploy or destroy a new, globally unique execution ID.
+
+A `failed` execution is final, and Yieldstar never runs it again. To recover, start a new deploy. The new deploy plans from persisted state and skips the resources that already converged.
+
+An execution that crashed keeps the hold. If a `reconciler.hold.waiting` event names an execution that crashed, resume that execution with its ID. If you don't want to resume it, clear its hold with `clearDeploymentHold`.
 
 Every value the runtime records must be a Yieldstar 0.8.0 durable value, including provider operation results and resource output. A `Date`, `Map`, `Set` or `bigint` is recorded as it is. A provider that returns a `Buffer` or another class instance fails the step with a `WorkflowValueError` whose code is `INVALID_STEP_VALUE`.
 

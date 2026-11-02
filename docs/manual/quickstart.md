@@ -37,7 +37,7 @@ export default defineConfig({
 });
 ```
 
-The CLI deploys `infra/api.ts` to the `dev` stage. To deploy to another stage, pass `--stage`: `npm run deploy -- --stage prod`. See [Project Config](./project-config.md).
+With this config, `npm run deploy` deploys `infra/api.ts` to the `dev` stage. To deploy to another stage, pass `--stage`: `npm run deploy -- --stage prod`. See [Project Config](./project-config.md).
 
 **`infra/api.ts`** – defines the API Gateway and routes:
 

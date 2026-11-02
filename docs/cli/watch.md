@@ -27,6 +27,6 @@ notation watch --stage dev
 
 `watch` reads the config once, when it starts. If the config file changes, `watch` waits for any running deploy to finish, then exits with code 1. Start `watch` again to use the new config.
 
-`watch` deploys to real AWS resources. Each developer can use their own stage, such as `--stage dev-alice`, in a shared AWS account, because [AWS names](../manual/project-config.md#aws-names) contain the stage. Remove the stage with `notation destroy --stage dev-alice`.
+`watch` deploys real AWS resources. Several developers can share one AWS account if each developer uses their own stage, such as `--stage dev-alice`, because [AWS names](../manual/project-config.md#aws-names) contain the stage. To remove the resources of the stage, run `notation destroy --stage dev-alice`.
 
 Production deployments use `notation deploy`, not `watch`.

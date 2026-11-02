@@ -24,7 +24,7 @@ The CLI deploys the entry file and every module that it imports.
 
 The project root is the directory that holds the config. The entry file, `dist/` and `.notation/workflows.db` are relative to it.
 
-The CLI finds the config by searching up from the current directory. The search stops at the first directory that holds a `notation.config.ts` or a `package.json`. So a config at the root of a monorepo never applies to a package inside it.
+The CLI finds the config by searching up from the current directory. The search stops at the first directory that holds a `notation.config.ts` or a `package.json`. So in a monorepo, a config at the root never applies to a package that has its own `package.json`.
 
 ## Several entry points
 
@@ -43,7 +43,7 @@ notation deploy                          # uses notation.config.ts
 notation deploy --config jobs.config.ts  # uses jobs.config.ts
 ```
 
-**Each config needs its own `app`.** Two configs with the same app share state and AWS names.
+**Each config needs its own `app`.** If two configs use the same app, a deploy of one config to a stage uses the same state key and AWS names as a deploy of the other config to that stage. Each deploy then sees the other config's resources in state but not in its entry file, and deletes them as orphans.
 
 ## Stages
 
@@ -73,7 +73,7 @@ The key contains no file paths, so you can move the entry file and keep its stat
 
 ## AWS names
 
-Every stage creates the same resources. To keep the stages apart in one AWS account, Notation starts each AWS name with the app and the stage: `<app>--<stage>--<id>`.
+Each stage has the same set of resources. To keep the stages apart in one AWS account, Notation starts each AWS name with the app and the stage: `<app>--<stage>--<id>`.
 
 For example, the starter app has a Lambda function with the ID `todos-getTodos`:
 
@@ -101,7 +101,7 @@ Names that only need to be unique inside another resource have no prefix. For ex
 | Lambda function | `my-app--prod--warehouse-processIncomingOrderNotificatio-9bed4260` |
 | IAM role        | `my-app--prod--warehouse-processIncomingOrderNotificatio-cf8fdd43` |
 
-The hash comes from the full name, so a shortened name is the same on every deploy. A FIFO queue's name keeps its `.fifo` ending.
+Notation computes the hash from the full name, so a shortened name is the same on every deploy. A FIFO queue's name keeps its `.fifo` ending.
 
 ## Name rules
 
@@ -120,13 +120,13 @@ The app and stage names must:
 | `-preview`  | No    | Starts with `-`          |
 | `my--app`   | No    | Contains `--`            |
 
-`defineConfig` checks `app` and `defaultStage` at compile time:
+The type of `defineConfig` makes TypeScript check `app` and `defaultStage`:
 
 ```ts
 defineConfig({ app: "My_App", entry: "infra/api.ts" });
 // Type '"My_App"' is not assignable to type '"\"My_App\" is not name-safe"'.
 ```
 
-Write the names as string literals. A value typed as `string` fails the check.
+Write the names as string literals. A value of type `string` fails the check with the message `a name must be a string literal`.
 
-The CLI checks the names again when it loads the config, and it also checks `--stage`. It rejects unknown config fields, and fails if the entry file doesn't exist.
+When the CLI loads the config, it checks the names again and checks the `--stage` value. The CLI also fails if the config has a field it doesn't know, or if the entry file doesn't exist.

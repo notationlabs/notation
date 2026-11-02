@@ -83,7 +83,7 @@ return collectResourceGraph(() => import(outFilePath), {
 
 While the compiled entry point is imported, calls such as `lambda({ ... })` add the Lambda function and its associated resources (IAM role, log group, zip package) to the graph.
 
-`scope` is the app and stage of the deployment. Resource constructors such as `lambda()` read it with `scopedPhysicalName` from `@notation/resource`, and name resources `<app>--<stage>--<id>`. `notation viz` passes no scope, because it deploys nothing.
+`scope` holds the app and the stage of the deployment. Resource constructors such as `lambda()` call `scopedPhysicalName` from `@notation/resource`, which reads `scope` and returns the name `<app>--<stage>--<id>`. `notation viz` deploys nothing, so it passes no scope, and the names in its graph are the bare IDs.
 
 The reconciler uses the resulting `{ resources, resourceGroups }` object to plan deployments.
 

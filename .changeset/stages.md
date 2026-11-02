@@ -6,7 +6,7 @@
 "@notation/esbuild-plugins": minor
 ---
 
-Deployments are identified by app and stage (RFC 0005), so one codebase can be deployed to several stages.
+Notation identifies a deployment by its app and its stage (RFC 0005). You can deploy one codebase to several stages.
 
 A project needs a `notation.config.ts`:
 
@@ -22,11 +22,11 @@ export default defineConfig({
 
 - The app and stage names have 1 to 32 characters from `a-z`, `0-9` and `-`. They can't start or end with `-`, or contain `--`.
 - CLI commands take no entry path: `notation deploy --stage prod`.
-- `--stage` defaults to `defaultStage`. A command fails if neither is set.
+- Without `--stage`, a command uses `defaultStage`. If neither is set, the command fails.
 - `--config <path>` chooses a config file. Use one config for each entry point.
 - `watch` exits when the config file changes.
-- State is keyed by `<app>:<stage>`.
-- AWS names are `<app>--<stage>--<id>`, such as `my-app--prod--todos-getTodos`. A name that is too long is cut, and ends in an 8-character hash. Names set directly on an `@notation/aws.iac` resource, such as `QueueName`, are used as they are.
+- The state key is `<app>:<stage>`.
+- AWS names are `<app>--<stage>--<id>`, such as `my-app--prod--todos-getTodos`. If a name is longer than AWS allows, Notation cuts it and ends it with an 8-character hash. Notation does not change a name that you set directly on an `@notation/aws.iac` resource, such as `QueueName`.
 - Lambda IDs can have up to 64 characters, up from 59.
 
 API changes:

@@ -9,7 +9,7 @@ notation deploy [--config <path>] [--stage <stage>]
 | `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
 | `--stage <stage>` | The stage. Default: `defaultStage`.                         |
 
-Compiles the entry file and deploys it to the stage. Each stage has its own state, keyed by `<app>:<stage>`. See [Project Config](../manual/project-config.md).
+Compiles the entry file and deploys it to the stage. Each stage has its own state, under the key `<app>:<stage>`. See [Project Config](../manual/project-config.md).
 
 ```sh
 notation deploy --stage prod
@@ -31,7 +31,11 @@ The command prints its execution ID before starting provider work. If the proces
 notation deploy --stage prod --execution-id <id>
 ```
 
-Pass the same config and stage as the crashed command. Notation rejects an execution ID from another deployment.
+Each execution ID belongs to the app and stage of the command that started the execution. When you resume, pass the same `--config` and `--stage` as the command that crashed. If the app or the stage is different, the command fails:
+
+```sh
+Execution <id> is bound to deployment my-app:prod workflow deploy, not deployment my-app:dev workflow deploy
+```
 
 Do not reuse a completed execution ID for a new deploy or for destroy.
 
