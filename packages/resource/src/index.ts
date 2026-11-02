@@ -9,8 +9,15 @@ export {
   collectResourceGraph,
   getActiveResourceCollection,
   onEvaluationEnd,
+  type CollectOptions,
   type ResourceGraph,
 } from "./resource-collection";
+export {
+  physicalName,
+  scopedPhysicalName,
+  type NameScope,
+  type PhysicalNameRule,
+} from "./physical-name";
 export {
   ContributionConflictError,
   mergeContributions,

@@ -55,7 +55,7 @@ test("a missing id throws", () => {
   );
 });
 
-test.each(["", "has space", "has.dot", "a/b", "é", "a".repeat(60)])(
+test.each(["", "has space", "has.dot", "a/b", "é", "a".repeat(65)])(
   "the id %j is rejected",
   (id) => {
     expect(() => lambda({ id: id as any, handler: "h", code })).toThrow(
@@ -70,9 +70,9 @@ test("the error names the bad id", () => {
   );
 });
 
-test("59 characters is the limit", () => {
+test("64 characters is the limit", () => {
   expect(() =>
-    lambda({ id: "a".repeat(59) as any, handler: "h", code }),
+    lambda({ id: "a".repeat(64) as any, handler: "h", code }),
   ).not.toThrow();
 });
 
@@ -117,8 +117,8 @@ test("NameSafe accepts name-safe literals and rejects the rest", () => {
   expect(() => lambda({ id: "", handler: "h", code })).toThrow();
   expect(() =>
     lambda({
-      // @ts-expect-error 60 characters is too long
-      id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      // @ts-expect-error 65 characters is too long
+      id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       handler: "h",
       code,
     }),

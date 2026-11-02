@@ -33,7 +33,7 @@ export const config: LambdaConfig = {
 
 ## `id`
 
-`id` is required. Each handler in the file becomes a Lambda function with the ID `<id>-<handler>`; in the example above, `heavy-task-processData`. The ID names the function, its IAM role and its log group, and keys them in state, so changing it replaces the functions. Use letters, digits, hyphens and underscores, and keep `<id>-<handler>` to 59 characters or fewer. See [Lambda IDs](../resources/lambda.md#ids).
+`id` is required. Each handler in the file becomes a Lambda function with the ID `<id>-<handler>`; in the example above, `heavy-task-processData`. The ID names the function, its IAM role and its log group, and keys them in state, so changing it replaces the functions. Use letters, digits, hyphens and underscores, and keep `<id>-<handler>` to 64 characters or fewer. See [Lambda IDs](../resources/lambda.md#ids).
 
 ## Defaults
 

@@ -3,6 +3,7 @@ import type { LambdaGroup } from "src/lambda";
 import { Schedule } from "./schedule";
 import * as aws from "@notation/aws.iac";
 import { toAwsScheduleExpression } from "./aws-conversions";
+import { awsName } from "src/naming";
 
 type ScheduleConfig = {
   name: string;
@@ -23,7 +24,7 @@ export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
     this.rule = this.add(
       new aws.eventBridge.EventBridgeRule(`${config.name}-eventbridge-rule`, {
         config: {
-          Name: config.name,
+          Name: awsName("eventBridgeRule", config.name),
           ScheduleExpression: toAwsScheduleExpression(config.schedule),
           EventBusName: "default",
         },

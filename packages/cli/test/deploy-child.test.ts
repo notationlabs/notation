@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
+import { configPath } from "@notation/core";
 import { deployInChild } from "../src/deploy-child";
 
 function fakeSpawn(lines: string[], exitCode: number) {
@@ -32,7 +33,7 @@ describe("deployInChild", () => {
     const { spawn, calls } = fakeSpawn([], 0);
 
     await deployInChild({
-      entryPoint: "infra/app.ts",
+      deployment: { app: "orders-app", stage: "prod" },
       executionId: "exec-1",
       logger: logger(),
       spawn,
@@ -41,7 +42,10 @@ describe("deployInChild", () => {
     expect(calls[0]).toEqual(
       expect.arrayContaining([
         "deploy",
-        "infra/app.ts",
+        "--config",
+        configPath(),
+        "--stage",
+        "prod",
         "--json",
         "--no-compile",
         "--no-drift-detection",
@@ -61,7 +65,7 @@ describe("deployInChild", () => {
     const { spawn } = fakeSpawn([JSON.stringify({ version: 1, ...event })], 0);
 
     await deployInChild({
-      entryPoint: "infra/app.ts",
+      deployment: { app: "orders-app", stage: "prod" },
       executionId: "exec-1",
       logger: log,
       spawn,
@@ -75,7 +79,7 @@ describe("deployInChild", () => {
 
     await expect(
       deployInChild({
-        entryPoint: "infra/app.ts",
+        deployment: { app: "orders-app", stage: "prod" },
         executionId: "exec-1",
         logger: logger(),
         spawn,
@@ -88,7 +92,7 @@ describe("deployInChild", () => {
     const proc = Object.assign(new EventEmitter(), { pid: 42, kill: vi.fn() });
 
     const deploying = deployInChild({
-      entryPoint: "infra/app.ts",
+      deployment: { app: "orders-app", stage: "prod" },
       executionId: "exec-1",
       logger: logger(),
       spawn,
@@ -108,7 +112,7 @@ describe("deployInChild", () => {
     const proc = Object.assign(new EventEmitter(), { pid: 42, kill: vi.fn() });
 
     await deployInChild({
-      entryPoint: "infra/app.ts",
+      deployment: { app: "orders-app", stage: "prod" },
       executionId: "exec-1",
       logger: logger(),
       spawn,

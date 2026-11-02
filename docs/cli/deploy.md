@@ -1,13 +1,18 @@
 # notation deploy
 
 ```sh
-notation deploy <entryPoint>
+notation deploy [--config <path>] [--stage <stage>]
 ```
 
-Compiles the stack and runs a durable deploy.
+| Option            | Meaning                                                     |
+| ----------------- | ----------------------------------------------------------- |
+| `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
+| `--stage <stage>` | The stage. Default: `defaultStage`.                         |
+
+Compiles the entry file and deploys it to the stage. Each stage has its own state, under the key `<app>:<stage>`. See [Project Config](../manual/project-config.md).
 
 ```sh
-notation deploy infra/api.ts
+notation deploy --stage prod
 ```
 
 ## Event stream
@@ -15,15 +20,24 @@ notation deploy infra/api.ts
 `--json` writes versioned reconciler events to stdout as newline-delimited JSON. Build output, the execution ID, and diagnostics move to stderr.
 
 ```sh
-notation deploy infra/api.ts --json > deploy.ndjson
+notation deploy --stage prod --json > deploy.ndjson
 ```
 
 ## Durable execution
 
-The command prints its execution ID before starting provider work. If the process crashes, resume the same execution with that ID:
+The command prints its execution ID before it starts provider work, and the command that resumes the execution:
 
 ```sh
-notation deploy infra/api.ts --execution-id <id>
+Execution ID 0195f0c2-7d1e-7b4a-9c3e-2f6a8b1d4e70
+To resume after a crash, run notation deploy --execution-id 0195f0c2-7d1e-7b4a-9c3e-2f6a8b1d4e70
+```
+
+When a deploy starts, Notation saves the state key `<app>:<stage>` with the execution. When you resume, the command reads the stage from the saved key, so you don't pass `--stage`. The command still needs the config, because the config names the entry file. If you deployed with `--config`, the printed command includes it.
+
+The command fails if the config's `app` is not the saved app, or if you pass a `--stage` that is not the saved stage:
+
+```sh
+Execution <id> is for stage prod, not dev. Leave out --stage, or pass --stage prod
 ```
 
 Do not reuse a completed execution ID for a new deploy or for destroy.

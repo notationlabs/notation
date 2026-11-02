@@ -2,6 +2,8 @@ import {
   createLoggerReconcilerSubscriber,
   createNdjsonEventEmitter,
   destroyApp,
+  resolveDeploymentId,
+  type Deployment,
 } from "@notation/core";
 import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
@@ -11,11 +13,13 @@ import { redirectStdoutToStderr } from "./stdio";
 export type DestroyCommandOptions = {
   json?: boolean;
   executionId?: string;
+  // Printed with the execution ID, such as `notation deploy`.
+  resumeCommand?: string;
   logger?: Logger;
 };
 
 export async function destroy(
-  entryPoint: string,
+  deployment: Deployment,
   opts: DestroyCommandOptions = {},
 ) {
   const logger = opts.logger ?? defaultLogger;
@@ -23,10 +27,15 @@ export async function destroy(
     ? createNdjsonEventEmitter(redirectStdoutToStderr().write)
     : createLoggerReconcilerSubscriber({ logger });
 
-  await compile(entryPoint, { logger });
-  logger.info(`Destroying ${entryPoint}\n`);
+  await compile(deployment.entryPoint, { logger });
+  logger.info(`Destroying ${resolveDeploymentId(deployment)}\n`);
   const executionId = opts.executionId ?? randomUUID();
   logger.info(`Execution ID ${executionId}`);
+  if (opts.resumeCommand) {
+    logger.info(
+      `To resume after a crash, run ${opts.resumeCommand} --execution-id ${executionId}`,
+    );
+  }
 
-  await destroyApp({ entryPoint, emit, executionId });
+  await destroyApp({ deployment, emit, executionId });
 }

@@ -51,10 +51,8 @@ export function functionInfraPlugin(opts: PluginOpts = {}): Plugin {
 // name-safe characters
 const NAME_SAFE_PATTERN = /^[A-Za-z0-9_-]+$/;
 
-// the function id is embedded in AWS names, the longest-limited being the IAM
-// role name `<function id>-role` (at most 64 chars); mirrors
-// LAMBDA_ID_MAX_LENGTH in @notation/aws
-const FUNCTION_ID_MAX_LENGTH = 64 - "-role".length;
+// the Lambda FunctionName limit; mirrors LAMBDA_ID_MAX_LENGTH in @notation/aws
+const FUNCTION_ID_MAX_LENGTH = 64;
 
 function getModuleId(config: Record<string, unknown>, filePath: string) {
   const id = config.id;

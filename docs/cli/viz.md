@@ -1,13 +1,17 @@
 # notation viz
 
 ```sh
-notation viz <entryPoint>
+notation viz [--config <path>]
 ```
 
-Generates a visual graph of the stack's resources and their dependencies. Outputs a Mermaid Live Editor URL.
+| Option            | Meaning                                                     |
+| ----------------- | ----------------------------------------------------------- |
+| `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
+
+Generates a graph of the entry file's resources and their dependencies. Outputs a Mermaid Live Editor URL.
 
 ```sh
-notation viz infra/api.ts
+notation viz
 ```
 
 Shows the full resource graph – API Gateway, Lambda functions, IAM roles, integrations, routes, log groups – and their dependency relationships.

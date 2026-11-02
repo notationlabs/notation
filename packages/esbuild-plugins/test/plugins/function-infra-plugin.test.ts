@@ -51,27 +51,27 @@ it("fails if the config id is not name-safe", async () => {
   );
 });
 
-it("allows <id>-<handler> up to 59 characters", async () => {
+it("allows <id>-<handler> up to 64 characters", async () => {
   const input = `
     import { handle } from "@notation/aws/lambda.fn";
     export const getNum = handle.apiRequest(() => 1);
-    export const config = { service: "aws/lambda", id: "${"a".repeat(52)}" };
+    export const config = { service: "aws/lambda", id: "${"a".repeat(57)}" };
   `;
 
   const output = await buildInfra(input);
 
-  expect(output).toContain(`id: "${"a".repeat(52)}-getNum"`);
+  expect(output).toContain(`id: "${"a".repeat(57)}-getNum"`);
 });
 
-it("fails if <id>-<handler> is longer than 59 characters", async () => {
+it("fails if <id>-<handler> is longer than 64 characters", async () => {
   const input = `
     import { handle } from "@notation/aws/lambda.fn";
     export const getNum = handle.apiRequest(() => 1);
-    export const config = { service: "aws/lambda", id: "${"a".repeat(53)}" };
+    export const config = { service: "aws/lambda", id: "${"a".repeat(58)}" };
   `;
 
   await expect(buildInfra(input)).rejects.toThrow(
-    /the function id "a{53}-getNum" \(`<id>-<handler>`\) must be at most 59/,
+    /the function id "a{58}-getNum" \(`<id>-<handler>`\) must be at most 64/,
   );
 });
 

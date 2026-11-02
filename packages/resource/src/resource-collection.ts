@@ -1,4 +1,5 @@
 import type { BaseResource } from "./resource";
+import type { NameScope } from "./physical-name";
 import type { ResourceGroup } from "./resource-group";
 
 export type ResourceGraph = {
@@ -12,6 +13,13 @@ export type ResourceCollection = {
   // collection are rejected from then on.
   closed: boolean;
   endOfEvaluation: Array<() => unknown | Promise<unknown>>;
+  // The app and stage that resource packages put in physical names. Unset
+  // when the graph is collected without a deployment, as `notation viz` does.
+  scope?: NameScope;
+};
+
+export type CollectOptions = {
+  scope?: NameScope;
 };
 
 let activeCollection: ResourceCollection | undefined;
@@ -20,9 +28,13 @@ let activeCollection: ResourceCollection | undefined;
  * Evaluates infra and returns the resources it made. Once `evaluate` is
  * done, the callbacks registered with `onEvaluationEnd` run in the order they
  * were registered, and then contributions close.
+ *
+ * `opts.scope` names the deployment's app and stage, which scope the
+ * physical names of the resources that `evaluate` declares.
  */
 export async function collectResourceGraph(
   evaluate: () => unknown | Promise<unknown>,
+  opts: CollectOptions = {},
 ): Promise<ResourceGraph> {
   if (activeCollection) {
     throw new Error("A resource graph is already being collected.");
@@ -32,6 +44,7 @@ export async function collectResourceGraph(
     graph: { resourceGroups: [], resources: [] },
     closed: false,
     endOfEvaluation: [],
+    scope: opts.scope,
   };
 
   activeCollection = collection;

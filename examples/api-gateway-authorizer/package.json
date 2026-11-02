@@ -2,12 +2,12 @@
   "private": true,
   "name": "api-authorizer-demo",
   "scripts": {
-    "compile": "notation compile infra/api.ts",
+    "compile": "notation compile",
     "dashboard": "notation dashboard",
-    "deploy": "notation deploy infra/api.ts",
-    "destroy": "notation destroy infra/api.ts",
-    "viz": "notation viz infra/api.ts",
-    "watch": "notation watch infra/api.ts",
+    "deploy": "notation deploy",
+    "destroy": "notation destroy",
+    "viz": "notation viz",
+    "watch": "notation watch",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

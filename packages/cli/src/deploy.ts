@@ -2,6 +2,8 @@ import {
   createLoggerReconcilerSubscriber,
   createNdjsonEventEmitter,
   deployApp,
+  resolveDeploymentId,
+  type Deployment,
 } from "@notation/core";
 import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
@@ -11,6 +13,8 @@ import { redirectStdoutToStderr } from "./stdio";
 export type DeployCommandOptions = {
   json?: boolean;
   executionId?: string;
+  // Printed with the execution ID, such as `notation deploy`.
+  resumeCommand?: string;
   // Off when the caller (e.g. watch) has already compiled.
   compile?: boolean;
   driftDetection?: boolean;
@@ -18,7 +22,7 @@ export type DeployCommandOptions = {
 };
 
 export async function deploy(
-  entryPoint: string,
+  deployment: Deployment,
   opts: DeployCommandOptions = {},
 ) {
   const logger = opts.logger ?? defaultLogger;
@@ -27,14 +31,19 @@ export async function deploy(
     : createLoggerReconcilerSubscriber({ logger });
 
   if (opts.compile !== false) {
-    await compile(entryPoint, { logger });
+    await compile(deployment.entryPoint, { logger });
   }
-  logger.info(`Deploying ${entryPoint}`);
+  logger.info(`Deploying ${resolveDeploymentId(deployment)}`);
   const executionId = opts.executionId ?? randomUUID();
   logger.info(`Execution ID ${executionId}`);
+  if (opts.resumeCommand) {
+    logger.info(
+      `To resume after a crash, run ${opts.resumeCommand} --execution-id ${executionId}`,
+    );
+  }
 
   await deployApp({
-    entryPoint,
+    deployment,
     emit,
     executionId,
     driftDetection: opts.driftDetection,

@@ -2,6 +2,7 @@ import path from "node:path";
 import fse from "fs-extra";
 import { execSync } from "node:child_process";
 import whichPmRuns from "which-pm-runs";
+import { setConfigApp, toNameSafe } from "./app-name";
 
 const dirname = path.dirname(new URL(import.meta.url).pathname);
 const packageManager = whichPmRuns()?.name || "npm";
@@ -39,12 +40,21 @@ export async function scaffoldApp(appName: string) {
     encoding: "utf8",
   });
 
+  const configPath = path.join(appDir, "notation.config.ts");
+  const config = await fse.readFile(configPath, "utf8");
+  await fse.writeFile(configPath, setConfigApp(config, toNameSafe(appName)), {
+    encoding: "utf8",
+  });
+
   console.log(`Installing dependencies with ${packageManager}...`);
 
-  execSync(`${packageManagerInstallCommand} @notation/cli @notation/aws`, {
-    cwd: appDir,
-    stdio: "inherit",
-  });
+  execSync(
+    `${packageManagerInstallCommand} @notation/cli @notation/aws @notation/core`,
+    {
+      cwd: appDir,
+      stdio: "inherit",
+    },
+  );
 
   console.log("\nApp ready! To get started run:\n");
   console.log(`➜ cd ${appName}`);

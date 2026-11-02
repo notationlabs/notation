@@ -1,10 +1,14 @@
 # notation compile
 
 ```sh
-notation compile <entryPoint>
+notation compile [--config <path>]
 ```
 
-Compiles infra and runtime modules to `dist/` without deploying. Two compilation passes:
+| Option            | Meaning                                                     |
+| ----------------- | ----------------------------------------------------------- |
+| `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
+
+Compiles the entry file and its runtime modules to `dist/`. The output is the same for every stage, so `compile` takes no `--stage`. There are two passes:
 
 1. **Infrastructure compilation** – esbuild bundles the infra entry point with the `function-infra-plugin`. This plugin intercepts `.fn.ts` imports and replaces handler exports with Lambda resource declarations:
 

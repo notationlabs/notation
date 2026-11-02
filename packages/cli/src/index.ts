@@ -9,39 +9,65 @@ import { runWithErrorHandling } from "./run-with-error-handling";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
 import { startDashboardServer } from "@notation/dashboard";
-import { NodeDurableRuntime, resolveDeploymentId } from "@notation/core";
+import {
+  NodeDurableRuntime,
+  loadProject,
+  readExecutionDeployment,
+  resolveDeployment,
+  resolveDeploymentIdentity,
+  resolveEntryPoint,
+  setConfigFile,
+  type Project,
+} from "@notation/core";
+
+const configOption = [
+  "--config <path>",
+  "config file to use (defaults to the nearest notation.config.ts)",
+] as const;
+const stageOption = [
+  "--stage <stage>",
+  "stage to deploy to (defaults to defaultStage in the config)",
+] as const;
 
 program
   .command("compile")
-  .argument("<entryPoint>", "entryPoint")
+  .option(...configOption)
   .description("Compile Notation App")
-  .action(async (entryPoint) => {
-    await compile(entryPoint);
+  .action(async (options) => {
+    const project = await load(options);
+    await compile(resolveEntryPoint(project));
   });
 
 program
   .command("dashboard")
-  .argument("<entryPoint>", "entryPoint")
+  .option(...configOption)
+  .option(...stageOption)
   .description("Start Notation Dashboard")
-  .action(async (entryPoint) => {
-    const runtime = new NodeDurableRuntime({
-      deploymentId: resolveDeploymentId(entryPoint),
+  .action(async (options) => {
+    const project = await load(options);
+    const deployment = resolveDeploymentIdentity(project, {
+      stage: options.stage,
     });
+    const runtime = new NodeDurableRuntime({ deployment });
     await startDashboardServer({ state: runtime.state });
   });
 
 program
   .command("deploy")
-  .argument("<entryPoint>", "entryPoint")
+  .option(...configOption)
+  .option(...stageOption)
   .description("Deploy Notation App")
   .option("--json", "stream reconciler events as NDJSON")
   .option("--execution-id <id>", "resume a durable execution")
   .option("--no-compile", "deploy the existing build without compiling")
   .option("--no-drift-detection", "skip drift detection")
-  .action(async (entryPoint, options) => {
-    await deploy(entryPoint, {
+  .action(async (options) => {
+    const project = await load(options);
+    const deployment = await resolveResumableDeployment(project, options);
+    await deploy(deployment, {
       json: options.json,
       executionId: options.executionId,
+      resumeCommand: resumeCommand("deploy", options),
       compile: options.compile,
       driftDetection: options.driftDetection,
     });
@@ -49,41 +75,81 @@ program
 
 program
   .command("destroy")
-  .argument("<entryPoint>", "entryPoint")
+  .option(...configOption)
+  .option(...stageOption)
   .description("Destroy Notation App")
   .option("--json", "stream reconciler events as NDJSON")
   .option("--execution-id <id>", "resume a durable execution")
-  .action(async (entryPoint, options) => {
-    await destroy(entryPoint, {
+  .action(async (options) => {
+    const project = await load(options);
+    const deployment = await resolveResumableDeployment(project, options);
+    await destroy(deployment, {
       json: options.json,
       executionId: options.executionId,
+      resumeCommand: resumeCommand("destroy", options),
     });
   });
 
 program
   .command("plan")
-  .argument("<entryPoint>", "entryPoint")
+  .option(...configOption)
+  .option(...stageOption)
   .description("Plan Notation App")
   .option("--json", "print the plan as JSON")
-  .action(async (entryPoint, options) => {
-    await plan(entryPoint, { json: options.json });
+  .action(async (options) => {
+    const project = await load(options);
+    const deployment = resolveDeployment(project, { stage: options.stage });
+    await plan(deployment, { json: options.json });
   });
 
 program
   .command("viz")
-  .argument("<entryPoint>", "entryPoint")
+  .option(...configOption)
   .description("Visualise Notation App")
-  .action(async (entryPoint) => {
-    await visualise(entryPoint);
+  .action(async (options) => {
+    const project = await load(options);
+    await visualise(resolveEntryPoint(project));
   });
 
 program
   .command("watch")
-  .argument("<entryPoint>", "entryPoint")
+  .option(...configOption)
+  .option(...stageOption)
   .description("Watch Notation App")
-  .action(async (entryPoint) => {
-    await watch(entryPoint);
+  .action(async (options) => {
+    const project = await load(options);
+    const deployment = resolveDeployment(project, { stage: options.stage });
+    await watch(deployment);
   });
+
+function load(options: { config?: string }) {
+  if (options.config !== undefined) setConfigFile(options.config);
+  return loadProject();
+}
+
+// An execution that already exists saved its stage when it started, so the
+// stage comes from the execution. An ID with no execution starts a new one.
+async function resolveResumableDeployment(
+  project: Project,
+  options: { stage?: string; executionId?: string },
+) {
+  const saved =
+    options.executionId === undefined
+      ? undefined
+      : await readExecutionDeployment(options.executionId);
+  return resolveDeployment(project, {
+    stage: options.stage,
+    execution: saved && { id: options.executionId!, deployment: saved },
+  });
+}
+
+// The command to print for resuming a crash. It omits --stage, because the
+// stage comes from the execution.
+function resumeCommand(command: string, options: { config?: string }) {
+  const config =
+    options.config === undefined ? "" : ` --config ${options.config}`;
+  return `notation ${command}${config}`;
+}
 
 process.exitCode = await runWithErrorHandling(
   () => program.parseAsync(process.argv),

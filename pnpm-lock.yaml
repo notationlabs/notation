@@ -160,6 +160,9 @@ importers:
       '@notation/cli':
         specifier: workspace:*
         version: link:../../packages/cli
+      '@notation/core':
+        specifier: workspace:*
+        version: link:../../packages/core
 
   examples/reconciler:
     dependencies:
@@ -318,6 +321,9 @@ importers:
       '@yieldstar/sqlite-runtime':
         specifier: 0.8.2
         version: 0.8.2
+      esbuild:
+        specifier: ^0.25.0
+        version: 0.25.12
       js-base64:
         specifier: ^3.7.7
         version: 3.7.7
@@ -362,6 +368,9 @@ importers:
       '@notation/aws':
         specifier: workspace:*
         version: link:../aws
+      '@notation/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/fs-extra':
         specifier: ^11.0.4
         version: 11.0.4

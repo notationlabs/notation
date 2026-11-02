@@ -1,5 +1,7 @@
 import {
+  configPath,
   createLoggerReconcilerSubscriber,
+  type DeploymentIdentity,
   type ReconcilerEventEmitter,
 } from "@notation/core";
 import { spawn as nodeSpawn } from "node:child_process";
@@ -7,7 +9,7 @@ import { createInterface } from "node:readline";
 import type { Logger } from "./logger";
 
 export type DeployChildOptions = {
-  entryPoint: string;
+  deployment: DeploymentIdentity;
   executionId: string;
   logger: Logger;
   spawn?: typeof nodeSpawn;
@@ -21,9 +23,13 @@ const forwardedSignals = ["SIGINT", "SIGTERM"] as const;
  * graph and the module cache live and die with the child, so a long-lived
  * parent (watch) never accumulates them. Events arrive as NDJSON on the
  * child's stdout; its logs pass through on stderr.
+ *
+ * The child loads the same config file again and resolves the deployment
+ * from the stage. `watch` stops when the config changes, so the child reads
+ * the same config as the parent.
  */
 export function deployInChild({
-  entryPoint,
+  deployment,
   executionId,
   logger,
   spawn = nodeSpawn,
@@ -34,7 +40,10 @@ export function deployInChild({
     ...process.execArgv,
     process.argv[1]!,
     "deploy",
-    entryPoint,
+    "--config",
+    configPath(),
+    "--stage",
+    deployment.stage,
     "--json",
     "--no-compile",
     "--no-drift-detection",

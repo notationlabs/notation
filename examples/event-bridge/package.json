@@ -2,12 +2,12 @@
   "private": true,
   "name": "schedule-demo",
   "scripts": {
-    "compile": "notation compile infra/schedule.ts",
+    "compile": "notation compile",
     "dashboard": "notation dashboard",
-    "deploy": "notation deploy infra/schedule.ts",
-    "destroy": "notation destroy infra/schedule.ts",
-    "viz": "notation viz infra/schedule.ts",
-    "watch": "notation watch infra/schedule.ts",
+    "deploy": "notation deploy",
+    "destroy": "notation destroy",
+    "viz": "notation viz",
+    "watch": "notation watch",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

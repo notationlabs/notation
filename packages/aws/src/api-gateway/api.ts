@@ -1,4 +1,5 @@
 import * as aws from "@notation/aws.iac";
+import { awsName } from "src/naming";
 
 export class ApiGroup extends aws.AwsResourceGroup<{ name: string }> {
   readonly api: aws.apiGateway.ApiInstance;
@@ -9,7 +10,7 @@ export class ApiGroup extends aws.AwsResourceGroup<{ name: string }> {
     this.api = this.add(
       new aws.apiGateway.Api(rgConfig.name, {
         config: {
-          Name: rgConfig.name,
+          Name: awsName("apiGatewayApi", rgConfig.name),
           ProtocolType: "HTTP",
         },
       }),

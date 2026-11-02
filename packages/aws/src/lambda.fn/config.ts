@@ -7,7 +7,7 @@ export type LambdaConfig = {
    * keep it stable.
    *
    * Letters, digits, hyphens and underscores only, and `<id>-<handler>` must
-   * be at most 59 characters.
+   * be at most 64 characters.
    */
   id: string;
   memory?: number;
