@@ -1,34 +1,48 @@
+import path from "node:path";
 import esbuild, { BuildOptions, Plugin } from "esbuild";
 
-const virtualFilePlugin = (input: any): Plugin => ({
-  name: "virtual-file",
+export const projectRoot = "/project";
+
+// Serves files from memory. Paths are relative to `projectRoot`. Bare
+// imports, such as packages, stay external.
+const virtualFilesPlugin = (files: Record<string, string>): Plugin => ({
+  name: "virtual-files",
   setup(build) {
-    build.onResolve({ filter: /\..*/ }, (args) => {
-      return { path: args.path, namespace: "stdin" };
+    build.onResolve({ filter: /.*/ }, (args) => {
+      if (!args.path.startsWith(".") && !path.isAbsolute(args.path)) {
+        return { path: args.path, external: true };
+      }
+      const resolved = path.resolve(args.resolveDir || projectRoot, args.path);
+      const relative = path.relative(projectRoot, resolved);
+      const file = [relative, `${relative}.ts`].find((f) => f in files);
+      return { path: path.join(projectRoot, file ?? relative) };
     });
-    build.onLoad({ filter: /\..*/, namespace: "stdin" }, (args) => {
-      return {
-        contents: input,
-        loader: "ts",
-        resolveDir: args.path,
-      };
+    build.onLoad({ filter: /.*/ }, (args) => {
+      const contents = files[path.relative(projectRoot, args.path)];
+      if (contents === undefined) throw new Error(`No file ${args.path}`);
+      return { contents, loader: "ts", resolveDir: path.dirname(args.path) };
     });
   },
 });
 
-export function createBuilder(
-  getBuildOptions: (input: string) => BuildOptions,
+export const readVirtualFile =
+  (files: Record<string, string>) => (filePath: string) =>
+    files[path.relative(projectRoot, filePath)];
+
+export async function buildVirtual(
+  files: Record<string, string>,
+  entryPoint: string,
+  plugins: Plugin[],
+  options: BuildOptions = {},
 ) {
-  return async (input: string) => {
-    const buildOptions = getBuildOptions(input);
-
-    const result = await esbuild.build({
-      write: false,
-      ...buildOptions,
-      plugins: [...(buildOptions.plugins || []), virtualFilePlugin(input)],
-      logLevel: "silent",
-    });
-
-    return result.outputFiles![0].text;
-  };
+  const result = await esbuild.build({
+    entryPoints: [path.join(projectRoot, entryPoint)],
+    bundle: true,
+    format: "esm",
+    write: false,
+    logLevel: "silent",
+    ...options,
+    plugins: [...plugins, virtualFilesPlugin(files)],
+  });
+  return result.outputFiles![0]!.text;
 }

@@ -441,13 +441,6 @@ importers:
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
-    devDependencies:
-      '@types/common-tags':
-        specifier: ^1.8.4
-        version: 1.8.4
-      common-tags:
-        specifier: ^1.8.2
-        version: 1.8.2
 
   packages/reconciler:
     dependencies:

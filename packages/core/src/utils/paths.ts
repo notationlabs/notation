@@ -59,7 +59,9 @@ export const toProjectRoot = (p: string) =>
   path.relative(projectRoot(), path.resolve(p)).split(path.sep).join("/");
 
 const distPath = (entryPoint: string, ext: string) =>
-  fromProjectRoot(`dist/${toProjectRoot(entryPoint).replace(/\.[cm]?[jt]sx?$/, ext)}`);
+  fromProjectRoot(
+    `dist/${toProjectRoot(entryPoint).replace(/\.[cm]?[jt]sx?$/, ext)}`,
+  );
 
 export const filePaths = {
   dist: {
