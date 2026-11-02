@@ -32,19 +32,42 @@ export type LambdaRolePolicySchema = AwsSchema<{
 
 const stringOrStrings = v.union([v.string(), v.array(v.string())]);
 
-const policyDocumentValue = v.object({
-  Version: v.literal("2012-10-17"),
-  Statement: v.array(
-    v.object({
-      Sid: v.optional(v.string()),
-      Effect: v.picklist(["Allow", "Deny"]),
-      Action: stringOrStrings,
-      Resource: stringOrStrings,
-      Condition: v.optional(
-        v.record(v.string(), v.record(v.string(), stringOrStrings)),
+const principalValue = v.union([
+  v.literal("*"),
+  v.record(v.string(), stringOrStrings),
+]);
+
+const conditionValue = v.union([v.string(), v.number(), v.boolean()]);
+
+// Accepts the IAM policy grammar, since a read returns whatever document IAM
+// holds, including one edited outside Notation.
+const policyStatementValue = v.intersect([
+  v.object({
+    Sid: v.optional(v.string()),
+    Effect: v.picklist(["Allow", "Deny"]),
+    Principal: v.optional(principalValue),
+    NotPrincipal: v.optional(principalValue),
+    Condition: v.optional(
+      v.record(
+        v.string(),
+        v.record(v.string(), v.union([conditionValue, v.array(conditionValue)])),
       ),
-    }),
-  ),
+    ),
+  }),
+  v.union([
+    v.object({ Action: stringOrStrings }),
+    v.object({ NotAction: stringOrStrings }),
+  ]),
+  v.union([
+    v.object({ Resource: stringOrStrings }),
+    v.object({ NotResource: stringOrStrings }),
+  ]),
+]);
+
+const policyDocumentValue = v.object({
+  Version: v.optional(v.picklist(["2012-10-17", "2008-10-17"])),
+  Id: v.optional(v.string()),
+  Statement: v.array(policyStatementValue),
 });
 
 const lambdaRolePolicy = resource<LambdaRolePolicySchema>({
@@ -137,7 +160,15 @@ async function putRolePolicy(params: LambdaRolePolicyParams) {
   );
 }
 
-/** IAM returns policy documents URL-encoded (RFC 3986). */
+/**
+ * IAM returns policy documents URL-encoded (RFC 3986). A single statement
+ * object is put in an array, so it compares equal to the same statement in
+ * config.
+ */
 function decodePolicyDocument(document: string): PolicyDocument {
-  return JSON.parse(decodeURIComponent(document));
+  const decoded = JSON.parse(decodeURIComponent(document));
+  if (decoded?.Statement && !Array.isArray(decoded.Statement)) {
+    decoded.Statement = [decoded.Statement];
+  }
+  return decoded;
 }

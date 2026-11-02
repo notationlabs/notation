@@ -63,11 +63,6 @@ const lambdaApiGatewayV2PermissionSchema =
       presence: "optional",
       value: v.enum(sdk.FunctionUrlAuthType),
     },
-    InvocationType: {
-      propertyType: "param",
-      presence: "optional",
-      value: v.enum(sdk.InvocationType),
-    },
     Policy: {
       propertyType: "computed",
       presence: "optional",

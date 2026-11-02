@@ -157,4 +157,21 @@ describe("LambdaRolePolicy drift detection", () => {
     });
     expect(node).toMatchObject({ decision: "drift-update" });
   });
+
+  it("reads a document that uses the wider IAM policy grammar", async () => {
+    const node = await planUnchanged({
+      Version: "2008-10-17",
+      Statement: {
+        Effect: "Deny",
+        NotAction: "sqs:*",
+        NotResource: ["arn:aws:sqs:eu-west-2:123456789012:orders"],
+        Principal: { AWS: "arn:aws:iam::123456789012:root" },
+        Condition: {
+          Bool: { "aws:SecureTransport": false },
+          NumericLessThan: { "s3:max-keys": 10 },
+        },
+      },
+    });
+    expect(node).toMatchObject({ decision: "drift-update" });
+  });
 });
