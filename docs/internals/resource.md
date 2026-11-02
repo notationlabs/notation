@@ -178,6 +178,17 @@ At declaration, output values are not known yet. At plan, and before deploy chan
 
 The other issues are reported. When the validator throws on a field that holds unknowns, the engine treats the field as valid. Just before the resource's own operation, every value is known, and the whole field is validated.
 
+A check over a whole field reports its issue with no path. So when any part of the field is unknown, the check does not run at declaration or plan, only just before the operation. This applies to a union or `v.check` on the field itself, such as a check that a policy document has either `Action` or `NotAction`. Put such a check on the smallest object it applies to, such as each statement, so that it runs for the parts of the field that are known:
+
+```ts
+const statement = v.union([
+  v.object({ Action: stringOrStrings, NotAction: v.optional(v.never()) }),
+  v.object({ NotAction: stringOrStrings, Action: v.optional(v.never()) }),
+]);
+```
+
+An issue in a statement that holds an unknown is still dropped, because the statement is a parent of the unknown.
+
 ## Operations
 
 `defineOperations` accepts CRUD handlers and parameter derivation:
