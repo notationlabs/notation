@@ -380,8 +380,8 @@ PolicyDocument: {
 While infra is being evaluated, any code can add to a collected param with `contribute`. `queue.consume` does this:
 
 ```ts [packages/aws/src/sqs/queue.ts]
-consume(handler: SqsHandler | LambdaGroup, options: ConsumeOptions = {}) {
-  const lambdaGroup = handler as LambdaGroup;
+consume(handler: RuntimeRef, options: ConsumeOptions = {}) {
+  const lambdaGroup = handler.resource;
   const id = `${this.id}-${lambdaGroup.fn.id}-mapping`;
 
   lambdaGroup.policy.contribute(
@@ -400,7 +400,7 @@ The rules for `collect`:
 `mergeContributions` is a `collect` rule for maps. It merges the maps key by key, and fails when two contributions set one key to different values. The error names each contribution by the `file:line` of its `contribute` call, and gives the path of the key:
 
 ```
-Conflicting contributions to orders-processOrders: infra/orders.ts:12 and infra/refunds.ts:8 both set Environment.Variables.QUEUE_URL, to "a" and "b"
+Conflicting contributions to orders: infra/orders.ts:12 and infra/refunds.ts:8 both set Environment.Variables.QUEUE_URL, to "a" and "b"
 ```
 
 Library code that contributes a map entry for the user should key the entry by a name the user chose, such as a binding's ID. Two calls of the library code then never set the same key, and when the library conflicts with the user's code, the key path names the binding. A value that holds a token is not known at plan, so plan cannot find a conflict with it, and deploy fails instead.
@@ -416,7 +416,6 @@ import { queue } from "@notation/aws/sqs";
 const orderQueue = queue({ name: "orders" });
 const importer = lambda({
   id: "order-importer",
-  handler: "handler",
   code: { type: "file", path: "external/importer.mjs" },
 });
 

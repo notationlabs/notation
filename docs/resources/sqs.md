@@ -57,13 +57,13 @@ orderQueue.consume(processOrders, { batchSize: 5 });
 ```
 
 ```ts [runtime/orders.fn.ts]
-import { LambdaConfig, handle } from "@notation/aws/lambda.fn";
+import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
 
 export const processOrders = handle.sqsEvent(async (event) => {
   for (const record of event.Records) console.log(record.body);
 });
 
-export const config: LambdaConfig = {
+export const resource: LambdaResource = {
   service: "aws/lambda",
   id: "orders",
 };
@@ -71,10 +71,11 @@ export const config: LambdaConfig = {
 
 ::
 
-The handler import from a `.fn.ts` file becomes a Lambda group, as it does for [API Gateway routes](api-gateway.md). `consume` then changes two things, and the function's own config doesn't mention the queue:
+`processOrders` is an export of the runtime module `runtime/orders.fn.ts`, so in infra code it is a `RuntimeRef`: the module's Lambda group, plus the name of the export. See [Lambda](lambda.md#runtime-modules). `consume` then changes three things, and the function's own config doesn't mention the queue:
 
 1. **The role's inline policy.** `consume` contributes a statement that allows `sqs:ReceiveMessage`, `sqs:DeleteMessage` and `sqs:GetQueueAttributes` on the queue to the function's [inline policy](lambda.md#inline-policy).
-2. **An event source mapping**, `orders-orders-processOrders-mapping`, which connects the queue to the function.
+2. **An event source mapping**, `orders-orders-mapping`, which connects the queue to the function.
+3. **The function's dispatch map.** `consume` adds an entry that sends messages from the queue's ARN to `processOrders`. See [Dispatch](lambda.md#dispatch).
 
 The mapping depends on the policy, even though it reads nothing from it. This matters because AWS checks the role's permissions when it creates the mapping, so the policy has to exist first. Notation retries the create while the new permissions propagate through IAM.
 
@@ -91,16 +92,18 @@ When you remove `batchSize` or `maxBatchingWindow`, Notation sets the mapping ba
 
 ### Several queues
 
-Each queue contributes its own statement, so two queues can feed one function:
+Each queue contributes its own statement and its own dispatch entry, so two queues can feed one function. The two queues can call the same export, or two exports of one module:
 
 ```ts [infra/orders.ts]
+import { processOrders, processRefunds } from "runtime/orders.fn";
+
 orderQueue.consume(processOrders);
-refundQueue.consume(processOrders);
+refundQueue.consume(processRefunds);
 ```
 
 The function's policy then has two statements. When you delete the `refundQueue.consume` line, its statement and mapping go with it, and the next deploy updates the policy and deletes the mapping.
 
-A queue can feed a given function once: a second `consume` with the same function throws.
+A queue can feed a given function once: a second `consume` with the same function throws, even with a different export of the module. The dispatch map sends all of a queue's messages to one export.
 
 ## `queue.grant(actions)`
 
@@ -111,7 +114,6 @@ import { lambda } from "@notation/aws/lambda";
 
 const importer = lambda({
   id: "order-importer",
-  handler: "handler",
   code: { type: "file", path: "external/importer.mjs" },
 });
 
@@ -120,7 +122,17 @@ importer.policy.contribute({
 });
 ```
 
-A handler imported from a `.fn.ts` file is typed as the handler, not as a Lambda group, so this needs a group from `lambda()`.
+For an export of a runtime module, use the export's `resource`, which is the module's Lambda group:
+
+```ts [infra/orders.ts]
+import { processOrders } from "runtime/orders.fn";
+
+processOrders.resource.policy.contribute({
+  PolicyDocument: { Statement: [refundQueue.grant(["SendMessage"])] },
+});
+```
+
+The grant applies to the whole function, so every export of `runtime/orders.fn.ts` gets it.
 
 ```ts [@notation/aws/sqs]
 type SqsAction =

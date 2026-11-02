@@ -55,8 +55,7 @@ todoRouter.get("/todos/count", getTodoCount);
 ```
 
 ```ts [runtime/todos.fn.ts]
-import type { LambdaConfig } from "@notation/aws/lambda.fn";
-import { handle, json } from "@notation/aws/lambda.fn";
+import { handle, json, type LambdaResource } from "@notation/aws/lambda.fn";
 
 export const getTodos = handle.apiRequest(() => {
   return json([{ id: 1, text: "Learn Notation" }]);
@@ -66,7 +65,7 @@ export const getTodoCount = handle.apiRequest(() => {
   return json(1);
 });
 
-export const config: LambdaConfig = {
+export const resource: LambdaResource = {
   service: "aws/lambda",
   id: "todos",
   timeout: 5,
@@ -76,7 +75,7 @@ export const config: LambdaConfig = {
 
 ::
 
-Infrastructure and runtime live in the same codebase. The router wires Lambda handlers to API Gateway routes, and Notation infers the intermediate resources – IAM roles, permissions, integrations, and so on.
+Infrastructure and runtime live in the same codebase. `runtime/todos.fn.ts` is a runtime module, because it exports `resource`. It deploys as one Lambda function with the ID `todos`, and both handlers run in that function. The router wires each handler to an API Gateway route, and Notation infers the intermediate resources – IAM roles, permissions, integrations, and so on. See [Runtime modules](./file-conventions.md#runtime-modules).
 
 ## 3. Visualize the graph
 
@@ -85,7 +84,7 @@ npm run viz
 ```
 
 ```sh
-✔ Compiled infra/api.ts → 12 resources
+✔ Compiled infra/api.ts → 11 resources
 → https://notation.dev/viz/abc123
 ```
 
@@ -98,22 +97,19 @@ npm run deploy
 ```
 
 ```sh
-✔ Compiled infra/api.ts → 12 resources
-✔ Diffed against state → 12 to create, 0 to update, 0 to destroy
+✔ Compiled infra/api.ts → 11 resources
+✔ Diffed against state → 11 to create, 0 to update, 0 to destroy
 ✔ Deploying...
 
-  ✔ iam-role/getTodos-role          created
-  ✔ iam-role/getTodoCount-role      created
-  ✔ lambda/getTodos                 created
-  ✔ lambda/getTodoCount             created
+  ✔ iam-role/todos-role             created
+  ✔ lambda/todos                    created
   ✔ api-gateway/todo-api            created
+  ✔ integration/todo-api-todos      created
   ✔ route/GET /todos                created
   ✔ route/GET /todos/count          created
-  ✔ integration/getTodos            created
-  ✔ integration/getTodoCount        created
   ...
 
-✔ Deployed 12 resources
+✔ Deployed 11 resources
 
   GET https://abc123.execute-api.us-east-1.amazonaws.com/todos
   GET https://abc123.execute-api.us-east-1.amazonaws.com/todos/count
@@ -152,7 +148,7 @@ npm run watch
 ✔ Watching infra/api.ts...
 ✔ runtime/todos.fn.ts changed
 ✔ Recompiled → 1 resource changed
-✔ lambda/getTodos                 updated
+✔ lambda/todos                    updated
 
   Ready.
 ```
@@ -166,21 +162,18 @@ npm run destroy
 ```
 
 ```sh
-✔ Compiled infra/api.ts → 12 resources
+✔ Compiled infra/api.ts → 11 resources
 ✔ Destroying in reverse dependency order...
 
-  ✔ integration/getTodoCount        destroyed
-  ✔ integration/getTodos            destroyed
   ✔ route/GET /todos/count          destroyed
   ✔ route/GET /todos                destroyed
+  ✔ integration/todo-api-todos      destroyed
   ✔ api-gateway/todo-api            destroyed
-  ✔ lambda/getTodoCount             destroyed
-  ✔ lambda/getTodos                 destroyed
-  ✔ iam-role/getTodoCount-role      destroyed
-  ✔ iam-role/getTodos-role          destroyed
+  ✔ lambda/todos                    destroyed
+  ✔ iam-role/todos-role             destroyed
   ...
 
-✔ Destroyed 12 resources
+✔ Destroyed 11 resources
 ```
 
 Everything is removed in reverse dependency order.

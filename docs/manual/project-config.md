@@ -12,11 +12,12 @@ export default defineConfig({
 });
 ```
 
-| Field          | Required | Meaning                                                |
-| -------------- | -------- | ------------------------------------------------------ |
-| `app`          | Yes      | The name of the app.                                   |
-| `entry`        | Yes      | The entry file, relative to the config.                |
-| `defaultStage` | No       | The stage that a command uses when given no `--stage`. |
+| Field            | Required | Meaning                                                                                                                                                                                    |
+| ---------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `app`            | Yes      | The name of the app.                                                                                                                                                                       |
+| `entry`          | Yes      | The entry file, relative to the config.                                                                                                                                                    |
+| `defaultStage`   | No       | The stage that a command uses when given no `--stage`.                                                                                                                                     |
+| `runtimeModules` | No       | A glob or an array of globs, relative to the config, for the files that can be runtime modules. The default is `**/*.fn.ts`. See [Runtime modules](./file-conventions.md#runtime-modules). |
 
 The CLI deploys the entry file and every module that it imports.
 
@@ -75,12 +76,12 @@ The key contains no file paths, so you can move the entry file and keep its stat
 
 Each stage has the same set of resources. To keep the stages apart in one AWS account, Notation starts each AWS name with the app and the stage: `<app>--<stage>--<id>`.
 
-For example, the starter app has a Lambda function with the ID `todos-getTodos`:
+For example, the starter app has a Lambda function with the ID `todos`:
 
-| Stage  | Lambda function                | IAM role                            |
-| ------ | ------------------------------ | ----------------------------------- |
-| `dev`  | `my-app--dev--todos-getTodos`  | `my-app--dev--todos-getTodos-role`  |
-| `prod` | `my-app--prod--todos-getTodos` | `my-app--prod--todos-getTodos-role` |
+| Stage  | Lambda function       | IAM role                   |
+| ------ | --------------------- | -------------------------- |
+| `dev`  | `my-app--dev--todos`  | `my-app--dev--todos-role`  |
+| `prod` | `my-app--prod--todos` | `my-app--prod--todos-role` |
 
 The parts are joined with `--`, because app and stage names can't contain `--`. With a single `-`, app `my-app` with stage `prod-eu` and app `my-app-prod` with stage `eu` would get the same names.
 

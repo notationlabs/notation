@@ -15,7 +15,7 @@ eventBridge.schedule({
 });
 ```
 
-The `handler` import from a `.fn.ts` file triggers the same [compiler transform](../internals/compiler.md) as API Gateway routes. The handler export is replaced with a `lambda()` resource declaration, and `schedule` wires it to an EventBridge rule with the required invoke permission.
+`logEvent` is an export of the runtime module `runtime/log-event.fn.ts`, so in infra code it is a `RuntimeRef`: the module's Lambda function, plus the name of the export. See [Lambda](lambda.md#runtime-modules). `schedule` creates an EventBridge rule that targets the function, and the permission that lets the rule invoke it.
 
 ### Config
 
@@ -23,9 +23,11 @@ The `handler` import from a `.fn.ts` file triggers the same [compiler transform]
 type ScheduleConfig = {
   name: string;
   schedule: Schedule;
-  handler: EventBridgeHandler;
+  handler: RuntimeRef;
 };
 ```
+
+The rule doesn't send the EventBridge event to the function as it is. It sends `{ "export": "logEvent", "event": <the EventBridge event> }`, so the function knows which export to call. The function's dispatcher calls `logEvent` with the EventBridge event. See [Dispatch](lambda.md#dispatch).
 
 `name` keys the schedule in state. In AWS, the EventBridge rule is named `<app>--<stage>--<name>`, such as `my-app--prod--log-every-minute`. See [AWS names](../manual/project-config.md#aws-names).
 
@@ -60,22 +62,15 @@ eventBridge.once(new Date("2027-12-31T23:59:00Z"));
 
 ## Handler
 
-::code-group
-
 ```ts [runtime/log-event.fn.ts]
-import { handle } from "@notation/aws/lambda.fn";
+import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
 
 export const logEvent = handle.eventBridgeScheduledEvent((event) => {
   console.log("Scheduled event fired:", event);
 });
-```
 
-```ts [dist/runtime/log-event.fn.ts]
-export const logEvent = async (event) => {
-  console.log("Scheduled event fired:", event);
+export const resource: LambdaResource = {
+  service: "aws/lambda",
+  id: "log-event",
 };
 ```
-
-::
-
-The EventBridge `schedule` call then takes this Lambda resource and generates the rule, target, and invoke permission automatically.

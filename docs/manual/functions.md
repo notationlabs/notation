@@ -2,6 +2,8 @@
 
 `@notation/aws/lambda.fn` exports typed handler wrappers for each Lambda event source.
 
+A handler is an export of a [runtime module](./file-conventions.md#runtime-modules). The examples below leave out the module's `resource` export. All the handlers in one module run in one Lambda function, which sends each event to the right handler. See [Dispatch](../resources/lambda.md#dispatch).
+
 ## `handle.apiRequest`
 
 For API Gateway HTTP API events.
@@ -82,7 +84,7 @@ For SQS batch events.
 Helper for returning JSON responses from API Gateway handlers.
 
 ```ts [runtime/todos.fn.ts]
-import { json } from "@notation/aws/lambda.fn";
+import { handle, json } from "@notation/aws/lambda.fn";
 
 export const getTodos = handle.apiRequest(() => {
   return json({ hello: "world" });
