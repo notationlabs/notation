@@ -31,7 +31,7 @@ The command prints its execution ID before starting provider work. If the proces
 notation deploy --stage prod --execution-id <id>
 ```
 
-Each execution ID belongs to the app and stage of the command that started the execution. When you resume, pass the same `--config` and `--stage` as the command that crashed. If the app or the stage is different, the command fails:
+When a deploy starts, Notation saves the execution ID with the state key `<app>:<stage>`. When you resume with `--execution-id`, the command compares its own state key with the saved one, so pass the same `--config` and `--stage` as the command that crashed. If the keys differ, the command fails:
 
 ```sh
 Execution <id> is bound to deployment my-app:prod workflow deploy, not deployment my-app:dev workflow deploy
