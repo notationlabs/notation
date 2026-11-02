@@ -16,6 +16,8 @@ export type DestroyCommandOptions = {
   // Printed with the execution ID, such as `notation deploy`.
   resumeCommand?: string;
   logger?: Logger;
+  /** Globs for the files that can be runtime modules. */
+  runtimeModules?: string[];
 };
 
 export async function destroy(
@@ -27,7 +29,10 @@ export async function destroy(
     ? createNdjsonEventEmitter(redirectStdoutToStderr().write)
     : createLoggerReconcilerSubscriber({ logger });
 
-  await compile(deployment.entryPoint, { logger });
+  await compile(deployment.entryPoint, {
+    logger,
+    runtimeModules: opts.runtimeModules,
+  });
   logger.info(`Destroying ${resolveDeploymentId(deployment)}\n`);
   const executionId = opts.executionId ?? randomUUID();
   logger.info(`Execution ID ${executionId}`);

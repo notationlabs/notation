@@ -6,11 +6,17 @@ import {
 import { compileInfra } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
 
+export type VisualiseOptions = {
+  logger?: Logger;
+  /** Globs for the files that can be runtime modules. */
+  runtimeModules?: string[];
+};
+
 export async function visualise(
   entryPoint: string,
-  logger: Logger = defaultLogger,
+  { logger = defaultLogger, runtimeModules }: VisualiseOptions = {},
 ) {
-  await compileInfra(entryPoint);
+  await compileInfra(entryPoint, { runtimeModules });
   await generateGraph(entryPoint, logger);
 }
 

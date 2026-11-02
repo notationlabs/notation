@@ -12,6 +12,8 @@ const dotFilesRe = /(^|[\/\\])\../;
 export type WatchOptions = {
   logger?: Logger;
   exit?: (code: number) => void;
+  /** Globs for the files that can be runtime modules. */
+  runtimeModules?: string[];
 };
 
 /**
@@ -24,9 +26,17 @@ export type WatchOptions = {
  */
 export async function watch(
   deployment: Deployment,
-  { logger = defaultLogger, exit = process.exit }: WatchOptions = {},
+  {
+    logger = defaultLogger,
+    exit = process.exit,
+    runtimeModules,
+  }: WatchOptions = {},
 ) {
-  await compile(deployment.entryPoint, { watch: true, logger });
+  await compile(deployment.entryPoint, {
+    watch: true,
+    logger,
+    runtimeModules,
+  });
 
   const watcher = chokidar.watch(filePaths.dist.dir(), {
     ignored: dotFilesRe,

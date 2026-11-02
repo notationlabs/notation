@@ -1,50 +1,91 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import chokidar from "chokidar";
 import { glob } from "glob";
-import esbuild from "esbuild";
+import esbuild, { type BuildContext } from "esbuild";
 import {
-  functionInfraPlugin,
-  functionRuntimePlugin,
+  createRuntimeEntry,
+  infraPlugin,
+  matchesRuntimeModules,
+  parseRuntimeModule,
+  runtimeModulesIgnore,
 } from "@notation/esbuild-plugins";
-import { filePaths, fromProjectRoot } from "@notation/core";
+import {
+  defaultRuntimeModules,
+  filePaths,
+  fromProjectRoot,
+  projectRoot,
+  toProjectRoot,
+} from "@notation/core";
 import { defaultLogger, type Logger } from "./logger";
 
 export type CompileOptions = {
   watch?: boolean;
   logger?: Logger;
+  /** Globs for the files that can be runtime modules. */
+  runtimeModules?: string[];
+};
+
+/** A module that matches the runtime-module globs and exports `resource`. */
+export type RuntimeModuleEntry = {
+  /** The absolute path of the module. */
+  path: string;
+  /** The module's `resource.service`, such as `aws/lambda`. */
+  service: string;
 };
 
 export async function compile(entryPoint: string, opts: CompileOptions = {}) {
   const watch = opts.watch ?? false;
   const logger = opts.logger ?? defaultLogger;
+  const runtimeModules = opts.runtimeModules ?? defaultRuntimeModules;
 
   logger.info(`${watch ? "Watching" : "Compiling"} infrastructure`, entryPoint);
-  await compileInfra(entryPoint, watch);
+  await compileInfra(entryPoint, { watch, runtimeModules });
 
-  logger.info(`${watch ? "Watching" : "Compiling"} functions`);
-
-  // @todo: fnEntryPoints could be an output of compileInfra
-  const fnEntryPoints = await glob(fromProjectRoot("runtime/**/*.fn.ts"));
-  let disposeFnCompiler = await compileFns(fnEntryPoints, watch);
+  logger.info(`${watch ? "Watching" : "Compiling"} runtime modules`);
+  let modules = await findRuntimeModules(runtimeModules);
+  let disposeRuntime = await compileRuntimeModules(modules, watch);
 
   if (!watch) return;
 
+  // esbuild watches the files each bundle imports. This watcher picks up
+  // modules that start or stop being runtime modules.
   chokidar
-    .watch("**/*.fn.ts", {
-      cwd: fromProjectRoot("."),
-      ignored: /node_modules/,
-      persistent: true,
+    .watch(projectRoot(), {
+      ignoreInitial: true,
+      ignored: (file, stats) =>
+        isIgnoredDir(file) ||
+        (stats?.isFile() === true &&
+          !matchesRuntimeModules(file, runtimeModules)),
     })
     .on("all", async () => {
-      if (disposeFnCompiler) disposeFnCompiler();
-      const fnEntryPoints = await glob(fromProjectRoot("runtime/**/*.fn.ts"));
-      disposeFnCompiler = await compileFns(fnEntryPoints, watch);
+      let found: RuntimeModuleEntry[];
+      try {
+        found = await findRuntimeModules(runtimeModules);
+      } catch (error) {
+        logger.error(error);
+        return;
+      }
+      if (sameModules(found, modules)) return;
+      modules = found;
+      await disposeRuntime();
+      disposeRuntime = await compileRuntimeModules(modules, watch);
     });
 }
 
-export async function compileInfra(entryPoint: string, watch: boolean = false) {
+export type CompileInfraOptions = {
+  watch?: boolean;
+  runtimeModules?: string[];
+};
+
+export async function compileInfra(
+  entryPoint: string,
+  opts: CompileInfraOptions = {},
+) {
+  const runtimeModules = opts.runtimeModules ?? defaultRuntimeModules;
   const context = await esbuild.context({
     entryPoints: [entryPoint],
-    plugins: [functionInfraPlugin()],
+    plugins: [infraPlugin({ runtimeModules })],
     outdir: filePaths.dist.dir(),
     outbase: fromProjectRoot("."),
     outExtension: { ".js": ".mjs" },
@@ -58,24 +99,58 @@ export async function compileInfra(entryPoint: string, watch: boolean = false) {
     sourcemap: true,
   });
 
-  if (watch) {
+  if (opts.watch) {
     await context.watch();
   } else {
     await context.rebuild();
-    context.dispose();
+    await context.dispose();
   }
 }
 
-export async function compileFns(
-  entryPoints: string[],
+/**
+ * Finds the runtime modules of the project: the files that match the globs
+ * and export `resource`. Fails if a matching file still exports `config`.
+ */
+export async function findRuntimeModules(
+  globs: string[] = defaultRuntimeModules,
+): Promise<RuntimeModuleEntry[]> {
+  const files = await glob(globs, {
+    cwd: projectRoot(),
+    ignore: runtimeModulesIgnore,
+    nodir: true,
+    absolute: true,
+  });
+  const modules: RuntimeModuleEntry[] = [];
+  for (const file of files.sort()) {
+    if (!matchesRuntimeModules(file, globs)) continue;
+    const source = await fs.readFile(file, "utf8");
+    const runtimeModule = parseRuntimeModule(source, toProjectRoot(file));
+    if (runtimeModule) {
+      modules.push({ path: file, service: runtimeModule.resource.service });
+    }
+  }
+  return modules;
+}
+
+/**
+ * Bundles each runtime module to `dist/<module path>/index.mjs`. The bundle's
+ * entry is generated: its `handler` export dispatches each event to an export
+ * of the module. Returns a function that stops watching.
+ */
+export async function compileRuntimeModules(
+  modules: RuntimeModuleEntry[],
   watch: boolean = false,
 ) {
-  for (const entryPoint of entryPoints) {
+  const contexts: BuildContext[] = [];
+  for (const module of modules) {
     const context = await esbuild.context({
-      entryPoints: [entryPoint],
-      plugins: [functionRuntimePlugin()],
-      outfile: filePaths.dist.runtime.index(entryPoint),
-      outExtension: { ".js": ".mjs" },
+      stdin: {
+        contents: createRuntimeEntry(module.path, module.service),
+        resolveDir: path.dirname(module.path),
+        sourcefile: `${path.basename(module.path)}.entry.ts`,
+        loader: "ts",
+      },
+      outfile: filePaths.dist.runtime.index(module.path),
       bundle: true,
       format: "esm",
       platform: "node",
@@ -84,10 +159,38 @@ export async function compileFns(
 
     if (watch) {
       await context.watch();
-      return () => context.dispose();
+      contexts.push(context);
     } else {
-      await context.rebuild();
-      context.dispose();
+      try {
+        await context.rebuild();
+      } finally {
+        await context.dispose();
+      }
     }
   }
+  return async () => {
+    await Promise.all(contexts.map((context) => context.dispose()));
+  };
+}
+
+function sameModules(a: RuntimeModuleEntry[], b: RuntimeModuleEntry[]) {
+  return (
+    a.length === b.length &&
+    a.every(
+      (module, i) =>
+        module.path === b[i]!.path && module.service === b[i]!.service,
+    )
+  );
+}
+
+function isIgnoredDir(file: string) {
+  const relative = toProjectRoot(file);
+  if (relative === "") return false;
+  return (
+    relative === "dist" ||
+    relative.startsWith("dist/") ||
+    relative
+      .split("/")
+      .some((part) => part === "node_modules" || part.startsWith("."))
+  );
 }

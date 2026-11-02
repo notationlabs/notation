@@ -19,6 +19,8 @@ export type DeployCommandOptions = {
   compile?: boolean;
   driftDetection?: boolean;
   logger?: Logger;
+  /** Globs for the files that can be runtime modules. */
+  runtimeModules?: string[];
 };
 
 export async function deploy(
@@ -31,7 +33,10 @@ export async function deploy(
     : createLoggerReconcilerSubscriber({ logger });
 
   if (opts.compile !== false) {
-    await compile(deployment.entryPoint, { logger });
+    await compile(deployment.entryPoint, {
+      logger,
+      runtimeModules: opts.runtimeModules,
+    });
   }
   logger.info(`Deploying ${resolveDeploymentId(deployment)}`);
   const executionId = opts.executionId ?? randomUUID();

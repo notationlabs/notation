@@ -13,6 +13,8 @@ import { redirectStdoutToStderr } from "./stdio";
 export type PlanCommandOptions = {
   json?: boolean;
   logger?: Logger;
+  /** Globs for the files that can be runtime modules. */
+  runtimeModules?: string[];
 };
 
 const decisionSymbols: Record<PlanNode["decision"], string> = {
@@ -32,11 +34,12 @@ export async function plan(
 ) {
   const logger = opts.logger ?? defaultLogger;
   const emit = createLoggerReconcilerSubscriber({ logger });
+  const compileOpts = { logger, runtimeModules: opts.runtimeModules };
   if (opts.json) {
     let result: Plan;
     const { restore } = redirectStdoutToStderr();
     try {
-      await compile(deployment.entryPoint, { logger });
+      await compile(deployment.entryPoint, compileOpts);
       result = await planApp({ deployment, emit });
     } finally {
       restore();
@@ -45,7 +48,7 @@ export async function plan(
     return;
   }
 
-  await compile(deployment.entryPoint, { logger });
+  await compile(deployment.entryPoint, compileOpts);
   logger.info(`Planning ${resolveDeploymentId(deployment)}\n`);
   const result = await planApp({ deployment, emit });
   printPlanSummary(result, logger);

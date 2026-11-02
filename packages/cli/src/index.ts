@@ -16,6 +16,7 @@ import {
   resolveDeployment,
   resolveDeploymentIdentity,
   resolveEntryPoint,
+  resolveRuntimeModules,
   setConfigFile,
   type Project,
 } from "@notation/core";
@@ -40,7 +41,9 @@ program
   .description("Compile Notation App")
   .action(async (options) => {
     const project = await load(options);
-    await compile(resolveEntryPoint(project));
+    await compile(resolveEntryPoint(project), {
+      runtimeModules: resolveRuntimeModules(project.config),
+    });
   });
 
 program
@@ -75,6 +78,7 @@ program
       resumeCommand: resumeCommand("deploy", options),
       compile: options.compile,
       driftDetection: options.driftDetection,
+      runtimeModules: resolveRuntimeModules(project.config),
     });
   });
 
@@ -92,6 +96,7 @@ program
       json: options.json,
       executionId: options.executionId,
       resumeCommand: resumeCommand("destroy", options),
+      runtimeModules: resolveRuntimeModules(project.config),
     });
   });
 
@@ -104,7 +109,10 @@ program
   .action(async (options) => {
     const project = await load(options);
     const deployment = resolveDeployment(project, { stage: options.stage });
-    await plan(deployment, { json: options.json });
+    await plan(deployment, {
+      json: options.json,
+      runtimeModules: resolveRuntimeModules(project.config),
+    });
   });
 
 program
@@ -113,7 +121,9 @@ program
   .description("Visualise Notation App")
   .action(async (options) => {
     const project = await load(options);
-    await visualise(resolveEntryPoint(project));
+    await visualise(resolveEntryPoint(project), {
+      runtimeModules: resolveRuntimeModules(project.config),
+    });
   });
 
 program
@@ -124,7 +134,9 @@ program
   .action(async (options) => {
     const project = await load(options);
     const deployment = resolveDeployment(project, { stage: options.stage });
-    await watch(deployment);
+    await watch(deployment, {
+      runtimeModules: resolveRuntimeModules(project.config),
+    });
   });
 
 function load(options: { config?: string }) {
