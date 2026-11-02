@@ -2,7 +2,6 @@ import {
   ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
-  ValueValidationError,
   assertComputedFields,
   assertRequiredOutputs,
   deployLookup,
@@ -24,7 +23,7 @@ import {
   retryPending,
 } from "./operation.pending";
 import { readResourceOperation } from "./operation.read";
-import { catchError } from "./catch-error";
+import { firstDeferredError } from "./deferred-checks";
 
 /** How long yieldstar waits before it looks up a create with an unknown outcome again. */
 const CREATE_LOOKUP_RETRY_MS = 1_000;
@@ -63,40 +62,32 @@ export async function* createResourceOperation(
       });
     }
 
-    let deferredError: unknown;
-    try {
-      const readResult = yield* readResourceOperation(step, {
-        resource: params.resource,
-        resourceParams: params.resourceParams,
-        persistedOutput: params.persistedOutput,
-        emit: params.emit,
-        maxOperationAttempts: params.maxOperationAttempts,
-      });
-      params.resource.setOutput({
-        ...params.resource.output,
-        ...readResult,
-      });
-    } catch (error) {
-      // Only a validation error is deferred. The resource exists, so it is
-      // recorded with the outputs known before the read.
-      if (!ValueValidationError.is(error)) throw error;
-      deferredError = error;
-    }
-    deferredError ??= catchError(() => {
-      if (computedPrimaryKey) {
+    // The create result is checked before the read, because the read uses
+    // its key. When a check fails, the resource still exists, so it is
+    // recorded with the outputs known at that point.
+    const deferredError = yield* firstDeferredError([
+      async function* () {
+        if (!computedPrimaryKey) return;
         assertComputedFields(params.resource, computedPrimaryKey);
-      }
-    });
-    if (!deferredError && computedPrimaryKey) {
-      try {
         await validateValues(params.resource, computedPrimaryKey, "create");
-      } catch (error) {
-        deferredError = error;
-      }
-    }
-    deferredError ??= catchError(() => {
-      assertRequiredOutputs(params.resource, params.resource.output);
-    });
+      },
+      async function* () {
+        const readResult = yield* readResourceOperation(step, {
+          resource: params.resource,
+          resourceParams: params.resourceParams,
+          persistedOutput: params.persistedOutput,
+          emit: params.emit,
+          maxOperationAttempts: params.maxOperationAttempts,
+        });
+        params.resource.setOutput({
+          ...params.resource.output,
+          ...readResult,
+        });
+      },
+      async function* () {
+        assertRequiredOutputs(params.resource, params.resource.output);
+      },
+    ]);
 
     yield* params.persist({
       id: params.resource.id,

@@ -1,5 +1,4 @@
 import {
-  ValueValidationError,
   assertRequiredOutputs,
   deployLookup,
   resolveOutputValues,
@@ -13,7 +12,7 @@ import {
 } from "./operation.types";
 import { runPendingOperation } from "./operation.pending";
 import { readResourceOperation } from "./operation.read";
-import { catchError } from "./catch-error";
+import { firstDeferredError } from "./deferred-checks";
 
 export async function* updateResourceOperation(
   step: StepRunner,
@@ -52,32 +51,34 @@ export async function* updateResourceOperation(
       ...params.resourceParams,
     });
 
-    let deferredError: unknown;
-    try {
-      const readResult = yield* readResourceOperation(step, {
-        resource: params.resource,
-        resourceParams: params.resourceParams,
-        persistedOutput: params.persistedOutput,
-        emit: params.emit,
-        maxOperationAttempts: params.maxOperationAttempts,
-      });
-      params.resource.setOutput({
-        ...params.resource.output,
-        ...readResult,
-      });
-    } catch (error) {
-      // Only a validation error is deferred. The update was made, so it is
-      // recorded with the outputs known before the read.
-      if (!ValueValidationError.is(error)) throw error;
-      deferredError = error;
-      params.resource.setOutput({
-        ...params.persistedOutput,
-        ...params.resource.output,
-      });
-    }
-    deferredError ??= catchError(() =>
-      assertRequiredOutputs(params.resource, params.resource.output),
-    );
+    // When a check fails, the update was still made, so it is recorded with
+    // the outputs known at that point.
+    const deferredError = yield* firstDeferredError([
+      async function* () {
+        try {
+          const readResult = yield* readResourceOperation(step, {
+            resource: params.resource,
+            resourceParams: params.resourceParams,
+            persistedOutput: params.persistedOutput,
+            emit: params.emit,
+            maxOperationAttempts: params.maxOperationAttempts,
+          });
+          params.resource.setOutput({
+            ...params.resource.output,
+            ...readResult,
+          });
+        } catch (error) {
+          params.resource.setOutput({
+            ...params.persistedOutput,
+            ...params.resource.output,
+          });
+          throw error;
+        }
+      },
+      async function* () {
+        assertRequiredOutputs(params.resource, params.resource.output);
+      },
+    ]);
 
     yield* params.persist({
       id: params.resource.id,

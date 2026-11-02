@@ -2350,6 +2350,56 @@ describe("value validation at deploy", () => {
     runtime.close();
   });
 
+  it("checks a computed key from create before the read uses it", async () => {
+    const read = vi.fn(async (key: { id: unknown }) => {
+      if (typeof key.id !== "string") throw new Error("malformed key");
+      return { id: key.id };
+    });
+    const Queue = resource<{
+      Key: { id: string };
+      CreateParams: { name: string };
+      UpdateParams: {};
+      ReadResult: {};
+    }>({ type: "test/durable/validated-queue" })
+      .defineSchema({
+        id: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+          primaryKey: true,
+        },
+        name: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          immutable: true,
+        },
+      })
+      .defineOperations({
+        create: async () => ({ id: 42 }) as any,
+        read,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime(
+      [new Queue("queue", { config: { name: "queue" } })],
+      "validate-create-key",
+    );
+
+    const error = await runtime.run("validate-create-key-1").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "ValueValidationError",
+      field: "id",
+      point: "create",
+    });
+    expect(read).not.toHaveBeenCalled();
+    expect(await runtime.state.get("queue")).toMatchObject({
+      lastOperation: "create",
+      output: { id: 42 },
+    });
+    runtime.close();
+  });
+
   it("records the resource, then fails, when a required output is missing", async () => {
     const Role = defineRole();
     const runtime = createRuntime(
