@@ -17,30 +17,37 @@ import type { RuntimeRef } from "src/lambda";
  */
 type Handled<H> = H & RuntimeRef;
 
-// Marks the functions that `handle.*` returns, so the dispatcher can tell
-// handlers from other exported functions. `Symbol.for` gives the same symbol
-// to every copy of this package.
-const handlerMark = Symbol.for("@notation/aws/handler");
+/** The kind of event that a handler made with `handle.*` takes. */
+export type HandlerKind = "api" | "schedule" | "sqs" | "dynamodb";
 
-export function isHandler(value: unknown): boolean {
-  return typeof value === "function" && (value as any)[handlerMark] === true;
+// Marks the functions that `handle.*` returns with their kind, so the
+// dispatcher can tell handlers from other exported functions. `Symbol.for`
+// gives the same symbol to every copy of this package.
+const handlerKind = Symbol.for("@notation/aws/handler");
+
+export function getHandlerKind(value: unknown): HandlerKind | undefined {
+  if (typeof value !== "function") return undefined;
+  return (value as any)[handlerKind];
 }
 
-const wrap = <H extends (...args: any[]) => any>(handler: H): Handled<H> => {
+const wrap = <H extends (...args: any[]) => any>(
+  kind: HandlerKind,
+  handler: H,
+): Handled<H> => {
   const wrapped = async (...args: Parameters<H>) => handler(...args);
-  Object.defineProperty(wrapped, handlerMark, { value: true });
+  Object.defineProperty(wrapped, handlerKind, { value: kind });
   return wrapped as unknown as Handled<H>;
 };
 
 export const handle = {
-  apiRequest: (handler: ApiGatewayHandler) => wrap(handler),
+  apiRequest: (handler: ApiGatewayHandler) => wrap("api", handler),
   jwtAuthorizedApiRequest: <T>(handler: JWTAuthorizedApiGatewayHandler<T>) =>
-    wrap(handler),
+    wrap("api", handler),
   eventBridgeScheduledEvent: (
     handler: EventBridgeHandler<"Scheduled Event", any>,
-  ) => wrap(handler),
-  dynamoDbStream: (handler: DynamoDbStreamHandler) => wrap(handler),
-  dynamoDbBatch: (handler: DynamoDbBatchHandler) => wrap(handler),
-  sqsEvent: (handler: SqsHandler) => wrap(handler),
-  sqsBatch: (handler: SqsBatchHandler) => wrap(handler),
+  ) => wrap("schedule", handler),
+  dynamoDbStream: (handler: DynamoDbStreamHandler) => wrap("dynamodb", handler),
+  dynamoDbBatch: (handler: DynamoDbBatchHandler) => wrap("dynamodb", handler),
+  sqsEvent: (handler: SqsHandler) => wrap("sqs", handler),
+  sqsBatch: (handler: SqsBatchHandler) => wrap("sqs", handler),
 };

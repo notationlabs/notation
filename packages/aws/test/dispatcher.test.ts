@@ -96,16 +96,36 @@ describe("createDispatcher", () => {
     expect(todos.sendDigest).toHaveBeenCalledWith(event, context);
   });
 
-  test("sends any event to the only handler of a module with one handler", async () => {
+  const scheduledEvent = {
+    "detail-type": "Scheduled Event",
+    time: "2026-11-02",
+  };
+  const sqsEvent = {
+    Records: [{ eventSource: "aws:sqs", eventSourceARN: "arn:unmapped" }],
+  };
+
+  test("sends an event with no entry to the module's only handler of that kind", async () => {
     const run = vi.fn(async () => {});
     const handler = dispatcherWith({
       run: handle.eventBridgeScheduledEvent(run),
+      getTodos: handle.apiRequest(() => json([])),
       formatDate: () => "2026-11-02",
       resource: {},
     });
 
-    await handler({ anything: true }, context);
-    expect(run).toHaveBeenCalledWith({ anything: true }, context);
+    await handler(scheduledEvent, context);
+    expect(run).toHaveBeenCalledWith(scheduledEvent, context);
+  });
+
+  test("does not send an event to a handler of another kind", async () => {
+    const handler = dispatcherWith({
+      getTodos: handle.apiRequest(() => json([])),
+      resource: {},
+    });
+
+    await expect(handler(sqsEvent, context)).rejects.toThrow(
+      "No export of this module handles the event (aws:sqs event from arn:unmapped). The module has no sqs handler, and the dispatch map has no entry for the event.",
+    );
   });
 
   test("counts only exports made with handle as handlers", async () => {
@@ -114,8 +134,26 @@ describe("createDispatcher", () => {
       resource: {},
     });
 
+    await expect(handler(scheduledEvent, context)).rejects.toThrow(
+      "The module has no schedule handler",
+    );
+  });
+
+  test("throws for an event with no entry when the module has several handlers of its kind", async () => {
+    const handler = dispatcherWith(todos);
+
+    await expect(
+      handler(apiRequest("api-1", "GET /todos"), context),
+    ).rejects.toThrow("the module has 2 api handlers: getTodos, createTodo");
+  });
+
+  test("throws for an event whose shape matches no kind of handler", async () => {
+    const handler = dispatcherWith({
+      run: handle.eventBridgeScheduledEvent(async () => {}),
+    });
+
     await expect(handler({ anything: true }, context)).rejects.toThrow(
-      "No export of this module handles the event",
+      "No export of this module handles the event (unrecognised event). Its shape doesn't match any kind of event that a handler takes.",
     );
   });
 
@@ -125,14 +163,6 @@ describe("createDispatcher", () => {
     await expect(
       handler({ export: "resource", event: {} }, context),
     ).rejects.toThrow('dispatched to the export "resource"');
-  });
-
-  test("throws for an event that no entry matches when the module has several handlers", async () => {
-    const handler = dispatcherWith(todos);
-
-    await expect(handler({}, context)).rejects.toThrow(
-      "No export of this module handles the event (unrecognised event). The dispatch map has 0 entries.",
-    );
   });
 });
 

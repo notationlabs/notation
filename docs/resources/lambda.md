@@ -90,9 +90,9 @@ export const handler = createDispatcher(mod);
 | Scheduled invocation | The export named in the event                                    |
 | HTTP API request     | The export that the dispatch map gives for the API and route key |
 | SQS messages         | The export that the dispatch map gives for the queue's ARN       |
-| Any other event      | The module's only handler, if the module has exactly one         |
+| Any other event      | The module's only handler for that kind of event, if it has one  |
 
-A handler is an export made with `handle.*`. Other exported functions, such as helpers, don't count. An HTTP API request or SQS message with no entry in the map also goes to the module's only handler. If the module has several handlers, the function throws an error that describes the event.
+A handler is an export made with `handle.*`. Other exported functions, such as helpers, don't count. Each handler takes one kind of event: HTTP API requests, SQS messages, DynamoDB stream records or EventBridge scheduled events. The function tells these kinds apart by the event's shape. An event with no entry in the dispatch map goes to the module's only handler of the same kind. If the module has no handler of that kind, or several, or the event has a shape that matches no kind, the function throws an error that describes the event.
 
 A request for `GET /todos` and a request for `POST /todos` have the same shape, so the function can't tell from the event which handler to call. Only infra knows which route goes to which export. So each route adds an entry to the function's **dispatch map**:
 
