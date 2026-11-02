@@ -31,10 +31,10 @@ import {
 } from "./contributions";
 import {
   OutputValue,
-  containsOutputValue,
   createPlanViews,
   deployLookup,
   forEachOutputValue,
+  isOutputValue,
   markUnknownOutputValues,
   planLookup,
   resolveOutputValues,
@@ -241,9 +241,10 @@ export abstract class Resource<
 
   /**
    * Checks config when the resource is declared: every field is a param, and
-   * every value passes its validator. A value that holds an output value is
-   * checked at deploy, once the output exists. A subclass calls this at the
-   * end of its constructor, when the schema has been set.
+   * every value passes its validator. Output values are not known yet, so
+   * issues that they could cause are left to plan and deploy; see
+   * `validateValues`. A subclass calls this at the end of its constructor,
+   * when the schema has been set.
    *
    * An async validator cannot throw from the constructor. Its result is
    * awaited when the resource graph has been collected, and is otherwise
@@ -257,12 +258,7 @@ export abstract class Resource<
       return;
     const config = this.config as Record<string, unknown>;
     assertParamFields(this, config);
-    const pending = validateValues(
-      this,
-      config,
-      "declaration",
-      containsOutputValue,
-    );
+    const pending = validateValues(this, config, "declaration", isOutputValue);
     if (!pending) return;
     // Handled now, so that a rejection before collection awaits it is not
     // reported as unhandled. Collection still fails with it.

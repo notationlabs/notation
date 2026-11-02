@@ -147,13 +147,13 @@ The engine only checks values. It keeps the value it was given, not the validato
 
 The engine validates values at five points:
 
-| Point       | What is validated                                                                                                                                                                       |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Declaration | The resource's config, in its constructor. A value that holds an [output value](#output-values) is skipped. An async validator's result is awaited when `collectResourceGraph` ends.    |
-| Plan        | Every param the plan knows. A value that is unknown until apply is skipped.                                                                                                             |
-| Deploy      | Every param deploy knows, before it changes anything. Then each resource's full params, just before its own operation, which checks the values that come from other resources' outputs. |
-| Create      | Every field of a `create` result. The reconciler records the resource, then fails the deploy.                                                                                           |
-| Read        | Every field of a `read` result. A malformed read fails the plan or deploy, so that it is never compared with params.                                                                    |
+| Point       | What is validated                                                                                                                                                                                                                   |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Declaration | The resource's config, in its constructor. [Output values](#output-values) are not known yet; see [Values that hold unknowns](#values-that-hold-unknowns). An async validator's result is awaited when `collectResourceGraph` ends. |
+| Plan        | Every param the plan knows. Values that are unknown until apply are treated as described in [Values that hold unknowns](#values-that-hold-unknowns).                                                                                |
+| Deploy      | Every param deploy knows, before it changes anything. Then each resource's full params, just before its own operation, which checks the values that come from other resources' outputs.                                             |
+| Create      | Every field of a `create` result. The reconciler records the resource, then fails the deploy.                                                                                                                                       |
+| Read        | Every field of a `read` result. A malformed read fails the plan or deploy, so that it is never compared with params.                                                                                                                |
 
 An invalid value raises `ValueValidationError`. Its message names the resource, the field and the `file:line` that declared the resource, and its `issues` list what the validator reported. For a `sensitive` field, each issue keeps its path but has a generic message, because a validator's message can include the value. The `file:line` is the first frame of the call stack outside node_modules and the @notation packages, so a resource that a library helper declares is reported at the user's code that called the helper. The CLI bundles infra code with source maps and turns on Node's source map support, so the `file:line` names the user's source file, not the bundle.
 
@@ -165,7 +165,17 @@ The engine also checks the fields of values against the schema, and raises `Sche
 - `create` returns a field that the schema has but not as computed;
 - a required computed field has no value after create or update.
 
-The last two can only be found after the provider has made its change. So can a malformed read after create or update. In each case the reconciler writes the resource's record first, so that state still tracks the resource, and then fails. When the read is malformed, the record holds the params and the outputs known without the read.
+The last two can only be found after the provider has made its change. So can an invalid value in a `create` result, and a malformed read after create or update. In each case the reconciler writes the resource's record first, so that state still tracks the resource, and then fails. When the read is malformed, the record holds the params and the outputs known without the read.
+
+### Values that hold unknowns
+
+At declaration, output values are not known yet. At plan, and before deploy changes anything, some values are unknown until apply. A field whose value is unknown as a whole is not validated. A field that holds unknowns, such as a policy document with one output ARN, is validated with the unknowns in place. The engine then drops each issue that the unknowns could cause:
+
+- an issue whose path points at an unknown value, or inside one;
+- an issue whose path points at a parent of an unknown value, such as a failed union or object check;
+- an issue with no path, which is at the root of the field.
+
+The other issues are reported. When the validator throws on a field that holds unknowns, the engine treats the field as valid. Just before the resource's own operation, every value is known, and the whole field is validated.
 
 ## Operations
 

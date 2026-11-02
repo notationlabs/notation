@@ -456,6 +456,66 @@ describe("createPlan", () => {
       });
     });
 
+    it("rejects an invalid known value next to an unknown output value", async () => {
+      // Cast: see above.
+      const Queue = resource({ type: "test/planner/validated-queue" })
+        .defineSchema({
+          name: {
+            presence: "required",
+            propertyType: "param",
+            primaryKey: true,
+            value: v.string(),
+          },
+          arn: {
+            presence: "required",
+            propertyType: "computed",
+            value: v.string(),
+          },
+        } as any)
+        .defineOperations({
+          create: async () => undefined,
+          delete: async () => undefined,
+        });
+      const Env = resource({ type: "test/planner/validated-env" })
+        .defineSchema({
+          name: {
+            presence: "required",
+            propertyType: "param",
+            primaryKey: true,
+            value: v.string(),
+          },
+          env: {
+            value: v.record(v.string(), v.string()),
+            presence: "optional",
+            propertyType: "param",
+            collect: mergeContributions,
+          },
+        } as any)
+        .defineOperations({
+          create: async () => undefined,
+          delete: async () => undefined,
+        });
+      const queue = new Queue("queue", { config: { name: "orders" } as any });
+      const env = new Env("env", { config: { name: "env" } as any });
+      env.contribute({
+        env: { QUEUE: (queue as any).outputValue("arn") },
+      } as any);
+      env.contribute({ env: { PORT: 8080 } } as any);
+
+      const plan = createPlan({
+        resources: [env, queue],
+        state: new MemoryStateBackend(),
+        driftDetection: false,
+      });
+      await expect(plan).rejects.toMatchObject({
+        name: "ValueValidationError",
+        resourceId: "env",
+        field: "env",
+        point: "plan",
+        issues: [expect.stringMatching(/^PORT: Invalid type/)],
+      });
+    });
+
     it("rejects a malformed read rather than planning drift from it", async () => {
       memory = 128;
       remote = { name: "fn", memory: "128" };

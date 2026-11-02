@@ -4,7 +4,9 @@ import {
   ValueValidationError,
   assertComputedFields,
   assertRequiredOutputs,
+  UNKNOWN_AFTER_APPLY,
   collectResourceGraph,
+  isUnknownAfterApply,
   resource,
   validateValues,
   withoutDeclarationChecks,
@@ -271,6 +273,131 @@ describe("validation at declaration", () => {
     );
     expect(role.config.MaxSessionDuration).toBe("x");
     expect(() => new Role("next", { config: { RoleName: 1 as any } })).toThrow(
+      ValueValidationError,
+    );
+  });
+});
+
+type Policy = { Resource: string[]; Limit: number };
+
+// Reports an issue at each invalid entry, and also at the parents of the
+// entry, as a union or object check does.
+const policy = (): StandardSchemaV1<Policy, Policy> => ({
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate: (value) => {
+      const { Resource, Limit } = value as Record<string, unknown>;
+      const issues: StandardSchemaV1.Issue[] = [];
+      (Resource as unknown[]).forEach((entry, index) => {
+        if (typeof entry !== "string") {
+          issues.push({
+            message: "Expected a string",
+            path: ["Resource", index],
+          });
+        }
+      });
+      if (issues.length > 0) {
+        issues.push({ message: "Invalid resources", path: ["Resource"] });
+      }
+      if (typeof Limit !== "number") {
+        issues.push({ message: "Expected a number", path: ["Limit"] });
+      }
+      if (issues.length > 0) issues.push({ message: "Invalid policy" });
+      return issues.length > 0 ? { issues } : { value: value as Policy };
+    },
+  },
+});
+
+const PolicyHolder = resource<{
+  Key: { Name: string };
+  CreateParams: { Name: string; Policy?: Policy };
+  UpdateParams: { Policy?: Policy };
+  ReadResult: {};
+}>({ type: "test/validation/policy-holder" })
+  .defineSchema({
+    Name: {
+      propertyType: "param",
+      presence: "required",
+      value: string(),
+      primaryKey: true,
+    },
+    Policy: { propertyType: "param", presence: "optional", value: policy() },
+  })
+  .defineOperations(operations);
+
+describe("values that hold unknowns", () => {
+  const source = new Role("source", { config: { RoleName: "source" } });
+
+  it("reports an invalid known value next to an output value at declaration", () => {
+    const error = catchError(
+      () =>
+        new PolicyHolder("holder", {
+          config: {
+            Name: "holder",
+            Policy: {
+              Resource: [source.outputValue("Arn"), "arn:known"],
+              Limit: "ten" as any,
+            },
+          },
+        }),
+    );
+
+    expect(error).toMatchObject({
+      name: "ValueValidationError",
+      field: "Policy",
+      point: "declaration",
+      issues: ["Limit: Expected a number"],
+    });
+  });
+
+  it("drops issues at, inside and above an unknown value", () => {
+    new PolicyHolder("holder", {
+      config: {
+        Name: "holder",
+        Policy: { Resource: [source.outputValue("Arn")], Limit: 10 },
+      },
+    });
+    expect(() =>
+      validateValues(
+        new PolicyHolder("checked", { config: { Name: "checked" } }),
+        {
+          Policy: {
+            Resource: [UNKNOWN_AFTER_APPLY, "arn:known"],
+            Limit: 10,
+          },
+        },
+        "plan",
+        isUnknownAfterApply,
+      ),
+    ).not.toThrow();
+    expect(
+      catchError(() =>
+        validateValues(
+          new PolicyHolder("mixed", { config: { Name: "mixed" } }),
+          { Policy: { Resource: [UNKNOWN_AFTER_APPLY, 5], Limit: 10 } },
+          "plan",
+          isUnknownAfterApply,
+        ),
+      ).issues,
+    ).toEqual(["Resource.1: Expected a string"]);
+  });
+
+  it("treats a validator that throws on an unknown value as passing", () => {
+    const Throwing = resource<RoleApi>({ type: "test/validation/throwing" })
+      .defineSchema({
+        RoleName: {
+          propertyType: "param",
+          presence: "required",
+          value: check<string>((value) => String(value) !== "", "Empty"),
+          primaryKey: true,
+          immutable: true,
+        },
+      })
+      .defineOperations(operations);
+
+    new Throwing("holder", { config: { RoleName: source.outputValue("Arn") } });
+    expect(() => new Throwing("bad", { config: { RoleName: "" } })).toThrow(
       ValueValidationError,
     );
   });

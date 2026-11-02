@@ -1,6 +1,7 @@
 import type { Schema } from "./resource.schema";
 import type { StandardSchemaV1 } from "./standard-schema";
-import { containsUnknownAfterApply } from "./diff-params";
+import { isUnknownAfterApply } from "./diff-params";
+import { isPlainObject } from "./output-value";
 
 /**
  * Where the engine validated a value:
@@ -12,11 +13,7 @@ import { containsUnknownAfterApply } from "./diff-params";
  * - `read`: the result of the resource's `read`.
  */
 export type ValidationPoint =
-  | "declaration"
-  | "plan"
-  | "deploy"
-  | "create"
-  | "read";
+  "declaration" | "plan" | "deploy" | "create" | "read";
 
 /** The parts of a resource that validation reads. */
 export type ValidationSubject = {
@@ -107,7 +104,15 @@ export class SchemaStructureError extends Error {
 /**
  * Validates each value with the validator of its schema item, and throws
  * `ValueValidationError` for the first that fails. A value that is undefined,
- * that has no schema item, or that `skip` returns true for, is not validated.
+ * or that has no schema item, is not validated.
+ *
+ * `isUnknown` marks values that stand for something not known yet, such as
+ * output values or values unknown until apply. A value that is unknown as a
+ * whole is not validated. A value that holds unknowns is validated with them
+ * in place, and the issues they could cause are dropped: an issue at or inside
+ * an unknown, and an issue at a parent of one, such as a failed union or
+ * object check. An issue with no path is at the root, so it is dropped too.
+ * A validator that throws on such a value reports no issues.
  *
  * Returns a promise only when a validator is async, so validation at
  * declaration can throw from the constructor.
@@ -116,20 +121,24 @@ export function validateValues(
   subject: ValidationSubject,
   values: Record<string, unknown>,
   point: ValidationPoint,
-  skip: (value: unknown) => boolean = () => false,
+  isUnknown: (value: unknown) => boolean = () => false,
 ): void | Promise<void> {
   const pending: Promise<void>[] = [];
   try {
     for (const [field, value] of Object.entries(values)) {
       const item = subject.schema[field];
-      if (!item || value === undefined || skip(value)) continue;
-      const result = item.value["~standard"].validate(value);
+      if (!item || value === undefined) continue;
+      const unknowns = findUnknownPaths(value, isUnknown);
+      if (unknowns.some((path) => path.length === 0)) continue;
+      const result = runValidator(item.value, value, unknowns.length > 0);
       if (result instanceof Promise) {
         pending.push(
-          result.then((settled) => assertValid(subject, field, point, settled)),
+          result.then((settled) =>
+            assertValid(subject, field, point, knownIssues(settled, unknowns)),
+          ),
         );
       } else {
-        assertValid(subject, field, point, result);
+        assertValid(subject, field, point, knownIssues(result, unknowns));
       }
     }
   } catch (error) {
@@ -141,13 +150,80 @@ export function validateValues(
   if (pending.length > 0) return Promise.all(pending).then(() => undefined);
 }
 
+type Path = readonly string[];
+
+function findUnknownPaths(
+  value: unknown,
+  isUnknown: (value: unknown) => boolean,
+  path: Path = [],
+  found: Path[] = [],
+): Path[] {
+  if (isUnknown(value)) {
+    found.push(path);
+  } else if (Array.isArray(value)) {
+    value.forEach((entry, index) =>
+      findUnknownPaths(entry, isUnknown, [...path, String(index)], found),
+    );
+  } else if (isPlainObject(value)) {
+    for (const [key, entry] of Object.entries(value)) {
+      findUnknownPaths(entry, isUnknown, [...path, key], found);
+    }
+  }
+  return found;
+}
+
+function runValidator(
+  validator: StandardSchemaV1,
+  value: unknown,
+  hasUnknowns: boolean,
+):
+  StandardSchemaV1.Result<unknown> | Promise<StandardSchemaV1.Result<unknown>> {
+  if (!hasUnknowns) return validator["~standard"].validate(value);
+  // A validator can throw on an output value or a marker, for example when
+  // it turns the value into a string.
+  const valid = { value };
+  try {
+    const result = validator["~standard"].validate(value);
+    return result instanceof Promise ? result.catch(() => valid) : result;
+  } catch {
+    return valid;
+  }
+}
+
+function knownIssues(
+  result: StandardSchemaV1.Result<unknown>,
+  unknowns: Path[],
+): readonly StandardSchemaV1.Issue[] {
+  const issues = result.issues ?? [];
+  if (unknowns.length === 0) return issues;
+  return issues.filter((issue) => {
+    const path = issuePath(issue);
+    return !unknowns.some((unknown) => isPrefixEither(path, unknown));
+  });
+}
+
+// True when one path is a prefix of the other, or the two are equal.
+function isPrefixEither(a: Path, b: Path): boolean {
+  const length = Math.min(a.length, b.length);
+  for (let index = 0; index < length; index++) {
+    if (a[index] !== b[index]) return false;
+  }
+  return true;
+}
+
+function issuePath(issue: StandardSchemaV1.Issue): Path {
+  return (issue.path ?? []).map((segment) =>
+    String(typeof segment === "object" ? segment.key : segment),
+  );
+}
+
 function assertValid(
   subject: ValidationSubject,
   field: string,
   point: ValidationPoint,
-  result: StandardSchemaV1.Result<unknown>,
+  issues: readonly StandardSchemaV1.Issue[],
 ): void {
-  if (!result.issues) return;
+  if (issues.length === 0) return;
   const sensitive = subject.schema[field]?.sensitive === true;
   throw new ValueValidationError({
     resourceId: subject.id,
@@ -155,7 +231,7 @@ function assertValid(
     field,
     point,
     declaredAt: subject.declaredAt,
-    issues: result.issues.map((issue) => formatIssue(issue, sensitive)),
+    issues: issues.map((issue) => formatIssue(issue, sensitive)),
   });
 }
 
@@ -164,18 +240,14 @@ function formatIssue(
   sensitive: boolean,
 ): string {
   const message = sensitive ? "Invalid sensitive value" : issue.message;
-  const path = (issue.path ?? [])
-    .map((segment) =>
-      String(typeof segment === "object" ? segment.key : segment),
-    )
-    .join(".");
+  const path = issuePath(issue).join(".");
   return path ? `${path}: ${message}` : message;
 }
 
 /**
  * Checks params at plan or deploy: every field is a param, and every value
- * passes its validator. A value that is unknown until apply, or holds one, is
- * skipped.
+ * passes its validator. Values unknown until apply are treated as described
+ * in `validateValues`.
  */
 export async function validateParams(
   subject: ValidationSubject,
@@ -183,7 +255,7 @@ export async function validateParams(
   point: "plan" | "deploy",
 ): Promise<void> {
   assertParamFields(subject, params);
-  await validateValues(subject, params, point, containsUnknownAfterApply);
+  await validateValues(subject, params, point, isUnknownAfterApply);
 }
 
 /** Throws unless every defined value is a param in the schema. */
