@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-iam";
 import { iamClient } from "src/utils/aws-clients";
@@ -22,11 +23,13 @@ const lambdaRolePolicyAttachmentSchema =
     RoleName: {
       propertyType: "param",
       presence: "required",
+      value: v.string(),
       primaryKey: true,
     },
     PolicyArn: {
       propertyType: "param",
       presence: "required",
+      value: v.string(),
       secondaryKey: true,
     },
   } as const);

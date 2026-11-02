@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-lambda";
 import { lambdaClient } from "src/utils/aws-clients";
@@ -26,58 +27,71 @@ const lambdaApiGatewayV2PermissionSchema =
     FunctionName: {
       propertyType: "param",
       presence: "required",
+      value: v.string(),
       primaryKey: true,
     },
     StatementId: {
       propertyType: "param",
       presence: "required",
+      value: v.string(),
       secondaryKey: true,
     },
     Qualifier: {
       propertyType: "param",
       presence: "optional",
+      value: v.string(),
       secondaryKey: true,
     },
     RevisionId: {
       propertyType: "param",
       presence: "optional",
+      value: v.string(),
       secondaryKey: true,
     },
     Action: {
       propertyType: "param",
       presence: "required",
+      value: v.string(),
     },
     Principal: {
       propertyType: "param",
       presence: "required",
+      value: v.string(),
     },
     FunctionUrlAuthType: {
       propertyType: "param",
       presence: "optional",
+      value: v.enum(sdk.FunctionUrlAuthType),
     },
     InvocationType: {
       propertyType: "param",
       presence: "optional",
+      value: v.enum(sdk.InvocationType),
     },
     Policy: {
       propertyType: "computed",
       presence: "optional",
+      value: v.string(),
     },
     PrincipalOrgID: {
       propertyType: "param",
       presence: "optional",
+      value: v.string(),
     },
     SourceArn: {
       propertyType: "param",
       presence: "optional",
+      value: v.string(),
     },
     EventSourceToken: {
       propertyType: "param",
       presence: "optional",
+      value: v.string(),
     },
     SourceAccount: {
       propertyType: "param",
       presence: "optional",
+      value: v.string(),
     },
   } as const);
 

@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-cloudwatch-logs";
 import { cloudWatchLogsClient } from "src/utils/aws-clients";
@@ -19,19 +20,23 @@ const lambdaLogGroupSchema = lambdaLogGroup.defineSchema({
   logGroupName: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
     primaryKey: true,
   },
   kmsKeyId: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   tags: {
     propertyType: "param",
     presence: "optional",
+    value: v.record(v.string(), v.string()),
   },
   retentionInDays: {
     propertyType: "param",
     presence: "required",
+    value: v.number(),
   },
 } as const);
 

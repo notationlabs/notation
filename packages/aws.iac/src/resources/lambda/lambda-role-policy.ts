@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-iam";
 import { iamClient } from "src/utils/aws-clients";
@@ -29,6 +30,23 @@ export type LambdaRolePolicySchema = AwsSchema<{
   ReadResult: LambdaRolePolicyParams;
 }>;
 
+const stringOrStrings = v.union([v.string(), v.array(v.string())]);
+
+const policyDocumentValue = v.object({
+  Version: v.literal("2012-10-17"),
+  Statement: v.array(
+    v.object({
+      Sid: v.optional(v.string()),
+      Effect: v.picklist(["Allow", "Deny"]),
+      Action: stringOrStrings,
+      Resource: stringOrStrings,
+      Condition: v.optional(
+        v.record(v.string(), v.record(v.string(), stringOrStrings)),
+      ),
+    }),
+  ),
+});
+
 const lambdaRolePolicy = resource<LambdaRolePolicySchema>({
   type: "aws/lambda/LambdaRolePolicy",
 });
@@ -37,16 +55,19 @@ const lambdaRolePolicySchema = lambdaRolePolicy.defineSchema({
   RoleName: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
     primaryKey: true,
   },
   PolicyName: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
     secondaryKey: true,
   },
   PolicyDocument: {
     propertyType: "param",
     presence: "required",
+    value: policyDocumentValue,
     // Statements are concatenated in the order the engine sorts them into,
     // so the document does not depend on the order code ran in.
     collect: (items) => ({

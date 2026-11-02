@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import {
   resource,
   ResourceNotFoundError,
@@ -54,40 +55,49 @@ const lambdaEventSourceMappingSchema = lambdaEventSourceMapping.defineSchema({
   UUID: {
     propertyType: "computed",
     presence: "required",
+    value: v.string(),
     primaryKey: true,
   },
   EventSourceArn: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
     immutable: true,
   },
   EventSourceMappingArn: {
     propertyType: "computed",
     presence: "required",
+    value: v.string(),
   },
   FunctionName: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
   },
   FunctionArn: {
     propertyType: "computed",
     presence: "required",
+    value: v.string(),
   },
   BatchSize: {
     propertyType: "param",
     presence: "optional",
+    value: v.number(),
   },
   MaximumBatchingWindowInSeconds: {
     propertyType: "param",
     presence: "optional",
+    value: v.number(),
   },
   Enabled: {
     propertyType: "param",
     presence: "optional",
+    value: v.boolean(),
   },
   State: {
     propertyType: "computed",
     presence: "required",
+    value: v.string(),
     volatile: true,
   },
 } as const);
