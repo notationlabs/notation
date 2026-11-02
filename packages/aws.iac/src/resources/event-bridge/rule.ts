@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { AwsSchema } from "src/utils/types";
 import * as sdk from "@aws-sdk/client-eventbridge";
@@ -58,34 +59,160 @@ const eventBridgeRule = resource<EventBridgeRuleSchema>({
   type: "aws/eventBridge/rule",
 });
 
+const keyValue = v.object({ Key: v.string(), Value: v.string() });
+
+const ecsParameters = v.object({
+  TaskDefinitionArn: v.string(),
+  TaskCount: v.optional(v.number()),
+  LaunchType: v.optional(v.enum(sdk.LaunchType)),
+  NetworkConfiguration: v.optional(
+    v.object({
+      awsvpcConfiguration: v.optional(
+        v.object({
+          Subnets: v.array(v.string()),
+          SecurityGroups: v.optional(v.array(v.string())),
+          AssignPublicIp: v.optional(v.enum(sdk.AssignPublicIp)),
+        }),
+      ),
+    }),
+  ),
+  PlatformVersion: v.optional(v.string()),
+  Group: v.optional(v.string()),
+  CapacityProviderStrategy: v.optional(
+    v.array(
+      v.object({
+        capacityProvider: v.string(),
+        weight: v.optional(v.number()),
+        base: v.optional(v.number()),
+      }),
+    ),
+  ),
+  EnableECSManagedTags: v.optional(v.boolean()),
+  EnableExecuteCommand: v.optional(v.boolean()),
+  PlacementConstraints: v.optional(
+    v.array(
+      v.object({
+        type: v.optional(v.enum(sdk.PlacementConstraintType)),
+        expression: v.optional(v.string()),
+      }),
+    ),
+  ),
+  PlacementStrategy: v.optional(
+    v.array(
+      v.object({
+        type: v.optional(v.enum(sdk.PlacementStrategyType)),
+        field: v.optional(v.string()),
+      }),
+    ),
+  ),
+  PropagateTags: v.optional(v.enum(sdk.PropagateTags)),
+  ReferenceId: v.optional(v.string()),
+  Tags: v.optional(v.array(keyValue)),
+});
+
+const target = v.object({
+  Id: v.string(),
+  Arn: v.string(),
+  RoleArn: v.optional(v.string()),
+  Input: v.optional(v.string()),
+  InputPath: v.optional(v.string()),
+  InputTransformer: v.optional(
+    v.object({
+      InputPathsMap: v.optional(v.record(v.string(), v.string())),
+      InputTemplate: v.string(),
+    }),
+  ),
+  KinesisParameters: v.optional(v.object({ PartitionKeyPath: v.string() })),
+  RunCommandParameters: v.optional(
+    v.object({
+      RunCommandTargets: v.array(
+        v.object({ Key: v.string(), Values: v.array(v.string()) }),
+      ),
+    }),
+  ),
+  EcsParameters: v.optional(ecsParameters),
+  BatchParameters: v.optional(
+    v.object({
+      JobDefinition: v.string(),
+      JobName: v.string(),
+      ArrayProperties: v.optional(v.object({ Size: v.optional(v.number()) })),
+      RetryStrategy: v.optional(v.object({ Attempts: v.optional(v.number()) })),
+    }),
+  ),
+  SqsParameters: v.optional(
+    v.object({ MessageGroupId: v.optional(v.string()) }),
+  ),
+  HttpParameters: v.optional(
+    v.object({
+      PathParameterValues: v.optional(v.array(v.string())),
+      HeaderParameters: v.optional(v.record(v.string(), v.string())),
+      QueryStringParameters: v.optional(v.record(v.string(), v.string())),
+    }),
+  ),
+  RedshiftDataParameters: v.optional(
+    v.object({
+      SecretManagerArn: v.optional(v.string()),
+      Database: v.string(),
+      DbUser: v.optional(v.string()),
+      Sql: v.optional(v.string()),
+      StatementName: v.optional(v.string()),
+      WithEvent: v.optional(v.boolean()),
+      Sqls: v.optional(v.array(v.string())),
+    }),
+  ),
+  SageMakerPipelineParameters: v.optional(
+    v.object({
+      PipelineParameterList: v.optional(
+        v.array(v.object({ Name: v.string(), Value: v.string() })),
+      ),
+    }),
+  ),
+  DeadLetterConfig: v.optional(v.object({ Arn: v.optional(v.string()) })),
+  RetryPolicy: v.optional(
+    v.object({
+      MaximumRetryAttempts: v.optional(v.number()),
+      MaximumEventAgeInSeconds: v.optional(v.number()),
+    }),
+  ),
+  AppSyncParameters: v.optional(
+    v.object({ GraphQLOperation: v.optional(v.string()) }),
+  ),
+});
+
 const eventBridgeRuleSchema = eventBridgeRule.defineSchema({
   Name: {
     presence: "required",
     primaryKey: true,
     propertyType: "param",
+    value: v.string(),
   },
   EventBusName: {
     presence: "required",
     propertyType: "param",
     secondaryKey: true,
+    value: v.string(),
   },
   ScheduleExpression: {
     presence: "optional",
     propertyType: "param",
+    value: v.string(),
   },
   EventPattern: {
     // Note: this is a JSON string representation of an event pattern:
     // (https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns.html#eb-filtering-data-types)
     presence: "optional",
     propertyType: "param",
+    value: v.string(),
   },
   Targets: {
     presence: "required",
     propertyType: "param",
+    value: v.array(target),
   },
   Arn: {
     presence: "required",
     propertyType: "computed",
+    value: v.string(),
   },
 });
 

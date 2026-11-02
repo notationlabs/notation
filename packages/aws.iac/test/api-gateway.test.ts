@@ -3,6 +3,8 @@ import * as sdk from "@aws-sdk/client-apigatewayv2";
 import {
   ResourceCreationUnknownError,
   ResourceNotFoundError,
+  validateValues,
+  ValueValidationError,
 } from "@notation/resource";
 import { createPlan } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
@@ -26,7 +28,7 @@ function mockSend(handler: (command: unknown) => unknown) {
 
 describe("API Gateway API", () => {
   const api = new Api("api", {
-    config: { Name: "app", ProtocolType: "HTTP" } as any,
+    config: { Name: "app", ProtocolType: "HTTP" },
   });
 
   it("reports a create that gets a server error as unknown", async () => {
@@ -118,6 +120,33 @@ describe("API Gateway API", () => {
     const untagged = (await api.read!({ ApiId: "api-1" })) as { Tags: unknown };
     expect(untagged.Tags).toBeUndefined();
   });
+
+  it("reads an API in the shape its validators accept", async () => {
+    mockSend(() => ({
+      ApiId: "api-1",
+      ApiEndpoint: "https://api-1.execute-api.eu-west-2.amazonaws.com",
+      CreatedDate: new Date("2026-07-22T00:00:00.000Z"),
+      Name: "app",
+      ProtocolType: "HTTP",
+      CorsConfiguration: { AllowOrigins: ["*"], MaxAge: 300 },
+      Tags: { team: "web", [CREATE_TOKEN_TAG]: "hash" },
+      $metadata: {},
+    }));
+    const result = await api.read!({ ApiId: "api-1" });
+
+    expect(() =>
+      validateValues(api, api.toResult(result), "read"),
+    ).not.toThrow();
+  });
+
+  it("rejects a protocol type that API Gateway does not have", () => {
+    expect(
+      () =>
+        new Api("bad-api", {
+          config: { Name: "app", ProtocolType: "GRPC" } as any,
+        }),
+    ).toThrow(ValueValidationError);
+  });
 });
 
 describe("API Gateway API drift", () => {
@@ -125,7 +154,7 @@ describe("API Gateway API drift", () => {
     ["no Tags", {}],
     ["empty Tags", { Tags: {} }],
   ])("reports no drift for an API with %s", async (_name, tags) => {
-    const config = { Name: "app", ProtocolType: "HTTP", ...tags } as any;
+    const config = { Name: "app", ProtocolType: "HTTP" as const, ...tags };
     const api = new Api("api", { config });
     const params = await api.getParams();
     mockSend(() => ({

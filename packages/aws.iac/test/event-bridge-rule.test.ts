@@ -1,6 +1,7 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/utils/aws-clients";
+import { validateValues } from "@notation/resource";
 import { EventBridgeRule } from "src/resources/event-bridge/rule";
 
 const send = vi.spyOn(eventBridgeClient, "send");
@@ -90,6 +91,9 @@ test("read reports the rule's current targets", async () => {
   const result = await rule.read!(key);
 
   expect(result).toMatchObject({ Targets: [{ Id: "fn", Arn: "arn:fn" }] });
+  expect(() =>
+    validateValues(rule, rule.toResult(result), "read"),
+  ).not.toThrow();
 });
 
 function mockFailedEntries(

@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/utils/aws-clients";
@@ -21,78 +22,104 @@ const api = resource<ApiSdkSchema>({
   type: "aws/apiGateway/Api",
 });
 
+const cors = v.object({
+  AllowCredentials: v.optional(v.boolean()),
+  AllowHeaders: v.optional(v.array(v.string())),
+  AllowMethods: v.optional(v.array(v.string())),
+  AllowOrigins: v.optional(v.array(v.string())),
+  ExposeHeaders: v.optional(v.array(v.string())),
+  MaxAge: v.optional(v.number()),
+});
+
 const apiSchema = api.defineSchema({
   ApiId: {
     propertyType: "computed",
     presence: "required",
     primaryKey: true,
+    value: v.string(),
   },
   ApiEndpoint: {
     propertyType: "computed",
     presence: "required",
+    value: v.string(),
   },
   ApiGatewayManaged: {
     propertyType: "computed",
     presence: "optional",
+    value: v.boolean(),
   },
   ApiKeySelectionExpression: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   CorsConfiguration: {
     propertyType: "param",
     presence: "optional",
+    value: cors,
   },
   CreatedDate: {
     propertyType: "computed",
     presence: "required",
     volatile: true,
+    value: v.date(),
   },
   Description: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   DisableExecuteApiEndpoint: {
     propertyType: "param",
     presence: "optional",
+    value: v.boolean(),
   },
   DisableSchemaValidation: {
     propertyType: "param",
     presence: "optional",
+    value: v.boolean(),
   },
   ImportInfo: {
     propertyType: "computed",
     presence: "optional",
+    value: v.array(v.string()),
   },
   Name: {
     propertyType: "param",
     presence: "required",
+    value: v.string(),
   },
   ProtocolType: {
     propertyType: "param",
     immutable: true,
     presence: "required",
+    value: v.enum(sdk.ProtocolType),
   },
   RouteKey: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   RouteSelectionExpression: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
   Tags: {
     propertyType: "param",
     presence: "optional",
     immutable: true,
+    value: v.record(v.string(), v.string()),
   },
   Warnings: {
     propertyType: "computed",
     presence: "optional",
+    value: v.array(v.string()),
   },
   Version: {
     propertyType: "param",
     presence: "optional",
+    value: v.string(),
   },
 } as const);
 

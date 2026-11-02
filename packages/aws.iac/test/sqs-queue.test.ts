@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-sqs";
-import { ResourceNotFoundError } from "@notation/resource";
+import {
+  ResourceNotFoundError,
+  validateValues,
+  ValueValidationError,
+} from "@notation/resource";
 import { sqsClient } from "src/utils/aws-clients";
 import { Queue } from "src/resources/sqs/queue";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
@@ -86,7 +90,12 @@ describe("SQS queue", () => {
       },
     }));
 
-    expect(await queue.read!({ QueueUrl: url })).toEqual({
+    const result = await queue.read!({ QueueUrl: url });
+
+    expect(() =>
+      validateValues(queue, queue.toResult(result), "read"),
+    ).not.toThrow();
+    expect(result).toEqual({
       QueueUrl: url,
       QueueArn: "arn:aws:sqs:eu-west-2:123456789012:orders",
       QueueName: "orders",
@@ -96,6 +105,15 @@ describe("SQS queue", () => {
       DelaySeconds: 0,
       ReceiveMessageWaitTimeSeconds: 0,
     });
+  });
+
+  it("rejects a visibility timeout that SQS does not allow", () => {
+    expect(
+      () =>
+        new Queue("bad-queue", {
+          config: { QueueName: "bad", VisibilityTimeout: 50_000 },
+        }),
+    ).toThrow(ValueValidationError);
   });
 
   it("resets a removed attribute to the API's default", async () => {
