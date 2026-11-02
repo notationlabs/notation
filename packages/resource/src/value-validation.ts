@@ -8,9 +8,15 @@ import { containsUnknownAfterApply } from "./diff-params";
  * - `plan`: the params a plan knows.
  * - `deploy`: params, before deploy changes anything, and again just before
  *   the resource's own operation.
+ * - `create`: the result of the resource's `create`.
  * - `read`: the result of the resource's `read`.
  */
-export type ValidationPoint = "declaration" | "plan" | "deploy" | "read";
+export type ValidationPoint =
+  | "declaration"
+  | "plan"
+  | "deploy"
+  | "create"
+  | "read";
 
 /** The parts of a resource that validation reads. */
 export type ValidationSubject = {
@@ -49,8 +55,8 @@ export class ValueValidationError extends Error {
     const resource = `${opts.resourceId} (${opts.resourceType})`;
     const site = opts.declaredAt ? `, declared at ${opts.declaredAt}` : "";
     const subject =
-      opts.point === "read"
-        ? `The read of ${resource} returned an invalid ${opts.field}${site}`
+      opts.point === "read" || opts.point === "create"
+        ? `The ${opts.point} of ${resource} returned an invalid ${opts.field}${site}`
         : opts.point === "declaration"
           ? `Invalid ${opts.field} for ${resource} when declared${opts.declaredAt ? ` at ${opts.declaredAt}` : ""}`
           : `Invalid ${opts.field} for ${resource} at ${opts.point}${site}`;

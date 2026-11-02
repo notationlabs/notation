@@ -7,6 +7,7 @@ import {
   assertRequiredOutputs,
   deployLookup,
   resolveOutputValues,
+  validateValues,
   type BaseResource,
   type DurableObject,
   type ResourceOperationContext,
@@ -85,6 +86,15 @@ export async function* createResourceOperation(
       if (computedPrimaryKey) {
         assertComputedFields(params.resource, computedPrimaryKey);
       }
+    });
+    if (!deferredError && computedPrimaryKey) {
+      try {
+        await validateValues(params.resource, computedPrimaryKey, "create");
+      } catch (error) {
+        deferredError = error;
+      }
+    }
+    deferredError ??= catchError(() => {
       assertRequiredOutputs(params.resource, params.resource.output);
     });
 

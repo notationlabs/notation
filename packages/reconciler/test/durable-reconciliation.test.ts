@@ -2017,7 +2017,11 @@ describe("value validation at deploy", () => {
       });
   }
 
-  function defineFn(create: () => Promise<void>, memory: () => number) {
+  function defineFn(
+    create: () => Promise<void>,
+    memory: () => number,
+    roleValue: v.GenericSchema<string> = v.string(),
+  ) {
     return resource<FnApi>({ type: "test/durable/validated-fn" })
       .defineSchema({
         name: {
@@ -2035,7 +2039,7 @@ describe("value validation at deploy", () => {
         role: {
           propertyType: "param",
           presence: "required",
-          value: v.string(),
+          value: roleValue,
         },
       })
       .defineOperations({
@@ -2136,8 +2140,12 @@ describe("value validation at deploy", () => {
 
   it("checks a value from another resource's output just before its operation", async () => {
     const createFn = vi.fn(async () => undefined);
-    const Role = defineRole({ create: async () => ({ arn: 42 }) as any });
-    const Fn = defineFn(createFn, () => 128);
+    const Role = defineRole({ create: async () => ({ arn: "role-arn" }) });
+    const Fn = defineFn(
+      createFn,
+      () => 128,
+      v.pipe(v.string(), v.startsWith("arn:")),
+    );
     const role = new Role("role", { config: { name: "role" } });
     const fn = new Fn("fn", {
       config: { name: "fn", role: role.outputValue("arn") },
@@ -2157,7 +2165,7 @@ describe("value validation at deploy", () => {
     });
     expect(createFn).not.toHaveBeenCalled();
     expect(await runtime.state.get("role")).toMatchObject({
-      output: { arn: 42 },
+      output: { arn: "role-arn" },
     });
     expect(await runtime.state.get("fn")).toBeUndefined();
     runtime.close();
@@ -2313,6 +2321,31 @@ describe("value validation at deploy", () => {
     );
     expect(await runtime.state.get("role")).toMatchObject({
       output: { arn: "arn:role" },
+    });
+    runtime.close();
+  });
+
+  it("records the resource, then fails, when a create result value is invalid", async () => {
+    const Role = defineRole({ create: async () => ({ arn: 42 }) as any });
+    const runtime = createRuntime(
+      [new Role("role", { config: { name: "role" } })],
+      "validate-create-value",
+    );
+
+    const error = await runtime.run("validate-create-value-1").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "ValueValidationError",
+      resourceId: "role",
+      field: "arn",
+      point: "create",
+    });
+    expect(error.message).toMatch(
+      /^The create of role \(test\/durable\/validated-role\) returned an invalid arn/,
+    );
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "create",
+      output: { arn: 42 },
     });
     runtime.close();
   });

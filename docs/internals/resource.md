@@ -145,13 +145,14 @@ A field that needs a narrower type than the API's, such as one of a few strings,
 
 The engine only checks values. It keeps the value it was given, not the validator's output. So the validator's input type must also be assignable to the field's type, and a validator that transforms its input, such as `v.pipe(v.string(), v.transform(Number))`, does not compile. A default that a validator fills in for an optional field, such as `v.optional(v.string(), "x")`, still compiles but is not applied.
 
-The engine validates values at four points:
+The engine validates values at five points:
 
 | Point       | What is validated                                                                                                                                                                       |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Declaration | The resource's config, in its constructor. A value that holds an [output value](#output-values) is skipped. An async validator's result is awaited when `collectResourceGraph` ends.    |
 | Plan        | Every param the plan knows. A value that is unknown until apply is skipped.                                                                                                             |
 | Deploy      | Every param deploy knows, before it changes anything. Then each resource's full params, just before its own operation, which checks the values that come from other resources' outputs. |
+| Create      | Every field of a `create` result. The reconciler records the resource, then fails the deploy.                                                                                           |
 | Read        | Every field of a `read` result. A malformed read fails the plan or deploy, so that it is never compared with params.                                                                    |
 
 An invalid value raises `ValueValidationError`. Its message names the resource, the field and the `file:line` that declared the resource, and its `issues` list what the validator reported. For a `sensitive` field, each issue keeps its path but has a generic message, because a validator's message can include the value. The `file:line` is the first frame of the call stack outside node_modules and the @notation packages, so a resource that a library helper declares is reported at the user's code that called the helper. The CLI bundles infra code with source maps and turns on Node's source map support, so the `file:line` names the user's source file, not the bundle.
