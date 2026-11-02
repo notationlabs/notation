@@ -321,6 +321,7 @@ const PolicyHolder = resource<{
       presence: "required",
       value: string(),
       primaryKey: true,
+      immutable: true,
     },
     Policy: { propertyType: "param", presence: "optional", value: policy() },
   })
@@ -384,7 +385,12 @@ describe("values that hold unknowns", () => {
   });
 
   it("treats a validator that throws on an unknown value as passing", () => {
-    const Throwing = resource<RoleApi>({ type: "test/validation/throwing" })
+    const Throwing = resource<{
+      Key: { RoleName: string };
+      CreateParams: { RoleName: string };
+      UpdateParams: {};
+      ReadResult: {};
+    }>({ type: "test/validation/throwing" })
       .defineSchema({
         RoleName: {
           propertyType: "param",
