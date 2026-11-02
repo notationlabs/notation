@@ -10,11 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { setConfigFile } from "@notation/core";
-import {
-  compileInfra,
-  compileRuntimeModules,
-  findRuntimeModules,
-} from "../src/compile";
+import { compileInfra, compileRuntimeModules } from "../src/compile";
 
 // Inside this package, so the project's imports of @notation/aws resolve
 // from the package's node_modules, to the built package.
@@ -73,8 +69,9 @@ it("deploys a runtime module as one lambda that dispatches to each export", asyn
     `,
   );
 
-  await compileInfra(path.join(root, "infra/main.ts"));
-  await compileRuntimeModules(await findRuntimeModules());
+  await compileRuntimeModules(
+    await compileInfra(path.join(root, "infra/main.ts")),
+  );
 
   // Evaluates the infra bundle, fills in the outputs that the lambda's params
   // need, and then calls the runtime bundle with the environment that a

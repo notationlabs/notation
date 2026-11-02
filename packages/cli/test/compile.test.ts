@@ -11,11 +11,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setConfigFile } from "@notation/core";
-import {
-  compileInfra,
-  compileRuntimeModules,
-  findRuntimeModules,
-} from "../src/compile";
+import { compileInfra, compileRuntimeModules } from "../src/compile";
 
 // Inside the repository, so the bundle's imports of @notation packages
 // resolve from the root node_modules.
@@ -81,16 +77,30 @@ const todos = `
 `;
 
 describe("runtime modules", () => {
-  it("finds the files that match the globs and export resource", async () => {
+  it("returns the runtime modules that the infra build replaced", async () => {
+    write(
+      "infra/main.ts",
+      [
+        `import { getTodos } from "../runtime/todos.fn";`,
+        `import { util } from "../runtime/utils.fn";`,
+        `import { createTodo } from "../runtime/jobs";`,
+        `console.log(getTodos, util, createTodo);`,
+      ].join("\n"),
+    );
     write("runtime/todos.fn.ts", todos);
     write("runtime/utils.fn.ts", `export const util = 1;`);
-    write("runtime/jobs.ts", todos);
-    write("node_modules/pkg/todos.fn.ts", todos);
+    write("runtime/jobs.ts", todos.replace(`"todos"`, `"jobs"`));
+    write("runtime/unused.fn.ts", todos.replace(`"todos"`, `"unused"`));
+    const entryPoint = path.join(root, "infra/main.ts");
 
-    expect(await findRuntimeModules(["**/*.fn.ts"])).toEqual([
+    expect(
+      await compileInfra(entryPoint, { runtimeModules: ["**/*.fn.ts"] }),
+    ).toEqual([
       { path: path.join(root, "runtime/todos.fn.ts"), service: "aws/lambda" },
     ]);
-    expect(await findRuntimeModules(["runtime/**"])).toEqual([
+    expect(
+      await compileInfra(entryPoint, { runtimeModules: ["runtime/**"] }),
+    ).toEqual([
       { path: path.join(root, "runtime/jobs.ts"), service: "aws/lambda" },
       { path: path.join(root, "runtime/todos.fn.ts"), service: "aws/lambda" },
     ]);
@@ -98,11 +108,17 @@ describe("runtime modules", () => {
 
   it("fails for a matching module that exports config", async () => {
     write(
+      "infra/main.ts",
+      `import { getTodos } from "../runtime/todos.fn";\nconsole.log(getTodos);\n`,
+    );
+    write(
       "runtime/todos.fn.ts",
-      `export const config = { service: "aws/lambda", id: "todos" };`,
+      `export const getTodos = () => [];\nexport const config = { service: "aws/lambda", id: "todos" };`,
     );
 
-    await expect(findRuntimeModules(["**/*.fn.ts"])).rejects.toThrow(
+    await expect(
+      compileInfra(path.join(root, "infra/main.ts")),
+    ).rejects.toThrow(
       'runtime/todos.fn.ts: rename the "config" export to "resource"',
     );
   });
@@ -122,8 +138,14 @@ describe("runtime modules", () => {
       `export const createDispatcher = (mod) => (event) => mod[event.export](event);`,
     );
     write("runtime/todos.fn.ts", todos);
+    write(
+      "infra/main.ts",
+      `import { getTodos } from "../runtime/todos.fn";\nconsole.log(getTodos);\n`,
+    );
 
-    await compileRuntimeModules(await findRuntimeModules(["**/*.fn.ts"]));
+    await compileRuntimeModules(
+      await compileInfra(path.join(root, "infra/main.ts")),
+    );
 
     const bundle = path.join(root, "dist/runtime/todos.fn/index.mjs");
     const { handler } = await import(pathToFileURL(bundle).href);

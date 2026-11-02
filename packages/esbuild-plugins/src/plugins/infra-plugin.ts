@@ -6,10 +6,23 @@ import { parseRuntimeModule } from "src/parsers/parse-runtime-module";
 import { matchesRuntimeModules } from "src/runtime-modules";
 import { GetFile, fsGetFile, withFileCheck } from "src/utils/get-file";
 
+/** A runtime module that the infra plugin replaced. */
+export type RuntimeModuleEntry = {
+  /** The absolute path of the module. */
+  path: string;
+  /** The module's `resource.service`, such as `aws/lambda`. */
+  service: string;
+};
+
 type PluginOpts = {
   /** Globs for the files that can be runtime modules. */
   runtimeModules: string[];
   getFile?: GetFile;
+  /**
+   * Called after each build without errors, with the runtime modules that the
+   * build replaced, sorted by path.
+   */
+  onRuntimeModules?: (modules: RuntimeModuleEntry[]) => void;
 };
 
 /**
@@ -23,6 +36,12 @@ export function infraPlugin(opts: PluginOpts): Plugin {
   return {
     name: "notation-infra",
     setup(build) {
+      let replaced = new Map<string, RuntimeModuleEntry>();
+
+      build.onStart(() => {
+        replaced = new Map();
+      });
+
       build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
         if (!matchesRuntimeModules(args.path, opts.runtimeModules)) return;
 
@@ -33,6 +52,10 @@ export function infraPlugin(opts: PluginOpts): Plugin {
         );
         if (!runtimeModule) return;
 
+        replaced.set(args.path, {
+          path: args.path,
+          service: runtimeModule.resource.service,
+        });
         const codePath = toProjectRoot(filePaths.dist.runtime.index(args.path));
         return {
           contents: createResourceModule(runtimeModule, codePath),
@@ -40,6 +63,14 @@ export function infraPlugin(opts: PluginOpts): Plugin {
           resolveDir: path.dirname(args.path),
           watchFiles: [args.path],
         };
+      });
+
+      build.onEnd((result) => {
+        if (!opts.onRuntimeModules || result.errors.length > 0) return;
+        const modules = [...replaced.values()].sort((a, b) =>
+          a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+        );
+        opts.onRuntimeModules(modules);
       });
     },
   };

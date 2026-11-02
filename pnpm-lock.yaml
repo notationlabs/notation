@@ -302,13 +302,13 @@ importers:
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
-      glob:
-        specifier: ^13.0.6
-        version: 13.0.6
     devDependencies:
       '@notation/aws':
         specifier: workspace:*
         version: link:../aws
+      '@notation/aws.iac':
+        specifier: workspace:*
+        version: link:../aws.iac
       '@notation/resource':
         specifier: workspace:*
         version: link:../resource
@@ -444,6 +444,9 @@ importers:
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
+      minimatch:
+        specifier: ^10.2.5
+        version: 10.2.5
       typescript:
         specifier: ^6.0.3
         version: 6.0.3

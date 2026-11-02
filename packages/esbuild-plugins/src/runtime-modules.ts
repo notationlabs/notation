@@ -1,4 +1,5 @@
 import path from "node:path";
+import { minimatch } from "minimatch";
 import { toProjectRoot } from "@notation/core";
 
 /** Globs, relative to the project root, that never hold runtime modules. */
@@ -15,10 +16,8 @@ export function matchesRuntimeModules(filePath: string, globs: string[]) {
   if (relativePath.startsWith("../") || path.isAbsolute(relativePath)) {
     return false;
   }
-  if (
-    runtimeModulesIgnore.some((glob) => path.matchesGlob(relativePath, glob))
-  ) {
+  if (runtimeModulesIgnore.some((glob) => minimatch(relativePath, glob))) {
     return false;
   }
-  return globs.some((glob) => path.matchesGlob(relativePath, glob));
+  return globs.some((glob) => minimatch(relativePath, glob));
 }

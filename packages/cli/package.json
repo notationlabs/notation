@@ -9,6 +9,9 @@
   "bin": {
     "notation": "dist/index.js"
   },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsup --clean",
     "dev": "tsup --watch",
@@ -20,11 +23,11 @@
     "@notation/esbuild-plugins": "workspace:*",
     "chokidar": "^4.0.3",
     "commander": "^13.1.0",
-    "esbuild": "^0.25.0",
-    "glob": "^13.0.6"
+    "esbuild": "^0.25.0"
   },
   "devDependencies": {
     "@notation/aws": "workspace:*",
+    "@notation/aws.iac": "workspace:*",
     "@notation/resource": "workspace:*",
     "@types/which-pm-runs": "^1.0.2"
   }
