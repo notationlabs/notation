@@ -97,7 +97,10 @@ describe("runtime modules", () => {
   });
 
   it("fails for a matching module that exports config", async () => {
-    write("runtime/todos.fn.ts", `export const config = { id: "todos" };`);
+    write(
+      "runtime/todos.fn.ts",
+      `export const config = { service: "aws/lambda", id: "todos" };`,
+    );
 
     await expect(findRuntimeModules(["**/*.fn.ts"])).rejects.toThrow(
       'runtime/todos.fn.ts: rename the "config" export to "resource"',

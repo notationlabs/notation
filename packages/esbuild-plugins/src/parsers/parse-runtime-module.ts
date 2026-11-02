@@ -22,13 +22,22 @@ export type RuntimeModule = {
 
 type Export = { name: string; node: ts.Node };
 
-const servicePattern = /^[a-z0-9-]+\/[A-Za-z_$][\w$]*$/;
+export const supportedServices = ["aws/lambda"];
+
+// Copied from the Lambda ID rule in @notation/aws, which this package can't
+// import.
+const ID_MAX_LENGTH = 64;
+const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+// The generated resource module declares these names next to the module's
+// exports.
+const RESERVED_PREFIX = "__notation";
 
 /**
  * Reads a module that matched a runtime-module glob. Returns `undefined` when
  * the module does not export `resource`, so it is an ordinary module. Throws
- * when the module still exports `config`, or when `resource` cannot be read
- * without evaluating the module.
+ * when the module still exports `config` in the old shape, or when `resource`
+ * cannot be read without evaluating the module.
  * @param filePath Names the module in error messages.
  */
 export function parseRuntimeModule(
@@ -52,7 +61,8 @@ export function parseRuntimeModule(
 
   const resourceExport = exports.find((exp) => exp.name === "resource");
   if (!resourceExport) {
-    if (exports.some((exp) => exp.name === "config")) {
+    const config = exports.find((exp) => exp.name === "config");
+    if (config && isOldConfig(config.node)) {
       fail(
         'rename the "config" export to "resource". A runtime module exports `resource`, e.g. `export const resource = { service: "aws/lambda", id: "todos" }`.',
       );
@@ -68,8 +78,38 @@ export function parseRuntimeModule(
   return { resource, exports: [...new Set(names)] };
 }
 
+// The old `config` export declared the service, as in
+// `export const config = { service: "aws/lambda", id: "todos" }`. A `config`
+// export without a `service` property is ordinary code.
+function isOldConfig(node: ts.Node) {
+  const expression = unwrap(node);
+  return (
+    ts.isObjectLiteralExpression(expression) &&
+    expression.properties.some(
+      (property) =>
+        property.name !== undefined && readKey(property.name) === "service",
+    )
+  );
+}
+
 function getExports(node: ts.Statement, fail: (m: string) => never): Export[] {
+  return readExports(node, fail).map((exp) => {
+    if (exp.name.startsWith(RESERVED_PREFIX)) {
+      fail(
+        `the export name "${exp.name}" is reserved. Names that start with "${RESERVED_PREFIX}" are used by the compiler.`,
+      );
+    }
+    return exp;
+  });
+}
+
+function readExports(node: ts.Statement, fail: (m: string) => never): Export[] {
   if (ts.isExportAssignment(node)) {
+    if (node.isExportEquals) {
+      return fail(
+        "`export =` is not supported in a runtime module. Use named exports.",
+      );
+    }
     return fail("default exports are not supported in a runtime module");
   }
 
@@ -81,20 +121,21 @@ function getExports(node: ts.Statement, fail: (m: string) => never): Export[] {
       );
     }
     if (ts.isNamespaceExport(node.exportClause)) {
-      return [{ name: node.exportClause.name.text, node }];
+      return [{ name: readExportName(node.exportClause.name, fail), node }];
     }
     return node.exportClause.elements
       .filter((element) => !element.isTypeOnly)
       .map((element) => {
-        if (element.name.text === "default") {
+        const name = readExportName(element.name, fail);
+        if (name === "default") {
           return fail("default exports are not supported in a runtime module");
         }
-        if (element.name.text === "resource") {
+        if (name === "resource") {
           return fail(
             "`resource` must be declared with `export const resource = { ... }`",
           );
         }
-        return { name: element.name.text, node: element };
+        return { name, node: element };
       });
   }
 
@@ -103,6 +144,15 @@ function getExports(node: ts.Statement, fail: (m: string) => never): Export[] {
     return fail("default exports are not supported in a runtime module");
   }
   if (hasModifier(node, ts.SyntaxKind.DeclareKeyword)) return [];
+
+  if (ts.isModuleDeclaration(node)) {
+    return fail(
+      "`export namespace` is not supported in a runtime module. Export each value by itself.",
+    );
+  }
+  if (ts.isImportEqualsDeclaration(node) && !node.isTypeOnly) {
+    return fail("`export import` is not supported in a runtime module");
+  }
 
   if (ts.isVariableStatement(node)) {
     return node.declarationList.declarations.map((declaration) => {
@@ -135,6 +185,18 @@ function getExports(node: ts.Statement, fail: (m: string) => never): Export[] {
   return [];
 }
 
+function readExportName(
+  name: ts.ModuleExportName,
+  fail: (m: string) => never,
+): string {
+  if (ts.isStringLiteral(name)) {
+    return fail(
+      `string export names, such as ${JSON.stringify(name.text)}, are not supported in a runtime module. Use an identifier.`,
+    );
+  }
+  return name.text;
+}
+
 function hasExportModifier(node: ts.Statement) {
   return hasModifier(node, ts.SyntaxKind.ExportKeyword);
 }
@@ -163,9 +225,9 @@ function readResource(
   if (service === undefined) {
     fail('`resource.service` is missing, e.g. `service: "aws/lambda"`');
   }
-  if (typeof service !== "string" || !servicePattern.test(service)) {
+  if (typeof service !== "string" || !supportedServices.includes(service)) {
     fail(
-      `\`resource.service\` must be "<platform>/<service>", e.g. "aws/lambda", not ${JSON.stringify(service)}`,
+      `unsupported service ${JSON.stringify(service)} in \`resource.service\`. Supported services: ${supportedServices.map((s) => JSON.stringify(s)).join(", ")}.`,
     );
   }
   if (id === undefined) {
@@ -173,8 +235,13 @@ function readResource(
       '`resource.id` is missing, e.g. `id: "todos"`. The id names the resource, so keep it stable: changing it replaces the resource.',
     );
   }
-  if (typeof id !== "string" || id === "") {
+  if (typeof id !== "string") {
     fail(`\`resource.id\` must be a string, not ${JSON.stringify(id)}`);
+  }
+  if (id === "" || id.length > ID_MAX_LENGTH || !ID_PATTERN.test(id)) {
+    fail(
+      `\`resource.id\` ${JSON.stringify(id)} is not name-safe. Use 1 to ${ID_MAX_LENGTH} letters (A-Z, a-z), digits, hyphens or underscores.`,
+    );
   }
   if ("code" in resource) {
     fail("`resource.code` is set by the compiler. Remove it.");

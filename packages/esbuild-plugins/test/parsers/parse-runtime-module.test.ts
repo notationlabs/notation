@@ -15,6 +15,21 @@ describe("detection", () => {
     ).toThrow('todos.ts: rename the "config" export to "resource"');
   });
 
+  it("fails for a config export whose type annotation hides the shape", () => {
+    expect(() =>
+      parse(
+        `export const config: LambdaConfig = { service: "aws/lambda", id: "todos" };`,
+      ),
+    ).toThrow('rename the "config" export to "resource"');
+  });
+
+  it("treats a config export without a service as ordinary code", () => {
+    expect(parse(`export const config = { region: "eu-west-1" };`)).toBe(
+      undefined,
+    );
+    expect(parse(`export const config = loadConfig();`)).toBe(undefined);
+  });
+
   it("treats config as an ordinary export next to resource", () => {
     expect(parse(`export const config = 1;\n${resource}`)?.exports).toEqual([
       "config",
@@ -62,6 +77,7 @@ describe("exports", () => {
       export type { Local };
       export { type Local as Other };
       export declare const injected: string;
+      export declare namespace Ambient { const a: string; }
       ${resource}
     `);
 
@@ -77,6 +93,19 @@ describe("exports", () => {
     ],
     [`export * from "./utils";`, /`export \*` is not supported/],
     [`export const { a, b } = obj;`, /destructured exports are not supported/],
+    [`export = {};`, /`export =` is not supported/],
+    [`const a = 1; export { a as "a-b" };`, /string export names/],
+    [`export * as "a-b" from "./utils";`, /string export names/],
+    [
+      `export const __notationResource = 1;`,
+      /"__notationResource" is reserved/,
+    ],
+    [
+      `const a = 1; export { a as __notationFactory };`,
+      /"__notationFactory" is reserved/,
+    ],
+    [`export namespace Utils { export const a = 1; }`, /`export namespace`/],
+    [`import fs = require("fs"); export import f = fs;`, /`export import`/],
   ])("rejects %s", (source, message) => {
     expect(() => parse(`${source}\n${resource}`)).toThrow(message);
   });
@@ -133,13 +162,20 @@ describe("resource", () => {
     );
   });
 
-  it("must have a service of the form <platform>/<service>", () => {
+  it("must have a supported service", () => {
     expect(() => parse(`export const resource = { id: "todos" };`)).toThrow(
       "todos.ts: `resource.service` is missing",
     );
     expect(() =>
       parse(`export const resource = { service: "lambda", id: "todos" };`),
-    ).toThrow('`resource.service` must be "<platform>/<service>"');
+    ).toThrow(
+      'todos.ts: unsupported service "lambda" in `resource.service`. Supported services: "aws/lambda".',
+    );
+    expect(() =>
+      parse(
+        `export const resource = { service: "cloudflare/worker", id: "todos" };`,
+      ),
+    ).toThrow('unsupported service "cloudflare/worker"');
   });
 
   it("must have a string id", () => {
@@ -149,6 +185,25 @@ describe("resource", () => {
     expect(() =>
       parse(`export const resource = { service: "aws/lambda", id: 1 };`),
     ).toThrow("`resource.id` must be a string, not 1");
+  });
+
+  it.each([``, `todos.api`, `my todos`, `a`.repeat(65)])(
+    "must have a name-safe id: %j",
+    (id) => {
+      expect(() =>
+        parse(
+          `export const resource = { service: "aws/lambda", id: "${id}" };`,
+        ),
+      ).toThrow(`todos.ts: \`resource.id\` "${id}" is not name-safe`);
+    },
+  );
+
+  it("accepts a name-safe id of up to 64 characters", () => {
+    const id = `A_b-${"c".repeat(60)}`;
+    expect(
+      parse(`export const resource = { service: "aws/lambda", id: "${id}" };`)
+        ?.resource.id,
+    ).toBe(id);
   });
 
   it("must not set code", () => {
