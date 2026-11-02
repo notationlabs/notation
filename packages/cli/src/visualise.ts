@@ -20,7 +20,9 @@ export async function generateGraph(
 ) {
   logger.info(`Generating graph for ${entryPoint}`);
 
-  const graph = await getResourceGraph(entryPoint);
+  const graph = await getResourceGraph(entryPoint, undefined, {
+    declarationChecks: false,
+  });
   const chart = createMermaidFlowChart(graph.resourceGroups, graph.resources);
   const chartUrl = createMermaidLiveUrl(chart);
 

@@ -31,10 +31,11 @@ export async function destroyApp({
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: DestroyAppOptions) {
-  const graph = await getResourceGraph(deployment.entryPoint, {
-    app: deployment.app,
-    stage: deployment.stage,
-  });
+  const graph = await getResourceGraph(
+    deployment.entryPoint,
+    { app: deployment.app, stage: deployment.stage },
+    { declarationChecks: false },
+  );
   await runDurableWorkflow(
     { deployment, workflowId: "destroy", runtime, databasePath, executionId },
     (step, executionId, runtime) =>
