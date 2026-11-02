@@ -107,3 +107,31 @@ it("bundles the runtime modules that an infra rebuild adds", async () => {
   );
   await waitFor(() => expect(existsSync(bundle("jobs.fn"))).toBe(true));
 });
+
+it("waits for a build that succeeds, and says so", async () => {
+  write("watch-c/todos.fn.ts", runtimeModule("todos"));
+  write("watch-c/main.ts", `export const broken = ;\n`);
+  const info = vi.fn();
+  const watchLogger = { info, error: () => {} } as unknown as Logger;
+
+  let resolved = false;
+  const compiling = compile(path.join(root, "watch-c/main.ts"), {
+    watch: true,
+    logger: watchLogger,
+  }).then(() => {
+    resolved = true;
+  });
+
+  await waitFor(() =>
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining("The infrastructure build failed"),
+    ),
+  );
+  expect(resolved).toBe(false);
+
+  write(
+    "watch-c/main.ts",
+    `import { run } from "./todos.fn";\nconsole.log(run);\n`,
+  );
+  await compiling;
+});

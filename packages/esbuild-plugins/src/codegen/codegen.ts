@@ -53,6 +53,7 @@ export function createRuntimeEntry(modulePath: string, service: string) {
 }
 
 const reservedWords = new Set([
+  "arguments",
   "await",
   "break",
   "case",
@@ -66,6 +67,7 @@ const reservedWords = new Set([
   "do",
   "else",
   "enum",
+  "eval",
   "export",
   "extends",
   "false",

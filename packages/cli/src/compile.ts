@@ -60,10 +60,17 @@ export async function compile(entryPoint: string, opts: CompileOptions = {}) {
     });
   };
 
+  // Deploys need a successful build, so watch waits until the first one.
   await compileInfra(entryPoint, {
     watch,
     runtimeModules,
     onRuntimeModules: update,
+    onBuildFailed: () => {
+      if (modules) return;
+      logger.info(
+        "The infrastructure build failed. Fix the errors above; watch starts deploying after the first build that succeeds.",
+      );
+    },
   });
   await updating;
 }
@@ -76,6 +83,8 @@ export type CompileInfraOptions = {
    * build replaced. In watch mode this includes every rebuild.
    */
   onRuntimeModules?: (modules: RuntimeModuleEntry[]) => void;
+  /** Called after each build that has errors. */
+  onBuildFailed?: () => void;
 };
 
 /**
@@ -99,7 +108,17 @@ export async function compileInfra(
 
   const context = await esbuild.context({
     entryPoints: [entryPoint],
-    plugins: [infraPlugin({ runtimeModules, onRuntimeModules })],
+    plugins: [
+      infraPlugin({ runtimeModules, onRuntimeModules }),
+      {
+        name: "notation-build-failed",
+        setup(build) {
+          build.onEnd((result) => {
+            if (result.errors.length > 0) opts.onBuildFailed?.();
+          });
+        },
+      },
+    ],
     outdir: filePaths.dist.dir(),
     outbase: fromProjectRoot("."),
     outExtension: { ".js": ".mjs" },

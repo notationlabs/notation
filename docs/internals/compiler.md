@@ -27,6 +27,7 @@ A file is a runtime module when it matches a `runtimeModules` glob and exports `
 
 - a `config` export in the old shape (an object literal with a `service` property) and no `resource` export, with a message to rename it. Any other `config` export is ordinary code,
 - a `service` that isn't supported. The supported services are listed in `supportedServices`; at present only `aws/lambda`,
+- a key that the service doesn't have, such as a misspelled `timout`. For `aws/lambda` the keys are `service`, `id`, `runtime`, `timeout` and `memory`,
 - an `id` that isn't name-safe: 1 to 64 letters, digits, hyphens or underscores,
 - `export default`, `export =`, `export *`, `export namespace` and `export import`, because the generated module needs a name for each export,
 - string export names, such as `export { a as "a-b" }`, and export names that start with `__notation`, because the generated module declares each export as a `const`,

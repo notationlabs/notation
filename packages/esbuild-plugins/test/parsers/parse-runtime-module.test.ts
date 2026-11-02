@@ -113,16 +113,14 @@ describe("exports", () => {
 
 describe("resource", () => {
   it("reads literal values", () => {
+    // The parser doesn't check value types, so `runtime` holds every kind of
+    // literal here.
     const module = parse(`
       export const resource: LambdaResource = {
         service: "aws/lambda",
         id: \`todos\`,
         timeout: 5,
-        offset: -1,
-        enabled: true,
-        layer: null,
-        "quoted-key": "x",
-        tags: ["a", { b: false }],
+        runtime: ["a", { b: false, c: null, n: -1, "quoted-key": true }],
       } as const;
     `);
 
@@ -130,19 +128,42 @@ describe("resource", () => {
       service: "aws/lambda",
       id: "todos",
       timeout: 5,
-      offset: -1,
-      enabled: true,
-      layer: null,
-      "quoted-key": "x",
-      tags: ["a", { b: false }],
+      runtime: ["a", { b: false, c: null, n: -1, "quoted-key": true }],
     });
+  });
+
+  it("keeps a __proto__ key as a key", () => {
+    const module = parse(`
+      export const resource = {
+        service: "aws/lambda",
+        id: "todos",
+        runtime: { __proto__: { polluted: true } },
+      };
+    `);
+    const runtime = module?.resource.runtime as Record<string, unknown>;
+
+    expect(Object.getPrototypeOf(runtime)).toBe(Object.prototype);
+    expect(Object.keys(runtime)).toEqual(["__proto__"]);
+  });
+
+  it("rejects a key that the service does not have", () => {
+    expect(() =>
+      parse(
+        `export const resource = { service: "aws/lambda", id: "todos", timout: 5 };`,
+      ),
+    ).toThrow(
+      'todos.ts: unknown key `resource.timout` for "aws/lambda". Known keys: service, id, runtime, timeout, memory.',
+    );
   });
 
   it.each([
     [`id`, "`resource.id` must be a literal value"],
     [`"todos", ...rest`, "`resource` must be a literal value"],
     [`"todos", memory`, "`resource` must be a literal value"],
-    [`"todos", tags: [name]`, "`resource.tags[0]` must be a literal value"],
+    [
+      `"todos", runtime: [name]`,
+      "`resource.runtime[0]` must be a literal value",
+    ],
     [`"todos", timeout: 60 * 5`, "`resource.timeout` must be a literal value"],
   ])("rejects values that are not static: id: %s", (props, message) => {
     expect(() =>

@@ -9,9 +9,6 @@
   "bin": {
     "notation": "dist/index.js"
   },
-  "engines": {
-    "node": ">=22"
-  },
   "scripts": {
     "build": "tsup --clean",
     "dev": "tsup --watch",

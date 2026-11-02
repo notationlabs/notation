@@ -22,7 +22,13 @@ export type RuntimeModule = {
 
 type Export = { name: string; node: ts.Node };
 
-export const supportedServices = ["aws/lambda"];
+// The keys that each service's `resource` accepts. They mirror the fields of
+// that service's resource type, such as `LambdaResource` in @notation/aws.
+const serviceKeys: Record<string, readonly string[]> = {
+  "aws/lambda": ["service", "id", "runtime", "timeout", "memory"],
+};
+
+export const supportedServices = Object.keys(serviceKeys);
 
 // Copied from the Lambda ID rule in @notation/aws, which this package can't
 // import.
@@ -246,6 +252,15 @@ function readResource(
   if ("code" in resource) {
     fail("`resource.code` is set by the compiler. Remove it.");
   }
+  const allowedKeys = serviceKeys[service]!;
+  const unknownKeys = Object.keys(resource).filter(
+    (key) => !allowedKeys.includes(key),
+  );
+  if (unknownKeys.length > 0) {
+    fail(
+      `unknown ${unknownKeys.length === 1 ? "key" : "keys"} ${unknownKeys.map((key) => `\`resource.${key}\``).join(", ")} for ${JSON.stringify(service)}. Known keys: ${allowedKeys.join(", ")}.`,
+    );
+  }
   return resource as RuntimeModuleResource;
 }
 
@@ -302,7 +317,13 @@ function readValue(
       if (!ts.isPropertyAssignment(property)) return notStatic();
       const key = readKey(property.name);
       if (key === undefined) return notStatic();
-      object[key] = readValue(property.initializer, `${path}.${key}`, fail);
+      // Assigning a `__proto__` key would set the prototype, not add a key.
+      Object.defineProperty(object, key, {
+        value: readValue(property.initializer, `${path}.${key}`, fail),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
     return object;
   }

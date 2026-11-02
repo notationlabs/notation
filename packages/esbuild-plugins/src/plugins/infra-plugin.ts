@@ -42,28 +42,33 @@ export function infraPlugin(opts: PluginOpts): Plugin {
         replaced = new Map();
       });
 
-      build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
-        if (!matchesRuntimeModules(args.path, opts.runtimeModules)) return;
+      build.onLoad(
+        { filter: /\.[cm]?[jt]sx?$/, namespace: "file" },
+        async (args) => {
+          if (!matchesRuntimeModules(args.path, opts.runtimeModules)) return;
 
-        const source = await getFile(args.path);
-        const runtimeModule = parseRuntimeModule(
-          source,
-          toProjectRoot(args.path),
-        );
-        if (!runtimeModule) return;
+          const source = await getFile(args.path);
+          const runtimeModule = parseRuntimeModule(
+            source,
+            toProjectRoot(args.path),
+          );
+          if (!runtimeModule) return;
 
-        replaced.set(args.path, {
-          path: args.path,
-          service: runtimeModule.resource.service,
-        });
-        const codePath = toProjectRoot(filePaths.dist.runtime.index(args.path));
-        return {
-          contents: createResourceModule(runtimeModule, codePath),
-          loader: "ts",
-          resolveDir: path.dirname(args.path),
-          watchFiles: [args.path],
-        };
-      });
+          replaced.set(args.path, {
+            path: args.path,
+            service: runtimeModule.resource.service,
+          });
+          const codePath = toProjectRoot(
+            filePaths.dist.runtime.index(args.path),
+          );
+          return {
+            contents: createResourceModule(runtimeModule, codePath),
+            loader: "ts",
+            resolveDir: path.dirname(args.path),
+            watchFiles: [args.path],
+          };
+        },
+      );
 
       build.onEnd((result) => {
         if (!opts.onRuntimeModules || result.errors.length > 0) return;
