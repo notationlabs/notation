@@ -4,6 +4,7 @@ import {
   type DispatchEntry,
 } from "@notation/aws.iac/shared";
 import type { Context } from "aws-lambda";
+import { isHandler } from "./handlers";
 
 type Handler = (event: any, context: Context) => unknown;
 
@@ -17,7 +18,8 @@ type Handler = (event: any, context: Context) => unknown;
  * 3. SQS messages go to the export that the dispatch map gives for their
  *    queue.
  * 4. Any other event, or one that the dispatch map has no entry for, goes to
- *    the module's only handler, if it has exactly one.
+ *    the module's only handler, if it has exactly one. Only exports made with
+ *    `handle.*` count as handlers.
  *
  * The dispatch map is read from the environment once, when the function
  * starts.
@@ -26,9 +28,7 @@ export function createDispatcher(mod: Record<string, unknown>) {
   const dispatch = Object.values(
     decodeRuntime(process.env[runtimeVariable]).dispatch ?? {},
   );
-  const handlers = Object.keys(mod).filter(
-    (name) => typeof mod[name] === "function",
-  );
+  const handlers = Object.keys(mod).filter((name) => isHandler(mod[name]));
 
   return async (event: unknown, context: Context) => {
     const target = findTarget(event, dispatch);

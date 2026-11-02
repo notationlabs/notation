@@ -97,11 +97,26 @@ describe("createDispatcher", () => {
   });
 
   test("sends any event to the only handler of a module with one handler", async () => {
-    const handle = vi.fn(async () => "done");
-    const handler = dispatcherWith({ handle, resource: {} });
+    const run = vi.fn(async () => {});
+    const handler = dispatcherWith({
+      run: handle.eventBridgeScheduledEvent(run),
+      formatDate: () => "2026-11-02",
+      resource: {},
+    });
 
-    expect(await handler({ anything: true }, context)).toBe("done");
-    expect(handle).toHaveBeenCalledWith({ anything: true }, context);
+    await handler({ anything: true }, context);
+    expect(run).toHaveBeenCalledWith({ anything: true }, context);
+  });
+
+  test("counts only exports made with handle as handlers", async () => {
+    const handler = dispatcherWith({
+      run: async () => "done",
+      resource: {},
+    });
+
+    await expect(handler({ anything: true }, context)).rejects.toThrow(
+      "No export of this module handles the event",
+    );
   });
 
   test("throws when the event names an export the module doesn't have", async () => {

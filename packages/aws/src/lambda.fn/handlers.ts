@@ -17,8 +17,20 @@ import type { RuntimeRef } from "src/lambda";
  */
 type Handled<H> = H & RuntimeRef;
 
-const wrap = <H extends (...args: any[]) => any>(handler: H): Handled<H> =>
-  (async (...args: Parameters<H>) => handler(...args)) as unknown as Handled<H>;
+// Marks the functions that `handle.*` returns, so the dispatcher can tell
+// handlers from other exported functions. `Symbol.for` gives the same symbol
+// to every copy of this package.
+const handlerMark = Symbol.for("@notation/aws/handler");
+
+export function isHandler(value: unknown): boolean {
+  return typeof value === "function" && (value as any)[handlerMark] === true;
+}
+
+const wrap = <H extends (...args: any[]) => any>(handler: H): Handled<H> => {
+  const wrapped = async (...args: Parameters<H>) => handler(...args);
+  Object.defineProperty(wrapped, handlerMark, { value: true });
+  return wrapped as unknown as Handled<H>;
+};
 
 export const handle = {
   apiRequest: (handler: ApiGatewayHandler) => wrap(handler),

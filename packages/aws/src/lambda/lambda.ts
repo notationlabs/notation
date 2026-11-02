@@ -16,9 +16,11 @@ export type LambdaConfig = {
    */
   id: string;
   /**
-   * The bundle to deploy. It must export `handler`, which Lambda calls with
-   * every event.
+   * The export of the code that Lambda calls with every event. Defaults to
+   * `handler`.
    */
+  handler?: string;
+  /** The bundle to deploy. */
   code: {
     type: "file" | "zip";
     path: string;
@@ -36,9 +38,25 @@ export type LambdaConfig = {
  */
 export type RuntimeRef = { resource: LambdaGroup; export: string };
 
+/**
+ * What an infra API such as `route()` invokes: an export of a runtime module,
+ * typed as its handler `H`, or a Lambda group from `lambda()` that runs
+ * external code.
+ */
+export type LambdaTarget<H> = (H & RuntimeRef) | LambdaGroup;
+
+// Marks a LambdaGroup. Two installed copies of this package have different
+// LambdaGroup classes, so `instanceof` can't recognise a group from the
+// other copy. `Symbol.for` returns the same symbol in both.
+const lambdaGroupMark = Symbol.for("@notation/aws/LambdaGroup");
+
 export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
   readonly fn: aws.lambda.LambdaFunctionInstance;
   readonly role: aws.lambda.LambdaIamRoleInstance;
+
+  get [lambdaGroupMark]() {
+    return true;
+  }
 
   constructor(config: LambdaConfig) {
     assertLambdaId(config.id);
@@ -78,20 +96,26 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
   }
 }
 
+export function isLambdaGroup(value: unknown): value is LambdaGroup {
+  return (value as any)?.[lambdaGroupMark] === true;
+}
+
 /**
- * Checks that `value` is a `RuntimeRef`. `caller` names the infra API in the
- * error.
+ * Finds the Lambda group that `target` invokes, and the export to dispatch
+ * to. A bare group runs external code, so it has no export. `caller` names
+ * the infra API in the error.
  */
-export function assertRuntimeRef(
-  value: unknown,
+export function resolveLambdaTarget(
+  target: unknown,
   caller: string,
-): asserts value is RuntimeRef {
-  const ref = value as Partial<RuntimeRef> | undefined;
-  if (ref?.resource instanceof LambdaGroup && typeof ref.export === "string") {
-    return;
+): { group: LambdaGroup; export?: string } {
+  if (isLambdaGroup(target)) return { group: target };
+  const ref = target as Partial<RuntimeRef> | undefined;
+  if (isLambdaGroup(ref?.resource) && typeof ref.export === "string") {
+    return { group: ref.resource, export: ref.export };
   }
   throw new Error(
-    `${caller} expects an export of a runtime module, or { resource, export } with resource from lambda(). A runtime module is one that exports \`resource\`.`,
+    `${caller} expects an export of a runtime module, or a Lambda group from lambda(). A runtime module is one that exports \`resource\`.`,
   );
 }
 
@@ -109,8 +133,7 @@ function assertUniqueLambdaId(id: string) {
   if (!collection) return;
   const clash = collection.graph.resourceGroups.find(
     (group) =>
-      group instanceof LambdaGroup &&
-      group.id.toLowerCase() === id.toLowerCase(),
+      isLambdaGroup(group) && group.id.toLowerCase() === id.toLowerCase(),
   );
   if (clash) {
     const existing = clash.id;
@@ -163,7 +186,7 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
     new aws.lambda.LambdaFunction(lambdaId, {
       config: {
         FunctionName: awsName("lambdaFunction", lambdaId),
-        Handler: `${fileName}.handler`,
+        Handler: `${fileName}.${config.handler ?? "handler"}`,
         Runtime: runtime,
         Timeout: config.timeout,
         MemorySize: config.memory,

@@ -1,4 +1,5 @@
-import { assertRuntimeRef, type RuntimeRef } from "src/lambda";
+import { resolveLambdaTarget, type LambdaTarget } from "src/lambda";
+import type { EventBridgeHandler } from "src/shared";
 import { Schedule } from "./schedule";
 import * as aws from "@notation/aws.iac";
 import { toAwsScheduleExpression } from "./aws-conversions";
@@ -7,18 +8,21 @@ import { awsName } from "src/naming";
 type ScheduleConfig = {
   name: string;
   schedule: Schedule;
-  /** The export of a runtime module to invoke on the schedule. */
-  handler: RuntimeRef;
+  /**
+   * The export of a runtime module to invoke on the schedule, or a Lambda
+   * group from `lambda()`.
+   */
+  handler: LambdaTarget<EventBridgeHandler<"Scheduled Event", any>>;
 };
 
 export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
   readonly rule: aws.eventBridge.EventBridgeRuleInstance;
 
   constructor(config: ScheduleConfig) {
-    assertRuntimeRef(config.handler, "schedule()");
+    const target = resolveLambdaTarget(config.handler, "schedule()");
     super("aws/eventBridge/schedule", config.name, config);
 
-    const lambdaGroup = config.handler.resource;
+    const lambdaGroup = target.group;
     const lambdaResource = lambdaGroup.fn;
 
     this.rule = this.add(
@@ -31,11 +35,13 @@ export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
             {
               Id: lambdaResource.outputValue("FunctionName"),
               Arn: lambdaResource.outputValue("FunctionArn"),
-              InputTransformer: {
-                InputTemplate: scheduledInvocationTemplate(
-                  config.handler.export,
-                ),
-              },
+              // A bare group runs external code, which gets the event as it is.
+              InputTransformer:
+                target.export === undefined
+                  ? undefined
+                  : {
+                      InputTemplate: scheduledInvocationTemplate(target.export),
+                    },
             },
           ],
         },

@@ -4,6 +4,7 @@ import { api } from "src/api-gateway";
 import { rate, schedule } from "src/event-bridge";
 import { lambda } from "src/lambda";
 import { queue } from "src/sqs";
+import { runtimeRef } from "./runtime-ref";
 
 const code = { type: "file", path: "src/fns/handler.fn.js" } as const;
 const scope = { app: "orders-app", stage: "prod" };
@@ -28,7 +29,7 @@ test("AWS names start with the app and stage", async () => {
       schedule: schedule({
         name: "nightly",
         schedule: rate(1, "day"),
-        handler: { resource: fn, export: "getOrders" },
+        handler: runtimeRef(fn, "getOrders"),
       }),
     };
   });

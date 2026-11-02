@@ -1,17 +1,19 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { expect, test } from "vitest";
+import { expect, expectTypeOf, test } from "vitest";
 import { lambda as awsLambda } from "@notation/aws.iac";
 import { createPlan } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
 import { collectResourceGraph } from "@notation/resource";
-import { lambda, type LambdaGroup } from "src/lambda";
+import { lambda, type LambdaGroup, type RuntimeRef } from "src/lambda";
+import type { ApiGatewayHandler } from "src/shared";
 import { queue } from "src/sqs";
+import { runtimeRef } from "./runtime-ref";
 
 const code = { type: "file", path: "src/fns/handler.fn.js" } as const;
 
-const ref = (resource: LambdaGroup) => ({ resource, export: "processOrders" });
+const ref = (resource: LambdaGroup) => runtimeRef(resource, "processOrders");
 
 const queueArn = (name: string) => `arn:aws:sqs:eu-west-2:123456789012:${name}`;
 
@@ -89,8 +91,8 @@ test("each queue adds a dispatch entry keyed by the mapping's id", async () => {
     fn = lambda({ id: "process", code });
     orders = queue({ name: "orders" });
     refunds = queue({ name: "refunds" });
-    orders.consume({ resource: fn, export: "processOrders" });
-    refunds.consume({ resource: fn, export: "processRefunds" });
+    orders.consume(runtimeRef(fn, "processOrders"));
+    refunds.consume(runtimeRef(fn, "processRefunds"));
   });
   deploy(orders, refunds);
   fn.role.setOutput({ Arn: "arn:role" } as any);
@@ -130,6 +132,35 @@ test("consuming one queue twice with one function throws", async () => {
       orders.consume(ref(fn));
     }),
   ).rejects.toThrow("Queue orders already feeds process");
+});
+
+test("consume with a lambda group from lambda() maps the queue without a dispatch entry", async () => {
+  let fn!: LambdaGroup;
+  let mapping!: awsLambda.LambdaEventSourceMappingInstance;
+  await collectResourceGraph(() => {
+    fn = lambda({ id: "process", code });
+    mapping = queue({ name: "orders" }).consume(fn);
+  });
+
+  fn.role.setOutput({ Arn: "arn:role" } as any);
+  fn.fn.dependencies.zipFile.setOutput({
+    filePath: "process.zip",
+    fileSha256: "sha",
+  } as any);
+
+  expect(mapping.id).toBe("orders-process-mapping");
+  expect((await fn.fn.getParams()).Environment).toBeUndefined();
+});
+
+test("consume takes only handlers of SQS events", () => {
+  const fn = lambda({ id: "process", code });
+  const apiHandler = runtimeRef(fn, "getTodos") as RuntimeRef &
+    ApiGatewayHandler;
+
+  const orders = queue({ name: "orders" });
+
+  // @ts-expect-error an API handler can't consume a queue
+  expectTypeOf(orders.consume).toBeCallableWith(apiHandler);
 });
 
 test("consume after evaluation has ended throws", async () => {
