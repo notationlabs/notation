@@ -1,8 +1,8 @@
-import { validateParams } from "@notation/resource";
 import {
   assertDependenciesPresent,
   buildResourceDepthLevels,
 } from "../dependency-graph";
+import { planKnownParams } from "../planner";
 import { withDeploymentHold } from "./deployment-hold";
 import { reconcileResource, sweepOrphans } from "./reconcile";
 import { scopeStep } from "./step";
@@ -38,17 +38,14 @@ export async function* deploy(
 }
 
 /**
- * Checks every value deploy knows before it changes anything. As in the
- * planner, outputs from state stand in for the outputs of dependencies. A
- * value that comes from an output that does not exist yet is checked later,
- * just before the operation of the resource that holds it.
+ * Checks every value deploy knows before it changes anything, as the planner
+ * does. A value that comes from an output that does not exist yet is checked
+ * later, just before the operation of the resource that holds it.
  */
 async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
-  for (const resource of opts.resources) {
-    const stateNode = await opts.state.get(resource.id);
-    if (stateNode) resource.setOutput(stateNode.output);
-  }
-  for (const resource of opts.resources) {
-    await validateParams(resource, await resource.planParams(), "deploy");
+  for (const level of buildResourceDepthLevels(opts.resources)) {
+    for (const resource of level) {
+      await planKnownParams(resource, opts.state, "deploy");
+    }
   }
 }

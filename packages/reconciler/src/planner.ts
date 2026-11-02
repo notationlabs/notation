@@ -1,5 +1,5 @@
 import { validateParams, type BaseResource } from "@notation/resource";
-import type { StateBackend } from "@notation/state";
+import type { StateBackend, StateNode } from "@notation/state";
 import {
   assertDependenciesPresent,
   buildResourceDepthLevels,
@@ -38,10 +38,11 @@ export async function createPlan({
 
   for (const level of buildResourceDepthLevels(resources)) {
     for (const resource of level) {
-      const stateNode = await state.get(resource.id);
-      if (stateNode) resource.setOutput(stateNode.output);
-      const params = await resource.planParams();
-      await validateParams(resource, params, "plan");
+      const { stateNode, params } = await planKnownParams(
+        resource,
+        state,
+        "plan",
+      );
       const action = await runOperation(
         applyDriftDetection(createStepRunner(), {
           action: decideAction({ resource, stateNode, params }),
@@ -85,4 +86,24 @@ export async function createPlan({
   }
 
   return { createdAt: new Date().toISOString(), nodes };
+}
+
+/**
+ * Loads the resource's outputs from state, then returns and checks the
+ * params that plan knows. Outputs in state stand in for the outputs of
+ * dependencies, so the dependencies must be loaded first.
+ */
+export async function planKnownParams(
+  resource: BaseResource,
+  state: { get(id: string): Promise<StateNode | undefined> },
+  point: "plan" | "deploy",
+): Promise<{
+  stateNode: StateNode | undefined;
+  params: Record<string, unknown>;
+}> {
+  const stateNode = await state.get(resource.id);
+  if (stateNode) resource.setOutput(stateNode.output);
+  const params = await resource.planParams();
+  await validateParams(resource, params, point);
+  return { stateNode, params };
 }
