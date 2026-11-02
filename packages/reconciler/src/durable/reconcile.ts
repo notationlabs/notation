@@ -53,16 +53,12 @@ export async function* reconcileResource(
   step: DurableStepRunner,
   resource: BaseResource,
   opts: DurableDeployOptions,
-  getParams: (
-    resource: BaseResource,
-  ) => ReturnType<BaseResource["getParams"]> = (resource) =>
-    resource.getParams(),
 ): AsyncGenerator<any, void, any> {
   // Resolved once and then carried: deriveParams is user code and need not be
   // deterministic, so an operation resolving them again could persist params
   // other than the ones the decision was taken against. The step also pins
   // the answer across a replay.
-  const params = yield* step.run("params", () => getParams(resource));
+  const params = yield* step.run("params", () => resource.getParams());
   await validateParams(resource, params, "deploy");
   const dependsOn = getDependencyIds(resource);
 
