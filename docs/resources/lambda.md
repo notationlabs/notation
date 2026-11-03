@@ -76,7 +76,7 @@ IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or unders
 
 ## Dispatch
 
-A Lambda function has one entry point, but the `todos` function serves two handlers. The runtime bundle's entry point is a `handler` export that the compiler generates:
+A Lambda function has one entry point, but the `todos` function serves two handlers. The entry point of the runtime bundle is a `handler` export that the compiler generates:
 
 ```ts [generated runtime entry]
 import * as mod from "/path/to/my-app/runtime/todos.fn.ts";
@@ -94,13 +94,9 @@ export const handler = createDispatcher(mod);
 | SQS messages         | The export that the dispatch map gives for the queue's ARN       |
 | Any other event      | The module's only handler for that kind of event, if it has one  |
 
-A handler is an export made with `handle.*`. Other exported functions, such as helpers, don't count. Each handler takes one kind of event: HTTP API requests, SQS messages, DynamoDB stream records or EventBridge scheduled events. The function tells these kinds apart by the event's shape. An event with no entry in the dispatch map goes to the module's only handler of the same kind. If the module has no handler of that kind, or several, or the event has a shape that matches no kind, the function throws an error that describes the event.
+### The dispatch map
 
-A DynamoDB stream adds no dispatch entry, so its records always go to the module's only DynamoDB handler. The same rule hides a wrong or missing dispatch map. A module with one API handler gets every API request, whatever the map says. The mistake shows only when the module gets a second API handler.
-
-Anyone allowed to invoke the function can send it a scheduled invocation. So the export it names must be made with `handle.eventBridgeScheduledEvent`. A scheduled invocation of any other export throws.
-
-A request for `GET /todos` and a request for `POST /todos` have the same shape, so the function can't tell from the event which handler to call. Only infra knows which route goes to which export. So each route adds an entry to the function's **dispatch map**:
+A request for `GET /todos` and a request for `POST /todos` have the same shape, so the function can't tell from the event which handler to call. Only infra knows which route goes to which export. So each route adds an entry to the function's dispatch map:
 
 ```json
 {
@@ -117,9 +113,17 @@ A request for `GET /todos` and a request for `POST /todos` have the same shape, 
 
 The map is keyed by the ID of the route, or of the event source mapping for a queue. Notation stores the map in the function's `NOTATION_RUNTIME` environment variable, and `createDispatcher` reads it when the function starts. A plan shows each entry as a change to `Environment.Runtime`.
 
-The variable holds a compact encoding of the map. Lambda limits a function's environment variables to 4 KB in total, and the map counts towards the limit. A route's entry takes about 25 bytes, plus the length of its ID, of the export's name and of the route key. A queue's entry takes about 15 bytes, plus the length of its ID, of the export's name and of the queue's ARN. If the variables pass 4 KB, the deploy fails with an error that names the function. Split the runtime module into smaller modules, so that each function serves fewer routes and queues.
+Lambda limits a function's environment variables to 4 KB in total, and the map counts towards the limit. The variable holds a compact encoding of the map. A route's entry takes about 25 bytes, plus the length of its ID, the export's name and the route key. A queue's entry takes about 15 bytes, plus the length of its ID, the export's name and the queue's ARN. If the variables are over 4 KB, the deploy fails with an error that names the function. To fix it, split the runtime module into smaller modules, so that each function serves fewer routes and queues.
 
-A schedule adds no entry. Instead, the EventBridge rule sends `{ "export": "<name>", "event": <the EventBridge event> }`, and `createDispatcher` calls the named export with the EventBridge event.
+A schedule adds no entry. Instead, the EventBridge rule sends `{ "export": "<name>", "event": <the EventBridge event> }`, and `createDispatcher` calls the named export with the EventBridge event. Anyone allowed to invoke the function can send this shape, so the named export must be made with `handle.eventBridgeScheduledEvent`. A scheduled invocation of any other export throws.
+
+### Events with no entry
+
+A handler is an export made with `handle.*`. Other exported functions, such as helpers, don't count. Each handler takes one kind of event: HTTP API requests, SQS messages, DynamoDB stream records or EventBridge scheduled events. The function tells these kinds apart by the event's shape.
+
+An event with no entry in the dispatch map goes to the module's only handler of its kind. If the module has no handler of that kind, or several, or the event matches no kind, the function throws an error that describes the event.
+
+A DynamoDB stream adds no dispatch entry, so its records always go to the module's only DynamoDB handler. The same rule hides a wrong or missing dispatch map: a module with one API handler gets every API request, whatever the map says. The mistake shows only when the module gets a second API handler.
 
 ## `lambda(config)`
 

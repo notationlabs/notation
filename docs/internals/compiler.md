@@ -15,7 +15,7 @@ The infra pass determines what infrastructure resources should be provisioned; t
 
 ## Runtime modules
 
-A file is a runtime module when it matches a `runtimeModules` glob and exports `resource`. Only the infra pass applies this rule. It reports the runtime modules it replaced, and the runtime pass bundles exactly those, so the two passes can't disagree.
+A file is a runtime module when it matches a `runtimeModules` glob and exports `resource`. Only the infra pass applies this rule. It reports the runtime modules that it replaced, and the runtime pass bundles those and no others, so the two passes can't disagree.
 
 | Function                             | Package                     | Does                                                                                               |
 | ------------------------------------ | --------------------------- | -------------------------------------------------------------------------------------------------- |
@@ -25,13 +25,12 @@ A file is a runtime module when it matches a `runtimeModules` glob and exports `
 
 `parseRuntimeModule` reads the source with the TypeScript parser and never runs it. So `resource` must be an object literal with literal values, and it must have a `service` and an `id`. The parser fails on:
 
-- a `config` export in the old shape (an object literal with a `service` property) and no `resource` export, with a message to rename it. Any other `config` export is ordinary code,
-- a `service` that isn't supported. The supported services are listed in `supportedServices`; at present only `aws/lambda`,
-- a key that the service doesn't have, such as a misspelled `timout`. For `aws/lambda` the keys are `service`, `id`, `runtime`, `timeout` and `memory`,
-- an `id` that isn't name-safe: 1 to 64 letters, digits, hyphens or underscores,
-- `export default`, `export =`, `export *`, `export namespace` and `export import`, because the generated module needs a name for each export,
-- string export names, such as `export { a as "a-b" }`, and export names that start with `__notation`, because the generated module declares each export as a `const`,
-- a `resource.code` field, because the compiler sets `code`.
+- A `config` export in the old shape (an object literal with a `service` property) and no `resource` export. The error asks you to rename it. A `config` export of any other shape is ordinary code.
+- A `service` that isn't in `supportedServices`. At present only `aws/lambda` is supported.
+- A key that the service doesn't have, such as a misspelled `timout`. For `aws/lambda` the keys are `service`, `id`, `runtime`, `timeout` and `memory`. So `resource.code` also fails, because the compiler sets `code`.
+- An `id` that isn't name-safe: 1 to 64 letters, digits, hyphens or underscores.
+- `export default`, `export =`, `export *`, `export namespace` and `export import`. The generated module needs a name for each export.
+- String export names, such as `export { a as "a-b" }`, and export names that start with `__notation`. The generated module declares each export as a `const`, and uses the `__notation` prefix for its own names.
 
 ## The infra plugin
 
@@ -81,7 +80,7 @@ export const createTodo = {
 1. `resource.service` has the form `<platform>/<service>`, and must be a supported service. The generated module imports the factory `<service>` from `@notation/<platform>/<service>`, so `"aws/lambda"` gives `lambda` from `@notation/aws/lambda`.
 2. The generated module calls the factory once. It passes every field of `resource` except `service`, and adds `code`, which points at the runtime bundle.
 3. For each other export, the generated module exports a reference: `{ resource, export: "<name>" }`.
-4. The generated names start with `__notation`. The parser rejects export names with that prefix, so they never clash with the module's export names.
+4. The generated names start with `__notation`. The parser rejects export names with that prefix, so the two sets of names never clash.
 
 **None of the runtime module's code is kept.** In the example, `fetchTodos()` runs only in the Lambda function, never at deploy time. The plugin also lists the runtime module in `watchFiles`, so watch mode rebuilds the infra bundle when the module's exports or `resource` change.
 

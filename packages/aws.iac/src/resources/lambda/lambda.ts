@@ -473,8 +473,6 @@ function encodeEnvironment(
   return { Variables: variables };
 }
 
-// Keys that would hold undefined are left out: the drift diff counts an
-// undefined key as a change, so the read would never match the params.
 // A runtime variable that doesn't decode stays in `Variables`, so drift shows
 // it and the next update replaces it.
 function decodeEnvironment(
@@ -492,6 +490,8 @@ function decodeEnvironment(
   const { Variables: __, ...rest } = environment;
   return {
     ...rest,
+    // The drift diff counts an undefined key as a change, so an empty
+    // `Variables` is left out rather than set to undefined.
     ...(Object.keys(variables).length > 0 && { Variables: variables }),
     Runtime: runtime,
   };

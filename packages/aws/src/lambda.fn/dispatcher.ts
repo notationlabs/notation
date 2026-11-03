@@ -9,29 +9,23 @@ import { getHandlerKind, type HandlerKind } from "./handlers";
 type Handler = (event: any, context: Context) => unknown;
 
 /**
- * Makes the single entry point of a runtime module's Lambda. It sends each
- * event to one of the module's exports:
+ * Makes the single entry point of a runtime module's Lambda function. It sends
+ * each event to one export of the module:
  *
- * 1. A scheduled invocation names its export, and carries the original event.
- *    The export must be a handler made with `handle.eventBridgeScheduledEvent`.
- *    Anyone allowed to invoke the function can send this shape, so it can't
- *    reach the module's other exports.
+ * 1. A scheduled invocation goes to the export that it names. Anyone allowed
+ *    to invoke the function can send this shape, so the export must be a
+ *    schedule handler.
  * 2. An HTTP API request goes to the export that the dispatch map gives for
  *    its API and route key.
  * 3. SQS messages go to the export that the dispatch map gives for their
  *    queue.
- * 4. An event that the dispatch map has no entry for goes to the module's
- *    only handler for that kind of event, if it has exactly one. The kind
- *    comes from the event's shape: HTTP API request, SQS messages, DynamoDB
- *    stream records or EventBridge scheduled event. Only exports made with
- *    `handle.*` count as handlers. DynamoDB streams have no dispatch entries,
- *    so they always take this path. It also means that a module with one
- *    handler of a kind keeps working when its dispatch map is wrong or
- *    missing. The mistake shows only once the module has a second handler of
- *    that kind.
+ * 4. An event with no dispatch entry goes to the module's only handler of the
+ *    event's kind. DynamoDB streams have no dispatch entries, so they always
+ *    take this path. This path also hides a wrong or missing dispatch map
+ *    until the module has a second handler of that kind.
  *
- * Any other event throws. The dispatch map is read from the environment once,
- * when the function starts.
+ * Only exports made with `handle.*` count as handlers. If no handler fits, the
+ * function throws. The dispatch map is read once, when the function starts.
  */
 export function createDispatcher(mod: Record<string, unknown>) {
   const dispatch = Object.values(

@@ -17,9 +17,7 @@ export type DispatchMatch = ApiRouteMatch | SqsQueueMatch;
 /** Sends events that match `match` to the module export named `export`. */
 export type DispatchEntry = { export: string; match: DispatchMatch };
 
-/**
- * Values that infra passes to a function's code at runtime.
- */
+/** Values that infra passes to a function's code at runtime. */
 export type LambdaRuntime = {
   /**
    * Keyed by the ID of the binding that added the entry, such as a route or

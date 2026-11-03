@@ -56,7 +56,7 @@ export const resource = {
 
 Use 1 to 64 letters, digits, hyphens and underscores. Two runtime modules in one deployment can't share an ID. See [Lambda IDs](../resources/lambda.md#ids).
 
-The compiler checks the ID when it reads `resource`, and fails the build with an error that names the module. Your editor doesn't check the ID in `resource` yet. An edit-time check of the literal arrives with the macro form of `resource`.
+The compiler checks the ID, and fails the build with an error that names the module. Your editor doesn't check the ID in `resource`.
 
 ## Defaults
 

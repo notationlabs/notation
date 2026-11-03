@@ -83,7 +83,6 @@ export type CompileInfraOptions = {
    * build replaced. In watch mode this includes every rebuild.
    */
   onRuntimeModules?: (modules: RuntimeModuleEntry[]) => void;
-  /** Called after each build that has errors. */
   onBuildFailed?: () => void;
 };
 
