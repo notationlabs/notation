@@ -124,7 +124,7 @@ importer.policy.contribute({
 });
 ```
 
-For an export of a runtime module, use the export's `resource`, which is the module's Lambda group:
+A function from a runtime module has no variable like `importer` to call `policy` on. Instead, every export of the module carries the module's Lambda group as `resource`. For example, to let `processOrders` send messages to `refundQueue`, contribute the grant to `processOrders.resource.policy`:
 
 ```ts [infra/orders.ts]
 import { processOrders } from "runtime/orders.fn";
@@ -134,7 +134,7 @@ processOrders.resource.policy.contribute({
 });
 ```
 
-The grant applies to the whole function, so every export of `runtime/orders.fn.ts` gets it.
+All the exports of `runtime/orders.fn.ts` run in one function with one role. So the grant applies to every export of the module, not only to `processOrders`.
 
 ```ts [@notation/aws/sqs]
 type SqsAction =
