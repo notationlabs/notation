@@ -13,6 +13,9 @@ type Handler = (event: any, context: Context) => unknown;
  * event to one of the module's exports:
  *
  * 1. A scheduled invocation names its export, and carries the original event.
+ *    The export must be a handler made with `handle.eventBridgeScheduledEvent`.
+ *    Anyone allowed to invoke the function can send this shape, so it can't
+ *    reach the module's other exports.
  * 2. An HTTP API request goes to the export that the dispatch map gives for
  *    its API and route key.
  * 3. SQS messages go to the export that the dispatch map gives for their
@@ -21,7 +24,11 @@ type Handler = (event: any, context: Context) => unknown;
  *    only handler for that kind of event, if it has exactly one. The kind
  *    comes from the event's shape: HTTP API request, SQS messages, DynamoDB
  *    stream records or EventBridge scheduled event. Only exports made with
- *    `handle.*` count as handlers.
+ *    `handle.*` count as handlers. DynamoDB streams have no dispatch entries,
+ *    so they always take this path. It also means that a module with one
+ *    handler of a kind keeps working when its dispatch map is wrong or
+ *    missing. The mistake shows only once the module has a second handler of
+ *    that kind.
  *
  * Any other event throws. The dispatch map is read from the environment once,
  * when the function starts.
@@ -63,6 +70,11 @@ function findTarget(
   handlersByKind: Map<HandlerKind, string[]>,
 ): Target {
   if (isScheduledInvocation(event)) {
+    if (!handlersByKind.get("schedule")?.includes(event.export)) {
+      return {
+        reason: `The scheduled invocation names the export "${event.export}", which is not a schedule handler.`,
+      };
+    }
     return { name: event.export, event: event.event };
   }
   const kind = eventKind(event);
@@ -127,6 +139,9 @@ function isScheduledInvocation(
 }
 
 function describeEvent(event: any): string {
+  if (isScheduledInvocation(event)) {
+    return `scheduled invocation of ${event.export}`;
+  }
   if (typeof event?.routeKey === "string") {
     return `HTTP API route ${event.routeKey} on API ${event.requestContext?.apiId}`;
   }

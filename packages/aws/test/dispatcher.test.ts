@@ -25,11 +25,13 @@ const runtime: LambdaRuntime = {
   },
 };
 
+const sendDigest = vi.fn(async () => {});
+
 const todos = {
   getTodos: handle.apiRequest(() => json(["a"])),
   createTodo: handle.apiRequest(() => json("created")),
   processOrders: vi.fn(async () => {}),
-  sendDigest: vi.fn(async () => {}),
+  sendDigest: handle.eventBridgeScheduledEvent(sendDigest),
   resource: { service: "aws/lambda", id: "todos" },
 };
 
@@ -93,7 +95,18 @@ describe("createDispatcher", () => {
 
     await handler({ export: "sendDigest", event }, context);
 
-    expect(todos.sendDigest).toHaveBeenCalledWith(event, context);
+    expect(sendDigest).toHaveBeenCalledWith(event, context);
+  });
+
+  test("refuses a scheduled invocation of an export that is not a schedule handler", async () => {
+    const handler = dispatcherWith(todos, runtime);
+
+    await expect(
+      handler({ export: "processOrders", event: {} }, context),
+    ).rejects.toThrow(
+      'No export of this module handles the event (scheduled invocation of processOrders). The scheduled invocation names the export "processOrders", which is not a schedule handler.',
+    );
+    expect(todos.processOrders).not.toHaveBeenCalled();
   });
 
   const scheduledEvent = {
@@ -157,12 +170,14 @@ describe("createDispatcher", () => {
     );
   });
 
-  test("throws when the event names an export the module doesn't have", async () => {
+  test("throws when a scheduled invocation names an export the module doesn't have", async () => {
     const handler = dispatcherWith(todos, runtime);
 
     await expect(
       handler({ export: "resource", event: {} }, context),
-    ).rejects.toThrow('dispatched to the export "resource"');
+    ).rejects.toThrow(
+      'names the export "resource", which is not a schedule handler',
+    );
   });
 });
 

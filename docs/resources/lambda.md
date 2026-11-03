@@ -62,6 +62,8 @@ type RuntimeRef = { resource: LambdaGroup; export: string };
 
 TypeScript types the import from the original module, so `handle.*` returns the handler type and `RuntimeRef` together. Infra code can read `getTodos.resource` without a cast. Each infra API checks the handler type: `router.get` takes an API request handler, and `queue.consume` takes an SQS handler. A router with a JWT authorizer takes only handlers for the same claims type.
 
+The `RuntimeRef` type also applies inside the runtime module, where it is wrong. There, `getTodos` is the handler function, and `getTodos.resource` is `undefined`. TypeScript doesn't report the mistake. Only read `resource` and `export` in infra code.
+
 ## IDs
 
 Every Lambda function has an ID. It names the function and the resources that support it (`<id>`, `<id>-role`, `<id>-zip`, `<id>-policy`, `<id>-role-policy` and `<id>-log-group`), and keys them in state. Changing an ID replaces the function.
@@ -87,12 +89,16 @@ export const handler = createDispatcher(mod);
 
 | Event                | Export                                                           |
 | -------------------- | ---------------------------------------------------------------- |
-| Scheduled invocation | The export named in the event                                    |
+| Scheduled invocation | The export named in the event, if it is a schedule handler       |
 | HTTP API request     | The export that the dispatch map gives for the API and route key |
 | SQS messages         | The export that the dispatch map gives for the queue's ARN       |
 | Any other event      | The module's only handler for that kind of event, if it has one  |
 
 A handler is an export made with `handle.*`. Other exported functions, such as helpers, don't count. Each handler takes one kind of event: HTTP API requests, SQS messages, DynamoDB stream records or EventBridge scheduled events. The function tells these kinds apart by the event's shape. An event with no entry in the dispatch map goes to the module's only handler of the same kind. If the module has no handler of that kind, or several, or the event has a shape that matches no kind, the function throws an error that describes the event.
+
+A DynamoDB stream adds no dispatch entry, so its records always go to the module's only DynamoDB handler. The same rule hides a wrong or missing dispatch map. A module with one API handler gets every API request, whatever the map says. The mistake shows only when the module gets a second API handler.
+
+Anyone allowed to invoke the function can send it a scheduled invocation. So the export it names must be made with `handle.eventBridgeScheduledEvent`. A scheduled invocation of any other export throws.
 
 A request for `GET /todos` and a request for `POST /todos` have the same shape, so the function can't tell from the event which handler to call. Only infra knows which route goes to which export. So each route adds an entry to the function's **dispatch map**:
 
