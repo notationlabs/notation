@@ -117,7 +117,7 @@ A request for `GET /todos` and a request for `POST /todos` have the same shape, 
 
 The map is keyed by the ID of the route, or of the event source mapping for a queue. Notation stores the map in the function's `NOTATION_RUNTIME` environment variable, and `createDispatcher` reads it when the function starts. A plan shows each entry as a change to `Environment.Runtime`.
 
-The variable holds a compact encoding of the map, which leaves out the route key when the entry's key already contains it. Lambda limits a function's environment variables to 4 KB in total, and the map counts towards the limit. Each entry takes about 30 bytes, plus the length of its ID and of the export's name. A queue's entry also holds the queue's ARN. If the variables pass 4 KB, the deploy fails with an error that names the function. Split the runtime module into smaller modules, so that each function serves fewer routes and queues.
+The variable holds a compact encoding of the map. Lambda limits a function's environment variables to 4 KB in total, and the map counts towards the limit. A route's entry takes about 25 bytes, plus the length of its ID, of the export's name and of the route key. A queue's entry takes about 15 bytes, plus the length of its ID, of the export's name and of the queue's ARN. If the variables pass 4 KB, the deploy fails with an error that names the function. Split the runtime module into smaller modules, so that each function serves fewer routes and queues.
 
 A schedule adds no entry. Instead, the EventBridge rule sends `{ "export": "<name>", "event": <the EventBridge event> }`, and `createDispatcher` calls the named export with the EventBridge event.
 

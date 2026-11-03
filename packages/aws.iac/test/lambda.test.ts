@@ -13,12 +13,7 @@ import {
   type LambdaFunctionInstance,
 } from "src/resources/lambda/lambda";
 import { LambdaIamRole } from "src/resources/lambda/lambda-role";
-import {
-  ResourceNotFoundError,
-  UNKNOWN_AFTER_APPLY,
-  isUnknownAfterApply,
-  validateValues,
-} from "@notation/resource";
+import { ResourceNotFoundError } from "@notation/resource";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
 import { decodeRuntime, encodeRuntime, runtimeVariable } from "src/shared";
 
@@ -564,46 +559,6 @@ describe("Lambda environment", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  function largeDispatch(apiId: unknown) {
-    const dispatch: Record<string, unknown> = {};
-    for (let i = 0; i < 100; i++) {
-      dispatch[`todo-api-GET-/todos/${i}`] = {
-        export: `getTodo${i}`,
-        match: { apiId, routeKey: `GET /todos/${i}` },
-      };
-    }
-    return dispatch;
-  }
-
-  it("rejects an oversized environment at plan, when the API ID is not known yet", async () => {
-    const lambda = createLambda();
-    const Environment = {
-      Runtime: { dispatch: largeDispatch(UNKNOWN_AFTER_APPLY) },
-    };
-
-    expect(() =>
-      validateValues(lambda, { Environment }, "plan", isUnknownAfterApply),
-    ).toThrow(/Variables: the environment is \d+ bytes, over Lambda's limit/);
-  });
-
-  it("accepts an environment under the limit at plan", async () => {
-    const lambda = createLambda();
-    const Environment = {
-      Runtime: {
-        dispatch: {
-          "todo-api-GET-/todos": {
-            export: "getTodos",
-            match: { apiId: UNKNOWN_AFTER_APPLY, routeKey: "GET /todos" },
-          },
-        },
-      },
-    };
-
-    expect(() =>
-      validateValues(lambda, { Environment }, "plan", isUnknownAfterApply),
-    ).not.toThrow();
-  });
-
   it("clears the variables when an update sets an empty environment", async () => {
     const send = vi
       .spyOn(lambdaClient, "send")
@@ -623,37 +578,23 @@ describe("Lambda environment", () => {
 });
 
 describe("runtime map encoding", () => {
-  it("leaves out a route key that the entry's key holds", () => {
+  it("encodes routes and queue subscriptions, and decodes them back", () => {
     const runtime = {
       dispatch: {
         "todo-api-GET-/todos/{id}": {
           export: "getTodo",
           match: { apiId: "api-1", routeKey: "GET /todos/{id}" },
         },
-      },
-    };
-
-    expect(encodeRuntime(runtime)).toBe(
-      '{"r":{"todo-api-GET-/todos/{id}":["getTodo","api-1"]}}',
-    );
-    expect(decodeRuntime(encodeRuntime(runtime))).toEqual(runtime);
-  });
-
-  it("keeps a route key that the entry's key doesn't hold", () => {
-    const runtime = {
-      dispatch: {
-        "custom-binding": {
-          export: "getTodo",
-          match: { apiId: "api-1", routeKey: "GET /todos" },
-        },
         "orders-app-mapping": {
           export: "processOrders",
           match: { queueArn: "arn:orders" },
         },
       },
-      outputs: { table: "todos" },
     };
 
+    expect(encodeRuntime(runtime)).toBe(
+      '{"q":{"orders-app-mapping":["processOrders","arn:orders"]},"r":{"todo-api-GET-/todos/{id}":["getTodo","api-1","GET /todos/{id}"]}}',
+    );
     expect(decodeRuntime(encodeRuntime(runtime))).toEqual(runtime);
   });
 

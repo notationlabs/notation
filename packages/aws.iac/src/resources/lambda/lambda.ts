@@ -1,6 +1,4 @@
 import {
-  isOutputValue,
-  isUnknownAfterApply,
   mergeContributions,
   resource,
   ResourceNotFoundError,
@@ -8,7 +6,6 @@ import {
 } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-lambda";
 import * as v from "valibot";
-import type { StandardSchemaV1 } from "@notation/resource";
 import { fromProjectRoot } from "@notation/core";
 import crypto from "node:crypto";
 import * as nodeFs from "node:fs/promises";
@@ -90,7 +87,6 @@ const runtimeValue = v.object({
       v.object({ export: v.string(), match: dispatchMatchValue }),
     ),
   ),
-  outputs: v.optional(v.record(v.string(), v.unknown())),
 });
 
 const lambdaFunction = resource<LambdaFunctionSchema>({
@@ -148,12 +144,10 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
   Environment: {
     propertyType: "param",
     presence: "optional",
-    value: withEnvironmentSizeCheck(
-      v.object({
-        Variables: v.optional(v.record(v.string(), v.string())),
-        Runtime: v.optional(runtimeValue),
-      }),
-    ),
+    value: v.object({
+      Variables: v.optional(v.record(v.string(), v.string())),
+      Runtime: v.optional(runtimeValue),
+    }),
     collect: mergeContributions,
   },
   FileSystemConfigs: {
@@ -468,80 +462,15 @@ function encodeEnvironment(
   if (Runtime === undefined) {
     return Variables === undefined ? {} : { Variables };
   }
-  const encoded = {
-    Variables: { ...Variables, [runtimeVariable]: encodeRuntime(Runtime) },
-  };
-  const sizeError = checkEnvironmentSize(encoded.Variables);
-  if (sizeError) {
-    throw new Error(`Lambda function ${functionName}: ${sizeError}`);
-  }
-  return encoded;
-}
-
-function checkEnvironmentSize(variables: Record<string, string>) {
+  const runtime = encodeRuntime(Runtime);
+  const variables = { ...Variables, [runtimeVariable]: runtime };
   const size = Buffer.byteLength(JSON.stringify(variables));
-  if (size <= LAMBDA_ENVIRONMENT_MAX_BYTES) return undefined;
-  const runtimeSize = Buffer.byteLength(variables[runtimeVariable] ?? "");
-  return `the environment is ${size} bytes, over Lambda's limit of ${LAMBDA_ENVIRONMENT_MAX_BYTES} bytes. ${runtimeVariable}, which holds the routes and queues that the function handles, is ${runtimeSize} bytes of it. Split the runtime module into smaller modules, so that each function handles fewer routes and queues.`;
-}
-
-// Values that aren't known yet are measured at these lengths. An API ID
-// is always 10 characters. A queue ARN is at most about 120 characters.
-const estimatedLengths: Record<string, number> = { apiId: 10, queueArn: 120 };
-const defaultEstimatedLength = 64;
-
-function estimateUnknowns(value: unknown, key?: string): unknown {
-  if (isUnknownAfterApply(value) || isOutputValue(value)) {
-    return "x".repeat(estimatedLengths[key ?? ""] ?? defaultEstimatedLength);
-  }
-  if (Array.isArray(value)) return value.map((item) => estimateUnknowns(item));
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([k, item]) => [k, estimateUnknowns(item, k)]),
+  if (size > LAMBDA_ENVIRONMENT_MAX_BYTES) {
+    throw new Error(
+      `Lambda function ${functionName}: the environment is ${size} bytes, over Lambda's limit of ${LAMBDA_ENVIRONMENT_MAX_BYTES} bytes. ${runtimeVariable}, which holds the routes and queues that the function handles, is ${Buffer.byteLength(runtime)} bytes of it. Split the runtime module into smaller modules, so that each function handles fewer routes and queues.`,
     );
   }
-  return value;
-}
-
-/**
- * Adds the size check to the environment's validator, so plan and deploy
- * report an oversized environment before anything changes.
- *
- * The validation engine drops issues at a parent of a value that isn't known
- * yet. The issue is reported at `Variables`, which holds no unknown values,
- * so it is kept when the dispatch map holds an API ID or queue ARN that plan
- * doesn't know.
- */
-function withEnvironmentSizeCheck<S extends StandardSchemaV1>(schema: S): S {
-  const validate: StandardSchemaV1["~standard"]["validate"] = (value) => {
-    const result = schema["~standard"].validate(value);
-    if (result instanceof Promise) return result;
-    // A value that plan doesn't know yet fails the schema, and the engine
-    // then drops that issue. So the size is checked even when there are issues.
-    const environment = estimateUnknowns(value) as LambdaEnvironment;
-    if (!environment.Runtime) return result;
-    let encoded: string;
-    try {
-      encoded = encodeRuntime(environment.Runtime);
-    } catch {
-      return result;
-    }
-    const sizeError = checkEnvironmentSize({
-      ...environment.Variables,
-      [runtimeVariable]: encoded,
-    });
-    if (!sizeError) return result;
-    return {
-      issues: [
-        ...(result.issues ?? []),
-        { message: sizeError, path: ["Variables"] },
-      ],
-    };
-  };
-  return {
-    ...schema,
-    "~standard": { ...schema["~standard"], validate },
-  };
+  return { Variables: variables };
 }
 
 // Keys that would hold undefined are left out: the drift diff counts an
