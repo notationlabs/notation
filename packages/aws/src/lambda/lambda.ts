@@ -6,6 +6,10 @@ import path from "path";
 import { awsName } from "src/naming";
 import { assertLambdaId, type NameSafe } from "./lambda-id";
 
+// A runtime module's `resource` export takes these fields, except `code` and
+// `handler`. The compiler checks its keys against its own list, `serviceKeys`
+// in packages/esbuild-plugins/src/parsers/parse-runtime-module.ts, so a new
+// field here must also be added there.
 export type LambdaConfig = {
   /**
    * Names the function and its role, zip, policy and log group, and keys them
