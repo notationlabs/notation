@@ -92,7 +92,6 @@ export const handler = createDispatcher(mod);
 | Scheduled invocation | The export named in the event, if it is a schedule handler       |
 | HTTP API request     | The export that the dispatch map gives for the API and route key |
 | SQS messages         | The export that the dispatch map gives for the queue's ARN       |
-| Any other event      | The module's only handler for that kind of event, if it has one  |
 
 ### The dispatch map
 
@@ -119,11 +118,9 @@ A schedule adds no entry. Instead, the EventBridge rule sends `{ "export": "<nam
 
 ### Events with no entry
 
-A handler is an export made with `handle.*`. Other exported functions, such as helpers, don't count. Each handler takes one kind of event: HTTP API requests, SQS messages, DynamoDB stream records or EventBridge scheduled events. The function tells these kinds apart by the event's shape.
+If an event is not a scheduled invocation and has no entry in the dispatch map, the function throws an error that describes the event. This includes a request from a route that was given the module's Lambda group, such as `getTodos.resource`, instead of an export: the group is treated as external code, so the route adds no entry.
 
-An event with no entry in the dispatch map goes to the module's only handler of its kind. If the module has no handler of that kind, or several, or the event matches no kind, the function throws an error that describes the event.
-
-A DynamoDB stream adds no dispatch entry, so its records always go to the module's only DynamoDB handler. The same rule hides a wrong or missing dispatch map: a module with one API handler gets every API request, whatever the map says. The mistake shows only when the module gets a second API handler.
+A handler is an export made with `handle.*`. Other exported functions, such as helpers, can't be the target of a scheduled invocation.
 
 ## `lambda(config)`
 

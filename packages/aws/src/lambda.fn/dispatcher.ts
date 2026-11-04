@@ -4,9 +4,11 @@ import {
   type DispatchEntry,
 } from "@notation/aws.iac/shared";
 import type { Context } from "aws-lambda";
-import { getHandlerKind, type HandlerKind } from "./handlers";
+import { getHandlerKind } from "./handlers";
 
 type Handler = (event: any, context: Context) => unknown;
+
+type Target = { ok: true; name: string; event: unknown } | { ok: false; reason: string };
 
 /**
  * Makes the single entry point of a runtime module's Lambda function. It sends
@@ -19,28 +21,18 @@ type Handler = (event: any, context: Context) => unknown;
  *    its API and route key.
  * 3. SQS messages go to the export that the dispatch map gives for their
  *    queue.
- * 4. An event with no dispatch entry goes to the module's only handler of the
- *    event's kind. DynamoDB streams have no dispatch entries, so they always
- *    take this path. This path also hides a wrong or missing dispatch map
- *    until the module has a second handler of that kind.
  *
- * Only exports made with `handle.*` count as handlers. If no handler fits, the
- * function throws. The dispatch map is read once, when the function starts.
+ * If no export fits, the function throws. The dispatch map is read once, when
+ * the function starts.
  */
 export function createDispatcher(mod: Record<string, unknown>) {
   const dispatch = Object.values(
     decodeRuntime(process.env[runtimeVariable]).dispatch ?? {},
   );
-  const handlersByKind = new Map<HandlerKind, string[]>();
-  for (const name of Object.keys(mod)) {
-    const kind = getHandlerKind(mod[name]);
-    if (kind)
-      handlersByKind.set(kind, [...(handlersByKind.get(kind) ?? []), name]);
-  }
 
   return async (event: unknown, context: Context) => {
-    const target = findTarget(event, dispatch, handlersByKind);
-    if ("reason" in target) {
+    const target = findTarget(event, mod, dispatch);
+    if (!target.ok) {
       throw new Error(
         `No export of this module handles the event (${describeEvent(event)}). ${target.reason}`,
       );
@@ -55,70 +47,37 @@ export function createDispatcher(mod: Record<string, unknown>) {
   };
 }
 
-type Target =
-  { name: string; event: unknown } | { name?: undefined; reason: string };
-
 function findTarget(
   event: any,
+  mod: Record<string, unknown>,
   dispatch: DispatchEntry[],
-  handlersByKind: Map<HandlerKind, string[]>,
 ): Target {
   if (isScheduledInvocation(event)) {
-    if (!handlersByKind.get("schedule")?.includes(event.export)) {
+    if (getHandlerKind(mod[event.export]) !== "schedule") {
       return {
+        ok: false,
         reason: `The scheduled invocation names the export "${event.export}", which is not a schedule handler.`,
       };
     }
-    return { name: event.export, event: event.event };
+    return { ok: true, name: event.export, event: event.event };
   }
-  const kind = eventKind(event);
-  if (!kind) {
-    return {
-      reason: "Its shape doesn't match any kind of event that a handler takes.",
-    };
-  }
-  const entry = dispatch.find(({ match }) => matches(match, kind, event));
-  if (entry) return { name: entry.export, event };
-
-  const handlers = handlersByKind.get(kind) ?? [];
-  if (handlers.length === 1) return { name: handlers[0]!, event };
-  return {
-    reason:
-      handlers.length === 0
-        ? `The module has no ${kind} handler, and the dispatch map has no entry for the event.`
-        : `The dispatch map has no entry for the event, and the module has ${handlers.length} ${kind} handlers: ${handlers.join(", ")}.`,
-  };
+  const entry = dispatch.find(({ match }) => matches(match, event));
+  if (entry) return { ok: true, name: entry.export, event };
+  return { ok: false, reason: "The dispatch map has no entry for the event." };
 }
 
-function eventKind(event: any): HandlerKind | undefined {
-  if (
-    typeof event?.requestContext?.apiId === "string" &&
-    typeof event.routeKey === "string"
-  ) {
-    return "api";
-  }
-  const record = Array.isArray(event?.Records) ? event.Records[0] : undefined;
-  if (record?.eventSource === "aws:sqs") return "sqs";
-  if (record?.eventSource === "aws:dynamodb") return "dynamodb";
-  if (event?.["detail-type"] === "Scheduled Event") return "schedule";
-  return undefined;
-}
-
-function matches(
-  match: DispatchEntry["match"],
-  kind: HandlerKind,
-  event: any,
-): boolean {
-  if (kind === "api" && "apiId" in match) {
+function matches(match: DispatchEntry["match"], event: any): boolean {
+  if ("apiId" in match) {
     return (
-      match.apiId === event.requestContext.apiId &&
+      match.apiId === event?.requestContext?.apiId &&
       match.routeKey === event.routeKey
     );
   }
-  if (kind === "sqs" && "queueArn" in match) {
-    return match.queueArn === event.Records[0].eventSourceARN;
-  }
-  return false;
+  const record = Array.isArray(event?.Records) ? event.Records[0] : undefined;
+  return (
+    record?.eventSource === "aws:sqs" &&
+    match.queueArn === record.eventSourceARN
+  );
 }
 
 function isScheduledInvocation(

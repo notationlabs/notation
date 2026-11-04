@@ -45,7 +45,7 @@ export const runCleanup = handle.eventBridgeScheduledEvent((event) => {
 
 ## `handle.dynamoDbStream`
 
-For DynamoDB stream events.
+For DynamoDB stream events. Notation has no DynamoDB stream binding yet, so the function's dispatcher has no entry for stream records and throws when it receives them.
 
 ```ts [runtime/records.fn.ts]
 import { handle } from "@notation/aws/lambda.fn";
