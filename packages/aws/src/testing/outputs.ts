@@ -68,8 +68,10 @@ function view(module: string, binding: string, path: string[]): any {
       }
       if (typeof prop === "symbol") return undefined;
       const next = [...path, prop];
+      // A whole-binding stub gives `undefined` for each property it lacks,
+      // such as `grant`. Those reads fall through to `grant` and the error.
       const found = findOutputValue(key, next);
-      if (found) return found.value;
+      if (found && found.value !== undefined) return found.value;
       if (hasOutputValuesBelow(outputKey(module, binding, next))) {
         return view(module, binding, next);
       }

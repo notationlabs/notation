@@ -56,6 +56,20 @@ test("grant stays callable, so lambda() settings can run", () => {
   expect(() => orderQueue.grant(["SendMessage"])).not.toThrow();
 });
 
+test("grant stays callable when the whole binding is stubbed", () => {
+  stubOutputs({ "infra/orders#orderQueue": { url: "u", arn: "a" } });
+  const orderQueue: any = infraBinding("infra/orders", "orderQueue");
+  expect(() => orderQueue.grant(["SendMessage"])).not.toThrow();
+});
+
+test("reading a property that a whole-binding stub lacks throws, naming its key", () => {
+  stubOutputs({ "infra/orders#orderQueue": { url: "u" } });
+  const orderQueue: any = infraBinding("infra/orders", "orderQueue");
+  expect(() => orderQueue.arn).toThrow(
+    'No output is stubbed for "infra/orders#orderQueue.arn".',
+  );
+});
+
 test("stubOutputs rejects a key that isn't an output key", () => {
   expect(() => stubOutputs({ orderQueue: "x" })).toThrow(
     '"orderQueue" is not an output key',
