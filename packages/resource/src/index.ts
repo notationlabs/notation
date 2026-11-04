@@ -47,7 +47,9 @@ export {
   isHandlerRef,
   isStandIn,
   linkRuntimeModules,
+  resolveReads,
   resolveRuntimeTarget,
+  type DeliverValues,
   type RuntimeFunction,
   type RuntimeHandler,
   type RuntimeModuleLink,
@@ -62,3 +64,14 @@ export type {
   RuntimeRef,
   RuntimeView,
 } from "./views";
+export {
+  addOutputSource,
+  bindingKey,
+  clearOutputValues,
+  isKeySegment,
+  outputKey,
+  parseOutputKey,
+  read,
+  setOutputValues,
+  type ParsedOutputKey,
+} from "./outputs";
