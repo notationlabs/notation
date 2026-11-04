@@ -169,8 +169,8 @@ describe("runtime modules", () => {
 
     const bundle = readFileSync(path.join(root, "dist/infra/main.mjs"), "utf8");
     expect(bundle).toContain(`from "@notation/aws/lambda"`);
-    expect(bundle).toContain(`id: "todos"`);
-    expect(bundle).toContain(`path: "dist/runtime/todos/index.mjs"`);
+    expect(bundle).toContain(`"id": "todos"`);
+    expect(bundle).toContain(`"path": "dist/runtime/todos/index.mjs"`);
     expect(bundle).not.toContain("init");
   });
 });
