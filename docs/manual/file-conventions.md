@@ -1,109 +1,126 @@
 # File Conventions
 
-Notation uses file naming conventions to determine how modules are compiled and deployed.
+A Notation project has two kinds of code. Infra code declares cloud resources, such as a queue. Runtime code runs inside a deployed resource, such as a Lambda function. Each import that crosses from one kind to the other carries an import attribute that names the side it comes from.
 
 ## Directory layout
 
 ```sh
 my-app/
-├── infra/             # Infrastructure definitions
-│   └── api.ts         # Entry file
-├── runtime/           # Lambda handler code
-│   ├── todos.fn.ts    # Runtime module: exports resource
-│   └── utils.ts       # Shared runtime utilities
-├── dist/              # Compiled output (generated)
-├── .notation/         # State (generated)
-├── notation.config.ts # Project config: app, entry, default stage
+├── infra/
+│   └── orders.ts       # Infra module, and the entry file
+├── runtime/
+│   ├── checkout.fn.ts  # Runtime module: calls lambda()
+│   └── orders.fn.ts    # Runtime module: calls lambda()
+├── dist/               # Compiled output (generated)
+├── .notation/          # State (generated)
+├── notation-env.d.ts   # Types of attributed imports (generated)
+├── notation.config.ts  # Project config: app, entry, default stage
 ├── package.json
 └── tsconfig.json
 ```
 
-## Infrastructure modules
+## Infra modules
 
-Location: `infra/*.ts`
-
-An infrastructure module declares cloud resources. The entry file is the module that `notation.config.ts` names in `entry`:
+An infra module declares cloud resources. The entry file is the infra module that `notation.config.ts` names in `entry`:
 
 ```ts [notation.config.ts]
 export default defineConfig({
   app: "my-app",
-  entry: "infra/api.ts",
+  entry: "infra/orders.ts",
 });
 ```
 
-```ts [infra/api.ts]
-import { api, router } from "@notation/aws/api-gateway";
-import { getTodos } from "runtime/todos.fn" with { type: "runtime" };
+```ts [infra/orders.ts]
+import { queue } from "@notation/aws/sqs";
+import { processOrders } from "runtime/orders.fn" with { type: "runtime" };
 
-const todoApi = api({ name: "todo-api" });
-const todoRouter = router(todoApi);
-todoRouter.get("/todos", getTodos);
+export const orderQueue = queue({ name: "orders" });
+orderQueue.consume(processOrders, { batchSize: 5 });
 ```
 
 The CLI deploys the entry file and the modules that it imports. To deploy part of a project separately, give that part its own config. See [Project Config](./project-config.md).
 
 ## Runtime modules
 
-Location: set by `runtimeModules` in `notation.config.ts`. The default is `**/*.fn.ts`.
+A runtime module holds code that runs in a deployed function. It calls [`lambda()`](./function-config.md) to declare the function, and exports the handlers that the function runs:
 
-A runtime module holds code that runs in a deployed resource, such as a Lambda function. A file is a runtime module when both of these are true:
+```ts [runtime/orders.fn.ts]
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
 
-1. The file matches one of the `runtimeModules` globs.
-2. The file exports `resource`.
+const { handle } = lambda({ id: "orders", timeout: 5, memory: 64 });
 
-**Each runtime module deploys as one resource.** A module can export several handlers, and they all run in the same Lambda function, with the same bundle, role and settings.
+export const processOrders = handle.sqsEvent((event) => {
+  for (const record of event.Records) console.log("order", record.body);
+});
 
-```ts [runtime/todos.fn.ts]
-import { handle, json, type LambdaResource } from "@notation/aws/lambda.fn";
-import { api } from "./utils";
-
-const todos = await api.get<any[]>("/todos");
-
-export const getTodos = handle.apiRequest(() => json(todos));
-export const getTodoCount = handle.apiRequest(() => json(todos.length));
-
-export const resource: LambdaResource = {
-  service: "aws/lambda",
-  id: "todos",
-  timeout: 5,
-  memory: 64,
-};
+export const processRefunds = handle.sqsEvent((event) => {
+  for (const record of event.Records) console.log("refund", record.body);
+});
 ```
 
-`resource.service` selects the type of resource. `"aws/lambda"` is the only service so far, and any other value fails the build. The other fields configure the resource; see [Lambda Resource](./function-config.md).
+**A file is a runtime module when infra imports it `with { type: "runtime" }`.** The compiler bundles each function that a runtime module declares. A runtime module that no infra module imports isn't built.
 
-`runtime/utils.ts` doesn't match `**/*.fn.ts`, so it is an ordinary module. A file that matches a glob and has no `resource` export is also an ordinary module. Runtime modules can import ordinary modules. Notation bundles the shared code into each runtime module that imports it.
+Runtime modules can import ordinary modules, such as `runtime/utils.ts`, without an attribute. Notation bundles the shared code into each function that uses it.
 
-### Choosing the globs
+## Import attributes
 
-`runtimeModules` takes one glob or an array of globs, relative to the config. For example, to treat every file in `runtime/` as a possible runtime module:
+Two attributes mark the imports that cross between infra and runtime code:
+
+| Attribute                  | Where                 | Target                                                         | The importer sees                                                     |
+| -------------------------- | --------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `with { type: "runtime" }` | In an infra module    | A runtime module of this project                               | Each handler as a `RuntimeRef`, which infra can wire but not call    |
+| `with { type: "infra" }`   | In a runtime module   | An infra module, or a provider's factory, such as `@notation/aws/lambda` | Each output value as its value, such as a queue's `url` as a `string` |
+
+[`notation types`](../cli/types.md) writes `notation-env.d.ts`, which gives each side its view of the other. See [End-to-End Types](./types.md) and [Reading Infra Values](./infra-values.md).
+
+The build fails when an import breaks these rules:
+
+- `type: "infra"` in an infra module, or `type: "runtime"` in runtime code.
+- `type: "runtime"` on an import of a package.
+- Runtime code that imports an infra package, such as `@notation/aws/sqs`, without `type: "infra"`. The function's bundle would include infra.
+- Infra that imports a file matching `runtimeModules` without `type: "runtime"`. See below.
+
+Tests import runtime modules without an attribute, so each handler is a plain function. See [Testing Handlers](./testing.md).
+
+### `runtimeModules`
+
+`runtimeModules` in `notation.config.ts` is a glob, or an array of globs, relative to the config. The default is `**/*.fn.ts`. Infra must import a file that matches a glob `with { type: "runtime" }`, so a forgotten attribute fails the build:
+
+```
+runtime/orders.fn.ts is a runtime module, so infra must import it with { type: "runtime" }.
+```
+
+The globs don't decide which files are runtime modules. A file that doesn't match, such as `runtime/checkout.ts`, is still a runtime module when infra imports it with the attribute. Files in `node_modules/` and `dist/` never match.
 
 ```ts [notation.config.ts]
 export default defineConfig({
   app: "my-app",
-  entry: "infra/api.ts",
+  entry: "infra/orders.ts",
   runtimeModules: "runtime/**",
 });
 ```
 
-With this setting, `runtime/utils.ts` matches the glob, but it has no `resource` export, so it stays an ordinary module. Files in `node_modules/` and `dist/` never match.
+## Infra imports a runtime module
 
-### Infra imports a runtime module
+Infra code imports the handlers of a runtime module and passes them to infra APIs, such as `queue.consume`:
 
-Infra code imports the handlers of a runtime module and passes them to infra APIs, such as `router.get`:
-
-```ts [infra/api.ts]
+```ts [infra/orders.ts]
 import {
-  getTodos,
-  getTodoCount,
-} from "runtime/todos.fn" with { type: "runtime" };
+  processOrders,
+  processRefunds,
+} from "runtime/orders.fn" with { type: "runtime" };
 
-todoRouter.get("/todos", getTodos);
-todoRouter.get("/todos/count", getTodoCount);
+orderQueue.consume(processOrders, { batchSize: 5 });
+refundQueue.consume(processRefunds);
 ```
 
-**The runtime module's code never runs at deploy time.** When the compiler builds the infra code, it replaces `runtime/todos.fn.ts` with a generated module. The generated module declares the Lambda function, and exports a reference for each export of the runtime module: `{ resource, export: "getTodos" }`. The `api.get("/todos")` call above runs only in the Lambda function. See [Compiler](../internals/compiler.md).
+**The compiler runs infra modules before runtime modules.** While infra modules run, each import of a runtime module gives a stand-in for each export, and none of the runtime module's code runs. Infra APIs such as `consume` record the stand-in and wire it once all infra has run. Then the compiler runs the `lambda()` calls of each runtime module, and links each stand-in to its handler. So the plan doesn't depend on the order in which infra modules load. See [Compiler](../internals/compiler.md).
 
-This applies to every export, not only handlers. If infra imports a constant or a helper from a runtime module, it gets a reference instead of the value, even though TypeScript types the import as the original value. Put code that infra and runtime share in an ordinary module.
+Infra can only use the handlers of a runtime module, and an exported `lambda()` result. Every other export, such as a helper or a constant, has a type that infra can't use. Put code that infra and runtime share in an ordinary module.
 
-If a file still exports the old `config` object (one with a `service` property) and no `resource`, the build fails with a message to rename the export. A `config` export of any other shape is ordinary code.
+## Limits
+
+- **TypeScript 7.1 or later** is needed to type the attributed imports. TypeScript 6, Prettier and typescript-eslint can't parse `notation-env.d.ts`, so exclude the file from them. See [notation types](../cli/types.md#tools).
+- **Renaming a handler in your editor doesn't reach infra.** See [End-to-End Types](./types.md#renaming-a-handler).
+- **`lambda()` settings lose effects that they don't reference.** See [Function Settings](./function-config.md#settings-are-ordinary-code).
+- **Plain Node can't load runtime modules.** Node overflows its stack on a cycle of TypeScript imports that carry attributes, so tests and scripts need Notation's loader hook. See [Testing Handlers](./testing.md).

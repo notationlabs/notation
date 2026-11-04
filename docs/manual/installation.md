@@ -23,6 +23,12 @@ Node.js 18 or later.
 node --version # v18.x or higher
 ```
 
+Tests that run runtime modules under Node's test runner use Notation's loader hook, which needs Node.js 22.15 or later. See [Testing Handlers](./testing.md).
+
+### TypeScript
+
+TypeScript 7.1 or later, to type-check a project. `notation types` writes `notation-env.d.ts`, which uses import attributes in module declarations, and earlier versions can't parse it. TypeScript 6, Prettier and typescript-eslint can't parse the file either, so exclude it from them. See [notation types](../cli/types.md#tools).
+
 ### AWS credentials
 
 Notation deploys to AWS. You need a default profile in `~/.aws/credentials`:

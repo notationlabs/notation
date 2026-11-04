@@ -19,7 +19,8 @@ export const manual: DocCategory = {
       icon: "cpu",
       links: [
         { label: "Lambda Handlers", slug: "manual/functions" },
-        { label: "Lambda Resource", slug: "manual/function-config" },
+        { label: "Function Settings", slug: "manual/function-config" },
+        { label: "Reading Infra Values", slug: "manual/infra-values" },
         { label: "Testing Handlers", slug: "manual/testing" },
       ],
     },
