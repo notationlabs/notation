@@ -63,7 +63,8 @@ export function isProvider(
   importer: string,
 ): boolean {
   if (!isBare(specifier)) return false;
-  if (file.split(path.sep).includes("node_modules")) return true;
+  // Vitest gives ids with "/" on Windows too, so both separators split.
+  if (file.split(/[\\/]/).includes("node_modules")) return true;
   const relative = path.relative(projectRootOf(importer), file);
   return relative.startsWith("..") || path.isAbsolute(relative);
 }

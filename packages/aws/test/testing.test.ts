@@ -15,6 +15,7 @@ import { infraBinding, stubOutputs, unstubOutputs } from "src/testing/outputs";
 import {
   exportNames,
   infraModuleSource,
+  isProvider,
   outputModule,
   projectRootOf,
 } from "src/testing/served";
@@ -86,6 +87,14 @@ test("the served module exports each binding of the infra module", () => {
       "export { _0 as orderQueue };",
     ].join("\n"),
   );
+});
+
+test("a file under node_modules is a provider with either path separator", () => {
+  const importer = path.join(checkout, "runtime/checkout.ts");
+  const posix = `${checkout}/node_modules/@notation/aws/lambda.js`;
+  const backslashed = `${checkout}/node_modules\\@notation\\aws\\lambda.js`;
+  expect(isProvider("@notation/aws/lambda", posix, importer)).toBe(true);
+  expect(isProvider("@notation/aws/lambda", backslashed, importer)).toBe(true);
 });
 
 test("the project root is the directory of notation.config.ts, past a nested package.json", () => {
