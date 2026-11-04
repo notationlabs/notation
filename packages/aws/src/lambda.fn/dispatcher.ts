@@ -8,7 +8,8 @@ import type { Context } from "aws-lambda";
 import { getHandlerKind } from "./handlers";
 
 // The function's bundle imports this module before its handlers' modules, so
-// the source is added before any of their code reads infra.
+// the environment is added as an output source before any handler code
+// reads infra.
 addOutputSource(() => decodeRuntime(process.env[runtimeVariable]).outputs);
 
 type Handler = (event: any, context: Context) => unknown;

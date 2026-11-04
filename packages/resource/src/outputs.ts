@@ -69,7 +69,7 @@ export function setOutputValues(values: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(values)) current.set(key, value);
 }
 
-/** Removes every value that `setOutputValues` or a source set. */
+/** Removes every value, whether `setOutputValues` set it or a source gave it. */
 export function clearOutputValues(): void {
   store().values.clear();
 }

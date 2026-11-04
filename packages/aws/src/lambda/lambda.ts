@@ -75,8 +75,8 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
     const { fn, role } = build(this, config);
     this.fn = fn;
     this.role = role;
-    // Not enumerable, so that serialising the group doesn't turn it into a
-    // string. A whole read of the group still delivers it.
+    // Not enumerable, so that serialising the group doesn't turn the ARN
+    // into a string. A read of the whole group still delivers the ARN.
     Object.defineProperty(this, "arn", {
       value: fn.outputValue("FunctionArn"),
       enumerable: false,
@@ -143,9 +143,9 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
   }
 
   /**
-   * Wires the function to a source of `kind` events, as a handler's `wire`
-   * does. The function runs external code, which gets every event, so `wire`
-   * gets no export name.
+   * Wires the function to a source of `kind` events, in the same way as a
+   * handler's `wire`. The function runs external code, which gets every
+   * event, so `run` gets no export name.
    */
   wire(
     _kind: HandlerKind,
@@ -169,9 +169,10 @@ export function isLambdaGroup(value: unknown): value is LambdaGroup {
 }
 
 /**
- * `target` as what an infra API wires: a handler imported from a runtime
- * module, or a Lambda group. Fails on anything else, naming `caller`, such
- * as `route()`.
+ * Checks that an infra API can wire `target`, and returns it as a
+ * `HandlerTarget`. An infra API can wire a handler imported from a runtime
+ * module, or a Lambda group. Any other value throws an error that names
+ * `caller`, such as `route()`.
  */
 export function lambdaTarget(
   target: unknown,
@@ -206,8 +207,8 @@ export type LambdaSettings<Id extends string> = Omit<LambdaConfig, "id"> & {
 };
 
 /**
- * `lambda()` as runtime code sees it. It returns what the runtime half
- * returns, the function's `handle`.
+ * The type of `lambda()` in runtime code. It returns the function's
+ * `handle`, as the runtime half of `lambda()` does.
  */
 export type RuntimeLambda = <const Id extends string>(
   config: LambdaSettings<Id>,

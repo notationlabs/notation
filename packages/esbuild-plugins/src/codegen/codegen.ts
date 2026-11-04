@@ -26,13 +26,18 @@ export function createStandInModule(module: string, exports: string[]) {
 }
 
 /**
- * The entry of the infra bundle. It evaluates infra, and re-exports its
- * exports, then the stripped copy
- * of each runtime module, and then links the stand-ins that infra holds to
- * the runtime modules' exports. ES modules evaluate their imports in order,
- * so no runtime module runs before all of infra has. esbuild keys modules by
- * their import attributes too, so the entry imports each stand-in module with
- * the attribute that infra uses, which gives it the same instance.
+ * The entry of the infra bundle. It does three things in order:
+ *
+ * 1. Re-exports the infra entry, which evaluates infra.
+ * 2. Imports the stripped copy of each runtime module.
+ * 3. Links the stand-ins that infra holds to the runtime modules' exports.
+ *
+ * ES modules evaluate their imports in order, so no runtime module runs
+ * before all of infra has run.
+ *
+ * esbuild keys modules by their import attributes as well as their paths.
+ * The entry imports each stand-in module with the same attribute as infra
+ * does, so that it gets the same module instance.
  * @param entryPoint The absolute path of the infra entry.
  * @param runtimeModules The absolute path of each runtime module, and its
  * path relative to the project root.

@@ -96,7 +96,8 @@ export class HandlerRef<F = unknown> implements RuntimeRef<any, unknown, F> {
 /**
  * Makes a handler reference for `fn`, and registers it so that linking fails
  * if no runtime module exports it. `below` is the provider function that the
- * user's code called, so the call site names the user's `handle` call.
+ * user's code called. The call site is taken from the frame that called
+ * `below`, so that it points at the user's `handle` call.
  */
 export function createHandlerRef<F>(
   kind: string,

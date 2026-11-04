@@ -481,9 +481,10 @@ type EnvironmentEntry = { path: string[]; label: string; size: number };
  * unknown until apply counts as an empty string, so the check fails only
  * when the environment is over the limit whatever the unknown values are.
  *
- * The issue's path is the largest entry that holds no unknown value. Plan
- * drops issues at or above an unknown value, and the whole environment is
- * above every one of them.
+ * The issue is reported at the largest entry that holds no unknown value.
+ * Plan drops an issue whose path is at or above an unknown value. The whole
+ * environment is above every unknown value, so plan would always drop an
+ * issue reported on it.
  */
 export function environmentSizeIssue(
   environment: LambdaEnvironment | undefined,

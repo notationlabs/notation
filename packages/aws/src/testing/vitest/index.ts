@@ -64,7 +64,7 @@ export function notationTesting(): NotationTestingPlugin {
           out += code.slice(cursor, imp.s) + prefix + imp.n;
         } else {
           // es-module-lexer doesn't parse a dynamic import's attributes, so
-          // its options are matched as text. `s` and `e` take in the quotes.
+          // its options are matched as text. The `s` and `e` offsets include the quotes.
           if (imp.a === -1 || !infraOptions.test(code.slice(imp.a, imp.se))) {
             continue;
           }

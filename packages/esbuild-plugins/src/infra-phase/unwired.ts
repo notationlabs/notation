@@ -24,12 +24,16 @@ export type UnwiredModule = {
 };
 
 /**
- * Finds the files that look like runtime modules that nothing deploys. Such a
- * file matches the `runtimeModules` globs, and imports a package, such as
- * `@notation/aws/lambda`, with `type: "infra"`, as a module that calls
- * `lambda()` does. No infra module imports it with `type: "runtime"`, and no
- * module that a wired runtime module imports, directly or not, imports it.
- * The infra phase never runs it, so its functions aren't declared.
+ * Finds the files that look like runtime modules but that nothing deploys.
+ * A file is reported when all of these are true:
+ *
+ * - It matches the `runtimeModules` globs.
+ * - It imports a package, such as `@notation/aws/lambda`, with
+ *   `type: "infra"`, as a module that calls `lambda()` does.
+ * - No infra module imports it with `type: "runtime"`.
+ * - No wired runtime module imports it, directly or through other modules.
+ *
+ * The infra phase never runs such a file, so its functions aren't declared.
  */
 export async function findUnwiredRuntimeModules(
   opts: UnwiredOptions,

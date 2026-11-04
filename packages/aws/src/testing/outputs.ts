@@ -9,11 +9,12 @@ import {
 } from "@notation/resource/outputs";
 
 /**
- * Sets the values that runtime code reads from infra in a test. Each key is
- * the infra module's path from the project root without its extension, `#`,
- * the binding, and the path of the property read, such as
- * `infra/orders#orderQueue.url`. A key without a property path,
- * `infra/orders#orderQueue`, sets the whole binding to an object.
+ * Sets the values that runtime code reads from infra in a test. A key has
+ * the form `<module>#<binding>.<path>`, such as `infra/orders#orderQueue.url`.
+ * `<module>` is the infra module's path from the project root, without its
+ * extension. `<path>` is the property that runtime code reads. A key without
+ * a path, such as `infra/orders#orderQueue`, sets the whole binding to an
+ * object.
  *
  * Each call adds to the values that earlier calls set.
  */

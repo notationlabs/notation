@@ -74,10 +74,10 @@ type IsNameSafe<
 
 /**
  * Resolves to `S` when `S` is a name-safe string literal, and to an error
- * message when it is a literal that isn't. A string that isn't a literal,
- * such as an ID built from infra, is typed `string` or a template such as
- * `${string}-checkout`. Its contents can't be checked in types, so it
- * resolves to `S`, and `lambda()` checks it when it runs.
+ * message when `S` is a literal that isn't name-safe. When `S` isn't a
+ * literal, such as an ID built from infra, its type is `string` or a
+ * template such as `${string}-checkout`. Types can't check its contents, so
+ * it resolves to `S`, and `lambda()` checks the ID when it runs.
  */
 export type NameSafe<S extends string> =
   {} extends Record<S, unknown>
