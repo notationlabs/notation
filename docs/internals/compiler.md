@@ -282,7 +282,7 @@ A function receives the values it reads from infra through its `NOTATION_RUNTIME
 
 4. **Reading values.** The function's dispatcher module, `@notation/aws/lambda.fn`, calls `addOutputSource` with a source that decodes `NOTATION_RUNTIME`. The first `read()` in the function loads the source into the store of `@notation/resource/outputs`, and each `read()` returns its value from there.
 
-A read of a whole binding, such as `orderQueue` used as a value, delivers the binding's data properties as one object, and reads of its paths are then served from that object.
+A read of a whole binding, such as `orderQueue` used as a value, delivers one object, and reads of its paths are then served from that object. A binding that is data is delivered whole. Any other binding, such as a resource group, delivers only its own properties that hold output values or primitives, such as a queue's `url`, `arn` and `id`, and not its `config`. This keeps the function's environment under Lambda's 4 KB limit, and `BindingView` in `@notation/resource` types the binding to match. Plan fails when a function's environment is over the limit; see [Lambda](../resources/lambda.md#dispatch).
 
 ## Resource graph construction
 

@@ -285,7 +285,9 @@ it("fails when a value read from a stand-in names an export that the runtime mod
       ]);
       policy.getDependencies();
     }),
-  ).rejects.toThrow("runtime/checkout.ts has no handler or function named missing");
+  ).rejects.toThrow(
+    "runtime/checkout.ts has no handler or function named missing",
+  );
 });
 
 it("links an exported function to the function itself", async () => {
@@ -376,6 +378,13 @@ class Queue {
   readonly url = new OutputValue({} as any, ["QueueUrl"]);
   readonly arn = new OutputValue({} as any, ["QueueArn"]);
   readonly queue = new Fn("orders-queue");
+  declare readonly name: string;
+  constructor() {
+    Object.defineProperty(this, "name", { value: "orders", enumerable: false });
+  }
+  get sideEffect(): string {
+    throw new Error("a whole read calls no getters");
+  }
   grant() {
     return {};
   }
@@ -428,16 +437,21 @@ it("delivers the values that a function reads from infra", async () => {
   });
 });
 
-it("delivers the data properties of a whole binding", async () => {
+it("delivers the output values and primitives of a whole binding, and not its config", async () => {
   const { delivered, infra } = await collectReads(["infra/orders#orderQueue"]);
   expect(delivered).toEqual({
     "infra/orders#orderQueue": {
       id: "orders",
-      config: { name: "orders" },
+      name: "orders",
       url: infra.orderQueue.url,
       arn: infra.orderQueue.arn,
     },
   });
+});
+
+it("delivers a whole binding that is data as it is", async () => {
+  const { delivered } = await collectReads(["infra/orders#settings"]);
+  expect(delivered).toEqual({ "infra/orders#settings": { memory: 64 } });
 });
 
 it("fails when a function reads an infra function, or a value that isn't data", async () => {

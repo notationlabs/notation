@@ -100,7 +100,15 @@ export function runtimeReadsDataAsValues(
   expectTypeOf(infra.orderQueue.url).toEqualTypeOf<string>();
   expectTypeOf(infra.orderQueue.arn).toEqualTypeOf<string>();
   expectTypeOf(infra.orderQueue.id).toEqualTypeOf<string>();
-  expectTypeOf(infra.orderQueue.config.name).toEqualTypeOf<string>();
+}
+
+export function runtimeReadsABindingOfDataWhole(
+  infra: RuntimeView<{ settings: { memory: number; tags: { team: string } } }>,
+) {
+  expectTypeOf(infra.settings).toEqualTypeOf<{
+    memory: number;
+    tags: { team: string };
+  }>();
 }
 
 export function runtimeDoesntSeeWhatIsntDelivered(
@@ -110,6 +118,16 @@ export function runtimeDoesntSeeWhatIsntDelivered(
   infra.orderQueue.resources;
   // @ts-expect-error a resource isn't delivered
   infra.orderQueue.queue;
+  // @ts-expect-error a binding that isn't data doesn't deliver its config
+  infra.orderQueue.config;
+}
+
+export function runtimeReadsTheArnOfALambdaGroup(
+  infra: RuntimeView<{ worker: LambdaGroup }>,
+) {
+  expectTypeOf(infra.worker.arn).toEqualTypeOf<string>();
+  // @ts-expect-error a binding that isn't data doesn't deliver its config
+  infra.worker.config;
 }
 
 export function runtimeCallsGrantButNoOtherMethod(

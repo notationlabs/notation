@@ -322,7 +322,11 @@ describe("a function declared in a runtime module", () => {
         "checkoutFn",
       ) as unknown as LambdaGroup;
       queue({ name: "orders" }).consume(checkoutFn);
-      caller = lambda({ id: "caller", code, grants: [checkoutFn.grantInvoke()] });
+      caller = lambda({
+        id: "caller",
+        code,
+        grants: [checkoutFn.grantInvoke()],
+      });
       caller.fn.contribute({
         Environment: { Variables: { CHECKOUT_ARN: checkoutFn.arn } },
       });
@@ -357,6 +361,40 @@ describe("a function declared in a runtime module", () => {
       Action: ["lambda:InvokeFunction"],
       Resource: "arn:checkout",
     });
+  });
+
+  test("a whole read of a queue or a Lambda group delivers its outputs and id, not its config", async () => {
+    let checkout!: LambdaGroup;
+    let orders!: QueueGroup;
+    let worker!: LambdaGroup;
+    await collectResourceGraph(
+      () => {
+        orders = queue({ name: "orders", visibilityTimeout: 30 });
+        worker = lambda({ id: "worker", code, timeout: 10 });
+        checkout = lambda({ id: "checkout" });
+        linkRuntimeModules(
+          [
+            {
+              module: "runtime/checkout.ts",
+              standIns: {},
+              exports: { run: checkout.handle.apiRequest(() => ({})) },
+            },
+          ],
+          { "infra/orders": { orderQueue: orders, worker } },
+        );
+      },
+      {
+        runtimeReads: () => ["infra/orders#orderQueue", "infra/orders#worker"],
+      },
+    );
+
+    const outputs = (await checkout.fn.planParams()).Environment as any;
+    expect(
+      Object.keys(outputs.Runtime.outputs["infra/orders#orderQueue"]).sort(),
+    ).toEqual(["arn", "id", "platform", "type", "url"]);
+    expect(
+      Object.keys(outputs.Runtime.outputs["infra/orders#worker"]).sort(),
+    ).toEqual(["arn", "id", "platform", "type"]);
   });
 
   test("wiring a handler of the wrong kind fails at the infra call site", async () => {

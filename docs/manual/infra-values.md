@@ -52,14 +52,15 @@ The two modules import each other. This is allowed: the compiler runs every infr
 
 [`notation types`](../cli/types.md) writes the declarations that give runtime code its view of an infra module. The view follows these rules:
 
-| In the infra module                                        | In runtime code                                                  |
-| ---------------------------------------------------------- | ---------------------------------------------------------------- |
-| An output value, such as `orderQueue.url`                  | The value's type, such as `string`                               |
-| Data, such as a string or a plain object                   | The same type                                                    |
-| A resource factory, such as `lambda` or `queue`            | Callable, for use in [`lambda()` settings](./function-config.md) |
-| A `grant` method, such as `orderQueue.grant`               | Callable, for use in `grants`                                    |
-| Any other function or method, such as `orderQueue.consume` | Uncallable                                                       |
-| Any other property, such as `orderQueue.resources`         | Left out                                                         |
+| In the infra module                                                          | In runtime code                                                  |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| An output value, such as `orderQueue.url`                                    | The value's type, such as `string`                               |
+| Data, such as a string or a plain object                                     | The same type                                                    |
+| A resource factory, such as `lambda` or `queue`                              | Callable, for use in [`lambda()` settings](./function-config.md) |
+| A `grant` method, such as `orderQueue.grant`                                 | Callable, for use in `grants`                                    |
+| Any other function or method, such as `orderQueue.consume`                   | Uncallable                                                       |
+| Any other property, such as `orderQueue.resources`                           | Left out                                                         |
+| An object property of a binding that isn't data, such as `orderQueue.config` | Left out                                                         |
 
 So `orderQueue.consume(createOrder)` in runtime code is a type error.
 
@@ -90,7 +91,7 @@ Then the values travel in four steps:
 3. The values go in the function's `NOTATION_RUNTIME` environment variable, next to its [dispatch map](../resources/lambda.md#dispatch). A plan shows them as a change to `Environment.Runtime`, and an output that isn't known yet shows as unknown.
 4. When the function runs, `read` looks the key up in the variable.
 
-`NOTATION_RUNTIME` counts towards Lambda's limit of 4 KB of environment variables, so each read adds about the length of its key and its value.
+`NOTATION_RUNTIME` counts towards Lambda's limit of 4 KB of environment variables, so each read adds about the length of its key and its value. When the variables are over the limit, plan fails, and names the function and its largest reads. See [Lambda](../resources/lambda.md#dispatch).
 
 ## What runtime code can read
 
@@ -102,7 +103,12 @@ A read must end at an output value or at data: a string, a number, a boolean, `n
 
 A read can go on past an output value or a string. `orderQueue.url.length` delivers the URL, and reads `length` in the function.
 
-**A whole binding can be read as a value.** `console.log(orderQueue)` delivers the binding's data properties, such as `url` and `arn`, as one object. Properties that aren't data, such as the queue's `resources`, are left out, and the type of the binding leaves them out too. Its methods are uncallable, except `grant`. A namespace import, such as `import * as orders from "infra/orders"`, can't be used as a value: read one of its exports, as in `orders.orderQueue.url`.
+**A whole binding can be read as a value.** What it delivers depends on the binding:
+
+- A binding that is data, such as `export const settings = { memory: 64 }`, is delivered whole.
+- Any other binding, such as a queue, delivers its own properties that hold output values or primitives, as one object. For a queue, that is its `url`, `arn` and `id`, and its `type` and `platform`. Its `config` and its resources are left out, so that the function's environment stays small.
+
+The type of the binding leaves out what isn't delivered. So `orderQueue.config` is a type error in runtime code. Methods are uncallable, except `grant`. A namespace import, such as `import * as orders from "infra/orders"`, can't be used as a value: read one of its exports, as in `orders.orderQueue.url`.
 
 ## Rules
 

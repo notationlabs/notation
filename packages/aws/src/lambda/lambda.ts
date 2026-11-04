@@ -66,6 +66,8 @@ const lambdaGroupMark = Symbol.for("@notation/aws/LambdaGroup");
 export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
   readonly fn: aws.lambda.LambdaFunctionInstance;
   readonly role: aws.lambda.LambdaIamRoleInstance;
+  /** The function's ARN. It is an output value, filled in at deploy. */
+  declare readonly arn: string;
   #handle?: Handle;
 
   get [lambdaGroupMark]() {
@@ -79,19 +81,17 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
     const { fn, role } = build(this, config);
     this.fn = fn;
     this.role = role;
+    // Not enumerable, so that serialising the group doesn't turn it into a
+    // string. A whole read of the group still delivers it.
+    Object.defineProperty(this, "arn", {
+      value: fn.outputValue("FunctionArn"),
+      enumerable: false,
+    });
     if (config.grants && config.grants.length > 0) {
       this.policy.contribute({
         PolicyDocument: { Statement: config.grants },
       });
     }
-  }
-
-  /**
-   * The function's ARN. It is an output value, filled in at deploy. A getter,
-   * so that serialising the group doesn't turn it into a string.
-   */
-  get arn(): string {
-    return this.fn.outputValue("FunctionArn");
   }
 
   /**

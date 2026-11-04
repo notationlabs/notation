@@ -105,33 +105,38 @@ export type RuntimeView<T> = {
 };
 
 /**
- * How runtime code sees a binding of an infra module. It keeps what the
- * function can be given: output values, primitives, and plain data, such as
- * a queue's `url`, `arn`, `id` and `config`. Properties that hold anything
- * else, such as the queue's resources, are left out. Methods become
- * `InfraOnly`, except `grant` methods.
+ * How runtime code sees a binding of an infra module. A binding that is data,
+ * such as a plain object of settings, keeps its type. A binding that isn't,
+ * such as a queue, keeps only the properties that the function is given when
+ * it reads the binding whole: output values and primitives, such as the
+ * queue's `url`, `arn` and `id`. Its `config` and resources are left out.
+ * Methods become `InfraOnly`, except `grant` methods.
  */
 type BindingView<T> = T extends AnyFunction
   ? T
-  : T extends object
-    ? {
-        readonly [
-          K in keyof T as T[K] extends AnyFunction
-            ? K
-            : IsData<T[K]> extends true
+  : IsData<T> extends true
+    ? T
+    : T extends object
+      ? {
+          readonly [
+            K in keyof T as T[K] extends AnyFunction
               ? K
-              : never
-        ]: T[K] extends AnyFunction
-          ? IsGrant<T[K]> extends true
-            ? T[K]
-            : InfraOnly<K>
-          : T[K];
-      }
-    : T;
+              : T[K] extends Primitive
+                ? K
+                : never
+          ]: T[K] extends AnyFunction
+            ? IsGrant<T[K]> extends true
+              ? T[K]
+              : InfraOnly<K>
+            : T[K];
+        }
+      : T;
+
+type Primitive = string | number | boolean | null | undefined;
 
 // Whether a value of type T is data that a function can be given. An object
 // with methods, such as a resource, isn't.
-type IsData<T> = T extends string | number | boolean | null | undefined
+type IsData<T> = T extends Primitive
   ? true
   : T extends AnyFunction
     ? false

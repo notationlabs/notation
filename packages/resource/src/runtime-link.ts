@@ -337,8 +337,8 @@ export function linkRuntimeModules(
 
 /**
  * Finds the value of each read that a function's bundle makes. A read of a
- * whole binding delivers its data properties, and the reads of its paths are
- * then served from it.
+ * whole binding delivers the binding, and the reads of its paths are then
+ * served from it. See `deliveredValue` for what a whole binding delivers.
  */
 export function resolveReads(
   info: Pick<RuntimeFunction, "id">,
@@ -390,6 +390,14 @@ export function resolveReads(
   return values;
 }
 
+/**
+ * A binding that is data, such as a plain object of settings, is delivered
+ * whole. A binding that isn't, such as a resource group, delivers only its
+ * own data properties that hold output values or primitives, enumerable or
+ * not: `id`, `url` and `arn` for a queue, and not its `config`. Getters are
+ * not called, since they can have effects. This keeps the function's
+ * environment small, and `BindingView` types the binding to match.
+ */
 function deliveredValue(value: unknown, binding: boolean, subject: string) {
   if (typeof value === "function") {
     throw new Error(
@@ -402,7 +410,10 @@ function deliveredValue(value: unknown, binding: boolean, subject: string) {
   if (isData(value)) return value;
   if (binding) {
     const data = Object.fromEntries(
-      Object.entries(value as object).filter(([, entry]) => isData(entry)),
+      Object.entries(Object.getOwnPropertyDescriptors(value))
+        .filter(([, descriptor]) => "value" in descriptor)
+        .map(([key, descriptor]) => [key, descriptor.value])
+        .filter(([, entry]) => entry === null || isLeaf(entry)),
     );
     if (Object.keys(data).length > 0) return data;
   }
