@@ -3,7 +3,7 @@
   "name": "reconciler-example",
   "type": "module",
   "scripts": {
-    "build": "tsup --clean",
+    "build": "tsdown",
     "demo": "pnpm build && node dist/index.js",
     "test": "vitest run --root ../.. examples/reconciler/test/reconciler.test.ts",
     "typecheck": "tsc --noEmit"

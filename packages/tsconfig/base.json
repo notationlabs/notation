@@ -6,11 +6,6 @@
     "module": "esnext",
     "target": "esnext",
 
-    // No tsconfig here sets baseUrl (removed in TS 7), but tsup's dts build
-    // injects `baseUrl: "."` itself and runs on TS 6, which rejects it as
-    // deprecated unless silenced.
-    "ignoreDeprecations": "6.0",
-
     "moduleResolution": "bundler",
     "noEmit": true,
 

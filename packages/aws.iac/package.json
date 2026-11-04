@@ -3,8 +3,8 @@
   "name": "@notation/aws.iac",
   "version": "0.16.0",
   "scripts": {
-    "build": "tsup --clean",
-    "dev": "tsup --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "typecheck": "tsc --noEmit"
   },
   "main": "./dist/index.js",
