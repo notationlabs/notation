@@ -1,10 +1,16 @@
 import type { BaseResource } from "./resource";
 import type { NameScope } from "./physical-name";
 import type { ResourceGroup } from "./resource-group";
+import type { RuntimeFunction, RuntimeRegistry } from "./runtime-link";
 
 export type ResourceGraph = {
   resourceGroups: ResourceGroup[];
   resources: BaseResource[];
+  /**
+   * The functions that runtime modules declared, each with the handlers it
+   * dispatches to. The compiler bundles one function per entry.
+   */
+  runtimeFunctions: RuntimeFunction[];
 };
 
 export type ResourceCollection = {
@@ -13,6 +19,7 @@ export type ResourceCollection = {
   // collection are rejected from then on.
   closed: boolean;
   endOfEvaluation: Array<() => unknown | Promise<unknown>>;
+  runtime: RuntimeRegistry;
   // Checks of config by async validators, started when resources were
   // declared. Collection fails with the first that fails.
   pendingValidations: Promise<void>[];
@@ -51,9 +58,10 @@ export async function collectResourceGraph(
   }
 
   const collection: ResourceCollection = {
-    graph: { resourceGroups: [], resources: [] },
+    graph: { resourceGroups: [], resources: [], runtimeFunctions: [] },
     closed: false,
     endOfEvaluation: [],
+    runtime: { handlers: [], functions: [] },
     pendingValidations: [],
     declarationChecks: opts.declarationChecks ?? true,
     scope: opts.scope,

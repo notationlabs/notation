@@ -143,22 +143,42 @@ type Prefixed<T, P extends string> = {
   [K in keyof T as K extends string ? `${P}${K}` : never]: T[K];
 };
 
-type V1Create = ApiCreateParams & Prefixed<Omit<ApiCreateParams, keyof ApiKey>, "v1_">;
-type V1Read = ApiReadResult & Prefixed<Omit<ApiReadResult, keyof ApiKey>, "v1_">;
-type V2Create = ApiCreateParams & Prefixed<Omit<ApiCreateParams, keyof ApiKey>, "v2_">;
-type V2Read = ApiReadResult & Prefixed<Omit<ApiReadResult, keyof ApiKey>, "v2_">;
-type V3Create = ApiCreateParams & Prefixed<Omit<ApiCreateParams, keyof ApiKey>, "v3_">;
-type V3Read = ApiReadResult & Prefixed<Omit<ApiReadResult, keyof ApiKey>, "v3_">;
-type V4Create = ApiCreateParams & Prefixed<Omit<ApiCreateParams, keyof ApiKey>, "v4_">;
-type V4Read = ApiReadResult & Prefixed<Omit<ApiReadResult, keyof ApiKey>, "v4_">;
-type V5Create = ApiCreateParams & Prefixed<Omit<ApiCreateParams, keyof ApiKey>, "v5_">;
-type V5Read = ApiReadResult & Prefixed<Omit<ApiReadResult, keyof ApiKey>, "v5_">;
+type V1Create = ApiCreateParams &
+  Prefixed<Omit<ApiCreateParams, keyof ApiKey>, "v1_">;
+type V1Read = ApiReadResult &
+  Prefixed<Omit<ApiReadResult, keyof ApiKey>, "v1_">;
+type V2Create = ApiCreateParams &
+  Prefixed<Omit<ApiCreateParams, keyof ApiKey>, "v2_">;
+type V2Read = ApiReadResult &
+  Prefixed<Omit<ApiReadResult, keyof ApiKey>, "v2_">;
+type V3Create = ApiCreateParams &
+  Prefixed<Omit<ApiCreateParams, keyof ApiKey>, "v3_">;
+type V3Read = ApiReadResult &
+  Prefixed<Omit<ApiReadResult, keyof ApiKey>, "v3_">;
+type V4Create = ApiCreateParams &
+  Prefixed<Omit<ApiCreateParams, keyof ApiKey>, "v4_">;
+type V4Read = ApiReadResult &
+  Prefixed<Omit<ApiReadResult, keyof ApiKey>, "v4_">;
+type V5Create = ApiCreateParams &
+  Prefixed<Omit<ApiCreateParams, keyof ApiKey>, "v5_">;
+type V5Read = ApiReadResult &
+  Prefixed<Omit<ApiReadResult, keyof ApiKey>, "v5_">;
 
-type S1 = ResolveSchema<SchemaFromApi<ApiKey, V1Create, ApiUpdateParams, V1Read>>;
-type S2 = ResolveSchema<SchemaFromApi<ApiKey, V2Create, ApiUpdateParams, V2Read>>;
-type S3 = ResolveSchema<SchemaFromApi<ApiKey, V3Create, ApiUpdateParams, V3Read>>;
-type S4 = ResolveSchema<SchemaFromApi<ApiKey, V4Create, ApiUpdateParams, V4Read>>;
-type S5 = ResolveSchema<SchemaFromApi<ApiKey, V5Create, ApiUpdateParams, V5Read>>;
+type S1 = ResolveSchema<
+  SchemaFromApi<ApiKey, V1Create, ApiUpdateParams, V1Read>
+>;
+type S2 = ResolveSchema<
+  SchemaFromApi<ApiKey, V2Create, ApiUpdateParams, V2Read>
+>;
+type S3 = ResolveSchema<
+  SchemaFromApi<ApiKey, V3Create, ApiUpdateParams, V3Read>
+>;
+type S4 = ResolveSchema<
+  SchemaFromApi<ApiKey, V4Create, ApiUpdateParams, V4Read>
+>;
+type S5 = ResolveSchema<
+  SchemaFromApi<ApiKey, V5Create, ApiUpdateParams, V5Read>
+>;
 
 export type _Stress1 = {
   key: CompoundKey<S1>;

@@ -37,3 +37,18 @@ export {
   planLookup,
   type OutputLookup,
 } from "./output-value";
+export {
+  HandlerRef,
+  createHandlerRef,
+  createStandIn,
+  declareRuntimeFunction,
+  isHandlerRef,
+  isStandIn,
+  linkRuntimeModules,
+  resolveRuntimeTarget,
+  type Handler,
+  type RuntimeFunction,
+  type RuntimeHandler,
+  type RuntimeModuleLink,
+  type RuntimeRef,
+} from "./runtime-link";
