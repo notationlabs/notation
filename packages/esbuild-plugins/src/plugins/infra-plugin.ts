@@ -139,6 +139,15 @@ function createPlugin(
             (file) => !scanned.files.has(file),
           );
           if (unscanned.length === 0) break;
+          // The scan's files come from the metafile, and the infra modules
+          // from build.resolve. If the two give different paths for a file,
+          // scanning it again doesn't help.
+          const repeated = unscanned.find((file) =>
+            extraEntries.includes(file),
+          );
+          if (repeated) {
+            return { errors: [{ text: unscannedMessage(repeated) }] };
+          }
           extraEntries.push(...unscanned);
         }
         const unwired = await findUnwiredRuntimeModules({
@@ -440,6 +449,11 @@ function unwiredMessage(module: UnwiredModule, entryFile: string | undefined) {
   if (!specifier.startsWith(".")) specifier = `./${specifier}`;
   const where = entryFile ? ` in ${toProjectRoot(entryFile)}` : "";
   return `${name} matches runtimeModules and imports ${module.factory} with { type: "infra" }, but no infra module imports it with { type: "runtime" }, so its functions aren't deployed. To deploy them, import it from infra, as in \`import * as handlers from "${specifier}" with { type: "runtime" };\`${where}, and pass its handlers to infra APIs such as route() or consume().`;
+}
+
+function unscannedMessage(file: string) {
+  const name = toProjectRoot(file);
+  return `The compiler scanned ${name} as an entry, but the scan's files don't include it. ${name} is an infra module that runtime code imports with { type: "infra" }. As an entry, its path may resolve to another file, as through a symlink, or the build may mark it as external.`;
 }
 
 function resourceExportMessage(name: string) {

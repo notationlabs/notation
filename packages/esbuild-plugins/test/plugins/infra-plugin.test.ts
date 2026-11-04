@@ -235,6 +235,51 @@ describe("in memory", () => {
     expect(output).toContain('module: "runtime/refund.fn.ts"');
   });
 
+  it("fails when a scanned infra module doesn't show up among the scan's files", async () => {
+    const files = {
+      "infra/main.ts": `
+        import { checkout } from "../runtime/checkout.fn" with { type: "runtime" };
+        console.log(checkout);
+      `,
+      "runtime/checkout.fn.ts": `
+        import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+        import { refunds } from "../infra/refunds" with { type: "infra" };
+        const { handle } = lambda({ id: "checkout", grants: [refunds.grant()] });
+        export const checkout = handle.apiRequest(() => ({}));
+      `,
+      "infra/refunds.ts": `export const refunds = { grant: () => ({}) };`,
+      "infra/real/refunds.ts": `export const refunds = { grant: () => ({}) };`,
+    };
+    // Resolves infra/refunds.ts as an entry to another path, as a symlink
+    // does. It stops after some scans, so that a loop fails the test.
+    let entryScans = 0;
+    const symlink: esbuild.Plugin = {
+      name: "symlink",
+      setup(build) {
+        build.onResolve({ filter: /infra\/refunds\.ts$/ }, (args) => {
+          if (args.kind !== "entry-point") return;
+          if (++entryScans > 5) {
+            return { errors: [{ text: "Scanned the entry too often." }] };
+          }
+          return { path: path.join(projectRoot, "infra/real/refunds.ts") };
+        });
+      },
+    };
+    await expect(
+      buildVirtual(files, "infra/main.ts", [
+        infraPlugin({
+          runtimeModules: ["**/*.fn.ts"],
+          getFile: readVirtualFile(files),
+          runtimeLink: "@notation/resource",
+        }),
+        symlink,
+      ]),
+    ).rejects.toThrow(
+      "The compiler scanned infra/refunds.ts as an entry, but the scan's files don't include it.",
+    );
+    expect(entryScans).toBe(1);
+  });
+
   it("takes any file that infra imports with type: runtime as a runtime module", async () => {
     const files = {
       "infra/main.ts": `
