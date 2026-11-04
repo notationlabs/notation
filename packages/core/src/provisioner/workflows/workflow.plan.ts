@@ -28,10 +28,11 @@ export async function planApp({
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: PlanAppOptions): Promise<Plan> {
-  const graph = await getResourceGraph(deployment.entryPoint, {
-    app: deployment.app,
-    stage: deployment.stage,
-  });
+  const graph = await getResourceGraph(
+    deployment.entryPoint,
+    { app: deployment.app, stage: deployment.stage },
+    { runtimeReads: true },
+  );
   return withRuntime(
     { deployment, runtime: suppliedRuntime, databasePath },
     (runtime) =>

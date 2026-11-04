@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import esbuild from "esbuild";
@@ -30,7 +31,9 @@ export type CompileOptions = {
  *
  * 1. Bundle and evaluate the infra phase, which declares the functions and
  *    links each handler to its function.
- * 2. Bundle each function, with its handlers as the dispatch entry.
+ * 2. Bundle each function, with its handlers as the dispatch entry, and list
+ *    the values that each bundle reads from infra. Plan and deploy deliver
+ *    them.
  *
  * In watch mode, each infra rebuild is evaluated again, and a change to the
  * functions or their handlers restarts the function bundles.
@@ -212,7 +215,8 @@ export async function evaluateFunctions(
 /**
  * Bundles each function to its `bundle` path. The bundle's entry is
  * generated: its `handler` export dispatches each event to one of the
- * function's handlers. Returns a function that stops watching.
+ * function's handlers. The output keys that each bundle reads from infra go
+ * in `reads.json` next to it. Returns a function that stops watching.
  */
 export async function compileFunctions(
   functions: RuntimeFunction[],
@@ -229,7 +233,10 @@ export async function compileFunctions(
 
   const context = await esbuild.context({
     entryPoints,
-    plugins: [functionEntryPlugin(functions), runtimePlugin()],
+    plugins: [
+      functionEntryPlugin(functions),
+      runtimePlugin({ onReads: (reads) => writeReads(functions, reads) }),
+    ],
     outdir: distDir,
     outExtension: { ".js": ".mjs" },
     bundle: true,
@@ -248,6 +255,20 @@ export async function compileFunctions(
     }
   }
   return () => context.dispose();
+}
+
+// Lists the reads of each function's bundle next to it, where plan and
+// deploy find them.
+function writeReads(
+  functions: RuntimeFunction[],
+  reads: Record<string, string[]>,
+) {
+  for (const fn of functions) {
+    const file = filePaths.dist.reads(fn.bundle);
+    mkdirSync(path.dirname(file), { recursive: true });
+    const found = reads[fromProjectRoot(fn.bundle)] ?? [];
+    writeFileSync(file, `${JSON.stringify({ reads: found }, null, 2)}\n`);
+  }
 }
 
 const functionEntryNamespace = "notation-function-entry";

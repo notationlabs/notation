@@ -70,6 +70,13 @@ export const filePaths = {
       index: (entryPoint: string) => distPath(entryPoint, "/index.mjs"),
     },
     infra: (entryPoint: string) => distPath(entryPoint, ".mjs"),
+    /**
+     * The file that lists the output keys that a function's bundle reads
+     * from infra, next to the bundle.
+     * @param bundle The bundle's path, relative to the project root.
+     */
+    reads: (bundle: string) =>
+      path.join(path.dirname(fromProjectRoot(bundle)), "reads.json"),
   },
   database: () => fromProjectRoot(".notation/workflows.db"),
   // Unique per call, so parallel commands never share the file.

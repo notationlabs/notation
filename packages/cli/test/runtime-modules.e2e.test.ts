@@ -208,3 +208,176 @@ it("fails at compile when a handler isn't exported", async () => {
     /The api handler made at .*runtime\/todos\.fn\.ts:5 isn't exported from a runtime module/,
   );
 });
+
+it("delivers the values that a function's bundle reads from infra", async () => {
+  write(
+    "runtime/checkout.fn.ts",
+    `
+    import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+    import { orderQueue, settings } from "../infra/orders" with { type: "infra" };
+
+    const grants = [orderQueue.grant(["SendMessage"])];
+    const { handle } = lambda({ id: "checkout", grants });
+
+    const unused = () => orderQueue.arn;
+
+    export const createOrder = handle.apiRequest(async () => ({
+      statusCode: 200,
+      body: JSON.stringify({ url: orderQueue.url, settings }),
+    }));
+    `,
+  );
+  write(
+    "infra/orders.ts",
+    `
+    import { api, router } from "@notation/aws/api-gateway";
+    import { queue } from "@notation/aws/sqs";
+    import { createOrder } from "../runtime/checkout.fn" with { type: "runtime" };
+
+    export const orderQueue = queue({ name: "orders" });
+    export const settings = { memory: 64, region: "eu-west-2" };
+    router(api({ name: "orders-api" })).post("/orders", createOrder);
+    `,
+  );
+
+  await compile(
+    {
+      entryPoint: path.join(root, "infra/orders.ts"),
+      runtimeModules: ["**/*.fn.ts"],
+    },
+    { logger },
+  );
+
+  // Collects the graph as plan does, fills in the outputs that the lambda's
+  // params need, and calls the bundle with the environment that a deploy
+  // would give it.
+  const script = `
+    import { readFileSync } from "node:fs";
+    import { getResourceGraph, setConfigFile } from "@notation/core";
+    import { encodeRuntime } from "@notation/aws.iac/shared";
+
+    setConfigFile(process.cwd() + "/notation.config.ts");
+    const graph = await getResourceGraph(process.cwd() + "/infra/orders.ts", undefined, { runtimeReads: true });
+    const ofType = (type) => graph.resources.filter((r) => r.type === type);
+    const [fn] = ofType("aws/lambda/LambdaFunction");
+    ofType("aws/apiGateway/Api")[0].setOutput({ ApiId: "api-1" });
+    ofType("aws/sqs/Queue")[0].setOutput({ QueueArn: "arn:queue", QueueUrl: "https://sqs.test/orders" });
+    fn.dependencies.role.setOutput({ Arn: "arn:role", RoleName: "checkout-role" });
+    fn.dependencies.zipFile.setOutput({ filePath: "checkout.zip", fileSha256: "sha" });
+    const params = await fn.getParams();
+    const policy = graph.resources.find((r) => r.id === "checkout-role-policy");
+
+    process.env.NOTATION_RUNTIME = encodeRuntime(params.Environment.Runtime);
+    const { handler } = await import("./dist/functions/checkout/index.mjs");
+    const response = await handler({ routeKey: "POST /orders", requestContext: { apiId: "api-1" } }, {});
+
+    console.log(JSON.stringify({
+      reads: JSON.parse(readFileSync("dist/functions/checkout/reads.json", "utf8")),
+      outputs: params.Environment.Runtime.outputs,
+      actions: (await policy.getParams()).PolicyDocument.Statement.map((s) => s.Action),
+      body: JSON.parse(response.body),
+    }));
+  `;
+  const output = execFileSync(
+    process.execPath,
+    ["--input-type=module", "-e", script],
+    { cwd: root, encoding: "utf8" },
+  );
+
+  const settings = { memory: 64, region: "eu-west-2" };
+  expect(JSON.parse(output.trim().split("\n").at(-1)!)).toEqual({
+    // The read in `unused` is tree-shaken, so it isn't delivered.
+    reads: {
+      reads: ["infra/orders#orderQueue.url", "infra/orders#settings"],
+    },
+    outputs: {
+      "infra/orders#orderQueue.url": "https://sqs.test/orders",
+      "infra/orders#settings": settings,
+    },
+    actions: [["sqs:SendMessage"]],
+    body: { url: "https://sqs.test/orders", settings },
+  });
+});
+
+it("fails at compile when a handler calls infra", async () => {
+  write(
+    "runtime/checkout.fn.ts",
+    `
+    import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+    import { orderQueue } from "../infra/orders" with { type: "infra" };
+    const { handle } = lambda({ id: "checkout" });
+    export const createOrder = handle.apiRequest(async () => {
+      orderQueue.grant(["SendMessage"]);
+      return { statusCode: 200 };
+    });
+    `,
+  );
+  write(
+    "infra/orders.ts",
+    `
+    import { api, router } from "@notation/aws/api-gateway";
+    import { queue } from "@notation/aws/sqs";
+    import { createOrder } from "../runtime/checkout.fn" with { type: "runtime" };
+    export const orderQueue = queue({ name: "orders" });
+    router(api({ name: "orders-api" })).post("/orders", createOrder);
+    `,
+  );
+
+  await expect(
+    compile(
+      {
+        entryPoint: path.join(root, "infra/orders.ts"),
+        runtimeModules: ["**/*.fn.ts"],
+      },
+      { logger },
+    ),
+  ).rejects.toThrow(/orderQueue\.grant\(\) calls infra from runtime code/);
+});
+
+it("fails at plan when a function stores an infra method", async () => {
+  write(
+    "runtime/checkout.fn.ts",
+    `
+    import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+    import { orderQueue } from "../infra/orders" with { type: "infra" };
+    const { handle } = lambda({ id: "checkout" });
+    export const createOrder = handle.apiRequest(async () => {
+      const grant = orderQueue.grant;
+      return { statusCode: 200, body: String(grant) };
+    });
+    `,
+  );
+  write(
+    "infra/orders.ts",
+    `
+    import { api, router } from "@notation/aws/api-gateway";
+    import { queue } from "@notation/aws/sqs";
+    import { createOrder } from "../runtime/checkout.fn" with { type: "runtime" };
+    export const orderQueue = queue({ name: "orders" });
+    router(api({ name: "orders-api" })).post("/orders", createOrder);
+    `,
+  );
+
+  await compile(
+    {
+      entryPoint: path.join(root, "infra/orders.ts"),
+      runtimeModules: ["**/*.fn.ts"],
+    },
+    { logger },
+  );
+
+  const script = `
+    import { getResourceGraph, setConfigFile } from "@notation/core";
+    setConfigFile(process.cwd() + "/notation.config.ts");
+    await getResourceGraph(process.cwd() + "/infra/orders.ts", undefined, { runtimeReads: true });
+  `;
+  expect(() =>
+    execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: "pipe",
+    }),
+  ).toThrow(
+    /The function "checkout" reads infra\/orders#orderQueue\.grant, which is a function of infra/,
+  );
+});

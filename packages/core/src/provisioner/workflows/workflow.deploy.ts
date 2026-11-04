@@ -36,10 +36,11 @@ export async function deployApp({
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: DeployAppOptions): Promise<void> {
-  const graph = await getResourceGraph(deployment.entryPoint, {
-    app: deployment.app,
-    stage: deployment.stage,
-  });
+  const graph = await getResourceGraph(
+    deployment.entryPoint,
+    { app: deployment.app, stage: deployment.stage },
+    { runtimeReads: true },
+  );
   await runDurableWorkflow(
     { deployment, workflowId: "deploy", runtime, databasePath, executionId },
     (step, executionId, runtime) =>
