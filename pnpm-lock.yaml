@@ -441,6 +441,9 @@ importers:
       '@notation/core':
         specifier: workspace:*
         version: link:../core
+      '@notation/resource':
+        specifier: workspace:*
+        version: link:../resource
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12

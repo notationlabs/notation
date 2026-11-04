@@ -197,7 +197,7 @@ export type RuntimeModuleLink = {
  * 3. A handler that no runtime module exports fails, naming its `handle`
  *    call.
  * 4. Each declared function gets its handlers, and goes in the graph's
- *    `runtimeFunctions`.
+ *    `runtimeFunctions`, sorted by ID.
  */
 export function linkRuntimeModules(modules: RuntimeModuleLink[]): void {
   const sorted = [...modules].sort((a, b) => (a.module < b.module ? -1 : 1));
@@ -256,6 +256,7 @@ export function linkRuntimeModules(modules: RuntimeModuleLink[]): void {
       .sort((a, b) => (a.export < b.export ? -1 : 1));
     collection.graph.runtimeFunctions.push(info);
   }
+  collection.graph.runtimeFunctions.sort((a, b) => (a.id < b.id ? -1 : 1));
 }
 
 const lazyFunctionMark = Symbol.for("@notation/resource/LazyFunction");
