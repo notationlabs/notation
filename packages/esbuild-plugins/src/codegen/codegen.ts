@@ -1,5 +1,6 @@
 import type { RuntimeFunction } from "@notation/resource";
 import { strippedPrefix } from "src/infra-phase/strip";
+import { exportName } from "src/utils/script";
 
 /** The specifier that generated infra code imports the linking API from. */
 export const runtimeLinkSpecifier = "notation:runtime-link";
@@ -106,10 +107,6 @@ export function createFunctionEntry(
     `export const handler = createDispatcher({\n${entries.join("\n")}\n});`,
   );
   return `${lines.join("\n")}\n`;
-}
-
-function exportName(name: string): string {
-  return /^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name);
 }
 
 function splitService(service: string) {

@@ -16,6 +16,7 @@ import {
 } from "src/infra-phase/strip";
 import { matchesRuntimeModules, moduleKey } from "src/runtime-modules";
 import { isLocalModule } from "src/utils/is-local";
+import { loaderFor } from "src/utils/script";
 import { GetFile, fsGetFile, withFileCheck } from "src/utils/get-file";
 
 type PluginOpts = {
@@ -328,13 +329,6 @@ async function readExportNames(
 
 function resourceExportMessage(name: string) {
   return `${name} exports \`resource\`, which runtime modules no longer use. Declare the function by calling lambda() from "@notation/aws/lambda", imported with { type: "infra" }: \`const { handle } = lambda({ id: "...", timeout: 5 })\`. Make each handler with that handle, remove the \`resource\` export, and import the module from infra with { type: "runtime" }.`;
-}
-
-function loaderFor(file: string): esbuild.Loader {
-  if (/\.[cm]?tsx$/.test(file)) return "tsx";
-  if (/\.[cm]?jsx$/.test(file)) return "jsx";
-  if (/\.[cm]?js$/.test(file)) return "js";
-  return "ts";
 }
 
 function toMessages(error: unknown): Partial<Message>[] {

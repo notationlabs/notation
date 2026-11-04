@@ -1,12 +1,13 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Loader, Plugin } from "esbuild";
+import type { Plugin } from "esbuild";
 import { toProjectRoot } from "@notation/core";
 import { parseModule } from "src/infra-phase/module-info";
 import { moduleKey } from "src/runtime-modules";
 import { rewriteRuntimeModule } from "src/runtime-bundle/rewrite";
 import { isLocalModule } from "src/utils/is-local";
+import { loaderFor } from "src/utils/script";
 import { GetFile, fsGetFile, withFileCheck } from "src/utils/get-file";
 
 type PluginOpts = {
@@ -207,11 +208,4 @@ function isLocalImporter(importer: string): boolean {
 
 function isPackage(result: { external?: boolean; path: string }) {
   return !isLocalModule(result);
-}
-
-function loaderFor(file: string): Loader {
-  if (/\.[cm]?tsx$/.test(file)) return "tsx";
-  if (/\.[cm]?jsx$/.test(file)) return "jsx";
-  if (/\.[cm]?js$/.test(file)) return "js";
-  return "ts";
 }

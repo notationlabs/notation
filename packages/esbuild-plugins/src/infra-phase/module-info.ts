@@ -264,10 +264,7 @@ function readAttribute(
   attributes: ts.ImportAttributes | undefined,
 ): string | undefined {
   for (const element of attributes?.elements ?? []) {
-    const key = ts.isIdentifier(element.name)
-      ? element.name.text
-      : element.name.text;
-    if (key === "type" && ts.isStringLiteral(element.value)) {
+    if (element.name.text === "type" && ts.isStringLiteral(element.value)) {
       return element.value.text;
     }
   }
@@ -351,8 +348,10 @@ export function isFunctionBody(node: ts.Node): boolean {
 }
 
 /**
- * Whether `node` is an identifier that refers to a binding: not a property
- * name, a key, a label or a name in a type.
+ * Whether an identifier can refer to a binding. Property names, keys, labels
+ * and the names in import and export specifiers can't. Declared names, and
+ * names in types, count, so callers that need to tell them apart check for
+ * them.
  */
 export function isReference(node: ts.Identifier): boolean {
   const parent = node.parent;

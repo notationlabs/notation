@@ -8,6 +8,7 @@ import {
   parseModule,
   type ModuleInfo,
 } from "./module-info";
+import { exportName } from "src/utils/script";
 
 /**
  * Where an import specifier leads. `local` is false for packages and other
@@ -240,7 +241,6 @@ class Analysis {
       )!;
       const target = this.#localTarget(state, decl.source, decl.attribute);
       if (!target) return;
-      this.visit(target.info.path);
       if (binding.imported === "*") this.requestAll(target);
       else this.request(target, binding.imported);
       return;
@@ -604,8 +604,4 @@ class Analysis {
     refs.delete(defaultLocal);
     return { refs, updates, replacements };
   }
-}
-
-function exportName(name: string): string {
-  return /^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name);
 }
