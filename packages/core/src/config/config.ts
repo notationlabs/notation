@@ -9,12 +9,19 @@ export type NotationConfig = {
   entry: string;
   /** The stage to use when a command is given no `--stage`. */
   defaultStage?: string;
+  /**
+   * Globs, relative to the directory of the config, for the files that can be
+   * runtime modules. A matching file is a runtime module only if it exports
+   * `resource`. Defaults to `**\/*.fn.ts`.
+   */
+  runtimeModules?: string | string[];
 };
 
 export type NotationConfigInput<App extends string, Stage extends string> = {
   app: NameSafe<App>;
   entry: string;
   defaultStage?: NameSafe<Stage>;
+  runtimeModules?: string | string[];
 };
 
 /**
@@ -32,6 +39,7 @@ const configKeys = [
   "app",
   "entry",
   "defaultStage",
+  "runtimeModules",
 ] as const satisfies readonly (keyof NotationConfig)[];
 
 /**
@@ -57,7 +65,7 @@ export function parseConfig(
     );
   }
 
-  const { app, entry, defaultStage } = value;
+  const { app, entry, defaultStage, runtimeModules } = value;
   assertNameSafe(app, `${prefix} app`);
 
   if (typeof entry !== "string" || entry === "") {
@@ -67,7 +75,25 @@ export function parseConfig(
   if (defaultStage !== undefined)
     assertNameSafe(defaultStage, `${prefix} defaultStage`);
 
+  if (runtimeModules !== undefined) {
+    const globs = [runtimeModules].flat();
+    if (
+      globs.length === 0 ||
+      !globs.every((glob) => typeof glob === "string" && glob !== "")
+    ) {
+      fail("runtimeModules must be a glob or a non-empty array of globs");
+    }
+  }
+
   return value as NotationConfig;
+}
+
+export const defaultRuntimeModules = ["**/*.fn.ts"];
+
+/** The config's `runtimeModules` as an array, or the default globs. */
+export function resolveRuntimeModules(config: NotationConfig): string[] {
+  if (config.runtimeModules === undefined) return defaultRuntimeModules;
+  return [config.runtimeModules].flat();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

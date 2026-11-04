@@ -7,7 +7,11 @@ import { EventBridgeRule } from "src/resources/event-bridge/rule";
 const send = vi.spyOn(eventBridgeClient, "send");
 
 const rule = new EventBridgeRule("rule", {
-  config: { Name: "daily", EventBusName: "default" },
+  config: {
+    Name: "daily",
+    EventBusName: "default",
+    Targets: [{ Id: "fn", Arn: "arn:fn" }],
+  },
   dependencies: { lambda: {} as any },
 });
 

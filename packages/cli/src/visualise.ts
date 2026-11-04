@@ -2,15 +2,16 @@ import {
   createMermaidFlowChart,
   createMermaidLiveUrl,
   getResourceGraph,
+  type Build,
 } from "@notation/core";
 import { compileInfra } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
 
 export async function visualise(
-  entryPoint: string,
+  { entryPoint, runtimeModules }: Build,
   logger: Logger = defaultLogger,
 ) {
-  await compileInfra(entryPoint);
+  await compileInfra(entryPoint, { runtimeModules });
   await generateGraph(entryPoint, logger);
 }
 

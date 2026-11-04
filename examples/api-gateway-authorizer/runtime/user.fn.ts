@@ -1,4 +1,4 @@
-import type { LambdaConfig } from "@notation/aws/lambda.fn";
+import type { LambdaResource } from "@notation/aws/lambda.fn";
 import { handle, json } from "@notation/aws/lambda.fn";
 import type { JWTClaims } from "shared/jwt";
 
@@ -10,7 +10,7 @@ export const getUserHandler = handle.jwtAuthorizedApiRequest<JWTClaims>(
   },
 );
 
-export const config: LambdaConfig = {
+export const resource: LambdaResource = {
   service: "aws/lambda",
   id: "user",
   timeout: 5,

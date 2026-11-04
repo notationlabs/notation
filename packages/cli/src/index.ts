@@ -15,7 +15,7 @@ import {
   readExecutionDeployment,
   resolveDeployment,
   resolveDeploymentIdentity,
-  resolveEntryPoint,
+  resolveBuild,
   setConfigFile,
   type Project,
 } from "@notation/core";
@@ -40,7 +40,7 @@ program
   .description("Compile Notation App")
   .action(async (options) => {
     const project = await load(options);
-    await compile(resolveEntryPoint(project));
+    await compile(resolveBuild(project));
   });
 
 program
@@ -113,7 +113,7 @@ program
   .description("Visualise Notation App")
   .action(async (options) => {
     const project = await load(options);
-    await visualise(resolveEntryPoint(project));
+    await visualise(resolveBuild(project));
   });
 
 program

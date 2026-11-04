@@ -31,7 +31,7 @@ export async function deploy(
     : createLoggerReconcilerSubscriber({ logger });
 
   if (opts.compile !== false) {
-    await compile(deployment.entryPoint, { logger });
+    await compile(deployment, { logger });
   }
   logger.info(`Deploying ${resolveDeploymentId(deployment)}`);
   const executionId = opts.executionId ?? randomUUID();

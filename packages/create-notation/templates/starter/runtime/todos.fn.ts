@@ -1,4 +1,4 @@
-import type { LambdaConfig } from "@notation/aws/lambda.fn";
+import type { LambdaResource } from "@notation/aws/lambda.fn";
 import { handle, json } from "@notation/aws/lambda.fn";
 import { api } from "./utils";
 
@@ -8,7 +8,7 @@ export const getTodos = handle.apiRequest(() => {
   return json(todos);
 });
 
-export const config: LambdaConfig = {
+export const resource: LambdaResource = {
   service: "aws/lambda",
   id: "todos",
   timeout: 5,

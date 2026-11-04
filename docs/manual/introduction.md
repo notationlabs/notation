@@ -18,7 +18,7 @@ The reconciler is also available as an embedded library. A Node.js host can cons
 The compiler runs two passes over your codebase:
 
 1. An infrastructure pass that resolves resource declarations into a graph,
-2. A function pass that bundles each `.fn.ts` module into a deployable Lambda artifact.
+2. A runtime pass that bundles each runtime module into the code for one Lambda function.
 
 The reconciler diffs the compiled graph against persisted state and produces a plan. The deployment engine executes that plan, provisioning, updating, or destroying resources in the correct order.
 

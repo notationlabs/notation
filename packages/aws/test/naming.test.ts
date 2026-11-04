@@ -4,6 +4,7 @@ import { api } from "src/api-gateway";
 import { rate, schedule } from "src/event-bridge";
 import { lambda } from "src/lambda";
 import { queue } from "src/sqs";
+import { runtimeRef } from "./runtime-ref";
 
 const code = { type: "file", path: "src/fns/handler.fn.js" } as const;
 const scope = { app: "orders-app", stage: "prod" };
@@ -20,7 +21,7 @@ const collect = <T>(declare: () => T, collectScope = scope) => {
 
 test("AWS names start with the app and stage", async () => {
   const declared = await collect(() => {
-    const fn = lambda({ id: "get-orders", handler: "handler", code });
+    const fn = lambda({ id: "get-orders", code });
     return {
       fn,
       api: api({ name: "orders-api" }),
@@ -28,7 +29,7 @@ test("AWS names start with the app and stage", async () => {
       schedule: schedule({
         name: "nightly",
         schedule: rate(1, "day"),
-        handler: fn,
+        handler: runtimeRef(fn, "getOrders"),
       }),
     };
   });
@@ -47,13 +48,11 @@ test("AWS names start with the app and stage", async () => {
 });
 
 test("resource ids do not change with the stage", async () => {
-  const prod = await collect(() =>
-    lambda({ id: "get-orders", handler: "handler", code }),
-  );
-  const staging = await collect(
-    () => lambda({ id: "get-orders", handler: "handler", code }),
-    { ...scope, stage: "staging" },
-  );
+  const prod = await collect(() => lambda({ id: "get-orders", code }));
+  const staging = await collect(() => lambda({ id: "get-orders", code }), {
+    ...scope,
+    stage: "staging",
+  });
 
   expect(staging.resources.map((r) => r.id)).toEqual(
     prod.resources.map((r) => r.id),
@@ -63,7 +62,7 @@ test("resource ids do not change with the stage", async () => {
 
 test("a long function and role name is shortened to 64 characters", async () => {
   const id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
-  const fn = await collect(() => lambda({ id, handler: "handler", code }));
+  const fn = await collect(() => lambda({ id, code }));
 
   expect(fn.fn.config.FunctionName).toHaveLength(64);
   expect(fn.fn.config.FunctionName).toMatch(
@@ -75,7 +74,7 @@ test("a long function and role name is shortened to 64 characters", async () => 
 
 test("the policy's role name is the scoped role name", async () => {
   const fn = await collect(() => {
-    const fn = lambda({ id: "get-orders", handler: "handler", code });
+    const fn = lambda({ id: "get-orders", code });
     fn.policy.contribute({
       PolicyDocument: {
         Statement: [

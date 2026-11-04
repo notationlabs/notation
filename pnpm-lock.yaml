@@ -302,10 +302,16 @@ importers:
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
-      glob:
-        specifier: ^13.0.6
-        version: 13.0.6
     devDependencies:
+      '@notation/aws':
+        specifier: workspace:*
+        version: link:../aws
+      '@notation/aws.iac':
+        specifier: workspace:*
+        version: link:../aws.iac
+      '@notation/resource':
+        specifier: workspace:*
+        version: link:../resource
       '@types/which-pm-runs':
         specifier: ^1.0.2
         version: 1.0.2
@@ -438,16 +444,12 @@ importers:
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
+      minimatch:
+        specifier: ^10.2.5
+        version: 10.2.5
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
-    devDependencies:
-      '@types/common-tags':
-        specifier: ^1.8.4
-        version: 1.8.4
-      common-tags:
-        specifier: ^1.8.2
-        version: 1.8.2
 
   packages/reconciler:
     dependencies:

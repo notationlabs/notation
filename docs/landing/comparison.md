@@ -19,8 +19,9 @@ export const getTodos = handle.apiRequest(() => {
   return json([{ id: 1, text: "Learn Notation" }]);
 });
 
-export const config = {
-  service: "aws-lambda",
+export const resource = {
+  service: "aws/lambda",
+  id: "todos",
   timeout: 5,
   memory: 64,
 };

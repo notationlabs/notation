@@ -23,6 +23,7 @@ const deployment: Deployment = {
   app: "orders-app",
   stage: "dev",
   entryPoint: "infra/api.ts",
+  runtimeModules: ["**/*.fn.ts"],
 };
 
 const logger = () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() });

@@ -345,13 +345,6 @@ export const EventBridgeRule = eventBridgeRuleSchema
     },
   })
   .requireDependencies<EventBridgeRuleDependencies>()
-  .deriveParams(async ({ deps }) => ({
-    Targets: [
-      {
-        Id: deps.lambda.output.FunctionName,
-        Arn: deps.lambda.output.FunctionArn,
-      },
-    ],
-  }));
+  .deriveParams(() => ({}));
 
 export type EventBridgeRuleInstance = InstanceType<typeof EventBridgeRule>;

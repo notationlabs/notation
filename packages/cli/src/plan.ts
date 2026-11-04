@@ -36,7 +36,7 @@ export async function plan(
     let result: Plan;
     const { restore } = redirectStdoutToStderr();
     try {
-      await compile(deployment.entryPoint, { logger });
+      await compile(deployment, { logger });
       result = await planApp({ deployment, emit });
     } finally {
       restore();
@@ -45,7 +45,7 @@ export async function plan(
     return;
   }
 
-  await compile(deployment.entryPoint, { logger });
+  await compile(deployment, { logger });
   logger.info(`Planning ${resolveDeploymentId(deployment)}\n`);
   const result = await planApp({ deployment, emit });
   printPlanSummary(result, logger);

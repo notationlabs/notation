@@ -1,50 +1,127 @@
-import chokidar from "chokidar";
-import { glob } from "glob";
+import path from "node:path";
 import esbuild from "esbuild";
 import {
-  functionInfraPlugin,
-  functionRuntimePlugin,
+  createRuntimeEntry,
+  infraPlugin,
+  type RuntimeModuleEntry,
 } from "@notation/esbuild-plugins";
-import { filePaths, fromProjectRoot } from "@notation/core";
+import {
+  defaultRuntimeModules,
+  filePaths,
+  fromProjectRoot,
+  type Build,
+} from "@notation/core";
 import { defaultLogger, type Logger } from "./logger";
+
+export type { RuntimeModuleEntry };
 
 export type CompileOptions = {
   watch?: boolean;
   logger?: Logger;
 };
 
-export async function compile(entryPoint: string, opts: CompileOptions = {}) {
+/**
+ * Compiles the infra entry, then bundles the runtime modules that the infra
+ * build replaced. In watch mode, each infra rebuild that changes that set of
+ * modules restarts the runtime bundles.
+ */
+export async function compile(
+  { entryPoint, runtimeModules }: Build,
+  opts: CompileOptions = {},
+) {
   const watch = opts.watch ?? false;
   const logger = opts.logger ?? defaultLogger;
 
   logger.info(`${watch ? "Watching" : "Compiling"} infrastructure`, entryPoint);
-  await compileInfra(entryPoint, watch);
 
-  logger.info(`${watch ? "Watching" : "Compiling"} functions`);
+  if (!watch) {
+    const modules = await compileInfra(entryPoint, { runtimeModules });
+    logger.info("Compiling runtime modules");
+    await compileRuntimeModules(modules);
+    return;
+  }
 
-  // @todo: fnEntryPoints could be an output of compileInfra
-  const fnEntryPoints = await glob(fromProjectRoot("runtime/**/*.fn.ts"));
-  let disposeFnCompiler = await compileFns(fnEntryPoints, watch);
+  let modules: RuntimeModuleEntry[] | undefined;
+  let disposeRuntime = async () => {};
+  let updating = Promise.resolve();
 
-  if (!watch) return;
-
-  chokidar
-    .watch("**/*.fn.ts", {
-      cwd: fromProjectRoot("."),
-      ignored: /node_modules/,
-      persistent: true,
-    })
-    .on("all", async () => {
-      if (disposeFnCompiler) disposeFnCompiler();
-      const fnEntryPoints = await glob(fromProjectRoot("runtime/**/*.fn.ts"));
-      disposeFnCompiler = await compileFns(fnEntryPoints, watch);
+  // Updates run one at a time, so two rebuilds never dispose the same
+  // contexts.
+  const update = (found: RuntimeModuleEntry[]) => {
+    updating = updating.then(async () => {
+      try {
+        if (modules && sameModules(found, modules)) return;
+        if (!modules) logger.info("Watching runtime modules");
+        await disposeRuntime();
+        disposeRuntime = async () => {};
+        disposeRuntime = await compileRuntimeModules(found, true);
+        // Set only after a successful start, so that a failed start is
+        // retried on the next rebuild with the same modules.
+        modules = found;
+      } catch (error) {
+        logger.error(error);
+      }
     });
+  };
+
+  // Deploys need a successful build, so watch waits until the first one.
+  await compileInfra(entryPoint, {
+    watch,
+    runtimeModules,
+    onRuntimeModules: update,
+    onBuildFailed: () => {
+      if (modules) return;
+      logger.info(
+        "The infrastructure build failed. Fix the errors above; watch starts deploying after the first build that succeeds.",
+      );
+    },
+  });
+  await updating;
 }
 
-export async function compileInfra(entryPoint: string, watch: boolean = false) {
+export type CompileInfraOptions = {
+  watch?: boolean;
+  runtimeModules?: string[];
+  /**
+   * Called after each build without errors, with the runtime modules that the
+   * build replaced. In watch mode this includes every rebuild.
+   */
+  onRuntimeModules?: (modules: RuntimeModuleEntry[]) => void;
+  onBuildFailed?: () => void;
+};
+
+/**
+ * Bundles the infra entry to `dist/`. Returns the runtime modules that the
+ * build replaced, sorted by path. In watch mode, resolves after the first
+ * build without errors.
+ */
+export async function compileInfra(
+  entryPoint: string,
+  opts: CompileInfraOptions = {},
+): Promise<RuntimeModuleEntry[]> {
+  const runtimeModules = opts.runtimeModules ?? defaultRuntimeModules;
+  let resolveFirst!: (modules: RuntimeModuleEntry[]) => void;
+  const first = new Promise<RuntimeModuleEntry[]>((resolve) => {
+    resolveFirst = resolve;
+  });
+  const onRuntimeModules = (modules: RuntimeModuleEntry[]) => {
+    opts.onRuntimeModules?.(modules);
+    resolveFirst(modules);
+  };
+
   const context = await esbuild.context({
     entryPoints: [entryPoint],
-    plugins: [functionInfraPlugin()],
+    plugins: [
+      infraPlugin({ runtimeModules, onRuntimeModules }),
+      {
+        name: "notation-build-failed",
+        setup(build) {
+          build.onEnd((result) => {
+            if (result.errors.length > 0) opts.onBuildFailed?.();
+          });
+        },
+      },
+    ],
     outdir: filePaths.dist.dir(),
     outbase: fromProjectRoot("."),
     outExtension: { ".js": ".mjs" },
@@ -58,36 +135,88 @@ export async function compileInfra(entryPoint: string, watch: boolean = false) {
     sourcemap: true,
   });
 
+  if (opts.watch) {
+    await context.watch();
+  } else {
+    try {
+      await context.rebuild();
+    } finally {
+      await context.dispose();
+    }
+  }
+  return first;
+}
+
+/**
+ * Bundles each runtime module to `dist/<module path>/index.mjs`. The bundle's
+ * entry is generated: its `handler` export dispatches each event to an export
+ * of the module. Returns a function that stops watching.
+ */
+export async function compileRuntimeModules(
+  modules: RuntimeModuleEntry[],
+  watch: boolean = false,
+) {
+  if (modules.length === 0) return async () => {};
+  const distDir = filePaths.dist.dir();
+  const entryPoints = Object.fromEntries(
+    modules.map((module) => [
+      path
+        .relative(distDir, filePaths.dist.runtime.index(module.path))
+        .replace(/\.mjs$/, ""),
+      `${runtimeEntryNamespace}:${module.path}`,
+    ]),
+  );
+
+  const context = await esbuild.context({
+    entryPoints,
+    plugins: [runtimeEntryPlugin(modules)],
+    outdir: distDir,
+    outExtension: { ".js": ".mjs" },
+    bundle: true,
+    format: "esm",
+    platform: "node",
+    treeShaking: true,
+  });
+
   if (watch) {
     await context.watch();
   } else {
-    await context.rebuild();
-    context.dispose();
-  }
-}
-
-export async function compileFns(
-  entryPoints: string[],
-  watch: boolean = false,
-) {
-  for (const entryPoint of entryPoints) {
-    const context = await esbuild.context({
-      entryPoints: [entryPoint],
-      plugins: [functionRuntimePlugin()],
-      outfile: filePaths.dist.runtime.index(entryPoint),
-      outExtension: { ".js": ".mjs" },
-      bundle: true,
-      format: "esm",
-      platform: "node",
-      treeShaking: true,
-    });
-
-    if (watch) {
-      await context.watch();
-      return () => context.dispose();
-    } else {
+    try {
       await context.rebuild();
-      context.dispose();
+    } finally {
+      await context.dispose();
     }
   }
+  return () => context.dispose();
+}
+
+const runtimeEntryNamespace = "notation-runtime-entry";
+
+// Serves the generated entry of each runtime module's bundle.
+function runtimeEntryPlugin(modules: RuntimeModuleEntry[]): esbuild.Plugin {
+  const services = new Map(
+    modules.map((module) => [module.path, module.service]),
+  );
+  const prefix = `${runtimeEntryNamespace}:`;
+  return {
+    name: runtimeEntryNamespace,
+    setup(build) {
+      build.onResolve({ filter: new RegExp(`^${prefix}`) }, (args) => ({
+        path: args.path.slice(prefix.length),
+        namespace: runtimeEntryNamespace,
+      }));
+      build.onLoad(
+        { filter: /.*/, namespace: runtimeEntryNamespace },
+        (args) => ({
+          contents: createRuntimeEntry(args.path, services.get(args.path)!),
+          resolveDir: path.dirname(args.path),
+          loader: "ts",
+        }),
+      );
+    },
+  };
+}
+
+function sameModules(a: RuntimeModuleEntry[], b: RuntimeModuleEntry[]) {
+  return JSON.stringify(a) === JSON.stringify(b);
 }

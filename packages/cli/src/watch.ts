@@ -26,7 +26,7 @@ export async function watch(
   deployment: Deployment,
   { logger = defaultLogger, exit = process.exit }: WatchOptions = {},
 ) {
-  await compile(deployment.entryPoint, { watch: true, logger });
+  await compile(deployment, { watch: true, logger });
 
   const watcher = chokidar.watch(filePaths.dist.dir(), {
     ignored: dotFilesRe,
