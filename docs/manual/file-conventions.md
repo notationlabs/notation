@@ -101,4 +101,6 @@ todoRouter.get("/todos/count", getTodoCount);
 
 **The runtime module's code never runs at deploy time.** When the compiler builds the infra code, it replaces `runtime/todos.fn.ts` with a generated module. The generated module declares the Lambda function, and exports a reference for each export of the runtime module: `{ resource, export: "getTodos" }`. The `api.get("/todos")` call above runs only in the Lambda function. See [Compiler](../internals/compiler.md).
 
+This applies to every export, not only handlers. If infra imports a constant or a helper from a runtime module, it gets a reference instead of the value, even though TypeScript types the import as the original value. Put code that infra and runtime share in an ordinary module.
+
 If a file still exports the old `config` object (one with a `service` property) and no `resource`, the build fails with a message to rename the export. A `config` export of any other shape is ordinary code.
