@@ -60,7 +60,7 @@ function resolveFile(
  * 2. A `type: "infra"` import of a provider, such as `@notation/aws/lambda`,
  *    resolves to its runtime half, `@notation/aws/lambda.fn`.
  * 3. A `type: "infra"` import of an infra module resolves to a module that
- *    serves the values set with `setOutputs`. The infra module never runs.
+ *    serves the values stubbed with `stubOutputs`. The infra module never runs.
  * 4. A project file imported without an extension resolves to its `.ts` file.
  */
 function resolve(
@@ -113,8 +113,7 @@ function load(url: string, context: object, next: NextLoad): LoadResult {
 }
 
 const registerHooks = (nodeModule as any).registerHooks as
-  | ((hooks: { resolve: typeof resolve; load: typeof load }) => void)
-  | undefined;
+  ((hooks: { resolve: typeof resolve; load: typeof load }) => void) | undefined;
 
 if (!registerHooks) {
   throw new Error(

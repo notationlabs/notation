@@ -17,7 +17,7 @@ import {
  *
  * Each call adds to the values that earlier calls set.
  */
-export function setOutputs(values: Record<string, unknown>): void {
+export function stubOutputs(values: Record<string, unknown>): void {
   for (const key of Object.keys(values)) {
     try {
       parseOutputKey(key);
@@ -30,15 +30,15 @@ export function setOutputs(values: Record<string, unknown>): void {
   setOutputValues(values);
 }
 
-/** Removes every value that `setOutputs` set. */
-export function clearOutputs(): void {
+/** Removes every value that `stubOutputs` stubbed. */
+export function unstubOutputs(): void {
   clearOutputValues();
 }
 
 function missing(module: string, binding: string, path: string[]): Error {
   const key = outputKey(module, binding, path);
   return new Error(
-    `No output is set for "${key}". Set it in the test with setOutputs({ "${key}": ... }).`,
+    `No output is stubbed for "${key}". Stub it in the test with stubOutputs({ "${key}": ... }).`,
   );
 }
 
@@ -82,7 +82,7 @@ function view(module: string, binding: string, path: string[]): any {
 /**
  * The value that a test sees for one export of an infra module, which the
  * Notation loader hook serves in place of the module. Reading a property
- * gives the value set with `setOutputs`, and throws, naming the key, if no
+ * gives the value stubbed with `stubOutputs`, and throws, naming the key, if no
  * value is set.
  * @internal
  */

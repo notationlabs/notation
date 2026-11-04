@@ -145,7 +145,7 @@ export function exportNames(file: string, seen = new Set<string>()): string[] {
 
 /**
  * The source of the module that a test sees in place of an infra module. Each
- * export reads the values set with `setOutputs`.
+ * export reads the values stubbed with `stubOutputs`.
  * @param bindingModule The URL or path of `@notation/aws/testing`.
  */
 export function infraModuleSource(file: string, bindingModule: string): string {

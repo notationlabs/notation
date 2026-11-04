@@ -139,6 +139,6 @@ export function read(binding: string, path: readonly string[]): unknown {
   const found = findOutputValue(binding, path);
   if (found) return found.value;
   throw new Error(
-    `No value for ${[binding, ...path].join(".")}. A function receives the values it reads from infra when it deploys, and a test sets them with setOutputs().`,
+    `No value for ${[binding, ...path].join(".")}. A function receives the values it reads from infra when it deploys, and a test stubs them with stubOutputs().`,
   );
 }

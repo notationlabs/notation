@@ -37,7 +37,7 @@ const withoutQuery = (id: string) => id.replace(/[?#].*$/, "");
 /**
  * A Vite plugin that lets Vitest import runtime modules as Notation's loader
  * hook does for Node. A `type: "infra"` import of an infra module serves the
- * values set with `setOutputs`, and one of a provider, such as
+ * values stubbed with `stubOutputs`, and one of a provider, such as
  * `@notation/aws/lambda`, resolves to its runtime half.
  *
  * Vite doesn't pass import attributes to plugins, so the plugin marks each

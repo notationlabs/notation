@@ -593,4 +593,4 @@ A value that runtime code reads from infra has an output key: the infra module's
 | `findOutputValue(binding, path)`    | Finds a value as `read` does, but returns `{ value }` or `undefined` in place of throwing.                                                              |
 | `hasOutputValuesBelow(key)`         | Returns whether a value is set for a key below `key`, such as `infra/api#api.stage.url` below `infra/api#api.stage`.                                    |
 
-The store is shared through `Symbol.for`, so every copy of the module in a process uses the same values. The Lambda dispatcher adds the function's `NOTATION_RUNTIME` environment variable as a source, and `setOutputs` from `@notation/aws/testing` sets values in the same store for tests.
+The store is shared through `Symbol.for`, so every copy of the module in a process uses the same values. The Lambda dispatcher adds the function's `NOTATION_RUNTIME` environment variable as a source, and `stubOutputs` from `@notation/aws/testing` stubs values in the same store for tests.

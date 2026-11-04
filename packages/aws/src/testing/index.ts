@@ -1,1 +1,1 @@
-export { clearOutputs, infraBinding, setOutputs } from "./outputs";
+export { infraBinding, stubOutputs, unstubOutputs } from "./outputs";

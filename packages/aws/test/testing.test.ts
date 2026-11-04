@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, expect, test } from "vitest";
-import { clearOutputs, infraBinding, setOutputs } from "src/testing/outputs";
+import { infraBinding, stubOutputs, unstubOutputs } from "src/testing/outputs";
 import {
   exportNames,
   infraModuleSource,
@@ -23,23 +23,23 @@ const run = promisify(execFile);
 const fixtures = path.join(import.meta.dirname, "fixtures");
 const checkout = path.join(fixtures, "testing");
 
-afterEach(() => clearOutputs());
+afterEach(() => unstubOutputs());
 
 test("a property read gives the value set for its key", () => {
-  setOutputs({ "infra/orders#orderQueue.url": "https://sqs.test/orders" });
+  stubOutputs({ "infra/orders#orderQueue.url": "https://sqs.test/orders" });
   const orderQueue: any = infraBinding("infra/orders", "orderQueue");
   expect(orderQueue.url).toBe("https://sqs.test/orders");
 });
 
 test("a key without a property path sets the whole binding", () => {
-  setOutputs({ "infra/orders#orderQueue": { url: "u", arn: "a" } });
+  stubOutputs({ "infra/orders#orderQueue": { url: "u", arn: "a" } });
   const orderQueue: any = infraBinding("infra/orders", "orderQueue");
   expect([orderQueue.url, orderQueue.arn]).toEqual(["u", "a"]);
   expect(JSON.stringify(orderQueue)).toBe('{"url":"u","arn":"a"}');
 });
 
 test("a dotted key sets a nested property", () => {
-  setOutputs({ "infra/api#api.stage.url": "https://api.test" });
+  stubOutputs({ "infra/api#api.stage.url": "https://api.test" });
   const api: any = infraBinding("infra/api", "api");
   expect(api.stage.url).toBe("https://api.test");
 });
@@ -47,7 +47,7 @@ test("a dotted key sets a nested property", () => {
 test("reading an unset value throws, naming its key", () => {
   const orderQueue: any = infraBinding("infra/orders", "orderQueue");
   expect(() => orderQueue.url).toThrow(
-    'No output is set for "infra/orders#orderQueue.url". Set it in the test with setOutputs({ "infra/orders#orderQueue.url": ... }).',
+    'No output is stubbed for "infra/orders#orderQueue.url". Stub it in the test with stubOutputs({ "infra/orders#orderQueue.url": ... }).',
   );
 });
 
@@ -56,8 +56,8 @@ test("grant stays callable, so lambda() settings can run", () => {
   expect(() => orderQueue.grant(["SendMessage"])).not.toThrow();
 });
 
-test("setOutputs rejects a key that isn't an output key", () => {
-  expect(() => setOutputs({ orderQueue: "x" })).toThrow(
+test("stubOutputs rejects a key that isn't an output key", () => {
+  expect(() => stubOutputs({ orderQueue: "x" })).toThrow(
     '"orderQueue" is not an output key',
   );
 });

@@ -123,10 +123,10 @@ Some uses of infra type-check but fail the build, at the line that breaks the ru
 
 ## Tests
 
-A test imports the runtime module without an attribute, and sets the values that the handler reads with `setOutputs`. The keys are the output keys above:
+A test imports the runtime module without an attribute, and stubs the values that the handler reads with `stubOutputs`. The keys are the output keys above:
 
 ```ts
-setOutputs({ "infra/orders#orderQueue.url": "https://sqs.test/orders" });
+stubOutputs({ "infra/orders#orderQueue.url": "https://sqs.test/orders" });
 ```
 
 See [Testing Handlers](./testing.md).
