@@ -168,9 +168,11 @@ export function isLambdaGroup(value: unknown): value is LambdaGroup {
   return (value as any)?.[lambdaGroupMark] === true;
 }
 
-// Infra APIs already type their target as a `HandlerTarget`. This catches
-// values that get past the types, such as from JavaScript, so the error names
-// the infra API instead of a missing `wire`.
+/**
+ * Throws if `target` is not a handler or a Lambda group. The error names
+ * `caller`, such as `route()`. Types already prevent this, except in
+ * JavaScript.
+ */
 export function lambdaTarget(
   target: unknown,
   caller: string,
