@@ -86,21 +86,42 @@ const ordersModule = `
   // @ts-expect-error infra can't use a helper of a runtime module
   checkout.formatOrder("x");
 
-  const fn: import("@notation/aws/lambda").LambdaGroup = checkout.createOrder.function;
+  const fn: import("@notation/aws/lambda").LambdaFunction = checkout.createOrder.function;
+  const arn: string = checkout.createOrder.function.arn;
+  // @ts-expect-error infra can't make handlers for a runtime module's function
+  checkout.createOrder.function.handle;
+  // @ts-expect-error infra can't make handlers for an exported lambda() result
+  checkout.checkoutFn.handle;
+
+  export const settings = { id: "checkout", memory: 64 };
 `;
 
 const checkoutModule = `
   import { json } from "@notation/aws/lambda.fn";
   import { lambda, isLambdaGroup } from "@notation/aws/lambda" with { type: "infra" };
-  import { orderQueue } from "../infra/orders" with { type: "infra" };
+  import { queue } from "@notation/aws/sqs" with { type: "infra" };
+  import { orderQueue, settings } from "../infra/orders" with { type: "infra" };
 
   const url: string = orderQueue.url;
-  const { handle } = lambda({ id: "checkout", grants: [orderQueue.grant(["SendMessage"])] });
+  export const checkoutFn = lambda({
+    id: settings.id,
+    memory: settings.memory * 2,
+    grants: [orderQueue.grant(["SendMessage"])],
+  });
+  const { handle } = checkoutFn;
 
   // @ts-expect-error runtime can't call an infra method other than grant
   orderQueue.consume({} as any);
   // @ts-expect-error runtime can't call an infra function that isn't a factory
   isLambdaGroup(orderQueue);
+  // @ts-expect-error runtime can't read its function's role
+  checkoutFn.role;
+  // @ts-expect-error a queue made in runtime code can't be consumed there
+  queue({ name: "x" }).consume({} as any);
+  // @ts-expect-error a binding's resources aren't delivered
+  orderQueue.resources;
+  // @ts-expect-error a binding's resource isn't delivered
+  orderQueue.queue;
 
   export const formatOrder = (body: string) => body.trim();
 
@@ -223,6 +244,7 @@ describe("writeTypes", () => {
     expect(blocks).toEqual([
       'declare module "../infra/orders*" with { type: "infra" }',
       'declare module "@notation/aws/lambda*" with { type: "infra" }',
+      'declare module "@notation/aws/sqs*" with { type: "infra" }',
       'declare module "../runtime/checkout*" with { type: "runtime" }',
       'declare module "./*" with { type: "infra" }',
       'declare module "../*" with { type: "infra" }',
@@ -312,7 +334,27 @@ describe("watchTypes", () => {
     try {
       expect(read()).not.toContain("../runtime/checkout*");
 
+      // The runtime module first, so that the import of it in orders.ts
+      // resolves whenever a run reads orders.ts.
+      write("runtime/checkout.ts", checkoutModule);
       write("infra/orders.ts", ordersModule);
+
+      await vi.waitFor(() => expect(read()).toContain("../runtime/checkout*"), {
+        timeout: 10_000,
+      });
+      expect(logger.error).not.toHaveBeenCalled();
+    } finally {
+      await stop();
+    }
+  }, 15_000);
+
+  it("writes the file again when an import that didn't resolve starts to resolve", async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    write("infra/orders.ts", ordersModule);
+    const stop = await watchTypes(root, { logger, debounceMs: 10 });
+    try {
+      expect(read()).not.toContain("../runtime/checkout*");
+
       write("runtime/checkout.ts", checkoutModule);
 
       await vi.waitFor(() => expect(read()).toContain("../runtime/checkout*"), {

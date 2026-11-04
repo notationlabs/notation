@@ -18,6 +18,14 @@ test("createOrder sends the order to the queue's URL", async () => {
   assert.deepEqual(sent, [{ url: "https://sqs.test/orders", body: "{}" }]);
 });
 
+test("a dynamic import of infra serves the values set with setOutputs", async () => {
+  setOutputs({ "infra/orders#orderQueue.url": "https://sqs.test/orders" });
+  const { orderQueue } = await import("../infra/orders", {
+    with: { type: "infra" },
+  });
+  assert.equal(orderQueue.url, "https://sqs.test/orders");
+});
+
 test("reading an unset output names its key", async () => {
   await assert.rejects(createOrder(request, {} as any), {
     message: /No output is set for "infra\/orders#orderQueue\.url"/,

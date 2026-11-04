@@ -52,15 +52,18 @@ The two modules import each other. This is allowed: the compiler runs every infr
 
 [`notation types`](../cli/types.md) writes the declarations that give runtime code its view of an infra module. The view follows these rules:
 
-| In the infra module                                         | In runtime code                                              |
-| ----------------------------------------------------------- | ------------------------------------------------------------ |
-| An output value, such as `orderQueue.url`                   | The value's type, such as `string`                           |
-| Data, such as a string or a plain object                    | The same type                                                |
-| A resource factory, such as `lambda` or `queue`             | Callable, for use in [`lambda()` settings](./function-config.md) |
-| A `grant` method, such as `orderQueue.grant`                | Callable, for use in `grants`                                |
-| Any other function or method, such as `orderQueue.consume`  | Uncallable                                                   |
+| In the infra module                                        | In runtime code                                                  |
+| ---------------------------------------------------------- | ---------------------------------------------------------------- |
+| An output value, such as `orderQueue.url`                  | The value's type, such as `string`                               |
+| Data, such as a string or a plain object                   | The same type                                                    |
+| A resource factory, such as `lambda` or `queue`            | Callable, for use in [`lambda()` settings](./function-config.md) |
+| A `grant` method, such as `orderQueue.grant`               | Callable, for use in `grants`                                    |
+| Any other function or method, such as `orderQueue.consume` | Uncallable                                                       |
+| Any other property, such as `orderQueue.resources`         | Left out                                                         |
 
 So `orderQueue.consume(createOrder)` in runtime code is a type error.
+
+A factory's result has the same view in runtime code. `lambda()` returns only `{ handle }`, which is what its runtime half returns, so runtime code can't read its function's `role` or `fn`. The result of `queue()` keeps its data and `grant`, and its other methods are uncallable.
 
 ## How a read reaches the function
 
@@ -74,11 +77,11 @@ read("infra/orders#orderQueue", ["url"]);
 
 `infra/orders#orderQueue.url` is the read's output key. It has three parts:
 
-| Part          | Example        | Meaning                                                                    |
-| ------------- | -------------- | -------------------------------------------------------------------------- |
-| Module        | `infra/orders` | The infra module's path from the project root, without its extension.      |
-| Binding       | `#orderQueue`  | The export of the infra module.                                            |
-| Property path | `.url`         | The property that runtime code reads. Nested reads use more dots.          |
+| Part          | Example        | Meaning                                                               |
+| ------------- | -------------- | --------------------------------------------------------------------- |
+| Module        | `infra/orders` | The infra module's path from the project root, without its extension. |
+| Binding       | `#orderQueue`  | The export of the infra module.                                       |
+| Property path | `.url`         | The property that runtime code reads. Nested reads use more dots.     |
 
 Then the values travel in four steps:
 
@@ -99,18 +102,18 @@ A read must end at an output value or at data: a string, a number, a boolean, `n
 
 A read can go on past an output value or a string. `orderQueue.url.length` delivers the URL, and reads `length` in the function.
 
-**A whole binding can be read as a value.** `console.log(orderQueue)` delivers the binding's data properties, such as `url` and `arn`, as one object. Its methods are left out, so the type of the binding as a value has no methods either. A namespace import, such as `import * as orders from "infra/orders"`, can't be used as a value: read one of its exports, as in `orders.orderQueue.url`.
+**A whole binding can be read as a value.** `console.log(orderQueue)` delivers the binding's data properties, such as `url` and `arn`, as one object. Properties that aren't data, such as the queue's `resources`, are left out, and the type of the binding leaves them out too. Its methods are uncallable, except `grant`. A namespace import, such as `import * as orders from "infra/orders"`, can't be used as a value: read one of its exports, as in `orders.orderQueue.url`.
 
 ## Rules
 
 Some uses of infra type-check but fail the build, at the line that breaks the rule:
 
-| Code in runtime code                                   | Error                                                          |
-| ------------------------------------------------------ | -------------------------------------------------------------- |
-| `orderQueue.grant(["SendMessage"])` inside a handler   | `orderQueue.grant() calls infra from runtime code.` Call it in `grants` instead. |
-| `orderQueue.url = "..."`                               | `Runtime code can't change orderQueue.url, which it reads from infra.` |
-| `export { orderQueue }`                                | `Runtime code can't re-export orderQueue, which it imports from infra.` |
-| `import { queue } from "@notation/aws/sqs"`            | A runtime module that imports infra without `{ type: "infra" }` would bundle infra. |
+| Code in runtime code                                 | Error                                                                               |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `orderQueue.grant(["SendMessage"])` inside a handler | `orderQueue.grant() calls infra from runtime code.` Call it in `grants` instead.    |
+| `orderQueue.url = "..."`                             | `Runtime code can't change orderQueue.url, which it reads from infra.`              |
+| `export { orderQueue }`                              | `Runtime code can't re-export orderQueue, which it imports from infra.`             |
+| `import { queue } from "@notation/aws/sqs"`          | A runtime module that imports infra without `{ type: "infra" }` would bundle infra. |
 
 ## Tests
 

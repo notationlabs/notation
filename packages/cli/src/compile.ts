@@ -273,7 +273,6 @@ function writeReads(
 
 const functionEntryNamespace = "notation-function-entry";
 
-// Serves the generated entry of each function's bundle.
 function functionEntryPlugin(functions: RuntimeFunction[]): esbuild.Plugin {
   const byId = new Map(functions.map((fn) => [fn.id, fn]));
   const prefix = `${functionEntryNamespace}:`;

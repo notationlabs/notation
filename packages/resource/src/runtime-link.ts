@@ -1,5 +1,10 @@
-import { captureCallSite } from "./contributions";
-import { isOutputValue, isPlainObject } from "./output-value";
+import { captureCallSite, captureCallSiteLazily } from "./contributions";
+import {
+  deferredMark,
+  isOutputValue,
+  isPlainObject,
+  resolveDeferred,
+} from "./output-value";
 import { outputKey, parseOutputKey } from "./outputs";
 import { getActiveResourceCollection } from "./resource-collection";
 import type { RuntimeRef } from "./views";
@@ -123,20 +128,29 @@ type StandInState = {
   name: string;
   linked: boolean;
   value: unknown;
+  // Calls that infra made on the stand-in's function before linking, such
+  // as `createOrder.function.policy.contribute(...)`. Linking runs them.
+  calls: Array<() => unknown>;
 };
 
 /**
  * What infra sees in place of an export of a runtime module, while the
  * runtime module has not run. After linking, it reads through to the export.
  * Before, reading it fails, except for `function`, which is a lazy proxy of
- * the export's function.
+ * the export's function; see `createChain`.
  * @param module The runtime module, relative to the project root.
  */
 export function createStandIn(
   module: string,
   name: string,
 ): RuntimeRef<any, unknown, unknown> {
-  const state: StandInState = { module, name, linked: false, value: undefined };
+  const state: StandInState = {
+    module,
+    name,
+    linked: false,
+    value: undefined,
+    calls: [],
+  };
   let lazyFunction: object | undefined;
   const get = (_: object, prop: string | symbol): unknown => {
     if (prop === standInMark) return state;
@@ -148,6 +162,7 @@ export function createStandIn(
     if (prop === "function") {
       return (lazyFunction ??= createLazyFunction(state));
     }
+    if (typeof prop === "symbol") return undefined;
     throw new Error(
       `${name} isn't known yet: infra read ${String(prop)} on it while infra was being evaluated${at(get)}. Pass it to an infra API such as route() or consume(), which wire it once evaluation ends.`,
     );
@@ -179,15 +194,16 @@ export function describeStandIn(value: unknown): string | undefined {
  * value is returned as it is. Fails if the stand-in is not linked yet.
  */
 export function resolveRuntimeTarget(value: unknown): unknown {
-  if (typeof value !== "object" || value === null) return value;
-  const state = standInState(value) ?? lazyFunctionState(value);
-  if (!state) return value;
-  if (!state.linked) {
+  if (typeof value !== "object" && typeof value !== "function") return value;
+  if (value === null) return value;
+  const standIn = standInState(value);
+  const state = standIn ?? lazyFunctionState(value);
+  if (state && !state.linked) {
     throw new Error(
       `${state.name} from ${state.module} isn't linked yet: runtime modules are linked after infra has been evaluated.`,
     );
   }
-  return lazyFunctionState(value) ? functionOf(state) : state.value;
+  return standIn ? standIn.value : resolveDeferred(value);
 }
 
 /** A runtime module's stand-in exports, and the exports of its stripped copy. */
@@ -235,6 +251,13 @@ export function linkRuntimeModules(
       const state = standInState(standIn as object)!;
       state.value = exports[name];
       state.linked = true;
+    }
+  }
+  for (const { standIns } of sorted) {
+    for (const standIn of Object.values(standIns)) {
+      if (!isStandIn(standIn)) continue;
+      const state = standInState(standIn as object)!;
+      for (const call of state.calls.splice(0)) call();
     }
   }
 
@@ -389,16 +412,105 @@ function isData(value: unknown): boolean {
 
 const lazyFunctionMark = Symbol.for("@notation/resource/LazyFunction");
 
+// Reading these turns a value into a string, which an unknown value can't be.
+const stringifyingProps = new Set<string | symbol>([
+  Symbol.toPrimitive,
+  "toString",
+  "valueOf",
+  "toJSON",
+]);
+
+// What a chain stands for once linked. `holder` is the value it was read
+// from, which a call on it receives as `this`.
+type ChainValue = { value: unknown; holder?: unknown };
+
 function createLazyFunction(state: StandInState): object {
+  return createChain(
+    state,
+    `${state.name}.function`,
+    () => undefined,
+    () => ({ value: functionOf(state) }),
+    true,
+  );
+}
+
+/**
+ * A stand-in's function, or a chain of property reads and calls on it, such
+ * as `createOrder.function.arn` or `createOrder.function.grantInvoke()`.
+ * Before linking, each read or call makes a longer chain. Config and
+ * contributions that hold a chain resolve it once the runtime modules are
+ * linked, through `deferredMark`. Linking makes each call, so that a call
+ * made for its effect, such as `policy.contribute(...)`, still happens.
+ * Reading `id`, or turning the chain into a string, fails before linking,
+ * since the chain can't give a value then. After linking, the chain reads
+ * through to the value it stands for.
+ * @param step Finds the chain's value from its parent's, once linked. Each
+ * chain runs it once.
+ */
+function createChain(
+  state: StandInState,
+  name: string,
+  site: () => string | undefined,
+  step: () => ChainValue,
+  root = false,
+): object {
+  let resolved: ChainValue | undefined;
+  const resolveStep = (): ChainValue => {
+    if (!state.linked) {
+      const where = site();
+      throw new Error(
+        `${name} isn't known yet: infra used it${where ? ` at ${where}` : ""} before the runtime modules were linked.`,
+      );
+    }
+    return (resolved ??= step());
+  };
+  const resolve = () => resolveStep().value;
   const get = (_: object, prop: string | symbol): unknown => {
-    if (prop === lazyFunctionMark) return state;
+    if (prop === lazyFunctionMark) return root ? state : undefined;
+    if (prop === deferredMark) return resolve;
+    if (state.linked) return readLinked(resolve(), prop);
     if (prop === "then") return undefined;
-    if (state.linked) return readLinked(functionOf(state), prop);
-    throw new Error(
-      `${state.name}.function isn't known yet: infra used it as a value while infra was being evaluated${at(get)}. Infra can pass it to an infra API, but not read it.`,
+    if (prop === "id" || stringifyingProps.has(prop)) {
+      const use = prop === "id" ? "read its id" : "turned it into a string";
+      throw new Error(
+        `${name} isn't known yet: infra ${use} while infra was being evaluated${at(get)}. Infra can pass it, or values read from it such as its arn, to an infra API or a resource, which resolve them once the runtime modules are linked.`,
+      );
+    }
+    if (typeof prop === "symbol") return undefined;
+    return createChain(
+      state,
+      `${name}.${prop}`,
+      captureCallSiteLazily(get, { skipLibraryFrames: true }),
+      () => {
+        const holder = resolve();
+        const value =
+          holder === null || holder === undefined
+            ? undefined
+            : Reflect.get(Object(holder), prop, holder);
+        return { value, holder };
+      },
     );
   };
-  return new Proxy({}, { get, set: readOnly(`${state.name}.function`) });
+  const callStep = (args: unknown[]) => (): ChainValue => {
+    const { value, holder } = resolveStep();
+    if (typeof value !== "function") {
+      throw new Error(`${name} is not a function.`);
+    }
+    return { value: Reflect.apply(value, holder, args) };
+  };
+  const apply = (_: object, _this: unknown, args: unknown[]): unknown => {
+    if (state.linked) return callStep(args)().value;
+    const call = createChain(
+      state,
+      `${name}()`,
+      captureCallSiteLazily(apply, { skipLibraryFrames: true }),
+      callStep(args),
+    );
+    state.calls.push(() => resolveDeferred(call));
+    return call;
+  };
+  // A function target, so that the chain can be called.
+  return new Proxy(() => {}, { get, apply, set: readOnly(name) });
 }
 
 function functionOf(state: StandInState): unknown {

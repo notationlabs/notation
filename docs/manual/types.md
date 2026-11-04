@@ -39,11 +39,11 @@ type RuntimeRef<Event, Result, Function> = {
 
 Infra can pass a `RuntimeRef` to the router, but it can't call it. Infra's view of a runtime module follows these rules:
 
-| Export of the runtime module                     | In infra                                                        |
-| ------------------------------------------------ | --------------------------------------------------------------- |
-| A handler made with `handle.*`                   | A `RuntimeRef`. `getUser.function` is its Lambda group.         |
-| The result of `lambda()`                         | The Lambda group                                                |
-| Anything else, such as a helper or a constant    | A type that infra can't use                                     |
+| Export of the runtime module                  | In infra                                                                  |
+| --------------------------------------------- | ------------------------------------------------------------------------- |
+| A handler made with `handle.*`                | A `RuntimeRef`. `getUser.function` is its Lambda group, without `handle`. |
+| The result of `lambda()`                      | The Lambda group, without `handle`                                        |
+| Anything else, such as a helper or a constant | A type that infra can't use                                               |
 
 Each infra API takes a `RuntimeRef` of the event it sends. So these are type errors, at the line you wrote:
 
@@ -63,7 +63,9 @@ import { api, router } from "@notation/aws/api-gateway";
 import { getUser } from "runtime/user.fn" with { type: "runtime" };
 import type { JWTClaims } from "shared/jwt";
 
-const authedRouter = router(api({ name: "user-api" })).withJWTAuthorizer<JWTClaims>({
+const authedRouter = router(
+  api({ name: "user-api" }),
+).withJWTAuthorizer<JWTClaims>({
   type: "jwt",
   issuer: "https://auth.example.com/",
   audience: ["https://api.example.com"],

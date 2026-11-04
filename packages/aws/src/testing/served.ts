@@ -9,24 +9,28 @@ const configFileName = "notation.config.ts";
 const roots = new Map<string, string>();
 
 /**
- * The project root of a file: the nearest directory above it that holds
- * `notation.config.ts`. The search stops at the first directory that holds a
- * `package.json` and no config, as `notation` commands do.
+ * The project root of a file, as the compiler sees it: the nearest directory
+ * above the file that holds `notation.config.ts`. `notation` commands run in
+ * that directory, and key each value that runtime code reads by its path
+ * from there, so a `package.json` in between, such as a nested package's,
+ * doesn't end the search. Without a config above the file, the root is the
+ * nearest directory with a `package.json`, or else the file's directory.
  */
 export function projectRootOf(file: string): string {
   const start = path.dirname(path.resolve(file));
   let root = roots.get(start);
   if (root !== undefined) return root;
+  let nearestPackage: string | undefined;
   for (let dir = start; ; dir = path.dirname(dir)) {
-    if (
-      fs.existsSync(path.join(dir, configFileName)) ||
-      fs.existsSync(path.join(dir, "package.json"))
-    ) {
+    if (fs.existsSync(path.join(dir, configFileName))) {
       root = dir;
       break;
     }
+    if (nearestPackage === undefined) {
+      if (fs.existsSync(path.join(dir, "package.json"))) nearestPackage = dir;
+    }
     if (dir === path.dirname(dir)) {
-      root = start;
+      root = nearestPackage ?? start;
       break;
     }
   }
@@ -66,7 +70,8 @@ export function isProvider(
 
 const extensions = [".ts", ".tsx", ".mts", ".js", ".mjs", ".jsx"];
 
-const isFile = (file: string) => fs.statSync(file, { throwIfNoEntry: false })?.isFile() ?? false;
+const isFile = (file: string) =>
+  fs.statSync(file, { throwIfNoEntry: false })?.isFile() ?? false;
 
 // Finds a file as TypeScript's bundler resolution does: with no extension,
 // `.js` written for `.ts`, or a directory's index.

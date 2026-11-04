@@ -46,7 +46,7 @@ A key without a property path, such as `infra/orders#orderQueue`, sets the whole
 
 **A read of a value that no test set throws**, and the error names the key: `No output is set for "infra/orders#orderQueue.url"`. The exception is `grant`, which stays callable, because the `lambda()` settings call it when the test imports the module.
 
-The project root is the nearest directory above the infra module that holds `notation.config.ts`, as for `notation` commands.
+The project root is the nearest directory above the infra module that holds `notation.config.ts`, as for `notation` commands. A `package.json` in between, such as a nested package's, doesn't stop the search.
 
 ## What the hook serves
 
@@ -72,6 +72,8 @@ export default defineConfig({
   plugins: [notationTesting()],
 });
 ```
+
+The plugin serves static imports and dynamic imports `with { type: "infra" }`, as the hook does. A dynamic import's specifier must be a string literal, since the plugin reads it from the source.
 
 ## Node's test runner
 

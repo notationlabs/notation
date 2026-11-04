@@ -125,7 +125,7 @@ const importer = lambda({
 });
 ```
 
-A function from a runtime module takes its grants in its own `lambda()` settings. Infra can't contribute to `processOrders.function.policy`, because `processOrders.function` is a stand-in until infra has been evaluated, and reading its `policy` throws.
+A function from a runtime module takes its grants in its own `lambda()` settings. Infra can also contribute to `processOrders.function.policy`. `processOrders.function` is a stand-in until the runtime modules are linked, so the contribution is made then.
 
 The statements go on the function's role, so every handler of the function gets the access.
 

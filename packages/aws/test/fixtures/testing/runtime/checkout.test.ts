@@ -17,6 +17,14 @@ test("createOrder sends the order to the queue's URL", async () => {
   expect(sent).toEqual([{ url: "https://sqs.test/orders", body: "{}" }]);
 });
 
+test("a dynamic import of infra serves the values set with setOutputs", async () => {
+  setOutputs({ "infra/orders#orderQueue.url": "https://sqs.test/orders" });
+  const { orderQueue } = await import("../infra/orders", {
+    with: { type: "infra" },
+  });
+  expect(orderQueue.url).toBe("https://sqs.test/orders");
+});
+
 test("reading an unset output names its key", async () => {
   await expect(createOrder(request, {} as any)).rejects.toThrow(
     'No output is set for "infra/orders#orderQueue.url"',

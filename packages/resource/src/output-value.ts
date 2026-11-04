@@ -54,11 +54,35 @@ export function isPlainObject(
   return prototype === Object.prototype || prototype === null;
 }
 
+export const deferredMark = Symbol.for("@notation/resource/Deferred");
+
+/**
+ * Whether a value stands for another that is not known yet, such as the ARN
+ * of a runtime module's function before the runtime modules are linked. The
+ * walks below replace it with the value it stands for, so it can be placed
+ * in config and contributions as an output value is.
+ */
+export function isDeferred(value: unknown): boolean {
+  if (typeof value !== "object" && typeof value !== "function") return false;
+  if (value === null) return false;
+  return typeof (value as any)[deferredMark] === "function";
+}
+
+/**
+ * The value that a deferred value stands for. It fails if that value is not
+ * known yet. Any other value is returned as it is.
+ */
+export function resolveDeferred(value: unknown): unknown {
+  while (isDeferred(value)) value = (value as any)[deferredMark]();
+  return value;
+}
+
 /** Walks a value and calls `visit` for every output value in it. */
 export function forEachOutputValue(
   value: unknown,
   visit: (token: OutputValue) => void,
 ): void {
+  value = resolveDeferred(value);
   if (isOutputValue(value)) return visit(value);
   if (Array.isArray(value)) {
     for (const entry of value) forEachOutputValue(entry, visit);
@@ -85,6 +109,7 @@ export function mapOutputValues(
   value: unknown,
   onToken: (token: OutputValue) => unknown,
 ): unknown {
+  value = resolveDeferred(value);
   if (isOutputValue(value)) return onToken(value);
   if (Array.isArray(value)) {
     return value.map((entry) => mapOutputValues(entry, onToken));

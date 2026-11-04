@@ -6,11 +6,14 @@ import {
   declareRuntimeFunction,
   describeStandIn,
   getActiveResourceCollection,
+  isDeferred,
   isHandlerRef,
   isStandIn,
   onEvaluationEnd,
   resolveRuntimeTarget,
   type FunctionDeclaration,
+  type Grant,
+  type RuntimeFactory,
 } from "@notation/resource";
 import type { DispatchEntry } from "@notation/aws.iac/shared";
 import path from "path";
@@ -81,6 +84,26 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
         PolicyDocument: { Statement: config.grants },
       });
     }
+  }
+
+  /**
+   * The function's ARN. It is an output value, filled in at deploy. A getter,
+   * so that serialising the group doesn't turn it into a string.
+   */
+  get arn(): string {
+    return this.fn.outputValue("FunctionArn");
+  }
+
+  /**
+   * A policy statement that allows invoking this function, for the grants of
+   * another function or a role's policy.
+   */
+  grantInvoke(): Grant<aws.lambda.PolicyStatement> {
+    return {
+      Effect: "Allow",
+      Action: ["lambda:InvokeFunction"],
+      Resource: this.arn,
+    };
   }
 
   /**
@@ -160,7 +183,12 @@ export function wireLambdaTarget(
   below: Function,
   wire: (target: ResolvedLambdaTarget) => void,
 ): void {
-  if (!isStandIn(target) && !isHandlerRef(target) && !isLambdaGroup(target)) {
+  if (
+    !isStandIn(target) &&
+    !isDeferred(target) &&
+    !isHandlerRef(target) &&
+    !isLambdaGroup(target)
+  ) {
     throw new Error(
       `${caller} expects a handler exported from a runtime module, or a Lambda group from lambda(). A runtime module calls lambda() and exports the handlers that its handle makes.`,
     );
@@ -197,21 +225,44 @@ function resolveLambdaTarget(
 }
 
 /**
- * What `lambda()` returns. Infra imports a runtime module
- * `with { type: "runtime" }`, and sees an exported `lambda()` result as its
- * `LambdaGroup`.
+ * How infra sees a Lambda function from a runtime module: its group, without
+ * `handle`, since only the runtime module makes its handlers.
  */
-export type LambdaDeclaration = LambdaGroup & FunctionDeclaration<LambdaGroup>;
+export type LambdaFunction = Omit<LambdaGroup, "handle">;
 
 /**
- * Declares a Lambda function. `id` must be a name-safe string literal; see
- * `NameSafe`.
+ * What `lambda()` returns. Infra imports a runtime module
+ * `with { type: "runtime" }`, and sees an exported `lambda()` result as a
+ * `LambdaFunction`.
+ */
+export type LambdaDeclaration = LambdaGroup &
+  FunctionDeclaration<LambdaFunction>;
+
+/** The settings of `lambda()`. A literal `id` must be name-safe. */
+export type LambdaSettings<Id extends string> = Omit<LambdaConfig, "id"> & {
+  id: NameSafe<Id>;
+};
+
+/**
+ * `lambda()` as runtime code sees it. It returns what the runtime half
+ * returns, the function's `handle`.
+ */
+export type RuntimeLambda = <const Id extends string>(
+  config: LambdaSettings<Id>,
+) => { readonly handle: Handle } & FunctionDeclaration<LambdaFunction>;
+
+/**
+ * Declares a Lambda function. A literal `id` must be name-safe; see
+ * `NameSafe`. An `id` that isn't a literal is checked when `lambda()` runs.
  *
  * Called in a runtime module without `code`, it declares the function that
  * the module's handlers run in. Destructure `handle` to make them.
  */
-export function lambda<const Id extends string>(
-  config: Omit<LambdaConfig, "id"> & { id: NameSafe<Id> },
+export const lambda: (<const Id extends string>(
+  config: LambdaSettings<Id>,
+) => LambdaDeclaration) &
+  RuntimeFactory<RuntimeLambda> = function lambda(
+  config: LambdaConfig,
 ): LambdaDeclaration {
   const group = new LambdaGroup(
     config.code ? config : { ...config, code: runtimeCode(config.id) },
@@ -231,7 +282,7 @@ export function lambda<const Id extends string>(
     );
   }
   return group as LambdaDeclaration;
-}
+};
 
 // The groups that `lambda()` declared without code, whose handlers the
 // compiler bundles.

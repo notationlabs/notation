@@ -14,7 +14,7 @@ overrides:
   '@babel/core@<7.29.6': ^7.29.7
   esbuild@>=0.27.3 <0.28.1: 0.28.1
 
-pnpmfileChecksum: sha256-O1M4ehq1bF7Nr09PeQG4Swv+/rLOalb5ophzhthzoVI=
+pnpmfileChecksum: sha256-RisZt+UnD6P7OArWb+UH6Pzv4OgBVKsbmvyKEb+BQas=
 
 importers:
 

@@ -510,8 +510,13 @@ Runtime modules and infra import each other. A runtime module calls `lambda()` t
 This section uses a checkout module, which declares a function and exports one handler, and an infra module that wires the handler:
 
 ```ts [runtime/checkout.fn.ts]
-const { handle } = lambda({ id: "checkout", grants: [orderQueue.grant(["SendMessage"])] });
-export const createOrder = handle.apiRequest(async (req) => { /* ... */ });
+const { handle } = lambda({
+  id: "checkout",
+  grants: [orderQueue.grant(["SendMessage"])],
+});
+export const createOrder = handle.apiRequest(async (req) => {
+  /* ... */
+});
 ```
 
 ```ts [infra/orders.ts]
@@ -523,14 +528,15 @@ ordersApi.post("/orders", createOrder);
 
 Each side of an attributed import sees the other through a type from `@notation/resource`. `notation types` writes the declarations that apply them.
 
-| Type | Used for |
-| --- | --- |
-| `Handler<E, R, F>` | What `handle.<kind>(fn)` returns, as runtime code and tests see it: a function of event `E` and result `R`, with a type-only mark. `F` is the provider's function type, such as `LambdaGroup`. |
-| `RuntimeRef<E, R, F>` | How infra sees a handler. It has `function: F` and is not callable. Infra APIs such as `route()` and `consume()` take one. |
-| `InfraView<M>` | Infra's view of a runtime module `M`: each `Handler` becomes a `RuntimeRef`, an exported `FunctionDeclaration<F>` becomes `F`, and any other export becomes an unusable `RuntimeOnly`. |
-| `RuntimeView<T>` | Runtime code's view of an infra module `T`: each output value becomes its value, such as `string` for a queue's `url`. Functions become an uncallable `InfraOnly`, except resource factories and `grant` methods. |
-| `Grant<T>` | Marks a method's result, such as a queue's `grant()`, so that `RuntimeView` keeps the method callable. |
-| `FunctionDeclaration<F>` | Marks the result of a function factory such as `lambda()`, so that `RuntimeView` keeps the factory callable and `InfraView` turns an exported result into `F`. |
+| Type                     | Used for                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Handler<E, R, F>`       | What `handle.<kind>(fn)` returns, as runtime code and tests see it: a function of event `E` and result `R`, with a type-only mark. `F` is the provider's function type, such as `LambdaGroup`.                                                                                                                                                                       |
+| `RuntimeRef<E, R, F>`    | How infra sees a handler. It has `function: F` and is not callable. Infra APIs such as `route()` and `consume()` take one.                                                                                                                                                                                                                                           |
+| `InfraView<M>`           | Infra's view of a runtime module `M`: each `Handler` becomes a `RuntimeRef`, an exported `FunctionDeclaration<F>` becomes `F`, and any other export becomes an unusable `RuntimeOnly`. `F` loses its `handle`, since only the runtime module makes handlers.                                                                                                         |
+| `RuntimeView<T>`         | Runtime code's view of an infra module `T`: each output value becomes its value, such as `string` for a queue's `url`. Functions become an uncallable `InfraOnly`, except resource factories and `grant` methods. A binding keeps only data and methods, so properties such as a group's `resources` are left out. A factory returns its result viewed as a binding. |
+| `Grant<T>`               | Marks a method's result, such as a queue's `grant()`, so that `RuntimeView` keeps the method callable.                                                                                                                                                                                                                                                               |
+| `RuntimeFactory<F>`      | Marks a factory with the signature `F` that `RuntimeView` gives it. `lambda()` is marked with a signature that returns `{ handle }`, which is what its runtime half returns.                                                                                                                                                                                         |
+| `FunctionDeclaration<F>` | Marks the result of a function factory such as `lambda()`, so that `RuntimeView` keeps the factory callable and `InfraView` turns an exported result into `F`.                                                                                                                                                                                                       |
 
 ### Declaring a function
 
@@ -539,7 +545,11 @@ A function factory calls `declareRuntimeFunction` when it runs in a runtime modu
 ```ts [packages/aws/src/lambda/lambda.ts]
 declareRuntimeFunction(
   group,
-  { id: config.id, service: "aws/lambda", bundle: `dist/functions/${config.id}/index.mjs` },
+  {
+    id: config.id,
+    service: "aws/lambda",
+    bundle: `dist/functions/${config.id}/index.mjs`,
+  },
   lambda,
   (outputs) => group.fn.contribute({ Environment: { Runtime: { outputs } } }),
 );
@@ -561,7 +571,9 @@ In the infra phase, infra receives a stand-in for each export of a runtime modul
 2. Register the wiring with `onEvaluationEnd`, which runs callbacks after the modules have been evaluated and linked, and before contributions close.
 3. In the callback, call `resolveRuntimeTarget` to get the `HandlerRef`, then check its `kind`.
 
-`wireLambdaTarget` in `@notation/aws/lambda` does these steps for Lambda. Outside an evaluation, it wires straight away. `describeStandIn` names a stand-in as `<export> from <module>` for error messages.
+A stand-in's `function` is a deferred value. Each property read or call on it before linking gives another deferred value, which records the read or call. Reading `id`, or turning a deferred value into a string, throws with the call site. `isDeferred(value)` tells a deferred value apart, and `resolveDeferred(value)` gives the value it stands for, or throws before linking. The walks over config and contributions resolve deferred values, so a resource can hold `createOrder.function.arn` as it holds an output value. Linking makes each recorded call, so a call made for its effect, such as `policy.contribute(...)`, still happens.
+
+`wireLambdaTarget` in `@notation/aws/lambda` does these steps for Lambda, and also takes a stand-in's `function`. Outside an evaluation, it wires straight away. `describeStandIn` names a stand-in as `<export> from <module>` for error messages.
 
 `linkRuntimeModules`, which generated code calls, names each exported `HandlerRef`, links the stand-ins, gives each declared function its handlers, and adds it to `graph.runtimeFunctions`.
 
@@ -569,16 +581,16 @@ In the infra phase, infra receives a stand-in for each export of a runtime modul
 
 A value that runtime code reads from infra has an output key: the infra module's path from the project root without its extension, `#`, the binding, and the property path. `orderQueue.url` in `infra/orders.ts` has the key `infra/orders#orderQueue.url`. The functions live in `@notation/resource/outputs`, which a function's bundle can import without the rest of the package:
 
-| Function | Does |
-| --- | --- |
-| `bindingKey(module, binding)` | Returns the key of a whole binding, such as `infra/orders#orderQueue`. |
-| `outputKey(module, binding, path?)` | Returns the key of a read, such as `infra/orders#orderQueue.url`. |
-| `parseOutputKey(key)` | Splits a key into `{ module, binding, path }`, and throws on a string that isn't a key. |
-| `read(binding, path)` | Returns a delivered value. The compiler rewrites `orderQueue.url` in a bundle to `read("infra/orders#orderQueue", ["url"])`. Throws if no value is set. |
-| `setOutputValues(values)` | Sets values by key. A key for a whole binding also serves reads of its paths. |
-| `clearOutputValues()` | Removes every value. |
-| `addOutputSource(source)` | Adds a source of values, which is loaded at the first read after it was added. Set values take precedence over a source's values. |
-| `findOutputValue(binding, path)` | Finds a value as `read` does, but returns `{ value }` or `undefined` in place of throwing. |
-| `hasOutputValuesBelow(key)` | Returns whether a value is set for a key below `key`, such as `infra/api#api.stage.url` below `infra/api#api.stage`. |
+| Function                            | Does                                                                                                                                                    |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bindingKey(module, binding)`       | Returns the key of a whole binding, such as `infra/orders#orderQueue`.                                                                                  |
+| `outputKey(module, binding, path?)` | Returns the key of a read, such as `infra/orders#orderQueue.url`.                                                                                       |
+| `parseOutputKey(key)`               | Splits a key into `{ module, binding, path }`, and throws on a string that isn't a key.                                                                 |
+| `read(binding, path)`               | Returns a delivered value. The compiler rewrites `orderQueue.url` in a bundle to `read("infra/orders#orderQueue", ["url"])`. Throws if no value is set. |
+| `setOutputValues(values)`           | Sets values by key. A key for a whole binding also serves reads of its paths.                                                                           |
+| `clearOutputValues()`               | Removes every value.                                                                                                                                    |
+| `addOutputSource(source)`           | Adds a source of values, which is loaded at the first read after it was added. Set values take precedence over a source's values.                       |
+| `findOutputValue(binding, path)`    | Finds a value as `read` does, but returns `{ value }` or `undefined` in place of throwing.                                                              |
+| `hasOutputValuesBelow(key)`         | Returns whether a value is set for a key below `key`, such as `infra/api#api.stage.url` below `infra/api#api.stage`.                                    |
 
 The store is shared through `Symbol.for`, so every copy of the module in a process uses the same values. The Lambda dispatcher adds the function's `NOTATION_RUNTIME` environment variable as a source, and `setOutputs` from `@notation/aws/testing` sets values in the same store for tests.

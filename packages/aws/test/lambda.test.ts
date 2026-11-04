@@ -12,7 +12,7 @@ import {
   type NameSafe,
   type LambdaRef,
 } from "src/lambda";
-import { queue } from "src/sqs";
+import { queue, type QueueGroup } from "src/sqs";
 
 const code = { type: "file", path: "src/fns/handler.fn.js" } as const;
 
@@ -144,9 +144,13 @@ test("NameSafe accepts name-safe literals and rejects the rest", () => {
     }),
   ).toThrow();
 
+  // A string that isn't a literal is checked when lambda() runs.
   const id: string = "fn";
-  // @ts-expect-error a plain string can't be checked
   lambda({ id, code });
+  const prefix: string = "bad.";
+  expect(() => lambda({ id: `${prefix}id`, code })).toThrow(
+    /Invalid lambda id "bad\.id"/,
+  );
 });
 
 test("resources declared by the helper are reported at the caller's line", () => {
@@ -250,6 +254,63 @@ describe("a function declared in a runtime module", () => {
         match: { apiId: "api-1", routeKey: "POST /orders" },
       },
     ]);
+  });
+
+  test("infra passes a stand-in's function, its arn and grantInvoke() on before linking", async () => {
+    let checkout!: LambdaGroup;
+    let caller!: LambdaGroup;
+    let audit!: QueueGroup;
+    let orders!: QueueGroup;
+    const graph = await collectResourceGraph(() => {
+      const standIn = createStandIn("runtime/checkout.ts", "processOrder");
+      const fn = (standIn as any).function as LambdaGroup;
+      orders = queue({ name: "orders" });
+      orders.consume(fn);
+      audit = queue({ name: "audit" });
+      caller = lambda({ id: "caller", code, grants: [fn.grantInvoke()] });
+      caller.fn.contribute({
+        Environment: { Variables: { CHECKOUT_ARN: fn.arn } },
+      });
+      fn.policy.contribute({
+        PolicyDocument: { Statement: [audit.grant(["SendMessage"])] },
+      });
+      expect(() => fn.id).toThrow(
+        /processOrder\.function isn't known yet: infra read its id/,
+      );
+
+      checkout = lambda({ id: "checkout" });
+      linkRuntimeModules([
+        {
+          module: "runtime/checkout.ts",
+          standIns: { processOrder: standIn },
+          exports: { processOrder: checkout.handle.sqsEvent(async () => {}) },
+        },
+      ]);
+    });
+
+    const mapping = graph.resources.find(
+      (r) => r.type === "aws/lambda/LambdaEventSourceMapping",
+    );
+    expect(mapping?.id).toBe("orders-checkout-mapping");
+    expect(caller.policy.getDependencies()).toContain(checkout.fn);
+    expect(caller.fn.getDependencies()).toContain(checkout.fn);
+    checkout.fn.setOutput({ FunctionArn: "arn:checkout" } as any);
+    const statements = (await caller.policy.getParams()).PolicyDocument
+      .Statement as any[];
+    expect(statements).toContainEqual({
+      Effect: "Allow",
+      Action: ["lambda:InvokeFunction"],
+      Resource: "arn:checkout",
+    });
+    audit.queue.setOutput({ QueueArn: "arn:audit" } as any);
+    orders.queue.setOutput({ QueueArn: "arn:orders" } as any);
+    const checkoutStatements = (await checkout.policy.getParams())
+      .PolicyDocument.Statement as any[];
+    expect(checkoutStatements).toContainEqual({
+      Effect: "Allow",
+      Action: ["sqs:SendMessage"],
+      Resource: "arn:audit",
+    });
   });
 
   test("wiring a handler of the wrong kind fails at the infra call site", async () => {

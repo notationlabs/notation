@@ -32,7 +32,9 @@ export {
   OutputValueStringError,
   PendingOutput,
   containsOutputValue,
+  isDeferred,
   isOutputValue,
+  resolveDeferred,
   resolveOutputValues,
   deployLookup,
   planLookup,
@@ -56,6 +58,7 @@ export {
 } from "./runtime-link";
 export type {
   FunctionDeclaration,
+  RuntimeFactory,
   Grant,
   Handler,
   InfraOnly,
