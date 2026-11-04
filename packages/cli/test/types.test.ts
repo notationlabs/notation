@@ -334,7 +334,27 @@ describe("watchTypes", () => {
     try {
       expect(read()).not.toContain("../runtime/checkout*");
 
+      // The runtime module first, so that the import of it in orders.ts
+      // resolves whenever a run reads orders.ts.
+      write("runtime/checkout.ts", checkoutModule);
       write("infra/orders.ts", ordersModule);
+
+      await vi.waitFor(() => expect(read()).toContain("../runtime/checkout*"), {
+        timeout: 10_000,
+      });
+      expect(logger.error).not.toHaveBeenCalled();
+    } finally {
+      await stop();
+    }
+  }, 15_000);
+
+  it("writes the file again when an import that didn't resolve starts to resolve", async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    write("infra/orders.ts", ordersModule);
+    const stop = await watchTypes(root, { logger, debounceMs: 10 });
+    try {
+      expect(read()).not.toContain("../runtime/checkout*");
+
       write("runtime/checkout.ts", checkoutModule);
 
       await vi.waitFor(() => expect(read()).toContain("../runtime/checkout*"), {
