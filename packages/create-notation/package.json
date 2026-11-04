@@ -6,8 +6,8 @@
     "create-notation": "dist/index.js"
   },
   "scripts": {
-    "build": "tsup --clean",
-    "dev": "tsup --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "typecheck": "tsc --noEmit && tsc --noEmit -p templates/starter"
   },
   "dependencies": {
