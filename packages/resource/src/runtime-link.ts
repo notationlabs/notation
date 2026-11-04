@@ -176,7 +176,7 @@ export function createStandIn(
         `${name} from ${module} isn't linked yet: runtime modules are linked after infra has been evaluated.`,
       );
     }
-    return state.value;
+    return exportOf(state);
   };
   const get = (_: object, prop: string | symbol): unknown => {
     if (prop === standInMark) return state;
@@ -184,7 +184,7 @@ export function createStandIn(
     if (prop === "then") return undefined;
     if (state.linked) {
       if (prop === "function") return functionOf(state);
-      return readLinked(state.value, prop);
+      return readLinked(exportOf(state), prop);
     }
     if (prop === "function") {
       return (lazyFunction ??= createLazyFunction(state));
@@ -239,7 +239,7 @@ export function resolveRuntimeTarget(value: unknown): unknown {
       `${state.name} from ${state.module} isn't linked yet: runtime modules are linked after infra has been evaluated.`,
     );
   }
-  return standIn ? standIn.value : resolveDeferred(value);
+  return standIn ? exportOf(standIn) : resolveDeferred(value);
 }
 
 /** A runtime module's stand-in exports, and the exports of its stripped copy. */

@@ -335,6 +335,26 @@ it("fails when a value read from a stand-in names an export that the runtime mod
   );
 });
 
+it("fails when infra reads a stand-in for a missing export after linking", async () => {
+  await collectResourceGraph(() => {
+    const standIn = createStandIn("runtime/checkout.ts", "missing");
+    const checkout = declare("checkout");
+    linkRuntimeModules([
+      {
+        module: "runtime/checkout.ts",
+        standIns: { missing: standIn },
+        exports: { run: checkout.api() },
+      },
+    ]);
+    const missing =
+      "runtime/checkout.ts has no handler or function named missing";
+    expect(() => (standIn as any).arn).toThrow(missing);
+    expect(() => (standIn as any).wire).toThrow(missing);
+    expect(() => resolveRuntimeTarget(standIn)).toThrow(missing);
+    expect(() => resolveDeferred(standIn)).toThrow(missing);
+  });
+});
+
 it("links an exported function to the function itself", async () => {
   await collectResourceGraph(() => {
     const standIn = createStandIn("runtime/checkout.ts", "checkoutFn");
