@@ -169,7 +169,7 @@ it("fails when runtime code imports an infra package without the attribute", asy
       "infra/orders.ts": `import { queue } from "@notation/aws/sqs"; export const orderQueue = queue({ name: "orders" });`,
     }),
   ).rejects.toThrow(
-    'infra/orders.ts imports @notation/aws/sqs without { type: "infra" }, so the bundle of runtime code would include infra',
+    'runtime/checkout.ts imports infra/orders.ts without { type: "infra" }, and infra/orders.ts imports @notation/aws/sqs, so the bundle of runtime code would include infra (runtime/checkout.ts → infra/orders.ts → @notation/aws/sqs)',
   );
 });
 

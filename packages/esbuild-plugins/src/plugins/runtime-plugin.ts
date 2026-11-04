@@ -49,6 +49,10 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
       // The error for each infra call that a rewrite replaced, by its ID. The
       // ID is in a bundle only if tree-shaking kept the call.
       const infraCalls = new Map<string, PartialMessage>();
+      // The first module to import each local module, so that an error can
+      // name the runtime code that brings infra into the bundle.
+      const importers = new Map<string, string>();
+      build.onStart(() => importers.clear());
 
       const resolveInternal = (specifier: string, importer: string) =>
         build.resolve(specifier, {
@@ -74,16 +78,41 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
           };
         }
         if (type === undefined) {
-          if (isInfraPackage(args.path) && isLocalImporter(args.importer)) {
+          if (args.namespace !== "file" || !isLocalImporter(args.importer)) {
+            return;
+          }
+          if (isInfraPackage(args.path)) {
             return {
               errors: [
                 {
-                  text: `${toProjectRoot(args.importer)} imports ${args.path} without { type: "infra" }, so the bundle of runtime code would include infra. Import infra from runtime code with { type: "infra" }, and don't import modules that declare infra without it.`,
+                  text: missingAttributeMessage(
+                    args.importer,
+                    args.path,
+                    importers,
+                  ),
                 },
               ],
             };
           }
-          return;
+          const result = await build.resolve(args.path, {
+            importer: args.importer,
+            resolveDir: args.resolveDir,
+            kind: args.kind,
+            with: args.with,
+            pluginData: { [internal]: true },
+          });
+          if (result.errors.length > 0) return;
+          if (isLocalModule(result) && !importers.has(result.path)) {
+            importers.set(result.path, args.importer);
+          }
+          return {
+            path: result.path,
+            external: result.external,
+            namespace: result.namespace,
+            sideEffects: result.sideEffects,
+            suffix: result.suffix,
+            pluginData: result.pluginData,
+          };
         }
         if (type !== "infra") return;
         const target = await resolveInternal(args.path, args.importer);
@@ -229,6 +258,31 @@ function parseString(literal: string): string {
   if (literal.startsWith('"')) return JSON.parse(literal);
   const body = literal.slice(1, -1).replace(/\\'/g, "'").replace(/"/g, '\\"');
   return JSON.parse(`"${body}"`);
+}
+
+function missingAttributeMessage(
+  importer: string,
+  specifier: string,
+  importers: Map<string, string>,
+) {
+  const fix = `Import infra from runtime code with { type: "infra" }, and don't import modules that declare infra without it.`;
+  const chain = [importer];
+  for (
+    let current = importers.get(importer);
+    current !== undefined && !chain.includes(current);
+    current = importers.get(current)
+  ) {
+    chain.push(current);
+  }
+  if (chain.length === 1) {
+    return `${toProjectRoot(importer)} imports ${specifier} without { type: "infra" }, so the bundle of runtime code would include infra. ${fix}`;
+  }
+  const infraModule = toProjectRoot(chain[0]!);
+  const runtimeModule = toProjectRoot(chain[1]!);
+  const imports = [...chain.reverse().map(toProjectRoot), specifier].join(
+    " → ",
+  );
+  return `${runtimeModule} imports ${infraModule} without { type: "infra" }, and ${infraModule} imports ${specifier}, so the bundle of runtime code would include infra (${imports}). ${fix}`;
 }
 
 // The directory of this module, so that `read` resolves from this package's
