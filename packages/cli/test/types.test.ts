@@ -326,6 +326,18 @@ describe("the generated declarations", () => {
   }, 30_000);
 });
 
+// On macOS, chokidar can miss changes made just after "ready", before the
+// underlying watch is listening, so each poll makes the change again.
+async function untilWritten(change: () => void) {
+  await vi.waitFor(
+    () => {
+      change();
+      expect(read()).toContain("../runtime/checkout*");
+    },
+    { timeout: 10_000, interval: 200 },
+  );
+}
+
 describe("watchTypes", () => {
   it("writes the file again when a file adds an attributed import", async () => {
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -337,11 +349,7 @@ describe("watchTypes", () => {
       // The runtime module first, so that the import of it in orders.ts
       // resolves whenever a run reads orders.ts.
       write("runtime/checkout.ts", checkoutModule);
-      write("infra/orders.ts", ordersModule);
-
-      await vi.waitFor(() => expect(read()).toContain("../runtime/checkout*"), {
-        timeout: 10_000,
-      });
+      await untilWritten(() => write("infra/orders.ts", ordersModule));
       expect(logger.error).not.toHaveBeenCalled();
     } finally {
       await stop();
@@ -351,15 +359,12 @@ describe("watchTypes", () => {
   it("writes the file again when an import that didn't resolve starts to resolve", async () => {
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     write("infra/orders.ts", ordersModule);
+    mkdirSync(path.join(root, "runtime"));
     const stop = await watchTypes(root, { logger, debounceMs: 10 });
     try {
       expect(read()).not.toContain("../runtime/checkout*");
 
-      write("runtime/checkout.ts", checkoutModule);
-
-      await vi.waitFor(() => expect(read()).toContain("../runtime/checkout*"), {
-        timeout: 10_000,
-      });
+      await untilWritten(() => write("runtime/checkout.ts", checkoutModule));
       expect(logger.error).not.toHaveBeenCalled();
     } finally {
       await stop();
