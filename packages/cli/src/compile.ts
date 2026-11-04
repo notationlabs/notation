@@ -24,6 +24,13 @@ export type { RuntimeFunction };
 export type CompileOptions = {
   watch?: boolean;
   logger?: Logger;
+  /**
+   * In watch mode, called after each infra build, evaluation of infra and
+   * function build, with whether the latest of each succeeded. Watch doesn't
+   * deploy while one of them failed, because the files in `dist` are then
+   * out of date.
+   */
+  onBuildStatus?: (ok: boolean) => void;
 };
 
 /**
@@ -58,22 +65,44 @@ export async function compile(
   let functions: RuntimeFunction[] | undefined;
   let disposeFunctions = async () => {};
   let updating = Promise.resolve();
+  type Step = "infra" | "evaluation" | "functions";
+  const failed = new Set<Step>();
+  const setFailed = (step: Step, isFailed: boolean) => {
+    if (isFailed) failed.add(step);
+    else failed.delete(step);
+    opts.onBuildStatus?.(failed.size === 0);
+  };
+  const onFunctionsBuildEnd = (ok: boolean) => setFailed("functions", !ok);
 
   // Updates run one at a time, so two rebuilds never dispose the same
   // contexts.
   const update = () => {
     updating = updating.then(async () => {
+      let found: RuntimeFunction[];
       try {
-        const found = await evaluateFunctions(entryPoint);
+        found = await evaluateFunctions(entryPoint);
+        setFailed("evaluation", false);
+      } catch (error) {
+        setFailed("evaluation", true);
+        logger.error(error);
+        return;
+      }
+      try {
         if (functions && sameFunctions(found, functions)) return;
         if (!functions) logger.info("Watching functions");
         await disposeFunctions();
         disposeFunctions = async () => {};
-        disposeFunctions = await compileFunctions(found, true);
+        // The disposed build's failure doesn't apply to the new build.
+        setFailed("functions", false);
+        disposeFunctions = await compileFunctions(found, {
+          watch: true,
+          onBuildEnd: onFunctionsBuildEnd,
+        });
         // Set only after a successful start, so that a failed start is
         // retried on the next rebuild with the same functions.
         functions = found;
       } catch (error) {
+        setFailed("functions", true);
         logger.error(error);
       }
     });
@@ -85,8 +114,9 @@ export async function compile(
     runtimeModules,
     logger,
     onRuntimeModules: update,
-    onBuildFailed: () => {
-      if (functions) return;
+    onBuildEnd: (ok) => {
+      setFailed("infra", !ok);
+      if (ok || functions) return;
       logger.info(
         "The infrastructure build failed. Fix the errors above; watch starts deploying after the first build that succeeds.",
       );
@@ -104,7 +134,8 @@ export type CompileInfraOptions = {
    * rebuild.
    */
   onRuntimeModules?: (modules: string[]) => void;
-  onBuildFailed?: () => void;
+  /** Called after each build, with whether it had no errors. */
+  onBuildEnd?: (ok: boolean) => void;
   /** Logs the build's warnings, such as a runtime module that isn't wired. */
   logger?: Logger;
 };
@@ -136,12 +167,12 @@ export async function compileInfra(
     plugins: [
       infraPlugin({ runtimeModules, onRuntimeModules }),
       {
-        name: "notation-build-failed",
+        name: "notation-build-end",
         setup(build) {
           // The infra plugin scans infra with a build that doesn't write.
           if (build.initialOptions.write === false) return;
           build.onEnd((result) => {
-            if (result.errors.length > 0) opts.onBuildFailed?.();
+            opts.onBuildEnd?.(result.errors.length === 0);
             const warnings = new Set(result.warnings.map((w) => w.text));
             for (const text of warnings) {
               if (!warned.has(text)) logger.warn(text);
@@ -231,7 +262,14 @@ export async function evaluateFunctions(
  */
 export async function compileFunctions(
   functions: RuntimeFunction[],
-  watch: boolean = false,
+  {
+    watch = false,
+    onBuildEnd,
+  }: {
+    watch?: boolean;
+    /** Called after each build, with whether it had no errors. */
+    onBuildEnd?: (ok: boolean) => void;
+  } = {},
 ) {
   if (functions.length === 0) return async () => {};
   const distDir = filePaths.dist.dir();
@@ -251,6 +289,12 @@ export async function compileFunctions(
     plugins: [
       functionEntryPlugin(functions),
       runtimePlugin({ onReads: (reads) => writeReads(functions, reads) }),
+      {
+        name: "notation-build-end",
+        setup(build) {
+          build.onEnd((result) => onBuildEnd?.(result.errors.length === 0));
+        },
+      },
     ],
     outdir: distDir,
     outExtension: { ".js": ".mjs" },

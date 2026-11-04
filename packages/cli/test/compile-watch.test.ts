@@ -107,6 +107,43 @@ it("bundles the functions that an infra rebuild adds", async () => {
   await waitFor(() => expect(existsSync(bundle("jobs-b"))).toBe(true));
 });
 
+it("reports a failed function build while the infra build succeeds", async () => {
+  write("watch-d/todos.fn.ts", runtimeModule("todos-d"));
+  write(
+    "watch-d/main.ts",
+    `import { api, router } from "@notation/aws/api-gateway";\n${importRun("./todos.fn")}\nrouter(api({ name: "d" })).get("/", run);\n`,
+  );
+  const status = vi.fn();
+  const failedLogger = {
+    info: () => {},
+    warn: () => {},
+    error: vi.fn(),
+  } as unknown as Logger;
+
+  await compile(build("watch-d/main.ts"), {
+    watch: true,
+    logger: failedLogger,
+    onBuildStatus: status,
+  });
+  await waitFor(() =>
+    expect(
+      existsSync(path.join(root, "dist/functions/todos-d/index.mjs")),
+    ).toBe(true),
+  );
+  await waitFor(() => expect(status).toHaveBeenLastCalledWith(true));
+
+  // The infra build leaves packages external, so only the function build
+  // fails on a package that doesn't exist.
+  write(
+    "watch-d/todos.fn.ts",
+    `import { missing } from "notation-missing-package";\n${runtimeModule("todos-d").replace('body: "todos-d"', "body: missing")}`,
+  );
+  await waitFor(() => expect(status).toHaveBeenLastCalledWith(false));
+
+  write("watch-d/todos.fn.ts", runtimeModule("todos-d"));
+  await waitFor(() => expect(status).toHaveBeenLastCalledWith(true));
+});
+
 it("waits for a build that succeeds, and says so", async () => {
   write("watch-c/todos.fn.ts", runtimeModule("todos-c"));
   write("watch-c/main.ts", `export const broken = ;\n`);

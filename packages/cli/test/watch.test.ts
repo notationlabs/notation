@@ -17,6 +17,7 @@ const { deployInChild } = vi.hoisted(() => ({
 vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
 vi.mock("../src/deploy-child", () => ({ deployInChild }));
 
+import { compile } from "../src/compile";
 import { watch } from "../src/watch";
 
 const deployment: Deployment = {
@@ -79,4 +80,26 @@ it("waits for a running deploy to finish before it exits", async () => {
   finishDeploy();
   await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(1));
   expect(deployInChild).toHaveBeenCalledTimes(1);
+});
+
+it("doesn't deploy while a build failed, and deploys after the builds succeed", async () => {
+  deployInChild.mockResolvedValue(undefined);
+  let onBuildStatus!: (ok: boolean) => void;
+  vi.mocked(compile).mockImplementationOnce(async (_deployment, opts) => {
+    onBuildStatus = opts!.onBuildStatus!;
+    onBuildStatus(false);
+  });
+  const log = logger();
+
+  await watch(deployment, { logger: log, exit: vi.fn() });
+  writeFileSync(path.join(root, "dist/infra.mjs"), "export {}");
+  await vi.waitFor(() =>
+    expect(log.info).toHaveBeenCalledWith(
+      "A build failed, so watch didn't deploy. Watch deploys after the builds succeed.",
+    ),
+  );
+  expect(deployInChild).not.toHaveBeenCalled();
+
+  onBuildStatus(true);
+  await vi.waitFor(() => expect(deployInChild).toHaveBeenCalledTimes(1));
 });

@@ -26,7 +26,27 @@ export async function watch(
   deployment: Deployment,
   { logger = defaultLogger, exit = process.exit }: WatchOptions = {},
 ) {
-  await compile(deployment, { watch: true, logger });
+  let isDeploying = false;
+  let deployQueued = false;
+  let stopping = false;
+  let timeoutId: NodeJS.Timeout;
+  const debounceTime = 500;
+  let buildsOk = true;
+  // Set when a deploy was skipped because a build failed, so that the next
+  // build that succeeds deploys even if it writes nothing new to `dist`.
+  let deployBlocked = false;
+
+  await compile(deployment, {
+    watch: true,
+    logger,
+    onBuildStatus: (ok) => {
+      buildsOk = ok;
+      if (ok && deployBlocked) {
+        deployBlocked = false;
+        debounceDeploy();
+      }
+    },
+  });
 
   const watcher = chokidar.watch(filePaths.dist.dir(), {
     ignored: dotFilesRe,
@@ -39,12 +59,6 @@ export async function watch(
   watcher.on("all", debounceDeploy);
   configWatcher.on("all", stop);
 
-  let isDeploying = false;
-  let deployQueued = false;
-  let stopping = false;
-  let timeoutId: NodeJS.Timeout;
-  const debounceTime = 500;
-
   function debounceDeploy() {
     if (timeoutId) {
       clearTimeout(timeoutId);
@@ -56,6 +70,15 @@ export async function watch(
 
   function triggerDeploy() {
     if (stopping) return;
+    if (!buildsOk) {
+      if (!deployBlocked) {
+        logger.info(
+          "A build failed, so watch didn't deploy. Watch deploys after the builds succeed.",
+        );
+      }
+      deployBlocked = true;
+      return;
+    }
     if (isDeploying) {
       deployQueued = true;
       return;
