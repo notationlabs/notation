@@ -258,47 +258,14 @@ describe("evaluated", () => {
     }
   `;
 
-  async function evaluate() {
+  // Bundles `infra/main.ts` of a project that uses `provider`, evaluates it,
+  // and prints its `wired` export and the functions in its graph.
+  async function evaluateProject(files: Record<string, string>) {
+    if (root) rmSync(root, { recursive: true, force: true });
     root = realpathSync(mkdtempSync(path.join(tmpDir, "infra-plugin-")));
     setConfigFile(path.join(root, "notation.config.ts"));
     write("infra/provider.ts", provider);
-    write(
-      "infra/main.ts",
-      `
-      import * as checkout from "../runtime/checkout.fn" with { type: "runtime" };
-      import { route, wired } from "./provider";
-      route("/orders", checkout.createOrder);
-      route("/refunds", checkout.refund);
-      export const memory = 256;
-      export { wired };
-      `,
-    );
-    write(
-      "runtime/checkout.fn.ts",
-      `
-      import { fn } from "../infra/provider" with { type: "infra" };
-      import { memory } from "../infra/main" with { type: "infra" };
-      import { refund } from "./refunds";
-      console.log("runtime init");
-      const { handle } = fn({ id: "checkout", memory });
-      export const createOrder = handle.api(() => { console.log("handler ran"); });
-      export { refund };
-      `,
-    );
-    write(
-      "runtime/refunds.ts",
-      `
-      import { handle } from "./fn";
-      export const refund = handle.api(() => {});
-      `,
-    );
-    write(
-      "runtime/fn.ts",
-      `
-      import { fn } from "../infra/provider" with { type: "infra" };
-      export const { handle } = fn({ id: "refunds", memory: 128 });
-      `,
-    );
+    for (const [file, contents] of Object.entries(files)) write(file, contents);
 
     await esbuild.build({
       entryPoints: [path.join(root, "infra/main.ts")],
@@ -325,6 +292,35 @@ describe("evaluated", () => {
       { cwd: root, encoding: "utf8" },
     );
   }
+
+  const evaluate = () =>
+    evaluateProject({
+      "infra/main.ts": `
+      import * as checkout from "../runtime/checkout.fn" with { type: "runtime" };
+      import { route, wired } from "./provider";
+      route("/orders", checkout.createOrder);
+      route("/refunds", checkout.refund);
+      export const memory = 256;
+      export { wired };
+      `,
+      "runtime/checkout.fn.ts": `
+      import { fn } from "../infra/provider" with { type: "infra" };
+      import { memory } from "../infra/main" with { type: "infra" };
+      import { refund } from "./refunds";
+      console.log("runtime init");
+      const { handle } = fn({ id: "checkout", memory });
+      export const createOrder = handle.api(() => { console.log("handler ran"); });
+      export { refund };
+      `,
+      "runtime/refunds.ts": `
+      import { handle } from "./fn";
+      export const refund = handle.api(() => {});
+      `,
+      "runtime/fn.ts": `
+      import { fn } from "../infra/provider" with { type: "infra" };
+      export const { handle } = fn({ id: "refunds", memory: 128 });
+      `,
+    });
 
   it("declares the functions after infra, and links each stand-in to its handler", async () => {
     const output = await evaluate();
@@ -358,5 +354,51 @@ describe("evaluated", () => {
         },
       ],
     });
+  });
+  it("gives the same functions and wiring whatever order infra modules load in", async () => {
+    // Each runtime module's settings read a value from the infra module that
+    // wires the other one.
+    const project = (imports: string[]) => ({
+      "infra/main.ts": `${imports.map((file) => `import "${file}";`).join("\n")}
+      export { wired } from "./provider";`,
+      "infra/orders.ts": `
+      import { checkout } from "../runtime/checkout.fn" with { type: "runtime" };
+      import { route } from "./provider";
+      route("/orders", checkout);
+      export const memory = 128;
+      `,
+      "infra/refunds.ts": `
+      import { refund } from "../runtime/refund.fn" with { type: "runtime" };
+      import { route } from "./provider";
+      route("/refunds", refund);
+      export const memory = 256;
+      `,
+      "runtime/checkout.fn.ts": `
+      import { fn } from "../infra/provider" with { type: "infra" };
+      import { memory } from "../infra/refunds" with { type: "infra" };
+      export const checkout = fn({ id: "checkout", memory }).handle.api(() => {});
+      `,
+      "runtime/refund.fn.ts": `
+      import { fn } from "../infra/provider" with { type: "infra" };
+      import { memory } from "../infra/orders" with { type: "infra" };
+      export const refund = fn({ id: "refund", memory }).handle.api(() => {});
+      `,
+    });
+    const sorted = (output: string) => {
+      const { wired, functions } = JSON.parse(output);
+      return { wired: [...wired].sort(), functions };
+    };
+
+    const first = sorted(
+      await evaluateProject(project(["./orders", "./refunds"])),
+    );
+    const second = sorted(
+      await evaluateProject(project(["./refunds", "./orders"])),
+    );
+    expect(first.wired).toEqual([
+      "/orders -> checkout (memory 256)",
+      "/refunds -> refund (memory 128)",
+    ]);
+    expect(second).toEqual(first);
   });
 });
