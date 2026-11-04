@@ -1,5 +1,6 @@
 export type {
   FunctionDeclaration,
+  RuntimeFactory,
   Grant,
   Handler,
   InfraOnly,

@@ -9,7 +9,12 @@ import type {
 import type { APIGatewayProxyResultV2, SQSEvent } from "aws-lambda";
 import { api, router } from "src/api-gateway";
 import type * as lambdaModule from "src/lambda";
-import { lambda, type LambdaGroup } from "src/lambda";
+import {
+  lambda,
+  type LambdaFunction,
+  type LambdaGroup,
+  type RuntimeLambda,
+} from "src/lambda";
 import { json, lambda as runtimeLambda } from "src/lambda.fn";
 import type { LambdaRef } from "src/lambda";
 import { queue, type QueueGroup } from "src/sqs";
@@ -46,7 +51,18 @@ export function infraWiresAHandlerButCantCallIt(
   todoRouter.get("/orders", infra.processOrder);
 
   expectTypeOf(infra.processOrder).toEqualTypeOf<LambdaRef<SQSEvent, void>>();
-  expectTypeOf(infra.createOrder.function).toEqualTypeOf<LambdaGroup>();
+  expectTypeOf(infra.createOrder.function).toEqualTypeOf<LambdaFunction>();
+}
+
+export function infraPassesOnValuesOfAHandlersFunction(
+  infra: InfraView<typeof checkout>,
+) {
+  const fn = infra.processOrder.function;
+  queue({ name: "orders" }).consume(fn);
+  lambda({ id: "caller", code, grants: [fn.grantInvoke()] });
+  expectTypeOf(fn.arn).toEqualTypeOf<string>();
+  // @ts-expect-error infra can't make handlers for a runtime module's function
+  fn.handle.apiRequest(async () => json({ ok: true }));
 }
 
 export function infraSeesOtherExportsAsRuntimeOnly(
@@ -61,7 +77,7 @@ export function infraSeesOtherExportsAsRuntimeOnly(
 export function infraSeesAnExportedDeclarationAsItsFunction(
   infra: InfraView<{ checkoutFn: FunctionDeclaration<LambdaGroup> }>,
 ) {
-  expectTypeOf(infra.checkoutFn).toEqualTypeOf<LambdaGroup>();
+  expectTypeOf(infra.checkoutFn).toEqualTypeOf<LambdaFunction>();
 }
 
 export function infraApisRejectPlainFunctions() {
@@ -84,6 +100,16 @@ export function runtimeReadsDataAsValues(
   expectTypeOf(infra.orderQueue.url).toEqualTypeOf<string>();
   expectTypeOf(infra.orderQueue.arn).toEqualTypeOf<string>();
   expectTypeOf(infra.orderQueue.id).toEqualTypeOf<string>();
+  expectTypeOf(infra.orderQueue.config.name).toEqualTypeOf<string>();
+}
+
+export function runtimeDoesntSeeWhatIsntDelivered(
+  infra: RuntimeView<{ orderQueue: QueueGroup }>,
+) {
+  // @ts-expect-error a binding's resources aren't delivered
+  infra.orderQueue.resources;
+  // @ts-expect-error a resource isn't delivered
+  infra.orderQueue.queue;
 }
 
 export function runtimeCallsGrantButNoOtherMethod(
@@ -99,8 +125,8 @@ export function runtimeCallsFactoriesButNoOtherFunction(
   sqs: RuntimeView<typeof sqsModule>,
   aws: RuntimeView<typeof lambdaModule>,
 ) {
-  expectTypeOf(sqs.queue).toEqualTypeOf<typeof queue>();
-  expectTypeOf(aws.lambda).toEqualTypeOf<typeof lambda>();
+  sqs.queue({ name: "orders" }).grant(["SendMessage"]);
+  expectTypeOf(aws.lambda).toEqualTypeOf<RuntimeLambda>();
 
   // @ts-expect-error a class is infra only
   new sqs.QueueGroup({ name: "orders" });
@@ -119,7 +145,7 @@ export function runtimeCallsFactoriesButNoOtherFunction(
 export function infraSeesAnExportedLambdaResultAsItsFunction() {
   const checkoutFn = lambda({ id: "checkout" });
   const infra = {} as InfraView<{ checkoutFn: typeof checkoutFn }>;
-  expectTypeOf(infra.checkoutFn).toEqualTypeOf<LambdaGroup>();
+  expectTypeOf(infra.checkoutFn).toEqualTypeOf<LambdaFunction>();
 }
 
 export function runtimeMakesHandlersWithTheHandleOfLambda(
@@ -128,5 +154,30 @@ export function runtimeMakesHandlersWithTheHandleOfLambda(
   const { handle } = aws.lambda({ id: "checkout", timeout: 5 });
   const createOrder = handle.apiRequest(async () => json({ ok: true }));
   const infra = {} as InfraView<{ createOrder: typeof createOrder }>;
-  expectTypeOf(infra.createOrder.function).toEqualTypeOf<LambdaGroup>();
+  expectTypeOf(infra.createOrder.function).toEqualTypeOf<LambdaFunction>();
+}
+
+export function runtimeSeesOnlyTheRuntimeHalfOfAFactorysResult(
+  aws: RuntimeView<typeof lambdaModule>,
+  sqs: RuntimeView<typeof sqsModule>,
+) {
+  const checkoutFn = aws.lambda({ id: "checkout" });
+  checkoutFn.handle.sqsEvent(async () => {});
+  // @ts-expect-error runtime code can't read its function's role
+  checkoutFn.role;
+  // @ts-expect-error runtime code can't read its function's resources
+  checkoutFn.fn;
+  // @ts-expect-error a queue made in runtime code can't be consumed there
+  sqs.queue({ name: "orders" }).consume({} as any);
+  // @ts-expect-error a literal id must be name-safe
+  aws.lambda({ id: "bad.id" });
+}
+
+export function lambdaTakesAnIdBuiltFromInfra(
+  infra: RuntimeView<{ settings: { id: string; prefix: string } }>,
+  aws: RuntimeView<typeof lambdaModule>,
+) {
+  aws.lambda({ id: infra.settings.id });
+  aws.lambda({ id: `${infra.settings.prefix}-checkout` });
+  lambda({ id: infra.settings.id, code });
 }

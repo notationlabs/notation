@@ -58,6 +58,7 @@ export {
 } from "./runtime-link";
 export type {
   FunctionDeclaration,
+  RuntimeFactory,
   Grant,
   Handler,
   InfraOnly,

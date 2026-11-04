@@ -46,9 +46,12 @@ The settings of `lambda()` are covered in [Function Settings](../manual/function
 Infra imports the runtime module `with { type: "runtime" }`, so it sees each handler as a `LambdaRef`. Infra APIs such as `router.get`, `queue.consume` and `schedule` take a `LambdaRef` of the event they send, or a Lambda group:
 
 ```ts [@notation/aws/lambda]
-type LambdaRef<Event> = RuntimeRef<Event, unknown, LambdaGroup>;
-type HandlerTarget<Event> = LambdaRef<Event> | LambdaGroup;
+type LambdaFunction = Omit<LambdaGroup, "handle">;
+type LambdaRef<Event> = RuntimeRef<Event, unknown, LambdaFunction>;
+type HandlerTarget<Event> = LambdaRef<Event> | LambdaFunction;
 ```
+
+A `LambdaFunction` is a Lambda group without its `handle`. Only the runtime module makes the handlers of its function, so infra doesn't see `handle`. A Lambda group that infra declares is also a `LambdaFunction`.
 
 So `router.get` takes only API request handlers, and `queue.consume` takes only SQS handlers. A router with a JWT authorizer takes only handlers for the same claims type. A `LambdaRef` isn't callable. See [End-to-End Types](../manual/types.md).
 
@@ -80,7 +83,7 @@ The ID is the `id` setting of `lambda()`. The ID doesn't come from the module's 
 
 In AWS, the function is named `<app>--<stage>--<id>` and its role `<app>--<stage>--<id>-role`. If a name is longer than 64 characters, Notation shortens it. See [AWS names](../manual/project-config.md#aws-names).
 
-IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. `lambda()` only accepts an `id` whose type is a string literal that follows this rule, and throws if it gets anything else. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, count as the same, because IAM role names ignore case.
+IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. If the type of `id` is a string literal, TypeScript checks it against this rule. An `id` built at runtime, such as one read from infra, is typed `string`, so `lambda()` checks it when it runs, and throws if it breaks the rule. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, count as the same, because IAM role names ignore case.
 
 ## Dispatch
 
