@@ -73,7 +73,7 @@ export function infraPlugin(opts: PluginOpts): Plugin {
       build.onEnd((result) => {
         if (!opts.onRuntimeModules || result.errors.length > 0) return;
         const modules = [...replaced.values()].sort((a, b) =>
-          a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+          a.path < b.path ? -1 : 1,
         );
         opts.onRuntimeModules(modules);
       });

@@ -1,5 +1,5 @@
 import path from "node:path";
-import esbuild, { type BuildContext } from "esbuild";
+import esbuild from "esbuild";
 import {
   createRuntimeEntry,
   infraPlugin,
@@ -152,53 +152,67 @@ export async function compileRuntimeModules(
   modules: RuntimeModuleEntry[],
   watch: boolean = false,
 ) {
-  const contexts: BuildContext[] = [];
-  const results = await Promise.allSettled(
-    modules.map(async (module) => {
-      const context = await esbuild.context({
-        stdin: {
-          contents: createRuntimeEntry(module.path, module.service),
-          resolveDir: path.dirname(module.path),
-          sourcefile: `${path.basename(module.path)}.entry.ts`,
-          loader: "ts",
-        },
-        outfile: filePaths.dist.runtime.index(module.path),
-        bundle: true,
-        format: "esm",
-        platform: "node",
-        treeShaking: true,
-      });
-
-      if (watch) {
-        contexts.push(context);
-        await context.watch();
-      } else {
-        try {
-          await context.rebuild();
-        } finally {
-          await context.dispose();
-        }
-      }
-    }),
+  if (modules.length === 0) return async () => {};
+  const distDir = filePaths.dist.dir();
+  const entryPoints = Object.fromEntries(
+    modules.map((module) => [
+      path
+        .relative(distDir, filePaths.dist.runtime.index(module.path))
+        .replace(/\.mjs$/, ""),
+      `${runtimeEntryNamespace}:${module.path}`,
+    ]),
   );
 
-  const dispose = async () => {
-    await Promise.all(contexts.map((context) => context.dispose()));
-  };
-  const failure = results.find((result) => result.status === "rejected");
-  if (failure) {
-    await dispose();
-    throw failure.reason;
+  const context = await esbuild.context({
+    entryPoints,
+    plugins: [runtimeEntryPlugin(modules)],
+    outdir: distDir,
+    outExtension: { ".js": ".mjs" },
+    bundle: true,
+    format: "esm",
+    platform: "node",
+    treeShaking: true,
+  });
+
+  if (watch) {
+    await context.watch();
+  } else {
+    try {
+      await context.rebuild();
+    } finally {
+      await context.dispose();
+    }
   }
-  return dispose;
+  return () => context.dispose();
+}
+
+const runtimeEntryNamespace = "notation-runtime-entry";
+
+// Serves the generated entry of each runtime module's bundle.
+function runtimeEntryPlugin(modules: RuntimeModuleEntry[]): esbuild.Plugin {
+  const services = new Map(
+    modules.map((module) => [module.path, module.service]),
+  );
+  const prefix = `${runtimeEntryNamespace}:`;
+  return {
+    name: runtimeEntryNamespace,
+    setup(build) {
+      build.onResolve({ filter: new RegExp(`^${prefix}`) }, (args) => ({
+        path: args.path.slice(prefix.length),
+        namespace: runtimeEntryNamespace,
+      }));
+      build.onLoad(
+        { filter: /.*/, namespace: runtimeEntryNamespace },
+        (args) => ({
+          contents: createRuntimeEntry(args.path, services.get(args.path)!),
+          resolveDir: path.dirname(args.path),
+          loader: "ts",
+        }),
+      );
+    },
+  };
 }
 
 function sameModules(a: RuntimeModuleEntry[], b: RuntimeModuleEntry[]) {
-  return (
-    a.length === b.length &&
-    a.every(
-      (module, i) =>
-        module.path === b[i]!.path && module.service === b[i]!.service,
-    )
-  );
+  return JSON.stringify(a) === JSON.stringify(b);
 }
