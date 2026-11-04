@@ -10,6 +10,7 @@ export default defineConfig({
     "src/shared/index.ts",
     "src/testing/index.ts",
     "src/testing/register/index.ts",
+    "src/testing/vitest/index.ts",
   ],
   splitting: false,
   dts: true,
