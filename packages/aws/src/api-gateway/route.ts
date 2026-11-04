@@ -1,9 +1,5 @@
 import * as aws from "@notation/aws.iac";
-import {
-  wireLambdaTarget,
-  type HandlerTarget,
-  type ResolvedLambdaTarget,
-} from "src/lambda";
+import { lambdaTarget, type HandlerTarget } from "src/lambda";
 import type { ApiGroup } from "./api";
 import { AuthorizerConfig } from "./auth";
 import { authorizerKey, mapAuthConfig, mapAuthType } from "./utils";
@@ -18,105 +14,89 @@ type RouteGroupConfig = {
 
 export class RouteGroup extends aws.AwsResourceGroup {
   /**
-   * The route. A route to a handler of a runtime module is added when
-   * evaluation ends, once the handler is known.
+   * The route. A route to a handler of a runtime module is added when the
+   * runtime modules are linked, once the handler is known.
    */
   route!: aws.apiGateway.RouteInstance;
 
-  constructor(
-    { apiGroup, method, path, auth, handler }: RouteGroupConfig,
-    below: Function,
-  ) {
-    const routeId = `${apiGroup.api.id}-${method}-${path}`;
-    super("API Gateway/Route", routeId);
-    wireLambdaTarget(handler, "route()", ["api"], below, (target) =>
-      this.#wire(target, { apiGroup, method, path, auth, routeId }),
-    );
-  }
-
-  #wire(
-    target: ResolvedLambdaTarget,
-    {
-      apiGroup,
-      method,
-      path,
-      auth,
-      routeId,
-    }: Omit<RouteGroupConfig, "handler"> & { routeId: string },
-  ) {
+  constructor({ apiGroup, method, path, auth, handler }: RouteGroupConfig) {
     const apiResource = apiGroup.api;
+    const routeId = `${apiResource.id}-${method}-${path}`;
     const routeKey = `${method} ${path}`;
-    const lambdaGroup = target.group;
-    const lambdaResource = lambdaGroup.fn;
+    super("API Gateway/Route", routeId);
 
-    // a lambda needs one integration and permission per api, however many
-    // routes it serves
-    const integration = lambdaGroup.addOnce(
-      aws.apiGateway.LambdaIntegration,
-      `${apiResource.id}-${lambdaResource.id}-integration`,
-      {
-        dependencies: {
-          api: apiResource,
-          lambda: lambdaResource,
-        },
-      },
-    );
+    lambdaTarget(handler, "route()").wire("api", (fn, exportName) => {
+      const lambdaResource = fn.fn;
 
-    lambdaGroup.addOnce(
-      aws.lambda.LambdaApiGatewayV2Permission,
-      `${lambdaResource.id}-${apiResource.id}-permission`,
-      {
-        dependencies: {
-          api: apiResource,
-          lambda: lambdaResource,
-        },
-      },
-    );
-
-    if (target.export !== undefined) {
-      lambdaGroup.addDispatchEntry(routeId, {
-        export: target.export,
-        match: { apiId: apiResource.outputValue("ApiId"), routeKey },
-      });
-    }
-
-    let authorizer: aws.apiGateway.AuthInstance | undefined;
-
-    // an api allows 10 authorizers, so routes with the same jwt config share one
-    if (auth.type != "NONE") {
-      authorizer = apiGroup.addOnce(
-        aws.apiGateway.RouteAuth,
-        `${apiResource.id}-jwt-authorizer-${authorizerKey(auth)}`,
+      // a lambda needs one integration and permission per api, however many
+      // routes it serves
+      const integration = fn.addOnce(
+        aws.apiGateway.LambdaIntegration,
+        `${apiResource.id}-${lambdaResource.id}-integration`,
         {
-          config: mapAuthConfig(apiResource.id, auth),
           dependencies: {
             api: apiResource,
+            lambda: lambdaResource,
           },
         },
       );
-    }
 
-    this.route = this.add(
-      new aws.apiGateway.Route(routeId, {
-        config: {
-          AuthorizationScopes: auth.scopes,
-          RouteKey: routeKey,
-          AuthorizationType: mapAuthType(auth),
+      fn.addOnce(
+        aws.lambda.LambdaApiGatewayV2Permission,
+        `${lambdaResource.id}-${apiResource.id}-permission`,
+        {
+          dependencies: {
+            api: apiResource,
+            lambda: lambdaResource,
+          },
         },
-        dependencies: {
-          api: apiResource,
-          lambdaIntegration: integration,
-          auth: authorizer,
-        },
-      }),
-    );
+      );
+
+      if (exportName !== undefined) {
+        fn.addDispatchEntry(routeId, {
+          export: exportName,
+          match: { apiId: apiResource.outputValue("ApiId"), routeKey },
+        });
+      }
+
+      let authorizer: aws.apiGateway.AuthInstance | undefined;
+
+      // an api allows 10 authorizers, so routes with the same jwt config share one
+      if (auth.type != "NONE") {
+        authorizer = apiGroup.addOnce(
+          aws.apiGateway.RouteAuth,
+          `${apiResource.id}-jwt-authorizer-${authorizerKey(auth)}`,
+          {
+            config: mapAuthConfig(apiResource.id, auth),
+            dependencies: {
+              api: apiResource,
+            },
+          },
+        );
+      }
+
+      this.route = this.add(
+        new aws.apiGateway.Route(routeId, {
+          config: {
+            AuthorizationScopes: auth.scopes,
+            RouteKey: routeKey,
+            AuthorizationType: mapAuthType(auth),
+          },
+          dependencies: {
+            api: apiResource,
+            lambdaIntegration: integration,
+            auth: authorizer,
+          },
+        }),
+      );
+    });
   }
 }
 
 /**
  * Routes requests for `method` and `path` on the API to a handler of a
  * runtime module, or to a Lambda group from `lambda()`. A handler is wired
- * when evaluation ends.
+ * when the runtime modules are linked.
  */
 export function route(
   apiGroup: ApiGroup,
@@ -125,5 +105,5 @@ export function route(
   auth: AuthorizerConfig,
   handler: HandlerTarget<never>,
 ): RouteGroup {
-  return new RouteGroup({ apiGroup, method, path, auth, handler }, route);
+  return new RouteGroup({ apiGroup, method, path, auth, handler });
 }

@@ -1,8 +1,4 @@
-import {
-  wireLambdaTarget,
-  type HandlerTarget,
-  type ResolvedLambdaTarget,
-} from "src/lambda";
+import { lambdaTarget, type HandlerTarget } from "src/lambda";
 import type { EventBridgeEvent } from "aws-lambda";
 import { Schedule } from "./schedule";
 import * as aws from "@notation/aws.iac";
@@ -14,7 +10,8 @@ type ScheduleConfig = {
   schedule: Schedule;
   /**
    * The handler of a runtime module to invoke on the schedule, or a Lambda
-   * group from `lambda()`. A handler is wired when evaluation ends.
+   * group from `lambda()`. A handler is wired when the runtime modules are
+   * linked.
    */
   handler: HandlerTarget<EventBridgeEvent<"Scheduled Event", any>>;
 };
@@ -23,57 +20,55 @@ export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
   /** The rule. It is added once the handler is wired. */
   rule!: aws.eventBridge.EventBridgeRuleInstance;
 
-  constructor(config: ScheduleConfig, below: Function) {
+  constructor(config: ScheduleConfig) {
     super("aws/eventBridge/schedule", config.name, config);
-    wireLambdaTarget(
-      config.handler,
-      "schedule()",
-      ["schedule"],
-      below,
-      (target) => this.#wire(target, config),
-    );
-  }
+    lambdaTarget(config.handler, "schedule()").wire(
+      "schedule",
+      (fn, exportName) => {
+        const lambdaResource = fn.fn;
 
-  #wire(target: ResolvedLambdaTarget, config: ScheduleConfig) {
-    const lambdaGroup = target.group;
-    const lambdaResource = lambdaGroup.fn;
-
-    this.rule = this.add(
-      new aws.eventBridge.EventBridgeRule(`${config.name}-eventbridge-rule`, {
-        config: {
-          Name: awsName("eventBridgeRule", config.name),
-          ScheduleExpression: toAwsScheduleExpression(config.schedule),
-          EventBusName: "default",
-          Targets: [
+        this.rule = this.add(
+          new aws.eventBridge.EventBridgeRule(
+            `${config.name}-eventbridge-rule`,
             {
-              Id: lambdaResource.outputValue("FunctionName"),
-              Arn: lambdaResource.outputValue("FunctionArn"),
-              // A bare group runs external code, which gets the event as it is.
-              InputTransformer:
-                target.export === undefined
-                  ? undefined
-                  : {
-                      InputTemplate: scheduledInvocationTemplate(target.export),
-                    },
+              config: {
+                Name: awsName("eventBridgeRule", config.name),
+                ScheduleExpression: toAwsScheduleExpression(config.schedule),
+                EventBusName: "default",
+                Targets: [
+                  {
+                    Id: lambdaResource.outputValue("FunctionName"),
+                    Arn: lambdaResource.outputValue("FunctionArn"),
+                    // A bare group runs external code, which gets the event as it is.
+                    InputTransformer:
+                      exportName === undefined
+                        ? undefined
+                        : {
+                            InputTemplate:
+                              scheduledInvocationTemplate(exportName),
+                          },
+                  },
+                ],
+              },
+              dependencies: {
+                lambda: lambdaResource,
+              },
             },
-          ],
-        },
-        dependencies: {
-          lambda: lambdaResource,
-        },
-      }),
-    );
+          ),
+        );
 
-    lambdaGroup.add(
-      new aws.eventBridge.LambdaEventBridgeRulePermission(
-        `${config.name}-eventbridge-permission`,
-        {
-          dependencies: {
-            lambda: lambdaResource,
-            eventBridgeRule: this.rule,
-          },
-        },
-      ),
+        fn.add(
+          new aws.eventBridge.LambdaEventBridgeRulePermission(
+            `${config.name}-eventbridge-permission`,
+            {
+              dependencies: {
+                lambda: lambdaResource,
+                eventBridgeRule: this.rule,
+              },
+            },
+          ),
+        );
+      },
     );
   }
 }
@@ -89,5 +84,5 @@ function scheduledInvocationTemplate(exportName: string): string {
 }
 
 export function schedule(config: ScheduleConfig): ScheduleGroup {
-  return new ScheduleGroup(config, schedule);
+  return new ScheduleGroup(config);
 }

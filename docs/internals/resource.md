@@ -381,9 +381,8 @@ While infra is being evaluated, any code can add to a collected param with `cont
 
 ```ts [packages/aws/src/sqs/queue.ts]
 consume(handler: HandlerTarget<SQSEvent>, options: ConsumeOptions = {}): void {
-  wireLambdaTarget(handler, "queue.consume()", ["sqs"], this.consume, (target) => {
-    const lambdaGroup = target.group;
-    lambdaGroup.policy.contribute({
+  lambdaTarget(handler, "queue.consume()").wire("sqs", (fn, exportName) => {
+    fn.policy.contribute({
       PolicyDocument: {
         Statement: [this.grant(["ReceiveMessage", "DeleteMessage", "GetQueueAttributes"])],
       },
@@ -393,7 +392,7 @@ consume(handler: HandlerTarget<SQSEvent>, options: ConsumeOptions = {}): void {
 }
 ```
 
-`wireLambdaTarget` runs the callback when evaluation ends, because the handler is a stand-in until then. See [Runtime links](#runtime-links).
+`wire` runs the callback once the handler's function is known: now for a Lambda group or a linked handler, and at linking for a stand-in. See [Runtime links](#runtime-links).
 
 The rules for `collect`:
 
@@ -565,15 +564,19 @@ Each method of the function's `handle` calls `createHandlerRef(kind, group, belo
 
 ### Stand-ins
 
-In the infra phase, infra receives a stand-in for each export of a runtime module, made by `createStandIn(module, name)`. The runtime module runs only after all of infra, so the stand-in doesn't know its handler while infra is being evaluated. An infra API that takes a handler must therefore defer its wiring:
+In the infra phase, infra receives a stand-in for each export of a runtime module, made by `createStandIn(module, name)`. The runtime module runs only after all of infra, so the stand-in doesn't know its handler while infra is being evaluated.
 
-1. Check the argument with `isStandIn`, `isHandlerRef`, or the provider's own check for a function.
-2. Register the wiring with `onEvaluationEnd`, which runs callbacks after the modules have been evaluated and linked, and before contributions close.
-3. In the callback, call `resolveRuntimeTarget` to get the `HandlerRef`, then check its `kind`.
+A stand-in is a deferred value, and so is its `function`. Each property read or call on either before linking gives another deferred value, which records the read or call. So `checkoutFn.arn` works on the stand-in of an exported `lambda()` result, as `createOrder.function.arn` works on a handler's stand-in. Reading `id`, or turning a deferred value into a string, throws with the call site. `isDeferred(value)` tells a deferred value apart, and `resolveDeferred(value)` gives the value it stands for, or throws before linking. The walks over config and contributions resolve deferred values, so a resource can hold `createOrder.function.arn` as it holds an output value. Linking makes each recorded call, so a call made for its effect, such as `policy.contribute(...)`, still happens. When a recorded call throws at linking, the error names where infra made the call.
 
-A stand-in is a deferred value, and so is its `function`. Each property read or call on either before linking gives another deferred value, which records the read or call. So `checkoutFn.arn` works on the stand-in of an exported `lambda()` result, as `createOrder.function.arn` works on a handler's stand-in. Reading `id`, or turning a deferred value into a string, throws with the call site. `isDeferred(value)` tells a deferred value apart, and `resolveDeferred(value)` gives the value it stands for, or throws before linking. The walks over config and contributions resolve deferred values, so a resource can hold `createOrder.function.arn` as it holds an output value. Linking makes each recorded call, so a call made for its effect, such as `policy.contribute(...)`, still happens.
+An infra API that takes a handler wires it through this mechanism. `HandlerRef` and a provider's function class both have `wire(kind, callback)`. A handler's `wire` checks that the handler is of `kind`, then calls the callback with the handler's function and the name of its export. A function's `wire` calls the callback with the function and no export name, since a function that runs external code gets every event. On a stand-in, `wire` is a recorded call, so the callback runs at linking, once the function is known. An infra API need not know whether it was given a stand-in, a linked handler or a function:
 
-`wireLambdaTarget` in `@notation/aws/lambda` does these steps for Lambda, and also takes a stand-in's `function`. Outside an evaluation, it wires straight away. `describeStandIn` names a stand-in as `<export> from <module>` for error messages.
+```ts
+lambdaTarget(handler, "queue.consume()").wire("sqs", (fn, exportName) => {
+  // fn is the LambdaGroup; exportName is the handler's export, or undefined for a bare group
+});
+```
+
+`lambdaTarget` in `@notation/aws/lambda` fails on a value that has no `wire`, naming the infra API.
 
 `linkRuntimeModules`, which generated code calls, names each exported `HandlerRef`, links the stand-ins, gives each declared function its handlers, and adds it to `graph.runtimeFunctions`.
 

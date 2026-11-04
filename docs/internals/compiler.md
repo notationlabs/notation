@@ -124,7 +124,7 @@ export { __notationStandIn1 as processRefunds };
 
 None of the runtime module's code runs here. A stand-in is a proxy:
 
-- Infra APIs that take a handler, such as `route()` and `consume()`, accept it. They record it, and apply their wiring when evaluation ends, through `onEvaluationEnd`.
+- Infra APIs that take a handler, such as `route()` and `consume()`, call `standIn.wire(kind, callback)`. The call is recorded, and made when the runtime modules are linked.
 - `standIn.function` is a lazy proxy of the function: the handler's function, or the export itself for an exported `lambda()` result. Infra can pass it to an infra API, which resolves it after linking.
 - Reading any other property, such as `checkoutFn.arn` on an exported `lambda()` result, gives a lazy proxy of that property. So does a read or a call on a lazy proxy, such as `createOrder.function.grantInvoke()`. Resources and infra APIs resolve the proxies after linking.
 - Reading `id`, or turning a stand-in or a lazy proxy into a string, fails while infra is being evaluated: `createOrder.function isn't known yet: infra read its id while infra was being evaluated …`.
@@ -164,7 +164,7 @@ linkRuntimeModules([
 4. Gives each declared function its handlers, and adds it to `graph.runtimeFunctions`, sorted by ID. A function with no handlers fails, and so do two handlers of one function with the same export name.
 5. Delivers reads, when the graph is collected for plan or deploy. See [Delivering reads](#delivering-reads).
 
-The wiring that `route()` and `consume()` deferred runs after this, when evaluation ends. At that point a stand-in resolves to its handler, and the API checks the handler's kind: `consume()` takes only SQS handlers, for example.
+The calls that infra recorded on stand-ins, such as the `wire` calls of `route()` and `consume()`, are made in step 2, once a stand-in knows its handler. A handler's `wire` checks the handler's kind: `consume()` wires a handler as an SQS handler, so an API handler fails there, naming the infra call site.
 
 ## Stripped copies
 

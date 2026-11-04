@@ -149,15 +149,9 @@ export function runtimeCallsFactoriesButNoOtherFunction(
   // @ts-expect-error a class is infra only
   new sqs.QueueGroup({ name: "orders" });
   // @ts-expect-error a function that isn't a factory is infra only
-  aws.wireLambdaTarget(
-    {},
-    "test",
-    [],
-    () => {},
-    () => {},
-  );
-  // @ts-expect-error a function that isn't a factory is infra only
   aws.isLambdaGroup({});
+  // @ts-expect-error a function that isn't a factory is infra only
+  aws.lambdaTarget({}, "test");
 }
 
 export function infraSeesAnExportedLambdaResultAsItsFunction() {

@@ -1,7 +1,7 @@
 import * as aws from "@notation/aws.iac";
 import type { Grant } from "@notation/resource";
 import type { SQSEvent } from "aws-lambda";
-import { wireLambdaTarget, type HandlerTarget } from "src/lambda";
+import { lambdaTarget, type HandlerTarget } from "src/lambda";
 import { awsName } from "src/naming";
 
 export type QueueConfig = {
@@ -76,57 +76,48 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
    * Invokes a handler of a runtime module, or a Lambda group from
    * `lambda()`, with the queue's messages. Gives the function's role
    * permission to read the queue, and maps the queue to the function. A
-   * handler is wired when evaluation ends.
+   * handler is wired when the runtime modules are linked.
    */
   consume(
     handler: HandlerTarget<SQSEvent>,
     options: ConsumeOptions = {},
   ): void {
-    wireLambdaTarget(
-      handler,
-      "queue.consume()",
-      ["sqs"],
-      this.consume,
-      (target) => {
-        const lambdaGroup = target.group;
-        const id = `${this.id}-${lambdaGroup.fn.id}-mapping`;
-        if (this.resources.some((resource) => resource.id === id)) {
-          throw new Error(
-            `Queue ${this.id} already feeds ${lambdaGroup.fn.id}`,
-          );
-        }
+    lambdaTarget(handler, "queue.consume()").wire("sqs", (fn, exportName) => {
+      const id = `${this.id}-${fn.fn.id}-mapping`;
+      if (this.resources.some((resource) => resource.id === id)) {
+        throw new Error(`Queue ${this.id} already feeds ${fn.fn.id}`);
+      }
 
-        if (target.export !== undefined) {
-          lambdaGroup.addDispatchEntry(id, {
-            export: target.export,
-            match: { queueArn: this.arn },
-          });
-        }
-
-        lambdaGroup.policy.contribute({
-          PolicyDocument: {
-            Statement: [
-              this.grant([
-                "ReceiveMessage",
-                "DeleteMessage",
-                "GetQueueAttributes",
-              ]),
-            ],
-          },
+      if (exportName !== undefined) {
+        fn.addDispatchEntry(id, {
+          export: exportName,
+          match: { queueArn: this.arn },
         });
-        this.add(
-          new aws.lambda.LambdaEventSourceMapping(id, {
-            config: {
-              EventSourceArn: this.arn,
-              FunctionName: lambdaGroup.fn.outputValue("FunctionName"),
-              BatchSize: options.batchSize,
-              MaximumBatchingWindowInSeconds: options.maxBatchingWindow,
-            },
-            dependencies: { policy: lambdaGroup.policy },
-          }),
-        );
-      },
-    );
+      }
+
+      fn.policy.contribute({
+        PolicyDocument: {
+          Statement: [
+            this.grant([
+              "ReceiveMessage",
+              "DeleteMessage",
+              "GetQueueAttributes",
+            ]),
+          ],
+        },
+      });
+      this.add(
+        new aws.lambda.LambdaEventSourceMapping(id, {
+          config: {
+            EventSourceArn: this.arn,
+            FunctionName: fn.fn.outputValue("FunctionName"),
+            BatchSize: options.batchSize,
+            MaximumBatchingWindowInSeconds: options.maxBatchingWindow,
+          },
+          dependencies: { policy: fn.policy },
+        }),
+      );
+    });
   }
 }
 

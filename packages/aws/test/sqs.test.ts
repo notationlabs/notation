@@ -5,7 +5,7 @@ import { expect, expectTypeOf, test } from "vitest";
 import { lambda as awsLambda } from "@notation/aws.iac";
 import { createPlan } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
-import { collectResourceGraph, onEvaluationEnd } from "@notation/resource";
+import { collectResourceGraph } from "@notation/resource";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { lambda, type LambdaGroup } from "src/lambda";
 import { queue } from "src/sqs";
@@ -148,9 +148,7 @@ test("consume with a lambda group from lambda() maps the queue without a dispatc
     fn = lambda({ id: "process", code });
     const orders = queue({ name: "orders" });
     orders.consume(fn);
-    onEvaluationEnd(() => {
-      mapping = mappingOf(orders, fn);
-    });
+    mapping = mappingOf(orders, fn);
   });
 
   fn.role.setOutput({ Arn: "arn:role" } as any);

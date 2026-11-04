@@ -397,7 +397,7 @@ describe("a function declared in a runtime module", () => {
     ).toEqual(["arn", "id", "platform", "type"]);
   });
 
-  test("wiring a handler of the wrong kind fails at the infra call site", async () => {
+  test("wiring a handler of the wrong kind fails, naming the infra call site", async () => {
     await expect(
       collectResourceGraph(() => {
         const standIn = createStandIn("runtime/checkout.ts", "createOrder");
@@ -412,7 +412,7 @@ describe("a function declared in a runtime module", () => {
         ]);
       }),
     ).rejects.toThrow(
-      /queue\.consume\(\) at .*test\/lambda\.test\.ts:\d+ invokes sqs handlers, but createOrder from runtime\/checkout\.ts is a api handler/,
+      /createOrder from runtime\/checkout\.ts handles api events, but it was wired to a source of sqs events\. Infra made the call at .*test\/lambda\.test\.ts:\d+\./,
     );
   });
 
@@ -431,7 +431,26 @@ describe("a function declared in a runtime module", () => {
         ]);
       }),
     ).rejects.toThrow(
-      "but helper from runtime/checkout.ts is not a handler or a Lambda group",
+      /runtime\/checkout\.ts has no handler or function named helper\. Infra made the call at .*test\/lambda\.test\.ts:\d+\./,
+    );
+  });
+
+  test("wiring an export that is neither a handler nor a function fails", async () => {
+    await expect(
+      collectResourceGraph(() => {
+        const standIn = createStandIn("runtime/checkout.ts", "helper");
+        queue({ name: "orders" }).consume(standIn as LambdaRef<any>);
+        const fn = lambda({ id: "checkout" });
+        linkRuntimeModules([
+          {
+            module: "runtime/checkout.ts",
+            standIns: { helper: standIn },
+            exports: { helper: () => {}, run: fn.handle.sqsEvent(() => {}) },
+          },
+        ]);
+      }),
+    ).rejects.toThrow(
+      /helper\.wire is not a function\. Infra made the call at .*test\/lambda\.test\.ts:\d+\./,
     );
   });
 });

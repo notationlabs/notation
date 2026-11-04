@@ -1,16 +1,9 @@
 import * as aws from "@notation/aws.iac";
 import * as std from "@notation/std.iac";
 import {
-  captureCallSite,
   createHandlerRef,
   declareRuntimeFunction,
-  describeStandIn,
   getActiveResourceCollection,
-  isDeferred,
-  isHandlerRef,
-  isStandIn,
-  onEvaluationEnd,
-  resolveRuntimeTarget,
   type FunctionDeclaration,
   type Grant,
   type RuntimeFactory,
@@ -22,6 +15,7 @@ import { handlerKinds, type Handle, type HandlerKind } from "src/shared/handle";
 
 export type { Handle, LambdaHandler } from "src/shared/handle";
 import { assertLambdaId, type NameSafe } from "./lambda-id";
+import type { HandlerTarget } from "./runtime-ref";
 
 export type LambdaConfig = {
   /**
@@ -147,6 +141,18 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
       Environment: { Runtime: { dispatch: { [bindingId]: entry } } },
     });
   }
+
+  /**
+   * Wires the function to a source of `kind` events, as a handler's `wire`
+   * does. The function runs external code, which gets every event, so `wire`
+   * gets no export name.
+   */
+  wire(
+    _kind: HandlerKind,
+    run: (fn: LambdaFunction, exportName?: string) => void,
+  ): void {
+    run(this, undefined);
+  }
 }
 
 function makeHandle(group: LambdaGroup): Handle {
@@ -162,66 +168,22 @@ export function isLambdaGroup(value: unknown): value is LambdaGroup {
   return (value as any)?.[lambdaGroupMark] === true;
 }
 
-/** The Lambda group that a target invokes, and the export to dispatch to. */
-export type ResolvedLambdaTarget = { group: LambdaGroup; export?: string };
-
 /**
- * Wires `target` once it is known. A handler of a runtime module is a
- * stand-in until the runtime modules are linked, so while infra is being
- * evaluated the wiring runs when evaluation ends. Outside an evaluation it
- * runs now.
- *
- * @param caller Names the infra API in errors, such as `route()`.
- * @param kinds The handler kinds that the API can invoke.
- * @param below The infra API that the user's code called, which names the
- * call site in errors.
+ * `target` as what an infra API wires: a handler imported from a runtime
+ * module, or a Lambda group. Fails on anything else, naming `caller`, such
+ * as `route()`.
  */
-export function wireLambdaTarget(
+export function lambdaTarget(
   target: unknown,
   caller: string,
-  kinds: readonly HandlerKind[],
-  below: Function,
-  wire: (target: ResolvedLambdaTarget) => void,
-): void {
-  if (
-    !isStandIn(target) &&
-    !isDeferred(target) &&
-    !isHandlerRef(target) &&
-    !isLambdaGroup(target)
-  ) {
+): HandlerTarget<any> {
+  const wire = (target as { wire?: unknown } | undefined)?.wire;
+  if (typeof wire !== "function") {
     throw new Error(
       `${caller} expects a handler exported from a runtime module, or a Lambda group from lambda(). A runtime module calls lambda() and exports the handlers that its handle makes.`,
     );
   }
-  const site = captureCallSite(below, { skipLibraryFrames: true });
-  const run = () => wire(resolveLambdaTarget(target, caller, kinds, site));
-  if (getActiveResourceCollection()) onEvaluationEnd(run);
-  else run();
-}
-
-function resolveLambdaTarget(
-  target: unknown,
-  caller: string,
-  kinds: readonly HandlerKind[],
-  site: string | undefined,
-): ResolvedLambdaTarget {
-  const resolved = resolveRuntimeTarget(target);
-  if (isLambdaGroup(resolved)) return { group: resolved };
-  const at = site ? ` at ${site}` : "";
-  if (!isHandlerRef(resolved)) {
-    throw new Error(
-      `${caller}${at} expects a handler, but ${describeStandIn(target) ?? "its target"} is not a handler or a Lambda group.`,
-    );
-  }
-  if (!kinds.includes(resolved.kind as HandlerKind)) {
-    throw new Error(
-      `${caller}${at} invokes ${kinds.join(" or ")} handlers, but ${resolved.export} from ${resolved.module} is a ${resolved.kind} handler.`,
-    );
-  }
-  if (!isLambdaGroup(resolved.function)) {
-    throw new Error(`${caller}${at} expects a handler of a Lambda function.`);
-  }
-  return { group: resolved.function, export: resolved.export };
+  return target as HandlerTarget<any>;
 }
 
 /**

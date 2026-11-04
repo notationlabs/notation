@@ -77,6 +77,20 @@ export class HandlerRef<F = unknown> implements RuntimeRef<any, unknown, F> {
   get [handlerRefMark]() {
     return true;
   }
+
+  wire(kind: string, wire: (fn: F, exportName: string) => void): void {
+    if (this.export === undefined) {
+      throw new Error(
+        `The ${this.kind} handler made${this.declaredAt ? ` at ${this.declaredAt}` : ""} isn't exported from a runtime module. Export it, so that infra can wire it and its function can dispatch to it.`,
+      );
+    }
+    if (this.kind !== kind) {
+      throw new Error(
+        `${this.export} from ${this.module} handles ${this.kind} events, but it was wired to a source of ${kind} events.`,
+      );
+    }
+    wire(this.function, this.export);
+  }
 }
 
 /**
@@ -529,13 +543,19 @@ function createChain(
   };
   const apply = (_: object, _this: unknown, args: unknown[]): unknown => {
     if (state.linked) return callStep(args)().value;
-    const call = createChain(
-      state,
-      `${name}()`,
-      captureCallSiteLazily(apply, { skipLibraryFrames: true }),
-      callStep(args),
-    );
-    state.calls.push(() => resolveDeferred(call));
+    const site = captureCallSiteLazily(apply, { skipLibraryFrames: true });
+    const call = createChain(state, `${name}()`, site, callStep(args));
+    state.calls.push(() => {
+      try {
+        resolveDeferred(call);
+      } catch (error) {
+        const where = site();
+        if (error instanceof Error && where) {
+          error.message += ` Infra made the call at ${where}.`;
+        }
+        throw error;
+      }
+    });
     return call;
   };
   // A function target, so that the chain can be called.

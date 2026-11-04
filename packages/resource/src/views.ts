@@ -23,6 +23,16 @@ export type Handler<E, R, F> = ((event: E, context?: unknown) => Promise<R>) & {
  */
 export type RuntimeRef<E, R, F> = {
   readonly function: F;
+  /**
+   * Wires the handler to a source of `kind` events: runs `wire` with the
+   * handler's function and the name of its export. Before the runtime
+   * modules are linked, the call is queued and made at linking. A handler of
+   * another kind fails.
+   */
+  readonly wire: (
+    kind: string,
+    wire: (fn: F, exportName: string) => void,
+  ) => void;
   readonly "~notation.runtimeRef": {
     readonly event: (event: E) => void;
     readonly result: R;

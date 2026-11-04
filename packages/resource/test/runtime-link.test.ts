@@ -268,6 +268,51 @@ it("resolves values read from an exported function's stand-in once linked", asyn
   });
 });
 
+it("wires a handler's stand-in once linked, with the handler's function and export", async () => {
+  const wired: Array<[unknown, string]> = [];
+  await collectResourceGraph(() => {
+    const standIn = createStandIn("runtime/checkout.ts", "processOrder");
+    (standIn as any).wire("sqs", (fn: unknown, exportName: string) => {
+      wired.push([fn, exportName]);
+    });
+    expect(wired).toEqual([]);
+
+    const checkout = declare("checkout");
+    linkRuntimeModules([
+      {
+        module: "runtime/checkout.ts",
+        standIns: { processOrder: standIn },
+        exports: { processOrder: checkout.sqs() },
+      },
+    ]);
+    expect(wired).toEqual([[checkout.fn, "processOrder"]]);
+
+    (standIn as any).wire("sqs", (fn: unknown, exportName: string) => {
+      wired.push([fn, exportName]);
+    });
+    expect(wired).toHaveLength(2);
+  });
+});
+
+it("fails when a handler is wired to a source of another kind, naming the infra call site", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const standIn = createStandIn("runtime/checkout.ts", "createOrder");
+      (standIn as any).wire("sqs", () => {});
+      const checkout = declare("checkout");
+      linkRuntimeModules([
+        {
+          module: "runtime/checkout.ts",
+          standIns: { createOrder: standIn },
+          exports: { createOrder: checkout.api() },
+        },
+      ]);
+    }),
+  ).rejects.toThrow(
+    /createOrder from runtime\/checkout\.ts handles api events, but it was wired to a source of sqs events\. Infra made the call at .*runtime-link\.test\.ts:\d+\./,
+  );
+});
+
 it("fails when a value read from a stand-in names an export that the runtime module doesn't have", async () => {
   await expect(
     collectResourceGraph(() => {
