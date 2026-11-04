@@ -172,3 +172,68 @@ it("fails when runtime code imports an infra package without the attribute", asy
     'infra/orders.ts imports @notation/aws/sqs without { type: "infra" }, so the bundle of runtime code would include infra',
   );
 });
+
+it("removes settings that statements update, along with those statements", () => {
+  const { code, errors } = rewrite(`
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+import { orderQueue } from "../infra/orders" with { type: "infra" };
+const settings = { id: "checkout", grants: [orderQueue.grant(["SendMessage"])] };
+Object.assign(settings, { timeout: 5 });
+if (process.env.BIG) settings.memory = 1024;
+globalThis.ready = true;
+const { handle } = lambda(settings);
+export const run = handle.apiRequest(() => ({}));
+`);
+  expect(errors).toEqual([]);
+  expect(code).not.toContain("settings");
+  expect(code).not.toContain("orderQueue");
+  expect(code).toContain("globalThis.ready = true;");
+});
+
+it("bundles grants that settings take from an export or a helper module", async () => {
+  const files = {
+    "runtime/checkout.ts": `
+      import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+      import { orderQueue } from "../infra/orders" with { type: "infra" };
+      import { refundGrants } from "./config";
+      export const grants = [orderQueue.grant(["SendMessage"])];
+      const { handle } = lambda({ id: "checkout", grants: [...grants, ...refundGrants] });
+      export const run = handle.apiRequest(() => orderQueue.url);
+    `,
+    "runtime/config.ts": `
+      import { refundQueue } from "../infra/orders" with { type: "infra" };
+      export const refundGrants = [refundQueue.grant(["SendMessage"])];
+      export const region = "eu-west-1";
+    `,
+    "infra/orders.ts": `export const orderQueue = {}; export const refundQueue = {};`,
+    // As a function's entry does, import only the handler.
+    "entry.ts": `export { run } from "./runtime/checkout";`,
+  };
+  let reads: Record<string, string[]> = {};
+  const output = await buildVirtual(files, "entry.ts", [
+    runtimePlugin({
+      getFile: readVirtualFile(files),
+      onReads: (found) => {
+        reads = found;
+      },
+    }),
+  ]);
+  expect(output).not.toContain("grant");
+  expect(output).not.toContain("__notationInfraCall");
+  expect(Object.values(reads)).toEqual([["infra/orders#orderQueue.url"]]);
+});
+
+it("fails when the bundle keeps a call to infra made outside a handler", async () => {
+  await expect(
+    buildRuntime({
+      "runtime/checkout.ts": `
+        import { orderQueue } from "../infra/orders" with { type: "infra" };
+        console.log(orderQueue.grant(["SendMessage"]));
+        export const run = () => 1;
+      `,
+      "infra/orders.ts": `export const orderQueue = {};`,
+    }),
+  ).rejects.toThrow(
+    "orderQueue.grant() calls infra from runtime code, and the function's bundle keeps the call",
+  );
+});

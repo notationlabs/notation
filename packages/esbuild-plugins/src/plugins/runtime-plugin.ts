@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Plugin } from "esbuild";
+import type { PartialMessage, Plugin } from "esbuild";
 import { toProjectRoot } from "@notation/core";
 import { parseModule } from "src/infra-phase/module-info";
 import { moduleKey } from "src/runtime-modules";
@@ -41,10 +41,13 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
   return {
     name: "notation-runtime",
     setup(build) {
-      if (opts.onReads) build.initialOptions.metafile = true;
+      build.initialOptions.metafile = true;
       // Every read that a rewrite made. A call in the output counts as a read
       // only if it is one of these.
       const generated = new Set<string>();
+      // The error for each infra call that a rewrite replaced, by its ID. The
+      // ID is in a bundle only if tree-shaking kept the call.
+      const infraCalls = new Map<string, PartialMessage>();
 
       const resolveInternal = (specifier: string, importer: string) =>
         build.resolve(specifier, {
@@ -131,12 +134,16 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
           });
           if (result.errors.length > 0) return { errors: result.errors };
           for (const read of result.reads) generated.add(read);
+          for (const call of result.infraCalls) {
+            infraCalls.set(call.id, call.error);
+          }
           return { contents: result.code, loader: loaderFor(args.path) };
         },
       );
 
       build.onEnd(async (result) => {
-        if (!opts.onReads || result.errors.length > 0) return;
+        if (result.errors.length > 0) return;
+        if (!opts.onReads && infraCalls.size === 0) return;
         const cwd = build.initialOptions.absWorkingDir ?? process.cwd();
         const outputs = result.outputFiles
           ? result.outputFiles.map((file) => ({
@@ -148,13 +155,19 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
               return { path: file, text: () => readFile(file, "utf8") };
             });
         const reads: Record<string, string[]> = {};
+        const errors: PartialMessage[] = [];
         for (const output of outputs) {
           if (/\.(map|css)$/.test(output.path)) continue;
-          reads[output.path] = findReads(await output.text()).filter((key) =>
+          const text = await output.text();
+          for (const [id, error] of infraCalls) {
+            if (text.includes(JSON.stringify(id))) errors.push(error);
+          }
+          reads[output.path] = findReads(text).filter((key) =>
             generated.has(key),
           );
         }
-        opts.onReads(reads);
+        if (errors.length > 0) return { errors };
+        opts.onReads?.(reads);
       });
     },
   };

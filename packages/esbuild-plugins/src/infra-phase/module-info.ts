@@ -344,6 +344,58 @@ export function chainRoot(
   }
 }
 
+/**
+ * The bindings that a top-level statement updates while the module body
+ * runs: by assigning to them or a property of them, by calling a method on
+ * them, or by passing them first to a method of `Object` or `Reflect`. Code
+ * in function bodies doesn't count.
+ */
+export function topLevelUpdates(node: ts.Node): Set<string> {
+  const updates = new Set<string>();
+  const add = (expression: ts.Expression) => {
+    const chain = chainRoot(expression);
+    if (chain) updates.add(chain.root);
+  };
+  const visit = (child: ts.Node) => {
+    if (isFunctionBody(child)) return;
+    if (ts.isCallExpression(child)) {
+      const callee = child.expression;
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        ["Object", "Reflect"].includes(callee.expression.text) &&
+        child.arguments[0]
+      ) {
+        add(child.arguments[0]);
+      } else if (
+        ts.isPropertyAccessExpression(callee) ||
+        ts.isElementAccessExpression(callee)
+      ) {
+        add(callee.expression);
+      }
+    }
+    if (
+      ts.isBinaryExpression(child) &&
+      child.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      child.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
+      add(child.left);
+    }
+    if (
+      (ts.isPrefixUnaryExpression(child) ||
+        ts.isPostfixUnaryExpression(child)) &&
+      (child.operator === ts.SyntaxKind.PlusPlusToken ||
+        child.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      add(child.operand);
+    }
+    if (ts.isDeleteExpression(child)) add(child.expression);
+    ts.forEachChild(child, visit);
+  };
+  visit(node);
+  return updates;
+}
+
 export function isFunctionBody(node: ts.Node): boolean {
   return (
     ts.isFunctionDeclaration(node) ||

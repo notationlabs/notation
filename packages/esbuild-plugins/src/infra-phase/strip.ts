@@ -6,6 +6,7 @@ import {
   isReference,
   ownExportNames,
   parseModule,
+  topLevelUpdates,
   type ModuleInfo,
 } from "./module-info";
 import { exportName, isScript } from "src/utils/script";
@@ -293,8 +294,7 @@ class Analysis {
           ) {
             continue;
           }
-          const { updates } = this.#scan(state, node);
-          if ([...updates].some((name) => kept.has(name))) {
+          if ([...topLevelUpdates(node)].some((name) => kept.has(name))) {
             this.keep(state, statement.index);
             changed = true;
           }
@@ -647,23 +647,18 @@ class Analysis {
     return Array.isArray(position) && position.at(-2) === "handle";
   }
 
-  // Finds the bindings that a statement references, the argument lists to
-  // replace, and the bindings that it updates while the module body runs.
+  // Finds the bindings that a statement references, and the argument lists
+  // to replace.
   #scan(state: ModuleState, node: ts.Node) {
     const refs = new Set<string>();
-    const updates = new Set<string>();
     const replacements: Array<[number, number]> = [];
-    const addUpdate = (expression: ts.Expression) => {
-      const chain = chainRoot(expression);
-      if (chain) updates.add(chain.root);
-    };
-    const visit = (child: ts.Node, inFunction: boolean) => {
+    const visit = (child: ts.Node) => {
       if (ts.isExpressionWithTypeArguments(child)) {
         if (
           ts.isHeritageClause(child.parent) &&
           child.parent.token === ts.SyntaxKind.ExtendsKeyword
         ) {
-          visit(child.expression, inFunction);
+          visit(child.expression);
         }
         return;
       }
@@ -682,54 +677,17 @@ class Analysis {
         refs.add(child.name.text);
         return;
       }
-      if (ts.isCallExpression(child)) {
-        if (this.#isHandleCall(state, child)) {
-          visit(child.expression, inFunction);
-          replacements.push([child.arguments.pos, child.arguments.end]);
-          return;
-        }
-        if (!inFunction) {
-          const callee = child.expression;
-          if (
-            ts.isPropertyAccessExpression(callee) &&
-            ts.isIdentifier(callee.expression) &&
-            ["Object", "Reflect"].includes(callee.expression.text) &&
-            child.arguments[0]
-          ) {
-            addUpdate(child.arguments[0]);
-          } else if (
-            ts.isPropertyAccessExpression(callee) ||
-            ts.isElementAccessExpression(callee)
-          ) {
-            addUpdate(callee.expression);
-          }
-        }
+      if (ts.isCallExpression(child) && this.#isHandleCall(state, child)) {
+        visit(child.expression);
+        replacements.push([child.arguments.pos, child.arguments.end]);
+        return;
       }
-      if (!inFunction) {
-        if (
-          ts.isBinaryExpression(child) &&
-          child.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-          child.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-        ) {
-          addUpdate(child.left);
-        }
-        if (
-          (ts.isPrefixUnaryExpression(child) ||
-            ts.isPostfixUnaryExpression(child)) &&
-          (child.operator === ts.SyntaxKind.PlusPlusToken ||
-            child.operator === ts.SyntaxKind.MinusMinusToken)
-        ) {
-          addUpdate(child.operand);
-        }
-        if (ts.isDeleteExpression(child)) addUpdate(child.expression);
-      }
-      const nested = inFunction || isFunctionBody(child);
-      ts.forEachChild(child, (grandchild) => visit(grandchild, nested));
+      ts.forEachChild(child, visit);
     };
-    visit(node, false);
+    visit(node);
     replacements.sort((a, b) => a[0] - b[0]);
     refs.delete(defaultLocal);
-    return { refs, updates, replacements };
+    return { refs, replacements };
   }
 }
 

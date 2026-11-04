@@ -10,6 +10,7 @@ import {
   isFunctionBody,
   isReference,
   parseModule,
+  topLevelUpdates,
 } from "src/infra-phase/module-info";
 
 export type RewriteOptions = {
@@ -28,12 +29,20 @@ export type RewriteResult = {
   code: string;
   /** The output key of each read in the rewritten code. */
   reads: string[];
+  /**
+   * Calls to infra made while the module body runs, outside the settings of
+   * a factory call. Each becomes a pure call with `id` as its argument, which
+   * tree-shaking removes if its result is unused. One that is left in the
+   * bundle fails the build with `error`.
+   */
+  infraCalls: Array<{ id: string; error: PartialMessage }>;
   errors: PartialMessage[];
 };
 
 type Edit = [start: number, end: number, text: string];
 
 const readLocal = "__notationRead";
+const infraCallLocal = "__notationInfraCall";
 
 /**
  * Rewrites a module of a function's bundle, so that it keeps only runtime
@@ -42,15 +51,19 @@ const readLocal = "__notationRead";
  * 1. A `type: "infra"` import of a provider, such as `@notation/aws/lambda`,
  *    imports the provider's runtime half, `@notation/aws/lambda.fn`, and each
  *    call to one of its factories loses its arguments.
- * 2. Top-level declarations that only those arguments used are removed.
+ * 2. Top-level declarations that only those arguments use are removed, and
+ *    so are the statements that update them.
  * 3. Each use of a `type: "infra"` import of a local module becomes a pure
  *    call to `read`: `orderQueue.url` becomes
  *    `read("infra/orders#orderQueue", ["url"])`, and `orderQueue` used as a
  *    value becomes `read("infra/orders#orderQueue", [])`. The import is
  *    removed.
  *
- * Calling infra, assigning to it, using a namespace import of it as a value,
- * or re-exporting it is an error.
+ * A call to infra made while the module body runs, such as a grant in a
+ * helper module's settings, becomes a pure placeholder call. Tree-shaking
+ * removes it when only settings use its result. Calling infra in a function
+ * body, assigning to it, using a namespace import of it as a value, or
+ * re-exporting it is an error.
  */
 export function rewriteRuntimeModule(
   file: string,
@@ -62,6 +75,7 @@ export function rewriteRuntimeModule(
   const edits: Edit[] = [];
   const errors: PartialMessage[] = [];
   const reads = new Set<string>();
+  const infraCalls: RewriteResult["infraCalls"] = [];
   const fail = (node: ts.Node, text: string) => {
     errors.push({ text, location: locate(sourceFile, node) });
   };
@@ -200,10 +214,28 @@ export function rewriteRuntimeModule(
     let end = top.end;
     if (called) {
       if (path.length <= 1) {
-        fail(
-          parent,
-          `${text}() calls infra from runtime code. Infra functions only run in the infra phase: call them in the settings of lambda(), as in grants: [orderQueue.grant(["SendMessage"])].`,
-        );
+        if (inFunctionBody(parent)) {
+          fail(
+            parent,
+            `${text}() calls infra from runtime code. Infra functions only run in the infra phase: call them in the settings of lambda(), as in grants: [orderQueue.grant(["SendMessage"])].`,
+          );
+          return;
+        }
+        const start = parent.getStart(sourceFile);
+        const id = `notation:infra-call:${file}:${start}`;
+        infraCalls.push({
+          id,
+          error: {
+            text: `${text}() calls infra from runtime code, and the function's bundle keeps the call. Infra functions only run in the infra phase: use their results only in the settings of lambda(), as in grants: [orderQueue.grant(["SendMessage"])].`,
+            location: locate(sourceFile, parent),
+          },
+        });
+        edits.push([
+          start,
+          parent.end,
+          `/* @__PURE__ */ ${infraCallLocal}(${JSON.stringify(id)})`,
+        ]);
+        skipped.push([start, parent.end]);
         return;
       }
       readPath = path.slice(0, -1);
@@ -242,20 +274,22 @@ export function rewriteRuntimeModule(
     cursor = end;
   }
   code += source.slice(cursor);
-  return { code, reads: [...reads].sort(), errors };
+  if (infraCalls.length > 0) {
+    code += `\nfunction ${infraCallLocal}(id) { throw new Error("Infra was called from runtime code: " + id); }\n`;
+  }
+  return { code, reads: [...reads].sort(), infraCalls, errors };
 }
 
 /**
  * The top-level declarations that only the arguments of factory calls use,
- * directly or through other such declarations. Exported declarations are
- * kept.
+ * directly or through other such declarations, and the top-level statements
+ * that only update them. Exported declarations are kept.
  */
 function settingsOnlyStatements(
   info: ReturnType<typeof parseModule>,
   argumentRanges: Array<[number, number]>,
 ): Set<number> {
-  const removed = new Set<number>();
-  if (argumentRanges.length === 0) return removed;
+  if (argumentRanges.length === 0) return new Set();
   const exported = new Set(info.localExports.map((exp) => exp.local));
   const references: Array<{ name: string; pos: number; statement: number }> =
     [];
@@ -273,7 +307,7 @@ function settingsOnlyStatements(
     if (!ts.isImportDeclaration(statement)) visit(statement);
   });
 
-  const candidates = info.statements.filter(
+  const declarations = info.statements.filter(
     ({ node, declares, typeOnly }) =>
       !typeOnly &&
       declares.length > 0 &&
@@ -282,20 +316,61 @@ function settingsOnlyStatements(
         ts.isFunctionDeclaration(node) ||
         ts.isClassDeclaration(node)),
   );
-  const unused = (pos: number, statement: number) =>
-    removed.has(statement) || within(argumentRanges, pos);
+  const usesOf = (index: number, declares: string[]) =>
+    references.filter(
+      (ref) => ref.statement !== index && declares.includes(ref.name),
+    );
+
+  // 1. The declarations that the arguments use, directly or through other
+  //    such declarations.
+  const used = new Set<number>();
   for (let changed = true; changed;) {
     changed = false;
-    for (const { index, declares } of candidates) {
-      if (removed.has(index)) continue;
-      const uses = references.filter(
-        (ref) => ref.statement !== index && declares.includes(ref.name),
+    for (const { index, declares } of declarations) {
+      if (used.has(index)) continue;
+      const reaches = usesOf(index, declares).some(
+        (ref) => within(argumentRanges, ref.pos) || used.has(ref.statement),
       );
-      if (
-        uses.length > 0 &&
-        uses.every((ref) => unused(ref.pos, ref.statement))
-      ) {
-        removed.add(index);
+      if (reaches) {
+        used.add(index);
+        changed = true;
+      }
+    }
+  }
+
+  // 2. Of those, and of the statements that update them, the ones that
+  //    nothing else needs. Each starts removed, and is kept once something
+  //    that stays needs it.
+  const updates = new Map<number, Set<string>>();
+  for (const { index, node, declares, typeOnly } of info.statements) {
+    if (typeOnly || declares.length > 0) continue;
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) continue;
+    const names = topLevelUpdates(node);
+    if (names.size > 0) updates.set(index, names);
+  }
+  const removed = new Set([...used, ...updates.keys()]);
+  const removedNames = () =>
+    new Set(
+      declarations
+        .filter(({ index }) => removed.has(index) && used.has(index))
+        .flatMap(({ declares }) => declares),
+    );
+  for (let changed = true; changed;) {
+    changed = false;
+    const names = removedNames();
+    for (const [index, updated] of updates) {
+      if (removed.has(index) && [...updated].some((name) => !names.has(name))) {
+        removed.delete(index);
+        changed = true;
+      }
+    }
+    for (const { index, declares } of declarations) {
+      if (!removed.has(index)) continue;
+      const needed = usesOf(index, declares).some(
+        (ref) => !within(argumentRanges, ref.pos) && !removed.has(ref.statement),
+      );
+      if (needed) {
+        removed.delete(index);
         changed = true;
       }
     }
@@ -305,6 +380,13 @@ function settingsOnlyStatements(
 
 function within(ranges: Array<[number, number]>, pos: number): boolean {
   return ranges.some(([start, end]) => pos >= start && pos < end);
+}
+
+function inFunctionBody(node: ts.Node): boolean {
+  for (let current = node.parent; current; current = current.parent) {
+    if (isFunctionBody(current)) return true;
+  }
+  return false;
 }
 
 function inType(node: ts.Node): boolean {
