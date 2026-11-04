@@ -578,7 +578,7 @@ describe("Lambda environment", () => {
 });
 
 describe("runtime map encoding", () => {
-  it("encodes routes and queue subscriptions, and decodes them back", () => {
+  it("encodes routes and queue subscriptions as sorted JSON, and decodes them back", () => {
     const runtime = {
       dispatch: {
         "todo-api-GET-/todos/{id}": {
@@ -593,13 +593,13 @@ describe("runtime map encoding", () => {
     };
 
     expect(encodeRuntime(runtime)).toBe(
-      '{"q":{"orders-app-mapping":["processOrders","arn:orders"]},"r":{"todo-api-GET-/todos/{id}":["getTodo","api-1","GET /todos/{id}"]}}',
+      '{"dispatch":{"orders-app-mapping":{"export":"processOrders","match":{"queueArn":"arn:orders"}},"todo-api-GET-/todos/{id}":{"export":"getTodo","match":{"apiId":"api-1","routeKey":"GET /todos/{id}"}}}}',
     );
     expect(decodeRuntime(encodeRuntime(runtime))).toEqual(runtime);
   });
 
   it("rejects text that is not a runtime map", () => {
-    expect(() => decodeRuntime('{"r":{"a":[1]}}')).toThrow(
+    expect(() => decodeRuntime('{"dispatch":{"a":{"export":1}}}')).toThrow(
       `${runtimeVariable} does not hold a valid runtime map`,
     );
     expect(() => decodeRuntime("[]")).toThrow();

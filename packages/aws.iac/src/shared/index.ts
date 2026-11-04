@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { sortedJson } from "@notation/utils";
 
 /**
@@ -35,65 +36,33 @@ export type ScheduledInvocation<Event = unknown> = {
   event: Event;
 };
 
-/**
- * Encodes the runtime map for the environment variable. Lambda allows 4 KB
- * for all of a function's variables, so the encoding is compact:
- *
- * - `r` holds routes as `[export, apiId, routeKey]`.
- * - `q` holds queue subscriptions as `[export, queueArn]`.
- */
+const dispatchMatchValue = v.union([
+  v.object({ apiId: v.string(), routeKey: v.string() }),
+  v.object({ queueArn: v.string() }),
+]);
+
+export const runtimeValue = v.object({
+  dispatch: v.optional(
+    v.record(
+      v.string(),
+      v.object({ export: v.string(), match: dispatchMatchValue }),
+    ),
+  ),
+});
+
+/** Encodes the runtime map for the environment variable, as sorted JSON. */
 export function encodeRuntime(runtime: LambdaRuntime): string {
-  const encoded: EncodedRuntime = {};
-  for (const [key, entry] of Object.entries(runtime.dispatch ?? {})) {
-    const { export: name, match } = entry;
-    if ("queueArn" in match) {
-      (encoded.q ??= {})[key] = [name, match.queueArn];
-    } else {
-      (encoded.r ??= {})[key] = [name, match.apiId, match.routeKey];
-    }
-  }
-  return sortedJson.encode(encoded);
+  return sortedJson.encode(runtime);
 }
 
-/** Throws when `text` is not a runtime map that `encodeRuntime` made. */
+/** Throws when `text` is not a runtime map. */
 export function decodeRuntime(text: string | undefined): LambdaRuntime {
   if (!text) return {};
-  const encoded = sortedJson.decode(text) as EncodedRuntime;
-  if (!isRecord(encoded)) throw invalidRuntime();
-  const runtime: LambdaRuntime = {};
-  const dispatch: Record<string, DispatchEntry> = {};
-  for (const [key, entry] of Object.entries(encoded.r ?? {})) {
-    if (!isStrings(entry, 3)) throw invalidRuntime();
-    dispatch[key] = {
-      export: entry[0],
-      match: { apiId: entry[1], routeKey: entry[2] },
-    };
+  const value = sortedJson.decode(text);
+  // `v.object` accepts an array.
+  const result = v.safeParse(runtimeValue, value);
+  if (Array.isArray(value) || !result.success) {
+    throw new Error(`${runtimeVariable} does not hold a valid runtime map`);
   }
-  for (const [key, entry] of Object.entries(encoded.q ?? {})) {
-    if (!isStrings(entry, 2)) throw invalidRuntime();
-    dispatch[key] = { export: entry[0], match: { queueArn: entry[1] } };
-  }
-  if (Object.keys(dispatch).length > 0) runtime.dispatch = dispatch;
-  return runtime;
-}
-
-type EncodedRuntime = {
-  r?: Record<string, [string, string, string]>;
-  q?: Record<string, [string, string]>;
-};
-
-function isRecord(value: unknown): value is Record<string, any> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isStrings(value: unknown, length: number): value is string[] {
-  return (
-    Array.isArray(value) &&
-    value.length === length &&
-    value.every((item) => typeof item === "string")
-  );
-}
-
-function invalidRuntime() {
-  return new Error(`${runtimeVariable} does not hold a valid runtime map`);
+  return result.output;
 }

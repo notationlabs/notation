@@ -18,6 +18,7 @@ import { fs } from "@notation/std.iac";
 import {
   decodeRuntime,
   encodeRuntime,
+  runtimeValue,
   runtimeVariable,
   type LambdaRuntime,
 } from "src/shared";
@@ -74,20 +75,6 @@ export type LambdaDependencies = {
   role: LambdaIamRoleInstance;
   zipFile: fs.ZipFileInstance | fs.FileInstance;
 };
-
-const dispatchMatchValue = v.union([
-  v.object({ apiId: v.string(), routeKey: v.string() }),
-  v.object({ queueArn: v.string() }),
-]);
-
-const runtimeValue = v.object({
-  dispatch: v.optional(
-    v.record(
-      v.string(),
-      v.object({ export: v.string(), match: dispatchMatchValue }),
-    ),
-  ),
-});
 
 const lambdaFunction = resource<LambdaFunctionSchema>({
   type: "aws/lambda/LambdaFunction",
@@ -477,7 +464,7 @@ function encodeEnvironment(
 // it and the next update replaces it.
 function decodeEnvironment(
   environment: sdk.EnvironmentResponse | undefined,
-): (LambdaEnvironment & { Error?: sdk.EnvironmentError }) | undefined {
+): LambdaEnvironment | undefined {
   const encoded = environment?.Variables?.[runtimeVariable];
   if (!environment || encoded === undefined) return environment;
   let runtime: LambdaRuntime;
