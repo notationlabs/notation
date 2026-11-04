@@ -237,7 +237,11 @@ export async function compileFunctions(
   const distDir = filePaths.dist.dir();
   const entryPoints = Object.fromEntries(
     functions.map((fn) => [
-      path.relative(distDir, fromProjectRoot(fn.bundle)).replace(/\.mjs$/, ""),
+      path
+        .relative(distDir, fromProjectRoot(fn.bundle))
+        .split(path.sep)
+        .join("/")
+        .replace(/\.mjs$/, ""),
       `${functionEntryNamespace}:${fn.id}`,
     ]),
   );
