@@ -13,18 +13,14 @@ todoRouter.get("/todos", getTodos);
 ```
 
 ```ts [runtime/todos.fn.ts]
-import { handle, json } from "notation/aws/lambda.fn";
+import { json } from "notation/aws/lambda.fn";
+import { lambda } from "notation/aws/lambda" with { type: "infra" };
+
+const { handle } = lambda({ id: "todos", timeout: 5, memory: 64 });
 
 export const getTodos = handle.apiRequest(() => {
   return json([{ id: 1, text: "Learn Notation" }]);
 });
-
-export const resource = {
-  service: "aws/lambda",
-  id: "todos",
-  timeout: 5,
-  memory: 64,
-};
 ```
 
 ::

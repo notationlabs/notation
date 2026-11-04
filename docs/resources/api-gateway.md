@@ -36,7 +36,7 @@ myRouter.get("/users", getUsers);
 myRouter.post("/users", createUser);
 ```
 
-`getUsers` and `createUser` are exports of the runtime module `runtime/users.fn.ts`. In infra code, each one is a `RuntimeRef`: the module's Lambda function, plus the name of the export. See [Lambda](lambda.md#runtime-modules). The router methods take only API request handlers, made with `handle.apiRequest`, or a Lambda group from [`lambda()`](lambda.md#lambdaconfig).
+`getUsers` and `createUser` are handlers that `runtime/users.fn.ts` exports. In infra code, each one is a `LambdaRef` of API Gateway events. See [Lambda](lambda.md#handlers-in-infra). The router methods take only API request handlers, made with `handle.apiRequest`, or a Lambda group that runs [external code](lambda.md#external-code). Each route is wired once infra has been evaluated.
 
 ### Available methods
 
@@ -53,7 +53,7 @@ Each route call produces a full resource subgraph:
 - **API Gateway route** – the HTTP method + path binding
 - **Lambda integration** – connects the API to the Lambda function. Routes on one API that call one function share it
 - **Lambda invoke permission** – allows API Gateway to call the function. Routes on one API that call one function share it
-- **Dispatch map entry** – sends requests for the route to the right export of the function. See [Dispatch](lambda.md#dispatch)
+- **Dispatch map entry** – sends requests for the route to the right handler of the function. See [Dispatch](lambda.md#dispatch)
 
 ## JWT Authorization
 
@@ -121,7 +121,10 @@ todoRouter.get("/todos/count", getTodoCount);
 ```
 
 ```ts [runtime/todos.fn.ts]
-import { handle, json, type LambdaResource } from "@notation/aws/lambda.fn";
+import { json } from "@notation/aws/lambda.fn";
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+
+const { handle } = lambda({ id: "todos", timeout: 5, memory: 64 });
 
 export const getTodos = handle.apiRequest(() => {
   return json([{ id: 1, text: "Build with Notation" }]);
@@ -130,13 +133,6 @@ export const getTodos = handle.apiRequest(() => {
 export const getTodoCount = handle.apiRequest(() => {
   return json(1);
 });
-
-export const resource: LambdaResource = {
-  service: "aws/lambda",
-  id: "todos",
-  timeout: 5,
-  memory: 64,
-};
 ```
 
 ::

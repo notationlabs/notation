@@ -40,6 +40,8 @@ SQS doesn't let you reuse a deleted queue's name for 60 seconds, so a replacemen
 
 `orderQueue.arn` and `orderQueue.url` are output values: they don't exist until AWS creates the queue, but you can place them in another resource's config now. Notation makes that resource depend on the queue and fills in the real value at deploy. See [Output values](../internals/resource.md#output-values).
 
+Runtime code that imports `orderQueue` `with { type: "infra" }` sees `orderQueue.url` as a `string`, and the function receives the URL when it deploys. See [Sending to a queue](#sending-to-a-queue).
+
 An output value can only be placed whole. Turning it into a string, for example in a template string, throws. To build a value from the queue's ARN, contribute a function that receives `orderQueue.queue` as a dep; see [Function contributions](../internals/resource.md#function-contributions).
 
 ## `queue.consume(handler)`
@@ -57,21 +59,18 @@ orderQueue.consume(processOrders, { batchSize: 5 });
 ```
 
 ```ts [runtime/orders.fn.ts]
-import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+
+const { handle } = lambda({ id: "orders", timeout: 5, memory: 64 });
 
 export const processOrders = handle.sqsEvent(async (event) => {
   for (const record of event.Records) console.log(record.body);
 });
-
-export const resource: LambdaResource = {
-  service: "aws/lambda",
-  id: "orders",
-};
 ```
 
 ::
 
-`processOrders` is an export of the runtime module `runtime/orders.fn.ts`, so in infra code it is a `RuntimeRef`: the module's Lambda group, plus the name of the export. See [Lambda](lambda.md#runtime-modules). `consume` also takes a Lambda group from [`lambda()`](lambda.md#lambdaconfig).
+`processOrders` is a handler of the `orders` function, so in infra code it is a `LambdaRef` of SQS events. See [Lambda](lambda.md#handlers-in-infra). `consume` also takes a Lambda group, such as one that runs [external code](lambda.md#external-code). `consume` wires the handler once infra has been evaluated, because until then `processOrders` is a stand-in.
 
 `consume` changes three things, and the function's own config doesn't mention the queue:
 
@@ -94,7 +93,7 @@ When you remove `batchSize` or `maxBatchingWindow`, Notation sets the mapping ba
 
 ### Several queues
 
-Each queue contributes its own statement and its own dispatch entry, so two queues can feed one function. The two queues can call the same export, or two exports of one module:
+Each queue contributes its own statement and its own dispatch entry, so two queues can feed one function. The two queues can call the same handler, or two handlers of one function:
 
 ```ts [infra/orders.ts]
 import {
@@ -108,11 +107,13 @@ refundQueue.consume(processRefunds);
 
 The function's policy then has two statements. When you delete the `refundQueue.consume` line, its statement and mapping go with it, and the next deploy updates the policy and deletes the mapping.
 
-A queue can feed a given function once. A second `consume` with the same function throws, even with a different export of the module, because the dispatch map sends all of a queue's messages to one export.
+A queue can feed a given function once. A second `consume` with the same function throws, even with a different handler of the function, because the dispatch map sends all of a queue's messages to one handler.
 
 ## `queue.grant(actions)`
 
-`grant` returns a policy statement for the queue. Contribute it to a Lambda group's inline policy to give the function other access, such as sending messages:
+`grant` returns a policy statement that allows `actions` on the queue. Pass it to the `grants` setting of `lambda()` to give a function other access, such as sending messages. See [Sending to a queue](#sending-to-a-queue).
+
+A function that runs external code takes `grants` in the same way:
 
 ```ts [infra/orders.ts]
 import { lambda } from "@notation/aws/lambda";
@@ -120,24 +121,13 @@ import { lambda } from "@notation/aws/lambda";
 const importer = lambda({
   id: "order-importer",
   code: { type: "file", path: "external/importer.mjs" },
-});
-
-importer.policy.contribute({
-  PolicyDocument: { Statement: [orderQueue.grant(["SendMessage"])] },
+  grants: [orderQueue.grant(["SendMessage"])],
 });
 ```
 
-A function from a runtime module has no variable like `importer` to call `policy` on. Instead, every export of the module carries the module's Lambda group as `resource`. For example, to let `processOrders` send messages to `refundQueue`, contribute the grant to `processOrders.resource.policy`:
+A function from a runtime module takes its grants in its own `lambda()` settings. Infra can't contribute to `processOrders.function.policy`, because `processOrders.function` is a stand-in until infra has been evaluated, and reading its `policy` throws.
 
-```ts [infra/orders.ts]
-import { processOrders } from "runtime/orders.fn" with { type: "runtime" };
-
-processOrders.resource.policy.contribute({
-  PolicyDocument: { Statement: [refundQueue.grant(["SendMessage"])] },
-});
-```
-
-All the exports of `runtime/orders.fn.ts` run in one function with one role. So the grant applies to every export of the module, not only to `processOrders`.
+The statements go on the function's role, so every handler of the function gets the access.
 
 ```ts [@notation/aws/sqs]
 type SqsAction =
@@ -149,3 +139,34 @@ type SqsAction =
   | "GetQueueUrl"
   | "PurgeQueue";
 ```
+
+## Sending to a queue
+
+A function that sends messages needs the queue's URL and permission to send. The runtime module imports the queue `with { type: "infra" }`, grants `SendMessage` in the `lambda()` settings, and reads `orderQueue.url` in the handler:
+
+```ts [runtime/checkout.fn.ts]
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
+import { json } from "@notation/aws/lambda.fn";
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+import { orderQueue } from "infra/orders" with { type: "infra" };
+
+const sqs = new SQSClient();
+
+const { handle } = lambda({
+  id: "checkout",
+  timeout: 5,
+  grants: [orderQueue.grant(["SendMessage"])],
+});
+
+export const createOrder = handle.apiRequest(async (req) => {
+  await sqs.send(
+    new SendMessageCommand({
+      QueueUrl: orderQueue.url,
+      MessageBody: req.body ?? "{}",
+    }),
+  );
+  return json({ ok: true });
+});
+```
+
+The compiler bundles `createOrder` without infra, and the function receives the queue's URL when it deploys. See [Reading Infra Values](../manual/infra-values.md).

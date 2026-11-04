@@ -123,18 +123,20 @@ A `lambda()` call can also sit in a helper module or behind a condition. The com
 
 ## Exporting the function
 
-A runtime module can export the result of `lambda()`. Infra then sees the export as the Lambda group, with its role, policy and function:
+A runtime module can export the result of `lambda()`. Infra then sees the export typed as the function's Lambda group, and can pass it to infra APIs that take a group:
 
 ```ts [runtime/checkout.fn.ts]
 export const checkoutFn = lambda({ id: "checkout", timeout: 5 });
 export const createOrder = checkoutFn.handle.apiRequest(() => json({}));
 ```
 
-```ts [infra/alarms.ts]
+```ts [infra/api.ts]
 import { checkoutFn } from "runtime/checkout.fn" with { type: "runtime" };
 ```
 
-Infra can also reach the function through any of its handlers, as `createOrder.function`. Infra can pass `createOrder.function` to other infra APIs, but can't read its ID while infra is being evaluated. See [Lambda](../resources/lambda.md#the-function-of-a-handler).
+Wire handlers, not the group. A route or a queue that gets the group adds no entry to the function's dispatch map, so the function can't tell which handler to call. See [Dispatch](../resources/lambda.md#dispatch).
+
+Infra can also reach the function through any of its handlers, as `createOrder.function`. Both are stand-ins while infra is being evaluated: infra can pass them to infra APIs, but can't read their properties, such as the ID or the policy. See [Lambda](../resources/lambda.md#the-function-of-a-handler).
 
 ## The `resource` export
 
