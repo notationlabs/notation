@@ -219,6 +219,10 @@ const functionsMarker = "__notation_functions__";
  * Evaluates the infra bundle and returns the functions that runtime modules
  * declared, with their handlers. It runs in a child process, so that the
  * bundle and its module cache don't stay in this process.
+ *
+ * The child prints the functions on a line of its stdout. Its other output,
+ * such as a console.log() in infra code, is written to this process's
+ * stderr, because the stdout of `deploy --json` is NDJSON.
  */
 export async function evaluateFunctions(
   entryPoint: string,
@@ -227,7 +231,7 @@ export async function evaluateFunctions(
   const script = `
     import { collectResourceGraph } from ${JSON.stringify(resolveRuntimeLink())};
     const graph = await collectResourceGraph(
-      () => import(${JSON.stringify(`${pathToFileURL(bundle).href}?${Date.now()}`)}),
+      () => import(${JSON.stringify(pathToFileURL(bundle).href)}),
       { declarationChecks: false },
     );
     console.log(${JSON.stringify(functionsMarker)} + JSON.stringify(graph.runtimeFunctions));
@@ -238,6 +242,11 @@ export async function evaluateFunctions(
       ["--enable-source-maps", "--input-type=module", "-e", script],
       { cwd: projectRoot(), maxBuffer: 64 * 1024 * 1024 },
       (error, stdout, stderr) => {
+        const output = stdout
+          .split("\n")
+          .filter((line) => !line.startsWith(functionsMarker))
+          .join("\n");
+        if (output.trim()) process.stderr.write(output);
         if (error) {
           reject(
             new Error(
@@ -245,6 +254,7 @@ export async function evaluateFunctions(
             ),
           );
         } else {
+          if (stderr) process.stderr.write(stderr);
           resolve(stdout);
         }
       },

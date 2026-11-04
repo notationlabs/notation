@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { setConfigFile } from "@notation/core";
 import { compile } from "../src/compile";
 import type { Logger } from "../src/logger";
@@ -381,6 +381,43 @@ it("fails at plan when a function stores an infra method", async () => {
   ).toThrow(
     /The function "checkout" reads infra\/orders#orderQueue\.grant, which is a function of infra/,
   );
+});
+
+it("writes the output of infra code to stderr when it evaluates infra", async () => {
+  write(
+    "runtime/todos.fn.ts",
+    `
+    import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+    const { handle } = lambda({ id: "todos" });
+    export const getTodos = handle.apiRequest(() => ({ statusCode: 200 }));
+    `,
+  );
+  write(
+    "infra/main.ts",
+    `
+    import { api, router } from "@notation/aws/api-gateway";
+    import { getTodos } from "../runtime/todos.fn" with { type: "runtime" };
+    console.log("infra log");
+    console.warn("infra warning");
+    router(api({ name: "todo-api" })).get("/todos", getTodos);
+    `,
+  );
+  const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  try {
+    await compile(
+      {
+        entryPoint: path.join(root, "infra/main.ts"),
+        runtimeModules: ["**/*.fn.ts"],
+      },
+      { logger },
+    );
+    const written = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+    expect(written).toContain("infra log\n");
+    expect(written).toContain("infra warning\n");
+    expect(written).not.toContain("__notation_functions__");
+  } finally {
+    stderr.mockRestore();
+  }
 });
 
 it("removes the directories in dist/functions of functions that no longer exist", async () => {
