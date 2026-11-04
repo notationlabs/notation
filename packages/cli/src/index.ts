@@ -8,7 +8,12 @@ import { defaultLogger } from "./logger";
 import { runWithErrorHandling } from "./run-with-error-handling";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
-import { typesFileName, watchTypes, writeTypes } from "./types";
+import {
+  typesFileName,
+  watchTypes,
+  writeTypes,
+  writeTypesOrWarn,
+} from "./types";
 import { startDashboardServer } from "@notation/dashboard";
 import {
   NodeDurableRuntime,
@@ -42,7 +47,7 @@ program
   .description("Compile Notation App")
   .action(async (options) => {
     const project = await load(options);
-    await writeTypes(projectRoot());
+    await writeTypesOrWarn(projectRoot());
     await compile(resolveBuild(project));
   });
 
@@ -125,7 +130,8 @@ program
   .description(`Write ${typesFileName}, which types attributed imports`)
   .action(async (options) => {
     if (options.config !== undefined) setConfigFile(options.config);
-    const changed = await writeTypes(projectRoot());
+    const { changed, warnings } = await writeTypes(projectRoot());
+    for (const warning of warnings) defaultLogger.warn(warning);
     defaultLogger.info(
       changed ? `Wrote ${typesFileName}` : `${typesFileName} is up to date`,
     );

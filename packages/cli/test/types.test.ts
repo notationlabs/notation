@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  AmbiguousSpecifierError,
+  writeTypesOrWarn,
   renderTypes,
   typesFileName,
   watchTypes,
@@ -134,7 +134,7 @@ const checkoutModule = `
 
 describe("renderTypes", () => {
   it("writes a block per attributed specifier and catch-alls per attribute", () => {
-    const contents = renderTypes(root, [
+    const { contents, warnings } = renderTypes(root, [
       {
         importer: path.join(root, "runtime/checkout.ts"),
         specifier: "../infra/orders",
@@ -186,11 +186,12 @@ describe("renderTypes", () => {
       }
       "
     `);
+    expect(warnings).toEqual([]);
   });
 
   it("writes one block for a specifier that names the same module from two files", () => {
     const orders = path.join(root, "infra/orders.ts");
-    const contents = renderTypes(root, [
+    const { contents } = renderTypes(root, [
       {
         importer: path.join(root, "runtime/a.ts"),
         specifier: "../infra/orders",
@@ -207,24 +208,46 @@ describe("renderTypes", () => {
     expect(contents.match(/"\.\.\/infra\/orders\*"/g)).toHaveLength(1);
   });
 
-  it("fails when a specifier names two modules from two directories", () => {
-    const imports = [
+  it("writes an error block and a warning for a specifier that names two modules from two directories", () => {
+    const { contents, warnings } = renderTypes(root, [
       {
         importer: path.join(root, "runtime/checkout.ts"),
         specifier: "../infra/orders",
-        type: "infra" as const,
+        type: "infra",
         resolved: path.join(root, "infra/orders.ts"),
       },
       {
         importer: path.join(root, "app/runtime/checkout.ts"),
         specifier: "../infra/orders",
-        type: "infra" as const,
+        type: "infra",
         resolved: path.join(root, "app/infra/orders.ts"),
       },
-    ];
-    expect(() => renderTypes(root, imports)).toThrow(AmbiguousSpecifierError);
-    expect(() => renderTypes(root, imports)).toThrow(
-      'The import "../infra/orders" with { type: "infra" } names different modules in app/runtime/checkout.ts, runtime/checkout.ts.',
+    ]);
+    expect(warnings).toEqual([
+      expect.stringContaining(
+        'The import "../infra/orders" with { type: "infra" } names different modules in app/runtime/checkout.ts, runtime/checkout.ts.',
+      ),
+    ]);
+    expect(contents).toContain(
+      `declare module "../infra/orders*" with { type: "infra" } {\n` +
+        `  const view: { readonly [name: string]: { readonly "\\"../infra/orders\\" names different modules in app/runtime/checkout.ts, runtime/checkout.ts": "use a different specifier in one of the files" } };`,
+    );
+  });
+
+  it("writes an error block and a warning for a relative specifier that doesn't resolve", () => {
+    const { contents, warnings } = renderTypes(root, [
+      {
+        importer: path.join(root, "infra/orders.ts"),
+        specifier: "../runtime/missing",
+        type: "runtime",
+      },
+    ]);
+    expect(warnings).toEqual([
+      'The import "../runtime/missing" with { type: "runtime" } in infra/orders.ts doesn\'t resolve to a file.',
+    ]);
+    expect(contents).toContain(
+      `declare module "../runtime/missing*" with { type: "runtime" } {\n` +
+        `  const view: { readonly [name: string]: { readonly "\\"../runtime/missing\\" in infra/orders.ts doesn't resolve to a file": "check the path" } };`,
     );
   });
 });
@@ -236,7 +259,7 @@ describe("writeTypes", () => {
     write("node_modules/pkg/index.ts", ordersModule);
     write("dist/infra/orders.ts", ordersModule);
 
-    expect(await writeTypes(root)).toBe(true);
+    expect((await writeTypes(root)).changed).toBe(true);
 
     const blocks = read().match(
       /^declare module "[^"]+" with \{ type: "\w+" \}/gm,
@@ -278,8 +301,41 @@ describe("writeTypes", () => {
 
     write("runtime/checkout.ts", checkoutModule + "\nexport const more = 1;\n");
 
-    expect(await writeTypes(root)).toBe(false);
+    expect((await writeTypes(root)).changed).toBe(false);
     expect(statSync(path.join(root, typesFileName)).mtimeMs).toBe(mtimeMs);
+  });
+
+  it("writes the file and warns when one specifier names different modules from two directories", async () => {
+    for (const dir of ["a", "b"]) {
+      write(
+        `${dir}/infra.ts`,
+        `import * as handlers from "./handlers" with { type: "runtime" };\nconsole.log(handlers);\n`,
+      );
+      write(`${dir}/handlers.ts`, `export const x = 1;`);
+    }
+
+    const { changed, warnings } = await writeTypes(root);
+
+    expect(changed).toBe(true);
+    expect(warnings).toEqual([
+      expect.stringContaining("names different modules in a/infra.ts, b/infra.ts"),
+    ]);
+  });
+});
+
+describe("writeTypesOrWarn", () => {
+  it("warns and doesn't throw when a source file doesn't parse", async () => {
+    write(
+      "infra/orders.ts",
+      `import * as checkout from "../runtime/checkout" with { type: "runtime" };\nexport const broken = ;\n`,
+    );
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    await writeTypesOrWarn(root, logger);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining(`Writing ${typesFileName} failed:`),
+    );
   });
 });
 
@@ -324,7 +380,28 @@ describe("the generated declarations", () => {
       `'{ readonly "no generated declaration for this { type: \\"runtime\\" } import": "run notation types"; }'`,
     );
   }, 30_000);
+
+  it("give an attributed import that doesn't resolve an error type that names the specifier and the file", async () => {
+    write(
+      "infra/orders.ts",
+      `
+      import { queue } from "@notation/aws/sqs";
+      import * as billing from "../runtime/billing" with { type: "runtime" };
+      queue({ name: "a" }).consume(billing.processOrder);
+      `,
+    );
+    await writeTypes(root);
+
+    const { status, output } = typecheck();
+    expect(status).not.toBe(0);
+    expect(output).toContain("infra/orders.ts(4,");
+    expect(output).toContain(
+      `'{ readonly "\\"../runtime/billing\\" in infra/orders.ts doesn't resolve to a file": "check the path"; }'`,
+    );
+  }, 30_000);
 });
+
+const checkoutView = `InfraView<typeof import("./runtime/checkout.js")>`;
 
 // On macOS, chokidar can miss changes made just after "ready", before the
 // underlying watch is listening, so each poll makes the change again.
@@ -332,7 +409,7 @@ async function untilWritten(change: () => void) {
   await vi.waitFor(
     () => {
       change();
-      expect(read()).toContain("../runtime/checkout*");
+      expect(read()).toContain(checkoutView);
     },
     { timeout: 10_000, interval: 200 },
   );
@@ -344,7 +421,7 @@ describe("watchTypes", () => {
     write("infra/orders.ts", `export const a = 1;`);
     const stop = await watchTypes(root, { logger, debounceMs: 10 });
     try {
-      expect(read()).not.toContain("../runtime/checkout*");
+      expect(read()).not.toContain(checkoutView);
 
       // The runtime module first, so that the import of it in orders.ts
       // resolves whenever a run reads orders.ts.
@@ -362,7 +439,7 @@ describe("watchTypes", () => {
     mkdirSync(path.join(root, "runtime"));
     const stop = await watchTypes(root, { logger, debounceMs: 10 });
     try {
-      expect(read()).not.toContain("../runtime/checkout*");
+      expect(read()).not.toContain(checkoutView);
 
       await untilWritten(() => write("runtime/checkout.ts", checkoutModule));
       expect(logger.error).not.toHaveBeenCalled();
