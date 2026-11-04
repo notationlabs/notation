@@ -10,6 +10,7 @@ export const cli: DocCategory = {
       links: [
         { label: "notation compile", slug: "cli/compile" },
         { label: "notation watch", slug: "cli/watch" },
+        { label: "notation types", slug: "cli/types" },
         { label: "notation plan", slug: "cli/plan" },
         { label: "notation deploy", slug: "cli/deploy" },
         { label: "notation destroy", slug: "cli/destroy" },

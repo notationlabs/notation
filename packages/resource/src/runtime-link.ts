@@ -1,28 +1,6 @@
 import { captureCallSite } from "./contributions";
 import { getActiveResourceCollection } from "./resource-collection";
-
-declare const handlerTypes: unique symbol;
-declare const runtimeRefTypes: unique symbol;
-
-/**
- * A handler that a runtime function's `handle` made, as runtime code sees it:
- * a function that takes the event `E` and returns `R`. The type-only mark
- * carries `F`, the provider's function type, so the infra view of a runtime
- * module can tell handlers from other exported functions.
- */
-export type Handler<E, R, F> = ((event: E, ...rest: any[]) => R) & {
-  readonly [handlerTypes]?: { event: E; result: R; function: F };
-};
-
-/**
- * A handler as infra sees it: a reference that infra APIs such as `route()`
- * and `consume()` wire, and that infra can't call. `function` is the function
- * the handler belongs to.
- */
-export type RuntimeRef<E, R, F> = {
-  readonly function: F;
-  readonly [runtimeRefTypes]?: { event: E; result: R };
-};
+import type { RuntimeRef } from "./views";
 
 /** A handler of a runtime function, found when the infra phase linked it. */
 export type RuntimeHandler = {
@@ -55,10 +33,18 @@ const standInMark = Symbol.for("@notation/resource/StandIn");
  * What `handle.<kind>(fn)` returns in the infra phase. It holds the function
  * it belongs to and the kind of event it takes, not the handler's code. The
  * infra phase names it after its export when it links the runtime modules.
+ *
+ * Types call it a `Handler`, as runtime code sees it, and infra sees it as a
+ * `RuntimeRef` through `InfraView`.
  */
-export class HandlerRef<F = unknown> {
+export class HandlerRef<F = unknown> implements RuntimeRef<any, unknown, F> {
   readonly kind: string;
   readonly function: F;
+  declare readonly "~notation.runtimeRef": RuntimeRef<
+    any,
+    unknown,
+    F
+  >["~notation.runtimeRef"];
   readonly declaredAt?: string;
   module?: string;
   export?: string;
@@ -128,7 +114,10 @@ type StandInState = {
  * the export's function.
  * @param module The runtime module, relative to the project root.
  */
-export function createStandIn(module: string, name: string): object {
+export function createStandIn(
+  module: string,
+  name: string,
+): RuntimeRef<any, unknown, unknown> {
   const state: StandInState = { module, name, linked: false, value: undefined };
   let lazyFunction: object | undefined;
   const get = (_: object, prop: string | symbol): unknown => {
@@ -145,7 +134,11 @@ export function createStandIn(module: string, name: string): object {
       `${name} isn't known yet: infra read ${String(prop)} on it while infra was being evaluated${at(get)}. Pass it to an infra API such as route() or consume(), which wire it once evaluation ends.`,
     );
   };
-  return new Proxy({}, { get, set: readOnly(name) });
+  return new Proxy({}, { get, set: readOnly(name) }) as RuntimeRef<
+    any,
+    unknown,
+    unknown
+  >;
 }
 
 export function isStandIn(value: unknown): boolean {

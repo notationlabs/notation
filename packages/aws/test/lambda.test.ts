@@ -10,7 +10,7 @@ import {
   lambda,
   type LambdaGroup,
   type NameSafe,
-  type RuntimeRef,
+  type LambdaRef,
 } from "src/lambda";
 import { queue } from "src/sqs";
 
@@ -221,7 +221,7 @@ describe("a function declared in a runtime module", () => {
     const graph = await collectResourceGraph(() => {
       const standIn = createStandIn("runtime/checkout.ts", "createOrder");
       todoApi = api({ name: "orders-api" });
-      router(todoApi).post("/orders", standIn as RuntimeRef);
+      router(todoApi).post("/orders", standIn as LambdaRef<any>);
 
       fn = lambda({ id: "checkout" });
       linkRuntimeModules([
@@ -256,7 +256,7 @@ describe("a function declared in a runtime module", () => {
     await expect(
       collectResourceGraph(() => {
         const standIn = createStandIn("runtime/checkout.ts", "createOrder");
-        queue({ name: "orders" }).consume(standIn as RuntimeRef);
+        queue({ name: "orders" }).consume(standIn as LambdaRef<any>);
         const fn = lambda({ id: "checkout" });
         linkRuntimeModules([
           {
@@ -275,7 +275,7 @@ describe("a function declared in a runtime module", () => {
     await expect(
       collectResourceGraph(() => {
         const standIn = createStandIn("runtime/checkout.ts", "helper");
-        queue({ name: "orders" }).consume(standIn as RuntimeRef);
+        queue({ name: "orders" }).consume(standIn as LambdaRef<any>);
         const fn = lambda({ id: "checkout" });
         linkRuntimeModules([
           {

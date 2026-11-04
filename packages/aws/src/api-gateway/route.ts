@@ -1,7 +1,7 @@
 import * as aws from "@notation/aws.iac";
 import {
   wireLambdaTarget,
-  type LambdaTarget,
+  type HandlerTarget,
   type ResolvedLambdaTarget,
 } from "src/lambda";
 import type { ApiGroup } from "./api";
@@ -13,7 +13,7 @@ type RouteGroupConfig = {
   method: string;
   path: `/${string}`;
   auth: AuthorizerConfig;
-  handler: LambdaTarget<any>;
+  handler: HandlerTarget<never>;
 };
 
 export class RouteGroup extends aws.AwsResourceGroup {
@@ -123,7 +123,7 @@ export function route(
   method: string, // todo: http methods only
   path: `/${string}`,
   auth: AuthorizerConfig,
-  handler: LambdaTarget<any>,
+  handler: HandlerTarget<never>,
 ): RouteGroup {
   return new RouteGroup({ apiGroup, method, path, auth, handler }, route);
 }

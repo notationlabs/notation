@@ -5,10 +5,9 @@ import { Context } from "aws-lambda";
 
 const { handle } = lambda();
 
-test("the runtime half of handle returns the handler, marked with its kind", async () => {
+test("the runtime half of handle wraps the handler, marked with its kind", async () => {
   const fn = async (): Promise<any> => ({ body: "{}" });
   const handler = handle.apiRequest(fn);
-  expect(handler).toBe(fn);
   expect(getHandlerKind(handler)).toBe("api");
   expect(getHandlerKind(handle.sqsEvent(async () => {}))).toBe("sqs");
   expect(await handler({} as any, {} as any)).toEqual({ body: "{}" });

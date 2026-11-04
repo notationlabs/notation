@@ -10,12 +10,14 @@ import {
   isStandIn,
   onEvaluationEnd,
   resolveRuntimeTarget,
-  type RuntimeRef as ResourceRuntimeRef,
+  type FunctionDeclaration,
 } from "@notation/resource";
 import type { DispatchEntry } from "@notation/aws.iac/shared";
 import path from "path";
 import { awsName } from "src/naming";
 import { handlerKinds, type Handle, type HandlerKind } from "src/shared/handle";
+
+export type { Handle, LambdaHandler } from "src/shared/handle";
 import { assertLambdaId, type NameSafe } from "./lambda-id";
 
 export type LambdaConfig = {
@@ -53,20 +55,6 @@ export type LambdaConfig = {
   grants?: aws.lambda.PolicyStatement[];
 };
 
-/**
- * An export of a runtime module as infra sees it: a handler of the Lambda
- * function that takes the event `E`. Infra APIs such as `route()` wire it.
- */
-export type RuntimeRef<E = any> = ResourceRuntimeRef<E, any, LambdaGroup>;
-
-/**
- * What an infra API such as `route()` invokes: a handler of a runtime
- * module, whose event is the first parameter of `H`, or a Lambda group from
- * `lambda()` that runs external code.
- */
-export type LambdaTarget<H extends (...args: any[]) => any> =
-  RuntimeRef<Parameters<H>[0]> | LambdaGroup;
-
 // Marks a LambdaGroup. Two installed copies of this package have different
 // LambdaGroup classes, so `instanceof` can't recognise a group from the
 // other copy. `Symbol.for` returns the same symbol in both.
@@ -75,7 +63,7 @@ const lambdaGroupMark = Symbol.for("@notation/aws/LambdaGroup");
 export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
   readonly fn: aws.lambda.LambdaFunctionInstance;
   readonly role: aws.lambda.LambdaIamRoleInstance;
-  #handle?: Handle<LambdaGroup>;
+  #handle?: Handle;
 
   get [lambdaGroupMark]() {
     return true;
@@ -100,7 +88,7 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
    * handler that a runtime module exports is dispatched to by the function.
    * A function that runs external code has no `handle`.
    */
-  get handle(): Handle<LambdaGroup> {
+  get handle(): Handle {
     if (!runtimeFunctions.has(this)) {
       throw new Error(
         `lambda "${this.id}" runs the external code at ${this.config.code!.path}, so it has no handle. Leave out code to declare a function in a runtime module.`,
@@ -138,13 +126,13 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
   }
 }
 
-function makeHandle(group: LambdaGroup): Handle<LambdaGroup> {
+function makeHandle(group: LambdaGroup): Handle {
   return Object.fromEntries(
     Object.entries(handlerKinds).map(([method, kind]) => {
       const make = (_handler: unknown) => createHandlerRef(kind, group, make);
       return [method, make];
     }),
-  ) as unknown as Handle<LambdaGroup>;
+  ) as unknown as Handle;
 }
 
 export function isLambdaGroup(value: unknown): value is LambdaGroup {
@@ -209,6 +197,13 @@ function resolveLambdaTarget(
 }
 
 /**
+ * What `lambda()` returns. Infra imports a runtime module
+ * `with { type: "runtime" }`, and sees an exported `lambda()` result as its
+ * `LambdaGroup`.
+ */
+export type LambdaDeclaration = LambdaGroup & FunctionDeclaration<LambdaGroup>;
+
+/**
  * Declares a Lambda function. `id` must be a name-safe string literal; see
  * `NameSafe`.
  *
@@ -217,7 +212,7 @@ function resolveLambdaTarget(
  */
 export function lambda<const Id extends string>(
   config: Omit<LambdaConfig, "id"> & { id: NameSafe<Id> },
-): LambdaGroup {
+): LambdaDeclaration {
   const group = new LambdaGroup(
     config.code ? config : { ...config, code: runtimeCode(config.id) },
   );
@@ -233,7 +228,7 @@ export function lambda<const Id extends string>(
       lambda,
     );
   }
-  return group;
+  return group as LambdaDeclaration;
 }
 
 // The groups that `lambda()` declared without code, whose handlers the

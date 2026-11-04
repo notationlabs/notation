@@ -1,7 +1,11 @@
-import type { LambdaGroup } from "src/lambda";
-import { handlerKinds, type Handle, type HandlerKind } from "src/shared/handle";
+import {
+  handlerKinds,
+  type Handle,
+  type HandlerKind,
+  type LambdaHandler,
+} from "src/shared/handle";
 
-export type { HandlerKind };
+export type { Handle, HandlerKind, LambdaHandler };
 
 // Marks the functions that `handle.*` returns with their kind, so the
 // dispatcher can tell handlers from other exported functions. `Symbol.for`
@@ -13,25 +17,25 @@ export function getHandlerKind(value: unknown): HandlerKind | undefined {
   return (value as any)[handlerKind];
 }
 
+// Wraps each handler in an async function, so that calling it returns a
+// promise, as its `Handler` type says.
 const handle = Object.fromEntries(
   Object.entries(handlerKinds).map(([method, kind]) => [
     method,
-    (handler: Function) => {
-      Object.defineProperty(handler, handlerKind, {
-        value: kind,
-        configurable: true,
-      });
-      return handler;
+    (handler: (...args: any[]) => unknown) => {
+      const wrapped = async (...args: any[]) => handler(...args);
+      Object.defineProperty(wrapped, handlerKind, { value: kind });
+      return wrapped;
     },
   ]),
-) as unknown as Handle<LambdaGroup>;
+) as unknown as Handle;
 
 /**
  * The runtime half of `lambda()` from `@notation/aws/lambda`. In a function's
  * bundle, the compiler replaces each `lambda(...)` call with a call to this,
  * without its settings, which only the infra phase reads. Each method of
- * `handle` marks the handler with its kind and returns it.
+ * `handle` returns the handler, marked with its kind.
  */
-export function lambda(): { handle: Handle<LambdaGroup> } {
+export function lambda(): { handle: Handle } {
   return { handle };
 }

@@ -1,8 +1,6 @@
-import type {
-  ApiGatewayHandler,
-  JWTAuthorizedApiGatewayHandler,
-} from "src/shared";
-import type { LambdaTarget } from "src/lambda";
+import type { APIGatewayProxyEventV2 } from "aws-lambda";
+import type { HandlerTarget } from "src/lambda";
+import type { APIGatewayJWTProxyEventV2 } from "src/shared";
 import { route } from "./route";
 import type { ApiGroup } from "./api";
 import { AuthorizerConfig, JWTAuthorizerConfig, NO_AUTH } from "./auth";
@@ -10,7 +8,7 @@ import { AuthorizerConfig, JWTAuthorizerConfig, NO_AUTH } from "./auth";
 export const router = (apiGroup: ApiGroup) => {
   const createRouteCallback =
     (method: string) =>
-    (path: `/${string}`, handler: LambdaTarget<ApiGatewayHandler>) => {
+    (path: `/${string}`, handler: HandlerTarget<APIGatewayProxyEventV2>) => {
       return route(apiGroup, method, path, NO_AUTH, handler);
     };
 
@@ -39,7 +37,7 @@ class AuthorizedRouteBuilder {
     <ClaimsType>(method: string, authorizer: JWTAuthorizerConfig) =>
     (
       path: `/${string}`,
-      handler: LambdaTarget<JWTAuthorizedApiGatewayHandler<ClaimsType>>,
+      handler: HandlerTarget<APIGatewayJWTProxyEventV2<ClaimsType>>,
     ) => {
       return route(this.apiGroup, method, path, authorizer, handler);
     };

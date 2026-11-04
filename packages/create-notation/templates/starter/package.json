@@ -6,6 +6,7 @@
     "dashboard": "notation dashboard",
     "deploy": "notation deploy",
     "destroy": "notation destroy",
+    "types": "notation types",
     "viz": "notation viz",
     "watch": "notation watch"
   }

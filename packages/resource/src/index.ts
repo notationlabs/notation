@@ -48,9 +48,17 @@ export {
   isStandIn,
   linkRuntimeModules,
   resolveRuntimeTarget,
-  type Handler,
   type RuntimeFunction,
   type RuntimeHandler,
   type RuntimeModuleLink,
-  type RuntimeRef,
 } from "./runtime-link";
+export type {
+  FunctionDeclaration,
+  Grant,
+  Handler,
+  InfraOnly,
+  InfraView,
+  RuntimeOnly,
+  RuntimeRef,
+  RuntimeView,
+} from "./views";

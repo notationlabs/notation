@@ -1,5 +1,5 @@
 import { api, router } from "@notation/aws/api-gateway";
-import { getUserHandler } from "runtime/user.fn";
+import { getUserHandler } from "runtime/user.fn" with { type: "runtime" };
 import type { JWTClaims } from "shared/jwt";
 
 const userApi = api({ name: "user-api-jwt" });

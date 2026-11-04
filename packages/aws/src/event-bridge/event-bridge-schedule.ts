@@ -1,9 +1,9 @@
 import {
   wireLambdaTarget,
-  type LambdaTarget,
+  type HandlerTarget,
   type ResolvedLambdaTarget,
 } from "src/lambda";
-import type { EventBridgeHandler } from "src/shared";
+import type { EventBridgeEvent } from "aws-lambda";
 import { Schedule } from "./schedule";
 import * as aws from "@notation/aws.iac";
 import { toAwsScheduleExpression } from "./aws-conversions";
@@ -16,7 +16,7 @@ type ScheduleConfig = {
    * The handler of a runtime module to invoke on the schedule, or a Lambda
    * group from `lambda()`. A handler is wired when evaluation ends.
    */
-  handler: LambdaTarget<EventBridgeHandler<"Scheduled Event", any>>;
+  handler: HandlerTarget<EventBridgeEvent<"Scheduled Event", any>>;
 };
 
 export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
