@@ -9,11 +9,16 @@ import { MemoryStateBackend } from "@notation/state";
 import { fs } from "@notation/std.iac";
 import { lambdaClient } from "src/utils/aws-clients";
 import {
+  environmentSizeIssue,
   LambdaFunction,
   type LambdaFunctionInstance,
 } from "src/resources/lambda/lambda";
 import { LambdaIamRole } from "src/resources/lambda/lambda-role";
-import { ResourceNotFoundError, UNKNOWN_AFTER_APPLY } from "@notation/resource";
+import {
+  OutputValue,
+  ResourceNotFoundError,
+  UNKNOWN_AFTER_APPLY,
+} from "@notation/resource";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
 import { decodeRuntime, encodeRuntime, runtimeVariable } from "src/shared";
 
@@ -593,6 +598,48 @@ describe("Lambda environment", () => {
     ).rejects.toThrow(
       /Invalid Environment for app \(aws\/lambda\/LambdaFunction\) at plan.*Runtime\.outputs\.infra\/orders#settings: the environment is at least \d+ bytes, over Lambda's limit of 4096 bytes. The largest values are the read infra\/orders#settings \(40\d\d bytes\), the read infra\/orders#orderQueue.url \(\d+ bytes\), the variable STAGE \(14 bytes\)/,
     );
+  });
+
+  it("counts an output value as an empty string in the size check", () => {
+    const role = new LambdaIamRole("role", { config: { RoleName: "app" } });
+    const issue = environmentSizeIssue({
+      Runtime: {
+        outputs: {
+          "infra/orders#settings": "x".repeat(4100),
+          "infra/orders#orderQueue.url": new OutputValue(role, ["Arn"]),
+        },
+      },
+    } as any);
+
+    expect(issue).toEqual({
+      path: ["Runtime", "outputs", "infra/orders#settings"],
+      message: expect.stringMatching(
+        /^the environment is at least \d+ bytes, over Lambda's limit of 4096 bytes/,
+      ),
+    });
+  });
+
+  it("accepts an environment under Lambda's limit that holds an output value at declaration", () => {
+    const role = new LambdaIamRole("role", { config: { RoleName: "app" } });
+    expect(
+      () =>
+        new LambdaFunction("app", {
+          config: {
+            FunctionName: "app",
+            Environment: {
+              Runtime: {
+                outputs: {
+                  "infra/orders#settings": "x".repeat(3900),
+                  "infra/orders#orderQueue.url": new OutputValue(role, [
+                    "Arn",
+                  ]),
+                },
+              },
+            },
+          } as any,
+          dependencies: { role } as any,
+        }),
+    ).not.toThrow();
   });
 
   it("counts other variables towards the limit at plan", async () => {

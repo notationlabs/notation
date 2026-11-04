@@ -1,5 +1,5 @@
 import {
-  containsUnknownAfterApply,
+  isOutputValue,
   isUnknownAfterApply,
   mergeContributions,
   resource,
@@ -477,14 +477,15 @@ function encodeEnvironment(
 type EnvironmentEntry = { path: string[]; label: string; size: number };
 
 /**
- * Checks the environment against Lambda's limit. At plan, a value that is
- * unknown until apply counts as an empty string, so the check fails only
- * when the environment is over the limit whatever the unknown values are.
+ * Checks the environment against Lambda's limit. A value that is not known
+ * yet counts as an empty string: an output value at declaration, or a value
+ * unknown until apply at plan. So the check fails only when the environment
+ * is over the limit whatever the unknown values are.
  *
  * The issue is reported at the largest entry that holds no unknown value.
- * Plan drops an issue whose path is at or above an unknown value. The whole
- * environment is above every unknown value, so plan would always drop an
- * issue reported on it.
+ * Validation drops an issue whose path is at or above an unknown value. The
+ * whole environment is above every unknown value, so validation would always
+ * drop an issue reported on it.
  */
 export function environmentSizeIssue(
   environment: LambdaEnvironment | undefined,
@@ -502,9 +503,9 @@ export function environmentSizeIssue(
   const largest = entries
     .slice(0, 3)
     .map((entry) => `${entry.label} (${entry.size} bytes)`);
-  const unknown = containsUnknownAfterApply(environment);
+  const unknown = containsUnknown(environment);
   const reported = entries.find(
-    (entry) => !containsUnknownAfterApply(valueAt(environment, entry.path)),
+    (entry) => !containsUnknown(valueAt(environment, entry.path)),
   );
   return {
     path: reported?.path ?? [],
@@ -548,8 +549,23 @@ function environmentEntries(
   return entries;
 }
 
+// An output value is unknown at declaration, as a value unknown until apply
+// is at plan. Its own fields hold the resource, so it must not be copied.
+function isUnknown(value: unknown): boolean {
+  return isUnknownAfterApply(value) || isOutputValue(value);
+}
+
+function containsUnknown(value: unknown): boolean {
+  if (isUnknown(value)) return true;
+  if (Array.isArray(value)) return value.some(containsUnknown);
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).some(containsUnknown);
+  }
+  return false;
+}
+
 function withoutUnknowns(value: unknown): unknown {
-  if (isUnknownAfterApply(value)) return "";
+  if (isUnknown(value)) return "";
   if (Array.isArray(value)) return value.map(withoutUnknowns);
   if (value !== null && typeof value === "object") {
     return Object.fromEntries(
