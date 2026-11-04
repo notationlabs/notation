@@ -1,11 +1,12 @@
-// `Symbol.for` gives one store to every copy of this module. Vitest loads the
-// plugin and the test's import of `@notation/aws/testing` as two copies.
-const storeKey = Symbol.for("@notation/aws/testing/outputs");
-
-function store(): Map<string, unknown> {
-  const global = globalThis as { [storeKey]?: Map<string, unknown> };
-  return (global[storeKey] ??= new Map());
-}
+import {
+  bindingKey,
+  clearOutputValues,
+  findOutputValue,
+  hasOutputValuesBelow,
+  outputKey,
+  parseOutputKey,
+  setOutputValues,
+} from "@notation/resource/outputs";
 
 /**
  * Sets the values that runtime code reads from infra in a test. Each key is
@@ -17,44 +18,25 @@ function store(): Map<string, unknown> {
  * Each call adds to the values that earlier calls set.
  */
 export function setOutputs(values: Record<string, unknown>): void {
-  for (const [key, value] of Object.entries(values)) {
-    if (!/^[^#]+#[^.#]+(\.[^.#]+)*$/.test(key)) {
+  for (const key of Object.keys(values)) {
+    try {
+      parseOutputKey(key);
+    } catch {
       throw new Error(
         `"${key}" is not an output key. Use the infra module's path from the project root, "#", the binding and the property path, such as "infra/orders#orderQueue.url".`,
       );
     }
-    store().set(key, value);
   }
+  setOutputValues(values);
 }
 
 /** Removes every value that `setOutputs` set. */
 export function clearOutputs(): void {
-  store().clear();
+  clearOutputValues();
 }
 
-type Lookup =
-  | { found: true; value: unknown }
-  | { found: false; nested: boolean };
-
-function lookup(module: string, path: string[]): Lookup {
-  const values = store();
-  const keyOf = (length: number) =>
-    `${module}#${path.slice(0, length).join(".")}`;
-  for (let length = path.length; length > 0; length--) {
-    if (!values.has(keyOf(length))) continue;
-    let value = values.get(keyOf(length));
-    for (const segment of path.slice(length)) {
-      value = (value as any)?.[segment];
-    }
-    return { found: true, value };
-  }
-  const prefix = `${keyOf(path.length)}.`;
-  const nested = [...values.keys()].some((key) => key.startsWith(prefix));
-  return { found: false, nested };
-}
-
-function missing(module: string, path: string[]): Error {
-  const key = `${module}#${path.join(".")}`;
+function missing(module: string, binding: string, path: string[]): Error {
+  const key = outputKey(module, binding, path);
   return new Error(
     `No output is set for "${key}". Set it in the test with setOutputs({ "${key}": ... }).`,
   );
@@ -71,24 +53,27 @@ const inert: any = new Proxy(function () {}, {
 // `grant` stays callable in runtime code, since `lambda()` settings use it.
 const callable = new Set(["grant"]);
 
-function view(module: string, path: string[]): any {
+function view(module: string, binding: string, path: string[]): any {
+  const key = bindingKey(module, binding);
   return new Proxy(function () {}, {
     get(_, prop) {
       if (prop === "then") return undefined;
       if (prop === "toJSON" || prop === Symbol.toPrimitive) {
         return () => {
-          const result = lookup(module, path);
-          if (!result.found) throw missing(module, path);
-          return result.value;
+          const found = findOutputValue(key, path);
+          if (!found) throw missing(module, binding, path);
+          return found.value;
         };
       }
       if (typeof prop === "symbol") return undefined;
       const next = [...path, prop];
-      const result = lookup(module, next);
-      if (result.found) return result.value;
-      if (result.nested) return view(module, next);
+      const found = findOutputValue(key, next);
+      if (found) return found.value;
+      if (hasOutputValuesBelow(outputKey(module, binding, next))) {
+        return view(module, binding, next);
+      }
       if (callable.has(prop)) return inert;
-      throw missing(module, next);
+      throw missing(module, binding, next);
     },
     apply: () => inert,
   });
@@ -102,5 +87,5 @@ function view(module: string, path: string[]): any {
  * @internal
  */
 export function infraBinding(module: string, binding: string): unknown {
-  return view(module, [binding]);
+  return view(module, binding, []);
 }

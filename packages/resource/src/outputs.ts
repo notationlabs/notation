@@ -85,6 +85,48 @@ export function addOutputSource(
   store().sources.push(source);
 }
 
+function loadSources(): Map<string, unknown> {
+  const { values, sources } = store();
+  while (sources.length > 0) {
+    const delivered = sources.shift()!() ?? {};
+    for (const [key, value] of Object.entries(delivered)) {
+      if (!values.has(key)) values.set(key, value);
+    }
+  }
+  return values;
+}
+
+/**
+ * Finds the value of a read as `read` does, but gives `undefined` in place of
+ * throwing when no value is set. The value is wrapped, since a set value can
+ * itself be `undefined`.
+ */
+export function findOutputValue(
+  binding: string,
+  path: readonly string[],
+): { value: unknown } | undefined {
+  const values = loadSources();
+  for (let length = path.length; length >= 0; length -= 1) {
+    const key = [binding, ...path.slice(0, length)].join(".");
+    if (!values.has(key)) continue;
+    let value = values.get(key);
+    for (const segment of path.slice(length)) {
+      value = (value as Record<string, unknown> | null | undefined)?.[segment];
+    }
+    return { value };
+  }
+  return undefined;
+}
+
+/**
+ * Whether a value is set for a key below `key`, such as
+ * `infra/api#api.stage.url` below `infra/api#api.stage`.
+ */
+export function hasOutputValuesBelow(key: string): boolean {
+  const prefix = `${key}.`;
+  return [...loadSources().keys()].some((set) => set.startsWith(prefix));
+}
+
 /**
  * Reads a value that infra delivered to runtime code. The compiler rewrites
  * each use of a `type: "infra"` import into a call to this, such as
@@ -94,22 +136,8 @@ export function addOutputSource(
  * binding.
  */
 export function read(binding: string, path: readonly string[]): unknown {
-  const { values, sources } = store();
-  while (sources.length > 0) {
-    const delivered = sources.shift()!() ?? {};
-    for (const [key, value] of Object.entries(delivered)) {
-      if (!values.has(key)) values.set(key, value);
-    }
-  }
-  for (let length = path.length; length >= 0; length -= 1) {
-    const key = [binding, ...path.slice(0, length)].join(".");
-    if (!values.has(key)) continue;
-    let value = values.get(key);
-    for (const segment of path.slice(length)) {
-      value = (value as Record<string, unknown> | null | undefined)?.[segment];
-    }
-    return value;
-  }
+  const found = findOutputValue(binding, path);
+  if (found) return found.value;
   throw new Error(
     `No value for ${[binding, ...path].join(".")}. A function receives the values it reads from infra when it deploys, and a test sets them with setOutputs().`,
   );

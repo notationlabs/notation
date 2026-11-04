@@ -2,6 +2,8 @@ import { afterEach, expect, it } from "vitest";
 import {
   addOutputSource,
   clearOutputValues,
+  findOutputValue,
+  hasOutputValuesBelow,
   outputKey,
   parseOutputKey,
   read,
@@ -47,4 +49,14 @@ it("loads each source at the first read, without replacing values that are set",
   addOutputSource(() => ({ "infra/orders#a": "source", "infra/orders#b": 2 }));
   expect(read("infra/orders#a", [])).toBe("set");
   expect(read("infra/orders#b", [])).toBe(2);
+});
+
+it("finds a value without throwing, and tells whether keys below one are set", () => {
+  setOutputValues({ "infra/api#api.stage.url": undefined });
+  expect(findOutputValue("infra/api#api", ["stage", "url"])).toEqual({
+    value: undefined,
+  });
+  expect(findOutputValue("infra/api#api", ["stage"])).toBeUndefined();
+  expect(hasOutputValuesBelow("infra/api#api.stage")).toBe(true);
+  expect(hasOutputValuesBelow("infra/api#api.stage.url")).toBe(false);
 });
