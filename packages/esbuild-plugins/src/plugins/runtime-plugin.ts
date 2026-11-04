@@ -1,34 +1,50 @@
+import { readFile } from "node:fs/promises";
 import path from "node:path";
-import ts from "typescript";
+import { fileURLToPath } from "node:url";
 import type { Loader, Plugin } from "esbuild";
 import { toProjectRoot } from "@notation/core";
-import { chainRoot, parseModule } from "src/infra-phase/module-info";
+import { parseModule } from "src/infra-phase/module-info";
+import { moduleKey } from "src/runtime-modules";
+import { rewriteRuntimeModule } from "src/runtime-bundle/rewrite";
 import { isLocalModule } from "src/utils/is-local";
 import { GetFile, fsGetFile, withFileCheck } from "src/utils/get-file";
 
 type PluginOpts = {
   getFile?: GetFile;
+  /**
+   * Called after each build without errors, with the output keys that each
+   * output file reads from infra, such as `infra/orders#orderQueue.url`, by
+   * the output file's absolute path. Only reads left after tree-shaking are
+   * listed.
+   */
+  onReads?: (reads: Record<string, string[]>) => void;
 };
 
 const internal = Symbol.for("@notation/esbuild-plugins/runtime-internal");
 const infraAttribute = /\btype\s*:\s*["']infra["']/;
 
+/** The specifier that rewritten runtime code imports `read` from. */
+export const readSpecifier = "notation:read";
+
 /**
- * Bundles a function's runtime code. A `type: "infra"` import of a provider,
- * such as `@notation/aws/lambda`, becomes an import of the provider's runtime
- * half, `@notation/aws/lambda.fn`, and each call to one of its factories
- * loses its arguments, which only the infra phase reads. TypeScript imports that are
- * then unused are dropped, so infra that only the settings use is not
- * bundled.
+ * Bundles a function's runtime code. Each module that imports infra
+ * `with { type: "infra" }` is rewritten by `rewriteRuntimeModule`: provider
+ * imports become their runtime halves, and each use of a local infra module
+ * becomes a read of a value that the function receives when it deploys.
  *
- * Reading an infra module's values from runtime code is not supported yet:
- * such an import fails the build.
+ * Runtime code that imports an infra package, such as `@notation/aws/sqs`,
+ * without the attribute fails, since the bundle would include infra.
  */
 export function runtimePlugin(opts: PluginOpts = {}): Plugin {
   const getFile = withFileCheck(opts.getFile || fsGetFile);
   return {
     name: "notation-runtime",
     setup(build) {
+      if (opts.onReads) build.initialOptions.metafile = true;
+      // Every read that a rewrite made. A call in the output counts as a read
+      // only if it is one of these.
+      const generated = new Set<string>();
+
       const resolveInternal = (specifier: string, importer: string) =>
         build.resolve(specifier, {
           importer,
@@ -39,6 +55,15 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
 
       build.onResolve({ filter: /.*/ }, async (args) => {
         if (args.pluginData?.[internal]) return;
+        if (args.path === readSpecifier) {
+          const result = await build.resolve("@notation/resource/outputs", {
+            kind: "import-statement",
+            resolveDir: ownDir,
+            pluginData: { [internal]: true },
+          });
+          if (result.errors.length > 0) return { errors: result.errors };
+          return { path: result.path, external: result.external };
+        }
         const type = args.with?.type;
         if (type === "runtime") {
           return {
@@ -49,6 +74,18 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
             ],
           };
         }
+        if (type === undefined) {
+          if (isInfraPackage(args.path) && isLocalImporter(args.importer)) {
+            return {
+              errors: [
+                {
+                  text: `${toProjectRoot(args.importer)} imports ${args.path} without { type: "infra" }, so the bundle of runtime code would include infra. Import infra from runtime code with { type: "infra" }, and don't import modules that declare infra without it.`,
+                },
+              ],
+            };
+          }
+          return;
+        }
         if (type !== "infra") return;
         const target = await resolveInternal(args.path, args.importer);
         if (target.errors.length > 0) return { errors: target.errors };
@@ -56,7 +93,7 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
           return {
             errors: [
               {
-                text: `${toProjectRoot(args.importer)} reads ${args.path}, an infra module, from runtime code. Only lambda() settings can use infra values for now.`,
+                text: `${toProjectRoot(args.importer)} imports ${args.path}, an infra module, in a way that the compiler can't rewrite. Import its bindings with import { ... } or import * as, and read them in runtime code.`,
               },
             ],
           };
@@ -78,71 +115,94 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
           const source = await getFile(args.path);
           if (!infraAttribute.test(source)) return;
           const providers = new Set<string>();
+          const infraModules = new Map<string, string>();
           for (const decl of parseModule(args.path, source).imports) {
             if (decl.attribute !== "infra") continue;
             const target = await resolveInternal(decl.source, args.path);
-            if (target.errors.length === 0 && isPackage(target)) {
-              providers.add(decl.source);
-            }
+            if (target.errors.length > 0) continue;
+            if (isPackage(target)) providers.add(decl.source);
+            else infraModules.set(decl.source, moduleKey(target.path));
           }
-          return {
-            contents: removeFactoryArguments(args.path, source, providers),
-            loader: loaderFor(args.path),
-          };
+          const result = rewriteRuntimeModule(args.path, source, {
+            providers,
+            infraModules,
+            readSpecifier,
+          });
+          if (result.errors.length > 0) return { errors: result.errors };
+          for (const read of result.reads) generated.add(read);
+          return { contents: result.code, loader: loaderFor(args.path) };
         },
       );
+
+      build.onEnd(async (result) => {
+        if (!opts.onReads || result.errors.length > 0) return;
+        const cwd = build.initialOptions.absWorkingDir ?? process.cwd();
+        const outputs = result.outputFiles
+          ? result.outputFiles.map((file) => ({
+              path: file.path,
+              text: async () => file.text,
+            }))
+          : Object.keys(result.metafile?.outputs ?? {}).map((output) => {
+              const file = path.resolve(cwd, output);
+              return { path: file, text: () => readFile(file, "utf8") };
+            });
+        const reads: Record<string, string[]> = {};
+        for (const output of outputs) {
+          if (/\.(map|css)$/.test(output.path)) continue;
+          reads[output.path] = findReads(await output.text()).filter((key) =>
+            generated.has(key),
+          );
+        }
+        opts.onReads(reads);
+      });
     },
   };
 }
 
-/**
- * Points each `type: "infra"` import of a provider, such as
- * `@notation/aws/lambda`, at the provider's runtime half, and removes the
- * arguments of each call to a binding it imports, such as `lambda({ ... })`.
- * @param providers The import specifiers that name providers.
- */
-export function removeFactoryArguments(
-  file: string,
-  source: string,
-  providers: Set<string>,
-): string {
-  const info = parseModule(file, source);
-  const factories = new Set<string>();
-  const edits: Array<[number, number, string]> = [];
-  for (const decl of info.imports) {
-    if (decl.attribute !== "infra" || !providers.has(decl.source)) {
+// Matches the pure `read` calls that the rewrite makes, as esbuild prints
+// them. esbuild may rename `read`, so any callee name matches.
+const readCall =
+  /\/\* @__PURE__ \*\/ [\w$]+\(("(?:[^"\\]|\\.)*"), (\[(?:[^\]"]|"(?:[^"\\]|\\.)*")*\])\)/g;
+
+/** The output keys of the reads in a bundle that the rewrite made. */
+export function findReads(bundle: string): string[] {
+  const reads = new Set<string>();
+  for (const match of bundle.matchAll(readCall)) {
+    try {
+      const binding = JSON.parse(match[1]!);
+      const path = JSON.parse(match[2]!);
+      if (typeof binding !== "string" || !Array.isArray(path)) continue;
+      reads.add([binding, ...path].join("."));
+    } catch {
       continue;
     }
-    for (const binding of decl.bindings) factories.add(binding.local);
-    const { moduleSpecifier, attributes } = decl.node;
-    edits.push([
-      moduleSpecifier.getStart(),
-      attributes!.end,
-      JSON.stringify(`${decl.source}.fn`),
-    ]);
   }
-  if (factories.size === 0) return source;
+  return [...reads].sort();
+}
 
-  const visit = (node: ts.Node) => {
-    if (ts.isCallExpression(node)) {
-      const chain = chainRoot(node.expression);
-      if (chain && !chain.called && factories.has(chain.root)) {
-        edits.push([node.arguments.pos, node.arguments.end, ""]);
-        visit(node.expression);
-        return;
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(info.sourceFile);
+// The directory of this module, so that `read` resolves from this package's
+// dependencies, not the project's.
+const ownDir = path.dirname(fileURLToPath(import.meta.url));
 
-  let out = "";
-  let cursor = 0;
-  for (const [start, end, text] of edits.sort((a, b) => a[0] - b[0])) {
-    out += source.slice(cursor, start) + text;
-    cursor = end;
+// Packages, or parts of them, that only infra uses. A provider's runtime half
+// ends in `.fn`.
+function isInfraPackage(specifier: string): boolean {
+  if (/^@notation\/(aws\.iac\/shared|resource\/outputs)$/.test(specifier)) {
+    return false;
   }
-  return out + source.slice(cursor);
+  if (/^@notation\/(resource|aws\.iac|std\.iac|core)(\/|$)/.test(specifier)) {
+    return true;
+  }
+  return (
+    /^@notation\/aws\/(?!testing$).+/.test(specifier) &&
+    !specifier.endsWith(".fn")
+  );
+}
+
+function isLocalImporter(importer: string): boolean {
+  return (
+    importer !== "" && isLocalModule({ path: importer, namespace: "file" })
+  );
 }
 
 function isPackage(result: { external?: boolean; path: string }) {

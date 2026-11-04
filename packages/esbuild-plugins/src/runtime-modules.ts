@@ -21,3 +21,12 @@ export function matchesRuntimeModules(filePath: string, globs: string[]) {
   }
   return globs.some((glob) => minimatch(relativePath, glob));
 }
+
+/**
+ * The key of an infra module in output keys: its path relative to the
+ * project root, without its extension, such as `infra/orders`.
+ * @param filePath An absolute path.
+ */
+export function moduleKey(filePath: string) {
+  return toProjectRoot(filePath).replace(/\.[cm]?[jt]sx?$/, "");
+}

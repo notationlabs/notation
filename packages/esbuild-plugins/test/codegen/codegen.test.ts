@@ -30,6 +30,26 @@ linkRuntimeModules([
 `);
 });
 
+it("creates an infra entry that passes the infra modules that runtime code reads to linking", () => {
+  expect(
+    createInfraEntry(
+      "/project/infra/main.ts",
+      [{ path: "/project/runtime/checkout.ts", module: "runtime/checkout.ts" }],
+      [{ path: "/project/infra/orders.ts", module: "infra/orders" }],
+    ),
+  ).toBe(`export * from "/project/infra/main.ts";
+import { linkRuntimeModules } from "notation:runtime-link";
+import * as __notationInfra0 from "/project/infra/orders.ts";
+import * as __notationStandIns0 from "notation-standin:/project/runtime/checkout.ts" with { type: "runtime" };
+import * as __notationRuntime0 from "notation-stripped:/project/runtime/checkout.ts";
+linkRuntimeModules([
+  { module: "runtime/checkout.ts", standIns: __notationStandIns0, exports: __notationRuntime0 },
+], {
+  "infra/orders": __notationInfra0,
+});
+`);
+});
+
 it("creates a function entry that dispatches to the function's handlers", () => {
   expect(
     createFunctionEntry(
@@ -44,10 +64,9 @@ it("creates a function entry that dispatches to the function's handlers", () => 
       },
       (module) => `/project/${module}`,
     ),
-  )
-    .toBe(`import { createOrder as __notationHandler0 } from "/project/runtime/checkout.ts";
+  ).toBe(`import { createDispatcher } from "@notation/aws/lambda.fn";
+import { createOrder as __notationHandler0 } from "/project/runtime/checkout.ts";
 import { refund as __notationHandler1 } from "/project/runtime/refunds.ts";
-import { createDispatcher } from "@notation/aws/lambda.fn";
 export const handler = createDispatcher({
   "createOrder": __notationHandler0,
   "refund": __notationHandler1,

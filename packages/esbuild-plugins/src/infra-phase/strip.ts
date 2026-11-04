@@ -29,6 +29,11 @@ export type StrippedModules = {
   modules: Map<string, string>;
   /** Every file that the analysis read. */
   files: string[];
+  /**
+   * The local modules that the runtime modules, and the local modules they
+   * import, import `with { type: "infra" }`, sorted.
+   */
+  infraModules: string[];
 };
 
 /** The specifier prefix of a stripped copy in generated code. */
@@ -80,7 +85,21 @@ export async function stripRuntimeModules(
   for (const [path, state] of states) {
     if (state.visited) modules.set(path, analysis.generate(state));
   }
-  return { modules, files: [...states.keys()] };
+  const infraModules = new Set<string>();
+  for (const state of states.values()) {
+    const { info, resolved } = state;
+    for (const decl of [...info.imports, ...info.reExports]) {
+      const target = resolved.get(decl.source);
+      if (decl.attribute === "infra" && target?.local) {
+        infraModules.add(target.path);
+      }
+    }
+  }
+  return {
+    modules,
+    files: [...states.keys()],
+    infraModules: [...infraModules].sort(),
+  };
 }
 
 // Parses the entries and every local module that they reach through imports

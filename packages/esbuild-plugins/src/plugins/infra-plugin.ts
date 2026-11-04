@@ -14,7 +14,7 @@ import {
   type Resolved,
   type StrippedModules,
 } from "src/infra-phase/strip";
-import { matchesRuntimeModules } from "src/runtime-modules";
+import { matchesRuntimeModules, moduleKey } from "src/runtime-modules";
 import { isLocalModule } from "src/utils/is-local";
 import { GetFile, fsGetFile, withFileCheck } from "src/utils/get-file";
 
@@ -80,14 +80,18 @@ function createPlugin(
     setup(build) {
       const found = new Set<string>();
       let runtimeModules: string[] = [];
-      let stripped: StrippedModules = { modules: new Map(), files: [] };
+      let stripped: StrippedModules = {
+        modules: new Map(),
+        files: [],
+        infraModules: [],
+      };
       const resolve = createResolver(build);
 
       build.onStart(async () => {
         found.clear();
         if (mode === "scan") return;
         runtimeModules = [];
-        stripped = { modules: new Map(), files: [] };
+        stripped = { modules: new Map(), files: [], infraModules: [] };
         try {
           runtimeModules = await scan(build, opts);
         } catch {
@@ -167,6 +171,10 @@ function createPlugin(
           runtimeModules.map((file) => ({
             path: file,
             module: toProjectRoot(file),
+          })),
+          stripped.infraModules.map((file) => ({
+            path: file,
+            module: moduleKey(file),
           })),
         ),
         loader: "js",

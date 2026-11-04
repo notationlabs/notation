@@ -35,16 +35,26 @@ export function createStandInModule(module: string, exports: string[]) {
  * @param entryPoint The absolute path of the infra entry.
  * @param runtimeModules The absolute path of each runtime module, and its
  * path relative to the project root.
+ * @param infraModules The absolute path of each infra module that runtime
+ * code imports `with { type: "infra" }`, and its key: its path relative to
+ * the project root, without its extension. Linking resolves the values that
+ * functions read from them.
  */
 export function createInfraEntry(
   entryPoint: string,
   runtimeModules: Array<{ path: string; module: string }>,
+  infraModules: Array<{ path: string; module: string }> = [],
 ) {
   const lines = [`export * from ${JSON.stringify(entryPoint)};`];
   if (runtimeModules.length === 0) return `${lines[0]}\n`;
   lines.push(
     `import { linkRuntimeModules } from ${JSON.stringify(runtimeLinkSpecifier)};`,
   );
+  infraModules.forEach(({ path }, index) => {
+    lines.push(
+      `import * as __notationInfra${index} from ${JSON.stringify(path)};`,
+    );
+  });
   runtimeModules.forEach(({ path }, index) => {
     lines.push(
       `import * as __notationStandIns${index} from ${JSON.stringify(`${standInPrefix}${path}`)} with { type: "runtime" };`,
@@ -55,14 +65,23 @@ export function createInfraEntry(
     ({ module }, index) =>
       `  { module: ${JSON.stringify(module)}, standIns: __notationStandIns${index}, exports: __notationRuntime${index} },`,
   );
-  lines.push(`linkRuntimeModules([\n${links.join("\n")}\n]);`);
+  const infra = infraModules.map(
+    ({ module }, index) =>
+      `  ${JSON.stringify(module)}: __notationInfra${index},`,
+  );
+  lines.push(
+    infra.length === 0
+      ? `linkRuntimeModules([\n${links.join("\n")}\n]);`
+      : `linkRuntimeModules([\n${links.join("\n")}\n], {\n${infra.join("\n")}\n});`,
+  );
   return `${lines.join("\n")}\n`;
 }
 
 /**
  * The entry of a function's bundle. Lambda calls its `handler` export, which
  * dispatches each event to one of the function's handlers. The dispatcher
- * comes from the service's runtime package, `@notation/<platform>/<service>.fn`.
+ * comes from the service's runtime package, `@notation/<platform>/<service>.fn`,
+ * which also gives `read` the values that infra delivers to the function.
  * @param resolve Gives the absolute path of a handler's module.
  */
 export function createFunctionEntry(
@@ -70,13 +89,15 @@ export function createFunctionEntry(
   resolve: (module: string) => string,
 ) {
   const { platform, service } = splitService(fn.service);
-  const lines = fn.handlers.map(
-    (handler, index) =>
-      `import { ${exportName(handler.export)} as __notationHandler${index} } from ${JSON.stringify(resolve(handler.module))};`,
-  );
-  lines.push(
+  // The runtime package comes first, so that it is set up before any
+  // handler's module runs.
+  const lines = [
     `import { createDispatcher } from "@notation/${platform}/${service}.fn";`,
-  );
+    ...fn.handlers.map(
+      (handler, index) =>
+        `import { ${exportName(handler.export)} as __notationHandler${index} } from ${JSON.stringify(resolve(handler.module))};`,
+    ),
+  ];
   const entries = fn.handlers.map(
     (handler, index) =>
       `  ${JSON.stringify(handler.export)}: __notationHandler${index},`,
