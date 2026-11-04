@@ -4,6 +4,14 @@ declare module "@notation/aws/lambda*" with { type: "infra" } {
   const view: import("@notation/core/types").RuntimeView<typeof import("@notation/aws/lambda")>;
   export = view;
 }
+declare module "infra/orders*" with { type: "infra" } {
+  const view: import("@notation/core/types").RuntimeView<typeof import("infra/orders")>;
+  export = view;
+}
+declare module "runtime/checkout.fn*" with { type: "runtime" } {
+  const view: import("@notation/core/types").InfraView<typeof import("runtime/checkout.fn")>;
+  export = view;
+}
 declare module "runtime/orders.fn*" with { type: "runtime" } {
   const view: import("@notation/core/types").InfraView<typeof import("runtime/orders.fn")>;
   export = view;

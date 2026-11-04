@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-sqs": "^3.1080.0",
     "@notation/aws": "workspace:*",
     "@notation/cli": "workspace:*",
     "@notation/core": "workspace:*"
