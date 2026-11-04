@@ -13,11 +13,21 @@ type RouteGroupConfig = {
 };
 
 export class RouteGroup extends aws.AwsResourceGroup {
+  #route?: aws.apiGateway.RouteInstance;
+
   /**
    * The route. A route to a handler of a runtime module is added when the
-   * runtime modules are linked, once the handler is known.
+   * runtime modules are linked, once the handler is known. Reading it before
+   * then throws.
    */
-  route!: aws.apiGateway.RouteInstance;
+  get route(): aws.apiGateway.RouteInstance {
+    if (!this.#route) {
+      throw new Error(
+        `The route of ${this.id} isn't set yet. It is set when the runtime modules are linked, after infra has been evaluated.`,
+      );
+    }
+    return this.#route;
+  }
 
   constructor({ apiGroup, method, path, auth, handler }: RouteGroupConfig) {
     const apiResource = apiGroup.api;
@@ -75,7 +85,7 @@ export class RouteGroup extends aws.AwsResourceGroup {
         );
       }
 
-      this.route = this.add(
+      this.#route = this.add(
         new aws.apiGateway.Route(routeId, {
           config: {
             AuthorizationScopes: auth.scopes,

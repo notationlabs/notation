@@ -1,7 +1,12 @@
 import { test, expect } from "vitest";
 import { eventBridge } from "@notation/aws.iac";
+import {
+  collectResourceGraph,
+  createStandIn,
+  linkRuntimeModules,
+} from "@notation/resource";
 import { rate, schedule } from "src/event-bridge";
-import { lambda, LambdaGroup } from "src/lambda";
+import { lambda, LambdaGroup, type LambdaRef } from "src/lambda";
 import { runtimeRef } from "./runtime-ref";
 
 const declareLambda = () =>
@@ -107,4 +112,28 @@ test("schedule takes a lambda group from another copy of the package", () => {
   expect(() =>
     schedule({ name: "daily", schedule: rate(1, "day"), handler: fn }),
   ).not.toThrow();
+});
+
+test("a rule for a stand-in is set when the runtime modules are linked", async () => {
+  await collectResourceGraph(() => {
+    const standIn = createStandIn("runtime/digest.ts", "sendDigest");
+    const daily = schedule({
+      name: "daily",
+      schedule: rate(1, "day"),
+      handler: standIn as LambdaRef<any>,
+    });
+    expect(() => daily.rule).toThrow(
+      "The rule of daily isn't set yet. It is set when the runtime modules are linked, after infra has been evaluated.",
+    );
+
+    const fn = lambda({ id: "digest" });
+    linkRuntimeModules([
+      {
+        module: "runtime/digest.ts",
+        standIns: { sendDigest: standIn },
+        exports: { sendDigest: fn.handle.eventBridgeScheduledEvent(() => {}) },
+      },
+    ]);
+    expect(daily.rule.id).toBe("daily-eventbridge-rule");
+  });
 });

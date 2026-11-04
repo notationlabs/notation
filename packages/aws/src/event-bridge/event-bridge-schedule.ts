@@ -17,8 +17,21 @@ type ScheduleConfig = {
 };
 
 export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
-  /** The rule. It is added once the handler is wired. */
-  rule!: aws.eventBridge.EventBridgeRuleInstance;
+  #rule?: aws.eventBridge.EventBridgeRuleInstance;
+
+  /**
+   * The rule. It is added once the handler is wired, which for a handler of a
+   * runtime module is when the runtime modules are linked. Reading it before
+   * then throws.
+   */
+  get rule(): aws.eventBridge.EventBridgeRuleInstance {
+    if (!this.#rule) {
+      throw new Error(
+        `The rule of ${this.id} isn't set yet. It is set when the runtime modules are linked, after infra has been evaluated.`,
+      );
+    }
+    return this.#rule;
+  }
 
   constructor(config: ScheduleConfig) {
     super("aws/eventBridge/schedule", config.name, config);
@@ -27,7 +40,7 @@ export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
       (fn, exportName) => {
         const lambdaResource = fn.fn;
 
-        this.rule = this.add(
+        const rule = this.add(
           new aws.eventBridge.EventBridgeRule(
             `${config.name}-eventbridge-rule`,
             {
@@ -56,6 +69,7 @@ export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
             },
           ),
         );
+        this.#rule = rule;
 
         fn.add(
           new aws.eventBridge.LambdaEventBridgeRulePermission(
@@ -63,7 +77,7 @@ export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
             {
               dependencies: {
                 lambda: lambdaResource,
-                eventBridgeRule: this.rule,
+                eventBridgeRule: rule,
               },
             },
           ),

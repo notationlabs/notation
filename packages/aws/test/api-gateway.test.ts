@@ -1,8 +1,12 @@
 import { test, expect, expectTypeOf } from "vitest";
-import { collectResourceGraph } from "@notation/resource";
+import {
+  collectResourceGraph,
+  createStandIn,
+  linkRuntimeModules,
+} from "@notation/resource";
 import { NO_AUTH, api, router } from "src/api-gateway";
 import { route } from "src/api-gateway/route";
-import { lambda, type LambdaGroup } from "src/lambda";
+import { lambda, type LambdaGroup, type LambdaRef } from "src/lambda";
 import { runtimeRef } from "./runtime-ref";
 import type { SQSEvent } from "aws-lambda";
 import type { APIGatewayJWTProxyEventV2 } from "src/shared";
@@ -254,4 +258,30 @@ test("router methods take only handlers of API requests", () => {
   expectTypeOf(authed.get).toBeCallableWith("/me", claimsHandler);
   // @ts-expect-error the claims type must match the authorizer's
   expectTypeOf(authed.get).toBeCallableWith("/b", otherClaimsHandler);
+});
+
+test("a route to a stand-in is set when the runtime modules are linked", async () => {
+  await collectResourceGraph(() => {
+    const standIn = createStandIn("runtime/todos.ts", "getTodos");
+    const getTodos = route(
+      api({ name: "todo-api" }),
+      "GET",
+      "/todos",
+      NO_AUTH,
+      standIn as LambdaRef<any>,
+    );
+    expect(() => getTodos.route).toThrow(
+      "The route of todo-api-GET-/todos isn't set yet. It is set when the runtime modules are linked, after infra has been evaluated.",
+    );
+
+    const fn = lambda({ id: "todos" });
+    linkRuntimeModules([
+      {
+        module: "runtime/todos.ts",
+        standIns: { getTodos: standIn },
+        exports: { getTodos: fn.handle.apiRequest(() => ({})) },
+      },
+    ]);
+    expect(getTodos.route.config.RouteKey).toBe("GET /todos");
+  });
 });
