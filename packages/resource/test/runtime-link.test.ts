@@ -533,3 +533,11 @@ it("fails when a function reads an infra function, or a value that isn't data", 
     "the infra phase didn't load infra/other",
   );
 });
+
+it("fails when a function reads through a getter, without calling it", async () => {
+  await expect(
+    collectReads(["infra/orders#orderQueue.sideEffect.length"]),
+  ).rejects.toThrow(
+    'The function "checkout" reads infra/orders#orderQueue.sideEffect.length, but infra/orders#orderQueue.sideEffect is a getter.',
+  );
+});

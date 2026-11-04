@@ -389,10 +389,22 @@ export function resolveReads(
     // A path that goes on past an output value or a primitive, such as
     // `orderQueue.url.length`, reads that property in the function.
     while (length < read.path.length && !isLeaf(value)) {
-      value =
-        value === null || value === undefined
-          ? undefined
-          : Reflect.get(Object(value), read.path[length]!, value);
+      if (value === null || value === undefined) {
+        value = undefined;
+      } else {
+        const descriptor = findProperty(Object(value), read.path[length]!);
+        if (descriptor && !("value" in descriptor)) {
+          const getter = outputKey(
+            read.module,
+            read.binding,
+            read.path.slice(0, length + 1),
+          );
+          throw new Error(
+            `${subject}, but ${getter} is a getter. Getters can have effects, so runtime code can't read through them.`,
+          );
+        }
+        value = descriptor?.value;
+      }
       length += 1;
     }
     const key = outputKey(
@@ -435,6 +447,20 @@ function deliveredValue(value: unknown, binding: boolean, subject: string) {
   throw new Error(
     `${subject}, which is not an output value or data. Runtime code can read output values, such as a queue's url, and data, such as strings, numbers and plain objects.`,
   );
+}
+
+// The descriptor of a property, own or inherited, so that a read can find
+// methods and fields without calling a getter. The getter of a Lambda
+// group's `policy`, for one, adds a resource.
+function findProperty(
+  value: object,
+  key: string,
+): PropertyDescriptor | undefined {
+  for (let at: object | null = value; at; at = Object.getPrototypeOf(at)) {
+    const descriptor = Object.getOwnPropertyDescriptor(at, key);
+    if (descriptor) return descriptor;
+  }
+  return undefined;
 }
 
 function isLeaf(value: unknown): boolean {
