@@ -24,7 +24,10 @@ type ApiConfig = {
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { getUsers, createUser } from "runtime/users.fn";
+import {
+  getUsers,
+  createUser,
+} from "runtime/users.fn" with { type: "runtime" };
 
 const myApi = api({ name: "user-api" });
 const myRouter = router(myApi);
@@ -56,7 +59,7 @@ Each route call produces a full resource subgraph:
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { getUser } from "runtime/user.fn";
+import { getUser } from "runtime/user.fn" with { type: "runtime" };
 import type { JWTClaims } from "shared/jwt";
 
 const myApi = api({ name: "user-api" });
@@ -105,7 +108,10 @@ Infrastructure and runtime side-by-side:
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { getTodos, getTodoCount } from "runtime/todos.fn";
+import {
+  getTodos,
+  getTodoCount,
+} from "runtime/todos.fn" with { type: "runtime" };
 
 const todoApi = api({ name: "todo-api" });
 const todoRouter = router(todoApi);

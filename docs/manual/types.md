@@ -10,7 +10,7 @@ When you wire a handler to an API Gateway route, TypeScript ensures the handler'
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { getUser } from "runtime/user.fn";
+import { getUser } from "runtime/user.fn" with { type: "runtime" };
 
 const myApi = api({ name: "user-api" });
 const myRouter = router(myApi);
@@ -27,7 +27,7 @@ export const getUser = handle.apiRequest((event) => {
 
 ::
 
-The `handle.apiRequest` wrapper types `event` as an API Gateway v2 HTTP event. If you pass a handler with the wrong event type to the router, TypeScript catches it at compile time.
+The `handle.apiRequest` wrapper types `event` as an API Gateway v2 HTTP event. Infra imports the runtime module `with { type: "runtime" }`, so it sees `getUser` as a `RuntimeRef`: it can pass it to the router, but it can't call it. [`notation types`](../cli/types.md) writes the declarations that give infra this view. If you pass a handler with the wrong event type to the router, TypeScript catches it at compile time.
 
 ## JWT authorizer types
 
@@ -37,7 +37,7 @@ When using a JWT authorizer, claims types flow from infrastructure to handler:
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { getUser } from "runtime/user.fn";
+import { getUser } from "runtime/user.fn" with { type: "runtime" };
 
 type JWTClaims = { sub: string; email: string };
 

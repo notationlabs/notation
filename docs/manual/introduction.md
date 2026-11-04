@@ -4,7 +4,7 @@ Notation is a build-time framework for composing and deploying AWS Lambda servic
 
 ```ts
 import { api, router } from "@notation/aws/api-gateway";
-import { getTodos } from "../runtime/todos.fn";
+import { getTodos } from "../runtime/todos.fn" with { type: "runtime" };
 
 const todoApi = api({ name: "todo-api" });
 const todoRouter = router(todoApi);

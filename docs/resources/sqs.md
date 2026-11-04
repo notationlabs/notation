@@ -50,7 +50,7 @@ An output value can only be placed whole. Turning it into a string, for example 
 
 ```ts [infra/orders.ts]
 import { queue } from "@notation/aws/sqs";
-import { processOrders } from "runtime/orders.fn";
+import { processOrders } from "runtime/orders.fn" with { type: "runtime" };
 
 export const orderQueue = queue({ name: "orders" });
 orderQueue.consume(processOrders, { batchSize: 5 });
@@ -97,7 +97,10 @@ When you remove `batchSize` or `maxBatchingWindow`, Notation sets the mapping ba
 Each queue contributes its own statement and its own dispatch entry, so two queues can feed one function. The two queues can call the same export, or two exports of one module:
 
 ```ts [infra/orders.ts]
-import { processOrders, processRefunds } from "runtime/orders.fn";
+import {
+  processOrders,
+  processRefunds,
+} from "runtime/orders.fn" with { type: "runtime" };
 
 orderQueue.consume(processOrders);
 refundQueue.consume(processRefunds);
@@ -127,7 +130,7 @@ importer.policy.contribute({
 A function from a runtime module has no variable like `importer` to call `policy` on. Instead, every export of the module carries the module's Lambda group as `resource`. For example, to let `processOrders` send messages to `refundQueue`, contribute the grant to `processOrders.resource.policy`:
 
 ```ts [infra/orders.ts]
-import { processOrders } from "runtime/orders.fn";
+import { processOrders } from "runtime/orders.fn" with { type: "runtime" };
 
 processOrders.resource.policy.contribute({
   PolicyDocument: { Statement: [refundQueue.grant(["SendMessage"])] },

@@ -23,7 +23,10 @@ export const resource: LambdaResource = {
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { getTodos, createTodo } from "runtime/todos.fn";
+import {
+  getTodos,
+  createTodo,
+} from "runtime/todos.fn" with { type: "runtime" };
 
 const todoRouter = router(api({ name: "todo-api" }));
 todoRouter.get("/todos", getTodos);

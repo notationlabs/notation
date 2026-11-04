@@ -33,7 +33,7 @@ export default defineConfig({
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { getTodos } from "runtime/todos.fn";
+import { getTodos } from "runtime/todos.fn" with { type: "runtime" };
 
 const todoApi = api({ name: "todo-api" });
 const todoRouter = router(todoApi);
@@ -93,7 +93,10 @@ With this setting, `runtime/utils.ts` matches the glob, but it has no `resource`
 Infra code imports the handlers of a runtime module and passes them to infra APIs, such as `router.get`:
 
 ```ts [infra/api.ts]
-import { getTodos, getTodoCount } from "runtime/todos.fn";
+import {
+  getTodos,
+  getTodoCount,
+} from "runtime/todos.fn" with { type: "runtime" };
 
 todoRouter.get("/todos", getTodos);
 todoRouter.get("/todos/count", getTodoCount);

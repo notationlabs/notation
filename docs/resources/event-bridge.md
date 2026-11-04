@@ -6,7 +6,7 @@
 
 ```ts [infra/schedule.ts]
 import * as eventBridge from "@notation/aws/event-bridge";
-import { logEvent } from "runtime/log-event.fn";
+import { logEvent } from "runtime/log-event.fn" with { type: "runtime" };
 
 eventBridge.schedule({
   name: "log-every-minute",
