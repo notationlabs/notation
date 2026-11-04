@@ -5,7 +5,7 @@ import {
   isPlainObject,
   resolveDeferred,
 } from "./output-value";
-import { outputKey, parseOutputKey } from "./outputs";
+import { bindingKey, outputKey, parseOutputKey } from "./outputs";
 import { getActiveResourceCollection } from "./resource-collection";
 import type { RuntimeRef } from "./views";
 
@@ -187,7 +187,13 @@ export function createStandIn(
     }
     if (prop === "then") return undefined;
     if (prop === "function") {
-      return (lazyFunction ??= createLazyFunction(state));
+      return (lazyFunction ??= createChain(
+        state,
+        `${name}.function`,
+        () => undefined,
+        () => ({ value: functionOf(state) }),
+        true,
+      ));
     }
     if (prop === "id" || stringifyingProps.has(prop)) {
       throw new Error(unknownUse(name, prop, at(get)));
@@ -374,7 +380,10 @@ export function resolveReads(
   );
   const values: Record<string, unknown> = {};
   for (const read of parsed) {
-    if (read.path.length > 0 && wholes.has(`${read.module}#${read.binding}`)) {
+    if (
+      read.path.length > 0 &&
+      wholes.has(bindingKey(read.module, read.binding))
+    ) {
       continue;
     }
     const subject = `The function "${info.id}" reads ${read.key}`;
@@ -477,8 +486,7 @@ function isLeaf(value: unknown): boolean {
 
 // Output values, and JSON values that may contain them.
 function isData(value: unknown): boolean {
-  if (value === null || isOutputValue(value)) return true;
-  if (["string", "number", "boolean"].includes(typeof value)) return true;
+  if (value === null || isLeaf(value)) return true;
   if (Array.isArray(value)) return value.every(isData);
   if (isPlainObject(value)) {
     return Object.values(value).every(
@@ -501,16 +509,6 @@ const stringifyingProps = new Set<string | symbol>([
 // What a chain stands for once linked. `holder` is the value it was read
 // from, which a call on it receives as `this`.
 type ChainValue = { value: unknown; holder?: unknown };
-
-function createLazyFunction(state: StandInState): object {
-  return createChain(
-    state,
-    `${state.name}.function`,
-    () => undefined,
-    () => ({ value: functionOf(state) }),
-    true,
-  );
-}
 
 /**
  * A stand-in's function, or a chain of property reads and calls on it, such
