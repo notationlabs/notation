@@ -1,10 +1,23 @@
 import { execFile } from "node:child_process";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, expect, test } from "vitest";
 import { clearOutputs, infraBinding, setOutputs } from "src/testing/outputs";
-import { exportNames, infraModuleSource } from "src/testing/served";
+import {
+  exportNames,
+  infraModuleSource,
+  outputModule,
+  projectRootOf,
+} from "src/testing/served";
 
 const run = promisify(execFile);
 const fixtures = path.join(import.meta.dirname, "fixtures");
@@ -59,6 +72,28 @@ test("the served module exports each binding of the infra module", () => {
       "export { _0 as orderQueue };",
     ].join("\n"),
   );
+});
+
+test("the project root is the directory of notation.config.ts, past a nested package.json", () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "notation-root-")));
+  try {
+    writeFileSync(path.join(root, "notation.config.ts"), "export default {}");
+    writeFileSync(path.join(root, "package.json"), "{}");
+    mkdirSync(path.join(root, "infra"));
+    writeFileSync(path.join(root, "infra/package.json"), "{}");
+    const file = path.join(root, "infra/orders.ts");
+    expect(projectRootOf(file)).toBe(root);
+    expect(outputModule(file)).toBe("infra/orders");
+
+    const other = realpathSync(
+      mkdtempSync(path.join(tmpdir(), "notation-root-")),
+    );
+    writeFileSync(path.join(other, "package.json"), "{}");
+    expect(projectRootOf(path.join(other, "src/a.ts"))).toBe(other);
+    rmSync(other, { recursive: true, force: true });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("a test runs under the loader hook in Node", async () => {
