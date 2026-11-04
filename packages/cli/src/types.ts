@@ -39,7 +39,6 @@ export class AmbiguousSpecifierError extends Error {
 
 const sourceExtensions = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const ignoredDirs = new Set(["node_modules", "dist"]);
-// Skips parsing files that can't have an attributed import.
 const mayHaveAttribute =
   /\bwith\s*:?\s*\{[^}]*\btype\s*:\s*["'](?:infra|runtime)["']/;
 
