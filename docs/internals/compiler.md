@@ -29,8 +29,8 @@ A file is a runtime module when it matches a `runtimeModules` glob and exports `
 - A `service` that isn't in `supportedServices`. At present only `aws/lambda` is supported.
 - A key that the service doesn't have, such as a misspelled `timout`. For `aws/lambda` the keys are `service`, `id`, `runtime`, `timeout` and `memory`. So `resource.code` also fails, because the compiler sets `code`.
 - An `id` that isn't name-safe: 1 to 64 letters, digits, hyphens or underscores.
-- `export default`, `export =`, `export *`, `export namespace` and `export import`. The generated module needs a name for each export.
-- String export names, such as `export { a as "a-b" }`, and export names that start with `__notation`. The generated module declares each export as a `const`, and uses the `__notation` prefix for its own names.
+- Any export other than `export const`, `export function`, `export class`, `export enum`, `export { a, b }` and `export * as name from`, with identifier names. This rules out `export default`, `export =`, `export *`, `export namespace`, `export import`, destructured exports and string export names. The generated module needs an identifier for each export. Type exports and `declare` exports are skipped.
+- Export names that start with `__notation`. The generated module uses that prefix for its own names.
 
 ## The infra plugin
 

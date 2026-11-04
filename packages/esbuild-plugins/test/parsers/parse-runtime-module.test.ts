@@ -85,17 +85,14 @@ describe("exports", () => {
   });
 
   it.each([
-    [`export default {};`, /default exports are not supported/],
-    [`export default function () {}`, /default exports are not supported/],
-    [
-      `const a = 1; export { a as default };`,
-      /default exports are not supported/,
-    ],
-    [`export * from "./utils";`, /`export \*` is not supported/],
-    [`export const { a, b } = obj;`, /destructured exports are not supported/],
-    [`export = {};`, /`export =` is not supported/],
-    [`const a = 1; export { a as "a-b" };`, /string export names/],
-    [`export * as "a-b" from "./utils";`, /string export names/],
+    [`export default {};`, /unsupported export/],
+    [`export default function () {}`, /unsupported export/],
+    [`const a = 1; export { a as default };`, /unsupported export/],
+    [`export * from "./utils";`, /unsupported export/],
+    [`export const { a, b } = obj;`, /unsupported export/],
+    [`export = {};`, /unsupported export/],
+    [`const a = 1; export { a as "a-b" };`, /unsupported export/],
+    [`export * as "a-b" from "./utils";`, /unsupported export/],
     [
       `export const __notationResource = 1;`,
       /"__notationResource" is reserved/,
@@ -104,10 +101,16 @@ describe("exports", () => {
       `const a = 1; export { a as __notationFactory };`,
       /"__notationFactory" is reserved/,
     ],
-    [`export namespace Utils { export const a = 1; }`, /`export namespace`/],
-    [`import fs = require("fs"); export import f = fs;`, /`export import`/],
+    [`export namespace Utils { export const a = 1; }`, /unsupported export/],
+    [`import fs = require("fs"); export import f = fs;`, /unsupported export/],
   ])("rejects %s", (source, message) => {
     expect(() => parse(`${source}\n${resource}`)).toThrow(message);
+  });
+
+  it("names the unsupported export and the supported forms", () => {
+    expect(() => parse(`export default {};\n${resource}`)).toThrow(
+      "todos.ts: unsupported export `export default {};`. A runtime module can use `export const`, `export function`, `export class`, `export enum`, `export { a, b }` and `export * as name from`, with identifier names.",
+    );
   });
 });
 

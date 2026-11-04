@@ -62,7 +62,7 @@ export function parseRuntimeModule(
 
   const exports: Export[] = [];
   for (const statement of sourceFile.statements) {
-    exports.push(...getExports(statement, fail));
+    exports.push(...readExports(statement, fail));
   }
 
   const resourceExport = exports.find((exp) => exp.name === "resource");
@@ -98,113 +98,74 @@ function isOldConfig(node: ts.Node) {
   );
 }
 
-function getExports(node: ts.Statement, fail: (m: string) => never): Export[] {
-  return readExports(node, fail).map((exp) => {
-    if (exp.name.startsWith(RESERVED_PREFIX)) {
-      fail(
-        `the export name "${exp.name}" is reserved. Names that start with "${RESERVED_PREFIX}" are used by the compiler.`,
-      );
-    }
-    return exp;
-  });
-}
+const supportedExports =
+  "`export const`, `export function`, `export class`, `export enum`, `export { a, b }` and `export * as name from`, with identifier names";
 
 function readExports(node: ts.Statement, fail: (m: string) => never): Export[] {
-  if (ts.isExportAssignment(node)) {
-    if (node.isExportEquals) {
+  const unsupported = (): never =>
+    fail(
+      `unsupported export \`${node.getText().split("\n")[0]}\`. A runtime module can use ${supportedExports}.`,
+    );
+  const named = (name: ts.ModuleExportName | undefined, node: ts.Node) => {
+    if (!name || !ts.isIdentifier(name) || name.text === "default") {
+      return unsupported();
+    }
+    if (name.text.startsWith(RESERVED_PREFIX)) {
       return fail(
-        "`export =` is not supported in a runtime module. Use named exports.",
+        `the export name "${name.text}" is reserved. Names that start with "${RESERVED_PREFIX}" are used by the compiler.`,
       );
     }
-    return fail("default exports are not supported in a runtime module");
-  }
+    return { name: name.text, node };
+  };
+
+  if (ts.isExportAssignment(node)) return unsupported();
 
   if (ts.isExportDeclaration(node)) {
     if (node.isTypeOnly) return [];
-    if (!node.exportClause) {
-      return fail(
-        "`export *` is not supported in a runtime module. Name each export.",
-      );
-    }
+    if (!node.exportClause) return unsupported();
     if (ts.isNamespaceExport(node.exportClause)) {
-      return [{ name: readExportName(node.exportClause.name, fail), node }];
+      return [named(node.exportClause.name, node)];
     }
     return node.exportClause.elements
       .filter((element) => !element.isTypeOnly)
       .map((element) => {
-        const name = readExportName(element.name, fail);
-        if (name === "default") {
-          return fail("default exports are not supported in a runtime module");
-        }
-        if (name === "resource") {
+        if (element.name.text === "resource") {
           return fail(
             "`resource` must be declared with `export const resource = { ... }`",
           );
         }
-        return { name, node: element };
+        return named(element.name, element);
       });
   }
 
-  if (!hasExportModifier(node)) return [];
-  if (hasModifier(node, ts.SyntaxKind.DefaultKeyword)) {
-    return fail("default exports are not supported in a runtime module");
+  if (
+    !hasModifier(node, ts.SyntaxKind.ExportKeyword) ||
+    hasModifier(node, ts.SyntaxKind.DeclareKeyword) ||
+    ts.isTypeAliasDeclaration(node) ||
+    ts.isInterfaceDeclaration(node) ||
+    (ts.isEnumDeclaration(node) &&
+      hasModifier(node, ts.SyntaxKind.ConstKeyword))
+  ) {
+    return [];
   }
-  if (hasModifier(node, ts.SyntaxKind.DeclareKeyword)) return [];
-
-  if (ts.isModuleDeclaration(node)) {
-    return fail(
-      "`export namespace` is not supported in a runtime module. Export each value by itself.",
-    );
-  }
-  if (ts.isImportEqualsDeclaration(node) && !node.isTypeOnly) {
-    return fail("`export import` is not supported in a runtime module");
-  }
+  if (hasModifier(node, ts.SyntaxKind.DefaultKeyword)) return unsupported();
 
   if (ts.isVariableStatement(node)) {
-    return node.declarationList.declarations.map((declaration) => {
-      if (!ts.isIdentifier(declaration.name)) {
-        return fail(
-          "destructured exports are not supported in a runtime module",
-        );
-      }
-      return {
-        name: declaration.name.text,
-        node: declaration.initializer ?? declaration,
-      };
-    });
-  }
-
-  if (
-    (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) &&
-    node.name
-  ) {
-    return [{ name: node.name.text, node }];
-  }
-
-  if (
-    ts.isEnumDeclaration(node) &&
-    !hasModifier(node, ts.SyntaxKind.ConstKeyword)
-  ) {
-    return [{ name: node.name.text, node }];
-  }
-
-  return [];
-}
-
-function readExportName(
-  name: ts.ModuleExportName,
-  fail: (m: string) => never,
-): string {
-  if (ts.isStringLiteral(name)) {
-    return fail(
-      `string export names, such as ${JSON.stringify(name.text)}, are not supported in a runtime module. Use an identifier.`,
+    return node.declarationList.declarations.map((declaration) =>
+      named(
+        ts.isIdentifier(declaration.name) ? declaration.name : undefined,
+        declaration.initializer ?? declaration,
+      ),
     );
   }
-  return name.text;
-}
-
-function hasExportModifier(node: ts.Statement) {
-  return hasModifier(node, ts.SyntaxKind.ExportKeyword);
+  if (
+    ts.isFunctionDeclaration(node) ||
+    ts.isClassDeclaration(node) ||
+    ts.isEnumDeclaration(node)
+  ) {
+    return [named(node.name, node)];
+  }
+  return unsupported();
 }
 
 function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {
