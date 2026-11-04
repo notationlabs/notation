@@ -283,3 +283,19 @@ it("fails when a bundle calls read, but no reads are found in it", async () => {
     ]),
   ).rejects.toThrow("but the compiler found none of its reads");
 });
+
+it("leaves names that a var in a block, or a named class expression, shadows", () => {
+  const { code, reads, errors } = rewrite(`
+import { orderQueue } from "../infra/orders" with { type: "infra" };
+export const a = () => {
+  if (Math.random()) { var orderQueue = { url: "local" }; }
+  return orderQueue.url;
+};
+export const B = class orderQueue { static url = "x"; m() { return orderQueue.url; } };
+export const c = () => orderQueue.arn;
+`);
+  expect(errors).toEqual([]);
+  expect(code).toContain("return orderQueue.url;");
+  expect(code).toContain("m() { return orderQueue.url; }");
+  expect(reads).toEqual(["infra/orders#orderQueue.arn"]);
+});

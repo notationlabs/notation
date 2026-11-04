@@ -424,17 +424,18 @@ function isShadowed(id: ts.Identifier): boolean {
   const name = id.text;
   for (let current = id.parent; current; current = current.parent) {
     if (ts.isSourceFile(current)) return false;
+    if (
+      (ts.isFunctionExpression(current) || ts.isClassExpression(current)) &&
+      current.name?.text === name
+    ) {
+      return true;
+    }
     if (isFunctionBody(current)) {
-      const fn = current as ts.SignatureDeclaration;
+      const fn = current as ts.FunctionLikeDeclaration;
       if (fn.parameters.some((param) => declaresName(param.name, name))) {
         return true;
       }
-      if (
-        (ts.isFunctionExpression(current) || ts.isClassExpression(current)) &&
-        current.name?.text === name
-      ) {
-        return true;
-      }
+      if (fn.body && declaresVar(fn.body, name)) return true;
     }
     if (
       ts.isBlock(current) ||
@@ -470,6 +471,26 @@ function isShadowed(id: ts.Identifier): boolean {
     }
   }
   return false;
+}
+
+// Whether a function body declares a name with `var`, in any of its blocks.
+// `var` declarations are scoped to the function, not to their block.
+function declaresVar(node: ts.Node, name: string): boolean {
+  let found = false;
+  const visit = (child: ts.Node) => {
+    if (found || isFunctionBody(child) || ts.isClassLike(child)) return;
+    if (
+      ts.isVariableDeclarationList(child) &&
+      !(child.flags & ts.NodeFlags.BlockScoped) &&
+      child.declarations.some((decl) => declaresName(decl.name, name))
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(child, visit);
+  };
+  ts.forEachChild(node, visit);
+  return found;
 }
 
 function statementDeclares(statement: ts.Statement, name: string): boolean {
