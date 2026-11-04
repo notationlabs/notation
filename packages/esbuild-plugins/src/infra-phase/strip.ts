@@ -8,7 +8,7 @@ import {
   parseModule,
   type ModuleInfo,
 } from "./module-info";
-import { exportName } from "src/utils/script";
+import { exportName, isScript } from "src/utils/script";
 
 /**
  * Where an import specifier leads. `local` is false for packages and other
@@ -137,7 +137,12 @@ async function loadGraph(
           `${opts.describe(path)} imports ${source} with { type: "runtime" }, which is only valid in infra modules. Import the module without an attribute.`,
         );
       }
-      const resolved = await opts.resolve(source, path);
+      let resolved = await opts.resolve(source, path);
+      // A stripped copy imports other files, such as JSON, from the file
+      // itself.
+      if (resolved.local && !isScript(resolved.path)) {
+        resolved = { ...resolved, local: false };
+      }
       state.resolved.set(source, resolved);
       if (attribute === "infra") {
         if (resolved.local && opts.isRuntimeModule(resolved.path)) {

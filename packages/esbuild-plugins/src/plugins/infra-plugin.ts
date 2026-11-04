@@ -16,7 +16,7 @@ import {
 } from "src/infra-phase/strip";
 import { matchesRuntimeModules, moduleKey } from "src/runtime-modules";
 import { isLocalModule } from "src/utils/is-local";
-import { loaderFor } from "src/utils/script";
+import { isScript, loaderFor } from "src/utils/script";
 import { GetFile, fsGetFile, withFileCheck } from "src/utils/get-file";
 
 type PluginOpts = {
@@ -320,7 +320,9 @@ async function readExportNames(
     for (const star of info.starExports) {
       if (star.attribute !== undefined) continue;
       const target = await resolve(star.source, current);
-      if (target.local) await read(target.path, false);
+      if (target.local && isScript(target.path)) {
+        await read(target.path, false);
+      }
     }
   };
   await read(file, true);

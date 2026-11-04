@@ -224,6 +224,25 @@ export const run = handle.apiRequest(() => unused);
     expect(code).not.toContain("unused");
   });
 
+  it("import files that aren't scripts, such as JSON, from the file itself", async () => {
+    const modules = await strip(
+      {
+        "runtime/checkout.ts": `
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+import config from "./config.json";
+const { handle } = lambda({ id: config.id });
+export const run = handle.apiRequest(() => ({}));
+`,
+        "runtime/config.json": `{ "id": "checkout" }`,
+      },
+      ["runtime/checkout.ts"],
+    );
+    expect(Object.keys(modules)).toEqual(["runtime/checkout.ts"]);
+    expect(modules["runtime/checkout.ts"]).toContain(
+      `import { default as config } from "./config.json";`,
+    );
+  });
+
   it("reject type: runtime in runtime code", async () => {
     await expect(
       strip(
