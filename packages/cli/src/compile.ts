@@ -52,9 +52,12 @@ export async function compile(
       try {
         if (modules && sameModules(found, modules)) return;
         if (!modules) logger.info("Watching runtime modules");
-        modules = found;
         await disposeRuntime();
+        disposeRuntime = async () => {};
         disposeRuntime = await compileRuntimeModules(found, true);
+        // Set only after a successful start, so that a failed start is
+        // retried on the next rebuild with the same modules.
+        modules = found;
       } catch (error) {
         logger.error(error);
       }
