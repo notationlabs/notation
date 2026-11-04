@@ -51,12 +51,14 @@ type LambdaConfig = {
 
 Use 1 to 64 letters, digits, hyphens and underscores. Two functions in one deployment can't share an ID. See [Lambda IDs](../resources/lambda.md#ids).
 
-The type of `id` must be a string literal, so that TypeScript can check its characters. A constant declared with `const` works:
+When the type of `id` is a string literal, TypeScript checks its characters. A constant declared with `const` has a literal type:
 
 ```ts
 const id = "checkout";
 const { handle } = lambda({ id, timeout: 5 });
 ```
+
+An `id` built from other values, such as `settings.id` from an infra module, is typed `string`. TypeScript can't check it, so `lambda()` checks it when the infra phase runs, and fails if it breaks the rule.
 
 ## Grants
 

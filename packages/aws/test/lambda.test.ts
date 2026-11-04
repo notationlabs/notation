@@ -144,9 +144,13 @@ test("NameSafe accepts name-safe literals and rejects the rest", () => {
     }),
   ).toThrow();
 
+  // A string that isn't a literal is checked when lambda() runs.
   const id: string = "fn";
-  // @ts-expect-error a plain string can't be checked
   lambda({ id, code });
+  const prefix: string = "bad.";
+  expect(() => lambda({ id: `${prefix}id`, code })).toThrow(
+    /Invalid lambda id "bad\.id"/,
+  );
 });
 
 test("resources declared by the helper are reported at the caller's line", () => {

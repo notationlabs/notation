@@ -74,14 +74,17 @@ type IsNameSafe<
 
 /**
  * Resolves to `S` when `S` is a name-safe string literal, and to an error
- * message otherwise. A value typed as plain `string` is rejected, since its
- * contents can't be checked.
+ * message when it is a literal that isn't. A string that isn't a literal,
+ * such as an ID built from infra, is typed `string` or a template such as
+ * `${string}-checkout`. Its contents can't be checked in types, so it
+ * resolves to `S`, and `lambda()` checks it when it runs.
  */
-export type NameSafe<S extends string> = string extends S
-  ? `Error: the id must be a string literal of ${typeof RULE}`
-  : IsNameSafe<S> extends true
+export type NameSafe<S extends string> =
+  {} extends Record<S, unknown>
     ? S
-    : `Error: "${S}" is not name-safe; use ${typeof RULE}`;
+    : IsNameSafe<S> extends true
+      ? S
+      : `Error: "${S}" is not name-safe; use ${typeof RULE}`;
 
 export function isNameSafe(id: unknown): id is string {
   return (
