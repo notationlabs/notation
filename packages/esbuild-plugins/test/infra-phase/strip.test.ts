@@ -185,6 +185,32 @@ export { checkoutFn as fn } from "./fn";
     );
   });
 
+  it("drop handler bodies of a lambda() call that a module exports as default", async () => {
+    const modules = await strip(
+      {
+        "runtime/fn.ts": `
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+export default lambda({ id: "checkout" });
+`,
+        "runtime/checkout.ts": `
+import { SQSClient } from "@aws-sdk/client-sqs";
+import fn from "./fn";
+const client = new SQSClient({});
+export const run = fn.handle.apiRequest(() => client.send());
+`,
+      },
+      ["runtime/checkout.ts"],
+    );
+    expect(modules["runtime/checkout.ts"]).toBe(
+      [
+        `const __notationInert = () => { throw new Error("A handler doesn't run in the infra phase."); };`,
+        `import { default as fn } from "notation-stripped:/project/runtime/fn.ts";`,
+        `export const run = fn.handle.apiRequest(__notationInert);`,
+        ``,
+      ].join("\n"),
+    );
+  });
+
   it("keep a handler that isn't exported, so linking can report it", async () => {
     const modules = await strip(
       {

@@ -373,8 +373,11 @@ class Analysis {
     const initializer = info.statements[index]!.initializers.find((init) =>
       init.names.includes(local),
     );
-    if (!initializer?.pattern) return undefined;
-    const path = destructuredPath(initializer.pattern, local);
+    if (!initializer) return undefined;
+    // `export default <expr>` has no pattern, and names the whole value.
+    const path = initializer.pattern
+      ? destructuredPath(initializer.pattern, local)
+      : [];
     if (!path) return undefined;
     return extend(this.#position(state, initializer.init), path);
   }
