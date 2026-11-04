@@ -35,6 +35,11 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+const build = (entry: string) => ({
+  entryPoint: path.join(root, entry),
+  runtimeModules: ["**/*.fn.ts"],
+});
+
 const write = (file: string, contents: string) => {
   mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
   writeFileSync(path.join(root, file), contents);
@@ -97,7 +102,7 @@ it("bundles the runtime modules that an infra rebuild adds", async () => {
   const bundle = (name: string) =>
     path.join(root, `dist/watch-b/${name}/index.mjs`);
 
-  await compile(path.join(root, "watch-b/main.ts"), { watch: true, logger });
+  await compile(build("watch-b/main.ts"), { watch: true, logger });
   await waitFor(() => expect(existsSync(bundle("todos.fn"))).toBe(true));
   expect(existsSync(bundle("jobs.fn"))).toBe(false);
 
@@ -115,7 +120,7 @@ it("waits for a build that succeeds, and says so", async () => {
   const watchLogger = { info, error: () => {} } as unknown as Logger;
 
   let resolved = false;
-  const compiling = compile(path.join(root, "watch-c/main.ts"), {
+  const compiling = compile(build("watch-c/main.ts"), {
     watch: true,
     logger: watchLogger,
   }).then(() => {

@@ -9,6 +9,7 @@ import {
   defaultRuntimeModules,
   filePaths,
   fromProjectRoot,
+  type Build,
 } from "@notation/core";
 import { defaultLogger, type Logger } from "./logger";
 
@@ -17,8 +18,6 @@ export type { RuntimeModuleEntry };
 export type CompileOptions = {
   watch?: boolean;
   logger?: Logger;
-  /** Globs for the files that can be runtime modules. */
-  runtimeModules?: string[];
 };
 
 /**
@@ -26,10 +25,12 @@ export type CompileOptions = {
  * build replaced. In watch mode, each infra rebuild that changes that set of
  * modules restarts the runtime bundles.
  */
-export async function compile(entryPoint: string, opts: CompileOptions = {}) {
+export async function compile(
+  { entryPoint, runtimeModules }: Build,
+  opts: CompileOptions = {},
+) {
   const watch = opts.watch ?? false;
   const logger = opts.logger ?? defaultLogger;
-  const runtimeModules = opts.runtimeModules ?? defaultRuntimeModules;
 
   logger.info(`${watch ? "Watching" : "Compiling"} infrastructure`, entryPoint);
 

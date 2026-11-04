@@ -2,19 +2,14 @@ import {
   createMermaidFlowChart,
   createMermaidLiveUrl,
   getResourceGraph,
+  type Build,
 } from "@notation/core";
 import { compileInfra } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
 
-export type VisualiseOptions = {
-  logger?: Logger;
-  /** Globs for the files that can be runtime modules. */
-  runtimeModules?: string[];
-};
-
 export async function visualise(
-  entryPoint: string,
-  { logger = defaultLogger, runtimeModules }: VisualiseOptions = {},
+  { entryPoint, runtimeModules }: Build,
+  logger: Logger = defaultLogger,
 ) {
   await compileInfra(entryPoint, { runtimeModules });
   await generateGraph(entryPoint, logger);
