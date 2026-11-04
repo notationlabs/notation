@@ -108,6 +108,8 @@ Which runtime modules exist is only known once infra's imports have been resolve
 
 Runtime code can import an infra module `with { type: "infra" }` that no other infra module imports, and that infra module can import more runtime modules. So after the scan, the plugin makes the stripped copies, and if they import an infra module that the scan didn't build, it scans again with that module as an extra entry. It repeats this until every such infra module has been scanned.
 
+Then the plugin looks for runtime modules that nothing deploys, in `findUnwiredRuntimeModules`. It lists the scripts under the project root, and keeps each one that matches the `runtimeModules` globs and imports a package `with { type: "infra" }`. It drops the runtime modules that infra imports, and every local module that they import, directly or through other modules, without an attribute. Each file left gets a warning that names it and shows the import to add. The CLI logs the warnings. In watch mode it logs a warning again only after a build without it.
+
 ### 2. Stand-ins
 
 In the infra bundle, a `type: "runtime"` import resolves to a stand-in module instead of the runtime module. `createStandInModule` generates it from the runtime module's export names, which the plugin reads from the source, following `export *`. The stand-in module for `orders.fn.ts` is:

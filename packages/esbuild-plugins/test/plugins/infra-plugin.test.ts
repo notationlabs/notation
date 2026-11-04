@@ -14,6 +14,7 @@ import { setConfigFile } from "@notation/core";
 import { infraPlugin } from "src/plugins/infra-plugin";
 import {
   buildVirtual,
+  buildVirtualResult,
   projectRoot,
   readVirtualFile,
 } from "test/esbuild-test-utils";
@@ -85,6 +86,62 @@ describe("in memory", () => {
     expect(consume).toBeGreaterThan(-1);
     expect(declare).toBeGreaterThan(consume);
     expect(link).toBeGreaterThan(declare);
+  });
+
+  const warningsOf = async (
+    files: Record<string, string>,
+    runtimeModules = ["**/*.fn.ts"],
+  ) => {
+    const result = await buildVirtualResult(files, "infra/main.ts", [
+      infraPlugin({
+        runtimeModules,
+        getFile: readVirtualFile(files),
+        runtimeLink: "@notation/resource",
+        listFiles: () =>
+          Object.keys(files).map((file) => path.join(projectRoot, file)),
+      }),
+    ]);
+    return result.warnings.map((warning) => warning.text);
+  };
+
+  it("warns about a runtime module that calls lambda() but that no infra module imports", async () => {
+    const warnings = await warningsOf({
+      ...files,
+      "runtime/refunds.fn.ts": `
+        import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+        const { handle } = lambda({ id: "refunds" });
+        export const refund = handle.apiRequest(async () => ({}));
+      `,
+    });
+    expect(warnings).toEqual([
+      'runtime/refunds.fn.ts matches runtimeModules and imports @notation/aws/lambda with { type: "infra" }, but no infra module imports it with { type: "runtime" }, so its functions aren\'t deployed. To deploy them, import it from infra, as in `import * as handlers from "../runtime/refunds.fn" with { type: "runtime" };` in infra/main.ts, and pass its handlers to infra APIs such as route() or consume().',
+    ]);
+  });
+
+  it("doesn't warn about modules that a wired runtime module imports, or that don't call a provider factory", async () => {
+    const warnings = await warningsOf(
+      {
+        ...files,
+        "runtime/checkout.fn.ts": `
+          import { handle } from "./fn";
+          export const processOrder = handle.sqsEvent(async () => {});
+        `,
+        "runtime/fn.ts": `
+          import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+          export const { handle } = lambda({ id: "checkout" });
+        `,
+        "runtime/checkout.test.ts": `
+          import { processOrder } from "./checkout.fn";
+          processOrder({ Records: [] });
+        `,
+        "runtime/reads.ts": `
+          import { orderQueue } from "../infra/orders" with { type: "infra" };
+          export const url = () => orderQueue.url;
+        `,
+      },
+      ["runtime/**"],
+    );
+    expect(warnings).toEqual([]);
   });
 
   it("fails when infra imports a runtime module without an attribute", async () => {

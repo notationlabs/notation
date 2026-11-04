@@ -14,6 +14,11 @@ import {
   type Resolved,
   type StrippedModules,
 } from "src/infra-phase/strip";
+import {
+  findUnwiredRuntimeModules,
+  listProjectScripts,
+  type UnwiredModule,
+} from "src/infra-phase/unwired";
 import { matchesRuntimeModules, moduleKey } from "src/runtime-modules";
 import { isLocalModule } from "src/utils/is-local";
 import { isScript, loaderFor } from "src/utils/script";
@@ -31,6 +36,13 @@ type PluginOpts = {
    * runtime modules that infra imports with `type: "runtime"`, sorted.
    */
   onRuntimeModules?: (modules: string[]) => void;
+  /**
+   * Lists the files that may be runtime modules, as absolute paths. A file
+   * that matches the globs and calls a provider factory, but that nothing
+   * imports with `type: "runtime"`, gets a warning. Defaults to the scripts
+   * under the project root.
+   */
+  listFiles?: () => string[] | Promise<string[]>;
   /**
    * Where generated code imports `@notation/resource` from. It must be the
    * copy that collects the resource graph. Defaults to the copy that this
@@ -129,6 +141,18 @@ function createPlugin(
           if (unscanned.length === 0) break;
           extraEntries.push(...unscanned);
         }
+        const unwired = await findUnwiredRuntimeModules({
+          files: await (opts.listFiles ?? listProjectScripts)(),
+          runtimeModules: opts.runtimeModules,
+          wired: runtimeModules,
+          getFile,
+          resolve,
+        });
+        return {
+          warnings: unwired.map((module) => ({
+            text: unwiredMessage(module, entryFileOf(build)),
+          })),
+        };
       });
 
       build.onResolve({ filter: /.*/ }, async (args) => {
@@ -391,6 +415,31 @@ async function readExportNames(
   };
   await read(file, true);
   return { names: [...names], files };
+}
+
+// The entry file, when the build has one, as an absolute path.
+function entryFileOf(build: PluginBuild): string | undefined {
+  const { entryPoints, absWorkingDir } = build.initialOptions;
+  const entries = Array.isArray(entryPoints)
+    ? entryPoints
+    : Object.values(entryPoints ?? {});
+  if (entries.length !== 1) return undefined;
+  const entry = entries[0]!;
+  const file = typeof entry === "string" ? entry : entry.in;
+  return path.resolve(absWorkingDir ?? process.cwd(), file);
+}
+
+function unwiredMessage(module: UnwiredModule, entryFile: string | undefined) {
+  const name = toProjectRoot(module.file);
+  const from = entryFile ? path.dirname(entryFile) : path.dirname(module.file);
+  let specifier = path
+    .relative(from, module.file)
+    .split(path.sep)
+    .join("/")
+    .replace(/\.[cm]?[jt]sx?$/, "");
+  if (!specifier.startsWith(".")) specifier = `./${specifier}`;
+  const where = entryFile ? ` in ${toProjectRoot(entryFile)}` : "";
+  return `${name} matches runtimeModules and imports ${module.factory} with { type: "infra" }, but no infra module imports it with { type: "runtime" }, so its functions aren't deployed. To deploy them, import it from infra, as in \`import * as handlers from "${specifier}" with { type: "runtime" };\`${where}, and pass its handlers to infra APIs such as route() or consume().`;
 }
 
 function resourceExportMessage(name: string) {

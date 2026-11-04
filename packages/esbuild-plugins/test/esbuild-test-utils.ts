@@ -35,7 +35,17 @@ export async function buildVirtual(
   plugins: Plugin[],
   options: BuildOptions = {},
 ) {
-  const result = await esbuild.build({
+  const result = await buildVirtualResult(files, entryPoint, plugins, options);
+  return result.outputFiles![0]!.text;
+}
+
+export async function buildVirtualResult(
+  files: Record<string, string>,
+  entryPoint: string,
+  plugins: Plugin[],
+  options: BuildOptions = {},
+) {
+  return esbuild.build({
     entryPoints: [path.join(projectRoot, entryPoint)],
     bundle: true,
     format: "esm",
@@ -44,5 +54,4 @@ export async function buildVirtual(
     ...options,
     plugins: [...plugins, virtualFilesPlugin(files)],
   });
-  return result.outputFiles![0]!.text;
 }

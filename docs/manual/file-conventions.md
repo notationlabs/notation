@@ -58,7 +58,7 @@ export const processRefunds = handle.sqsEvent((event) => {
 });
 ```
 
-**A file is a runtime module when infra imports it `with { type: "runtime" }`.** The compiler bundles each function that a runtime module declares. A runtime module that no infra module imports isn't built.
+**A file is a runtime module when infra imports it `with { type: "runtime" }`.** The compiler bundles each function that a runtime module declares. A runtime module that no infra module imports isn't built, and its functions aren't deployed. The compiler warns about such a file when it matches [`runtimeModules`](#runtimemodules); see below.
 
 Runtime modules can import ordinary modules, such as `runtime/utils.ts`, without an attribute. Notation bundles the shared code into each function that uses it.
 
@@ -91,6 +91,21 @@ runtime/orders.fn.ts is a runtime module, so infra must import it with { type: "
 ```
 
 The globs don't decide which files are runtime modules. A file that doesn't match, such as `runtime/checkout.ts`, is still a runtime module when infra imports it with the attribute. Files in `node_modules/` and `dist/` never match.
+
+The compiler also uses the globs to find runtime modules that nothing deploys. It warns about a file when all of these are true:
+
+- The file matches a glob.
+- The file imports a package `with { type: "infra" }`, as a module that calls `lambda()` imports `@notation/aws/lambda`.
+- No infra module imports the file `with { type: "runtime" }`.
+- No module that a runtime module imports, directly or through other modules, imports the file. So a helper module that calls `lambda()` for a runtime module gets no warning.
+
+The warning names the file and shows the import to add:
+
+```
+runtime/refunds.fn.ts matches runtimeModules and imports @notation/aws/lambda with { type: "infra" }, but no infra module imports it with { type: "runtime" }, so its functions aren't deployed. To deploy them, import it from infra, as in `import * as handlers from "../runtime/refunds.fn" with { type: "runtime" };` in infra/main.ts, and pass its handlers to infra APIs such as route() or consume().
+```
+
+It is a warning, not an error, so that a runtime module in progress doesn't block a deploy. A project that deploys its parts with separate configs can narrow each config's `runtimeModules` to its own part, so that one config doesn't warn about the runtime modules of another.
 
 ```ts [notation.config.ts]
 export default defineConfig({

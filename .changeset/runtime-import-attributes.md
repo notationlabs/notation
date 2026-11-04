@@ -1,6 +1,7 @@
 ---
 "@notation/resource": minor
 "@notation/aws": minor
+"@notation/aws.iac": minor
 "@notation/core": minor
 "@notation/esbuild-plugins": minor
 "@notation/cli": minor
@@ -13,6 +14,7 @@ Runtime and infra modules import each other through import attributes, and runti
 - Runtime modules run after all of infra, as stripped copies that keep only the `lambda()` calls, the handlers they make and what those reference. `lambda()` settings can use any infra value, and the plan doesn't depend on the order infra modules load.
 - `route()`, `queue.consume()` and `schedule()` wire a handler when evaluation ends. `consume()` returns nothing. A handler of the wrong kind fails at the infra call site, and a handler that isn't exported fails at plan.
 - `compile` writes `notation-env.d.ts`, evaluates the infra phase, then bundles each function to `dist/functions/<id>/index.mjs`, with a dispatcher to its handlers.
+- `compile` warns about a file that matches the `runtimeModules` globs and imports a package with `type: "infra"`, such as `@notation/aws/lambda`, when no infra module imports it with `type: "runtime"` and no wired runtime module imports it. The warning names the file and shows the import to add. `infraPlugin` takes `listFiles`, which lists the files to check.
 - `notation types` writes `notation-env.d.ts` at the project root. It has one block per attributed import specifier, and catch-all blocks for `./*` and `../*` that give an import with no block an error type. `notation watch` writes it again when a source file is created, deleted, moved or changed. The file needs TypeScript 7.1. Exclude it from Prettier and typescript-eslint.
 - `@notation/resource` exports the view types `RuntimeView`, `InfraView`, `Handler`, `RuntimeRef`, `InfraOnly`, `RuntimeOnly`, `Grant` and `FunctionDeclaration`, which `@notation/core/types` re-exports. It also adds the linking API: `createStandIn`, `linkRuntimeModules`, `createHandlerRef`, `declareRuntimeFunction` and `resolveRuntimeTarget`. The resource graph has `runtimeFunctions`.
 - `handle.<kind>(fn)` returns a `LambdaHandler`: a function with a type-only mark. Infra sees it as a `LambdaRef`, a `RuntimeRef` whose `function` is a `LambdaFunction`, and can wire it but not call it. An exported `lambda()` result is seen by infra as a `LambdaFunction`. A `LambdaFunction` is a `LambdaGroup` without `handle`.

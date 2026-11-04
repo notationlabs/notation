@@ -48,7 +48,7 @@ export async function compile(
   logger.info(`${watch ? "Watching" : "Compiling"} infrastructure`, entryPoint);
 
   if (!watch) {
-    await compileInfra(entryPoint, { runtimeModules });
+    await compileInfra(entryPoint, { runtimeModules, logger });
     const functions = await evaluateFunctions(entryPoint);
     logger.info("Compiling functions");
     await compileFunctions(functions);
@@ -83,6 +83,7 @@ export async function compile(
   await compileInfra(entryPoint, {
     watch,
     runtimeModules,
+    logger,
     onRuntimeModules: update,
     onBuildFailed: () => {
       if (functions) return;
@@ -104,6 +105,8 @@ export type CompileInfraOptions = {
    */
   onRuntimeModules?: (modules: string[]) => void;
   onBuildFailed?: () => void;
+  /** Logs the build's warnings, such as a runtime module that isn't wired. */
+  logger?: Logger;
 };
 
 /**
@@ -116,6 +119,9 @@ export async function compileInfra(
   opts: CompileInfraOptions = {},
 ): Promise<string[]> {
   const runtimeModules = opts.runtimeModules ?? defaultRuntimeModules;
+  const logger = opts.logger ?? defaultLogger;
+  // In watch mode, a warning is logged again only after a build without it.
+  let warned = new Set<string>();
   let resolveFirst!: (modules: string[]) => void;
   const first = new Promise<string[]>((resolve) => {
     resolveFirst = resolve;
@@ -136,6 +142,11 @@ export async function compileInfra(
           if (build.initialOptions.write === false) return;
           build.onEnd((result) => {
             if (result.errors.length > 0) opts.onBuildFailed?.();
+            const warnings = new Set(result.warnings.map((w) => w.text));
+            for (const text of warnings) {
+              if (!warned.has(text)) logger.warn(text);
+            }
+            warned = warnings;
           });
         },
       },

@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setConfigFile } from "@notation/core";
 import { compileInfra } from "../src/compile";
 
@@ -91,9 +91,19 @@ describe("runtime modules", () => {
     write("runtime/jobs.ts", todos.replace(`"todos"`, `"jobs"`));
     write("runtime/unused.fn.ts", todos.replace(`"todos"`, `"unused"`));
 
-    expect(await compileInfra(path.join(root, "infra/main.ts"))).toEqual([
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    expect(
+      await compileInfra(path.join(root, "infra/main.ts"), { logger }),
+    ).toEqual([
       path.join(root, "runtime/jobs.ts"),
       path.join(root, "runtime/todos.fn.ts"),
+    ]);
+    expect(logger.warn.mock.calls).toEqual([
+      [
+        expect.stringMatching(
+          /^runtime\/unused\.fn\.ts matches runtimeModules and imports @notation\/aws\/lambda with \{ type: "infra" \}, but no infra module imports it with \{ type: "runtime" \}, so its functions aren't deployed\. To deploy them, import it from infra, as in `import \* as handlers from "\.\.\/runtime\/unused\.fn" with \{ type: "runtime" \};` in infra\/main\.ts/,
+        ),
+      ],
     ]);
   });
 
