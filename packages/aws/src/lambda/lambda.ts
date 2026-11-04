@@ -226,6 +226,8 @@ export function lambda<const Id extends string>(
         bundle: runtimeBundle(config.id),
       },
       lambda,
+      (outputs) =>
+        group.fn.contribute({ Environment: { Runtime: { outputs } } }),
     );
   }
   return group as LambdaDeclaration;

@@ -1,4 +1,6 @@
 import { captureCallSite } from "./contributions";
+import { isOutputValue, isPlainObject } from "./output-value";
+import { outputKey, parseOutputKey } from "./outputs";
 import { getActiveResourceCollection } from "./resource-collection";
 import type { RuntimeRef } from "./views";
 
@@ -21,9 +23,21 @@ export type RuntimeFunction = {
   handlers: RuntimeHandler[];
 };
 
+/**
+ * Gives a function the values that its code reads from infra, keyed by
+ * output key, such as `infra/orders#orderQueue.url`. Values may be output
+ * values, which resolve at deploy.
+ */
+export type DeliverValues = (values: Record<string, unknown>) => void;
+
 export type RuntimeRegistry = {
   handlers: HandlerRef[];
-  functions: Array<{ fn: object; info: RuntimeFunction; declaredAt?: string }>;
+  functions: Array<{
+    fn: object;
+    info: RuntimeFunction;
+    declaredAt?: string;
+    deliver?: DeliverValues;
+  }>;
 };
 
 const handlerRefMark = Symbol.for("@notation/resource/HandlerRef");
@@ -84,11 +98,14 @@ export function isHandlerRef(value: unknown): value is HandlerRef {
  * Registers a function that a runtime module declares. Once the runtime
  * modules are linked, the function's handlers are the exported handler
  * references that hold `fn`.
+ * @param deliver Gives the function the values that its bundle reads from
+ * infra. A function without it can't read infra.
  */
 export function declareRuntimeFunction(
   fn: object,
   info: Omit<RuntimeFunction, "handlers">,
   below: Function,
+  deliver?: DeliverValues,
 ): void {
   const collection = getActiveResourceCollection();
   if (!collection) return;
@@ -97,6 +114,7 @@ export function declareRuntimeFunction(
     fn,
     info: { ...info, handlers: [] },
     declaredAt,
+    deliver,
   });
 }
 
@@ -191,8 +209,16 @@ export type RuntimeModuleLink = {
  *    call.
  * 4. Each declared function gets its handlers, and goes in the graph's
  *    `runtimeFunctions`, sorted by ID.
+ * 5. When the graph is collected with `runtimeReads`, each function gets the
+ *    values that its bundle reads from infra.
+ * @param infraModules The exports of each infra module that runtime code
+ * imports `with { type: "infra" }`, keyed by its path relative to the project
+ * root, without its extension.
  */
-export function linkRuntimeModules(modules: RuntimeModuleLink[]): void {
+export function linkRuntimeModules(
+  modules: RuntimeModuleLink[],
+  infraModules: Record<string, object> = {},
+): void {
   const sorted = [...modules].sort((a, b) => (a.module < b.module ? -1 : 1));
   for (const { module, exports } of sorted) {
     for (const name of Object.keys(exports).sort()) {
@@ -250,6 +276,115 @@ export function linkRuntimeModules(modules: RuntimeModuleLink[]): void {
     collection.graph.runtimeFunctions.push(info);
   }
   collection.graph.runtimeFunctions.sort((a, b) => (a.id < b.id ? -1 : 1));
+
+  const readsOf = collection.runtimeReads;
+  if (!readsOf) return;
+  for (const { info, deliver } of collection.runtime.functions) {
+    const reads = readsOf(info) ?? [];
+    if (reads.length === 0) continue;
+    if (!deliver) {
+      throw new Error(
+        `The function "${info.id}" reads ${reads[0]} from infra, but its provider can't deliver values to it.`,
+      );
+    }
+    deliver(resolveReads(info, reads, infraModules));
+  }
+}
+
+/**
+ * Finds the value of each read that a function's bundle makes. A read of a
+ * whole binding delivers its data properties, and the reads of its paths are
+ * then served from it.
+ */
+export function resolveReads(
+  info: Pick<RuntimeFunction, "id">,
+  reads: string[],
+  infraModules: Record<string, object>,
+): Record<string, unknown> {
+  const parsed = [...new Set(reads)].sort().map((key) => ({
+    key,
+    ...parseOutputKey(key),
+  }));
+  const wholes = new Set(
+    parsed.filter((read) => read.path.length === 0).map((read) => read.key),
+  );
+  const values: Record<string, unknown> = {};
+  for (const read of parsed) {
+    if (read.path.length > 0 && wholes.has(`${read.module}#${read.binding}`)) {
+      continue;
+    }
+    const subject = `The function "${info.id}" reads ${read.key}`;
+    const exports = infraModules[read.module];
+    if (!exports) {
+      throw new Error(
+        `${subject}, but the infra phase didn't load ${read.module} as an infra module that runtime code imports. Compile the app again.`,
+      );
+    }
+    if (!(read.binding in exports)) {
+      throw new Error(
+        `${subject}, but ${read.module} has no export named ${read.binding}.`,
+      );
+    }
+    let value: unknown = (exports as Record<string, unknown>)[read.binding];
+    let length = 0;
+    // A path that goes on past an output value or a primitive, such as
+    // `orderQueue.url.length`, reads that property in the function.
+    while (length < read.path.length && !isLeaf(value)) {
+      value =
+        value === null || value === undefined
+          ? undefined
+          : Reflect.get(Object(value), read.path[length]!, value);
+      length += 1;
+    }
+    const key = outputKey(
+      read.module,
+      read.binding,
+      read.path.slice(0, length),
+    );
+    values[key] = deliveredValue(value, length === 0, subject);
+  }
+  return values;
+}
+
+function deliveredValue(value: unknown, binding: boolean, subject: string) {
+  if (typeof value === "function") {
+    throw new Error(
+      `${subject}, which is a function of infra. Runtime code can't call or store infra functions; call them in the settings of lambda().`,
+    );
+  }
+  if (value === undefined) {
+    throw new Error(`${subject}, which infra leaves undefined.`);
+  }
+  if (isData(value)) return value;
+  if (binding) {
+    const data = Object.fromEntries(
+      Object.entries(value as object).filter(([, entry]) => isData(entry)),
+    );
+    if (Object.keys(data).length > 0) return data;
+  }
+  throw new Error(
+    `${subject}, which is not an output value or data. Runtime code can read output values, such as a queue's url, and data, such as strings, numbers and plain objects.`,
+  );
+}
+
+function isLeaf(value: unknown): boolean {
+  return (
+    isOutputValue(value) ||
+    ["string", "number", "boolean"].includes(typeof value)
+  );
+}
+
+// Output values, and JSON values that may contain them.
+function isData(value: unknown): boolean {
+  if (value === null || isOutputValue(value)) return true;
+  if (["string", "number", "boolean"].includes(typeof value)) return true;
+  if (Array.isArray(value)) return value.every(isData);
+  if (isPlainObject(value)) {
+    return Object.values(value).every(
+      (entry) => entry === undefined || isData(entry),
+    );
+  }
+  return false;
 }
 
 const lazyFunctionMark = Symbol.for("@notation/resource/LazyFunction");

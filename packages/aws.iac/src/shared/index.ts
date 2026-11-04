@@ -25,6 +25,11 @@ export type LambdaRuntime = {
    * an event source mapping.
    */
   dispatch?: Record<string, DispatchEntry>;
+  /**
+   * The values that the function's code reads from infra, keyed by output
+   * key, such as `infra/orders#orderQueue.url`.
+   */
+  outputs?: Record<string, unknown>;
 };
 
 /**
@@ -48,6 +53,7 @@ export const runtimeValue = v.object({
       v.object({ export: v.string(), match: dispatchMatchValue }),
     ),
   ),
+  outputs: v.optional(v.record(v.string(), v.unknown())),
 });
 
 /** Encodes the runtime map for the environment variable, as sorted JSON. */

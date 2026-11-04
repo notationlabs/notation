@@ -3,8 +3,13 @@ import {
   runtimeVariable,
   type DispatchEntry,
 } from "@notation/aws.iac/shared";
+import { addOutputSource } from "@notation/resource/outputs";
 import type { Context } from "aws-lambda";
 import { getHandlerKind } from "./handlers";
+
+// The function's bundle imports this module before its handlers' modules, so
+// the source is added before any of their code reads infra.
+addOutputSource(() => decodeRuntime(process.env[runtimeVariable]).outputs);
 
 type Handler = (event: any, context: Context) => unknown;
 

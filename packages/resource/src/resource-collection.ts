@@ -24,6 +24,7 @@ export type ResourceCollection = {
   // declared. Collection fails with the first that fails.
   pendingValidations: Promise<void>[];
   declarationChecks: boolean;
+  runtimeReads?: CollectOptions["runtimeReads"];
   // The app and stage that resource packages put in physical names. Unset
   // when the graph is collected without a deployment, as `notation viz` does.
   scope?: NameScope;
@@ -37,6 +38,14 @@ export type CollectOptions = {
    * that config which fails them does not block it.
    */
   declarationChecks?: boolean;
+  /**
+   * The output keys that each function's bundle reads from infra, such as
+   * `infra/orders#orderQueue.url`. When it is set, linking delivers their
+   * values to each function, and fails on a read that has no value to
+   * deliver. Leave it out to collect the graph before the functions are
+   * bundled.
+   */
+  runtimeReads?: (fn: RuntimeFunction) => string[] | undefined;
 };
 
 let activeCollection: ResourceCollection | undefined;
@@ -64,6 +73,7 @@ export async function collectResourceGraph(
     runtime: { handlers: [], functions: [] },
     pendingValidations: [],
     declarationChecks: opts.declarationChecks ?? true,
+    runtimeReads: opts.runtimeReads,
     scope: opts.scope,
   };
 

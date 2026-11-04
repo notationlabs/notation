@@ -7,6 +7,7 @@ import {
   isHandlerRef,
   isStandIn,
   linkRuntimeModules,
+  OutputValue,
   onEvaluationEnd,
   resolveRuntimeTarget,
   type HandlerRef,
@@ -180,4 +181,89 @@ it("names a handler exported under several names after the first", async () => {
     expect(handler.module).toBe("runtime/a.ts");
     expect(handler.export).toBe("beta");
   });
+});
+
+class Queue {
+  readonly id = "orders";
+  readonly config = { name: "orders" };
+  readonly url = new OutputValue({} as any, ["QueueUrl"]);
+  readonly arn = new OutputValue({} as any, ["QueueArn"]);
+  readonly queue = new Fn("orders-queue");
+  grant() {
+    return {};
+  }
+}
+
+const collectReads = async (reads: string[]) => {
+  let delivered: Record<string, unknown> | undefined;
+  const infra = { orderQueue: new Queue(), settings: { memory: 64 } };
+  await collectResourceGraph(
+    () => {
+      const fn = new Fn("checkout");
+      declareRuntimeFunction(
+        fn,
+        {
+          id: "checkout",
+          service: "test/fn",
+          bundle: "dist/functions/checkout/index.mjs",
+        },
+        collectReads,
+        (values) => {
+          delivered = values;
+        },
+      );
+      linkRuntimeModules(
+        [
+          {
+            module: "runtime/checkout.ts",
+            standIns: {},
+            exports: { run: createHandlerRef("api", fn, collectReads) },
+          },
+        ],
+        { "infra/orders": infra },
+      );
+    },
+    { runtimeReads: () => reads },
+  );
+  return { delivered, infra };
+};
+
+it("delivers the values that a function reads from infra", async () => {
+  const { delivered, infra } = await collectReads([
+    "infra/orders#orderQueue.url",
+    "infra/orders#orderQueue.url.length",
+    "infra/orders#settings",
+    "infra/orders#settings.memory",
+  ]);
+  expect(delivered).toEqual({
+    "infra/orders#orderQueue.url": infra.orderQueue.url,
+    "infra/orders#settings": { memory: 64 },
+  });
+});
+
+it("delivers the data properties of a whole binding", async () => {
+  const { delivered, infra } = await collectReads(["infra/orders#orderQueue"]);
+  expect(delivered).toEqual({
+    "infra/orders#orderQueue": {
+      id: "orders",
+      config: { name: "orders" },
+      url: infra.orderQueue.url,
+      arn: infra.orderQueue.arn,
+    },
+  });
+});
+
+it("fails when a function reads an infra function, or a value that isn't data", async () => {
+  await expect(collectReads(["infra/orders#orderQueue.grant"])).rejects.toThrow(
+    'The function "checkout" reads infra/orders#orderQueue.grant, which is a function of infra. Runtime code can\'t call or store infra functions',
+  );
+  await expect(collectReads(["infra/orders#orderQueue.queue"])).rejects.toThrow(
+    'The function "checkout" reads infra/orders#orderQueue.queue, which is not an output value or data',
+  );
+  await expect(collectReads(["infra/orders#missing"])).rejects.toThrow(
+    "infra/orders has no export named missing",
+  );
+  await expect(collectReads(["infra/other#x"])).rejects.toThrow(
+    "the infra phase didn't load infra/other",
+  );
 });
