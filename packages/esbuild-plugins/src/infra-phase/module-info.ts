@@ -47,7 +47,12 @@ export type Statement = {
    * Each variable declarator's names and initializer, for finding bindings
    * that derive from infra calls. `export default <expr>` gives `default`.
    */
-  initializers: Array<{ names: string[]; init: ts.Expression }>;
+  initializers: Array<{
+    names: string[];
+    init: ts.Expression;
+    /** The declarator's name, which may destructure the initializer. */
+    pattern?: ts.BindingName;
+  }>;
   /** Type-only statements, such as interfaces, have no effect. */
   typeOnly: boolean;
 };
@@ -134,7 +139,11 @@ export function parseModule(path: string, source: string): ModuleInfo {
         const names = bindingNames(declaration.name);
         statement.declares.push(...names);
         if (declaration.initializer) {
-          statement.initializers.push({ names, init: declaration.initializer });
+          statement.initializers.push({
+            names,
+            init: declaration.initializer,
+            pattern: declaration.name,
+          });
         }
       }
     } else if (

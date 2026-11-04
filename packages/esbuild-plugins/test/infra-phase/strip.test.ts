@@ -224,6 +224,54 @@ export const run = handle.apiRequest(() => unused);
     expect(code).not.toContain("unused");
   });
 
+  it("keep handlers of a lambda() call behind a condition", async () => {
+    const modules = await strip(
+      {
+        "runtime/checkout.ts": `
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+import { db } from "./db";
+const { handle } = process.env.BIG ? lambda({ id: "big" }) : lambda({ id: "small" });
+const fallback = process.env.FN ?? lambda({ id: "fallback" });
+export const run = handle.apiRequest(() => db.get());
+export const other = fallback.handle.sqsEvent(() => db.get());
+`,
+        "runtime/db.ts": `export const db = connect();`,
+      },
+      ["runtime/checkout.ts"],
+    );
+    const code = modules["runtime/checkout.ts"]!;
+    expect(code).toContain(
+      "export const run = handle.apiRequest(__notationInert);",
+    );
+    expect(code).toContain(
+      "export const other = fallback.handle.sqsEvent(__notationInert);",
+    );
+    expect(code).not.toContain("__notationDropped");
+    expect(modules["runtime/db.ts"]).toBeUndefined();
+  });
+
+  it("only replace the arguments of handle.<kind>() calls", async () => {
+    const modules = await strip(
+      {
+        "runtime/checkout.ts": `
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+import { queue } from "@notation/aws/sqs" with { type: "infra" };
+export const fn = lambda({ id: "checkout", grants: [queue({ name: "x" }).grant(["SendMessage"])] });
+const { handle: { apiRequest } } = lambda({ id: "other" });
+fn.role.tag("team", "orders");
+export const run = fn.handle.apiRequest(() => ({}));
+export const other = apiRequest(() => ({}));
+`,
+      },
+      ["runtime/checkout.ts"],
+    );
+    const code = modules["runtime/checkout.ts"]!;
+    expect(code).toContain(`queue({ name: "x" }).grant(["SendMessage"])`);
+    expect(code).toContain(`fn.role.tag("team", "orders");`);
+    expect(code).toContain("fn.handle.apiRequest(__notationInert);");
+    expect(code).toContain("export const other = apiRequest(__notationInert);");
+  });
+
   it("import files that aren't scripts, such as JSON, from the file itself", async () => {
     const modules = await strip(
       {

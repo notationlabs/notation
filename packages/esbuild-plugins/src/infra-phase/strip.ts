@@ -40,12 +40,17 @@ export type StrippedModules = {
 /** The specifier prefix of a stripped copy in generated code. */
 export const strippedPrefix = "notation-stripped:";
 
-// Replaces the arguments of calls on a derived binding, so handler bodies
+// Replaces the arguments of `handle.<kind>(...)` calls, so handler bodies
 // never run in the infra phase.
 const inert = "__notationInert";
 const inertDeclaration = `const ${inert} = () => { throw new Error("A handler doesn't run in the infra phase."); };`;
 
 type Kind = "infra" | "derived" | "plain";
+
+// Where a value comes from: `infra` for a `type: "infra"` import or a
+// property of one, or the property path from the result of a call to one,
+// such as `["handle", "apiRequest"]`. Undefined for anything else.
+type Position = "infra" | string[] | undefined;
 
 type ModuleState = {
   info: ModuleInfo;
@@ -67,8 +72,9 @@ type ModuleState = {
  * 3. Everything a kept statement references.
  * 4. Statements that update a kept binding.
  *
- * Calls on a derived binding have their arguments replaced with an inert
- * placeholder. A local module that a copy imports is stripped the same way,
+ * Calls of `handle.<kind>(...)`, where `handle` is the `handle` property of
+ * a call to a `type: "infra"` import, have their arguments replaced with an
+ * inert placeholder. A local module that a copy imports is stripped the same way,
  * rooted at the names that the copy imports, and its dropped exports become
  * `undefined`.
  * @param entries The absolute paths of the runtime modules.
@@ -161,6 +167,7 @@ async function loadGraph(
 
 class Analysis {
   #kinds = new Map<string, Kind>();
+  #positions = new Map<string, Position>();
   #exportNames = new Map<string, Set<string>>();
 
   constructor(
@@ -332,11 +339,126 @@ class Analysis {
     );
     if (!initializer) return "plain";
     const chain = chainRoot(initializer.init);
-    if (!chain) return "plain";
-    const rootKind = this.bindingKind(state, chain.root);
-    if (rootKind === "derived") return "derived";
-    if (rootKind === "infra" && chain.called) return "derived";
-    return "plain";
+    if (chain) {
+      const rootKind = this.bindingKind(state, chain.root);
+      if (rootKind === "derived") return "derived";
+      if (rootKind === "infra" && chain.called) return "derived";
+    }
+    // Such as `cond ? lambda(a) : lambda(b)`, or a value built from infra
+    // calls.
+    return this.#callsInfra(state, initializer.init) ? "derived" : "plain";
+  }
+
+  bindingPosition(state: ModuleState, local: string): Position {
+    const key = `${state.info.path}#${local}`;
+    if (this.#positions.has(key)) return this.#positions.get(key);
+    this.#positions.set(key, undefined);
+    const position = this.#bindingPosition(state, local);
+    this.#positions.set(key, position);
+    return position;
+  }
+
+  #bindingPosition(state: ModuleState, local: string): Position {
+    const { info } = state;
+    const binding = info.importBindings.get(local);
+    if (binding) {
+      const decl = info.imports.find((d) => d.index === binding.declaration)!;
+      if (decl.attribute === "infra") return "infra";
+      const target = this.#localTarget(state, decl.source, decl.attribute);
+      if (!target || binding.imported === "*") return undefined;
+      return this.exportPosition(target, binding.imported);
+    }
+    const index = info.declarations.get(local);
+    if (index === undefined) return undefined;
+    const initializer = info.statements[index]!.initializers.find((init) =>
+      init.names.includes(local),
+    );
+    if (!initializer?.pattern) return undefined;
+    const path = destructuredPath(initializer.pattern, local);
+    if (!path) return undefined;
+    return extend(this.#position(state, initializer.init), path);
+  }
+
+  exportPosition(state: ModuleState, name: string): Position {
+    const { info } = state;
+    const local = info.localExports.find((exp) => exp.exported === name);
+    if (local) return this.bindingPosition(state, local.local);
+    const reExport = info.reExports.find((exp) => exp.exported === name);
+    if (reExport) {
+      if (reExport.attribute === "infra") return "infra";
+      const target = this.#localTarget(
+        state,
+        reExport.source,
+        reExport.attribute,
+      );
+      if (!target || reExport.imported === "*") return undefined;
+      return this.exportPosition(target, reExport.imported);
+    }
+    for (const star of info.starExports) {
+      const target = this.#localTarget(state, star.source, star.attribute);
+      if (target && this.exportNames(target).has(name)) {
+        return this.exportPosition(target, name);
+      }
+    }
+    return undefined;
+  }
+
+  #position(state: ModuleState, expression: ts.Expression): Position {
+    const node = skipOuterExpressions(expression);
+    if (ts.isIdentifier(node)) return this.bindingPosition(state, node.text);
+    if (
+      ts.isPropertyAccessExpression(node) ||
+      ts.isElementAccessExpression(node)
+    ) {
+      const name = ts.isPropertyAccessExpression(node)
+        ? node.name.text
+        : ts.isStringLiteralLike(node.argumentExpression)
+          ? node.argumentExpression.text
+          : undefined;
+      if (name === undefined) return undefined;
+      const namespace = this.#namespaceTarget(state, node.expression);
+      if (namespace) return this.exportPosition(namespace, name);
+      return extend(this.#position(state, node.expression), [name]);
+    }
+    if (ts.isCallExpression(node)) {
+      return this.#position(state, node.expression) === "infra"
+        ? []
+        : undefined;
+    }
+    if (ts.isConditionalExpression(node)) {
+      return (
+        this.#position(state, node.whenTrue) ??
+        this.#position(state, node.whenFalse)
+      );
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      [
+        ts.SyntaxKind.QuestionQuestionToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.AmpersandAmpersandToken,
+      ].includes(node.operatorToken.kind)
+    ) {
+      return (
+        this.#position(state, node.left) ?? this.#position(state, node.right)
+      );
+    }
+    return undefined;
+  }
+
+  // The module that an identifier imports as a namespace, if it is local.
+  #namespaceTarget(
+    state: ModuleState,
+    expression: ts.Expression,
+  ): ModuleState | undefined {
+    const node = skipOuterExpressions(expression);
+    if (!ts.isIdentifier(node)) return undefined;
+    const binding = state.info.importBindings.get(node.text);
+    if (binding?.imported !== "*") return undefined;
+    const decl = state.info.imports.find(
+      (d) => d.index === binding.declaration,
+    )!;
+    return this.#localTarget(state, decl.source, decl.attribute);
   }
 
   exportKind(state: ModuleState, name: string): Kind {
@@ -518,11 +640,11 @@ class Analysis {
     return found;
   }
 
-  #isDerivedCall(state: ModuleState, call: ts.CallExpression): boolean {
-    const chain = chainRoot(call.expression);
-    if (!chain) return false;
-    const kind = this.bindingKind(state, chain.root);
-    return kind === "derived" || (kind === "infra" && chain.called);
+  // Whether a call is `handle.<kind>(...)` on the `handle` of a factory
+  // call's result.
+  #isHandleCall(state: ModuleState, call: ts.CallExpression): boolean {
+    const position = this.#position(state, call.expression);
+    return Array.isArray(position) && position.at(-2) === "handle";
   }
 
   // Finds the bindings that a statement references, the argument lists to
@@ -561,7 +683,7 @@ class Analysis {
         return;
       }
       if (ts.isCallExpression(child)) {
-        if (this.#isDerivedCall(state, child)) {
+        if (this.#isHandleCall(state, child)) {
           visit(child.expression, inFunction);
           replacements.push([child.arguments.pos, child.arguments.end]);
           return;
@@ -609,4 +731,46 @@ class Analysis {
     refs.delete(defaultLocal);
     return { refs, updates, replacements };
   }
+}
+
+function extend(position: Position, path: string[]): Position {
+  if (position === "infra" || position === undefined) return position;
+  return [...position, ...path];
+}
+
+function skipOuterExpressions(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isAwaitExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+// The property path that a binding pattern destructures a name from, such as
+// `["handle", "apiRequest"]` for `{ handle: { apiRequest } }`. Undefined if
+// the path goes through an array, a computed key or a rest element.
+function destructuredPath(
+  pattern: ts.BindingName,
+  name: string,
+): string[] | undefined {
+  if (ts.isIdentifier(pattern)) return pattern.text === name ? [] : undefined;
+  if (!ts.isObjectBindingPattern(pattern)) return undefined;
+  for (const element of pattern.elements) {
+    const inner = destructuredPath(element.name, name);
+    if (!inner) continue;
+    if (element.dotDotDotToken) return undefined;
+    const key = element.propertyName ?? element.name;
+    if (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) {
+      return [key.text, ...inner];
+    }
+    return undefined;
+  }
+  return undefined;
 }
