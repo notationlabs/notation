@@ -105,6 +105,7 @@ it("bundles the functions that an infra rebuild adds", async () => {
     `import { api, router } from "@notation/aws/api-gateway";\n${importRun("./jobs.fn")}\nrouter(api({ name: "b" })).get("/", run);\n`,
   );
   await waitFor(() => expect(existsSync(bundle("jobs-b"))).toBe(true));
+  expect(existsSync(path.dirname(bundle("todos-b")))).toBe(false);
 });
 
 it("reports a failed function build while the infra build succeeds", async () => {

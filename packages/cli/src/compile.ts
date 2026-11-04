@@ -1,5 +1,11 @@
 import { execFile } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import esbuild from "esbuild";
@@ -258,7 +264,9 @@ export async function evaluateFunctions(
  * Bundles each function to its `bundle` path. The bundle's entry is
  * generated: its `handler` export dispatches each event to one of the
  * function's handlers. The output keys that each bundle reads from infra go
- * in `reads.json` next to it. Returns a function that stops watching.
+ * in `reads.json` next to it. It first removes the directories in
+ * `dist/functions` of functions that aren't in `functions`. Returns a
+ * function that stops watching.
  */
 export async function compileFunctions(
   functions: RuntimeFunction[],
@@ -271,6 +279,7 @@ export async function compileFunctions(
     onBuildEnd?: (ok: boolean) => void;
   } = {},
 ) {
+  removeStaleFunctions(functions);
   if (functions.length === 0) return async () => {};
   const distDir = filePaths.dist.dir();
   const entryPoints = Object.fromEntries(
@@ -314,6 +323,25 @@ export async function compileFunctions(
     }
   }
   return () => context.dispose();
+}
+
+// Removes each directory directly in `dist/functions` that holds no bundle
+// of `functions`. It doesn't remove files, or anything outside that
+// directory.
+function removeStaleFunctions(functions: RuntimeFunction[]) {
+  const dir = path.join(filePaths.dist.dir(), "functions");
+  if (!existsSync(dir)) return;
+  const current = new Set<string>();
+  for (const fn of functions) {
+    const relative = path.relative(dir, fromProjectRoot(fn.bundle));
+    const [first] = relative.split(path.sep);
+    if (first === ".." || path.isAbsolute(relative)) continue;
+    current.add(first!);
+  }
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || current.has(entry.name)) continue;
+    rmSync(path.join(dir, entry.name), { recursive: true, force: true });
+  }
 }
 
 // Lists the reads of each function's bundle next to it, where plan and

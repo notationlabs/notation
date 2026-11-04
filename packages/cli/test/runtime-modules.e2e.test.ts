@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -380,4 +381,40 @@ it("fails at plan when a function stores an infra method", async () => {
   ).toThrow(
     /The function "checkout" reads infra\/orders#orderQueue\.grant, which is a function of infra/,
   );
+});
+
+it("removes the directories in dist/functions of functions that no longer exist", async () => {
+  write(
+    "runtime/todos.fn.ts",
+    `
+    import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+    const { handle } = lambda({ id: "todos" });
+    export const getTodos = handle.apiRequest(() => ({ statusCode: 200 }));
+    `,
+  );
+  write(
+    "infra/main.ts",
+    `
+    import { api, router } from "@notation/aws/api-gateway";
+    import { getTodos } from "../runtime/todos.fn" with { type: "runtime" };
+    router(api({ name: "todo-api" })).get("/todos", getTodos);
+    `,
+  );
+  write("dist/functions/removed/index.mjs", "export {}");
+  write("dist/functions/notes.txt", "kept");
+  write("dist/other/index.mjs", "export {}");
+
+  await compile(
+    {
+      entryPoint: path.join(root, "infra/main.ts"),
+      runtimeModules: ["**/*.fn.ts"],
+    },
+    { logger },
+  );
+
+  const exists = (file: string) => existsSync(path.join(root, file));
+  expect(exists("dist/functions/todos/index.mjs")).toBe(true);
+  expect(exists("dist/functions/removed")).toBe(false);
+  expect(exists("dist/functions/notes.txt")).toBe(true);
+  expect(exists("dist/other/index.mjs")).toBe(true);
 });
