@@ -17,7 +17,11 @@ import type { Logger } from "../src/logger";
 // Inside this package, so the project's imports of @notation/aws resolve
 // from the package's node_modules, to the built package.
 const tmpDir = fileURLToPath(new URL("../tmp", import.meta.url));
-const logger = { info: () => {}, error: () => {} } as unknown as Logger;
+const logger = {
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+} as unknown as Logger;
 
 let root: string;
 
@@ -107,7 +111,11 @@ it("waits for a build that succeeds, and says so", async () => {
   write("watch-c/todos.fn.ts", runtimeModule("todos-c"));
   write("watch-c/main.ts", `export const broken = ;\n`);
   const info = vi.fn();
-  const watchLogger = { info, error: () => {} } as unknown as Logger;
+  const watchLogger = {
+    info,
+    warn: () => {},
+    error: () => {},
+  } as unknown as Logger;
 
   let resolved = false;
   const compiling = compile(build("watch-c/main.ts"), {
