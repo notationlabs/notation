@@ -313,6 +313,52 @@ describe("a function declared in a runtime module", () => {
     });
   });
 
+  test("infra passes an exported lambda() result, its arn and grantInvoke() on before linking", async () => {
+    let checkout!: LambdaGroup;
+    let caller!: LambdaGroup;
+    const graph = await collectResourceGraph(() => {
+      const checkoutFn = createStandIn(
+        "runtime/checkout.ts",
+        "checkoutFn",
+      ) as unknown as LambdaGroup;
+      queue({ name: "orders" }).consume(checkoutFn);
+      caller = lambda({ id: "caller", code, grants: [checkoutFn.grantInvoke()] });
+      caller.fn.contribute({
+        Environment: { Variables: { CHECKOUT_ARN: checkoutFn.arn } },
+      });
+      expect(() => checkoutFn.id).toThrow(
+        /checkoutFn isn't known yet: infra read its id/,
+      );
+
+      checkout = lambda({ id: "checkout" });
+      linkRuntimeModules([
+        {
+          module: "runtime/checkout.ts",
+          standIns: { checkoutFn },
+          exports: {
+            checkoutFn: checkout,
+            processOrder: checkout.handle.sqsEvent(async () => {}),
+          },
+        },
+      ]);
+    });
+
+    const mapping = graph.resources.find(
+      (r) => r.type === "aws/lambda/LambdaEventSourceMapping",
+    );
+    expect(mapping?.id).toBe("orders-checkout-mapping");
+    expect(caller.policy.getDependencies()).toContain(checkout.fn);
+    expect(caller.fn.getDependencies()).toContain(checkout.fn);
+    checkout.fn.setOutput({ FunctionArn: "arn:checkout" } as any);
+    const statements = (await caller.policy.getParams()).PolicyDocument
+      .Statement as any[];
+    expect(statements).toContainEqual({
+      Effect: "Allow",
+      Action: ["lambda:InvokeFunction"],
+      Resource: "arn:checkout",
+    });
+  });
+
   test("wiring a handler of the wrong kind fails at the infra call site", async () => {
     await expect(
       collectResourceGraph(() => {

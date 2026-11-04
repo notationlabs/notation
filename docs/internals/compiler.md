@@ -123,8 +123,9 @@ export { __notationStandIn1 as processRefunds };
 None of the runtime module's code runs here. A stand-in is a proxy:
 
 - Infra APIs that take a handler, such as `route()` and `consume()`, accept it. They record it, and apply their wiring when evaluation ends, through `onEvaluationEnd`.
-- `standIn.function` is a lazy proxy of the function. Infra can pass it to an infra API, which resolves it after linking, but reading any of its properties while infra is being evaluated fails: `createOrder.function isn't known yet: infra used it as a value …`.
-- Reading anything else fails while infra is being evaluated: `createOrder isn't known yet: infra read <prop> on it while infra was being evaluated …`.
+- `standIn.function` is a lazy proxy of the function: the handler's function, or the export itself for an exported `lambda()` result. Infra can pass it to an infra API, which resolves it after linking.
+- Reading any other property, such as `checkoutFn.arn` on an exported `lambda()` result, gives a lazy proxy of that property. So does a read or a call on a lazy proxy, such as `createOrder.function.grantInvoke()`. Resources and infra APIs resolve the proxies after linking.
+- Reading `id`, or turning a stand-in or a lazy proxy into a string, fails while infra is being evaluated: `createOrder.function isn't known yet: infra read its id while infra was being evaluated …`.
 
 ### 3. The generated entry
 

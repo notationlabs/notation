@@ -136,8 +136,11 @@ type StandInState = {
 /**
  * What infra sees in place of an export of a runtime module, while the
  * runtime module has not run. After linking, it reads through to the export.
- * Before, reading it fails, except for `function`, which is a lazy proxy of
- * the export's function; see `createChain`.
+ * Before, each property read gives a chain that resolves once linked, as
+ * values read from a handler's function do; see `createChain`. `function` is
+ * the export's function: the handler's function, or the export itself for an
+ * exported `lambda()` result. Reading `id`, or turning the stand-in into a
+ * string, fails before linking.
  * @param module The runtime module, relative to the project root.
  */
 export function createStandIn(
@@ -152,8 +155,17 @@ export function createStandIn(
     calls: [],
   };
   let lazyFunction: object | undefined;
+  const resolve = () => {
+    if (!state.linked) {
+      throw new Error(
+        `${name} from ${module} isn't linked yet: runtime modules are linked after infra has been evaluated.`,
+      );
+    }
+    return state.value;
+  };
   const get = (_: object, prop: string | symbol): unknown => {
     if (prop === standInMark) return state;
+    if (prop === deferredMark) return resolve;
     if (prop === "then") return undefined;
     if (state.linked) {
       if (prop === "function") return functionOf(state);
@@ -162,9 +174,18 @@ export function createStandIn(
     if (prop === "function") {
       return (lazyFunction ??= createLazyFunction(state));
     }
+    if (prop === "id" || stringifyingProps.has(prop)) {
+      throw new Error(unknownUse(name, prop, at(get)));
+    }
     if (typeof prop === "symbol") return undefined;
-    throw new Error(
-      `${name} isn't known yet: infra read ${String(prop)} on it while infra was being evaluated${at(get)}. Pass it to an infra API such as route() or consume(), which wire it once evaluation ends.`,
+    return createChain(
+      state,
+      `${name}.${prop}`,
+      captureCallSiteLazily(get, { skipLibraryFrames: true }),
+      () => {
+        const holder = exportOf(state);
+        return { value: Reflect.get(Object(holder), prop, holder), holder };
+      },
     );
   };
   return new Proxy({}, { get, set: readOnly(name) }) as RuntimeRef<
@@ -471,10 +492,7 @@ function createChain(
     if (state.linked) return readLinked(resolve(), prop);
     if (prop === "then") return undefined;
     if (prop === "id" || stringifyingProps.has(prop)) {
-      const use = prop === "id" ? "read its id" : "turned it into a string";
-      throw new Error(
-        `${name} isn't known yet: infra ${use} while infra was being evaluated${at(get)}. Infra can pass it, or values read from it such as its arn, to an infra API or a resource, which resolve them once the runtime modules are linked.`,
-      );
+      throw new Error(unknownUse(name, prop, at(get)));
     }
     if (typeof prop === "symbol") return undefined;
     return createChain(
@@ -513,14 +531,23 @@ function createChain(
   return new Proxy(() => {}, { get, apply, set: readOnly(name) });
 }
 
-function functionOf(state: StandInState): unknown {
-  if (isHandlerRef(state.value)) return state.value.function;
+function unknownUse(name: string, prop: string | symbol, site: string) {
+  const use = prop === "id" ? "read its id" : "turned it into a string";
+  return `${name} isn't known yet: infra ${use} while infra was being evaluated${site}. Infra can pass it, or values read from it such as its arn, to an infra API or a resource, which resolve them once the runtime modules are linked.`;
+}
+
+function exportOf(state: StandInState): unknown {
   if (state.value === undefined) {
     throw new Error(
       `${state.module} has no handler or function named ${state.name}.`,
     );
   }
   return state.value;
+}
+
+function functionOf(state: StandInState): unknown {
+  if (isHandlerRef(state.value)) return state.value.function;
+  return exportOf(state);
 }
 
 function readLinked(target: unknown, prop: string | symbol): unknown {

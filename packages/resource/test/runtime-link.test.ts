@@ -9,6 +9,7 @@ import {
   linkRuntimeModules,
   OutputValue,
   onEvaluationEnd,
+  resolveDeferred,
   resolveRuntimeTarget,
   resource,
   type HandlerRef,
@@ -77,12 +78,15 @@ it("links stand-ins to the exports of the runtime module and lists each function
   ]);
 });
 
-it("fails when infra reads a stand-in before it is linked, naming the call site", async () => {
+it("fails when infra reads a stand-in's identity before it is linked, naming the call site", async () => {
   await collectResourceGraph(() => {
     const standIn = createStandIn("runtime/checkout.ts", "createOrder");
     expect(isStandIn(standIn)).toBe(true);
-    expect(() => (standIn as any).kind).toThrow(
-      /createOrder isn't known yet: infra read kind on it while infra was being evaluated \(.*runtime-link\.test\.ts:\d+\)/,
+    expect(() => (standIn as any).id).toThrow(
+      /createOrder isn't known yet: infra read its id while infra was being evaluated \(.*runtime-link\.test\.ts:\d+\)/,
+    );
+    expect(() => `${standIn}`).toThrow(
+      /createOrder isn't known yet: infra turned it into a string while infra was being evaluated \(.*runtime-link\.test\.ts:\d+\)/,
     );
     const fn = (standIn as any).function;
     expect(() => fn.id).toThrow(
@@ -222,6 +226,66 @@ it("fails when a value read from a stand-in's function is used before linking, n
   ).rejects.toThrow(
     /createOrder\.function\.arn isn't known yet: infra used it at .*runtime-link\.test\.ts:\d+ before the runtime modules were linked/,
   );
+});
+
+it("resolves values read from an exported function's stand-in once linked", async () => {
+  let policy!: InstanceType<typeof Policy>;
+  let fn!: ResourceFn;
+  await collectResourceGraph(() => {
+    const standIn = createStandIn("runtime/checkout.ts", "checkoutFn");
+    const kind = (standIn as any).kind;
+    policy = new Policy("policy", {
+      config: { name: "policy", target: (standIn as any).arn },
+    });
+    policy.contribute({ statements: [(standIn as any).grantInvoke()] });
+    expect(() => `${(standIn as any).arn}`).toThrow(
+      /checkoutFn\.arn isn't known yet: infra turned it into a string/,
+    );
+
+    fn = new ResourceFn();
+    declareRuntimeFunction(
+      fn,
+      { id: "checkout", service: "test/fn", bundle: "b" },
+      it,
+    );
+    linkRuntimeModules([
+      {
+        module: "runtime/checkout.ts",
+        standIns: { checkoutFn: standIn },
+        exports: { checkoutFn: fn, run: createHandlerRef("api", fn, it) },
+      },
+    ]);
+    expect(resolveDeferred(standIn)).toBe(fn);
+    expect(resolveDeferred(kind)).toBeUndefined();
+  });
+
+  expect(policy.getDependencies()).toEqual([fn.resource]);
+  fn.resource.setOutput({ name: "checkout", arn: "arn:checkout" });
+  expect(await policy.getParams()).toEqual({
+    name: "policy",
+    target: "arn:checkout",
+    statements: [{ Action: "invoke", Resource: "arn:checkout" }],
+  });
+});
+
+it("fails when a value read from a stand-in names an export that the runtime module doesn't have", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const standIn = createStandIn("runtime/checkout.ts", "missing");
+      const policy = new Policy("policy", {
+        config: { name: "policy", target: (standIn as any).arn },
+      });
+      const checkout = declare("checkout");
+      linkRuntimeModules([
+        {
+          module: "runtime/checkout.ts",
+          standIns: { missing: standIn },
+          exports: { run: checkout.api() },
+        },
+      ]);
+      policy.getDependencies();
+    }),
+  ).rejects.toThrow("runtime/checkout.ts has no handler or function named missing");
 });
 
 it("links an exported function to the function itself", async () => {

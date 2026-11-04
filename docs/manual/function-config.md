@@ -138,7 +138,7 @@ import { checkoutFn } from "runtime/checkout.fn" with { type: "runtime" };
 
 Wire handlers, not the group. A route or a queue that gets the group adds no entry to the function's dispatch map, so the function can't tell which handler to call. See [Dispatch](../resources/lambda.md#dispatch).
 
-Infra can also reach the function through any of its handlers, as `createOrder.function`. Both are stand-ins while infra is being evaluated. Infra can pass them to infra APIs, and pass values read from them, such as `createOrder.function.arn`, to resources. Infra can't read the function's ID, or turn a value read from it into a string, until the runtime modules are linked. See [Lambda](../resources/lambda.md#the-function-of-a-handler).
+Infra can also reach the function through any of its handlers, as `createOrder.function`. Both are stand-ins while infra is being evaluated. Infra can pass them to infra APIs, and pass values read from them, such as `checkoutFn.arn` or `createOrder.function.arn`, to resources. Infra can't read the function's ID, or turn a value read from it into a string, until the runtime modules are linked. See [Lambda](../resources/lambda.md#the-function-of-a-handler).
 
 ## The `resource` export
 

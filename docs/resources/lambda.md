@@ -61,6 +61,8 @@ So `router.get` takes only API request handlers, and `queue.consume` takes only 
 
 While infra is being evaluated, `getTodos` is a stand-in: the compiler runs the runtime module after every infra module, and only then links `getTodos` to its handler. Infra APIs such as `router.get` record the stand-in, and wire it once evaluation ends. `getTodos.function` is a proxy that resolves after linking. Infra can pass it to an infra API, such as `router.get`. Infra can also read values from it and pass them to a resource or an infra API, such as `getTodos.function.arn` or `getTodos.function.grantInvoke()`. Each read gives a proxy that resolves after linking. A call, such as `getTodos.function.policy.contribute(...)`, is made when the runtime modules are linked.
 
+An exported `lambda()` result, such as `checkoutFn` from `export const checkoutFn = lambda({ ... })`, is a stand-in too, and works the same way: infra can pass `checkoutFn` to an infra API, and pass `checkoutFn.arn` or `checkoutFn.grantInvoke()` to a resource.
+
 Infra can't use the function's identity while infra is being evaluated. Reading `getTodos.function.id`, or turning a value read from it into a string, fails, and the error names the line:
 
 ```
