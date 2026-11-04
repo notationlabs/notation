@@ -227,6 +227,9 @@ importers:
       aws-jwt-verify:
         specifier: ^5.0.0
         version: 5.0.0
+      es-module-lexer:
+        specifier: ^2.3.2
+        version: 2.3.2
     devDependencies:
       '@notation/reconciler':
         specifier: workspace:*
@@ -234,6 +237,9 @@ importers:
       '@notation/state':
         specifier: workspace:*
         version: link:../state
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.13.4
 
   packages/aws.iac:
     dependencies:
@@ -2526,10 +2532,12 @@ packages:
   '@smithy/core@3.29.1':
     resolution: {integrity: sha512-qoiY4nrk5OCu1+eIR1VB8l5DmON/oKiqrd5zZFAhXJXjJlLWQusKEW/SkBDAtGDcPaz86m9kfcE1lngU0GlM6A==}
     engines: {node: '>=18.0.0'}
+    deprecated: Deprecated due to a bug in custom logger data redaction. See https://github.com/aws/aws-sdk-js-v3/issues/8393.
 
   '@smithy/core@3.38.0':
     resolution: {integrity: sha512-aLyyCnK2p4yvNA2TaM+5owXqb+rZGSiUKEsNP329AzeYnERtAz7NrlTbRsaxqmZ0ooxwoID8LMm959UGQQDIsg==}
     engines: {node: '>=18.0.0'}
+    deprecated: Deprecated due to a bug in custom logger data redaction. See https://github.com/aws/aws-sdk-js-v3/issues/8393.
 
   '@smithy/credential-provider-imds@4.4.6':
     resolution: {integrity: sha512-B2WQ/PV/H6Jeg3lrIq6bKUfa6Hy01mtK7CGs6lhjzHA6k4aagldH6T6eEjnzKl4HI0cJnAsxfJ19pgb5PV+CVQ==}

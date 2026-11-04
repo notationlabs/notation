@@ -8,6 +8,8 @@ export default defineConfig({
     "src/lambda.fn/index.ts",
     "src/sqs/index.ts",
     "src/shared/index.ts",
+    "src/testing/index.ts",
+    "src/testing/register/index.ts",
   ],
   splitting: false,
   dts: true,
