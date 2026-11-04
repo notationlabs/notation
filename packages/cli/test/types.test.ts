@@ -403,17 +403,10 @@ describe("the generated declarations", () => {
 
 const checkoutView = `InfraView<typeof import("./runtime/checkout.js")>`;
 
-// On macOS, chokidar can miss changes made just after "ready", before the
-// underlying watch is listening, so each poll makes the change again.
-async function untilWritten(change: () => void) {
-  await vi.waitFor(
-    () => {
-      change();
-      expect(read()).toContain(checkoutView);
-    },
-    { timeout: 10_000, interval: 200 },
-  );
-}
+const untilWritten = () =>
+  vi.waitFor(() => expect(read()).toContain(checkoutView), {
+    timeout: 10_000,
+  });
 
 describe("watchTypes", () => {
   it("writes the file again when a file adds an attributed import", async () => {
@@ -426,7 +419,8 @@ describe("watchTypes", () => {
       // The runtime module first, so that the import of it in orders.ts
       // resolves whenever a run reads orders.ts.
       write("runtime/checkout.ts", checkoutModule);
-      await untilWritten(() => write("infra/orders.ts", ordersModule));
+      write("infra/orders.ts", ordersModule);
+      await untilWritten();
       expect(logger.error).not.toHaveBeenCalled();
     } finally {
       await stop();
@@ -441,7 +435,8 @@ describe("watchTypes", () => {
     try {
       expect(read()).not.toContain(checkoutView);
 
-      await untilWritten(() => write("runtime/checkout.ts", checkoutModule));
+      write("runtime/checkout.ts", checkoutModule);
+      await untilWritten();
       expect(logger.error).not.toHaveBeenCalled();
     } finally {
       await stop();

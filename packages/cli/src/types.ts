@@ -265,10 +265,10 @@ export async function writeTypesOrWarn(
 export type WatchTypesOptions = { logger?: Logger; debounceMs?: number };
 
 /**
- * Writes `notation-env.d.ts`, then writes it again when a source file is
- * created, deleted, moved or changed. A change that leaves the attributed
- * import specifiers the same leaves the file as it is. Resolves with a
- * function that stops watching, once the watcher is ready.
+ * Writes `notation-env.d.ts` once the watcher is ready, then writes it again
+ * when a source file is created, deleted, moved or changed. A change that
+ * leaves the attributed import specifiers the same leaves the file as it is.
+ * Resolves with a function that stops watching, after the first write.
  */
 export async function watchTypes(
   root: string,
@@ -288,7 +288,6 @@ export async function watchTypes(
       logger.error(error);
     }
   };
-  await run();
 
   const watcher = chokidar.watch(root, {
     ignoreInitial: true,
@@ -313,6 +312,10 @@ export async function watchTypes(
     }, debounceMs);
   });
   await new Promise<void>((resolve) => watcher.once("ready", resolve));
+  // The first run is after "ready", so that it sees every change made before
+  // the watcher started to listen.
+  running = running.then(run);
+  await running;
 
   return async () => {
     clearTimeout(timeout);
