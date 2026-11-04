@@ -6,11 +6,13 @@ import {
   declareRuntimeFunction,
   describeStandIn,
   getActiveResourceCollection,
+  isDeferred,
   isHandlerRef,
   isStandIn,
   onEvaluationEnd,
   resolveRuntimeTarget,
   type FunctionDeclaration,
+  type Grant,
 } from "@notation/resource";
 import type { DispatchEntry } from "@notation/aws.iac/shared";
 import path from "path";
@@ -81,6 +83,26 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
         PolicyDocument: { Statement: config.grants },
       });
     }
+  }
+
+  /**
+   * The function's ARN. It is an output value, filled in at deploy. A getter,
+   * so that serialising the group doesn't turn it into a string.
+   */
+  get arn(): string {
+    return this.fn.outputValue("FunctionArn");
+  }
+
+  /**
+   * A policy statement that allows invoking this function, for the grants of
+   * another function or a role's policy.
+   */
+  grantInvoke(): Grant<aws.lambda.PolicyStatement> {
+    return {
+      Effect: "Allow",
+      Action: ["lambda:InvokeFunction"],
+      Resource: this.arn,
+    };
   }
 
   /**
@@ -160,7 +182,12 @@ export function wireLambdaTarget(
   below: Function,
   wire: (target: ResolvedLambdaTarget) => void,
 ): void {
-  if (!isStandIn(target) && !isHandlerRef(target) && !isLambdaGroup(target)) {
+  if (
+    !isStandIn(target) &&
+    !isDeferred(target) &&
+    !isHandlerRef(target) &&
+    !isLambdaGroup(target)
+  ) {
     throw new Error(
       `${caller} expects a handler exported from a runtime module, or a Lambda group from lambda(). A runtime module calls lambda() and exports the handlers that its handle makes.`,
     );

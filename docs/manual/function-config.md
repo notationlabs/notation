@@ -33,12 +33,12 @@ type LambdaConfig = {
 };
 ```
 
-| Setting   | Meaning                                                                                                     |
-| --------- | ----------------------------------------------------------------------------------------------------------- |
-| `id`      | Names the function and the resources that support it, and keys them in state. Required.                    |
-| `timeout` | The seconds that the function may run for each event.                                                       |
-| `memory`  | The megabytes of memory that the function gets.                                                             |
-| `runtime` | The Lambda runtime.                                                                                         |
+| Setting   | Meaning                                                                                                        |
+| --------- | -------------------------------------------------------------------------------------------------------------- |
+| `id`      | Names the function and the resources that support it, and keys them in state. Required.                        |
+| `timeout` | The seconds that the function may run for each event.                                                          |
+| `memory`  | The megabytes of memory that the function gets.                                                                |
+| `runtime` | The Lambda runtime.                                                                                            |
 | `grants`  | Policy statements for the function's role, such as `orderQueue.grant(["SendMessage"])`. See [Grants](#grants). |
 
 `lambda()` also takes `code` and `handler`, for a function that runs code that Notation doesn't build. Leave them out in a runtime module: the compiler bundles the module's handlers to `dist/functions/<id>/index.mjs`. See [Lambda](../resources/lambda.md#external-code).
@@ -136,7 +136,7 @@ import { checkoutFn } from "runtime/checkout.fn" with { type: "runtime" };
 
 Wire handlers, not the group. A route or a queue that gets the group adds no entry to the function's dispatch map, so the function can't tell which handler to call. See [Dispatch](../resources/lambda.md#dispatch).
 
-Infra can also reach the function through any of its handlers, as `createOrder.function`. Both are stand-ins while infra is being evaluated: infra can pass them to infra APIs, but can't read their properties, such as the ID or the policy. See [Lambda](../resources/lambda.md#the-function-of-a-handler).
+Infra can also reach the function through any of its handlers, as `createOrder.function`. Both are stand-ins while infra is being evaluated. Infra can pass them to infra APIs, and pass values read from them, such as `createOrder.function.arn`, to resources. Infra can't read the function's ID, or turn a value read from it into a string, until the runtime modules are linked. See [Lambda](../resources/lambda.md#the-function-of-a-handler).
 
 ## The `resource` export
 

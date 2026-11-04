@@ -10,8 +10,10 @@ import {
   OutputValue,
   onEvaluationEnd,
   resolveRuntimeTarget,
+  resource,
   type HandlerRef,
 } from "src";
+import { check, string } from "./validators";
 
 class Fn {
   constructor(readonly id: string) {}
@@ -84,7 +86,10 @@ it("fails when infra reads a stand-in before it is linked, naming the call site"
     );
     const fn = (standIn as any).function;
     expect(() => fn.id).toThrow(
-      /createOrder\.function isn't known yet: infra used it as a value while infra was being evaluated/,
+      /createOrder\.function isn't known yet: infra read its id while infra was being evaluated \(.*runtime-link\.test\.ts:\d+\)/,
+    );
+    expect(() => `${fn.arn}`).toThrow(
+      /createOrder\.function\.arn isn't known yet: infra turned it into a string while infra was being evaluated \(.*runtime-link\.test\.ts:\d+\)/,
     );
     expect(() => resolveRuntimeTarget(standIn)).toThrow("isn't linked yet");
 
@@ -99,6 +104,124 @@ it("fails when infra reads a stand-in before it is linked, naming the call site"
     expect(fn.id).toBe("checkout");
     expect(resolveRuntimeTarget(fn)).toBe(checkout.fn);
   });
+});
+
+const FnResource = resource<{
+  Key: { name: string };
+  CreateParams: { name: string };
+  UpdateParams: {};
+  ReadResult: { arn: string };
+}>({ type: "test/runtime-link/function" })
+  .defineSchema({
+    name: {
+      propertyType: "param",
+      presence: "required",
+      value: string(),
+      primaryKey: true,
+      immutable: true,
+    },
+    arn: { propertyType: "computed", presence: "required", value: string() },
+  })
+  .defineOperations({
+    create: async () => undefined,
+    delete: async () => undefined,
+  });
+
+type Statement = { Action: string; Resource: string };
+
+const Policy = resource<{
+  Key: { name: string };
+  CreateParams: { name: string; target?: string; statements: Statement[] };
+  UpdateParams: { target?: string; statements: Statement[] };
+  ReadResult: {};
+}>({ type: "test/runtime-link/policy" })
+  .defineSchema({
+    name: {
+      propertyType: "param",
+      presence: "required",
+      value: string(),
+      primaryKey: true,
+      immutable: true,
+    },
+    target: {
+      propertyType: "param",
+      presence: "optional",
+      value: check<string | undefined>(
+        (value) => value === undefined || typeof value === "string",
+        "Expected a string",
+      ),
+    },
+    statements: {
+      propertyType: "param",
+      presence: "required",
+      value: check<Statement[]>(Array.isArray, "Expected an array"),
+      collect: (items: any[]) => items.flat(),
+    },
+  })
+  .defineOperations({
+    create: async () => undefined,
+    update: async () => undefined,
+    delete: async () => undefined,
+  });
+
+class ResourceFn {
+  readonly resource = new FnResource("checkout", {
+    config: { name: "checkout" },
+  });
+  readonly arn = this.resource.outputValue("arn");
+  grantInvoke(): Statement {
+    return { Action: "invoke", Resource: this.arn };
+  }
+}
+
+it("resolves values read from a stand-in's function in config and contributions once linked", async () => {
+  let policy!: InstanceType<typeof Policy>;
+  let fn!: ResourceFn;
+  await collectResourceGraph(() => {
+    const standIn = createStandIn("runtime/checkout.ts", "createOrder");
+    const lazy = (standIn as any).function;
+    policy = new Policy("policy", {
+      config: { name: "policy", target: lazy.arn },
+    });
+    policy.contribute({ statements: [lazy.grantInvoke()] });
+
+    fn = new ResourceFn();
+    declareRuntimeFunction(
+      fn,
+      { id: "checkout", service: "test/fn", bundle: "b" },
+      it,
+    );
+    linkRuntimeModules([
+      {
+        module: "runtime/checkout.ts",
+        standIns: { createOrder: standIn },
+        exports: { createOrder: createHandlerRef("api", fn, it) },
+      },
+    ]);
+    expect(lazy.arn).toBeInstanceOf(OutputValue);
+  });
+
+  expect(policy.getDependencies()).toEqual([fn.resource]);
+  fn.resource.setOutput({ name: "checkout", arn: "arn:checkout" });
+  expect(await policy.getParams()).toEqual({
+    name: "policy",
+    target: "arn:checkout",
+    statements: [{ Action: "invoke", Resource: "arn:checkout" }],
+  });
+});
+
+it("fails when a value read from a stand-in's function is used before linking, naming where it was read", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const standIn = createStandIn("runtime/checkout.ts", "createOrder");
+      const policy = new Policy("policy", {
+        config: { name: "policy", target: (standIn as any).function.arn },
+      });
+      policy.getDependencies();
+    }),
+  ).rejects.toThrow(
+    /createOrder\.function\.arn isn't known yet: infra used it at .*runtime-link\.test\.ts:\d+ before the runtime modules were linked/,
+  );
 });
 
 it("links an exported function to the function itself", async () => {

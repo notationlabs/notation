@@ -35,6 +35,7 @@ import {
   createPlanViews,
   deployLookup,
   forEachOutputValue,
+  isDeferred,
   isOutputValue,
   markUnknownOutputValues,
   planLookup,
@@ -263,7 +264,12 @@ export abstract class Resource<
     if (this.#collection?.declarationChecks === false) return;
     const config = this.config as Record<string, unknown>;
     assertParamFields(this, config);
-    const pending = validateValues(this, config, "declaration", isOutputValue);
+    const pending = validateValues(
+      this,
+      config,
+      "declaration",
+      (value) => isOutputValue(value) || isDeferred(value),
+    );
     if (!pending) return;
     // Handled now, so that a rejection before collection awaits it is not
     // reported as unhandled. Collection still fails with it.

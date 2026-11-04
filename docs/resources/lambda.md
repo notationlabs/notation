@@ -56,11 +56,21 @@ So `router.get` takes only API request handlers, and `queue.consume` takes only 
 
 `getTodos.function` is the handler's Lambda group. All the handlers that one `handle` makes share one group, so `getTodos.function` and `createTodo.function` are the same group.
 
-While infra is being evaluated, `getTodos` is a stand-in: the compiler runs the runtime module after every infra module, and only then links `getTodos` to its handler. Infra APIs such as `router.get` record the stand-in, and wire it once evaluation ends. `getTodos.function` is a proxy that resolves after linking. So infra can pass `getTodos.function` to an infra API, such as `router.get`, but reading a property of it while infra is being evaluated fails, and the error names the line. This includes `getTodos.function.policy`, so a function from a runtime module takes its permissions in its `grants` setting:
+While infra is being evaluated, `getTodos` is a stand-in: the compiler runs the runtime module after every infra module, and only then links `getTodos` to its handler. Infra APIs such as `router.get` record the stand-in, and wire it once evaluation ends. `getTodos.function` is a proxy that resolves after linking. Infra can pass it to an infra API, such as `router.get`. Infra can also read values from it and pass them to a resource or an infra API, such as `getTodos.function.arn` or `getTodos.function.grantInvoke()`. Each read gives a proxy that resolves after linking. A call, such as `getTodos.function.policy.contribute(...)`, is made when the runtime modules are linked.
+
+Infra can't use the function's identity while infra is being evaluated. Reading `getTodos.function.id`, or turning a value read from it into a string, fails, and the error names the line:
 
 ```
-getTodos.function isn't known yet: infra used it as a value while infra was being evaluated (infra/api.ts:5:70). Infra can pass it to an infra API, but not read it.
+getTodos.function isn't known yet: infra read its id while infra was being evaluated (infra/api.ts:5:70). Infra can pass it, or values read from it such as its arn, to an infra API or a resource, which resolve them once the runtime modules are linked.
 ```
+
+A Lambda group has these members for other resources to use:
+
+| Member          | Is                                                                                                          |
+| --------------- | ----------------------------------------------------------------------------------------------------------- |
+| `arn`           | The function's ARN, as an output value.                                                                     |
+| `grantInvoke()` | A policy statement that allows `lambda:InvokeFunction` on the function, for the grants of another function. |
+| `policy`        | The role's inline policy. Contribute statements to it.                                                      |
 
 ## IDs
 
