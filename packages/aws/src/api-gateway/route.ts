@@ -1,6 +1,6 @@
 import * as aws from "@notation/aws.iac";
 import { resolveLambdaTarget } from "src/lambda";
-import type { HandlerTarget } from "src/shared";
+import type { HandlerTarget } from "src/lambda";
 import type { ApiGroup } from "./api";
 import { AuthorizerConfig } from "./auth";
 import { authorizerKey, mapAuthConfig, mapAuthType } from "./utils";

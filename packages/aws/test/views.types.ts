@@ -11,7 +11,7 @@ import { api, router } from "src/api-gateway";
 import type * as lambdaModule from "src/lambda";
 import { lambda, type LambdaGroup } from "src/lambda";
 import { handle, json } from "src/lambda.fn";
-import type { LambdaRef } from "src/shared";
+import type { LambdaRef } from "src/lambda";
 import { queue, type QueueGroup } from "src/sqs";
 import type * as sqsModule from "src/sqs";
 

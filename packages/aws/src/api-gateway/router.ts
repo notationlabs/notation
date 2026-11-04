@@ -1,5 +1,6 @@
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
-import type { APIGatewayJWTProxyEventV2, HandlerTarget } from "src/shared";
+import type { HandlerTarget } from "src/lambda";
+import type { APIGatewayJWTProxyEventV2 } from "src/shared";
 import { route } from "./route";
 import type { ApiGroup } from "./api";
 import { AuthorizerConfig, JWTAuthorizerConfig, NO_AUTH } from "./auth";

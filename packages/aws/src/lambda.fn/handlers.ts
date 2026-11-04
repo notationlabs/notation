@@ -7,14 +7,19 @@ import type {
   EventBridgeHandler,
   JWTAuthorizedApiGatewayHandler,
 } from "src/shared/lambda.handler";
-import type { LambdaHandler } from "src/shared/runtime-ref";
+import type { Handler } from "@notation/resource";
+import type { LambdaGroup } from "src/lambda";
 
 /**
- * Infra imports a runtime module `with { type: "runtime" }`, and sees each
- * handler as a `RuntimeRef` through the generated declarations.
+ * A handler that `handle.<kind>(fn)` returns, for a Lambda handler `H`. Infra
+ * imports a runtime module `with { type: "runtime" }`, and sees each handler
+ * as a `RuntimeRef` through the generated declarations.
+ *
+ * It is exported from here, the module that user code imports `handle` from,
+ * so that declaration emit can name it in the type of a user's export.
  */
-type Handled<H extends (event: any, context: any) => unknown> =
-  LambdaHandler<H>;
+export type LambdaHandler<H extends (event: any, context: any) => unknown> =
+  Handler<Parameters<H>[0], Awaited<ReturnType<H>>, LambdaGroup>;
 
 /** The kind of event that a handler made with `handle.*` takes. */
 export type HandlerKind = "api" | "schedule" | "sqs" | "dynamodb";
@@ -32,10 +37,10 @@ export function getHandlerKind(value: unknown): HandlerKind | undefined {
 const wrap = <H extends (...args: any[]) => any>(
   kind: HandlerKind,
   handler: H,
-): Handled<H> => {
+): LambdaHandler<H> => {
   const wrapped = async (...args: Parameters<H>) => handler(...args);
   Object.defineProperty(wrapped, handlerKind, { value: kind });
-  return wrapped as unknown as Handled<H>;
+  return wrapped as unknown as LambdaHandler<H>;
 };
 
 export const handle = {

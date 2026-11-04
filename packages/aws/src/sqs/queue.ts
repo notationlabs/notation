@@ -2,7 +2,7 @@ import * as aws from "@notation/aws.iac";
 import type { Grant } from "@notation/resource";
 import type { SQSBatchResponse, SQSEvent } from "aws-lambda";
 import { resolveLambdaTarget } from "src/lambda";
-import type { HandlerTarget } from "src/shared";
+import type { HandlerTarget } from "src/lambda";
 import { awsName } from "src/naming";
 
 export type QueueConfig = {

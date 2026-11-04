@@ -1,6 +1,6 @@
 import type { EventBridgeEvent } from "aws-lambda";
 import { resolveLambdaTarget } from "src/lambda";
-import type { HandlerTarget } from "src/shared";
+import type { HandlerTarget } from "src/lambda";
 import { Schedule } from "./schedule";
 import * as aws from "@notation/aws.iac";
 import { toAwsScheduleExpression } from "./aws-conversions";
