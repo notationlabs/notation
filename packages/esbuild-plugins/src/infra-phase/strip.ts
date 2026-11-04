@@ -217,22 +217,25 @@ class Analysis {
   }
 
   /**
-   * Throws if a module calls infra inside a function, unless the function is
-   * in the arguments of an infra call, such as the settings of lambda(). A
-   * stripped copy keeps only the infra calls made at the top level, so a
-   * function that lambda() makes inside another function is never declared.
+   * Throws if a module calls a `type: "infra"` import itself, such as
+   * lambda(), inside a function, unless the function is in the arguments of
+   * an infra call, such as the settings of lambda(). A stripped copy keeps
+   * only the infra calls made at the top level, so a function that lambda()
+   * makes inside another function is never declared. A method call such as
+   * `orderQueue.grant()` in a handler is left to the runtime bundle, which
+   * reports it with its own error.
    */
   checkFunctionBodies(state: ModuleState): void {
     const visit = (child: ts.Node, inFunction: boolean) => {
       inFunction ||= isFunctionBody(child);
       if (ts.isCallExpression(child)) {
         const chain = chainRoot(child.expression);
-        if (
-          chain &&
-          this.bindingKind(state, chain.root) === "infra" &&
-          this.#isInfraCall(state, child)
-        ) {
-          if (inFunction) {
+        const path =
+          chain && this.bindingKind(state, chain.root) === "infra"
+            ? this.#infraCallPath(state, child)
+            : undefined;
+        if (path && isInfraCall(path)) {
+          if (inFunction && path.length === 0) {
             throw new Error(
               `${this.opts.describe(state.info.path)} calls ${child.expression.getText()}() inside a function. Call lambda() at the top level of the module, as in \`const { handle } = lambda({ id: "..." })\`, and call other infra functions there or in the settings of lambda(). The compiler only declares the functions that lambda() makes at the top level.`,
             );
@@ -683,6 +686,17 @@ class Analysis {
   // the runtime rewrite uses. `orderQueue.arn.split(":")` reads `arn` and
   // calls a method of its value, so it doesn't.
   #isInfraCall(state: ModuleState, call: ts.CallExpression): boolean {
+    const path = this.#infraCallPath(state, call);
+    return path !== undefined && isInfraCall(path);
+  }
+
+  // The property path from a call's root import to its callee, without the
+  // export name of a namespace import. Undefined when the callee isn't a
+  // plain property path from an identifier.
+  #infraCallPath(
+    state: ModuleState,
+    call: ts.CallExpression,
+  ): string[] | undefined {
     let root = call.expression;
     while (
       ts.isPropertyAccessExpression(root) ||
@@ -690,12 +704,12 @@ class Analysis {
     ) {
       root = root.expression;
     }
-    if (!ts.isIdentifier(root)) return false;
+    if (!ts.isIdentifier(root)) return undefined;
     const { levels, segments } = accessPath(root);
-    if (levels.at(-1) !== call.expression) return false;
+    if (levels.at(-1) !== call.expression) return undefined;
     const namespace =
       state.info.importBindings.get(root.text)?.imported === "*";
-    return isInfraCall(segments.slice(namespace ? 1 : 0));
+    return segments.slice(namespace ? 1 : 0);
   }
 
   // Whether a call is `handle.<kind>(...)` on the `handle` of a factory

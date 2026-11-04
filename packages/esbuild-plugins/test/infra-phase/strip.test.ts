@@ -357,6 +357,21 @@ export const run = handle.apiRequest(() => ({}));
     );
   });
 
+  it("leave a method call on infra inside a handler to the runtime bundle", async () => {
+    const modules = await strip(
+      {
+        "runtime/checkout.ts": `
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+import { orderQueue } from "../infra/orders" with { type: "infra" };
+const { handle } = lambda({ id: "checkout" });
+export const run = handle.apiRequest(() => { orderQueue.grant(["SendMessage"]); return {}; });
+`,
+      },
+      ["runtime/checkout.ts"],
+    );
+    expect(modules["runtime/checkout.ts"]).not.toContain("orderQueue.grant");
+  });
+
   it("allow infra calls inside functions in the settings of lambda()", async () => {
     const modules = await strip(
       {
