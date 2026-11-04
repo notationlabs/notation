@@ -18,9 +18,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup --clean",
+    "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "dev": "tsup --watch"
+    "dev": "tsdown --watch"
   },
   "dependencies": {
     "@notation/resource": "workspace:*",

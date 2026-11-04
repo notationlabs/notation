@@ -1,4 +1,4 @@
-import { defineConfig } from "tsup";
+import { defineConfig } from "tsdown";
 
 export default defineConfig({
   entry: [
@@ -12,8 +12,9 @@ export default defineConfig({
     "src/testing/register/index.ts",
     "src/testing/vitest/index.ts",
   ],
-  splitting: false,
-  dts: true,
-  format: ["esm"],
+  format: "esm",
   platform: "node",
+  dts: { sourcemap: false },
+  sourcemap: false,
+  fixedExtension: false,
 });
