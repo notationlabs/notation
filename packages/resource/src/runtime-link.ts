@@ -573,6 +573,11 @@ function createChain(
     const site = captureCallSiteLazily(apply, { skipLibraryFrames: true });
     const call = createChain(state, `${name}()`, site, callStep(args));
     state.calls.push(() => {
+      // Resources that the call declares, such as the route that a handler's
+      // `wire` adds, take infra's call site.
+      const collection = getActiveResourceCollection();
+      const outer = collection?.declarationSite;
+      if (collection) collection.declarationSite = site;
       try {
         resolveDeferred(call);
       } catch (error) {
@@ -581,6 +586,8 @@ function createChain(
           error.message += ` Infra made the call at ${where}.`;
         }
         throw error;
+      } finally {
+        if (collection) collection.declarationSite = outer;
       }
     });
     return call;

@@ -1,11 +1,13 @@
 import { describe, test, expect } from "vitest";
 import {
+  captureCallSite,
   collectResourceGraph,
   createStandIn,
   isHandlerRef,
   linkRuntimeModules,
 } from "@notation/resource";
 import { api, router } from "src/api-gateway";
+import { rate, schedule } from "src/event-bridge";
 import {
   lambda,
   type LambdaGroup,
@@ -15,6 +17,12 @@ import {
 import { queue, type QueueGroup } from "src/sqs";
 
 const code = { type: "file", path: "src/fns/handler.fn.js" } as const;
+
+// `file:line` of the line after the one that calls this.
+function nextLine(): string {
+  const [, file, line] = captureCallSite(nextLine)!.match(/^(.*):(\d+)$/)!;
+  return `${file}:${Number(line) + 1}`;
+}
 
 test("resource ids and names embed the id", () => {
   const group = lambda({ id: "get-todos", code });
@@ -254,6 +262,60 @@ describe("a function declared in a runtime module", () => {
         match: { apiId: "api-1", routeKey: "POST /orders" },
       },
     ]);
+  });
+
+  test("resources that linking adds for a stand-in are declared where infra used the stand-in", async () => {
+    const sites: Record<string, string> = {};
+    const graph = await collectResourceGraph(() => {
+      const standIn = createStandIn("runtime/orders.ts", "createOrder");
+      const consumer = createStandIn("runtime/orders.ts", "processOrder");
+      const digest = createStandIn("runtime/orders.ts", "sendDigest");
+      sites.route = nextLine();
+      router(api({ name: "orders-api" })).post("/orders", standIn as any);
+      sites.consume = nextLine();
+      queue({ name: "orders" }).consume(consumer as any);
+      sites.schedule = nextLine();
+      schedule({
+        name: "daily",
+        schedule: rate(1, "day"),
+        handler: digest as any,
+      });
+
+      const fn = lambda({ id: "orders" });
+      linkRuntimeModules([
+        {
+          module: "runtime/orders.ts",
+          standIns: {
+            createOrder: standIn,
+            processOrder: consumer,
+            sendDigest: digest,
+          },
+          exports: {
+            createOrder: fn.handle.apiRequest(() => ({})),
+            processOrder: fn.handle.sqsEvent(async () => {}),
+            sendDigest: fn.handle.eventBridgeScheduledEvent(() => {}),
+          },
+        },
+      ]);
+    });
+
+    const declaredAt = (type: string) =>
+      graph.resources.filter((r) => r.type === type).map((r) => r.declaredAt);
+    expect(declaredAt("aws/apiGateway/Route")).toEqual([sites.route]);
+    expect(declaredAt("aws/apiGateway/LambdaIntegration")).toEqual([
+      sites.route,
+    ]);
+    expect(declaredAt("aws/lambda/LambdaApiGatewayV2Permission")).toEqual([
+      sites.route,
+    ]);
+    expect(declaredAt("aws/lambda/LambdaEventSourceMapping")).toEqual([
+      sites.consume,
+    ]);
+    expect(declaredAt("aws/lambda/LambdaRolePolicy")).toEqual([sites.consume]);
+    expect(declaredAt("aws/eventBridge/rule")).toEqual([sites.schedule]);
+    expect(
+      declaredAt("aws/eventBridge/LambdaEventBridgeRulePermission"),
+    ).toEqual([sites.schedule]);
   });
 
   test("infra passes a stand-in's function, its arn and grantInvoke() on before linking", async () => {

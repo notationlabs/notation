@@ -237,9 +237,9 @@ export abstract class Resource<
     this.id = id;
     this.config = config || ({} as C);
     this.dependencies = dependencies || ({} as D);
-    const declaredAt = captureCallSiteLazily(new.target, {
-      skipLibraryFrames: true,
-    });
+    const declaredAt =
+      this.#collection?.declarationSite ??
+      captureCallSiteLazily(new.target, { skipLibraryFrames: true });
     // An own enumerable getter, so that a copy made with spread syntax keeps
     // the call site, as it would with a plain field.
     Object.defineProperty(this, "declaredAt", {

@@ -25,6 +25,10 @@ export type ResourceCollection = {
   pendingValidations: Promise<void>[];
   declarationChecks: boolean;
   runtimeReads?: CollectOptions["runtimeReads"];
+  // Set while linking makes a call that infra made on a stand-in. Resources
+  // declared during the call take this call site in place of their own, which
+  // would point at the linking code.
+  declarationSite?: () => string | undefined;
   // The app and stage that resource packages put in physical names. Unset
   // when the graph is collected without a deployment, as `notation viz` does.
   scope?: NameScope;

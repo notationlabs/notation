@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import {
+  captureCallSite,
   collectResourceGraph,
   createHandlerRef,
   createStandIn,
@@ -21,6 +22,12 @@ class Fn {
   describe() {
     return `fn ${this.id}`;
   }
+}
+
+// `file:line` of the line after the one that calls this.
+function nextLine(): string {
+  const [, file, line] = captureCallSite(nextLine)!.match(/^(.*):(\d+)$/)!;
+  return `${file}:${Number(line) + 1}`;
 }
 
 function declare(id: string) {
@@ -292,6 +299,31 @@ it("wires a handler's stand-in once linked, with the handler's function and expo
     });
     expect(wired).toHaveLength(2);
   });
+});
+
+it("declares the resources that a deferred call makes at infra's call site", async () => {
+  let policy!: InstanceType<typeof Policy>;
+  let wiredAt: string | undefined;
+  await collectResourceGraph(() => {
+    const standIn = createStandIn("runtime/checkout.ts", "processOrder");
+    const wire = (standIn as any).wire;
+    wiredAt = nextLine();
+    wire("sqs", () => {
+      policy = new Policy("policy", {
+        config: { name: "policy", statements: [] },
+      });
+    });
+
+    const checkout = declare("checkout");
+    linkRuntimeModules([
+      {
+        module: "runtime/checkout.ts",
+        standIns: { processOrder: standIn },
+        exports: { processOrder: checkout.sqs() },
+      },
+    ]);
+  });
+  expect(policy.declaredAt).toBe(wiredAt);
 });
 
 it("fails when a handler is wired to a source of another kind, naming the infra call site", async () => {
