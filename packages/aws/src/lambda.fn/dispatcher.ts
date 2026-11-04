@@ -8,7 +8,8 @@ import { getHandlerKind } from "./handlers";
 
 type Handler = (event: any, context: Context) => unknown;
 
-type Target = { ok: true; name: string; event: unknown } | { ok: false; reason: string };
+type Target =
+  { ok: true; name: string; event: unknown } | { ok: false; reason: string };
 
 /**
  * Makes the single entry point of a runtime module's Lambda function. It sends
