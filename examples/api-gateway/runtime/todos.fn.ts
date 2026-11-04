@@ -1,6 +1,8 @@
-import type { LambdaResource } from "@notation/aws/lambda.fn";
-import { handle, json } from "@notation/aws/lambda.fn";
+import { json } from "@notation/aws/lambda.fn";
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
 import { api } from "./utils";
+
+const { handle } = lambda({ id: "todos", timeout: 5, memory: 64 });
 
 const todos = await api.get<any[]>("/todos");
 
@@ -11,10 +13,3 @@ export const getTodos = handle.apiRequest(() => {
 export const getTodoCount = handle.apiRequest(() => {
   return json(todos.length);
 });
-
-export const resource: LambdaResource = {
-  service: "aws/lambda",
-  id: "todos",
-  timeout: 5,
-  memory: 64,
-};

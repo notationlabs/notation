@@ -1,6 +1,8 @@
-import type { LambdaResource } from "@notation/aws/lambda.fn";
-import { handle, json } from "@notation/aws/lambda.fn";
+import { json } from "@notation/aws/lambda.fn";
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
 import type { JWTClaims } from "shared/jwt";
+
+const { handle } = lambda({ id: "user", timeout: 5, memory: 64 });
 
 export const getUserHandler = handle.jwtAuthorizedApiRequest<JWTClaims>(
   async (event) => {
@@ -9,10 +11,3 @@ export const getUserHandler = handle.jwtAuthorizedApiRequest<JWTClaims>(
     });
   },
 );
-
-export const resource: LambdaResource = {
-  service: "aws/lambda",
-  id: "user",
-  timeout: 5,
-  memory: 64,
-};
