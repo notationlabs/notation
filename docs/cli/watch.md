@@ -17,11 +17,12 @@ notation watch --stage dev
 
 ## What it does
 
-1. Compiles infra and runtime with esbuild in watch mode.
-2. Deploys the initial stack.
-3. Watches `dist/` for changes (debounced at 500ms).
-4. On change, redeploys – only changed resources are updated (same reconciler as `deploy`).
-5. Queues deploys if one is already in progress.
+1. Writes [`notation-env.d.ts`](./types.md), and writes it again when a source file is created, deleted, moved or changed.
+2. Compiles infra and runtime with esbuild in watch mode.
+3. Deploys the initial stack.
+4. Watches `dist/` for changes (debounced at 500ms).
+5. On change, redeploys – only changed resources are updated (same reconciler as `deploy`).
+6. Queues deploys if one is already in progress.
 
 ## Changing the config
 

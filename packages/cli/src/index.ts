@@ -8,10 +8,12 @@ import { defaultLogger } from "./logger";
 import { runWithErrorHandling } from "./run-with-error-handling";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
+import { typesFileName, watchTypes, writeTypes } from "./types";
 import { startDashboardServer } from "@notation/dashboard";
 import {
   NodeDurableRuntime,
   loadProject,
+  projectRoot,
   readExecutionDeployment,
   resolveDeployment,
   resolveDeploymentIdentity,
@@ -40,6 +42,7 @@ program
   .description("Compile Notation App")
   .action(async (options) => {
     const project = await load(options);
+    await writeTypes(projectRoot());
     await compile(resolveBuild(project));
   });
 
@@ -117,6 +120,18 @@ program
   });
 
 program
+  .command("types")
+  .option(...configOption)
+  .description(`Write ${typesFileName}, which types attributed imports`)
+  .action(async (options) => {
+    if (options.config !== undefined) setConfigFile(options.config);
+    const changed = await writeTypes(projectRoot());
+    defaultLogger.info(
+      changed ? `Wrote ${typesFileName}` : `${typesFileName} is up to date`,
+    );
+  });
+
+program
   .command("watch")
   .option(...configOption)
   .option(...stageOption)
@@ -124,6 +139,7 @@ program
   .action(async (options) => {
     const project = await load(options);
     const deployment = resolveDeployment(project, { stage: options.stage });
+    await watchTypes(projectRoot());
     await watch(deployment);
   });
 

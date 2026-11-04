@@ -8,7 +8,7 @@ notation compile [--config <path>]
 | ----------------- | ----------------------------------------------------------- |
 | `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
 
-Compiles the entry file and its runtime modules to `dist/`. The output is the same for every stage, so `compile` takes no `--stage`. There are two passes:
+Writes [`notation-env.d.ts`](./types.md), then compiles the entry file and its runtime modules to `dist/`. The output is the same for every stage, so `compile` takes no `--stage`. There are two passes:
 
 1. **Infrastructure compilation** – esbuild bundles the infra entry point to `dist/infra/<entry>.mjs`. When the entry imports a [runtime module](../manual/file-conventions.md#runtime-modules), the compiler replaces the module with a generated module that declares its resource. The example below is simplified. The real module starts its own names with `__notation`, so they don't clash with the module's exports:
 
