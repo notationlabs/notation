@@ -315,7 +315,7 @@ A resource can depend on other resources. After `defineOperations`, chain `requi
 const LambdaIntegration = defineResource<{ ... }>({ type: "aws/apiGateway/LambdaIntegration" })
   .defineSchema({ ... })
   .defineOperations({ ... })
-  .requireDependencies<{ api: ApiResource; lambda: LambdaResource }>()
+  .requireDependencies<{ api: ApiInstance; lambda: LambdaFunctionInstance }>()
   .deriveParams(({ id, config, deps }) => ({
     IntegrationUri: deps.lambda.output.FunctionArn,
     ApiId: deps.api.output.ApiId,
@@ -380,16 +380,20 @@ PolicyDocument: {
 While infra is being evaluated, any code can add to a collected param with `contribute`. `queue.consume` does this:
 
 ```ts [packages/aws/src/sqs/queue.ts]
-consume(handler: LambdaTarget<SqsHandler | SqsBatchHandler>, options: ConsumeOptions = {}) {
-  const lambdaGroup = resolveLambdaTarget(handler, "queue.consume()").group;
-  const id = `${this.id}-${lambdaGroup.fn.id}-mapping`;
-
-  lambdaGroup.policy.contribute(
-    { PolicyDocument: { Statement: [this.grant(["ReceiveMessage", "DeleteMessage", "GetQueueAttributes"])] } },
-  );
-  // ...
+consume(handler: HandlerTarget<SQSEvent>, options: ConsumeOptions = {}): void {
+  wireLambdaTarget(handler, "queue.consume()", ["sqs"], this.consume, (target) => {
+    const lambdaGroup = target.group;
+    lambdaGroup.policy.contribute({
+      PolicyDocument: {
+        Statement: [this.grant(["ReceiveMessage", "DeleteMessage", "GetQueueAttributes"])],
+      },
+    });
+    // ...
+  });
 }
 ```
+
+`wireLambdaTarget` runs the callback when evaluation ends, because the handler is a stand-in until then. See [Runtime links](#runtime-links).
 
 The rules for `collect`:
 
@@ -495,6 +499,86 @@ Groups don't declare dependencies. Edges between groups follow from the dependen
 
 `addOnce` adds a resource unless the group already has one with the same ID, and returns the one the group holds. Use it for resources that bind two others, such as an API integration, which several call sites may create. It throws if the existing resource has a different class.
 
-During graph construction, the group and each resource added via `add()` become part of the active graph automatically. This is how a construct like `export const getTodos = lambda({ ... })` maps to the 4–6 actual AWS resources required to run it.
+During graph construction, the group and each resource added via `add()` become part of the active graph automatically. This is how one call such as `lambda({ id: "checkout" })` maps to the 4–6 AWS resources that the function needs.
 
 Resource groups are collected during graph construction and used by the reconciler to determine the full set of resources to deploy or destroy.
+
+## Runtime links
+
+Runtime modules and infra import each other. A runtime module calls `lambda()` to declare its function, and infra wires the module's handlers to routes and queues. `@notation/resource` holds the parts of this link that a provider uses. The compiler's side is described in [Compiler](compiler.md#the-infra-phase).
+
+This section uses a checkout module, which declares a function and exports one handler, and an infra module that wires the handler:
+
+```ts [runtime/checkout.fn.ts]
+const { handle } = lambda({ id: "checkout", grants: [orderQueue.grant(["SendMessage"])] });
+export const createOrder = handle.apiRequest(async (req) => { /* ... */ });
+```
+
+```ts [infra/orders.ts]
+import { createOrder } from "runtime/checkout.fn" with { type: "runtime" };
+ordersApi.post("/orders", createOrder);
+```
+
+### View types
+
+Each side of an attributed import sees the other through a type from `@notation/resource`. `notation types` writes the declarations that apply them.
+
+| Type | Used for |
+| --- | --- |
+| `Handler<E, R, F>` | What `handle.<kind>(fn)` returns, as runtime code and tests see it: a function of event `E` and result `R`, with a type-only mark. `F` is the provider's function type, such as `LambdaGroup`. |
+| `RuntimeRef<E, R, F>` | How infra sees a handler. It has `function: F` and is not callable. Infra APIs such as `route()` and `consume()` take one. |
+| `InfraView<M>` | Infra's view of a runtime module `M`: each `Handler` becomes a `RuntimeRef`, an exported `FunctionDeclaration<F>` becomes `F`, and any other export becomes an unusable `RuntimeOnly`. |
+| `RuntimeView<T>` | Runtime code's view of an infra module `T`: each output value becomes its value, such as `string` for a queue's `url`. Functions become an uncallable `InfraOnly`, except resource factories and `grant` methods. |
+| `Grant<T>` | Marks a method's result, such as a queue's `grant()`, so that `RuntimeView` keeps the method callable. |
+| `FunctionDeclaration<F>` | Marks the result of a function factory such as `lambda()`, so that `RuntimeView` keeps the factory callable and `InfraView` turns an exported result into `F`. |
+
+### Declaring a function
+
+A function factory calls `declareRuntimeFunction` when it runs in a runtime module:
+
+```ts [packages/aws/src/lambda/lambda.ts]
+declareRuntimeFunction(
+  group,
+  { id: config.id, service: "aws/lambda", bundle: `dist/functions/${config.id}/index.mjs` },
+  lambda,
+  (outputs) => group.fn.contribute({ Environment: { Runtime: { outputs } } }),
+);
+```
+
+- The first argument is the provider's function object, here the Lambda group.
+- `service` picks the runtime package that the function's bundle imports its dispatcher from: `aws/lambda` gives `@notation/aws/lambda.fn`.
+- `bundle` is where the compiler writes the function's bundle.
+- `below` is the factory, so that errors name the user's `lambda()` call.
+- The last argument, a `DeliverValues` callback, receives the values that the bundle reads from infra. A function without it can't read infra.
+
+Each method of the function's `handle` calls `createHandlerRef(kind, group, below)`. It returns a `HandlerRef`, which holds the kind of event and the function, not the handler's code. The infra phase names the ref after its export when it links the runtime modules.
+
+### Stand-ins
+
+In the infra phase, infra receives a stand-in for each export of a runtime module, made by `createStandIn(module, name)`. The runtime module runs only after all of infra, so the stand-in doesn't know its handler while infra is being evaluated. An infra API that takes a handler must therefore defer its wiring:
+
+1. Check the argument with `isStandIn`, `isHandlerRef`, or the provider's own check for a function.
+2. Register the wiring with `onEvaluationEnd`, which runs callbacks after the modules have been evaluated and linked, and before contributions close.
+3. In the callback, call `resolveRuntimeTarget` to get the `HandlerRef`, then check its `kind`.
+
+`wireLambdaTarget` in `@notation/aws/lambda` does these steps for Lambda. Outside an evaluation, it wires straight away. `describeStandIn` names a stand-in as `<export> from <module>` for error messages.
+
+`linkRuntimeModules`, which generated code calls, names each exported `HandlerRef`, links the stand-ins, gives each declared function its handlers, and adds it to `graph.runtimeFunctions`.
+
+### Output keys and reads
+
+A value that runtime code reads from infra has an output key: the infra module's path from the project root without its extension, `#`, the binding, and the property path. `orderQueue.url` in `infra/orders.ts` has the key `infra/orders#orderQueue.url`. The functions live in `@notation/resource/outputs`, which a function's bundle can import without the rest of the package:
+
+| Function | Does |
+| --- | --- |
+| `bindingKey(module, binding)` | Returns the key of a whole binding, such as `infra/orders#orderQueue`. |
+| `outputKey(module, binding, path?)` | Returns the key of a read, such as `infra/orders#orderQueue.url`. |
+| `parseOutputKey(key)` | Splits a key into `{ module, binding, path }`, and throws on a string that isn't a key. |
+| `read(binding, path)` | Returns a delivered value. The compiler rewrites `orderQueue.url` in a bundle to `read("infra/orders#orderQueue", ["url"])`. Throws if no value is set. |
+| `setOutputValues(values)` | Sets values by key. A key for a whole binding also serves reads of its paths. |
+| `clearOutputValues()` | Removes every value. |
+| `addOutputSource(source)` | Adds a source of values, which is loaded at the first read after it was added. Set values take precedence over a source's values. |
+| `findOutputValue(binding, path)` | Finds a value as `read` does, but returns `{ value }` or `undefined` in place of throwing. |
+| `hasOutputValuesBelow(key)` | Returns whether a value is set for a key below `key`, such as `infra/api#api.stage.url` below `infra/api#api.stage`. |
+
+The store is shared through `Symbol.for`, so every copy of the module in a process uses the same values. The Lambda dispatcher adds the function's `NOTATION_RUNTIME` environment variable as a source, and `setOutputs` from `@notation/aws/testing` sets values in the same store for tests.
