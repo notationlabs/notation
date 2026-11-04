@@ -52,9 +52,9 @@ export type DynamoDbStreamHandler = (
 ) => void | Promise<void>;
 
 export type DynamoDbBatchHandler = (
-  event: DynamoDBBatchResponse,
+  event: DynamoDBStreamEvent,
   context: Context,
-) => void | Promise<void>;
+) => DynamoDBBatchResponse | Promise<DynamoDBBatchResponse>;
 
 export type SqsHandler = (
   event: SQSEvent,
@@ -62,6 +62,6 @@ export type SqsHandler = (
 ) => void | Promise<void>;
 
 export type SqsBatchHandler = (
-  event: SQSBatchResponse,
+  event: SQSEvent,
   context: Context,
-) => void | Promise<void>;
+) => SQSBatchResponse | Promise<SQSBatchResponse>;
