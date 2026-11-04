@@ -88,6 +88,7 @@ export async function stripRuntimeModules(
 ): Promise<StrippedModules> {
   const states = await loadGraph(entries, opts);
   const analysis = new Analysis(states, opts);
+  for (const state of states.values()) analysis.checkFunctionBodies(state);
   for (const entry of entries) analysis.visit(entry);
   analysis.applyUpdates();
 
@@ -213,6 +214,37 @@ class Analysis {
       }
     }
     return state;
+  }
+
+  /**
+   * Throws if a module calls infra inside a function, unless the function is
+   * in the arguments of an infra call, such as the settings of lambda(). A
+   * stripped copy keeps only the infra calls made at the top level, so a
+   * function that lambda() makes inside another function is never declared.
+   */
+  checkFunctionBodies(state: ModuleState): void {
+    const visit = (child: ts.Node, inFunction: boolean) => {
+      inFunction ||= isFunctionBody(child);
+      if (ts.isCallExpression(child)) {
+        const chain = chainRoot(child.expression);
+        if (
+          chain &&
+          this.bindingKind(state, chain.root) === "infra" &&
+          this.#isInfraCall(state, child)
+        ) {
+          if (inFunction) {
+            throw new Error(
+              `${this.opts.describe(state.info.path)} calls ${child.expression.getText()}() inside a function. Call lambda() at the top level of the module, as in \`const { handle } = lambda({ id: "..." })\`, and call other infra functions there or in the settings of lambda(). The compiler only declares the functions that lambda() makes at the top level.`,
+            );
+          }
+          return;
+        }
+      }
+      ts.forEachChild(child, (next) => visit(next, inFunction));
+    };
+    for (const statement of state.info.statements) {
+      if (!statement.typeOnly) visit(statement.node, false);
+    }
   }
 
   request(state: ModuleState, name: string): void {

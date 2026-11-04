@@ -339,6 +339,41 @@ export const run = handle.apiRequest(() => ({}));
     );
   });
 
+  it("reject lambda() inside a function", async () => {
+    await expect(
+      strip(
+        {
+          "runtime/checkout.ts": `
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+function make() { return lambda({ id: "checkout" }); }
+const { handle } = make();
+export const run = handle.apiRequest(() => ({}));
+`,
+        },
+        ["runtime/checkout.ts"],
+      ),
+    ).rejects.toThrow(
+      "runtime/checkout.ts calls lambda() inside a function. Call lambda() at the top level of the module",
+    );
+  });
+
+  it("allow infra calls inside functions in the settings of lambda()", async () => {
+    const modules = await strip(
+      {
+        "runtime/checkout.ts": `
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+import { orderQueue } from "../infra/orders" with { type: "infra" };
+const { handle } = lambda({ id: "checkout", grants: ["SendMessage"].map((action) => orderQueue.grant([action])) });
+export const run = handle.apiRequest(() => ({}));
+`,
+      },
+      ["runtime/checkout.ts"],
+    );
+    expect(modules["runtime/checkout.ts"]).toContain(
+      "orderQueue.grant([action])",
+    );
+  });
+
   it("reject type: runtime in runtime code", async () => {
     await expect(
       strip(
