@@ -1,5 +1,8 @@
 import { queue } from "@notation/aws/sqs";
-import { processOrders, processRefunds } from "runtime/orders.fn";
+import {
+  processOrders,
+  processRefunds,
+} from "runtime/orders.fn" with { type: "runtime" };
 
 export const orderQueue = queue({ name: "orders" });
 orderQueue.consume(processOrders, { batchSize: 5 });
