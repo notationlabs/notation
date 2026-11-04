@@ -237,3 +237,49 @@ it("fails when the bundle keeps a call to infra made outside a handler", async (
     "orderQueue.grant() calls infra from runtime code, and the function's bundle keeps the call",
   );
 });
+
+it("finds reads however esbuild prints them", async () => {
+  expect(
+    findReads(
+      `a("infra/orders#orderQueue",["url"]);b( 'infra/orders#refundQueue' , [ 'arn', ] );`,
+    ),
+  ).toEqual(["infra/orders#orderQueue.url", "infra/orders#refundQueue.arn"]);
+
+  let reads: Record<string, string[]> = {};
+  const files = {
+    "runtime/checkout.ts": `
+      import { orderQueue } from "../infra/orders" with { type: "infra" };
+      export const run = () => orderQueue.url;
+    `,
+    "infra/orders.ts": `export const orderQueue = { url: "x" };`,
+  };
+  await buildVirtual(
+    files,
+    "runtime/checkout.ts",
+    [
+      runtimePlugin({
+        getFile: readVirtualFile(files),
+        onReads: (found) => {
+          reads = found;
+        },
+      }),
+    ],
+    { minify: true },
+  );
+  expect(Object.values(reads)).toEqual([["infra/orders#orderQueue.url"]]);
+});
+
+it("fails when a bundle calls read, but no reads are found in it", async () => {
+  const files = {
+    "runtime/checkout.ts": `
+      import { read } from "notation:read";
+      const key = "infra/orders#orderQueue";
+      export const run = () => read(key, ["url"]);
+    `,
+  };
+  await expect(
+    buildVirtual(files, "runtime/checkout.ts", [
+      runtimePlugin({ getFile: readVirtualFile(files), onReads: () => {} }),
+    ]),
+  ).rejects.toThrow("but the compiler found none of its reads");
+});

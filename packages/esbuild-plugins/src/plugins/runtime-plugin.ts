@@ -22,6 +22,7 @@ type PluginOpts = {
 };
 
 const internal = Symbol.for("@notation/esbuild-plugins/runtime-internal");
+const readNamespace = "notation-read";
 const infraAttribute = /\btype\s*:\s*["']infra["']/;
 
 /** The specifier that rewritten runtime code imports `read` from. */
@@ -60,13 +61,7 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
       build.onResolve({ filter: /.*/ }, async (args) => {
         if (args.pluginData?.[internal]) return;
         if (args.path === readSpecifier) {
-          const result = await build.resolve("@notation/resource/outputs", {
-            kind: "import-statement",
-            resolveDir: ownDir,
-            pluginData: { [internal]: true },
-          });
-          if (result.errors.length > 0) return { errors: result.errors };
-          return { path: result.path, external: result.external };
+          return { path: "read", namespace: readNamespace };
         }
         const type = args.with?.type;
         if (type === "runtime") {
@@ -141,30 +136,60 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
         },
       );
 
+      // Wraps `read`, so that the metafile shows whether a bundle calls it.
+      build.onLoad({ filter: /.*/, namespace: readNamespace }, () => ({
+        contents: [
+          `import { read as outputsRead } from "@notation/resource/outputs";`,
+          `export function read(binding, path) { return outputsRead(binding, path); }`,
+        ].join("\n"),
+        loader: "js",
+        resolveDir: ownDir,
+      }));
+
       build.onEnd(async (result) => {
         if (result.errors.length > 0) return;
         if (!opts.onReads && infraCalls.size === 0) return;
         const cwd = build.initialOptions.absWorkingDir ?? process.cwd();
+        const metas = Object.entries(result.metafile?.outputs ?? {})
+          .map(([output, meta]) => ({ file: path.resolve(cwd, output), meta }))
+          .filter(({ file }) => !/\.(map|css)$/.test(file));
         const outputs = result.outputFiles
-          ? result.outputFiles.map((file) => ({
-              path: file.path,
-              text: async () => file.text,
-            }))
-          : Object.keys(result.metafile?.outputs ?? {}).map((output) => {
-              const file = path.resolve(cwd, output);
-              return { path: file, text: () => readFile(file, "utf8") };
-            });
+          ? result.outputFiles
+              .filter((file) => !/\.(map|css)$/.test(file.path))
+              .map((file, _, all) => ({
+                file: file.path,
+                text: async () => file.text,
+                // esbuild names an output without an outfile `<stdout>`, and
+                // gives it another name in the metafile.
+                meta:
+                  metas.find((meta) => meta.file === file.path)?.meta ??
+                  (all.length === 1 && metas.length === 1
+                    ? metas[0]!.meta
+                    : undefined),
+              }))
+          : metas.map(({ file, meta }) => ({
+              file,
+              text: () => readFile(file, "utf8"),
+              meta,
+            }));
         const reads: Record<string, string[]> = {};
         const errors: PartialMessage[] = [];
-        for (const output of outputs) {
-          if (/\.(map|css)$/.test(output.path)) continue;
-          const text = await output.text();
+        for (const { file, text: readText, meta } of outputs) {
+          const text = await readText();
           for (const [id, error] of infraCalls) {
             if (text.includes(JSON.stringify(id))) errors.push(error);
           }
-          reads[output.path] = findReads(text).filter((key) =>
-            generated.has(key),
+          const found = findReads(text).filter((key) => generated.has(key));
+          const callsRead = Object.entries(meta?.inputs ?? {}).some(
+            ([input, { bytesInOutput }]) =>
+              input.startsWith(`${readNamespace}:`) && bytesInOutput > 0,
           );
+          if (callsRead && found.length === 0) {
+            errors.push({
+              text: `${toProjectRoot(file)} reads values from infra, but the compiler found none of its reads. This is a bug in the Notation compiler.`,
+            });
+          }
+          reads[file] = found;
         }
         if (errors.length > 0) return { errors };
         opts.onReads?.(reads);
@@ -173,25 +198,37 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
   };
 }
 
-// Matches the pure `read` calls that the rewrite makes, as esbuild prints
-// them. esbuild may rename `read`, so any callee name matches.
-const readCall =
-  /\/\* @__PURE__ \*\/ [\w$]+\(("(?:[^"\\]|\\.)*"), (\[(?:[^\]"]|"(?:[^"\\]|\\.)*")*\])\)/g;
+const stringLiteral = String.raw`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'`;
+// Matches calls with the shape of the `read` calls that the rewrite makes,
+// however esbuild prints them: any callee name, since esbuild may rename
+// `read`, and any spacing. Callers keep only the reads that a rewrite made.
+const readCall = new RegExp(
+  String.raw`[\w$]+\s*\(\s*(${stringLiteral})\s*,\s*(\[\s*(?:(?:${stringLiteral})\s*(?:,\s*(?:${stringLiteral})\s*)*,?\s*)?\])\s*\)`,
+  "g",
+);
+const stringInArray = new RegExp(stringLiteral, "g");
 
-/** The output keys of the reads in a bundle that the rewrite made. */
+/** The output keys of the calls in a bundle that look like reads. */
 export function findReads(bundle: string): string[] {
   const reads = new Set<string>();
   for (const match of bundle.matchAll(readCall)) {
     try {
-      const binding = JSON.parse(match[1]!);
-      const path = JSON.parse(match[2]!);
-      if (typeof binding !== "string" || !Array.isArray(path)) continue;
+      const binding = parseString(match[1]!);
+      const path = [...match[2]!.matchAll(stringInArray)].map((item) =>
+        parseString(item[0]),
+      );
       reads.add([binding, ...path].join("."));
     } catch {
       continue;
     }
   }
   return [...reads].sort();
+}
+
+function parseString(literal: string): string {
+  if (literal.startsWith('"')) return JSON.parse(literal);
+  const body = literal.slice(1, -1).replace(/\\'/g, "'").replace(/"/g, '\\"');
+  return JSON.parse(`"${body}"`);
 }
 
 // The directory of this module, so that `read` resolves from this package's
