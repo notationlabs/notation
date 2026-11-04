@@ -169,8 +169,8 @@ export function isLambdaGroup(value: unknown): value is LambdaGroup {
 }
 
 /**
- * Throws if `target` is not a handler or a Lambda group. The error names
- * `caller`, such as `route()`. Types already prevent this, except in
+ * Throws if `target` is not a handler or a Lambda group. The error message
+ * includes `caller`, such as `route()`. Types already prevent this, except in
  * JavaScript.
  */
 export function lambdaTarget(
