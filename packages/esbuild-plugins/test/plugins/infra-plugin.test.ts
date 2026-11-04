@@ -141,6 +141,71 @@ describe("in memory", () => {
     );
   });
 
+  it("finds runtime modules that an infra module imported by runtime code imports", async () => {
+    let found: string[] = [];
+    const output = await buildInfra(
+      {
+        "infra/main.ts": `
+          import { checkout } from "../runtime/checkout.fn" with { type: "runtime" };
+          console.log(checkout);
+        `,
+        "runtime/checkout.fn.ts": `
+          import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+          import { refunds } from "../infra/refunds" with { type: "infra" };
+          const { handle } = lambda({ id: "checkout", grants: [refunds.grant()] });
+          export const checkout = handle.apiRequest(() => ({}));
+        `,
+        "infra/refunds.ts": `
+          import { refund } from "../runtime/refund.fn" with { type: "runtime" };
+          export const refunds = { grant: () => refund };
+        `,
+        "runtime/refund.fn.ts": `
+          import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+          const { handle } = lambda({ id: "refund" });
+          export const refund = handle.apiRequest(() => ({}));
+        `,
+      },
+      undefined,
+      (modules) => {
+        found = modules;
+      },
+    );
+    expect(found).toEqual([
+      "/project/runtime/checkout.fn.ts",
+      "/project/runtime/refund.fn.ts",
+    ]);
+    expect(output).toContain('({ id: "refund" })');
+    expect(output).toContain('module: "runtime/refund.fn.ts"');
+  });
+
+  it("takes any file that infra imports with type: runtime as a runtime module", async () => {
+    const files = {
+      "infra/main.ts": `
+        import { run } from "../runtime/checkout" with { type: "runtime" };
+        import "./other";
+        console.log(run);
+      `,
+      "infra/other.ts": ``,
+      "runtime/checkout.ts": `
+        import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+        const { handle } = lambda({ id: "checkout" });
+        export const run = handle.apiRequest(() => ({}));
+      `,
+    };
+    const output = await buildInfra(files);
+    expect(output).toContain('createStandIn("runtime/checkout.ts", "run")');
+    expect(output).toContain('module: "runtime/checkout.ts"');
+
+    await expect(
+      buildInfra({
+        ...files,
+        "infra/other.ts": `import { run } from "../runtime/checkout"; console.log(run);`,
+      }),
+    ).rejects.toThrow(
+      'runtime/checkout.ts is a runtime module, so infra must import it with { type: "runtime" }',
+    );
+  });
+
   it("follows export * for the stand-ins", async () => {
     const output = await buildInfra({
       "infra/main.ts": `import { a, b } from "../runtime/index.fn" with { type: "runtime" }; console.log(a, b);`,

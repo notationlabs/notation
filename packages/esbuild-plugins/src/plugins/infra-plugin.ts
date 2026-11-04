@@ -87,29 +87,47 @@ function createPlugin(
         infraModules: [],
       };
       const resolve = createResolver(build);
+      // A file that infra imports with `type: "runtime"` is a runtime module,
+      // whether or not it matches the globs.
+      const isRuntimeModule = (file: string) =>
+        matchesRuntimeModules(file, opts.runtimeModules) ||
+        runtimeModules.includes(file);
 
       build.onStart(async () => {
         found.clear();
         if (mode === "scan") return;
         runtimeModules = [];
         stripped = { modules: new Map(), files: [], infraModules: [] };
-        try {
-          runtimeModules = await scan(build, opts);
-        } catch {
-          // The scan builds the same infra with the same checks, so the build
-          // fails with the same errors, and reports them once.
-          return;
-        }
-        try {
-          stripped = await stripRuntimeModules(runtimeModules, {
-            getFile,
-            resolve,
-            isRuntimeModule: (file) =>
-              matchesRuntimeModules(file, opts.runtimeModules),
-            describe: toProjectRoot,
-          });
-        } catch (error) {
-          return { errors: toMessages(error) };
+        // An infra module that runtime code imports with `type: "infra"` can
+        // import more runtime modules. If infra doesn't import it, scan again
+        // with it as an entry, until every infra module has been scanned.
+        const extraEntries: string[] = [];
+        for (;;) {
+          let scanned: Awaited<ReturnType<typeof scan>>;
+          try {
+            scanned = await scan(build, opts, extraEntries);
+          } catch (error) {
+            // The first scan builds the same infra with the same checks, so
+            // the build fails with the same errors, and reports them once.
+            if (extraEntries.length === 0) return;
+            return { errors: toMessages(error) };
+          }
+          runtimeModules = scanned.modules;
+          try {
+            stripped = await stripRuntimeModules(runtimeModules, {
+              getFile,
+              resolve,
+              isRuntimeModule,
+              describe: toProjectRoot,
+            });
+          } catch (error) {
+            return { errors: toMessages(error) };
+          }
+          const unscanned = stripped.infraModules.filter(
+            (file) => !scanned.files.has(file),
+          );
+          if (unscanned.length === 0) break;
+          extraEntries.push(...unscanned);
         }
       });
 
@@ -142,7 +160,10 @@ function createPlugin(
         }
 
         const type = args.with?.type;
-        if (type === "infra" && args.namespace === "file") {
+        // The scan doesn't know all runtime modules until it ends, so the
+        // build reports a runtime module that infra imports without the
+        // attribute, not this.
+        if (type === "infra" && args.namespace === "file" && mode === "build") {
           return {
             errors: [
               {
@@ -222,7 +243,7 @@ function createPlugin(
       build.onLoad(
         { filter: /\.[cm]?[jt]sx?$/, namespace: "file" },
         async (args) => {
-          if (!matchesRuntimeModules(args.path, opts.runtimeModules)) return;
+          if (!isRuntimeModule(args.path)) return;
           const source = await getFile(args.path);
           const info = parseModule(args.path, source);
           const name = toProjectRoot(args.path);
@@ -244,24 +265,67 @@ function createPlugin(
 }
 
 // Builds infra without writing it, to find the runtime modules that infra
-// imports with `type: "runtime"`.
-async function scan(build: PluginBuild, opts: PluginOpts): Promise<string[]> {
+// imports with `type: "runtime"`, and the files that infra is made of.
+// `extraEntries` are infra modules to scan as well.
+async function scan(
+  build: PluginBuild,
+  opts: PluginOpts,
+  extraEntries: string[],
+): Promise<{ modules: string[]; files: Set<string> }> {
   let modules: string[] = [];
   const scanPlugin = createPlugin(opts, "scan", (found) => {
     modules = found;
   });
   const { initialOptions } = build;
-  await esbuild.build({
+  const cwd = initialOptions.absWorkingDir ?? process.cwd();
+  // Several entries need an outdir. The scan writes nothing, so any will do.
+  const output =
+    extraEntries.length === 0
+      ? {}
+      : {
+          outfile: undefined,
+          outdir:
+            initialOptions.outdir ??
+            (initialOptions.outfile
+              ? path.dirname(path.resolve(cwd, initialOptions.outfile))
+              : cwd),
+        };
+  const result = await esbuild.build({
     ...initialOptions,
+    ...output,
+    entryPoints: withEntries(initialOptions.entryPoints, extraEntries),
     write: false,
-    metafile: false,
+    metafile: true,
     sourcemap: false,
     logLevel: "silent",
     plugins: (initialOptions.plugins ?? []).map((plugin) =>
       plugin.name === pluginName ? scanPlugin : plugin,
     ),
   });
-  return modules;
+  const files = new Set(
+    Object.keys(result.metafile.inputs)
+      .filter((input) => !/^[\w-]+:/.test(input))
+      .map((input) => path.resolve(cwd, input)),
+  );
+  return { modules, files };
+}
+
+function withEntries(
+  entryPoints: esbuild.BuildOptions["entryPoints"],
+  extra: string[],
+): esbuild.BuildOptions["entryPoints"] {
+  if (extra.length === 0) return entryPoints;
+  const added = extra.map((file, index) => ({
+    in: file,
+    out: `__notation-scan-${index}`,
+  }));
+  if (Array.isArray(entryPoints)) {
+    return [...entryPoints, ...added] as esbuild.BuildOptions["entryPoints"];
+  }
+  return {
+    ...entryPoints,
+    ...Object.fromEntries(added.map((entry) => [entry.out, entry.in])),
+  };
 }
 
 function createResolver(build: PluginBuild) {

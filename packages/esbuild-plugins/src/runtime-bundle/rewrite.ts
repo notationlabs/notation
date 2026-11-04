@@ -367,7 +367,8 @@ function settingsOnlyStatements(
     for (const { index, declares } of declarations) {
       if (!removed.has(index)) continue;
       const needed = usesOf(index, declares).some(
-        (ref) => !within(argumentRanges, ref.pos) && !removed.has(ref.statement),
+        (ref) =>
+          !within(argumentRanges, ref.pos) && !removed.has(ref.statement),
       );
       if (needed) {
         removed.delete(index);
