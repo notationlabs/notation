@@ -168,12 +168,9 @@ export function isLambdaGroup(value: unknown): value is LambdaGroup {
   return (value as any)?.[lambdaGroupMark] === true;
 }
 
-/**
- * Checks that an infra API can wire `target`, and returns it as a
- * `HandlerTarget`. An infra API can wire a handler imported from a runtime
- * module, or a Lambda group. Any other value throws an error that names
- * `caller`, such as `route()`.
- */
+// Infra APIs already type their target as a `HandlerTarget`. This catches
+// values that get past the types, such as from JavaScript, so the error names
+// the infra API instead of a missing `wire`.
 export function lambdaTarget(
   target: unknown,
   caller: string,
