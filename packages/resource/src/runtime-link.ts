@@ -37,6 +37,8 @@ export type DeliverValues = (values: Record<string, unknown>) => void;
 
 export type RuntimeRegistry = {
   handlers: HandlerRef[];
+  // Set once `linkRuntimeModules` has named the exported handlers.
+  linked: boolean;
   functions: Array<{
     fn: object;
     info: RuntimeFunction;
@@ -80,8 +82,11 @@ export class HandlerRef<F = unknown> implements RuntimeRef<any, unknown, F> {
 
   wire(kind: string, wire: (fn: F, exportName: string) => void): void {
     if (this.export === undefined) {
+      if (getActiveResourceCollection()?.runtime.linked) {
+        throw new Error(notExported(this));
+      }
       throw new Error(
-        `The ${this.kind} handler made${this.declaredAt ? ` at ${this.declaredAt}` : ""} isn't exported from a runtime module. Export it, so that infra can wire it and its function can dispatch to it.`,
+        `The ${this.kind} handler made${madeAt(this)} was wired before the runtime modules were linked, so its export isn't known yet. Import its runtime module with { type: "runtime" }, and pass infra the handler from that import.`,
       );
     }
     if (this.kind !== kind) {
@@ -91,6 +96,14 @@ export class HandlerRef<F = unknown> implements RuntimeRef<any, unknown, F> {
     }
     wire(this.function, this.export);
   }
+}
+
+function notExported(ref: HandlerRef): string {
+  return `The ${ref.kind} handler made${madeAt(ref)} isn't exported from a runtime module. Export it, so that infra can wire it and its function can dispatch to it.`;
+}
+
+function madeAt(ref: HandlerRef): string {
+  return ref.declaredAt ? ` at ${ref.declaredAt}` : "";
 }
 
 /**
@@ -171,11 +184,7 @@ export function createStandIn(
   };
   let lazyFunction: object | undefined;
   const resolve = () => {
-    if (!state.linked) {
-      throw new Error(
-        `${name} from ${module} isn't linked yet: runtime modules are linked after infra has been evaluated.`,
-      );
-    }
+    if (!state.linked) throw new Error(notLinked(state));
     return exportOf(state);
   };
   const get = (_: object, prop: string | symbol): unknown => {
@@ -245,11 +254,7 @@ export function resolveRuntimeTarget(value: unknown): unknown {
   if (value === null) return value;
   const standIn = standInState(value);
   const state = standIn ?? lazyFunctionState(value);
-  if (state && !state.linked) {
-    throw new Error(
-      `${state.name} from ${state.module} isn't linked yet: runtime modules are linked after infra has been evaluated.`,
-    );
-  }
+  if (state && !state.linked) throw new Error(notLinked(state));
   return standIn ? exportOf(standIn) : resolveDeferred(value);
 }
 
@@ -292,6 +297,8 @@ export function linkRuntimeModules(
       }
     }
   }
+  const collection = getActiveResourceCollection();
+  if (collection) collection.runtime.linked = true;
   for (const { standIns, exports } of sorted) {
     for (const [name, standIn] of Object.entries(standIns)) {
       if (!isStandIn(standIn)) continue;
@@ -308,14 +315,9 @@ export function linkRuntimeModules(
     }
   }
 
-  const collection = getActiveResourceCollection();
   if (!collection) return;
   for (const ref of collection.runtime.handlers) {
-    if (ref.export === undefined) {
-      throw new Error(
-        `The ${ref.kind} handler made${ref.declaredAt ? ` at ${ref.declaredAt}` : ""} isn't exported from a runtime module. Export it, so that infra can wire it and its function can dispatch to it.`,
-      );
-    }
+    if (ref.export === undefined) throw new Error(notExported(ref));
   }
   for (const { fn, info, declaredAt } of collection.runtime.functions) {
     const handlers = collection.runtime.handlers.filter(
@@ -612,6 +614,10 @@ function readableBeforeLinking(prop: string | symbol): boolean {
 function unknownUse(name: string, prop: string | symbol, site: string) {
   const use = prop === "id" ? "read its id" : "turned it into a string";
   return `${name} isn't known yet: infra ${use} while infra was being evaluated${site}. Infra can pass it, or values read from it such as its arn, to an infra API or a resource, which resolve them once the runtime modules are linked.`;
+}
+
+function notLinked(state: StandInState): string {
+  return `${state.name} from ${state.module} isn't linked yet: runtime modules are linked after infra has been evaluated.`;
 }
 
 function exportOf(state: StandInState): unknown {

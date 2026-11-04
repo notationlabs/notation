@@ -74,7 +74,7 @@ export async function collectResourceGraph(
     graph: { resourceGroups: [], resources: [], runtimeFunctions: [] },
     closed: false,
     endOfEvaluation: [],
-    runtime: { handlers: [], functions: [] },
+    runtime: { handlers: [], functions: [], linked: false },
     pendingValidations: [],
     declarationChecks: opts.declarationChecks ?? true,
     runtimeReads: opts.runtimeReads,

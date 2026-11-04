@@ -461,6 +461,26 @@ it("fails when a handler isn't exported, naming the handle call", async () => {
   );
 });
 
+it("fails when infra wires a handler before linking, or wires one that isn't exported", async () => {
+  await collectResourceGraph(() => {
+    const checkout = declare("checkout");
+    const early = checkout.api();
+    expect(() => early.wire("api", () => {})).toThrow(
+      /^The api handler made at .*runtime-link\.test\.ts:\d+ was wired before the runtime modules were linked, so its export isn't known yet\. Import its runtime module with \{ type: "runtime" \}, and pass infra the handler from that import\.$/,
+    );
+    linkRuntimeModules([
+      {
+        module: "runtime/checkout.ts",
+        standIns: {},
+        exports: { createOrder: early },
+      },
+    ]);
+    expect(() => checkout.api().wire("api", () => {})).toThrow(
+      /^The api handler made at .*runtime-link\.test\.ts:\d+ isn't exported from a runtime module\./,
+    );
+  });
+});
+
 it("fails when a function has no handlers", async () => {
   await expect(
     collectResourceGraph(() => {
