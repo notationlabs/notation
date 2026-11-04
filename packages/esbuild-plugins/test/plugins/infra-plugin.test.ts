@@ -355,6 +355,7 @@ describe("evaluated", () => {
       ],
     });
   });
+
   it("gives the same functions and wiring whatever order infra modules load in", async () => {
     // Each runtime module's settings read a value from the infra module that
     // wires the other one.

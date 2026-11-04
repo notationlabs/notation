@@ -74,9 +74,9 @@ The two modules import each other. `infra/orders.ts` needs `createOrder` to wire
 
 ## Runtime modules
 
-**A runtime module is a file that infra imports `with { type: "runtime" }`.** In the example, the runtime modules are `runtime/checkout.fn.ts` and `runtime/orders.fn.ts`. The compiler finds them by following infra's imports, so a file that no infra module imports this way is never a runtime module.
+**A runtime module is a file that infra imports `with { type: "runtime" }`.** In the example, the runtime modules are `runtime/checkout.fn.ts` and `runtime/orders.fn.ts`. The compiler finds them by following infra's imports, so a file that no infra module imports this way is never a runtime module. A file that infra imports this way is a runtime module even if it matches none of the `runtimeModules` globs.
 
-The `runtimeModules` globs in `notation.config.ts` (default `**/*.fn.ts`) are a guard. If infra imports a file that matches a glob without the attribute, the infra build fails:
+The `runtimeModules` globs in `notation.config.ts` (default `**/*.fn.ts`) are a guard. If infra imports a file without the attribute, and the file matches a glob or another infra module imports it with the attribute, the infra build fails:
 
 ```
 runtime/checkout.fn.ts is a runtime module, so infra must import it with { type: "runtime" }.
@@ -105,6 +105,8 @@ The plugin's build runs in four stages.
 ### 1. The scan
 
 Which runtime modules exist is only known once infra's imports have been resolved. So each build starts with a scan: a build of the same infra that writes nothing, and only records each file imported `with { type: "runtime" }`.
+
+Runtime code can import an infra module `with { type: "infra" }` that no other infra module imports, and that infra module can import more runtime modules. So after the scan, the plugin makes the stripped copies, and if they import an infra module that the scan didn't build, it scans again with that module as an extra entry. It repeats this until every such infra module has been scanned.
 
 ### 2. Stand-ins
 
@@ -170,7 +172,9 @@ The infra phase doesn't run a runtime module as written. In `checkout.fn.ts`, `n
 3. **Everything a kept statement references**: declarations, imports, and what kept function bodies reference.
 4. **Statements that update a kept binding**, such as `memory *= 2`.
 
-Calls on a derived binding, such as `handle.apiRequest(...)`, get an inert placeholder in place of their arguments, so handler bodies never run. The stripped copy of `checkout.fn.ts`, as it appears in `dist/infra/orders.mjs`:
+A binding is also derived when its initializer calls infra outside a function body, as `cond ? lambda(a) : lambda(b)` does.
+
+Calls of `handle.<kind>(...)`, where `handle` is the `handle` property of a factory call's result, get an inert placeholder in place of their arguments, so handler bodies never run. This follows the binding through destructuring, aliases and imports, as in `const { handle: { apiRequest } } = lambda(...)` or `fn.handle.apiRequest(...)`. Other calls on derived bindings, such as `queue({ name: "x" }).grant([...])` in the settings, run as written. The stripped copy of `checkout.fn.ts`, as it appears in `dist/infra/orders.mjs`:
 
 ```js [stripped copy of runtime/checkout.fn.ts]
 import { lambda } from "@notation/aws/lambda";
@@ -187,7 +191,7 @@ var createOrder = handle.apiRequest(__notationInert);
 
 The SDK import, `new SQSClient()` and the handler's body are gone. `orderQueue` is the real queue, because a `type: "infra"` import in a stripped copy resolves to the infra module itself.
 
-A local module that a copy imports is stripped in the same way, starting from the names the copy imports. Its other exports become `undefined`.
+A local module that a copy imports is stripped in the same way, starting from the names the copy imports. Its other exports become `undefined`. Only scripts (`.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`) are stripped. A copy imports other files, such as `config.json`, from the file itself.
 
 **Settings lose effects they don't reference.** The rules keep only what the settings reference, so an effect that reaches the settings some other way is removed without an error:
 
@@ -225,6 +229,8 @@ A function's bundle holds only its own handlers. If one runtime module calls `la
 | `import { lambda } from "@notation/aws/lambda" with { type: "infra" }` | `import { lambda } from "@notation/aws/lambda.fn"`: the provider's runtime half |
 | `lambda({ id: "checkout", timeout: 5, grants: [...] })` | `lambda()`: the settings are removed |
 | A top-level declaration that only the settings use | Removed |
+| A top-level statement that only updates such a declaration, such as `Object.assign(settings, …)` | Removed |
+| A call to infra made while the module body runs, outside the settings, such as `export const grants = [orderQueue.grant([…])]` | A pure placeholder call, which tree-shaking removes if only the settings use its result |
 | `orderQueue.url` | `/* @__PURE__ */ read("infra/orders#orderQueue", ["url"])` |
 | `orderQueue` used as a value | `read("infra/orders#orderQueue", [])`: every data property of the binding, as one object |
 | `import { orderQueue } from "infra/orders" with { type: "infra" }` | Removed, and `read` is imported from `@notation/resource/outputs` |
@@ -235,20 +241,29 @@ The rewrite fails the build on code that it can't turn into a read:
 
 | Code | Error |
 | --- | --- |
-| `orderQueue.grant(["SendMessage"])` in a handler | `orderQueue.grant() calls infra from runtime code. Infra functions only run in the infra phase: call them in the settings of lambda(), …` |
+| `orderQueue.grant(["SendMessage"])` in a function body | `orderQueue.grant() calls infra from runtime code. Infra functions only run in the infra phase: call them in the settings of lambda(), …` |
+| A placeholder call that is left in the bundle after tree-shaking, such as `console.log(orderQueue.grant([…]))` at the top level | `orderQueue.grant() calls infra from runtime code, and the function's bundle keeps the call. …` |
 | `orderQueue.url = "…"` | `Runtime code can't change orderQueue.url, which it reads from infra.` |
 | `import * as orders from "infra/orders" with { type: "infra" }`, then `orders` used as a value | `orders is a namespace import of infra, which runtime code can't use as a value. …` |
 | `export { orderQueue }` | `Runtime code can't re-export orderQueue, which it imports from infra.` |
 
 A method call on a value that runtime code reads, such as `orderQueue.url.startsWith("https:")`, is allowed. The rewrite reads `orderQueue.url`, and the call runs on the string.
 
-The plugin also fails when runtime code imports an infra package, such as `@notation/aws/sqs`, without the attribute, because the bundle would then include infra. A `type: "runtime"` import in runtime code fails too.
+The placeholder calls let settings take grants from an export, or from a helper module such as `runtime/config.ts` that the runtime module imports. The function's entry imports only the handlers, so tree-shaking removes the export when nothing else uses it. A statement removed because it only updates the settings is removed with all of its effects, as in `settings.memory = compute()`.
+
+The plugin also fails when runtime code imports an infra package, such as `@notation/aws/sqs`, without the attribute, because the bundle would then include infra. When the package comes in through a local infra module, the error names the runtime module that imports the infra module, and the chain of imports:
+
+```
+runtime/checkout.ts imports infra/orders.ts without { type: "infra" }, and infra/orders.ts imports @notation/aws/sqs, so the bundle of runtime code would include infra (runtime/checkout.ts → infra/orders.ts → @notation/aws/sqs). …
+```
+
+A `type: "runtime"` import in runtime code fails too.
 
 ## Delivering reads
 
 A function receives the values it reads from infra through its `NOTATION_RUNTIME` environment variable. Delivery has four parts.
 
-1. **Listing reads.** The rewrite marks each `read` call pure, so esbuild removes reads that tree-shaking drops. After each build, `findReads` lists the reads left in each output file, and the CLI writes them to `reads.json` next to the bundle:
+1. **Listing reads.** The rewrite marks each `read` call pure, so esbuild removes reads that tree-shaking drops. After each build, `findReads` lists the calls in each output file that have the shape of a read, whatever their spacing and callee name, and the plugin keeps the ones that a rewrite made. The CLI writes them to `reads.json` next to the bundle:
 
    ```json [dist/functions/checkout/reads.json]
    {
@@ -257,6 +272,8 @@ A function receives the values it reads from infra through its `NOTATION_RUNTIME
    ```
 
    Only the reads in the finished bundle count. Otherwise dead code would deliver extra values, or fail plan on values the function never reads.
+
+   `read` comes from a small module that wraps the one in `@notation/resource/outputs`. If the metafile shows that a bundle keeps the wrapper, but no reads are found in it, the build fails.
 
 2. **Resolving values.** Plan and deploy collect the graph with `runtimeReads`, which reads each function's `reads.json`. `linkRuntimeModules` then calls `resolveReads`, which looks each key up in the infra module's exports. `infra/orders#orderQueue.url` resolves to the queue's `url`, an output value. A read fails at plan if the value is a function, is `undefined`, or is not an output value or data.
 
