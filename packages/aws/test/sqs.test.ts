@@ -6,8 +6,8 @@ import { lambda as awsLambda } from "@notation/aws.iac";
 import { createPlan } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
 import { collectResourceGraph } from "@notation/resource";
-import { lambda, type LambdaGroup, type RuntimeRef } from "src/lambda";
-import type { ApiGatewayHandler } from "src/shared";
+import type { APIGatewayProxyEventV2 } from "aws-lambda";
+import { lambda, type LambdaGroup } from "src/lambda";
 import { queue } from "src/sqs";
 import { runtimeRef } from "./runtime-ref";
 
@@ -154,8 +154,7 @@ test("consume with a lambda group from lambda() maps the queue without a dispatc
 
 test("consume takes only handlers of SQS events", () => {
   const fn = lambda({ id: "process", code });
-  const apiHandler = runtimeRef(fn, "getTodos") as RuntimeRef &
-    ApiGatewayHandler;
+  const apiHandler = runtimeRef<APIGatewayProxyEventV2>(fn, "getTodos");
 
   const orders = queue({ name: "orders" });
 

@@ -7,15 +7,14 @@ import type {
   EventBridgeHandler,
   JWTAuthorizedApiGatewayHandler,
 } from "src/shared/lambda.handler";
-import type { RuntimeRef } from "src/lambda";
+import type { LambdaHandler } from "src/shared/runtime-ref";
 
 /**
- * Infra imports a runtime module through a generated module, whose exports
- * are `RuntimeRef`s. TypeScript types the import from the original module,
- * so each handler is also typed as a `RuntimeRef`, for infra to pass to APIs
- * such as `route()`. The function itself has no `resource` or `export`.
+ * Infra imports a runtime module `with { type: "runtime" }`, and sees each
+ * handler as a `RuntimeRef` through the generated declarations.
  */
-type Handled<H> = H & RuntimeRef;
+type Handled<H extends (event: any, context: any) => unknown> =
+  LambdaHandler<H>;
 
 /** The kind of event that a handler made with `handle.*` takes. */
 export type HandlerKind = "api" | "schedule" | "sqs" | "dynamodb";

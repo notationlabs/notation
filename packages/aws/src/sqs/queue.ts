@@ -1,6 +1,8 @@
 import * as aws from "@notation/aws.iac";
-import { resolveLambdaTarget, type LambdaTarget } from "src/lambda";
-import type { SqsBatchHandler, SqsHandler } from "src/shared";
+import type { Grant } from "@notation/resource";
+import type { SQSBatchResponse, SQSEvent } from "aws-lambda";
+import { resolveLambdaTarget } from "src/lambda";
+import type { HandlerTarget } from "src/shared";
 import { awsName } from "src/naming";
 
 export type QueueConfig = {
@@ -63,7 +65,7 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
   }
 
   /** A policy statement that allows the actions on this queue. */
-  grant(actions: SqsAction[]): aws.lambda.PolicyStatement {
+  grant(actions: SqsAction[]): Grant<aws.lambda.PolicyStatement> {
     return {
       Effect: "Allow",
       Action: actions.map((action) => `sqs:${action}`),
@@ -77,7 +79,7 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
    * the queue, and maps the queue to the function.
    */
   consume(
-    handler: LambdaTarget<SqsHandler | SqsBatchHandler>,
+    handler: HandlerTarget<SQSEvent> | HandlerTarget<SQSBatchResponse>,
     options: ConsumeOptions = {},
   ): aws.lambda.LambdaEventSourceMappingInstance {
     const target = resolveLambdaTarget(handler, "queue.consume()");

@@ -1,5 +1,6 @@
-import { resolveLambdaTarget, type LambdaTarget } from "src/lambda";
-import type { EventBridgeHandler } from "src/shared";
+import type { EventBridgeEvent } from "aws-lambda";
+import { resolveLambdaTarget } from "src/lambda";
+import type { HandlerTarget } from "src/shared";
 import { Schedule } from "./schedule";
 import * as aws from "@notation/aws.iac";
 import { toAwsScheduleExpression } from "./aws-conversions";
@@ -12,7 +13,7 @@ type ScheduleConfig = {
    * The export of a runtime module to invoke on the schedule, or a Lambda
    * group from `lambda()`.
    */
-  handler: LambdaTarget<EventBridgeHandler<"Scheduled Event", any>>;
+  handler: HandlerTarget<EventBridgeEvent<"Scheduled Event", any>>;
 };
 
 export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {

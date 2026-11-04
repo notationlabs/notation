@@ -37,3 +37,13 @@ export {
   planLookup,
   type OutputLookup,
 } from "./output-value";
+export type {
+  FunctionDeclaration,
+  Grant,
+  Handler,
+  InfraOnly,
+  InfraView,
+  RuntimeOnly,
+  RuntimeRef,
+  RuntimeView,
+} from "./views";

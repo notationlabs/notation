@@ -1,6 +1,7 @@
-import type { LambdaGroup, RuntimeRef } from "src/lambda";
+import type { LambdaGroup } from "src/lambda";
+import type { LambdaRef } from "src/shared";
 
-// Stands in for an import of a runtime module's export. The generated module
-// makes it a RuntimeRef, and TypeScript types it as the handler.
-export const runtimeRef = (resource: LambdaGroup, name: string) =>
-  ({ resource, export: name }) as RuntimeRef & ((...args: any[]) => any);
+// Stands in for a handler that infra imports `with { type: "runtime" }`.
+// `E` is the handler's event; `any` fits every infra API.
+export const runtimeRef = <E = any>(resource: LambdaGroup, name: string) =>
+  ({ resource, export: name }) as unknown as LambdaRef<NoInfer<E>>;
