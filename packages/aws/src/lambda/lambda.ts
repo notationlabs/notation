@@ -1,15 +1,23 @@
 import * as aws from "@notation/aws.iac";
 import * as std from "@notation/std.iac";
-import { getActiveResourceCollection } from "@notation/resource";
+import {
+  captureCallSite,
+  createHandlerRef,
+  declareRuntimeFunction,
+  describeStandIn,
+  getActiveResourceCollection,
+  isHandlerRef,
+  isStandIn,
+  onEvaluationEnd,
+  resolveRuntimeTarget,
+  type RuntimeRef as ResourceRuntimeRef,
+} from "@notation/resource";
 import type { DispatchEntry } from "@notation/aws.iac/shared";
 import path from "path";
 import { awsName } from "src/naming";
+import { handlerKinds, type Handle, type HandlerKind } from "src/shared/handle";
 import { assertLambdaId, type NameSafe } from "./lambda-id";
 
-// A runtime module's `resource` export takes these fields, except `code` and
-// `handler`. The compiler checks its keys against its own list, `serviceKeys`
-// in packages/esbuild-plugins/src/parsers/parse-runtime-module.ts, so a new
-// field here must also be added there.
 export type LambdaConfig = {
   /**
    * Names the function and its role, zip, policy and log group, and keys them
@@ -24,8 +32,12 @@ export type LambdaConfig = {
    * `handler`.
    */
   handler?: string;
-  /** The bundle to deploy. */
-  code: {
+  /**
+   * The bundle to deploy, for a function that runs external code. Leave it
+   * out in a runtime module: the compiler bundles the module's handlers to
+   * `dist/functions/<id>/index.mjs`.
+   */
+  code?: {
     type: "file" | "zip";
     path: string;
   };
@@ -34,20 +46,26 @@ export type LambdaConfig = {
   timeout?: number;
   /** Megabytes of memory for the function. Lambda's default is 128. */
   memory?: number;
+  /**
+   * Policy statements for the function's role, such as
+   * `orderQueue.grant(["SendMessage"])`.
+   */
+  grants?: aws.lambda.PolicyStatement[];
 };
 
 /**
- * One export of a runtime module: the module's Lambda, and the name of the
- * export to invoke. Infra APIs such as `route()` and `schedule()` take one.
+ * An export of a runtime module as infra sees it: a handler of the Lambda
+ * function that takes the event `E`. Infra APIs such as `route()` wire it.
  */
-export type RuntimeRef = { resource: LambdaGroup; export: string };
+export type RuntimeRef<E = any> = ResourceRuntimeRef<E, any, LambdaGroup>;
 
 /**
- * What an infra API such as `route()` invokes: an export of a runtime module,
- * typed as its handler `H`, or a Lambda group from `lambda()` that runs
- * external code.
+ * What an infra API such as `route()` invokes: a handler of a runtime
+ * module, whose event is the first parameter of `H`, or a Lambda group from
+ * `lambda()` that runs external code.
  */
-export type LambdaTarget<H> = (H & RuntimeRef) | LambdaGroup;
+export type LambdaTarget<H extends (...args: any[]) => any> =
+  RuntimeRef<Parameters<H>[0]> | LambdaGroup;
 
 // Marks a LambdaGroup. Two installed copies of this package have different
 // LambdaGroup classes, so `instanceof` can't recognise a group from the
@@ -57,6 +75,7 @@ const lambdaGroupMark = Symbol.for("@notation/aws/LambdaGroup");
 export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
   readonly fn: aws.lambda.LambdaFunctionInstance;
   readonly role: aws.lambda.LambdaIamRoleInstance;
+  #handle?: Handle<LambdaGroup>;
 
   get [lambdaGroupMark]() {
     return true;
@@ -69,6 +88,25 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
     const { fn, role } = build(this, config);
     this.fn = fn;
     this.role = role;
+    if (config.grants && config.grants.length > 0) {
+      this.policy.contribute({
+        PolicyDocument: { Statement: config.grants },
+      });
+    }
+  }
+
+  /**
+   * Makes the handlers of a function that a runtime module declares. Each
+   * handler that a runtime module exports is dispatched to by the function.
+   * A function that runs external code has no `handle`.
+   */
+  get handle(): Handle<LambdaGroup> {
+    if (!runtimeFunctions.has(this)) {
+      throw new Error(
+        `lambda "${this.id}" runs the external code at ${this.config.code!.path}, so it has no handle. Leave out code to declare a function in a runtime module.`,
+      );
+    }
+    return (this.#handle ??= makeHandle(this));
   }
 
   /**
@@ -100,36 +138,113 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
   }
 }
 
+function makeHandle(group: LambdaGroup): Handle<LambdaGroup> {
+  return Object.fromEntries(
+    Object.entries(handlerKinds).map(([method, kind]) => {
+      const make = (_handler: unknown) => createHandlerRef(kind, group, make);
+      return [method, make];
+    }),
+  ) as unknown as Handle<LambdaGroup>;
+}
+
 export function isLambdaGroup(value: unknown): value is LambdaGroup {
   return (value as any)?.[lambdaGroupMark] === true;
 }
 
+/** The Lambda group that a target invokes, and the export to dispatch to. */
+export type ResolvedLambdaTarget = { group: LambdaGroup; export?: string };
+
 /**
- * Finds the Lambda group that `target` invokes, and the export to dispatch
- * to. A bare group runs external code, so it has no export. `caller` names
- * the infra API in the error.
+ * Wires `target` once it is known. A handler of a runtime module is a
+ * stand-in until the runtime modules are linked, so while infra is being
+ * evaluated the wiring runs when evaluation ends. Outside an evaluation it
+ * runs now.
+ *
+ * @param caller Names the infra API in errors, such as `route()`.
+ * @param kinds The handler kinds that the API can invoke.
+ * @param below The infra API that the user's code called, which names the
+ * call site in errors.
  */
-export function resolveLambdaTarget(
+export function wireLambdaTarget(
   target: unknown,
   caller: string,
-): { group: LambdaGroup; export?: string } {
-  if (isLambdaGroup(target)) return { group: target };
-  const ref = target as Partial<RuntimeRef> | undefined;
-  if (isLambdaGroup(ref?.resource) && typeof ref.export === "string") {
-    return { group: ref.resource, export: ref.export };
+  kinds: readonly HandlerKind[],
+  below: Function,
+  wire: (target: ResolvedLambdaTarget) => void,
+): void {
+  if (!isStandIn(target) && !isHandlerRef(target) && !isLambdaGroup(target)) {
+    throw new Error(
+      `${caller} expects a handler exported from a runtime module, or a Lambda group from lambda(). A runtime module calls lambda() and exports the handlers that its handle makes.`,
+    );
   }
-  throw new Error(
-    `${caller} expects an export of a runtime module, or a Lambda group from lambda(). A runtime module is one that exports \`resource\`.`,
-  );
+  const site = captureCallSite(below, { skipLibraryFrames: true });
+  const run = () => wire(resolveLambdaTarget(target, caller, kinds, site));
+  if (getActiveResourceCollection()) onEvaluationEnd(run);
+  else run();
+}
+
+function resolveLambdaTarget(
+  target: unknown,
+  caller: string,
+  kinds: readonly HandlerKind[],
+  site: string | undefined,
+): ResolvedLambdaTarget {
+  const resolved = resolveRuntimeTarget(target);
+  if (isLambdaGroup(resolved)) return { group: resolved };
+  const at = site ? ` at ${site}` : "";
+  if (!isHandlerRef(resolved)) {
+    throw new Error(
+      `${caller}${at} expects a handler, but ${describeStandIn(target) ?? "its target"} is not a handler or a Lambda group.`,
+    );
+  }
+  if (!kinds.includes(resolved.kind as HandlerKind)) {
+    throw new Error(
+      `${caller}${at} invokes ${kinds.join(" or ")} handlers, but ${resolved.export} from ${resolved.module} is a ${resolved.kind} handler.`,
+    );
+  }
+  if (!isLambdaGroup(resolved.function)) {
+    throw new Error(`${caller}${at} expects a handler of a Lambda function.`);
+  }
+  return { group: resolved.function, export: resolved.export };
 }
 
 /**
  * Declares a Lambda function. `id` must be a name-safe string literal; see
  * `NameSafe`.
+ *
+ * Called in a runtime module without `code`, it declares the function that
+ * the module's handlers run in. Destructure `handle` to make them.
  */
-export const lambda = <const Id extends string>(
+export function lambda<const Id extends string>(
   config: Omit<LambdaConfig, "id"> & { id: NameSafe<Id> },
-) => new LambdaGroup(config);
+): LambdaGroup {
+  const group = new LambdaGroup(
+    config.code ? config : { ...config, code: runtimeCode(config.id) },
+  );
+  if (!config.code) {
+    runtimeFunctions.add(group);
+    declareRuntimeFunction(
+      group,
+      {
+        id: config.id,
+        service: "aws/lambda",
+        bundle: runtimeBundle(config.id),
+      },
+      lambda,
+    );
+  }
+  return group;
+}
+
+// The groups that `lambda()` declared without code, whose handlers the
+// compiler bundles.
+const runtimeFunctions = new WeakSet<LambdaGroup>();
+
+const runtimeBundle = (id: string) => `dist/functions/${id}/index.mjs`;
+const runtimeCode = (id: string) => ({
+  type: "file" as const,
+  path: runtimeBundle(id),
+});
 
 // IAM role names are unique regardless of case, so compare IDs in lower case
 function assertUniqueLambdaId(id: string) {
@@ -150,12 +265,12 @@ function assertUniqueLambdaId(id: string) {
 }
 
 const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
-  const filePath = config.code.path;
+  const filePath = config.code!.path;
   const lambdaId = config.id;
 
   let zipFile: std.fs.ZipFileInstance | std.fs.FileInstance;
 
-  if (config.code.type === "file") {
+  if (config.code!.type === "file") {
     zipFile = functionGroup.add(
       new std.fs.Zip(`${lambdaId}-zip`, {
         config: { sourceFilePath: filePath },

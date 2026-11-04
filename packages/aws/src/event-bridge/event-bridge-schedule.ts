@@ -1,4 +1,8 @@
-import { resolveLambdaTarget, type LambdaTarget } from "src/lambda";
+import {
+  wireLambdaTarget,
+  type LambdaTarget,
+  type ResolvedLambdaTarget,
+} from "src/lambda";
 import type { EventBridgeHandler } from "src/shared";
 import { Schedule } from "./schedule";
 import * as aws from "@notation/aws.iac";
@@ -9,19 +13,28 @@ type ScheduleConfig = {
   name: string;
   schedule: Schedule;
   /**
-   * The export of a runtime module to invoke on the schedule, or a Lambda
-   * group from `lambda()`.
+   * The handler of a runtime module to invoke on the schedule, or a Lambda
+   * group from `lambda()`. A handler is wired when evaluation ends.
    */
   handler: LambdaTarget<EventBridgeHandler<"Scheduled Event", any>>;
 };
 
 export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
-  readonly rule: aws.eventBridge.EventBridgeRuleInstance;
+  /** The rule. It is added once the handler is wired. */
+  rule!: aws.eventBridge.EventBridgeRuleInstance;
 
-  constructor(config: ScheduleConfig) {
-    const target = resolveLambdaTarget(config.handler, "schedule()");
+  constructor(config: ScheduleConfig, below: Function) {
     super("aws/eventBridge/schedule", config.name, config);
+    wireLambdaTarget(
+      config.handler,
+      "schedule()",
+      ["schedule"],
+      below,
+      (target) => this.#wire(target, config),
+    );
+  }
 
+  #wire(target: ResolvedLambdaTarget, config: ScheduleConfig) {
     const lambdaGroup = target.group;
     const lambdaResource = lambdaGroup.fn;
 
@@ -75,4 +88,6 @@ function scheduledInvocationTemplate(exportName: string): string {
   return `{"export":${JSON.stringify(exportName)},"event":<aws.events.event.json>}`;
 }
 
-export const schedule = (config: ScheduleConfig) => new ScheduleGroup(config);
+export function schedule(config: ScheduleConfig): ScheduleGroup {
+  return new ScheduleGroup(config, schedule);
+}

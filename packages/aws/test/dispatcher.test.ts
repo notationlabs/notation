@@ -2,11 +2,10 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { encodeRuntime, runtimeVariable } from "@notation/aws.iac/shared";
 import type { LambdaRuntime } from "@notation/aws.iac/shared";
 import type { Context } from "aws-lambda";
-import { createDispatcher, handle, json } from "src/lambda.fn";
-import { api, router } from "src/api-gateway";
-import { lambda } from "src/lambda";
+import { createDispatcher, json, lambda } from "src/lambda.fn";
 
 const context = {} as Context;
+const { handle } = lambda();
 
 const runtime: LambdaRuntime = {
   dispatch: {
@@ -140,15 +139,3 @@ describe("createDispatcher", () => {
     );
   });
 });
-
-test("handlers are typed as references that infra can route to", () => {
-  const getTodos = handle.apiRequest(() => json([]));
-  // the generated module gives infra a reference in place of the handler
-  const ref = { resource: lambda({ id: "todos", code }), export: "getTodos" };
-  const asImported = ref as unknown as typeof getTodos;
-
-  const todoRoute = router(api({ name: "a" })).get("/", asImported);
-  expect(todoRoute.id).toBe("a-GET-/");
-});
-
-const code = { type: "file", path: "dist/runtime/todos/index.mjs" } as const;

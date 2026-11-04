@@ -1,6 +1,15 @@
+import { HandlerRef } from "@notation/resource";
 import type { LambdaGroup, RuntimeRef } from "src/lambda";
+import type { HandlerKind } from "src/shared";
 
-// Stands in for an import of a runtime module's export. The generated module
-// makes it a RuntimeRef, and TypeScript types it as the handler.
-export const runtimeRef = (resource: LambdaGroup, name: string) =>
-  ({ resource, export: name }) as RuntimeRef & ((...args: any[]) => any);
+// Stands in for a handler that the infra phase has linked to its export.
+export const runtimeRef = <E = any>(
+  fn: LambdaGroup,
+  name: string,
+  kind: HandlerKind = "api",
+): RuntimeRef<E> => {
+  const ref = new HandlerRef(kind, fn);
+  ref.module = "runtime/test.ts";
+  ref.export = name;
+  return ref as unknown as RuntimeRef<E>;
+};

@@ -22,6 +22,7 @@ export {
 } from "./physical-name";
 export {
   ContributionConflictError,
+  captureCallSite,
   mergeContributions,
   type CollectContext,
   type ContributionFunction,
@@ -42,6 +43,7 @@ export {
   createHandlerRef,
   createStandIn,
   declareRuntimeFunction,
+  describeStandIn,
   isHandlerRef,
   isStandIn,
   linkRuntimeModules,

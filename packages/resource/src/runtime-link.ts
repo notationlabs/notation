@@ -156,6 +156,13 @@ export function isStandIn(value: unknown): boolean {
   );
 }
 
+/** `<export> from <module>` for a stand-in, or undefined for other values. */
+export function describeStandIn(value: unknown): string | undefined {
+  if (!isStandIn(value)) return undefined;
+  const state = standInState(value as object)!;
+  return `${state.name} from ${state.module}`;
+}
+
 /**
  * Finds what a stand-in, or a stand-in's `function`, stands for. Any other
  * value is returned as it is. Fails if the stand-in is not linked yet.

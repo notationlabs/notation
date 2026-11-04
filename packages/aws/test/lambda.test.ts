@@ -1,6 +1,18 @@
-import { test, expect } from "vitest";
-import { collectResourceGraph } from "@notation/resource";
-import { lambda, type NameSafe } from "src/lambda";
+import { describe, test, expect } from "vitest";
+import {
+  collectResourceGraph,
+  createStandIn,
+  isHandlerRef,
+  linkRuntimeModules,
+} from "@notation/resource";
+import { api, router } from "src/api-gateway";
+import {
+  lambda,
+  type LambdaGroup,
+  type NameSafe,
+  type RuntimeRef,
+} from "src/lambda";
+import { queue } from "src/sqs";
 
 const code = { type: "file", path: "src/fns/handler.fn.js" } as const;
 
@@ -142,4 +154,139 @@ test("resources declared by the helper are reported at the caller's line", () =>
   for (const resource of group.resources) {
     expect(resource.declaredAt).toMatch(/(^|\/)test\/lambda\.test\.ts:\d+$/);
   }
+});
+
+describe("a function declared in a runtime module", () => {
+  test("bundles to dist/functions/<id>, and its handle makes handler references", async () => {
+    let fn!: LambdaGroup;
+    let handler: unknown;
+    const graph = await collectResourceGraph(() => {
+      fn = lambda({ id: "checkout", timeout: 5 });
+      handler = fn.handle.apiRequest(() => ({ statusCode: 200 }));
+      linkRuntimeModules([
+        {
+          module: "runtime/checkout.ts",
+          standIns: {},
+          exports: { createOrder: handler },
+        },
+      ]);
+    });
+
+    expect(fn.fn.dependencies.zipFile.config).toEqual({
+      sourceFilePath: "dist/functions/checkout/index.mjs",
+    });
+    expect(isHandlerRef(handler)).toBe(true);
+    expect(handler).toMatchObject({ kind: "api", function: fn });
+    expect(graph.runtimeFunctions).toEqual([
+      {
+        id: "checkout",
+        service: "aws/lambda",
+        bundle: "dist/functions/checkout/index.mjs",
+        handlers: [
+          { module: "runtime/checkout.ts", export: "createOrder", kind: "api" },
+        ],
+      },
+    ]);
+  });
+
+  test("grants go in the role's policy", async () => {
+    let fn!: LambdaGroup;
+    await collectResourceGraph(() => {
+      const orders = queue({ name: "orders" });
+      fn = lambda({ id: "checkout", grants: [orders.grant(["SendMessage"])] });
+      linkRuntimeModules([
+        {
+          module: "runtime/checkout.ts",
+          standIns: {},
+          exports: { run: fn.handle.apiRequest(() => ({})) },
+        },
+      ]);
+    });
+    const params = await fn.policy.planParams();
+    expect((params.PolicyDocument as any).Statement).toEqual([
+      expect.objectContaining({ Action: ["sqs:SendMessage"] }),
+    ]);
+  });
+
+  test("a function that runs external code has no handle", () => {
+    const fn = lambda({ id: "external", code });
+    expect(() => fn.handle).toThrow(
+      'lambda "external" runs the external code at src/fns/handler.fn.js, so it has no handle',
+    );
+  });
+
+  test("infra wires a stand-in once the runtime module is linked", async () => {
+    let fn!: LambdaGroup;
+    let todoApi!: ReturnType<typeof api>;
+    const graph = await collectResourceGraph(() => {
+      const standIn = createStandIn("runtime/checkout.ts", "createOrder");
+      todoApi = api({ name: "orders-api" });
+      router(todoApi).post("/orders", standIn as RuntimeRef);
+
+      fn = lambda({ id: "checkout" });
+      linkRuntimeModules([
+        {
+          module: "runtime/checkout.ts",
+          standIns: { createOrder: standIn },
+          exports: { createOrder: fn.handle.apiRequest(() => ({})) },
+        },
+      ]);
+    });
+
+    const routes = graph.resources.filter(
+      (r) => r.type === "aws/apiGateway/Route",
+    );
+    expect(routes.map((r) => r.config.RouteKey)).toEqual(["POST /orders"]);
+    todoApi.api.setOutput({ ApiId: "api-1" } as any);
+    fn.role.setOutput({ Arn: "arn:role" } as any);
+    fn.fn.dependencies.zipFile.setOutput({
+      filePath: "checkout.zip",
+      fileSha256: "sha",
+    } as any);
+    const env = (await fn.fn.getParams()).Environment as any;
+    expect(Object.values(env.Runtime.dispatch)).toEqual([
+      {
+        export: "createOrder",
+        match: { apiId: "api-1", routeKey: "POST /orders" },
+      },
+    ]);
+  });
+
+  test("wiring a handler of the wrong kind fails at the infra call site", async () => {
+    await expect(
+      collectResourceGraph(() => {
+        const standIn = createStandIn("runtime/checkout.ts", "createOrder");
+        queue({ name: "orders" }).consume(standIn as RuntimeRef);
+        const fn = lambda({ id: "checkout" });
+        linkRuntimeModules([
+          {
+            module: "runtime/checkout.ts",
+            standIns: { createOrder: standIn },
+            exports: { createOrder: fn.handle.apiRequest(() => ({})) },
+          },
+        ]);
+      }),
+    ).rejects.toThrow(
+      /queue\.consume\(\) at .*test\/lambda\.test\.ts:\d+ invokes sqs handlers, but createOrder from runtime\/checkout\.ts is a api handler/,
+    );
+  });
+
+  test("wiring an export that isn't a handler fails", async () => {
+    await expect(
+      collectResourceGraph(() => {
+        const standIn = createStandIn("runtime/checkout.ts", "helper");
+        queue({ name: "orders" }).consume(standIn as RuntimeRef);
+        const fn = lambda({ id: "checkout" });
+        linkRuntimeModules([
+          {
+            module: "runtime/checkout.ts",
+            standIns: { helper: standIn },
+            exports: { run: fn.handle.sqsEvent(() => {}) },
+          },
+        ]);
+      }),
+    ).rejects.toThrow(
+      "but helper from runtime/checkout.ts is not a handler or a Lambda group",
+    );
+  });
 });

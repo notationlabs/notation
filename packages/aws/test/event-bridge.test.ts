@@ -12,7 +12,7 @@ const declareLambda = () =>
 
 test("each schedule on a lambda gets its own invoke permission", () => {
   const fn = declareLambda();
-  const handler = runtimeRef(fn, "handler");
+  const handler = runtimeRef(fn, "handler", "schedule");
   const daily = schedule({ name: "daily", schedule: rate(1, "day"), handler });
   const hourly = schedule({
     name: "hourly",
@@ -28,7 +28,7 @@ test("each schedule on a lambda gets its own invoke permission", () => {
 });
 
 test("a schedule group is identified by its name", () => {
-  const handler = runtimeRef(declareLambda(), "handler");
+  const handler = runtimeRef(declareLambda(), "handler", "schedule");
   const daily = schedule({ name: "daily", schedule: rate(1, "day"), handler });
 
   expect(daily.id).toBe("daily");
@@ -43,7 +43,7 @@ test("the rule's target names the export and passes on the original event", asyn
   const daily = schedule({
     name: "daily",
     schedule: rate(1, "day"),
-    handler: runtimeRef(fn, "sendDigest"),
+    handler: runtimeRef(fn, "sendDigest", "schedule"),
   });
   fn.fn.setOutput({
     FunctionName: "handler",
@@ -90,7 +90,7 @@ test("schedule rejects a value that is not a reference to a runtime export", () 
       schedule: rate(1, "day"),
       handler: (async () => {}) as any,
     }),
-  ).toThrow("schedule() expects an export of a runtime module");
+  ).toThrow("schedule() expects a handler exported from a runtime module");
 });
 
 test("schedule takes a lambda group from another copy of the package", () => {

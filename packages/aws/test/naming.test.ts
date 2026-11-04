@@ -29,7 +29,7 @@ test("AWS names start with the app and stage", async () => {
       schedule: schedule({
         name: "nightly",
         schedule: rate(1, "day"),
-        handler: runtimeRef(fn, "getOrders"),
+        handler: runtimeRef(fn, "getOrders", "schedule"),
       }),
     };
   });

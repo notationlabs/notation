@@ -1,5 +1,9 @@
 import * as aws from "@notation/aws.iac";
-import { resolveLambdaTarget, type LambdaTarget } from "src/lambda";
+import {
+  wireLambdaTarget,
+  type LambdaTarget,
+  type ResolvedLambdaTarget,
+} from "src/lambda";
 import type { ApiGroup } from "./api";
 import { AuthorizerConfig } from "./auth";
 import { authorizerKey, mapAuthConfig, mapAuthType } from "./utils";
@@ -9,19 +13,39 @@ type RouteGroupConfig = {
   method: string;
   path: `/${string}`;
   auth: AuthorizerConfig;
-  handler: LambdaTarget<unknown>;
+  handler: LambdaTarget<any>;
 };
 
 export class RouteGroup extends aws.AwsResourceGroup {
-  readonly route: aws.apiGateway.RouteInstance;
+  /**
+   * The route. A route to a handler of a runtime module is added when
+   * evaluation ends, once the handler is known.
+   */
+  route!: aws.apiGateway.RouteInstance;
 
-  constructor({ apiGroup, method, path, auth, handler }: RouteGroupConfig) {
-    const apiResource = apiGroup.api;
-    const routeId = `${apiResource.id}-${method}-${path}`;
-    const routeKey = `${method} ${path}`;
-    const target = resolveLambdaTarget(handler, "route()");
+  constructor(
+    { apiGroup, method, path, auth, handler }: RouteGroupConfig,
+    below: Function,
+  ) {
+    const routeId = `${apiGroup.api.id}-${method}-${path}`;
     super("API Gateway/Route", routeId);
+    wireLambdaTarget(handler, "route()", ["api"], below, (target) =>
+      this.#wire(target, { apiGroup, method, path, auth, routeId }),
+    );
+  }
 
+  #wire(
+    target: ResolvedLambdaTarget,
+    {
+      apiGroup,
+      method,
+      path,
+      auth,
+      routeId,
+    }: Omit<RouteGroupConfig, "handler"> & { routeId: string },
+  ) {
+    const apiResource = apiGroup.api;
+    const routeKey = `${method} ${path}`;
     const lambdaGroup = target.group;
     const lambdaResource = lambdaGroup.fn;
 
@@ -90,15 +114,16 @@ export class RouteGroup extends aws.AwsResourceGroup {
 }
 
 /**
- * Routes requests for `method` and `path` on the API to an export of a
- * runtime module, or to a Lambda group from `lambda()`.
+ * Routes requests for `method` and `path` on the API to a handler of a
+ * runtime module, or to a Lambda group from `lambda()`. A handler is wired
+ * when evaluation ends.
  */
-export const route = (
+export function route(
   apiGroup: ApiGroup,
   method: string, // todo: http methods only
   path: `/${string}`,
   auth: AuthorizerConfig,
-  handler: LambdaTarget<unknown>,
-) => {
-  return new RouteGroup({ apiGroup, method, path, auth, handler });
-};
+  handler: LambdaTarget<any>,
+): RouteGroup {
+  return new RouteGroup({ apiGroup, method, path, auth, handler }, route);
+}

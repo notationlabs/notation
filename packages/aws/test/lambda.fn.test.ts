@@ -1,12 +1,17 @@
 import { test, expect } from "vitest";
-import { handle, json } from "src/lambda.fn";
+import { getHandlerKind, json, lambda } from "src/lambda.fn";
 import { APIGatewayJWTProxyEventV2 } from "src/shared";
 import { Context } from "aws-lambda";
 
-test("handlers wrap user-provided handlers", async () => {
+const { handle } = lambda();
+
+test("the runtime half of handle returns the handler, marked with its kind", async () => {
   const fn = async (): Promise<any> => ({ body: "{}" });
-  const result = await handle.apiRequest(fn)({} as any, {} as any);
-  expect(result).toEqual({ body: "{}" });
+  const handler = handle.apiRequest(fn);
+  expect(handler).toBe(fn);
+  expect(getHandlerKind(handler)).toBe("api");
+  expect(getHandlerKind(handle.sqsEvent(async () => {}))).toBe("sqs");
+  expect(await handler({} as any, {} as any)).toEqual({ body: "{}" });
 });
 
 test("jwtAuthorizedApiRequest passes through JWT token as expected", async () => {
