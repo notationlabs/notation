@@ -47,12 +47,17 @@ export async function getResourceGraph(
 
 /**
  * The output keys that a function's bundle reads from infra, which the
- * compiler lists next to the bundle. A function that has not been bundled
- * reads nothing.
+ * compiler lists next to the bundle. It throws if the list is missing.
+ * Reading nothing in that case would deploy a function that fails at its
+ * first read.
  */
-export function readRuntimeReads(fn: RuntimeFunction): string[] | undefined {
+export function readRuntimeReads(fn: RuntimeFunction): string[] {
   const file = filePaths.dist.reads(fn.bundle);
-  if (!existsSync(file)) return undefined;
+  if (!existsSync(file)) {
+    throw new Error(
+      `The function "${fn.id}" has no list of the values it reads from infra at ${file}. The compiler writes it next to the function's bundle. Compile the app again.`,
+    );
+  }
   const { reads } = JSON.parse(readFileSync(file, "utf8")) as {
     reads: string[];
   };
