@@ -1,4 +1,5 @@
 import path from "node:path";
+import esbuild from "esbuild";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { setConfigFile } from "@notation/core";
 import { findReads, runtimePlugin } from "src/plugins/runtime-plugin";
@@ -7,6 +8,7 @@ import {
   buildVirtual,
   projectRoot,
   readVirtualFile,
+  virtualFilesPlugin,
 } from "test/esbuild-test-utils";
 
 beforeAll(() => setConfigFile(path.join(projectRoot, "notation.config.ts")));
@@ -298,4 +300,59 @@ export const c = () => orderQueue.arn;
   expect(code).toContain("return orderQueue.url;");
   expect(code).toContain("m() { return orderQueue.url; }");
   expect(reads).toEqual(["infra/orders#orderQueue.arn"]);
+});
+
+it("lists only the reads of the current build when it rebuilds", async () => {
+  const files: Record<string, string> = {
+    "runtime/checkout.ts": `
+      import { orderQueue } from "../infra/orders" with { type: "infra" };
+      export const run = () => orderQueue.url;
+    `,
+    "infra/orders.ts": `export const orderQueue = { url: "x" };`,
+  };
+  const reported: string[][] = [];
+  const context = await esbuild.context({
+    entryPoints: [path.join(projectRoot, "runtime/checkout.ts")],
+    bundle: true,
+    format: "esm",
+    write: false,
+    logLevel: "silent",
+    plugins: [
+      runtimePlugin({
+        getFile: readVirtualFile(files),
+        onReads: (found) => reported.push(...Object.values(found)),
+      }),
+      virtualFilesPlugin(files),
+    ],
+  });
+  try {
+    await context.rebuild();
+    await context.rebuild();
+    // A call with the shape of a read, which no rewrite made.
+    files["runtime/checkout.ts"] = `
+      const look = (binding: string, path: string[]) => binding;
+      export const run = () => look("infra/orders#orderQueue", ["url"]);
+    `;
+    await context.rebuild();
+  } finally {
+    await context.dispose();
+  }
+  expect(reported).toEqual([
+    ["infra/orders#orderQueue.url"],
+    ["infra/orders#orderQueue.url"],
+    [],
+  ]);
+});
+
+it("lets runtime code import the testing helpers of @notation/aws", async () => {
+  for (const specifier of [
+    "@notation/aws/testing",
+    "@notation/aws/testing/vitest",
+    "@notation/aws/testing/register",
+  ]) {
+    const output = await buildRuntime({
+      "runtime/checkout.ts": `import * as helpers from "${specifier}"; console.log(helpers);`,
+    });
+    expect(output).toContain(specifier);
+  }
 });

@@ -5,7 +5,7 @@ export const projectRoot = "/project";
 
 // Serves files from memory. Paths are relative to `projectRoot`. Bare
 // imports, such as packages, stay external.
-const virtualFilesPlugin = (files: Record<string, string>): Plugin => ({
+export const virtualFilesPlugin = (files: Record<string, string>): Plugin => ({
   name: "virtual-files",
   setup(build) {
     build.onResolve({ filter: /.*/ }, (args) => {

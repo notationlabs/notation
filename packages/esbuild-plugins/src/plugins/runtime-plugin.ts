@@ -52,7 +52,13 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
       // The first module to import each local module, so that an error can
       // name the runtime code that brings infra into the bundle.
       const importers = new Map<string, string>();
-      build.onStart(() => importers.clear());
+      // esbuild runs onLoad again for every module on each rebuild, so each
+      // build fills these again.
+      build.onStart(() => {
+        generated.clear();
+        infraCalls.clear();
+        importers.clear();
+      });
 
       const resolveInternal = (specifier: string, importer: string) =>
         build.resolve(specifier, {
@@ -299,7 +305,7 @@ function isInfraPackage(specifier: string): boolean {
     return true;
   }
   return (
-    /^@notation\/aws\/(?!testing$).+/.test(specifier) &&
+    /^@notation\/aws\/(?!testing(\/|$)).+/.test(specifier) &&
     !specifier.endsWith(".fn")
   );
 }
