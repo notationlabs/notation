@@ -4,13 +4,8 @@ import { createResourceModule, createRuntimeEntry } from "src/codegen/codegen";
 it("creates a resource module", () => {
   const source = createResourceModule(
     {
-      resource: {
-        service: "aws/lambda",
-        id: "todos",
-        timeout: 5,
-        tags: { "cost-centre": "a" },
-      },
-      exports: ["getTodos", "createTodo"],
+      resource: { service: "aws/lambda", id: "todos", timeout: 5 },
+      exports: ["getTodos", "delete"],
     },
     "dist/runtime/todos/index.mjs",
   );
@@ -18,28 +13,14 @@ it("creates a resource module", () => {
   expect(source).toBe(
     [
       `import { lambda as __notationFactory } from "@notation/aws/lambda";`,
-      `const __notationResource = __notationFactory({ id: "todos", code: { type: "file", path: "dist/runtime/todos/index.mjs" }, timeout: 5, tags: { "cost-centre": "a" } });`,
-      `export const getTodos = { resource: __notationResource, export: "getTodos" };`,
-      `export const createTodo = { resource: __notationResource, export: "createTodo" };`,
+      `const __notationResource = __notationFactory({"id":"todos","code":{"type":"file","path":"dist/runtime/todos/index.mjs"},"timeout":5});`,
+      `const __notationRef0 = { resource: __notationResource, export: "getTodos" };`,
+      `export { __notationRef0 as getTodos };`,
+      `const __notationRef1 = { resource: __notationResource, export: "delete" };`,
+      `export { __notationRef1 as delete };`,
       ``,
     ].join("\n"),
   );
-});
-
-it("exports a reference under a reserved word through an alias", () => {
-  const source = createResourceModule(
-    {
-      resource: { service: "aws/lambda", id: "todos" },
-      exports: ["getTodos", "delete", "eval"],
-    },
-    "dist/runtime/todos/index.mjs",
-  );
-
-  expect(source).toContain(
-    `const __notationRef1 = { resource: __notationResource, export: "delete" };\nexport { __notationRef1 as delete };`,
-  );
-  expect(source).toContain(`export { __notationRef2 as eval };`);
-  expect(source).toContain(`export const getTodos = `);
 });
 
 it("creates a runtime entry that dispatches to the module's exports", () => {

@@ -66,11 +66,10 @@ const __notationResource = __notationFactory({
   timeout: 5,
   memory: 64,
 });
-export const getTodos = { resource: __notationResource, export: "getTodos" };
-export const createTodo = {
-  resource: __notationResource,
-  export: "createTodo",
-};
+const __notationRef0 = { resource: __notationResource, export: "getTodos" };
+export { __notationRef0 as getTodos };
+const __notationRef1 = { resource: __notationResource, export: "createTodo" };
+export { __notationRef1 as createTodo };
 ```
 
 ::
@@ -79,7 +78,7 @@ export const createTodo = {
 
 1. `resource.service` has the form `<platform>/<service>`, and must be a supported service. The generated module imports the factory `<service>` from `@notation/<platform>/<service>`, so `"aws/lambda"` gives `lambda` from `@notation/aws/lambda`.
 2. The generated module calls the factory once. It passes every field of `resource` except `service`, and adds `code`, which points at the runtime bundle.
-3. For each other export, the generated module exports a reference: `{ resource, export: "<name>" }`.
+3. For each other export, the generated module declares a reference, `{ resource, export: "<name>" }`, under a generated name, and exports it under the export's name. An export name such as `delete` is not a valid variable name, so the reference is not declared under the export's name.
 4. The generated names start with `__notation`. The parser rejects export names with that prefix, so the two sets of names never clash.
 
 **None of the runtime module's code is kept.** In the example, `fetchTodos()` runs only in the Lambda function, never at deploy time. The plugin also lists the runtime module in `watchFiles`, so watch mode rebuilds the infra bundle when the module's exports or `resource` change.

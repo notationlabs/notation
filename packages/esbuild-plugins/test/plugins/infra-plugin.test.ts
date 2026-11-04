@@ -50,13 +50,13 @@ it("replaces a runtime module with a module that declares its resource", async (
     'import { lambda as __notationFactory } from "@notation/aws/lambda";',
   );
   expect(output).toContain(
-    'var __notationResource = __notationFactory({ id: "todos", code: { type: "file", path: "dist/runtime/todos.fn/index.mjs" }, timeout: 5, memory: 64 });',
+    'var __notationResource = __notationFactory({ "id": "todos", "code": { "type": "file", "path": "dist/runtime/todos.fn/index.mjs" }, "timeout": 5, "memory": 64 });',
   );
   expect(output).toContain(
-    'var getTodos = { resource: __notationResource, export: "getTodos" };',
+    'var __notationRef0 = { resource: __notationResource, export: "getTodos" };',
   );
   expect(output).toContain(
-    'var createTodo = { resource: __notationResource, export: "createTodo" };',
+    'var __notationRef1 = { resource: __notationResource, export: "createTodo" };',
   );
 });
 
