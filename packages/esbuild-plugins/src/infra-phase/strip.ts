@@ -1,8 +1,10 @@
 import ts from "typescript";
 import {
+  accessPath,
   chainRoot,
   defaultLocal,
   isFunctionBody,
+  isInfraCall,
   isReference,
   ownExportNames,
   parseModule,
@@ -339,10 +341,8 @@ class Analysis {
     );
     if (!initializer) return "plain";
     const chain = chainRoot(initializer.init);
-    if (chain) {
-      const rootKind = this.bindingKind(state, chain.root);
-      if (rootKind === "derived") return "derived";
-      if (rootKind === "infra" && chain.called) return "derived";
+    if (chain && this.bindingKind(state, chain.root) === "derived") {
+      return "derived";
     }
     // Such as `cond ? lambda(a) : lambda(b)`, or a value built from infra
     // calls.
@@ -629,7 +629,11 @@ class Analysis {
       if (found || isFunctionBody(child)) return;
       if (ts.isCallExpression(child)) {
         const chain = chainRoot(child.expression);
-        if (chain && this.bindingKind(state, chain.root) !== "plain") {
+        const kind = chain && this.bindingKind(state, chain.root);
+        if (
+          kind === "derived" ||
+          (kind === "infra" && this.#isInfraCall(state, child))
+        ) {
           found = true;
           return;
         }
@@ -638,6 +642,25 @@ class Analysis {
     };
     visit(node);
     return found;
+  }
+
+  // Whether a call on a `type: "infra"` import calls infra, by the rule that
+  // the runtime rewrite uses. `orderQueue.arn.split(":")` reads `arn` and
+  // calls a method of its value, so it doesn't.
+  #isInfraCall(state: ModuleState, call: ts.CallExpression): boolean {
+    let root = call.expression;
+    while (
+      ts.isPropertyAccessExpression(root) ||
+      ts.isElementAccessExpression(root)
+    ) {
+      root = root.expression;
+    }
+    if (!ts.isIdentifier(root)) return false;
+    const { levels, segments } = accessPath(root);
+    if (levels.at(-1) !== call.expression) return false;
+    const namespace =
+      state.info.importBindings.get(root.text)?.imported === "*";
+    return isInfraCall(segments.slice(namespace ? 1 : 0));
   }
 
   // Whether a call is `handle.<kind>(...)` on the `handle` of a factory

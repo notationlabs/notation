@@ -1,13 +1,11 @@
 import ts from "typescript";
 import type { PartialMessage } from "esbuild";
+import { bindingKey, outputKey } from "@notation/resource/outputs";
 import {
-  bindingKey,
-  isKeySegment,
-  outputKey,
-} from "@notation/resource/outputs";
-import {
+  accessPath,
   chainRoot,
   isFunctionBody,
+  isInfraCall,
   isReference,
   parseModule,
   topLevelUpdates,
@@ -167,29 +165,7 @@ export function rewriteRuntimeModule(
   const rewriteUse = (id: ts.Identifier) => {
     if (!isReference(id) || inType(id) || isShadowed(id)) return;
     const { module, imported } = infra.get(id.text)!;
-    const levels: ts.Expression[] = [id];
-    const segments: string[] = [];
-    for (;;) {
-      const top = levels.at(-1)!;
-      const parent = top.parent;
-      let segment: string | undefined;
-      if (
-        ts.isPropertyAccessExpression(parent) &&
-        parent.expression === top &&
-        ts.isIdentifier(parent.name)
-      ) {
-        segment = parent.name.text;
-      } else if (
-        ts.isElementAccessExpression(parent) &&
-        parent.expression === top &&
-        ts.isStringLiteralLike(parent.argumentExpression)
-      ) {
-        segment = parent.argumentExpression.text;
-      }
-      if (segment === undefined || !isKeySegment(segment)) break;
-      segments.push(segment);
-      levels.push(parent as ts.Expression);
-    }
+    const { levels, segments } = accessPath(id);
 
     const namespace = imported === "*";
     if (namespace && segments.length === 0) {
@@ -213,7 +189,7 @@ export function rewriteRuntimeModule(
     let readPath = path;
     let end = top.end;
     if (called) {
-      if (path.length <= 1) {
+      if (isInfraCall(path)) {
         if (inFunctionBody(parent)) {
           fail(
             parent,

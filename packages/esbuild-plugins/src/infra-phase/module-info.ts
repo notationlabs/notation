@@ -1,4 +1,5 @@
 import ts from "typescript";
+import { isKeySegment } from "@notation/resource/outputs";
 
 /** A binding that an import declaration makes. */
 export type ImportBinding = {
@@ -342,6 +343,53 @@ export function chainRoot(
       return undefined;
     }
   }
+}
+
+/**
+ * Follows the property reads that start at an identifier, as in
+ * `orderQueue.arn.split`, while each key is a key segment. `levels` holds the
+ * identifier and each read, and `segments` holds the keys.
+ */
+export function accessPath(id: ts.Identifier): {
+  levels: ts.Expression[];
+  segments: string[];
+} {
+  const levels: ts.Expression[] = [id];
+  const segments: string[] = [];
+  for (;;) {
+    const top = levels.at(-1)!;
+    const parent = top.parent;
+    let segment: string | undefined;
+    if (
+      ts.isPropertyAccessExpression(parent) &&
+      parent.expression === top &&
+      ts.isIdentifier(parent.name)
+    ) {
+      segment = parent.name.text;
+    } else if (
+      ts.isElementAccessExpression(parent) &&
+      parent.expression === top &&
+      ts.isStringLiteralLike(parent.argumentExpression)
+    ) {
+      segment = parent.argumentExpression.text;
+    }
+    if (segment === undefined || !isKeySegment(segment)) break;
+    segments.push(segment);
+    levels.push(parent as ts.Expression);
+  }
+  return { levels, segments };
+}
+
+/**
+ * Whether a call at the end of an access path from a `type: "infra"` import
+ * calls infra. It does when the path has at most one segment, as in
+ * `lambda(...)` or `orderQueue.grant(...)`. With a longer path, as in
+ * `orderQueue.arn.split(":")`, runtime code reads `arn` from infra and calls a
+ * method of that value. For a namespace import, the path starts after the
+ * export name.
+ */
+export function isInfraCall(path: string[]): boolean {
+  return path.length <= 1;
 }
 
 /**

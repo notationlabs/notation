@@ -272,6 +272,28 @@ export const other = apiRequest(() => ({}));
     expect(code).toContain("export const other = apiRequest(__notationInert);");
   });
 
+  it("drop a method call on a value that runtime code reads from infra", async () => {
+    const modules = await strip(
+      {
+        "runtime/checkout.ts": `
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+import { orderQueue } from "../infra/orders" with { type: "infra" };
+import * as orders from "../infra/orders" with { type: "infra" };
+const region = orderQueue.arn.split(":")[3];
+const account = orders.orderQueue.arn.split(":")[4];
+orderQueue.url.toString();
+const { handle } = lambda({ id: "checkout", grants: [orders.orderQueue.grant(["SendMessage"])] });
+export const run = handle.apiRequest(() => ({ region, account }));
+`,
+      },
+      ["runtime/checkout.ts"],
+    );
+    const code = modules["runtime/checkout.ts"]!;
+    expect(code).not.toContain("split");
+    expect(code).not.toContain("toString");
+    expect(code).toContain(`orders.orderQueue.grant(["SendMessage"])`);
+  });
+
   it("import files that aren't scripts, such as JSON, from the file itself", async () => {
     const modules = await strip(
       {
