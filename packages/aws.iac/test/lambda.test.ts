@@ -13,7 +13,7 @@ import {
   type LambdaFunctionInstance,
 } from "src/resources/lambda/lambda";
 import { LambdaIamRole } from "src/resources/lambda/lambda-role";
-import { ResourceNotFoundError } from "@notation/resource";
+import { ResourceNotFoundError, UNKNOWN_AFTER_APPLY } from "@notation/resource";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
 import { decodeRuntime, encodeRuntime, runtimeVariable } from "src/shared";
 
@@ -554,9 +554,59 @@ describe("Lambda environment", () => {
         {} as any,
       ),
     ).rejects.toThrow(
-      /Lambda function app: the environment is \d+ bytes, over Lambda's limit of 4096 bytes.*Split the runtime module/,
+      /Lambda function app: the environment is \d+ bytes, over Lambda's limit of 4096 bytes. The largest values are the dispatch entry todo-api-GET-\/todos\/\d+ \(\d+ bytes\)/,
     );
     expect(send).not.toHaveBeenCalled();
+  });
+
+  function createPlannableLambda() {
+    const zipFile = new fs.File("zip", { config: { filePath: "app.zip" } });
+    zipFile.setOutput({
+      filePath: "app.zip",
+      sourceSha256: "source",
+      fileSha256: "sha",
+    });
+    const role = new LambdaIamRole("role", { config: { RoleName: "app" } });
+    role.setOutput({ Arn: "arn:aws:iam::123456789012:role/app" } as any);
+    return new LambdaFunction("app", {
+      config: { FunctionName: "app", ReservedConcurrentExecutions: 1 },
+      dependencies: { role, zipFile },
+    });
+  }
+
+  it("fails at plan when the environment is over Lambda's limit, naming the largest reads", async () => {
+    const lambda = createPlannableLambda();
+    lambda.contribute({
+      Environment: {
+        Variables: { STAGE: "prod" },
+        Runtime: {
+          outputs: {
+            "infra/orders#settings": { tags: "x".repeat(4000) },
+            "infra/orders#orderQueue.url": UNKNOWN_AFTER_APPLY,
+          },
+        },
+      },
+    });
+
+    await expect(
+      createPlan({ resources: [lambda], state: new MemoryStateBackend({}) }),
+    ).rejects.toThrow(
+      /Invalid Environment for app \(aws\/lambda\/LambdaFunction\) at plan.*Runtime\.outputs\.infra\/orders#settings: the environment is at least \d+ bytes, over Lambda's limit of 4096 bytes. The largest values are the read infra\/orders#settings \(40\d\d bytes\), the read infra\/orders#orderQueue.url \(\d+ bytes\), the variable STAGE \(14 bytes\)/,
+    );
+  });
+
+  it("counts other variables towards the limit at plan", async () => {
+    const lambda = createPlannableLambda();
+    lambda.contribute({
+      Environment: {
+        Variables: { BIG: "x".repeat(3000) },
+        Runtime: { outputs: { "infra/orders#settings": "y".repeat(1100) } },
+      },
+    });
+
+    await expect(
+      createPlan({ resources: [lambda], state: new MemoryStateBackend({}) }),
+    ).rejects.toThrow(/over Lambda's limit of 4096 bytes/);
   });
 
   it("clears the variables when an update sets an empty environment", async () => {

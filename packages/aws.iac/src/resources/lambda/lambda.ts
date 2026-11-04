@@ -1,4 +1,6 @@
 import {
+  containsUnknownAfterApply,
+  isUnknownAfterApply,
   mergeContributions,
   resource,
   ResourceNotFoundError,
@@ -131,10 +133,24 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
   Environment: {
     propertyType: "param",
     presence: "optional",
-    value: v.object({
-      Variables: v.optional(v.record(v.string(), v.string())),
-      Runtime: v.optional(runtimeValue),
-    }),
+    value: v.pipe(
+      v.object({
+        Variables: v.optional(v.record(v.string(), v.string())),
+        Runtime: v.optional(runtimeValue),
+      }),
+      v.rawCheck(({ dataset, addIssue }) => {
+        const issue = environmentSizeIssue(dataset.value as LambdaEnvironment);
+        if (!issue) return;
+        const [first, ...rest] = issue.path.map((key) => ({
+          type: "object" as const,
+          origin: "value" as const,
+          input: {},
+          key,
+          value: undefined,
+        }));
+        addIssue({ message: issue.message, path: first && [first, ...rest] });
+      }),
+    ),
     collect: mergeContributions,
   },
   FileSystemConfigs: {
@@ -446,18 +462,108 @@ function encodeEnvironment(
       `The environment variable ${runtimeVariable} is reserved for Notation. Give the variable another name.`,
     );
   }
+  const issue = environmentSizeIssue(environment);
+  if (issue) {
+    throw new Error(`Lambda function ${functionName}: ${issue.message}`);
+  }
   if (Runtime === undefined) {
     return Variables === undefined ? {} : { Variables };
   }
-  const runtime = encodeRuntime(Runtime);
-  const variables = { ...Variables, [runtimeVariable]: runtime };
+  return {
+    Variables: { ...Variables, [runtimeVariable]: encodeRuntime(Runtime) },
+  };
+}
+
+type EnvironmentEntry = { path: string[]; label: string; size: number };
+
+/**
+ * Checks the environment against Lambda's limit. At plan, a value that is
+ * unknown until apply counts as an empty string, so the check fails only
+ * when the environment is over the limit whatever the unknown values are.
+ *
+ * The issue's path is the largest entry that holds no unknown value. Plan
+ * drops issues at or above an unknown value, and the whole environment is
+ * above every one of them.
+ */
+export function environmentSizeIssue(
+  environment: LambdaEnvironment | undefined,
+): { path: string[]; message: string } | undefined {
+  if (!environment) return undefined;
+  const known = withoutUnknowns(environment) as LambdaEnvironment;
+  const variables: Record<string, string> = { ...known.Variables };
+  if (known.Runtime !== undefined) {
+    variables[runtimeVariable] = encodeRuntime(known.Runtime);
+  }
   const size = Buffer.byteLength(JSON.stringify(variables));
-  if (size > LAMBDA_ENVIRONMENT_MAX_BYTES) {
-    throw new Error(
-      `Lambda function ${functionName}: the environment is ${size} bytes, over Lambda's limit of ${LAMBDA_ENVIRONMENT_MAX_BYTES} bytes. ${runtimeVariable}, which holds the routes and queues that the function handles, is ${Buffer.byteLength(runtime)} bytes of it. Split the runtime module into smaller modules, so that each function handles fewer routes and queues.`,
+  if (size <= LAMBDA_ENVIRONMENT_MAX_BYTES) return undefined;
+
+  const entries = environmentEntries(known).sort((a, b) => b.size - a.size);
+  const largest = entries
+    .slice(0, 3)
+    .map((entry) => `${entry.label} (${entry.size} bytes)`);
+  const unknown = containsUnknownAfterApply(environment);
+  const reported = entries.find(
+    (entry) => !containsUnknownAfterApply(valueAt(environment, entry.path)),
+  );
+  return {
+    path: reported?.path ?? [],
+    message: `the environment is ${unknown ? "at least " : ""}${size} bytes, over Lambda's limit of ${LAMBDA_ENVIRONMENT_MAX_BYTES} bytes. The largest values are ${largest.join(", ")}. Read fewer or smaller values from infra, such as one property in place of a whole binding, or split the runtime module so that each function handles fewer routes and queues.`,
+  };
+}
+
+// Each entry's size is its share of the encoded variables. The runtime map
+// is JSON inside a JSON string, so its entries are counted escaped.
+function environmentEntries(
+  environment: LambdaEnvironment,
+): EnvironmentEntry[] {
+  const nested = (key: string, value: unknown) =>
+    Buffer.byteLength(JSON.stringify(JSON.stringify({ [key]: value }))) - 4;
+  const entries: EnvironmentEntry[] = [];
+  for (const [key, value] of Object.entries(environment.Variables ?? {})) {
+    entries.push({
+      path: ["Variables", key],
+      label: `the variable ${key}`,
+      size: Buffer.byteLength(JSON.stringify({ [key]: value })) - 2,
+    });
+  }
+  for (const [key, value] of Object.entries(
+    environment.Runtime?.outputs ?? {},
+  )) {
+    entries.push({
+      path: ["Runtime", "outputs", key],
+      label: `the read ${key}`,
+      size: nested(key, value),
+    });
+  }
+  for (const [key, value] of Object.entries(
+    environment.Runtime?.dispatch ?? {},
+  )) {
+    entries.push({
+      path: ["Runtime", "dispatch", key],
+      label: `the dispatch entry ${key}`,
+      size: nested(key, value),
+    });
+  }
+  return entries;
+}
+
+function withoutUnknowns(value: unknown): unknown {
+  if (isUnknownAfterApply(value)) return "";
+  if (Array.isArray(value)) return value.map(withoutUnknowns);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        withoutUnknowns(entry),
+      ]),
     );
   }
-  return { Variables: variables };
+  return value;
+}
+
+function valueAt(value: unknown, path: string[]): unknown {
+  for (const key of path) value = (value as Record<string, unknown>)?.[key];
+  return value;
 }
 
 // A runtime variable that doesn't decode stays in `Variables`, so drift shows
