@@ -8,10 +8,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setConfigFile } from "@notation/core";
-import { compileInfra, compileRuntimeModules } from "../src/compile";
+import { compileInfra } from "../src/compile";
 
 // Inside the repository, so the bundle's imports of @notation packages
 // resolve from the root node_modules.
@@ -71,106 +71,60 @@ const write = (file: string, contents: string) => {
 };
 
 const todos = `
-  export const getTodos = (event: unknown) => ["todos", event];
-  export const createTodo = () => "created";
-  export const resource = { service: "aws/lambda", id: "todos", timeout: 5 };
+  import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+  console.log("init");
+  const { handle } = lambda({ id: "todos", timeout: 5 });
+  export const getTodos = handle.apiRequest(() => ({ statusCode: 200 }));
 `;
 
 describe("runtime modules", () => {
-  it("returns the runtime modules that the infra build replaced", async () => {
+  it("returns the runtime modules that infra imports with type: runtime", async () => {
     write(
       "infra/main.ts",
       [
-        `import { getTodos } from "../runtime/todos.fn";`,
-        `import { util } from "../runtime/utils.fn";`,
-        `import { createTodo } from "../runtime/jobs";`,
-        `console.log(getTodos, util, createTodo);`,
+        `import { getTodos } from "../runtime/todos.fn" with { type: "runtime" };`,
+        `import * as jobs from "../runtime/jobs" with { type: "runtime" };`,
+        `console.log(getTodos, jobs);`,
       ].join("\n"),
     );
     write("runtime/todos.fn.ts", todos);
-    write("runtime/utils.fn.ts", `export const util = 1;`);
     write("runtime/jobs.ts", todos.replace(`"todos"`, `"jobs"`));
     write("runtime/unused.fn.ts", todos.replace(`"todos"`, `"unused"`));
-    const entryPoint = path.join(root, "infra/main.ts");
 
-    expect(
-      await compileInfra(entryPoint, { runtimeModules: ["**/*.fn.ts"] }),
-    ).toEqual([
-      { path: path.join(root, "runtime/todos.fn.ts"), service: "aws/lambda" },
-    ]);
-    expect(
-      await compileInfra(entryPoint, { runtimeModules: ["runtime/**"] }),
-    ).toEqual([
-      { path: path.join(root, "runtime/jobs.ts"), service: "aws/lambda" },
-      { path: path.join(root, "runtime/todos.fn.ts"), service: "aws/lambda" },
+    expect(await compileInfra(path.join(root, "infra/main.ts"))).toEqual([
+      path.join(root, "runtime/jobs.ts"),
+      path.join(root, "runtime/todos.fn.ts"),
     ]);
   });
 
-  it("fails for a matching module that exports config", async () => {
+  it("fails with a migration message for a module that exports resource", async () => {
     write(
       "infra/main.ts",
       `import { getTodos } from "../runtime/todos.fn";\nconsole.log(getTodos);\n`,
     );
     write(
       "runtime/todos.fn.ts",
-      `export const getTodos = () => [];\nexport const config = { service: "aws/lambda", id: "todos" };`,
+      `export const getTodos = () => [];\nexport const resource = { service: "aws/lambda", id: "todos" };`,
     );
 
     await expect(
       compileInfra(path.join(root, "infra/main.ts")),
-    ).rejects.toThrow(
-      'runtime/todos.fn.ts: rename the "config" export to "resource"',
-    );
+    ).rejects.toThrow("runtime/todos.fn.ts exports `resource`");
   });
 
-  it("bundles a runtime module behind a dispatching handler", async () => {
-    // Stands in for the service's runtime package.
+  it("keeps only the stripped copy of a runtime module in the infra bundle", async () => {
     write(
-      "node_modules/@notation/aws/package.json",
-      JSON.stringify({
-        name: "@notation/aws",
-        type: "module",
-        exports: { "./lambda.fn": "./lambda.fn.js" },
-      }),
-    );
-    write(
-      "node_modules/@notation/aws/lambda.fn.js",
-      `export const createDispatcher = (mod) => (event) => mod[event.export](event);`,
+      "infra/main.ts",
+      `import { getTodos } from "../runtime/todos.fn" with { type: "runtime" };\nconsole.log(getTodos);\n`,
     );
     write("runtime/todos.fn.ts", todos);
-    write(
-      "infra/main.ts",
-      `import { getTodos } from "../runtime/todos.fn";\nconsole.log(getTodos);\n`,
-    );
 
-    await compileRuntimeModules(
-      await compileInfra(path.join(root, "infra/main.ts")),
-    );
-
-    const bundle = path.join(root, "dist/runtime/todos.fn/index.mjs");
-    const { handler } = await import(pathToFileURL(bundle).href);
-    expect(handler({ export: "getTodos" })).toEqual([
-      "todos",
-      { export: "getTodos" },
-    ]);
-    expect(handler({ export: "createTodo" })).toBe("created");
-  });
-
-  it("replaces runtime modules in the infra bundle", async () => {
-    write(
-      "infra/main.ts",
-      `import { getTodos } from "../runtime/todos";\nconsole.log(getTodos);\n`,
-    );
-    write("runtime/todos.ts", `console.log("init");\n${todos}`);
-
-    await compileInfra(path.join(root, "infra/main.ts"), {
-      runtimeModules: ["runtime/**"],
-    });
+    await compileInfra(path.join(root, "infra/main.ts"));
 
     const bundle = readFileSync(path.join(root, "dist/infra/main.mjs"), "utf8");
     expect(bundle).toContain(`from "@notation/aws/lambda"`);
-    expect(bundle).toContain(`"id": "todos"`);
-    expect(bundle).toContain(`"path": "dist/runtime/todos/index.mjs"`);
+    expect(bundle).toContain(`lambda({ id: "todos", timeout: 5 })`);
+    expect(bundle).toContain(`linkRuntimeModules`);
     expect(bundle).not.toContain("init");
   });
 });

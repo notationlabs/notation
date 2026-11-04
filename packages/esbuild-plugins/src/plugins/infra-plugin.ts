@@ -73,7 +73,7 @@ function createPlugin(
   onScan?: (modules: string[]) => void,
 ): Plugin {
   const getFile = withFileCheck(opts.getFile || fsGetFile);
-  const runtimeLink = opts.runtimeLink ?? defaultRuntimeLink();
+  const runtimeLink = opts.runtimeLink ?? resolveRuntimeLink();
 
   return {
     name: pluginName,
@@ -86,8 +86,16 @@ function createPlugin(
       build.onStart(async () => {
         found.clear();
         if (mode === "scan") return;
+        runtimeModules = [];
+        stripped = { modules: new Map(), files: [] };
         try {
           runtimeModules = await scan(build, opts);
+        } catch {
+          // The scan builds the same infra with the same checks, so the build
+          // fails with the same errors, and reports them once.
+          return;
+        }
+        try {
           stripped = await stripRuntimeModules(runtimeModules, {
             getFile,
             resolve,
@@ -327,7 +335,12 @@ function toMessages(error: unknown): Partial<Message>[] {
   return [{ text: error instanceof Error ? error.message : String(error) }];
 }
 
-function defaultRuntimeLink(): string {
+/**
+ * The URL of the copy of `@notation/resource` that this package resolves,
+ * which generated infra code links runtime modules with. Code that collects
+ * the graph of an infra bundle must use the same copy.
+ */
+export function resolveRuntimeLink(): string {
   try {
     return import.meta.resolve("@notation/resource");
   } catch {

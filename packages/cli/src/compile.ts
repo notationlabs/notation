@@ -1,19 +1,24 @@
+import { execFile } from "node:child_process";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import esbuild from "esbuild";
 import {
-  createRuntimeEntry,
+  createFunctionEntry,
   infraPlugin,
-  type RuntimeModuleEntry,
+  resolveRuntimeLink,
+  runtimePlugin,
 } from "@notation/esbuild-plugins";
 import {
   defaultRuntimeModules,
   filePaths,
   fromProjectRoot,
+  projectRoot,
   type Build,
 } from "@notation/core";
+import type { RuntimeFunction } from "@notation/resource";
 import { defaultLogger, type Logger } from "./logger";
 
-export type { RuntimeModuleEntry };
+export type { RuntimeFunction };
 
 export type CompileOptions = {
   watch?: boolean;
@@ -21,9 +26,14 @@ export type CompileOptions = {
 };
 
 /**
- * Compiles the infra entry, then bundles the runtime modules that the infra
- * build replaced. In watch mode, each infra rebuild that changes that set of
- * modules restarts the runtime bundles.
+ * Builds in the order that declaring functions needs:
+ *
+ * 1. Bundle and evaluate the infra phase, which declares the functions and
+ *    links each handler to its function.
+ * 2. Bundle each function, with its handlers as the dispatch entry.
+ *
+ * In watch mode, each infra rebuild is evaluated again, and a change to the
+ * functions or their handlers restarts the function bundles.
  */
 export async function compile(
   { entryPoint, runtimeModules }: Build,
@@ -35,29 +45,31 @@ export async function compile(
   logger.info(`${watch ? "Watching" : "Compiling"} infrastructure`, entryPoint);
 
   if (!watch) {
-    const modules = await compileInfra(entryPoint, { runtimeModules });
-    logger.info("Compiling runtime modules");
-    await compileRuntimeModules(modules);
+    await compileInfra(entryPoint, { runtimeModules });
+    const functions = await evaluateFunctions(entryPoint);
+    logger.info("Compiling functions");
+    await compileFunctions(functions);
     return;
   }
 
-  let modules: RuntimeModuleEntry[] | undefined;
-  let disposeRuntime = async () => {};
+  let functions: RuntimeFunction[] | undefined;
+  let disposeFunctions = async () => {};
   let updating = Promise.resolve();
 
   // Updates run one at a time, so two rebuilds never dispose the same
   // contexts.
-  const update = (found: RuntimeModuleEntry[]) => {
+  const update = () => {
     updating = updating.then(async () => {
       try {
-        if (modules && sameModules(found, modules)) return;
-        if (!modules) logger.info("Watching runtime modules");
-        await disposeRuntime();
-        disposeRuntime = async () => {};
-        disposeRuntime = await compileRuntimeModules(found, true);
+        const found = await evaluateFunctions(entryPoint);
+        if (functions && sameFunctions(found, functions)) return;
+        if (!functions) logger.info("Watching functions");
+        await disposeFunctions();
+        disposeFunctions = async () => {};
+        disposeFunctions = await compileFunctions(found, true);
         // Set only after a successful start, so that a failed start is
-        // retried on the next rebuild with the same modules.
-        modules = found;
+        // retried on the next rebuild with the same functions.
+        functions = found;
       } catch (error) {
         logger.error(error);
       }
@@ -70,7 +82,7 @@ export async function compile(
     runtimeModules,
     onRuntimeModules: update,
     onBuildFailed: () => {
-      if (modules) return;
+      if (functions) return;
       logger.info(
         "The infrastructure build failed. Fix the errors above; watch starts deploying after the first build that succeeds.",
       );
@@ -83,28 +95,29 @@ export type CompileInfraOptions = {
   watch?: boolean;
   runtimeModules?: string[];
   /**
-   * Called after each build without errors, with the runtime modules that the
-   * build replaced. In watch mode this includes every rebuild.
+   * Called after each build without errors, with the absolute paths of the
+   * runtime modules that infra imports. In watch mode this includes every
+   * rebuild.
    */
-  onRuntimeModules?: (modules: RuntimeModuleEntry[]) => void;
+  onRuntimeModules?: (modules: string[]) => void;
   onBuildFailed?: () => void;
 };
 
 /**
- * Bundles the infra entry to `dist/`. Returns the runtime modules that the
- * build replaced, sorted by path. In watch mode, resolves after the first
- * build without errors.
+ * Bundles the infra phase to `dist/`. Returns the runtime modules that infra
+ * imports, sorted by path. In watch mode, resolves after the first build
+ * without errors.
  */
 export async function compileInfra(
   entryPoint: string,
   opts: CompileInfraOptions = {},
-): Promise<RuntimeModuleEntry[]> {
+): Promise<string[]> {
   const runtimeModules = opts.runtimeModules ?? defaultRuntimeModules;
-  let resolveFirst!: (modules: RuntimeModuleEntry[]) => void;
-  const first = new Promise<RuntimeModuleEntry[]>((resolve) => {
+  let resolveFirst!: (modules: string[]) => void;
+  const first = new Promise<string[]>((resolve) => {
     resolveFirst = resolve;
   });
-  const onRuntimeModules = (modules: RuntimeModuleEntry[]) => {
+  const onRuntimeModules = (modules: string[]) => {
     opts.onRuntimeModules?.(modules);
     resolveFirst(modules);
   };
@@ -116,6 +129,8 @@ export async function compileInfra(
       {
         name: "notation-build-failed",
         setup(build) {
+          // The infra plugin scans infra with a build that doesn't write.
+          if (build.initialOptions.write === false) return;
           build.onEnd((result) => {
             if (result.errors.length > 0) opts.onBuildFailed?.();
           });
@@ -147,29 +162,74 @@ export async function compileInfra(
   return first;
 }
 
+const functionsMarker = "__notation_functions__";
+
 /**
- * Bundles each runtime module to `dist/<module path>/index.mjs`. The bundle's
- * entry is generated: its `handler` export dispatches each event to an export
- * of the module. Returns a function that stops watching.
+ * Evaluates the infra bundle and returns the functions that runtime modules
+ * declared, with their handlers. It runs in a child process, so that the
+ * bundle and its module cache don't stay in this process.
  */
-export async function compileRuntimeModules(
-  modules: RuntimeModuleEntry[],
+export async function evaluateFunctions(
+  entryPoint: string,
+): Promise<RuntimeFunction[]> {
+  const bundle = filePaths.dist.infra(entryPoint);
+  const script = `
+    import { collectResourceGraph } from ${JSON.stringify(resolveRuntimeLink())};
+    const graph = await collectResourceGraph(
+      () => import(${JSON.stringify(`${pathToFileURL(bundle).href}?${Date.now()}`)}),
+      { declarationChecks: false },
+    );
+    console.log(${JSON.stringify(functionsMarker)} + JSON.stringify(graph.runtimeFunctions));
+  `;
+  const stdout = await new Promise<string>((resolve, reject) => {
+    execFile(
+      process.execPath,
+      ["--enable-source-maps", "--input-type=module", "-e", script],
+      { cwd: projectRoot(), maxBuffer: 64 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(
+            new Error(
+              `Evaluating the infrastructure failed:\n${stderr.trim() || error.message}`,
+            ),
+          );
+        } else {
+          resolve(stdout);
+        }
+      },
+    );
+  });
+  const line = stdout
+    .split("\n")
+    .reverse()
+    .find((line) => line.startsWith(functionsMarker));
+  if (!line) {
+    throw new Error("Evaluating the infrastructure returned no functions.");
+  }
+  return JSON.parse(line.slice(functionsMarker.length));
+}
+
+/**
+ * Bundles each function to its `bundle` path. The bundle's entry is
+ * generated: its `handler` export dispatches each event to one of the
+ * function's handlers. Returns a function that stops watching.
+ */
+export async function compileFunctions(
+  functions: RuntimeFunction[],
   watch: boolean = false,
 ) {
-  if (modules.length === 0) return async () => {};
+  if (functions.length === 0) return async () => {};
   const distDir = filePaths.dist.dir();
   const entryPoints = Object.fromEntries(
-    modules.map((module) => [
-      path
-        .relative(distDir, filePaths.dist.runtime.index(module.path))
-        .replace(/\.mjs$/, ""),
-      `${runtimeEntryNamespace}:${module.path}`,
+    functions.map((fn) => [
+      path.relative(distDir, fromProjectRoot(fn.bundle)).replace(/\.mjs$/, ""),
+      `${functionEntryNamespace}:${fn.id}`,
     ]),
   );
 
   const context = await esbuild.context({
     entryPoints,
-    plugins: [runtimeEntryPlugin(modules)],
+    plugins: [functionEntryPlugin(functions), runtimePlugin()],
     outdir: distDir,
     outExtension: { ".js": ".mjs" },
     bundle: true,
@@ -190,33 +250,31 @@ export async function compileRuntimeModules(
   return () => context.dispose();
 }
 
-const runtimeEntryNamespace = "notation-runtime-entry";
+const functionEntryNamespace = "notation-function-entry";
 
-// Serves the generated entry of each runtime module's bundle.
-function runtimeEntryPlugin(modules: RuntimeModuleEntry[]): esbuild.Plugin {
-  const services = new Map(
-    modules.map((module) => [module.path, module.service]),
-  );
-  const prefix = `${runtimeEntryNamespace}:`;
+// Serves the generated entry of each function's bundle.
+function functionEntryPlugin(functions: RuntimeFunction[]): esbuild.Plugin {
+  const byId = new Map(functions.map((fn) => [fn.id, fn]));
+  const prefix = `${functionEntryNamespace}:`;
   return {
-    name: runtimeEntryNamespace,
+    name: functionEntryNamespace,
     setup(build) {
       build.onResolve({ filter: new RegExp(`^${prefix}`) }, (args) => ({
         path: args.path.slice(prefix.length),
-        namespace: runtimeEntryNamespace,
+        namespace: functionEntryNamespace,
       }));
       build.onLoad(
-        { filter: /.*/, namespace: runtimeEntryNamespace },
+        { filter: /.*/, namespace: functionEntryNamespace },
         (args) => ({
-          contents: createRuntimeEntry(args.path, services.get(args.path)!),
-          resolveDir: path.dirname(args.path),
-          loader: "ts",
+          contents: createFunctionEntry(byId.get(args.path)!, fromProjectRoot),
+          resolveDir: projectRoot(),
+          loader: "js",
         }),
       );
     },
   };
 }
 
-function sameModules(a: RuntimeModuleEntry[], b: RuntimeModuleEntry[]) {
+function sameFunctions(a: RuntimeFunction[], b: RuntimeFunction[]) {
   return JSON.stringify(a) === JSON.stringify(b);
 }

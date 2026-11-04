@@ -11,12 +11,12 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { setConfigFile } from "@notation/core";
-import { compile, compileInfra, type RuntimeModuleEntry } from "../src/compile";
+import { compile, compileInfra } from "../src/compile";
 import type { Logger } from "../src/logger";
 
-// Inside the repository, so the bundle's imports of @notation packages
-// resolve from the root node_modules.
-const tmpDir = fileURLToPath(new URL("../../../tmp", import.meta.url));
+// Inside this package, so the project's imports of @notation/aws resolve
+// from the package's node_modules, to the built package.
+const tmpDir = fileURLToPath(new URL("../tmp", import.meta.url));
 const logger = { info: () => {}, error: () => {} } as unknown as Logger;
 
 let root: string;
@@ -45,24 +45,27 @@ const write = (file: string, contents: string) => {
   writeFileSync(path.join(root, file), contents);
 };
 
-const runtimeModule = (id: string) =>
-  `export const run = () => "${id}";\nexport const resource = { service: "aws/lambda", id: "${id}" };\n`;
+const runtimeModule = (id: string) => `
+import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+const { handle } = lambda({ id: "${id}" });
+export const run = handle.apiRequest(() => ({ statusCode: 200, body: "${id}" }));
+`;
 
-const names = (modules: RuntimeModuleEntry[]) =>
-  modules.map((module) => path.basename(module.path));
+const importRun = (file: string, name = "run") =>
+  `import { run as ${name} } from "${file}" with { type: "runtime" };`;
+
+const names = (modules: string[]) =>
+  modules.map((module) => path.basename(module));
 
 const waitFor = (check: () => void) =>
-  vi.waitFor(check, { timeout: 5000, interval: 50 });
+  vi.waitFor(check, { timeout: 10000, interval: 50 });
 
-it("reports the replaced runtime modules after each rebuild", async () => {
-  write("watch-a/todos.fn.ts", runtimeModule("todos"));
-  write("watch-a/jobs.fn.ts", runtimeModule("jobs"));
-  write(
-    "watch-a/main.ts",
-    `import { run } from "./todos.fn";\nconsole.log(run);\n`,
-  );
+it("reports the runtime modules after each rebuild", async () => {
+  write("watch-a/todos.fn.ts", runtimeModule("todos-a"));
+  write("watch-a/jobs.fn.ts", runtimeModule("jobs-a"));
+  write("watch-a/main.ts", `${importRun("./todos.fn")}\nconsole.log(run);\n`);
 
-  const seen: RuntimeModuleEntry[][] = [];
+  const seen: string[][] = [];
   const initial = await compileInfra(path.join(root, "watch-a/main.ts"), {
     watch: true,
     onRuntimeModules: (modules) => seen.push(modules),
@@ -72,49 +75,36 @@ it("reports the replaced runtime modules after each rebuild", async () => {
   // todos.fn.ts does not change, so the rebuild must still report it.
   write(
     "watch-a/main.ts",
-    `import { run } from "./todos.fn";\nimport { run as job } from "./jobs.fn";\nconsole.log(run, job);\n`,
+    `${importRun("./todos.fn")}\n${importRun("./jobs.fn", "job")}\nconsole.log(run, job);\n`,
   );
   await waitFor(() =>
     expect(names(seen.at(-1)!)).toEqual(["jobs.fn.ts", "todos.fn.ts"]),
   );
 });
 
-it("bundles the runtime modules that an infra rebuild adds", async () => {
-  // Stands in for the service's runtime package.
-  write(
-    "node_modules/@notation/aws/package.json",
-    JSON.stringify({
-      name: "@notation/aws",
-      type: "module",
-      exports: { "./lambda.fn": "./lambda.fn.js" },
-    }),
-  );
-  write(
-    "node_modules/@notation/aws/lambda.fn.js",
-    `export const createDispatcher = (mod) => (event) => mod[event.export](event);`,
-  );
-  write("watch-b/todos.fn.ts", runtimeModule("todos"));
-  write("watch-b/jobs.fn.ts", runtimeModule("jobs"));
+it("bundles the functions that an infra rebuild adds", async () => {
+  write("watch-b/todos.fn.ts", runtimeModule("todos-b"));
+  write("watch-b/jobs.fn.ts", runtimeModule("jobs-b"));
   write(
     "watch-b/main.ts",
-    `import { run } from "./todos.fn";\nconsole.log(run);\n`,
+    `import { api, router } from "@notation/aws/api-gateway";\n${importRun("./todos.fn")}\nrouter(api({ name: "b" })).get("/", run);\n`,
   );
-  const bundle = (name: string) =>
-    path.join(root, `dist/watch-b/${name}/index.mjs`);
+  const bundle = (id: string) =>
+    path.join(root, `dist/functions/${id}/index.mjs`);
 
   await compile(build("watch-b/main.ts"), { watch: true, logger });
-  await waitFor(() => expect(existsSync(bundle("todos.fn"))).toBe(true));
-  expect(existsSync(bundle("jobs.fn"))).toBe(false);
+  await waitFor(() => expect(existsSync(bundle("todos-b"))).toBe(true));
+  expect(existsSync(bundle("jobs-b"))).toBe(false);
 
   write(
     "watch-b/main.ts",
-    `import { run } from "./jobs.fn";\nconsole.log(run);\n`,
+    `import { api, router } from "@notation/aws/api-gateway";\n${importRun("./jobs.fn")}\nrouter(api({ name: "b" })).get("/", run);\n`,
   );
-  await waitFor(() => expect(existsSync(bundle("jobs.fn"))).toBe(true));
+  await waitFor(() => expect(existsSync(bundle("jobs-b"))).toBe(true));
 });
 
 it("waits for a build that succeeds, and says so", async () => {
-  write("watch-c/todos.fn.ts", runtimeModule("todos"));
+  write("watch-c/todos.fn.ts", runtimeModule("todos-c"));
   write("watch-c/main.ts", `export const broken = ;\n`);
   const info = vi.fn();
   const watchLogger = { info, error: () => {} } as unknown as Logger;
@@ -134,9 +124,6 @@ it("waits for a build that succeeds, and says so", async () => {
   );
   expect(resolved).toBe(false);
 
-  write(
-    "watch-c/main.ts",
-    `import { run } from "./todos.fn";\nconsole.log(run);\n`,
-  );
+  write("watch-c/main.ts", `${importRun("./todos.fn")}\nconsole.log(run);\n`);
   await compiling;
 });
