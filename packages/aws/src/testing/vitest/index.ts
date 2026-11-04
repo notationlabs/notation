@@ -29,6 +29,8 @@ const prefix = "notation-infra:";
 const virtualPrefix = `\0${prefix}`;
 const bindingModule = fileURLToPath(new URL("../index.js", import.meta.url));
 const scriptFile = /\.[cm]?[jt]sx?$/;
+const infraOptions =
+  /^\{\s*["']?with["']?\s*:\s*\{[^}]*\btype["']?\s*:\s*["'`]infra["'`]/;
 
 const withoutQuery = (id: string) => id.replace(/[?#].*$/, "");
 
@@ -39,7 +41,8 @@ const withoutQuery = (id: string) => id.replace(/[?#].*$/, "");
  * `@notation/aws/lambda`, resolves to its runtime half.
  *
  * Vite doesn't pass import attributes to plugins, so the plugin marks each
- * `type: "infra"` specifier with a prefix before Vite resolves it.
+ * `type: "infra"` specifier with a prefix before Vite resolves it. This
+ * covers static imports, and dynamic imports whose specifier is a string.
  */
 export function notationTesting(): NotationTestingPlugin {
   return {
@@ -53,9 +56,20 @@ export function notationTesting(): NotationTestingPlugin {
       let out = "";
       let cursor = 0;
       for (const imp of imports) {
-        const infra = imp.at?.some(([k, v]) => k === "type" && v === "infra");
-        if (!infra || imp.d !== -1 || imp.n === undefined) continue;
-        out += code.slice(cursor, imp.s) + prefix + imp.n;
+        if (imp.n === undefined) continue;
+        if (imp.d === -1) {
+          if (!imp.at?.some(([k, v]) => k === "type" && v === "infra")) {
+            continue;
+          }
+          out += code.slice(cursor, imp.s) + prefix + imp.n;
+        } else {
+          // es-module-lexer doesn't parse a dynamic import's attributes, so
+          // its options are matched as text. `s` and `e` take in the quotes.
+          if (imp.a === -1 || !infraOptions.test(code.slice(imp.a, imp.se))) {
+            continue;
+          }
+          out += code.slice(cursor, imp.s) + JSON.stringify(prefix + imp.n);
+        }
         cursor = imp.e;
       }
       if (cursor === 0) return;

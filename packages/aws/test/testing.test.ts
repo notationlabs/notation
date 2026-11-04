@@ -108,7 +108,7 @@ test("a test runs under the loader hook in Node", async () => {
     ],
     { cwd: checkout },
   );
-  expect(stdout).toContain("# pass 2");
+  expect(stdout).toContain("# pass 3");
   expect(stdout).toContain("# fail 0");
 });
 
@@ -120,7 +120,7 @@ test("a test runs under the Vitest plugin", async () => {
   const { stdout } = await run(process.execPath, [vitest, "run"], {
     cwd: checkout,
   });
-  expect(stdout).toMatch(/Tests\s+2 passed/);
+  expect(stdout).toMatch(/Tests\s+3 passed/);
 }, 30_000);
 
 test("the loader hook avoids Node's overflow on attributed TypeScript cycles", async () => {

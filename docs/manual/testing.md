@@ -73,6 +73,8 @@ export default defineConfig({
 });
 ```
 
+The plugin serves static imports and dynamic imports `with { type: "infra" }`, as the hook does. A dynamic import's specifier must be a string literal, since the plugin reads it from the source.
+
 ## Node's test runner
 
 Plain Node loads the hook with `--import`. It needs Node 22.15 or later, for `module.registerHooks()`, and Node's TypeScript support.
