@@ -20,6 +20,7 @@ export const manual: DocCategory = {
       links: [
         { label: "Lambda Handlers", slug: "manual/functions" },
         { label: "Lambda Resource", slug: "manual/function-config" },
+        { label: "Testing Handlers", slug: "manual/testing" },
       ],
     },
     {

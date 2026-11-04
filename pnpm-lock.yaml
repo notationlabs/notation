@@ -230,6 +230,9 @@ importers:
       aws-jwt-verify:
         specifier: ^5.0.0
         version: 5.0.0
+      es-module-lexer:
+        specifier: ^2.3.2
+        version: 2.3.2
     devDependencies:
       '@notation/reconciler':
         specifier: workspace:*
@@ -237,6 +240,9 @@ importers:
       '@notation/state':
         specifier: workspace:*
         version: link:../state
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.13.4
 
   packages/aws.iac:
     dependencies:
