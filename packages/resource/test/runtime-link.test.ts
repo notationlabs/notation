@@ -387,6 +387,50 @@ it("fails when infra reads a stand-in for a missing export after linking", async
   });
 });
 
+it("answers `in` for a stand-in and its function as reads do", async () => {
+  await collectResourceGraph(() => {
+    const standIn = createStandIn("runtime/checkout.ts", "createOrder");
+    const fn = (standIn as any).function;
+    expect("wire" in standIn).toBe(true);
+    expect("function" in standIn).toBe(true);
+    expect("then" in standIn).toBe(false);
+    expect("arn" in fn).toBe(true);
+    expect("then" in fn).toBe(false);
+
+    const checkout = declare("checkout");
+    linkRuntimeModules([
+      {
+        module: "runtime/checkout.ts",
+        standIns: { createOrder: standIn },
+        exports: { createOrder: checkout.api() },
+      },
+    ]);
+    expect("wire" in standIn).toBe(true);
+    expect("function" in standIn).toBe(true);
+    expect("missing" in standIn).toBe(false);
+    expect("describe" in fn).toBe(true);
+    expect("arn" in fn).toBe(false);
+  });
+});
+
+it("reads `then` through a linked stand-in, as a linked chain does", async () => {
+  await collectResourceGraph(() => {
+    const standIn = createStandIn("runtime/checkout.ts", "checkoutFn");
+    expect((standIn as any).then).toBeUndefined();
+    const checkout = declare("checkout");
+    const fn = Object.assign(checkout.fn, { then: "a then field" });
+    linkRuntimeModules([
+      {
+        module: "runtime/checkout.ts",
+        standIns: { checkoutFn: standIn },
+        exports: { checkoutFn: fn, run: checkout.api() },
+      },
+    ]);
+    expect((standIn as any).then).toBe("a then field");
+    expect((standIn as any).function.then).toBe("a then field");
+  });
+});
+
 it("links an exported function to the function itself", async () => {
   await collectResourceGraph(() => {
     const standIn = createStandIn("runtime/checkout.ts", "checkoutFn");

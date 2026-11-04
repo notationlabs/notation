@@ -181,11 +181,11 @@ export function createStandIn(
   const get = (_: object, prop: string | symbol): unknown => {
     if (prop === standInMark) return state;
     if (prop === deferredMark) return resolve;
-    if (prop === "then") return undefined;
     if (state.linked) {
       if (prop === "function") return functionOf(state);
       return readLinked(exportOf(state), prop);
     }
+    if (prop === "then") return undefined;
     if (prop === "function") {
       return (lazyFunction ??= createLazyFunction(state));
     }
@@ -203,7 +203,12 @@ export function createStandIn(
       },
     );
   };
-  return new Proxy({}, { get, set: readOnly(name) }) as RuntimeRef<
+  const has = (_: object, prop: string | symbol): boolean => {
+    if (prop === "function") return true;
+    if (state.linked) return prop in Object(exportOf(state));
+    return readableBeforeLinking(prop);
+  };
+  return new Proxy({}, { get, has, set: readOnly(name) }) as RuntimeRef<
     any,
     unknown,
     unknown
@@ -592,8 +597,18 @@ function createChain(
     });
     return call;
   };
+  const has = (_: object, prop: string | symbol): boolean => {
+    if (state.linked) return prop in Object(resolve());
+    return readableBeforeLinking(prop);
+  };
   // A function target, so that the chain can be called.
-  return new Proxy(() => {}, { get, apply, set: readOnly(name) });
+  return new Proxy(() => {}, { get, has, apply, set: readOnly(name) });
+}
+
+// Before linking, a stand-in and a chain give a chain for each string key but
+// `then`, so `in` is true for those keys.
+function readableBeforeLinking(prop: string | symbol): boolean {
+  return typeof prop === "string" && prop !== "then";
 }
 
 function unknownUse(name: string, prop: string | symbol, site: string) {
