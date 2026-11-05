@@ -448,7 +448,10 @@ function unwiredMessage(module: UnwiredModule, entryFile: string | undefined) {
     .replace(/\.[cm]?[jt]sx?$/, "");
   if (!specifier.startsWith(".")) specifier = `./${specifier}`;
   const where = entryFile ? ` in ${toProjectRoot(entryFile)}` : "";
-  return `${name} matches runtimeModules and imports ${module.factory} with { type: "infra" }, but no infra module imports it with { type: "runtime" }, so its functions aren't deployed. To deploy them, import it from infra, as in \`import * as handlers from "${specifier}" with { type: "runtime" };\`${where}, and pass its handlers to infra APIs such as route() or consume().`;
+  const imports = module.via
+    ? `imports ${toProjectRoot(module.via)}, which imports ${module.factory} with { type: "infra" }`
+    : `imports ${module.factory} with { type: "infra" }`;
+  return `${name} matches runtimeModules and ${imports}, but no infra module imports it with { type: "runtime" }, so its functions aren't deployed. To deploy them, import it from infra, as in \`import * as handlers from "${specifier}" with { type: "runtime" };\`${where}, and pass its handlers to infra APIs such as route() or consume().`;
 }
 
 function unscannedMessage(file: string) {

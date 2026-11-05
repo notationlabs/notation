@@ -21,6 +21,11 @@ export type UnwiredModule = {
   file: string;
   /** The package that the module imports with `type: "infra"`. */
   factory: string;
+  /**
+   * The local module that imports `factory`, when it isn't `file` itself but
+   * a module that `file` imports, such as a helper that calls `lambda()`.
+   */
+  via?: string;
 };
 
 /**
@@ -29,7 +34,11 @@ export type UnwiredModule = {
  *
  * - It matches the `runtimeModules` globs.
  * - It imports a package, such as `@notation/aws/lambda`, with
- *   `type: "infra"`, as a module that calls `lambda()` does.
+ *   `type: "infra"`, as a module that calls `lambda()` does. The import can
+ *   also be in a helper that it imports without an attribute, such as one
+ *   that calls `lambda()` and exports its `handle`. Helpers that are runtime
+ *   modules themselves aren't searched: a test that imports a wired module
+ *   isn't reported.
  * - No infra module imports it with `type: "runtime"`.
  * - No wired runtime module imports it, directly or through other modules.
  *
@@ -43,8 +52,14 @@ export async function findUnwiredRuntimeModules(
   for (const file of [...opts.files].sort()) {
     if (reached.has(file) || !isScript(file)) continue;
     if (!matchesRuntimeModules(file, opts.runtimeModules)) continue;
-    const factory = await infraPackageImport(file, opts);
-    if (factory) unwired.push({ file, factory });
+    const found = await infraPackageImport(file, opts, opts.wired);
+    if (found) {
+      unwired.push(
+        found.file === file
+          ? { file, factory: found.factory }
+          : { file, factory: found.factory, via: found.file },
+      );
+    }
   }
   return unwired;
 }
@@ -76,16 +91,36 @@ async function reachableFrom(
   return reached;
 }
 
+// The first package that `root`, or a helper that it imports without an
+// attribute, imports with `type: "infra"`, and the module that imports it. A
+// helper is a local module that isn't a runtime module. Modules are searched
+// breadth-first, so `root`'s own import comes first.
 async function infraPackageImport(
-  file: string,
-  opts: Pick<UnwiredOptions, "getFile" | "resolve">,
-): Promise<string | undefined> {
-  const source = await readOrUndefined(file, opts.getFile);
-  if (source === undefined) return undefined;
-  for (const entry of parseModule(file, source).imports) {
-    if (entry.attribute !== "infra") continue;
-    const target = await resolveOrUndefined(entry.source, file, opts.resolve);
-    if (target && !target.local) return entry.source;
+  root: string,
+  opts: Pick<UnwiredOptions, "getFile" | "resolve" | "runtimeModules">,
+  wired: string[],
+): Promise<{ file: string; factory: string } | undefined> {
+  const queue = [root];
+  const seen = new Set(queue);
+  for (const file of queue) {
+    const source = await readOrUndefined(file, opts.getFile);
+    if (source === undefined) continue;
+    const info = parseModule(file, source);
+    for (const entry of info.imports) {
+      if (entry.attribute !== "infra") continue;
+      const target = await resolveOrUndefined(entry.source, file, opts.resolve);
+      if (target && !target.local) return { file, factory: entry.source };
+    }
+    const local = [...info.imports, ...info.reExports, ...info.starExports];
+    for (const entry of local) {
+      if (entry.attribute !== undefined) continue;
+      const target = await resolveOrUndefined(entry.source, file, opts.resolve);
+      if (!target?.local || !isScript(target.path)) continue;
+      if (seen.has(target.path) || wired.includes(target.path)) continue;
+      if (matchesRuntimeModules(target.path, opts.runtimeModules)) continue;
+      seen.add(target.path);
+      queue.push(target.path);
+    }
   }
   return undefined;
 }

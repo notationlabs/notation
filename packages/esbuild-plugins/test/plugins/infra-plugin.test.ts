@@ -118,6 +118,25 @@ describe("in memory", () => {
     ]);
   });
 
+  it("warns about a runtime module that gets its handle from a helper", async () => {
+    const warnings = await warningsOf({
+      ...files,
+      "runtime/shared.ts": `
+        import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+        export const { handle } = lambda({ id: "shared" });
+      `,
+      "runtime/refunds.fn.ts": `
+        import { handle } from "./shared";
+        export const refund = handle.apiRequest(async () => ({}));
+      `,
+    });
+    expect(warnings).toEqual([
+      expect.stringContaining(
+        'runtime/refunds.fn.ts matches runtimeModules and imports runtime/shared.ts, which imports @notation/aws/lambda with { type: "infra" }, but no infra module imports it',
+      ),
+    ]);
+  });
+
   it("doesn't warn about modules that a wired runtime module imports, or that don't call a provider factory", async () => {
     const warnings = await warningsOf(
       {

@@ -66,10 +66,10 @@ Runtime modules can import ordinary modules, such as `runtime/utils.ts`, without
 
 Two attributes mark the imports that cross between infra and runtime code:
 
-| Attribute                  | Where                 | Target                                                         | The importer sees                                                     |
-| -------------------------- | --------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `with { type: "runtime" }` | In an infra module    | A runtime module of this project                               | Each handler as a `RuntimeRef`, which infra can wire but not call    |
-| `with { type: "infra" }`   | In a runtime module   | An infra module, or a provider's factory, such as `@notation/aws/lambda` | Each output value as its value, such as a queue's `url` as a `string` |
+| Attribute                  | Where               | Target                                                                   | The importer sees                                                     |
+| -------------------------- | ------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `with { type: "runtime" }` | In an infra module  | A runtime module of this project                                         | Each handler as a `RuntimeRef`, which infra can wire but not call     |
+| `with { type: "infra" }`   | In a runtime module | An infra module, or a provider's factory, such as `@notation/aws/lambda` | Each output value as its value, such as a queue's `url` as a `string` |
 
 [`notation types`](../cli/types.md) writes `notation-env.d.ts`, which gives each side its view of the other. See [End-to-End Types](./types.md) and [Reading Infra Values](./infra-values.md).
 
@@ -95,7 +95,7 @@ The globs don't decide which files are runtime modules. A file that doesn't matc
 The compiler also uses the globs to find runtime modules that nothing deploys. It warns about a file when all of these are true:
 
 - The file matches a glob.
-- The file imports a package `with { type: "infra" }`, as a module that calls `lambda()` imports `@notation/aws/lambda`.
+- The file imports a package `with { type: "infra" }`, as a module that calls `lambda()` imports `@notation/aws/lambda`. The import can also be in a helper that the file imports, such as a module that calls `lambda()` and exports its `handle`. A helper that matches a glob, or that infra imports `with { type: "runtime" }`, isn't searched.
 - No infra module imports the file `with { type: "runtime" }`.
 - No module that a runtime module imports, directly or through other modules, imports the file. So a helper module that calls `lambda()` for a runtime module gets no warning.
 
