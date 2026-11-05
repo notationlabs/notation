@@ -66,9 +66,13 @@ function write(file: string, contents: string) {
 const read = () => readFileSync(path.join(root, typesFileName), "utf8");
 
 function typecheck() {
-  const result = spawnSync(process.execPath, [tsc, "-p", root], {
-    encoding: "utf8",
-  });
+  const result = spawnSync(
+    process.execPath,
+    [tsc, "-p", root, "--pretty", "false"],
+    {
+      encoding: "utf8",
+    },
+  );
   return { status: result.status, output: result.stdout + result.stderr };
 }
 
