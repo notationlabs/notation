@@ -9,7 +9,7 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
+import { promisify, stripVTControlCharacters } from "node:util";
 import { afterEach, expect, test } from "vitest";
 import { infraBinding, stubOutputs, unstubOutputs } from "src/testing/outputs";
 import {
@@ -143,7 +143,8 @@ test("a test runs under the Vitest plugin", async () => {
   const { stdout } = await run(process.execPath, [vitest, "run"], {
     cwd: checkout,
   });
-  expect(stdout).toMatch(/Tests\s+3 passed/);
+  // Vitest colours its output in CI, and the escape codes split the summary line.
+  expect(stripVTControlCharacters(stdout)).toMatch(/Tests\s+3 passed/);
 }, 30_000);
 
 test("the loader hook avoids Node's overflow on attributed TypeScript cycles", async () => {
