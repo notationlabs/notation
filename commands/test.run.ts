@@ -1,9 +1,9 @@
 import { defineCommand } from "@pokit/core";
 
-// What CI and the pre-commit hook call.
+// What CI calls.
 export const command = defineCommand({
   label: "Run the suite once",
   run: async (r) => {
-    await r.exec("vitest run");
+    await r.exec("pnpm exec vitest run");
   },
 });
