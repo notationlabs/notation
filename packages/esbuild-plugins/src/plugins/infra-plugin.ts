@@ -107,6 +107,8 @@ function createPlugin(
 
       build.onStart(async () => {
         found.clear();
+        // Files can move between watch rebuilds.
+        resolve.clear();
         if (mode === "scan") return;
         runtimeModules = [];
         stripped = { modules: new Map(), files: [], infraModules: [] };
@@ -119,9 +121,9 @@ function createPlugin(
           try {
             scanned = await scan(build, opts, extraEntries);
           } catch (error) {
-            // The first scan builds the same infra with the same checks, so
-            // the build fails with the same errors, and reports them once.
-            if (extraEntries.length === 0) return;
+            // The build usually fails with the same errors, so they can be
+            // reported twice. If it doesn't fail, it has no runtime modules,
+            // and would plan routes and queues without their functions.
             return { errors: toMessages(error) };
           }
           runtimeModules = scanned.modules;
@@ -363,7 +365,7 @@ function withEntries(
 
 function createResolver(build: PluginBuild) {
   const cache = new Map<string, Promise<Resolved>>();
-  return (specifier: string, importer: string): Promise<Resolved> => {
+  const resolve = (specifier: string, importer: string): Promise<Resolved> => {
     const key = `${importer}\0${specifier}`;
     let resolved = cache.get(key);
     if (!resolved) {
@@ -389,6 +391,7 @@ function createResolver(build: PluginBuild) {
     }
     return resolved;
   };
+  return Object.assign(resolve, { clear: () => cache.clear() });
 }
 
 /**

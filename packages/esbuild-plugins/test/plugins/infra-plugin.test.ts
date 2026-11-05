@@ -17,7 +17,10 @@ import {
   buildVirtualResult,
   projectRoot,
   readVirtualFile,
+  virtualFilesPlugin,
 } from "test/esbuild-test-utils";
+
+const internal = Symbol.for("@notation/esbuild-plugins/internal");
 
 const buildInfra = (
   files: Record<string, string>,
@@ -325,6 +328,70 @@ describe("in memory", () => {
     ).rejects.toThrow(
       'runtime/checkout.ts is a runtime module, so infra must import it with { type: "runtime" }',
     );
+  });
+
+  it("fails when the scan fails, even if the build itself would pass", async () => {
+    // The scan is the only build with a metafile.
+    const failScan: esbuild.Plugin = {
+      name: "fail-scan",
+      setup(build) {
+        build.onStart(() =>
+          build.initialOptions.metafile
+            ? { errors: [{ text: "scan failed" }] }
+            : undefined,
+        );
+      },
+    };
+    await expect(
+      buildVirtual(files, "infra/main.ts", [
+        infraPlugin({
+          runtimeModules: ["**/*.fn.ts"],
+          getFile: readVirtualFile(files),
+          runtimeLink: "@notation/resource",
+          listFiles: () => [],
+        }),
+        failScan,
+      ]),
+    ).rejects.toThrow("scan failed");
+  });
+
+  it("resolves again on each rebuild, so that a moved file is found", async () => {
+    let resolutions = 0;
+    const countDb: esbuild.Plugin = {
+      name: "count-db",
+      setup(build) {
+        build.onResolve({ filter: /^\.\/db$/ }, (args) => {
+          if (args.pluginData?.[internal]) resolutions++;
+          return undefined;
+        });
+      },
+    };
+    const ctx = await esbuild.context({
+      entryPoints: [path.join(projectRoot, "infra/main.ts")],
+      bundle: true,
+      format: "esm",
+      write: false,
+      logLevel: "silent",
+      plugins: [
+        infraPlugin({
+          runtimeModules: ["**/*.fn.ts"],
+          getFile: readVirtualFile(files),
+          runtimeLink: "@notation/resource",
+          listFiles: () => [],
+        }),
+        countDb,
+        virtualFilesPlugin(files),
+      ],
+    });
+    try {
+      await ctx.rebuild();
+      const first = resolutions;
+      expect(first).toBeGreaterThan(0);
+      await ctx.rebuild();
+      expect(resolutions).toBe(first * 2);
+    } finally {
+      await ctx.dispose();
+    }
   });
 
   it("follows export * for the stand-ins", async () => {
