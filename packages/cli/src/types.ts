@@ -1,8 +1,13 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import chokidar from "chokidar";
 import esbuild from "esbuild";
+import {
+  isProjectScript,
+  isSkippedDirectory,
+  listProjectScripts,
+} from "@notation/esbuild-plugins";
 import { defaultLogger, type Logger } from "./logger";
 
 export const typesFileName = "notation-env.d.ts";
@@ -26,31 +31,8 @@ export type AttributedImport = {
   resolved?: string;
 };
 
-const sourceExtensions = /\.(?:[cm]?[jt]s|[jt]sx)$/;
-const ignoredDirs = new Set(["node_modules", "dist"]);
 const mayHaveAttribute =
   /\bwith\s*:?\s*\{[^}]*\btype\s*:\s*["'](?:infra|runtime)["']/;
-
-/** Lists the source files of the project, outside node_modules, dist and dot directories. */
-export async function listSourceFiles(root: string): Promise<string[]> {
-  const files: string[] = [];
-  const walk = async (dir: string) => {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      if (entry.name.startsWith(".")) continue;
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (!ignoredDirs.has(entry.name)) await walk(full);
-      } else if (
-        sourceExtensions.test(entry.name) &&
-        !/\.d\.[cm]?ts$/.test(entry.name)
-      ) {
-        files.push(full);
-      }
-    }
-  };
-  await walk(root);
-  return files.sort();
-}
 
 /**
  * Finds every import in `files` with `{ type: "infra" }` or
@@ -235,7 +217,7 @@ export type WrittenTypes = { changed: boolean; warnings: string[] };
  * for nothing.
  */
 export async function writeTypes(root: string): Promise<WrittenTypes> {
-  const imports = await findAttributedImports(await listSourceFiles(root));
+  const imports = await findAttributedImports(await listProjectScripts(root));
   const { contents, warnings } = renderTypes(root, imports);
   const file = path.join(root, typesFileName);
   if (existsSync(file) && readFileSync(file, "utf8") === contents) {
@@ -295,10 +277,8 @@ export async function watchTypes(
       const relative = path.relative(root, file);
       if (relative === "") return false;
       const parts = relative.split(path.sep);
-      if (parts.some((part) => part.startsWith(".") || ignoredDirs.has(part))) {
-        return true;
-      }
-      return stats?.isFile() === true && !sourceExtensions.test(file);
+      if (parts.some(isSkippedDirectory)) return true;
+      return stats?.isFile() === true && !isProjectScript(file);
     },
   });
 

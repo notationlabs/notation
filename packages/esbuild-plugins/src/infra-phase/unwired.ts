@@ -148,13 +148,24 @@ async function resolveOrUndefined(
   }
 }
 
-// Directories that never hold runtime modules, or that are too large to walk.
-const skippedDirectories = new Set(["node_modules", "dist", ".git"]);
+/**
+ * Whether a project walk skips a directory: one whose name starts with a dot,
+ * `node_modules` or `dist`. They never hold runtime modules, or are too large
+ * to walk.
+ */
+export function isSkippedDirectory(name: string): boolean {
+  return name.startsWith(".") || name === "node_modules" || name === "dist";
+}
+
+/** Whether a project walk lists a file: a script that isn't a declaration file. */
+export function isProjectScript(name: string): boolean {
+  return isScript(name) && !/\.d\.[cm]?ts$/.test(name);
+}
 
 /**
- * The script files under the project root, as absolute paths. Directories
- * whose names start with a dot are skipped, as are `node_modules` and `dist`,
- * and directories that can't be read.
+ * The files under the project root that `isProjectScript` accepts, as
+ * absolute paths, sorted. Directories that `isSkippedDirectory` accepts are
+ * skipped, and so are directories that can't be read.
  */
 export async function listProjectScripts(
   root: string = projectRoot(),
@@ -170,15 +181,12 @@ export async function listProjectScripts(
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name.startsWith(".") || skippedDirectories.has(entry.name)) {
-          continue;
-        }
-        await walk(full);
-      } else if (entry.isFile() && isScript(entry.name)) {
+        if (!isSkippedDirectory(entry.name)) await walk(full);
+      } else if (entry.isFile() && isProjectScript(entry.name)) {
         files.push(full);
       }
     }
   };
   await walk(root);
-  return files;
+  return files.sort();
 }
