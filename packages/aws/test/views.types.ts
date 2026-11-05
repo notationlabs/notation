@@ -139,12 +139,15 @@ export function runtimeCallsGrantButNoOtherMethod(
   infra.orderQueue.consume({} as any);
 }
 
-export function runtimeCallsFactoriesButNoOtherFunction(
+export function runtimeCallsMarkedFactoriesButNoOtherFunction(
   sqs: RuntimeView<typeof sqsModule>,
   aws: RuntimeView<typeof lambdaModule>,
 ) {
-  sqs.queue({ name: "orders" }).grant(["SendMessage"]);
   expectTypeOf(aws.lambda).toEqualTypeOf<RuntimeLambda>();
+  expectTypeOf(sqs.queue).toEqualTypeOf<InfraOnly<"queue">>();
+
+  // @ts-expect-error a factory without a runtime half is infra only
+  sqs.queue({ name: "orders" });
 
   // @ts-expect-error a class is infra only
   new sqs.QueueGroup({ name: "orders" });
@@ -171,7 +174,6 @@ export function runtimeMakesHandlersWithTheHandleOfLambda(
 
 export function runtimeSeesOnlyTheRuntimeHalfOfAFactorysResult(
   aws: RuntimeView<typeof lambdaModule>,
-  sqs: RuntimeView<typeof sqsModule>,
 ) {
   const checkoutFn = aws.lambda({ id: "checkout" });
   checkoutFn.handle.sqsEvent(async () => {});
@@ -179,8 +181,6 @@ export function runtimeSeesOnlyTheRuntimeHalfOfAFactorysResult(
   checkoutFn.role;
   // @ts-expect-error runtime code can't read its function's resources
   checkoutFn.fn;
-  // @ts-expect-error a queue made in runtime code can't be consumed there
-  sqs.queue({ name: "orders" }).consume({} as any);
   // @ts-expect-error a literal id must be name-safe
   aws.lambda({ id: "bad.id" });
 }

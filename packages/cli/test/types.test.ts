@@ -116,8 +116,8 @@ const checkoutModule = `
   isLambdaGroup(orderQueue);
   // @ts-expect-error runtime can't read its function's role
   checkoutFn.role;
-  // @ts-expect-error a queue made in runtime code can't be consumed there
-  queue({ name: "x" }).consume({} as any);
+  // @ts-expect-error runtime can't call a factory that has no runtime half
+  queue({ name: "x" });
   // @ts-expect-error a binding's resources aren't delivered
   orderQueue.resources;
   // @ts-expect-error a binding's resource isn't delivered
@@ -318,7 +318,9 @@ describe("writeTypes", () => {
 
     expect(changed).toBe(true);
     expect(warnings).toEqual([
-      expect.stringContaining("names different modules in a/infra.ts, b/infra.ts"),
+      expect.stringContaining(
+        "names different modules in a/infra.ts, b/infra.ts",
+      ),
     ]);
   });
 });

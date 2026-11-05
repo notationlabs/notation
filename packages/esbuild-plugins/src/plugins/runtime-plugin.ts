@@ -5,7 +5,7 @@ import type { PartialMessage, Plugin } from "esbuild";
 import { toProjectRoot } from "@notation/core";
 import { parseModule } from "src/infra-phase/module-info";
 import { moduleKey } from "src/runtime-modules";
-import { rewriteRuntimeModule } from "src/runtime-bundle/rewrite";
+import { locate, rewriteRuntimeModule } from "src/runtime-bundle/rewrite";
 import { isLocalModule } from "src/utils/is-local";
 import { loaderFor } from "src/utils/script";
 import { GetFile, fsGetFile, withFileCheck } from "src/utils/get-file";
@@ -133,7 +133,11 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
           };
         }
         const result = await resolveInternal(`${args.path}.fn`, args.importer);
-        if (result.errors.length > 0) return { errors: result.errors };
+        if (result.errors.length > 0) {
+          return {
+            errors: [{ text: noRuntimeHalfMessage(args.importer, args.path) }],
+          };
+        }
         return {
           path: result.path,
           external: result.external,
@@ -150,12 +154,27 @@ export function runtimePlugin(opts: PluginOpts = {}): Plugin {
           if (!infraAttribute.test(source)) return;
           const providers = new Set<string>();
           const infraModules = new Map<string, string>();
-          for (const decl of parseModule(args.path, source).imports) {
+          const module = parseModule(args.path, source);
+          for (const decl of module.imports) {
             if (decl.attribute !== "infra") continue;
             const target = await resolveInternal(decl.source, args.path);
             if (target.errors.length > 0) continue;
-            if (isPackage(target)) providers.add(decl.source);
-            else infraModules.set(decl.source, moduleKey(target.path));
+            if (!isPackage(target)) {
+              infraModules.set(decl.source, moduleKey(target.path));
+              continue;
+            }
+            const half = await resolveInternal(`${decl.source}.fn`, args.path);
+            if (half.errors.length > 0) {
+              return {
+                errors: [
+                  {
+                    text: noRuntimeHalfMessage(args.path, decl.source),
+                    location: locate(module.sourceFile, decl.node),
+                  },
+                ],
+              };
+            }
+            providers.add(decl.source);
           }
           const result = rewriteRuntimeModule(args.path, source, {
             providers,
@@ -289,6 +308,10 @@ function missingAttributeMessage(
     " → ",
   );
   return `${runtimeModule} imports ${infraModule} without { type: "infra" }, and ${infraModule} imports ${specifier}, so the bundle of runtime code would include infra (${imports}). ${fix}`;
+}
+
+function noRuntimeHalfMessage(importer: string, specifier: string) {
+  return `${toProjectRoot(importer)} imports ${specifier} with { type: "infra" }, but ${specifier} has no runtime half, ${specifier}.fn. Runtime code can only call factories that have one, such as lambda(). Declare other resources in an infra module, and import them from there.`;
 }
 
 // The directory of this module, so that `read` resolves from this package's

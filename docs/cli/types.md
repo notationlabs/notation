@@ -10,7 +10,7 @@ notation types [--config <path>]
 
 Writes `notation-env.d.ts` at the project root. The file types the imports that cross between infra and runtime code:
 
-- A runtime module imports infra `with { type: "infra" }`. It sees each output value as its value, such as a queue's `url` as a `string`. It can call resource factories and `grant`, but no other infra function or method.
+- A runtime module imports infra `with { type: "infra" }`. It sees each output value as its value, such as a queue's `url` as a `string`. It can call `lambda` and `grant`, but no other infra function or method.
 - An infra module imports a runtime module `with { type: "runtime" }`. It sees each handler as a `RuntimeRef`, which it can pass to `route()`, `consume()` or `schedule()` but can't call. It can't use the module's other exports.
 
 ```ts [infra/orders.ts]

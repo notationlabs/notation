@@ -52,19 +52,19 @@ The two modules import each other. This is allowed: the compiler runs every infr
 
 [`notation types`](../cli/types.md) writes the declarations that give runtime code its view of an infra module. The view follows these rules:
 
-| In the infra module                                                          | In runtime code                                                  |
-| ---------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| An output value, such as `orderQueue.url`                                    | The value's type, such as `string`                               |
-| Data, such as a string or a plain object                                     | The same type                                                    |
-| A resource factory, such as `lambda` or `queue`                              | Callable, for use in [`lambda()` settings](./function-config.md) |
-| A `grant` method, such as `orderQueue.grant`                                 | Callable, for use in `grants`                                    |
-| Any other function or method, such as `orderQueue.consume`                   | Uncallable                                                       |
-| Any other property, such as `orderQueue.resources`                           | Left out                                                         |
-| An object property of a binding that isn't data, such as `orderQueue.config` | Left out                                                         |
+| In the infra module                                                          | In runtime code                            |
+| ---------------------------------------------------------------------------- | ------------------------------------------ |
+| An output value, such as `orderQueue.url`                                    | The value's type, such as `string`         |
+| Data, such as a string or a plain object                                     | The same type                              |
+| `lambda`                                                                     | Callable, to declare the module's function |
+| A `grant` method, such as `orderQueue.grant`                                 | Callable, for use in `grants`              |
+| Any other function or method, such as `queue` or `orderQueue.consume`        | Uncallable                                 |
+| Any other property, such as `orderQueue.resources`                           | Left out                                   |
+| An object property of a binding that isn't data, such as `orderQueue.config` | Left out                                   |
 
-So `orderQueue.consume(createOrder)` in runtime code is a type error.
+So `orderQueue.consume(createOrder)` and `queue({ name: "orders" })` in runtime code are type errors. Declare queues and other resources in infra modules.
 
-A factory's result has the same view in runtime code. `lambda()` returns only `{ handle }`, which is what its runtime half returns, so runtime code can't read its function's `role` or `fn`. The result of `queue()` keeps its data and `grant`, and its other methods are uncallable.
+`lambda()` returns only `{ handle }` in runtime code, which is what its runtime half returns, so runtime code can't read its function's `role` or `fn`.
 
 ## How a read reaches the function
 

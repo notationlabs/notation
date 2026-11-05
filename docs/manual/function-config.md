@@ -73,7 +73,7 @@ const { handle } = lambda({
 
 The grant sits in the settings, next to the code that sends to the queue. The infra module that declares `orderQueue` doesn't mention the checkout function.
 
-**Grants only work in the settings.** Runtime code sees each infra function as uncallable, except resource factories such as `lambda` and `grant` methods. A call to `orderQueue.grant()` inside a handler type-checks, because `grant` stays callable, but the build fails at the call:
+**Grants only work in the settings.** Runtime code sees each infra function as uncallable, except `lambda` and `grant` methods. A call to `orderQueue.grant()` inside a handler type-checks, because `grant` stays callable, but the build fails at the call:
 
 ```
 orderQueue.grant() calls infra from runtime code. Infra functions only run in the infra phase: call them in the settings of lambda(), as in grants: [orderQueue.grant(["SendMessage"])].

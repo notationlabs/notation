@@ -46,9 +46,11 @@ export type RuntimeRef<E, R, F> = {
 export type FunctionDeclaration<F> = { readonly "~notation.function": F };
 
 /**
- * Marks a resource factory with the signature that runtime code sees, when
- * it differs from the factory's own. `lambda()` is marked with a signature
- * that returns what its runtime half returns, `{ handle }`.
+ * Marks a resource factory that runtime code may call, with the signature
+ * that runtime code sees. Only a factory with a runtime half can be marked:
+ * the runtime bundle replaces the factory's import with its runtime half.
+ * `lambda()` is marked with a signature that returns what its runtime half
+ * returns, `{ handle }`.
  */
 export type RuntimeFactory<F extends AnyFunction> = {
   readonly "~notation.runtimeFactory"?: F;
@@ -62,7 +64,8 @@ export type Grant<T> = T & { readonly "~notation.grant"?: true };
 
 /**
  * How runtime code sees an infra function or method that it can't call. Only
- * resource factories and `grant` methods are callable from runtime code.
+ * factories marked with `RuntimeFactory`, such as `lambda`, and `grant`
+ * methods are callable from runtime code.
  */
 export type InfraOnly<Name extends PropertyKey> = {
   readonly "~notation.infraOnly": Name;
@@ -79,18 +82,6 @@ export type RuntimeOnly<Name extends PropertyKey> = {
 type AnyFunction = (...args: any) => any;
 type AnyClass = abstract new (...args: any) => any;
 
-// A resource group, matched by shape so that two copies of this package
-// still match.
-type ResourceGroupShape = {
-  readonly type: string;
-  readonly id: string;
-  readonly resources: readonly object[];
-};
-
-// A factory's result: a resource group, or a function declaration such as
-// `lambda()`'s.
-type FactoryResult = ResourceGroupShape | FunctionDeclaration<unknown>;
-
 type IsGrant<F extends AnyFunction> =
   "~notation.grant" extends keyof ReturnType<F> ? true : false;
 
@@ -98,9 +89,10 @@ type IsGrant<F extends AnyFunction> =
  * How runtime code sees an infra module that it imports
  * `with { type: "infra" }`. Data keeps its type: an output value, such as a
  * queue's `url`, is the value it is filled in with. Functions become
- * `InfraOnly`, except resource factories and `grant` methods. A factory
- * returns its result as a binding: only its data and `grant` methods are
- * usable. A factory marked with `RuntimeFactory` has the marked signature.
+ * `InfraOnly`, except `grant` methods and factories marked with
+ * `RuntimeFactory`, such as `lambda`. A marked factory has the marked
+ * signature. Other factories, such as `queue`, are `InfraOnly`: a runtime
+ * module's bundle can only call a factory that has a runtime half.
  */
 export type RuntimeView<T> = {
   readonly [K in keyof T]: T[K] extends AnyClass
@@ -108,9 +100,7 @@ export type RuntimeView<T> = {
     : T[K] extends AnyFunction
       ? "~notation.runtimeFactory" extends keyof T[K]
         ? NonNullable<T[K]["~notation.runtimeFactory" & keyof T[K]]>
-        : ReturnType<T[K]> extends FactoryResult
-          ? (...args: Parameters<T[K]>) => BindingView<ReturnType<T[K]>>
-          : InfraOnly<K>
+        : InfraOnly<K>
       : BindingView<T[K]>;
 };
 

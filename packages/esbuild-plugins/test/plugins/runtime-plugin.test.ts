@@ -128,6 +128,34 @@ it("bundles a provider's runtime half, and drops infra that only the settings us
   expect(output).not.toContain("with {");
 });
 
+it("fails when runtime code imports a provider that has no runtime half", async () => {
+  const files = {
+    "runtime/checkout.ts": `
+      import { lambda } from "@notation/aws/lambda" with { type: "infra" };
+      import { queue } from "@notation/aws/sqs" with { type: "infra" };
+      const jobs = queue({ name: "jobs" });
+      const { handle } = lambda({ id: "checkout" });
+      export const run = handle.apiRequest(() => ({ url: jobs.url }));
+    `,
+  };
+  const noSqsHalf: esbuild.Plugin = {
+    name: "no-sqs-half",
+    setup(build) {
+      build.onResolve({ filter: /^@notation\/aws\/sqs\.fn$/ }, () => ({
+        errors: [{ text: "not found" }],
+      }));
+    },
+  };
+  await expect(
+    buildVirtual(files, "runtime/checkout.ts", [
+      runtimePlugin({ getFile: readVirtualFile(files) }),
+      noSqsHalf,
+    ]),
+  ).rejects.toThrow(
+    'runtime/checkout.ts imports @notation/aws/sqs with { type: "infra" }, but @notation/aws/sqs has no runtime half, @notation/aws/sqs.fn',
+  );
+});
+
 it("fails on type: runtime in runtime code", async () => {
   await expect(
     buildRuntime({

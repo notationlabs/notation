@@ -494,7 +494,7 @@ function declaresName(binding: ts.BindingName, name: string): boolean {
   );
 }
 
-function locate(sourceFile: ts.SourceFile, node: ts.Node) {
+export function locate(sourceFile: ts.SourceFile, node: ts.Node) {
   const start = node.getStart(sourceFile);
   const { line, character } = sourceFile.getLineAndCharacterOfPosition(start);
   const lineStart = sourceFile.getPositionOfLineAndCharacter(line, 0);
