@@ -1,4 +1,4 @@
-import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
+import { handle, type LambdaResource } from "@notation/aws/lambda/runtime";
 
 export const logEvent = handle.eventBridgeScheduledEvent((event) => {
   console.log(JSON.stringify(event));

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { encodeRuntime, runtimeVariable } from "@notation/aws.iac/shared";
 import type { LambdaRuntime } from "@notation/aws.iac/shared";
 import type { Context } from "aws-lambda";
-import { createDispatcher, handle } from "src/lambda.fn";
+import { createDispatcher, handle } from "src/lambda/runtime";
 import { api, router } from "src/api-gateway";
 import { lambda } from "src/lambda";
 

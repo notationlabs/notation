@@ -1,5 +1,5 @@
 import { test, expect } from "vitest";
-import { handle } from "src/lambda.fn";
+import { handle } from "src/lambda/runtime";
 import { APIGatewayJWTProxyEventV2 } from "src/shared";
 import { Context } from "aws-lambda";
 

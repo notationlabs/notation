@@ -9,7 +9,7 @@ A [runtime module](../manual/file-conventions.md#runtime-modules) whose `resourc
 ::code-group
 
 ```ts [runtime/todos.fn.ts]
-import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
+import { handle, type LambdaResource } from "@notation/aws/lambda/runtime";
 
 export const getTodos = handle.apiRequest(() => []);
 export const createTodo = handle.apiRequest(() => {
@@ -82,7 +82,7 @@ A Lambda function has one entry point, but the `todos` function serves two handl
 
 ```ts [generated runtime entry]
 import * as mod from "/path/to/my-app/runtime/todos.fn.ts";
-import { createDispatcher } from "@notation/aws/lambda.fn";
+import { createDispatcher } from "@notation/aws/lambda/runtime";
 
 export const handler = createDispatcher(mod);
 ```

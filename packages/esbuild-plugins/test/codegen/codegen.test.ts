@@ -27,7 +27,7 @@ it("creates a runtime entry that dispatches to the module's exports", () => {
   expect(createRuntimeEntry("/project/runtime/todos.ts", "aws/lambda")).toBe(
     [
       `import * as mod from "/project/runtime/todos.ts";`,
-      `import { createDispatcher } from "@notation/aws/lambda.fn";`,
+      `import { createDispatcher } from "@notation/aws/lambda/runtime";`,
       `export const handler = createDispatcher(mod);`,
       ``,
     ].join("\n"),

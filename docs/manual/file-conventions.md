@@ -54,7 +54,7 @@ A runtime module holds code that runs in a deployed resource, such as a Lambda f
 **Each runtime module deploys as one resource.** A module can export several handlers, and they all run in the same Lambda function, with the same bundle, role and settings.
 
 ```ts [runtime/todos.fn.ts]
-import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
+import { handle, type LambdaResource } from "@notation/aws/lambda/runtime";
 import { api } from "./utils";
 
 const todos = await api.get<any[]>("/todos");

@@ -1,5 +1,5 @@
-import type { LambdaResource } from "@notation/aws/lambda.fn";
-import { handle } from "@notation/aws/lambda.fn";
+import type { LambdaResource } from "@notation/aws/lambda/runtime";
+import { handle } from "@notation/aws/lambda/runtime";
 import type { JWTClaims } from "shared/jwt";
 
 export const getUserHandler = handle.jwtAuthorizedApiRequest<JWTClaims>(

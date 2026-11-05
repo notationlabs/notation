@@ -130,11 +130,11 @@ describe("runtime modules", () => {
       JSON.stringify({
         name: "@notation/aws",
         type: "module",
-        exports: { "./lambda.fn": "./lambda.fn.js" },
+        exports: { "./lambda/runtime": "./lambda-runtime.js" },
       }),
     );
     write(
-      "node_modules/@notation/aws/lambda.fn.js",
+      "node_modules/@notation/aws/lambda-runtime.js",
       `export const createDispatcher = (mod) => (event) => mod[event.export](event);`,
     );
     write("runtime/todos.fn.ts", todos);

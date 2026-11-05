@@ -39,7 +39,7 @@ it("deploys a runtime module as one lambda that dispatches to each export", asyn
   write(
     "runtime/todos.fn.ts",
     `
-    import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
+    import { handle, type LambdaResource } from "@notation/aws/lambda/runtime";
 
     export const getTodos = handle.apiRequest(() => "get");
     export const createTodo = handle.apiRequest(() => "create");
