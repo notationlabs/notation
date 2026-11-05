@@ -45,7 +45,7 @@ export function createRuntimeEntry(modulePath: string, service: string) {
   const { platform, service: name } = splitService(service);
   return [
     `import * as mod from ${JSON.stringify(modulePath)};`,
-    `import { createDispatcher } from "@notation/${platform}/${name}.fn";`,
+    `import { createDispatcher } from "@notation/${platform}/${name}/runtime";`,
     `export const handler = createDispatcher(mod);`,
     ``,
   ].join("\n");

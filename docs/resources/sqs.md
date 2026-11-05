@@ -57,7 +57,7 @@ orderQueue.consume(processOrders, { batchSize: 5 });
 ```
 
 ```ts [runtime/orders.fn.ts]
-import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
+import { handle, type LambdaResource } from "@notation/aws/lambda/runtime";
 
 export const processOrders = handle.sqsEvent(async (event) => {
   for (const record of event.Records) console.log(record.body);

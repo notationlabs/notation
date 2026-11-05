@@ -4,7 +4,7 @@ A runtime module exports `resource` to say what it deploys as. For a Lambda func
 
 ## Type
 
-```ts [@notation/aws/lambda.fn]
+```ts [@notation/aws/lambda/runtime]
 type LambdaResource = {
   service: "aws/lambda";
   id: string;
@@ -17,7 +17,7 @@ type LambdaResource = {
 ## Usage
 
 ```ts [runtime/reports.fn.ts]
-import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
+import { handle, type LambdaResource } from "@notation/aws/lambda/runtime";
 
 export const buildReport = handle.apiRequest((event) => {
   // heavy processing

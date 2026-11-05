@@ -20,7 +20,7 @@ const buildInfra = (
   ]);
 
 const todos = `
-  import { handle } from "@notation/aws/lambda.fn";
+  import { handle } from "@notation/aws/lambda/runtime";
   import { fetchTodos } from "./utils";
 
   console.log("init");
@@ -69,7 +69,7 @@ it("keeps none of the runtime module's code", async () => {
 
   expect(output).not.toContain("init");
   expect(output).not.toContain("fetching");
-  expect(output).not.toContain("@notation/aws/lambda.fn");
+  expect(output).not.toContain("@notation/aws/lambda/runtime");
 });
 
 it("uses the configured globs", async () => {

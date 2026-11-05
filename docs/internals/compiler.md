@@ -41,7 +41,7 @@ A file is a runtime module when it matches a `runtimeModules` glob and exports `
 ::code-group
 
 ```ts [runtime/todos.fn.ts]
-import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
+import { handle, type LambdaResource } from "@notation/aws/lambda/runtime";
 
 const todos = await fetchTodos();
 
@@ -87,7 +87,7 @@ The runtime pass doesn't bundle the module directly. Its entry point is generate
 
 ```ts [generated runtime entry]
 import * as mod from "/path/to/my-app/runtime/todos.fn.ts";
-import { createDispatcher } from "@notation/aws/lambda.fn";
+import { createDispatcher } from "@notation/aws/lambda/runtime";
 export const handler = createDispatcher(mod);
 ```
 

@@ -1,4 +1,4 @@
-import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
+import { handle, type LambdaResource } from "@notation/aws/lambda/runtime";
 
 export const processOrders = handle.sqsEvent((event) => {
   for (const record of event.Records) console.log("order", record.body);

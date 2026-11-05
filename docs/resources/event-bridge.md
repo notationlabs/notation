@@ -63,7 +63,7 @@ eventBridge.once(new Date("2027-12-31T23:59:00Z"));
 ## Handler
 
 ```ts [runtime/log-event.fn.ts]
-import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
+import { handle, type LambdaResource } from "@notation/aws/lambda/runtime";
 
 export const logEvent = handle.eventBridgeScheduledEvent((event) => {
   console.log("Scheduled event fired:", event);
