@@ -630,6 +630,50 @@ it("fails when a function reads an infra function, or a value that isn't data", 
   );
 });
 
+it("delivers a deferred value that infra exports, such as a handler's function ARN", async () => {
+  class ArnFn extends Fn {
+    readonly arn = new OutputValue({} as any, ["Arn"]);
+  }
+  const fn = new ArnFn("checkout");
+  const standIn = createStandIn("runtime/checkout.ts", "run");
+  const infra = {
+    arn: (standIn as any).function.arn,
+    settings: { arn: (standIn as any).function.arn },
+  };
+  let delivered: Record<string, unknown> | undefined;
+  await collectResourceGraph(
+    () => {
+      declareRuntimeFunction(
+        fn,
+        {
+          id: "checkout",
+          service: "test/fn",
+          bundle: "dist/functions/checkout/index.mjs",
+        },
+        collectReads,
+        (values) => {
+          delivered = values;
+        },
+      );
+      linkRuntimeModules(
+        [
+          {
+            module: "runtime/checkout.ts",
+            standIns: { run: standIn },
+            exports: { run: createHandlerRef("api", fn, collectReads) },
+          },
+        ],
+        { "infra/orders": infra },
+      );
+    },
+    { runtimeReads: () => ["infra/orders#arn", "infra/orders#settings"] },
+  );
+  expect(delivered).toEqual({
+    "infra/orders#arn": fn.arn,
+    "infra/orders#settings": { arn: fn.arn },
+  });
+});
+
 it("fails when a function reads through a getter, without calling it", async () => {
   await expect(
     collectReads(["infra/orders#orderQueue.sideEffect.length"]),

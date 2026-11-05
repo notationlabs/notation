@@ -3,6 +3,7 @@ import {
   deferredMark,
   isOutputValue,
   isPlainObject,
+  mapOutputValues,
   resolveDeferred,
 } from "./output-value";
 import { bindingKey, outputKey, parseOutputKey } from "./outputs";
@@ -400,7 +401,10 @@ export function resolveReads(
         `${subject}, but ${read.module} has no export named ${read.binding}.`,
       );
     }
-    let value: unknown = (exports as Record<string, unknown>)[read.binding];
+    // A deferred value, such as `createOrder.function.arn`, is linked by now.
+    let value = resolveDeferred(
+      (exports as Record<string, unknown>)[read.binding],
+    );
     let length = 0;
     // A path that goes on past an output value or a primitive, such as
     // `orderQueue.url.length`, reads that property in the function.
@@ -419,7 +423,7 @@ export function resolveReads(
             `${subject}, but ${getter} is a getter. Getters can have effects, so runtime code can't read through them.`,
           );
         }
-        value = descriptor?.value;
+        value = resolveDeferred(descriptor?.value);
       }
       length += 1;
     }
@@ -450,12 +454,13 @@ function deliveredValue(value: unknown, binding: boolean, subject: string) {
   if (value === undefined) {
     throw new Error(`${subject}, which infra leaves undefined.`);
   }
-  if (isData(value)) return value;
+  // The copy replaces the deferred values in data with what they stand for.
+  if (isData(value)) return mapOutputValues(value, (token) => token);
   if (binding) {
     const data = Object.fromEntries(
       Object.entries(Object.getOwnPropertyDescriptors(value))
         .filter(([, descriptor]) => "value" in descriptor)
-        .map(([key, descriptor]) => [key, descriptor.value])
+        .map(([key, descriptor]) => [key, resolveDeferred(descriptor.value)])
         .filter(([, entry]) => entry === null || isLeaf(entry)),
     );
     if (Object.keys(data).length > 0) return data;
@@ -488,6 +493,7 @@ function isLeaf(value: unknown): boolean {
 
 // Output values, and JSON values that may contain them.
 function isData(value: unknown): boolean {
+  value = resolveDeferred(value);
   if (value === null || isLeaf(value)) return true;
   if (Array.isArray(value)) return value.every(isData);
   if (isPlainObject(value)) {
