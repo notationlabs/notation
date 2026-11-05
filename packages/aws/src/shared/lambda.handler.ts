@@ -10,10 +10,16 @@ import type {
   APIGatewayProxyEventV2WithJWTAuthorizer,
 } from "aws-lambda";
 
+// With payload format 2.0, API Gateway sends a returned value that has no
+// `statusCode` as a JSON body, with status 200.
+export type ApiGatewayResult = APIGatewayProxyResultV2<
+  object | number | boolean | null
+>;
+
 export type ApiGatewayHandler = (
   event: APIGatewayProxyEventV2,
   context: Context,
-) => APIGatewayProxyResultV2 | Promise<APIGatewayProxyResultV2>;
+) => ApiGatewayResult | Promise<ApiGatewayResult>;
 
 export type TypedClaimsOverride<T> = {
   requestContext: {
@@ -35,7 +41,7 @@ export type APIGatewayJWTProxyEventV2<T> = Omit<
 export type JWTAuthorizedApiGatewayHandler<ClaimsType> = (
   event: APIGatewayJWTProxyEventV2<ClaimsType>,
   context: Context,
-) => APIGatewayProxyResultV2 | Promise<APIGatewayProxyResultV2>;
+) => ApiGatewayResult | Promise<ApiGatewayResult>;
 
 export type EventBridgeHandler<TypeDescription extends string, DetailType> = (
   event: EventBridgeEvent<TypeDescription, DetailType>,

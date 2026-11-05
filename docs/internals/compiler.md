@@ -41,14 +41,12 @@ A file is a runtime module when it matches a `runtimeModules` glob and exports `
 ::code-group
 
 ```ts [runtime/todos.fn.ts]
-import { handle, json, type LambdaResource } from "@notation/aws/lambda.fn";
+import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
 
 const todos = await fetchTodos();
 
-export const getTodos = handle.apiRequest(() => json(todos));
-export const createTodo = handle.apiRequest(async (req) =>
-  json(await save(req)),
-);
+export const getTodos = handle.apiRequest(() => todos);
+export const createTodo = handle.apiRequest(async (req) => await save(req));
 
 export const resource: LambdaResource = {
   service: "aws/lambda",

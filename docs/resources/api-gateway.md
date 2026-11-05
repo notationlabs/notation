@@ -115,14 +115,14 @@ todoRouter.get("/todos/count", getTodoCount);
 ```
 
 ```ts [runtime/todos.fn.ts]
-import { handle, json, type LambdaResource } from "@notation/aws/lambda.fn";
+import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
 
 export const getTodos = handle.apiRequest(() => {
-  return json([{ id: 1, text: "Build with Notation" }]);
+  return [{ id: 1, text: "Build with Notation" }];
 });
 
 export const getTodoCount = handle.apiRequest(() => {
-  return json(1);
+  return 1;
 });
 
 export const resource: LambdaResource = {

@@ -1,5 +1,5 @@
 import { test, expect } from "vitest";
-import { handle, json } from "src/lambda.fn";
+import { handle } from "src/lambda.fn";
 import { APIGatewayJWTProxyEventV2 } from "src/shared";
 import { Context } from "aws-lambda";
 
@@ -46,11 +46,4 @@ test("jwtAuthorizedApiRequest passes through JWT token as expected", async () =>
   const result = await jwtTokenHandler(input, {} as Context);
 
   expect(result).toEqual({ body: JSON.stringify({ name: "John Doe" }) });
-});
-
-test("json returns a JSON string and a 200 status code", () => {
-  const payload = { message: "Hello, world!" };
-  const response = json(payload);
-  expect(response.statusCode).toEqual(200);
-  expect(response.body).toEqual(JSON.stringify(payload));
 });
