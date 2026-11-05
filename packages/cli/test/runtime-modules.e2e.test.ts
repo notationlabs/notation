@@ -39,10 +39,10 @@ it("deploys a runtime module as one lambda that dispatches to each export", asyn
   write(
     "runtime/todos.fn.ts",
     `
-    import { handle, json, type LambdaResource } from "@notation/aws/lambda.fn";
+    import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
 
-    export const getTodos = handle.apiRequest(() => json("get"));
-    export const createTodo = handle.apiRequest(() => json("create"));
+    export const getTodos = handle.apiRequest(() => "get");
+    export const createTodo = handle.apiRequest(() => "create");
     export const cleanUp = handle.eventBridgeScheduledEvent((event) => {
       return "clean " + event.source;
     });
@@ -121,8 +121,8 @@ it("deploys a runtime module as one lambda that dispatches to each export", asyn
     timeout: 5,
     memory: 64,
     zipSource: "dist/runtime/todos.fn/index.mjs",
-    get: { statusCode: 200, body: '"get"' },
-    post: { statusCode: 200, body: '"create"' },
+    get: "get",
+    post: "create",
     scheduled: "clean aws.events",
   });
 });

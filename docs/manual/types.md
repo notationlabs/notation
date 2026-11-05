@@ -18,10 +18,10 @@ myRouter.get("/user", getUser);
 ```
 
 ```ts [runtime/user.fn.ts]
-import { handle, json } from "@notation/aws/lambda.fn";
+import { handle } from "@notation/aws/lambda.fn";
 
 export const getUser = handle.apiRequest((event) => {
-  return json({ id: 1, name: "Alice" });
+  return { id: 1, name: "Alice" };
 });
 ```
 
@@ -53,12 +53,12 @@ authedRouter.get("/user", getUser);
 ```
 
 ```ts [runtime/user.fn.ts]
-import { handle, json } from "@notation/aws/lambda.fn";
+import { handle } from "@notation/aws/lambda.fn";
 
 export const getUser = handle.jwtAuthorizedApiRequest<JWTClaims>((event) => {
   // event.requestContext.authorizer.jwt.claims is typed as JWTClaims
   const { sub, email } = event.requestContext.authorizer.jwt.claims;
-  return json({ sub, email });
+  return { sub, email };
 });
 ```
 

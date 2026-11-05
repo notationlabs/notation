@@ -9,10 +9,10 @@ A handler is an export of a [runtime module](./file-conventions.md#runtime-modul
 For API Gateway HTTP API events.
 
 ```ts [runtime/todos.fn.ts]
-import { handle, json } from "@notation/aws/lambda.fn";
+import { handle } from "@notation/aws/lambda.fn";
 
 export const getUsers = handle.apiRequest((event) => {
-  return json([{ id: 1, name: "Alice" }]);
+  return [{ id: 1, name: "Alice" }];
 });
 ```
 
@@ -21,13 +21,13 @@ export const getUsers = handle.apiRequest((event) => {
 For API Gateway events with JWT authorization. Accepts a generic for JWT claims.
 
 ```ts [runtime/user.fn.ts]
-import { handle, json } from "@notation/aws/lambda.fn";
+import { handle } from "@notation/aws/lambda.fn";
 
 type Claims = { sub: string; email: string };
 
 export const getProfile = handle.jwtAuthorizedApiRequest<Claims>((event) => {
   const { sub } = event.requestContext.authorizer.jwt.claims;
-  return json({ sub });
+  return { sub };
 });
 ```
 
@@ -79,14 +79,16 @@ export const processMessage = handle.sqsEvent((event) => {
 
 For SQS batch events.
 
-## `json`
+## Responses
 
-Helper for returning JSON responses from API Gateway handlers.
+An API handler can return a plain value, such as an object or an array. API Gateway sends a value that has no `statusCode` as a JSON body, with status 200:
 
 ```ts [runtime/todos.fn.ts]
-import { handle, json } from "@notation/aws/lambda.fn";
+import { handle } from "@notation/aws/lambda.fn";
 
 export const getTodos = handle.apiRequest(() => {
-  return json({ hello: "world" });
+  return [{ id: 1, text: "Learn Notation" }];
 });
 ```
+
+To set the status code, headers or body yourself, return `{ statusCode, headers, body }`. API Gateway reads any returned object that has a `statusCode` this way, so wrap a value that has a `statusCode` field in a body of your own.

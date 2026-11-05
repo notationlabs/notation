@@ -9,10 +9,12 @@ A [runtime module](../manual/file-conventions.md#runtime-modules) whose `resourc
 ::code-group
 
 ```ts [runtime/todos.fn.ts]
-import { handle, json, type LambdaResource } from "@notation/aws/lambda.fn";
+import { handle, type LambdaResource } from "@notation/aws/lambda.fn";
 
-export const getTodos = handle.apiRequest(() => json([]));
-export const createTodo = handle.apiRequest(() => json({ id: 2 }));
+export const getTodos = handle.apiRequest(() => []);
+export const createTodo = handle.apiRequest(() => {
+  id: 2;
+});
 
 export const resource: LambdaResource = {
   service: "aws/lambda",

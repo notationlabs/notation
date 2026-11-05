@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { encodeRuntime, runtimeVariable } from "@notation/aws.iac/shared";
 import type { LambdaRuntime } from "@notation/aws.iac/shared";
 import type { Context } from "aws-lambda";
-import { createDispatcher, handle, json } from "src/lambda.fn";
+import { createDispatcher, handle } from "src/lambda.fn";
 import { api, router } from "src/api-gateway";
 import { lambda } from "src/lambda";
 
@@ -28,8 +28,8 @@ const runtime: LambdaRuntime = {
 const sendDigest = vi.fn(async () => {});
 
 const todos = {
-  getTodos: handle.apiRequest(() => json(["a"])),
-  createTodo: handle.apiRequest(() => json("created")),
+  getTodos: handle.apiRequest(() => ["a"]),
+  createTodo: handle.apiRequest(() => "created"),
   processOrders: vi.fn(async () => {}),
   sendDigest: handle.eventBridgeScheduledEvent(sendDigest),
   resource: { service: "aws/lambda", id: "todos" },
@@ -54,11 +54,11 @@ describe("createDispatcher", () => {
   test("sends an API request to the export the dispatch map gives for its route", async () => {
     const handler = dispatcherWith(todos, runtime);
 
-    expect(await handler(apiRequest("api-1", "GET /todos"), context)).toEqual(
-      json(["a"]),
-    );
+    expect(await handler(apiRequest("api-1", "GET /todos"), context)).toEqual([
+      "a",
+    ]);
     expect(await handler(apiRequest("api-1", "POST /todos"), context)).toEqual(
-      json("created"),
+      "created",
     );
   });
 
@@ -111,7 +111,7 @@ describe("createDispatcher", () => {
 
   test("throws for an event with no dispatch entry, even when the module has one handler of its kind", async () => {
     const handler = dispatcherWith({
-      getTodos: handle.apiRequest(() => json([])),
+      getTodos: handle.apiRequest(() => []),
       resource: {},
     });
 
@@ -142,7 +142,7 @@ describe("createDispatcher", () => {
 });
 
 test("handlers are typed as references that infra can route to", () => {
-  const getTodos = handle.apiRequest(() => json([]));
+  const getTodos = handle.apiRequest(() => []);
   // the generated module gives infra a reference in place of the handler
   const ref = { resource: lambda({ id: "todos", code }), export: "getTodos" };
   const asImported = ref as unknown as typeof getTodos;
