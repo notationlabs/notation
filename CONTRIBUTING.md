@@ -11,9 +11,7 @@ the commands, or `pok <command> --help` for one of them.
 | `pok test watch` | Re-run tests on change |
 | `pok typecheck` | Type-check every package |
 | `pok format` | Format the repository |
-| `pok docs dev` | Documentation site on http://localhost:3005 |
-| `pok docs build` | Build the documentation site |
-| `pok docs deploy` | Deploy the documentation site to Cloudflare |
+
 
 ## Publishing Packages
 

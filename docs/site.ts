@@ -1,14 +1,154 @@
 import type { DocsSite } from "@notation/docs";
 
-// This repo's docs as the Manifest site, composed into notation.dev by
-// notation-web. Paths resolve beside this file.
-export default {
-  slug: "manifest",
-  label: "Manifest",
-  root: new URL(".", import.meta.url),
-  categories: ["manual", "cli", "resources", "internals"],
+const root = new URL(".", import.meta.url);
+
+export const resource = {
+  slug: "resource",
+  label: "Resource",
+  root,
+  version: { packageJson: "packages/resource/package.json" },
+  categories: [
+    {
+      label: "Reference",
+      slug: "reference",
+      sections: [
+        {
+          heading: "Resource SDK",
+          icon: "layers",
+          links: [{ label: "Resource", slug: "internals/resource" }],
+        },
+      ],
+    },
+  ],
+} satisfies DocsSite;
+
+export const compiler = {
+  slug: "compiler",
+  label: "Compiler",
+  root,
   defaultSlug: "manual/quickstart",
   version: { packageJson: "packages/core/package.json" },
-  // The docs site deliberately shows a lightbulb for its packages section.
-  icons: { "file-text": "bulb" },
+  categories: [
+    {
+      label: "User Manual",
+      slug: "manual",
+      sections: [
+        {
+          heading: "Getting Started",
+          icon: "rocket",
+          links: [
+            { label: "Introduction", slug: "manual/introduction" },
+            { label: "Installation", slug: "manual/installation" },
+            { label: "Quick Start", slug: "manual/quickstart" },
+          ],
+        },
+        {
+          heading: "Handlers",
+          icon: "cpu",
+          links: [
+            { label: "Lambda Handlers", slug: "manual/functions" },
+            { label: "Lambda Resource", slug: "manual/function-config" },
+          ],
+        },
+        {
+          heading: "Concepts",
+          icon: "layers",
+          links: [
+            { label: "Project Config", slug: "manual/project-config" },
+            { label: "File Conventions", slug: "manual/file-conventions" },
+            { label: "End-to-End Types", slug: "manual/types" },
+          ],
+        },
+      ],
+    },
+    {
+      label: "CLI",
+      slug: "cli",
+      sections: [
+        {
+          heading: "Commands",
+          icon: "terminal",
+          links: [
+            { label: "notation compile", slug: "cli/compile" },
+            { label: "notation watch", slug: "cli/watch" },
+            { label: "notation plan", slug: "cli/plan" },
+            { label: "notation deploy", slug: "cli/deploy" },
+            { label: "notation destroy", slug: "cli/destroy" },
+            { label: "notation dashboard", slug: "cli/dashboard" },
+            { label: "notation viz", slug: "cli/viz" },
+          ],
+        },
+      ],
+    },
+    {
+      label: "Internals",
+      slug: "internals",
+      sections: [
+        {
+          heading: "Architecture",
+          icon: "layers",
+          links: [{ label: "Compiler", slug: "internals/compiler" }],
+        },
+      ],
+    },
+  ],
+} satisfies DocsSite;
+
+export const reconciler = {
+  slug: "reconciler",
+  label: "Reconciler",
+  root,
+  version: { packageJson: "packages/reconciler/package.json" },
+  categories: [
+    {
+      label: "Guide",
+      slug: "guide",
+      sections: [
+        {
+          heading: "Getting Started",
+          icon: "rocket",
+          links: [{ label: "Reconciler", slug: "manual/reconciler" }],
+        },
+      ],
+    },
+    {
+      label: "Internals",
+      slug: "internals",
+      sections: [
+        {
+          heading: "Architecture",
+          icon: "layers",
+          links: [
+            { label: "Reconciler", slug: "internals/reconciler" },
+            { label: "State", slug: "internals/state" },
+          ],
+        },
+      ],
+    },
+  ],
+} satisfies DocsSite;
+
+export const providers = {
+  slug: "providers",
+  label: "Providers",
+  root,
+  version: { packageJson: "packages/aws/package.json" },
+  categories: [
+    {
+      label: "AWS",
+      slug: "aws",
+      sections: [
+        {
+          heading: "AWS",
+          icon: "cloud",
+          links: [
+            { label: "Lambda", slug: "resources/lambda" },
+            { label: "API Gateway", slug: "resources/api-gateway" },
+            { label: "EventBridge", slug: "resources/event-bridge" },
+            { label: "SQS", slug: "resources/sqs" },
+          ],
+        },
+      ],
+    },
+  ],
 } satisfies DocsSite;

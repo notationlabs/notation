@@ -1,5 +1,5 @@
 import { defineConfig } from "@pokit/core";
-import { docs, release } from "pok-plugins";
+import { release } from "pok-plugins";
 import type { ReleasePackage } from "pok-plugins";
 
 // turbo builds the whole graph in dependency order, so every published package
@@ -24,7 +24,6 @@ export default defineConfig({
   commandsDir: "./commands",
   appName: "notation",
   plugins: [
-    docs({ name: "notation-docs" }),
     release({
       // Versioning runs through changesets: `pok changeset` records changes,
       // `pok version` consumes them. Lockstep for @notation/* comes from the
