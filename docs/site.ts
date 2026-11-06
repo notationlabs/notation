@@ -2,29 +2,9 @@ import type { DocsSite } from "@notation/docs";
 
 const root = new URL(".", import.meta.url);
 
-export const resource = {
-  slug: "resource",
-  label: "Resource",
-  root,
-  version: { packageJson: "packages/resource/package.json" },
-  categories: [
-    {
-      label: "Reference",
-      slug: "reference",
-      sections: [
-        {
-          heading: "Resource SDK",
-          icon: "layers",
-          links: [{ label: "Resource", slug: "internals/resource" }],
-        },
-      ],
-    },
-  ],
-} satisfies DocsSite;
-
 export const compiler = {
   slug: "compiler",
-  label: "Infrastructure Compiler",
+  label: "Infra Compiler",
   root,
   defaultSlug: "manual/quickstart",
   version: { packageJson: "packages/core/package.json" },
@@ -96,7 +76,7 @@ export const compiler = {
 
 export const reconciler = {
   slug: "reconciler",
-  label: "Deployment Reconciler",
+  label: "Infra Reconciler",
   root,
   version: { packageJson: "packages/reconciler/package.json" },
   categories: [
@@ -147,6 +127,17 @@ export const providers = {
             { label: "EventBridge", slug: "resources/event-bridge" },
             { label: "SQS", slug: "resources/sqs" },
           ],
+        },
+      ],
+    },
+    {
+      label: "Resource SDK",
+      slug: "sdk",
+      sections: [
+        {
+          heading: "Resource SDK",
+          icon: "layers",
+          links: [{ label: "Resource", slug: "internals/resource" }],
         },
       ],
     },
