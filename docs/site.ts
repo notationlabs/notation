@@ -24,7 +24,7 @@ export const resource = {
 
 export const compiler = {
   slug: "compiler",
-  label: "Compiler",
+  label: "Infrastructure Compiler",
   root,
   defaultSlug: "manual/quickstart",
   version: { packageJson: "packages/core/package.json" },
@@ -96,7 +96,7 @@ export const compiler = {
 
 export const reconciler = {
   slug: "reconciler",
-  label: "Reconciler",
+  label: "Deployment Reconciler",
   root,
   version: { packageJson: "packages/reconciler/package.json" },
   categories: [
