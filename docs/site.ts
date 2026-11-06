@@ -110,7 +110,7 @@ export const reconciler = {
 
 export const providers = {
   slug: "providers",
-  label: "Providers",
+  label: "Cloud Providers",
   root,
   version: { packageJson: "packages/aws/package.json" },
   categories: [
