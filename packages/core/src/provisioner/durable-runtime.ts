@@ -2,8 +2,9 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import {
   ExecutionDispatcher,
+  WorkflowCancelledError,
   WorkflowRunner,
-  waitForExecutionOutcome,
+  createExecutionObserver,
   type ExecutionRecord,
   type WorkflowInvoker,
   type WorkflowRouter,
@@ -114,16 +115,23 @@ export class NodeDurableRuntime {
       // another workflow or deployment before the check throws.
       await this.#admit(opts);
       dispatcher.start();
-      const outcome = await waitForExecutionOutcome(
-        this.#runtime.executions,
-        opts.executionId,
-        { emitter: invoker.workflowEndEmitter },
-      );
+      const outcome = await createExecutionObserver(this.#runtime.executions, {
+        notifier: invoker.workflowEndEmitter,
+      }).wait(opts.executionId);
       if (!outcome) {
         throw new Error(`Execution ${opts.executionId} has no record`);
       }
-      if (outcome.status === "failed") throw outcome.error;
-      return outcome.result;
+      switch (outcome.status) {
+        case "completed":
+          return outcome.result;
+        case "failed":
+          throw outcome.error;
+        case "cancelled":
+          throw new WorkflowCancelledError(outcome);
+        case "timed-out":
+          // Unreachable: the wait has no timeout.
+          throw new Error(`Timed out waiting for ${opts.executionId}`);
+      }
     } finally {
       await dispatcher.stop();
       this.#running = false;
@@ -148,12 +156,17 @@ export class NodeDurableRuntime {
       context: new Map(),
     });
     if (admission.status === "accepted") return;
-    if (admission.code !== "EXECUTION_ID_CONFLICT") {
+    if (
+      admission.status === "rejected" &&
+      admission.code !== "EXECUTION_ID_CONFLICT"
+    ) {
       throw new ExecutionAdmissionError(admission.code, admission.message);
     }
 
     const record = await this.#runtime.executions.get(executionId);
-    if (!record) throw new Error(admission.message);
+    if (!record) {
+      throw new Error(`Execution ${executionId} has no record`);
+    }
     const deploymentId = record.params?.deploymentId;
     if (
       record.workflowId !== workflowId ||

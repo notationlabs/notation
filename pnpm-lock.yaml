@@ -158,8 +158,8 @@ importers:
         specifier: ^1.4.2
         version: 1.4.2(typescript@7.0.2)
       yieldstar:
-        specifier: 0.8.2
-        version: 0.8.2
+        specifier: 0.9.0
+        version: 0.9.0
     devDependencies:
       '@types/node':
         specifier: ^22.13.4
@@ -304,11 +304,11 @@ importers:
         specifier: workspace:*
         version: link:../state
       '@yieldstar/core':
-        specifier: 0.8.2
-        version: 0.8.2
+        specifier: 0.9.0
+        version: 0.9.0
       '@yieldstar/sqlite-runtime':
-        specifier: 0.8.2
-        version: 0.8.2
+        specifier: 0.9.0
+        version: 0.9.0
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
@@ -328,8 +328,8 @@ importers:
         specifier: ^1.4.2
         version: 1.4.2(typescript@6.0.3)
       yieldstar:
-        specifier: 0.8.2
-        version: 0.8.2
+        specifier: 0.9.0
+        version: 0.9.0
     devDependencies:
       '@types/common-tags':
         specifier: ^1.8.4
@@ -433,18 +433,18 @@ importers:
         specifier: workspace:*
         version: link:../state
       '@yieldstar/core':
-        specifier: 0.8.2
-        version: 0.8.2
+        specifier: 0.9.0
+        version: 0.9.0
       valibot:
         specifier: ^1.4.2
         version: 1.4.2(typescript@6.0.3)
       yieldstar:
-        specifier: 0.8.2
-        version: 0.8.2
+        specifier: 0.9.0
+        version: 0.9.0
     devDependencies:
       '@yieldstar/sqlite-runtime':
-        specifier: 0.8.2
-        version: 0.8.2
+        specifier: 0.9.0
+        version: 0.9.0
       pino:
         specifier: ^9.9.0
         version: 9.14.0
@@ -2957,11 +2957,11 @@ packages:
   '@vitest/utils@4.1.10':
     resolution: {integrity: sha512-fy9am/HWxbaGt/Sawrp90vt6Y6jQwf1RX77cz3uwoJwJVMli/e1IEwRPnMNJ7vKfPTwo0diXifkpPvwH9v7nGA==}
 
-  '@yieldstar/core@0.8.2':
-    resolution: {integrity: sha512-CLBPuL8qycGJNAhDBCo1XleGtVLEFx7EXgCuU5C8g60ctaMxbMDb+WGhlhRFIj9ykDuEt32NykUWBLEoTpTzoA==}
+  '@yieldstar/core@0.9.0':
+    resolution: {integrity: sha512-QBYePFlx+QEY39Q2MinY17nFMok+YAXrpM0+z513ldQ7RunWPoIzXzUbNSoPkBR6mlXmmo4j5L4ZRbNcXna8OQ==}
 
-  '@yieldstar/sqlite-runtime@0.8.2':
-    resolution: {integrity: sha512-2t/I6m2QTEQsaLSr4WQV0OZN+8hMErHJF+0cmTfAQwBpWgZOyD5IlvWENj+tw79escKot/Uq38dwU+ewVn4cgQ==}
+  '@yieldstar/sqlite-runtime@0.9.0':
+    resolution: {integrity: sha512-hmPVAouy9bwJq+cW/xFcZzupNOVgJ0tqHGNqZKXmLuwOvKhMlVE7kvJf7P0cAcSvCOYb70LQVNnbIrQ40+DxCw==}
     engines: {node: '>=22.6'}
 
   '@yuku-core/binding-android-arm64@0.19.0':
@@ -4578,39 +4578,6 @@ packages:
       unrun:
         optional: true
 
-  unplugin@3.3.0:
-    resolution: {integrity: sha512-qa66K+crbfyE6JK10GjvbJeRrOsuC/JpbnHctfyp/i4oBTxWOzJfRZyDiOk1PtErMFRu8JhsU/wPvOdBNWe5Rg==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    peerDependencies:
-      '@farmfe/core': '*'
-      '@rspack/core': '*'
-      bun-types-no-globals: '*'
-      esbuild: 0.28.1
-      rolldown: '*'
-      rollup: '*'
-      unloader: '*'
-      vite: '*'
-      webpack: '*'
-    peerDependenciesMeta:
-      '@farmfe/core':
-        optional: true
-      '@rspack/core':
-        optional: true
-      bun-types-no-globals:
-        optional: true
-      esbuild:
-        optional: true
-      rolldown:
-        optional: true
-      rollup:
-        optional: true
-      unloader:
-        optional: true
-      vite:
-        optional: true
-      webpack:
-        optional: true
-
   unplugin@3.4.0:
     resolution: {integrity: sha512-9skdIFlCsPdFV7wUfZxNsFInlW+7nJmGu2gkTu0OUhF56aXGsHab9x52/QhdJ4lC7ZDPWTxbiC4ANqVlsuaW3w==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -4851,8 +4818,8 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
-  yieldstar@0.8.2:
-    resolution: {integrity: sha512-kWIuHHlONsQGhw61F2xGYkylrJ1Qj0TOYYk4XdXh5HbziWy2jhvBFpjmm0/xrt1Os6wni0ZjHG17k1wEfbIhRg==}
+  yieldstar@0.9.0:
+    resolution: {integrity: sha512-SQ6HHqEW3/5tIvi/fIvm/ufwqXNtgq5qRPJMCKtcs/h913mTUK9vSOFIYWkGKu1c7sCjO88UkUVYYSuqCqa1aQ==}
 
   yoctocolors@2.1.1:
     resolution: {integrity: sha512-GQHQqAopRhwU8Kt1DDM8NjibDXHC8eoh1erhGAJPEyveY9qqVeXvVikNKrDz69sHowPMorbPUrH/mx8c50eiBQ==}
@@ -5921,7 +5888,7 @@ snapshots:
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
       '@jridgewell/trace-mapping': 0.3.31
 
   '@jridgewell/remapping@2.3.5':
@@ -5938,7 +5905,7 @@ snapshots:
   '@jridgewell/trace-mapping@0.3.31':
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
 
   '@jridgewell/trace-mapping@0.3.9':
     dependencies:
@@ -6859,7 +6826,7 @@ snapshots:
       '@tanstack/router-generator': 1.167.44
       '@tanstack/router-utils': 1.162.4
       chokidar: 5.0.0
-      unplugin: 3.3.0(esbuild@0.28.2)(rolldown@1.2.16)(rollup@4.62.2)(vite@8.1.3(@types/node@22.13.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))
+      unplugin: 3.4.0(esbuild@0.28.2)(rolldown@1.2.16)(rollup@4.62.2)(vite@8.1.3(@types/node@22.13.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))
       zod: 4.6.7
     optionalDependencies:
       '@tanstack/react-router': 1.170.44(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -7185,13 +7152,13 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.2.0
 
-  '@yieldstar/core@0.8.2':
+  '@yieldstar/core@0.9.0':
     dependencies:
       '@standard-schema/spec': 1.1.0
 
-  '@yieldstar/sqlite-runtime@0.8.2':
+  '@yieldstar/sqlite-runtime@0.9.0':
     dependencies:
-      '@yieldstar/core': 0.8.2
+      '@yieldstar/core': 0.9.0
       pino: 9.14.0
       uuid: 11.1.1
 
@@ -7300,9 +7267,9 @@ snapshots:
   babel-dead-code-elimination@1.0.12:
     dependencies:
       '@babel/core': 7.29.7
-      '@babel/parser': 7.29.7
+      '@babel/parser': 7.29.9
       '@babel/traverse': 7.29.7(supports-color@10.2.2)
-      '@babel/types': 7.29.7
+      '@babel/types': 7.29.8
     transitivePeerDependencies:
       - supports-color
 
@@ -8745,17 +8712,6 @@ snapshots:
       - vite
       - webpack
 
-  unplugin@3.3.0(esbuild@0.28.2)(rolldown@1.2.16)(rollup@4.62.2)(vite@8.1.3(@types/node@22.13.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0)):
-    dependencies:
-      '@jridgewell/remapping': 2.3.5
-      picomatch: 4.0.7
-      webpack-virtual-modules: 0.6.2
-    optionalDependencies:
-      esbuild: 0.28.2
-      rolldown: 1.2.16
-      rollup: 4.62.2
-      vite: 8.1.3(@types/node@22.13.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0)
-
   unplugin@3.4.0(esbuild@0.28.2)(rolldown@1.2.16)(rollup@4.62.2)(vite@8.1.3(@types/node@22.13.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0)):
     dependencies:
       '@jridgewell/remapping': 2.3.5
@@ -8928,9 +8884,9 @@ snapshots:
 
   yaml@2.9.0: {}
 
-  yieldstar@0.8.2:
+  yieldstar@0.9.0:
     dependencies:
-      '@yieldstar/core': 0.8.2
+      '@yieldstar/core': 0.9.0
       nanoid: 5.1.16
       pino: 9.14.0
 

@@ -26,15 +26,15 @@
     "@notation/reconciler": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/state": "workspace:*",
-    "@yieldstar/core": "0.8.2",
-    "@yieldstar/sqlite-runtime": "0.8.2",
+    "@yieldstar/core": "0.9.0",
+    "@yieldstar/sqlite-runtime": "0.9.0",
     "esbuild": "^0.25.0",
     "js-base64": "^3.7.7",
     "valibot": "^1.4.2",
     "lodash-es": "^4.17.21",
     "pako": "^2.1.0",
     "pino": "^9.14.0",
-    "yieldstar": "0.8.2"
+    "yieldstar": "0.9.0"
   },
   "devDependencies": {
     "@types/common-tags": "^1.8.4",

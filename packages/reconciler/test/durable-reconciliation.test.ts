@@ -3,7 +3,6 @@ import {
   REDELIVERY_DELAY_BASE,
   WorkflowRunner,
   type EffectClient,
-  type ExecutionLease,
   type HeapClient,
   type Runtime,
   type StoreClient,
@@ -2526,6 +2525,7 @@ function createRuntime(
       ? new CrashAfterWriteHeap(sqliteRuntime.heap, options.crashAfterStep)
       : sqliteRuntime.heap,
     stores: sqliteRuntime.stores,
+    joins: sqliteRuntime.joins,
   };
   const storeClient = sqliteRuntime.stores;
   const state = new durable.DurableStateBackend(storeClient, deploymentId);
@@ -2632,13 +2632,11 @@ class CrashAfterWriteHeap implements HeapClient {
     return this.inner.readStep(params);
   }
 
-  async writeStep(params: {
-    lease: ExecutionLease;
-    stepKey: string;
-    stepAttempt: number;
-    done: boolean;
-    stepResponseJson: string;
-  }) {
+  recordCancellation(params: Parameters<HeapClient["recordCancellation"]>[0]) {
+    return this.inner.recordCancellation(params);
+  }
+
+  async writeStep(params: Parameters<HeapClient["writeStep"]>[0]) {
     const result = await this.inner.writeStep(params);
     if (
       !this.#crashed &&
