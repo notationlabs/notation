@@ -1,4 +1,4 @@
-import { fromProjectRoot } from "@notation/core";
+import { fromProjectRoot } from "@notation/core/paths";
 import crypto from "crypto";
 import fs from "node:fs/promises";
 

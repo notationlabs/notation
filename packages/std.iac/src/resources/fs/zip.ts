@@ -1,4 +1,4 @@
-import { fromProjectRoot } from "@notation/core";
+import { fromProjectRoot } from "@notation/core/paths";
 import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { isErrorWithCode } from "@notation/utils";

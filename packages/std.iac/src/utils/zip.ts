@@ -1,4 +1,4 @@
-import { fromProjectRoot } from "@notation/core";
+import { fromProjectRoot } from "@notation/core/paths";
 import path from "node:path";
 import * as fs from "node:fs/promises";
 import * as fflate from "fflate";

@@ -1,7 +1,11 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-  entry: { index: "src/index.ts", config: "src/config/index.ts" },
+  entry: {
+    index: "src/index.ts",
+    config: "src/config/index.ts",
+    paths: "src/utils/paths.ts",
+  },
   format: "esm",
   platform: "node",
   dts: { sourcemap: false },

@@ -6,7 +6,7 @@ import {
 } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-lambda";
 import * as v from "valibot";
-import { fromProjectRoot } from "@notation/core";
+import { fromProjectRoot } from "@notation/core/paths";
 import crypto from "node:crypto";
 import * as nodeFs from "node:fs/promises";
 import { lambdaClient } from "src/utils/aws-clients";
