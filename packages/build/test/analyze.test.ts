@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { analyze, packageFiles, packages } from "./virtual";
+import path from "node:path";
+import { ModuleAnalyses } from "src/index";
+import { analyze, packageFiles, packages, root, virtualMarks } from "./virtual";
 
 const run = (source: string, extra: Record<string, string> = {}) =>
   analyze(
@@ -107,5 +109,16 @@ describe("analyzeModule", () => {
       `import { $lambda } from "@notation/aws/lambda";\nexport const f = ($lambda) => $lambda({});`,
     );
     expect(declaration).toBeUndefined();
+  });
+});
+
+describe("ModuleAnalyses", () => {
+  it("reuses the analysis of a source that hasn't changed", () => {
+    const analyses = new ModuleAnalyses(virtualMarks(packageFiles, packages));
+    const file = path.join(root, "runtime/fn.ts");
+    const source = `export const a = 1;`;
+    const first = analyses.fromSource(file, source);
+    expect(analyses.fromSource(file, source)).toBe(first);
+    expect(analyses.fromSource(file, `export const a = 2;`)).not.toBe(first);
   });
 });

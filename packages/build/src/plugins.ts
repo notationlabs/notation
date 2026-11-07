@@ -69,8 +69,14 @@ export class ModuleAnalyses {
     this.marks = marks;
   }
 
-  /** Analyses a module from the source that a transform hook sees. */
+  /**
+   * Analyses a module from the source that a transform hook sees. Each
+   * runtime build transforms the same files, so an analysis of the same
+   * source is reused.
+   */
   fromSource(file: string, source: string): ModuleAnalysis {
+    const cached = this.#analyses.get(file);
+    if (cached?.table.module.source === source) return cached;
     const analysis = analyzeModule(
       this.marks.setSource(file, source),
       this.marks,
