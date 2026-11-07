@@ -55,7 +55,7 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
   write(
     "runtime/process-orders.ts",
     `
-    import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+    import { $lambda, DecodeError, sqs, type LambdaHandler } from "@notation/aws/lambda";
     import { ordersQueue } from "../infra/orders";
     import { Order } from "./schema";
 
@@ -68,17 +68,15 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
     });
 
     export const handler: LambdaHandler<typeof lambda> = async (event) => {
-      const batchItemFailures = [];
       const orders = [];
       for (const record of event.Records) {
         try {
           orders.push(await lambda.decode(record));
-        } catch {
-          batchItemFailures.push({ itemIdentifier: record.messageId });
+        } catch (error) {
+          if (!(error instanceof DecodeError)) throw error;
         }
       }
       console.log(JSON.stringify({ orders, env: lambda.env() }));
-      return { batchItemFailures };
     };
     `,
   );
@@ -119,7 +117,7 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
     Object.assign(process.env, params.Environment.Variables);
     const { handler } = await import("./dist/runtime/process-orders/index.mjs");
     const record = (messageId, body) => ({ messageId, body: JSON.stringify(body) });
-    const result = await handler({ Records: [record("1", { id: "o1" }), record("2", { id: 2 })] }, {});
+    await handler({ Records: [record("1", { id: "o1" }), record("2", { id: 2 })] }, {});
 
     console.log(JSON.stringify({
       lambdas: 1 + otherFns.length,
@@ -129,7 +127,6 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
       actions: statements.flatMap((s) => s.Action),
       mappings: mappings.map((m) => m.id),
       zipSource: fn.dependencies.zipFile.config.sourceFilePath,
-      result,
     }));
   `;
   const output = execFileSync(
@@ -152,7 +149,6 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
     ],
     mappings: ["orders-process-orders-mapping"],
     zipSource: "dist/runtime/process-orders/index.mjs",
-    result: { batchItemFailures: [{ itemIdentifier: "2" }] },
   });
   expect(JSON.parse(logged!)).toEqual({
     orders: [{ id: "o1" }],

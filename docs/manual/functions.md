@@ -91,8 +91,12 @@ Deploy sets `ORDER_QUEUE_URL` as an environment variable of the function. In the
 `lambda.decode()` parses the JSON body of one item, and validates it with the schema in `event`. For an SQS Lambda the item is one record. For an HTTP Lambda the item is the request, and a base64 body is decoded first:
 
 ```ts [runtime/orders.ts]
-import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
-import type { SQSBatchResponse } from "aws-lambda";
+import {
+  $lambda,
+  DecodeError,
+  sqs,
+  type LambdaHandler,
+} from "@notation/aws/lambda";
 import { Order } from "./schema";
 
 export const lambda = $lambda({
@@ -101,25 +105,23 @@ export const lambda = $lambda({
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
-  const batchItemFailures: SQSBatchResponse["batchItemFailures"] = [];
   for (const record of event.Records) {
     try {
       const order = await lambda.decode(record);
-      console.log("order", order);
-    } catch {
-      batchItemFailures.push({ itemIdentifier: record.messageId });
+      console.log("order", order.orderId);
+    } catch (error) {
+      if (!(error instanceof DecodeError)) throw error;
+      console.error("invalid order", record.messageId, error.issues);
     }
   }
-  return { batchItemFailures };
 };
 ```
 
 - `Order` is any [Standard Schema](https://standardschema.dev), such as a Zod or Valibot schema. `decode()` returns the schema's output type.
 - Without a schema, as in `sqs()`, `decode()` returns the parsed JSON as `unknown`.
 - When the body is not JSON, or the schema rejects it, `decode()` throws a `DecodeError`. Its `issues` hold the schema's issues.
+- A message that fails validation fails again on every retry, so the handler logs it and skips it. If the handler threw instead, Lambda would retry the whole batch until the queue's retention period ends.
 - A scheduled Lambda, or a Lambda with no `event`, has no `decode()`. Calling it is a type error.
-
-As an aside, `queue.consume()` doesn't turn on `ReportBatchItemFailures` for the event source mapping, so Lambda ignores the `batchItemFailures` that the handler returns. See [SQS](../resources/sqs.md#queueconsumetarget).
 
 `decode()` only checks what the function receives. Nothing checks that a sender writes a body that matches the schema, and a value such as a `Date` doesn't survive `JSON.stringify` and `JSON.parse` as a `Date`.
 
