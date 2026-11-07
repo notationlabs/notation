@@ -192,6 +192,28 @@ describe("stripForRuntime", () => {
     expect(code).toContain("export const handler");
   });
 
+  it("removes an import whose uses it removed, and keeps the others", () => {
+    const { analysis, marks, isInfraModule } = setup(runtimeSource);
+    const { code } = stripForRuntime(analysis, marks, isInfraModule)!;
+    expect(code).not.toContain("../infra/orders");
+    expect(code).toContain(`import "./sentry";`);
+    expect(code).toContain(`from "@aws-sdk/client-sqs"`);
+    expect(code).toContain(`from "./schema"`);
+    expect(code).toContain(`from "@notation/aws/lambda"`);
+  });
+
+  it("keeps an import that the function still uses", () => {
+    const source = runtimeSource.replace(
+      "await client.send(config);",
+      "await client.send(config, unused);",
+    );
+    const { analysis, marks, isInfraModule } = setup(source);
+    const { code } = stripForRuntime(analysis, marks, isInfraModule)!;
+    expect(code).toContain(
+      `import { ordersQueue, unused } from "../infra/orders";`,
+    );
+  });
+
   it("removes the last option with the comma before it", () => {
     const source = `
       import { $lambda } from "@notation/aws/lambda";

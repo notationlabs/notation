@@ -1,5 +1,12 @@
 import MagicString from "magic-string";
-import { freeReferences, location, unwrap, walk, type Node } from "./ast";
+import {
+  freeReferences,
+  location,
+  unwrap,
+  walk,
+  type Node,
+  type Reference,
+} from "./ast";
 import type { Declaration, ModuleAnalysis } from "./analyze";
 import type { Marks } from "./marks";
 
@@ -19,6 +26,9 @@ export type IsInfraModule = (file: string) => boolean;
  *    value becomes `undefined`.
  * 3. A call to a function marked `@runtime` keeps only its runtime
  *    arguments. The others become `undefined`.
+ * 4. An import whose uses were all removed is removed too, so the bundle
+ *    doesn't load the module it imports from. Without this, the module would
+ *    still load when `verbatimModuleSyntax` keeps unused imports.
  *
  * The binding and its export stay, so that modules which import it still
  * link. Throws when a kept option refers to an infra module, or calls a
@@ -101,6 +111,8 @@ export function stripForRuntime(
     }
   }
 
+  removeEmptiedImports(module.body, analysis.references, removed, s);
+
   return {
     code: s.toString(),
     map: s.generateMap({
@@ -109,6 +121,35 @@ export function stripForRuntime(
       includeContent: true,
     }),
   };
+}
+
+// An import is removed when one of its names was used, and none of them is
+// used outside the removed nodes. An import that was never used is left, as
+// it may be there for the module's side effects.
+function removeEmptiedImports(
+  body: Node[],
+  before: Reference[],
+  removed: Set<Node>,
+  s: MagicString,
+) {
+  const used = (references: Reference[]) =>
+    new Set(references.map((reference) => reference.node.name));
+  const usedBefore = used(before);
+  const usedAfter = used(
+    body.flatMap((statement) => freeReferences(statement, removed)),
+  );
+  for (const statement of body) {
+    if (statement.type !== "ImportDeclaration") continue;
+    const names: string[] = statement.specifiers.map(
+      (specifier: Node) => specifier.local.name,
+    );
+    if (
+      names.some((name) => usedBefore.has(name)) &&
+      !names.some((name) => usedAfter.has(name))
+    ) {
+      s.remove(statement.start, statement.end);
+    }
+  }
 }
 
 function mergeRanges(ranges: [number, number][]): [number, number][] {

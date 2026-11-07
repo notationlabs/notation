@@ -246,7 +246,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts, because the function uses orders at runtime/process-orders.ts:16:38.",
+      "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts. The bundle imports it through runtime/process-orders.ts → infra/orders.ts, and uses orders at runtime/process-orders.ts:16:38.",
     );
   });
 
@@ -271,7 +271,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts, because the function uses orders at runtime/queue-url.ts:2:31.",
+      "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts. The bundle imports it through runtime/process-orders.ts → runtime/queue-url.ts → infra/orders.ts, and uses orders at runtime/queue-url.ts:2:31.",
     );
   });
 
@@ -292,7 +292,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "because the function uses orders at runtime/process-orders.ts:16:38.",
+      "and uses orders at runtime/process-orders.ts:16:38.",
     );
   });
 
@@ -310,7 +310,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes a function that declares infrastructure, from @notation/aws/sqs.js, because the function uses queue at runtime/process-orders.ts:17:38.",
+      "The bundle of runtime/process-orders.ts includes queue from @notation/aws/sqs.js, a function that declares infrastructure. The bundle imports it through runtime/process-orders.ts → @notation/aws/sqs.js, and uses queue at runtime/process-orders.ts:17:38.",
     );
   });
 
@@ -328,7 +328,76 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "from @notation/aws/sqs.js, imported through runtime/process-orders.ts → @notation/aws/helpers.js → @notation/aws/sqs.js.",
+      "The bundle imports it through runtime/process-orders.ts → @notation/aws/helpers.js → @notation/aws/sqs.js.",
+    );
+  });
+
+  // The infra module calls queue() through a function of its own, so the
+  // build doesn't see that it is infra.
+  function writeFactoryInfra() {
+    write(
+      "infra/helpers.ts",
+      [
+        `import { queue } from "@notation/aws/sqs";`,
+        `export function makeQueue(name: string) { return queue({ name }); }`,
+      ].join("\n"),
+    );
+    write(
+      "infra/orders.ts",
+      [
+        `import { makeQueue } from "./helpers";`,
+        `import { lambda } from "../runtime/process-orders";`,
+        `export const orders = makeQueue("orders");`,
+        `orders.consume(() => lambda);`,
+      ].join("\n"),
+    );
+  }
+
+  it.each([false, true])(
+    "leaves out an infra module that calls a factory, with verbatimModuleSyntax %s",
+    async (verbatimModuleSyntax) => {
+      writeProject();
+      writeFactoryInfra();
+      write(
+        "tsconfig.json",
+        JSON.stringify({ compilerOptions: { verbatimModuleSyntax } }),
+      );
+      await compileRuntimeModules(
+        (await compileInfra(path.join(root, "infra/orders.ts"))).modules,
+      );
+      const bundle = readFileSync(
+        path.join(root, "dist/runtime/process-orders/index.mjs"),
+        "utf8",
+      );
+      expect(bundle).not.toContain("makeQueue");
+      expect(bundle).not.toContain("placeholder-url");
+    },
+  );
+
+  it("names the import chain when a module that the function imports brings in infra", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { Order } from "./schema";`,
+          `import { Order } from "./schema";\n  import { label } from "./labels";`,
+        )
+        .replace(
+          "export const handler = async () =>",
+          "export const handler = async () => label() &&",
+        ),
+    );
+    writeFactoryInfra();
+    write(
+      "runtime/labels.ts",
+      [
+        `import { orders } from "../infra/orders";`,
+        `export const label = () => "orders";`,
+        `export const queueUrl = () => orders.url;`,
+      ].join("\n"),
+    );
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
+    await expect(compileRuntimeModules(modules)).rejects.toThrow(
+      "The bundle of runtime/process-orders.ts includes queue from @notation/aws/sqs.js, a function that declares infrastructure. The bundle imports it through runtime/process-orders.ts → runtime/labels.ts → infra/orders.ts → infra/helpers.ts → @notation/aws/sqs.js, and uses queue at infra/helpers.ts:2:50. Infra functions can't run in a function. The function loads every module on the chain.",
     );
   });
 

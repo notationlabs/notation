@@ -77,8 +77,8 @@ function displayPath(file: string): string {
   }
 }
 
-const envAdvice =
-  "Read infra values in the function through the declaration's env().";
+const chainAdvice =
+  "The function loads every module on the chain. Remove the import that leads to infra, or read the infra value in the function through the declaration's env().";
 
 /**
  * Analyses project modules for both builds. An analysis is kept until its
@@ -319,7 +319,7 @@ export function runtimePlugin({
           );
           const chain = importChain(this, id).map(displayPath);
           this.error(
-            `The bundle of ${toProjectRoot(module.path)} includes the infra module ${toProjectRoot(id)}, ${because(uses, chain)}. The runtime build leaves infra out, so runtime code can't use it. ${envAdvice}`,
+            `The bundle of ${toProjectRoot(module.path)} includes the infra module ${toProjectRoot(id)}. ${because(uses, chain)} The runtime build leaves infra out, so runtime code can't use it. ${chainAdvice}`,
           );
         }
         // Infra functions from packages, such as queue() from
@@ -343,7 +343,7 @@ export function runtimePlugin({
             );
             const chain = importChain(this, id).map(displayPath);
             this.error(
-              `The bundle of ${toProjectRoot(module.path)} includes a function that declares infrastructure, from ${displayPath(id)}, ${because(uses, chain)}. Infra functions can't run in a function. ${envAdvice}`,
+              `The bundle of ${toProjectRoot(module.path)} includes ${name} from ${displayPath(id)}, a function that declares infrastructure. ${because(uses, chain)} Infra functions can't run in a function. ${chainAdvice}`,
             );
           }
         }
@@ -408,12 +408,13 @@ function usesOfImports(
   return uses;
 }
 
-// Why a module is in the bundle: the references that use it, or else the
-// chain of imports that brings it in.
+// Why a module is in the bundle: the chain of imports that brings it in, and
+// the references that use it.
 function because(uses: ImportUse[], chain: string[]): string {
-  if (uses.length === 0) return `imported through ${chain.join(" → ")}`;
+  const imported = `The bundle imports it through ${chain.join(" → ")}`;
+  if (uses.length === 0) return `${imported}.`;
   const listed = uses.map(({ at, name }) => `${name} at ${at}`);
-  return `because the function uses ${listed.join(", ")}`;
+  return `${imported}, and uses ${listed.join(", ")}.`;
 }
 
 type ModuleGraph = {

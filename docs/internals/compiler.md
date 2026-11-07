@@ -188,25 +188,28 @@ export const lambda = $lambda({
 1. Options that the mark lists under neither `shared:` nor `runtime:` are removed. For `$lambda`, `policy`, `runtime`, `timeout` and `memory` go. `id` stays, so the function can read `lambda.id`.
 2. Each `keys:` option keeps the keys of the object that it returns, and each value becomes `undefined`. The option must be `() => ({ ... })`, or a function whose body is one `return { ... }`, with no spread or computed keys.
 3. A call to a function marked `@runtime`, such as `sqs(Order)`, keeps its runtime arguments. The others become `undefined`.
-4. The binding and its export stay, so an infra module that imports `lambda` still links.
+4. An import whose uses the strip removed is removed too. For example, the import of `orderQueue` goes once its use in `env` is gone. An import that had no uses to begin with stays, because it may be there for its side effects, such as a polyfill.
+5. The binding and its export stay, so an infra module that imports `lambda` still links.
 
 The strip then checks the kept options. A reference to an import from an infra module, or a call to a resource function, fails the build with its file and line.
 
 ### Leaving infra out
 
-The runtime plugin marks each infra module free of side effects, through the `moduleSideEffects` result of its `transform` hook. Once the strip has removed `orderQueue` from the options, nothing uses the infra module, and the bundler drops it. Other modules keep their side effects, such as a polyfill import.
+An import loads its module and runs the module's top-level code, even when nothing uses the import's bindings. So step 4 of the strip is what keeps `infra/orders.ts` out of the bundle of `runtime/orders.ts`. The TypeScript transform removes an unused import by default, but with `verbatimModuleSyntax` it keeps every import that isn't `import type`, so the strip doesn't rely on it.
+
+An infra module can also be reached through a module that the strip doesn't change, such as a shared module that imports `orderQueue` and uses it in a function the handler never calls. For that case, the runtime plugin marks each infra module free of side effects, through the `moduleSideEffects` result of its `transform` hook. The bundler then drops the infra module if nothing in the bundle uses its bindings. Other modules keep their side effects. A module counts as infra only if it calls a resource function, such as `queue()`, at its top level. A module that calls `queue()` through a factory of its own, such as `makeQueue("orders")`, is not marked, so in this case the bundler keeps it, and the check below fails the build.
 
 The provider packages declare `"sideEffects": false` in their `package.json`, so the bundler also drops a package module whose exports the function doesn't use.
 
 In `generateBundle`, the plugin checks that no infra module is left in the bundle. A handler that reads `orderQueue.url` directly keeps `infra/orders.ts` in the bundle, and the build fails:
 
 ```
-The bundle of runtime/orders.ts includes the infra module infra/orders.ts, because the function uses orderQueue at runtime/orders.ts:15:31. The runtime build leaves infra out, so runtime code can't use it. Read infra values in the function through the declaration's env().
+The bundle of runtime/orders.ts includes the infra module infra/orders.ts. The bundle imports it through runtime/orders.ts → infra/orders.ts, and uses orderQueue at runtime/orders.ts:15:31. The runtime build leaves infra out, so runtime code can't use it. The function loads every module on the chain. Remove the import that leads to infra, or read the infra value in the function through the declaration's env().
 ```
 
-The error lists each reference to an import from the infra module, in any project module in the bundle. References in the declaration's options are left out, because the strip has removed or checked them. The list can include a reference in code that tree-shaking dropped, since the module is in the bundle either way. If the plugin finds no reference, such as for an `export { orderQueue } from "../infra/orders"`, the error names the chain of imports instead.
+The error names the shortest chain of imports from the function's module to the infra module. Then it lists each reference to an import from the infra module, in any project module in the bundle. References in the declaration's options are left out, because the strip has removed or checked them. The list can include a reference in code that tree-shaking dropped, since the module is in the bundle either way. If the plugin finds no reference, such as for an `export { orderQueue } from "../infra/orders"`, the error names only the chain.
 
-The plugin also checks infra functions from packages. `sideEffects: false` only drops what the function doesn't use, so a handler that calls `queue()` from `@notation/aws/sqs` would bundle it, with the AWS SDK. For each package module in the bundle, the plugin looks up the mark of each export that is left after tree-shaking. An export marked `@resource` or `@declaration` fails the build, and the error names each reference to it, such as `queue at runtime/orders.ts:15:20`. `$lambda` from the runtime entry of `@notation/aws/lambda` has no mark, so it passes.
+The plugin also checks infra functions from packages. `sideEffects: false` only drops what the function doesn't use, so a handler that calls `queue()` from `@notation/aws/sqs` would bundle it, with the AWS SDK. For each package module in the bundle, the plugin looks up the mark of each export that is left after tree-shaking. An export marked `@resource` or `@declaration` fails the build. The error names the chain of imports to the package module and each reference to the export, such as `queue at infra/helpers.ts:4:10`. This check also catches an infra module that calls a resource function through a factory, because the chain passes through the module that calls the factory. `$lambda` from the runtime entry of `@notation/aws/lambda` has no mark, so it passes.
 
 ## Import cycles
 
