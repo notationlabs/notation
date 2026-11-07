@@ -47,15 +47,16 @@ The declaration adds the function even when nothing wires it. The options are li
 
 Infra APIs take the declaration as a function that returns it, such as `() => todos`. They call the function when infra has finished loading, so the runtime module and the infra module can import each other.
 
-| Infra API                                              | Accepts                                        |
-| ------------------------------------------------------ | ---------------------------------------------- |
-| [`queue.consume`](sqs.md#queueconsumetarget)           | A declaration with `sqs()` or no `event`       |
-| [`router.get`](api-gateway.md#routerapi), `.post`, ... | A declaration with `http()` or no `event`      |
-| [`schedule`](event-bridge.md#scheduleconfig)           | A declaration with `scheduled()` or no `event` |
+| Infra API                                                      | Accepts                                                  |
+| -------------------------------------------------------------- | -------------------------------------------------------- |
+| [`queue.consume`](sqs.md#queueconsumetarget)                   | A declaration with `sqs()` or no `event`                 |
+| [`router.get`](api-gateway.md#routerapi), `.post`, ...         | A declaration with `http()` or no `event`                |
+| [`withJWTAuthorizer`](api-gateway.md#jwt-authorization) routes | A declaration with `http({ auth: jwt() })` or no `event` |
+| [`schedule`](event-bridge.md#scheduleconfig)                   | A declaration with `scheduled()` or no `event`           |
 
 Each API also takes a Lambda group from [`lambda()`](#lambdaconfig), as it is, with no function around it.
 
-A declaration whose event doesn't match is a type error. If TypeScript doesn't catch it, the infra API throws when infra runs, for example `route() sends http events, but the Lambda "orders" is declared with a sqs event.`
+A declaration whose event doesn't match is a type error. If TypeScript doesn't catch it, the infra API throws when infra runs, for example `route() sends http events, but the Lambda "orders" is declared with event: () => sqs().`
 
 ### One handler for each function
 

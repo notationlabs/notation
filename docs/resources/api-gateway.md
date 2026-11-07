@@ -57,7 +57,7 @@ Each route call produces a full resource subgraph:
 
 ### Request bodies
 
-`http(schema)` gives the declaration a [Standard Schema](https://standardschema.dev) for request bodies. The handler validates a request with `lambda.decode(event)`, which decodes a base64 body, parses it as JSON and returns the schema's output type. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
+`http({ body: schema })` gives the declaration a [Standard Schema](https://standardschema.dev) for request bodies. The handler validates a request with `lambda.decode(event)`, which decodes a base64 body, parses it as JSON and returns the schema's output type. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
 
 ## JWT Authorization
 
@@ -77,22 +77,23 @@ const authedRouter = router(myApi).withJWTAuthorizer({
 authedRouter.get("/user", () => user);
 ```
 
-The authorizer adds the token's claims to the request. `withJWTAuthorizer()` doesn't carry a claims type, so the handler types the event itself, with `APIGatewayJWTProxyEventV2` from `@notation/aws/shared`:
+The authorizer adds the token's claims to the request. The declaration says that its routes have a JWT authorizer with `http({ auth: jwt<JWTClaims>() })`, and `LambdaHandler<typeof lambda>` types the claims:
 
 ```ts [runtime/user.ts]
-import { $lambda, http } from "@notation/aws/lambda";
-import type { APIGatewayJWTProxyEventV2 } from "@notation/aws/shared";
+import { $lambda, http, jwt, type LambdaHandler } from "@notation/aws/lambda";
 import type { JWTClaims } from "shared/jwt";
 
 export const lambda = $lambda({
   id: "user",
-  event: () => http(),
+  event: () => http({ auth: jwt<JWTClaims>() }),
 });
 
-export const handler = async (event: APIGatewayJWTProxyEventV2<JWTClaims>) => {
+export const handler: LambdaHandler<typeof lambda> = async (event) => {
   return { message: event.requestContext.authorizer.jwt.claims.$username };
 };
 ```
+
+The routes of `withJWTAuthorizer()` accept only a declaration with `http({ auth: jwt() })`, or one with no `event`. A plain router's routes reject it. TypeScript doesn't check `JWTClaims` against the tokens that the issuer sends.
 
 Routes on one API with the same `issuer` and `audience` share one authorizer. Routes with different `scopes` still share it, because API Gateway checks scopes on the route. An HTTP API allows 10 authorizers, so one API can have 10 distinct issuer and audience pairs.
 

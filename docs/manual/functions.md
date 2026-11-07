@@ -27,14 +27,15 @@ The `$` marks a function that the build handles specially. `$lambda` must be cal
 
 `event` in the declaration chooses the type of the handler:
 
-| `event`             | `LambdaHandler<typeof lambda>`                                                                   |
-| ------------------- | ------------------------------------------------------------------------------------------------ |
-| `() => sqs()`       | `(event: SQSEvent, context: Context) => SQSBatchResponse \| void` (or a promise)                 |
-| `() => http()`      | `(event: APIGatewayProxyEventV2, context: Context) => ApiGatewayResult` (or a promise)           |
-| `() => scheduled()` | `(event: EventBridgeEvent<"Scheduled Event", unknown>, context: Context) => void` (or a promise) |
-| no `event`          | `(event: unknown, context: Context) => unknown`                                                  |
+| `event`                               | `LambdaHandler<typeof lambda>`                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `() => sqs()`                         | `(event: SQSEvent, context: Context) => SQSBatchResponse \| void` (or a promise)                  |
+| `() => http()`                        | `(event: APIGatewayProxyEventV2, context: Context) => ApiGatewayResult` (or a promise)            |
+| `() => http({ auth: jwt<Claims>() })` | `(event: APIGatewayJWTProxyEventV2<Claims>, context: Context) => ApiGatewayResult` (or a promise) |
+| `() => scheduled()`                   | `(event: EventBridgeEvent<"Scheduled Event", unknown>, context: Context) => void` (or a promise)  |
+| no `event`                            | `(event: unknown, context: Context) => unknown`                                                   |
 
-`event` also decides where infra can wire the function: an SQS Lambda to a queue, an HTTP Lambda to a route, and a scheduled Lambda to a schedule. A Lambda with no `event` can be wired to any of them. See [End-to-End Types](./types.md).
+`event` also decides where infra can wire the function: an SQS Lambda to a queue, an HTTP Lambda to a route, and a scheduled Lambda to a schedule. A Lambda with `http({ auth: jwt() })` can only be wired to a route with a JWT authorizer. A Lambda with no `event` can be wired to any of them. See [End-to-End Types](./types.md).
 
 Notation has no event kind for DynamoDB streams. A function for another event source has no `event`, and its handler types the event itself.
 
@@ -88,7 +89,7 @@ Deploy sets `ORDER_QUEUE_URL` as an environment variable of the function. In the
 
 ## Validating bodies with `decode()`
 
-`lambda.decode()` parses the JSON body of one item, and validates it with the schema in `event`. For an SQS Lambda the item is one record. For an HTTP Lambda the item is the request, and a base64 body is decoded first:
+`lambda.decode()` parses the JSON body of one item, and validates it with the schema in `event`. For an SQS Lambda the item is one record. For an HTTP Lambda the item is the request, and a base64 body is decoded first. The schema goes in `sqs(schema)` or `http({ body: schema })`:
 
 ```ts [runtime/orders.ts]
 import {
@@ -118,7 +119,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 ```
 
 - `Order` is any [Standard Schema](https://standardschema.dev), such as a Zod or Valibot schema. `decode()` returns the schema's output type.
-- Without a schema, as in `sqs()`, `decode()` returns the parsed JSON as `unknown`.
+- Without a schema, as in `sqs()` or `http()`, `decode()` returns the parsed JSON as `unknown`.
 - When the body is not JSON, or the schema rejects it, `decode()` throws a `DecodeError`. Its `issues` hold the schema's issues.
 - A message that fails validation fails again on every retry, so the handler logs it and skips it. If the handler threw instead, Lambda would retry the whole batch until the queue's retention period ends.
 - A scheduled Lambda, or a Lambda with no `event`, has no `decode()`. Calling it is a type error.

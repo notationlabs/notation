@@ -26,7 +26,8 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 ```
 
 - `$lambda` in `@notation/aws/lambda` declares the function. It takes `id`, `event`, `env`, `policy`, `runtime`, `timeout` and `memory`.
-- `event` is `() => sqs(schema)`, `() => http(schema)` or `() => scheduled()`. The schema is any Standard Schema, and is optional.
+- `event` is `() => sqs(schema)`, `() => http({ body: schema })` or `() => scheduled()`. The schema is any Standard Schema, and is optional.
+- `http({ auth: jwt<Claims>() })` declares a function whose routes have a JWT authorizer. `LambdaHandler` types the claims in its event as `Claims`. The routes of `withJWTAuthorizer()` accept only these declarations, and a plain router's routes reject them.
 - `env` binds values by name. Deploy sets each one as an environment variable of the function. `lambda.env()` returns them, typed by name, and throws when one is not set. `env` must return an object literal with no spread or computed keys.
 - `lambda.decode(item)` parses the JSON body of an SQS record or an HTTP request, and validates it with the event's schema. It throws a `DecodeError` when the body is not valid.
 - `policy` adds statements to the function's role.
@@ -34,7 +35,8 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 - Infra wires the declaration as a function: `queue.consume(() => lambda)`, `router.get("/todos", () => lambda)` and `schedule({ name, schedule, target: () => lambda })`. A Lambda group from `lambda()` is passed as it is. The wiring runs when infra has finished loading, so a runtime module and the infra that wires it can import each other. `consume()`, `route()`, the router methods and `schedule()` return nothing.
 - Wiring a declaration whose event doesn't match fails: a queue needs an SQS Lambda, a route an HTTP Lambda, and a schedule a scheduled Lambda. A Lambda without `event` can be wired to any of them.
 - `schedule()` takes `target` in place of `handler`, and the rule sends the EventBridge event unchanged.
-- `withJWTAuthorizer()` no longer takes a claims type. Type the event in the handler, for example with `APIGatewayJWTProxyEventV2<Claims>` from `@notation/aws/shared`.
+- `withJWTAuthorizer()` no longer takes a claims type. Declare the claims with `http({ auth: jwt<Claims>() })`.
+- `APIGatewayJWTProxyEventV2<Claims>` in `@notation/aws/shared` keeps the whole request context, and `TypedClaimsOverride` is removed.
 - The runtime build resolves `@notation/aws/lambda` to an entry without infra code, through the `notation-runtime` export condition.
 - Lambda IDs are 1 to 64 letters, digits, hyphens or underscores. `lambda()` takes `timeout` and `memory`, and `handler` defaults to `"handler"`.
 - `@notation/aws` recognises a Lambda group by a symbol, not by `instanceof`, so a group from another installed copy of the package passes its checks.

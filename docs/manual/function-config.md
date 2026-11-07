@@ -19,7 +19,7 @@ type LambdaDeclarationConfig = {
 | Option    | Meaning                                                                                                   |
 | --------- | --------------------------------------------------------------------------------------------------------- |
 | `id`      | Names the function and its role, zip, policy and log group, and keys them in state. See [`id`](#id).      |
-| `event`   | The events that the function receives: `sqs(schema?)`, `http(schema?)` or `scheduled()`.                  |
+| `event`   | The events that the function receives: `sqs(schema?)`, `http({ body?, auth? })` or `scheduled()`.         |
 | `env`     | Values that the function reads, by name. Deploy sets each one as an environment variable of the function. |
 | `policy`  | Statements to add to the function role's inline policy.                                                   |
 | `runtime` | The Lambda runtime.                                                                                       |

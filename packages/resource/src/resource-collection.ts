@@ -45,12 +45,12 @@ export function claimSingleCopy(url: string) {
   if (loaded === undefined) registry[loadedKey] = url;
   else if (loaded !== url) {
     throw new Error(
-      `Two versions of @notation/resource were detected at ${loaded} and ${url}. Please install one version (for example with npm dedupe).`pnpm dedupe\` or \`npm dedupe\`.`,
+      `Two versions of @notation/resource were detected at ${loaded} and ${url}. Please install one version (for example with npm dedupe).`,
     );
   }
 }
 
-claimSingleCopy(import.meta.url);
+claimSingleCopy((import.meta as ImportMeta & { url: string }).url);
 
 let activeCollection: ResourceCollection | undefined;
 
