@@ -204,7 +204,7 @@ The provider packages declare `"sideEffects": false` in their `package.json`, so
 In `generateBundle`, the plugin checks that no infra module is left in the bundle. A handler that reads `orderQueue.url` directly keeps `infra/orders.ts` in the bundle, and the build fails:
 
 ```
-The bundle of runtime/orders.ts includes the infra module infra/orders.ts. The bundle imports it through runtime/orders.ts → infra/orders.ts, and uses orderQueue at runtime/orders.ts:15:31. The runtime build leaves infra out, so runtime code can't use it. The function loads every module on the chain. Remove the import that leads to infra, or read the infra value in the function through the declaration's env().
+The bundle of runtime/orders.ts includes the infra module infra/orders.ts. The bundle imports it through runtime/orders.ts → infra/orders.ts, and uses orderQueue at runtime/orders.ts:15:31. The runtime build leaves infra out, so runtime code can't use it.
 ```
 
 The error names the shortest chain of imports from the function's module to the infra module. Then it lists each reference to an import from the infra module, in any project module in the bundle. References in the declaration's options are left out, because the strip has removed or checked them. The list can include a reference in code that tree-shaking dropped, since the module is in the bundle either way. If the plugin finds no reference, such as for an `export { orderQueue } from "../infra/orders"`, the error names only the chain.

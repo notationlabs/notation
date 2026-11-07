@@ -397,7 +397,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes queue from @notation/aws/sqs.js, a function that declares infrastructure. The bundle imports it through runtime/process-orders.ts → runtime/labels.ts → infra/orders.ts → infra/helpers.ts → @notation/aws/sqs.js, and uses queue at infra/helpers.ts:2:50. Infra functions can't run in a function. The function loads every module on the chain.",
+      "The bundle of runtime/process-orders.ts includes queue from @notation/aws/sqs.js, a function that declares infrastructure. The bundle imports it through runtime/process-orders.ts → runtime/labels.ts → infra/orders.ts → infra/helpers.ts → @notation/aws/sqs.js, and uses queue at infra/helpers.ts:2:50. Infra functions can't run in a runtime module.",
     );
   });
 

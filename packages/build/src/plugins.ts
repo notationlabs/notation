@@ -77,9 +77,6 @@ function displayPath(file: string): string {
   }
 }
 
-const chainAdvice =
-  "The function loads every module on the chain. Remove the import that leads to infra, or read the infra value in the function through the declaration's env().";
-
 /**
  * Analyses project modules for both builds. An analysis is kept until its
  * file changes.
@@ -319,7 +316,7 @@ export function runtimePlugin({
           );
           const chain = importChain(this, id).map(displayPath);
           this.error(
-            `The bundle of ${toProjectRoot(module.path)} includes the infra module ${toProjectRoot(id)}. ${because(uses, chain)} The runtime build leaves infra out, so runtime code can't use it. ${chainAdvice}`,
+            `The bundle of ${toProjectRoot(module.path)} includes the infra module ${toProjectRoot(id)}. ${because(uses, chain)} The runtime build leaves infra out, so runtime code can't use it.`,
           );
         }
         // Infra functions from packages, such as queue() from
@@ -343,7 +340,7 @@ export function runtimePlugin({
             );
             const chain = importChain(this, id).map(displayPath);
             this.error(
-              `The bundle of ${toProjectRoot(module.path)} includes ${name} from ${displayPath(id)}, a function that declares infrastructure. ${because(uses, chain)} Infra functions can't run in a function. ${chainAdvice}`,
+              `The bundle of ${toProjectRoot(module.path)} includes ${name} from ${displayPath(id)}, a function that declares infrastructure. ${because(uses, chain)} Infra functions can't run in a runtime module.`,
             );
           }
         }
