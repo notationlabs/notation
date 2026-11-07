@@ -7,7 +7,9 @@ import type {
   DynamoDBBatchResponse,
   SQSEvent,
   SQSBatchResponse,
-  APIGatewayProxyEventV2WithJWTAuthorizer,
+  APIGatewayProxyEventV2WithRequestContext,
+  APIGatewayEventRequestContextV2WithAuthorizer,
+  APIGatewayEventRequestContextJWTAuthorizer,
 } from "aws-lambda";
 
 // With payload format 2.0, API Gateway sends a returned value that has no
@@ -21,22 +23,18 @@ export type ApiGatewayHandler = (
   context: Context,
 ) => ApiGatewayResult | Promise<ApiGatewayResult>;
 
-export type TypedClaimsOverride<T> = {
-  requestContext: {
-    authorizer: {
-      jwt: {
-        claims: T;
-        scopes: string[];
-      };
-    };
-  };
-};
-
-export type APIGatewayJWTProxyEventV2<T> = Omit<
-  APIGatewayProxyEventV2WithJWTAuthorizer,
-  "requestContext"
-> &
-  TypedClaimsOverride<T>;
+/**
+ * A request through a route with a JWT authorizer, with the token's claims
+ * typed as `T`.
+ */
+export type APIGatewayJWTProxyEventV2<T> =
+  APIGatewayProxyEventV2WithRequestContext<
+    APIGatewayEventRequestContextV2WithAuthorizer<
+      Omit<APIGatewayEventRequestContextJWTAuthorizer, "jwt"> & {
+        jwt: { claims: T; scopes: string[] };
+      }
+    >
+  >;
 
 export type JWTAuthorizedApiGatewayHandler<ClaimsType> = (
   event: APIGatewayJWTProxyEventV2<ClaimsType>,

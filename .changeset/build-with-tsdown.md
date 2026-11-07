@@ -4,7 +4,7 @@
 "@notation/cli": patch
 "@notation/core": patch
 "@notation/dashboard": patch
-"@notation/esbuild-plugins": patch
+"@notation/build": patch
 "@notation/reconciler": patch
 "@notation/resource": patch
 "@notation/state": patch

@@ -1,15 +1,10 @@
 import * as aws from "@notation/aws.iac";
 import * as std from "@notation/std.iac";
 import { getActiveResourceCollection } from "@notation/resource";
-import type { DispatchEntry } from "@notation/aws.iac/shared";
 import path from "path";
 import { awsName } from "src/naming";
 import { assertLambdaId, type NameSafe } from "./lambda-id";
 
-// A runtime module's `resource` export takes these fields, except `code` and
-// `handler`. The compiler checks its keys against its own list, `serviceKeys`
-// in packages/esbuild-plugins/src/parsers/parse-runtime-module.ts, so a new
-// field here must also be added there.
 export type LambdaConfig = {
   /**
    * Names the function and its role, zip, policy and log group, and keys them
@@ -35,19 +30,6 @@ export type LambdaConfig = {
   /** Megabytes of memory for the function. Lambda's default is 128. */
   memory?: number;
 };
-
-/**
- * One export of a runtime module: the module's Lambda, and the name of the
- * export to invoke. Infra APIs such as `route()` and `schedule()` take one.
- */
-export type RuntimeRef = { resource: LambdaGroup; export: string };
-
-/**
- * What an infra API such as `route()` invokes: an export of a runtime module,
- * typed as its handler `H`, or a Lambda group from `lambda()` that runs
- * external code.
- */
-export type LambdaTarget<H> = (H & RuntimeRef) | LambdaGroup;
 
 // Marks a LambdaGroup. Two installed copies of this package have different
 // LambdaGroup classes, so `instanceof` can't recognise a group from the
@@ -87,17 +69,6 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
       dependencies: { role: this.role },
     });
   }
-
-  /**
-   * Adds an entry to the function's dispatch map, which sends events that
-   * match the entry to one export. `bindingId` is the ID of the binding that
-   * adds the entry, such as a route or an event source mapping.
-   */
-  addDispatchEntry(bindingId: string, entry: DispatchEntry): void {
-    this.fn.contribute({
-      Environment: { Runtime: { dispatch: { [bindingId]: entry } } },
-    });
-  }
 }
 
 export function isLambdaGroup(value: unknown): value is LambdaGroup {
@@ -105,31 +76,16 @@ export function isLambdaGroup(value: unknown): value is LambdaGroup {
 }
 
 /**
- * Finds the Lambda group that `target` invokes, and the export to dispatch
- * to. A bare group runs external code, so it has no export. `caller` names
- * the infra API in the error.
+ * Declares a Lambda function that runs code built outside notation, such as
+ * a zip file. `id` must be a name-safe string literal; see `NameSafe`. Use
+ * `$lambda` for a function whose code is in the project.
+ * @resource
  */
-export function resolveLambdaTarget(
-  target: unknown,
-  caller: string,
-): { group: LambdaGroup; export?: string } {
-  if (isLambdaGroup(target)) return { group: target };
-  const ref = target as Partial<RuntimeRef> | undefined;
-  if (isLambdaGroup(ref?.resource) && typeof ref.export === "string") {
-    return { group: ref.resource, export: ref.export };
-  }
-  throw new Error(
-    `${caller} expects an export of a runtime module, or a Lambda group from lambda(). A runtime module is one that exports \`resource\`.`,
-  );
-}
-
-/**
- * Declares a Lambda function. `id` must be a name-safe string literal; see
- * `NameSafe`.
- */
-export const lambda = <const Id extends string>(
+export function lambda<const Id extends string>(
   config: Omit<LambdaConfig, "id"> & { id: NameSafe<Id> },
-) => new LambdaGroup(config);
+): LambdaGroup {
+  return new LambdaGroup(config);
+}
 
 // IAM role names are unique regardless of case, so compare IDs in lower case
 function assertUniqueLambdaId(id: string) {

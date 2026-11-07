@@ -15,13 +15,6 @@ import { awsCreate } from "src/utils/errors";
 import { runLambdaMutation } from "src/utils/lambda-mutation";
 import { AwsSchema } from "src/utils/types";
 import { fs } from "@notation/std.iac";
-import {
-  decodeRuntime,
-  encodeRuntime,
-  runtimeValue,
-  runtimeVariable,
-  type LambdaRuntime,
-} from "src/shared";
 import { LambdaIamRoleInstance } from "./";
 
 export type LambdaFunctionSchema = AwsSchema<{
@@ -46,13 +39,11 @@ export type LambdaFunctionSchema = AwsSchema<{
 }>;
 
 /**
- * `Runtime` holds values that the function's code reads at runtime, such as
- * its dispatch map. The params keep it as a structured map, so diff and plan
- * see each key. The provider encodes it into one variable only in API calls.
+ * `Variables` is collected, so several contributors, such as the variables
+ * that a declaration binds, can add to it.
  */
 export type LambdaEnvironment = {
   Variables?: Record<string, string>;
-  Runtime?: LambdaRuntime;
 };
 
 type LambdaEnvironmentParams = { Environment?: LambdaEnvironment };
@@ -133,7 +124,6 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
     presence: "optional",
     value: v.object({
       Variables: v.optional(v.record(v.string(), v.string())),
-      Runtime: v.optional(runtimeValue),
     }),
     collect: mergeContributions,
   },
@@ -344,7 +334,6 @@ export const LambdaFunction = lambdaFunctionSchema
 
         return {
           ...Configuration,
-          Environment: decodeEnvironment(Configuration.Environment),
           Layers: Configuration.Layers?.map((layer) => layer.Arn),
           VpcConfig: Configuration.VpcConfig ? vpcConfig : undefined,
           SnapStart: Configuration.SnapStart ? snapStart : undefined,
@@ -441,48 +430,15 @@ function encodeEnvironment(
   environment: LambdaEnvironment | undefined,
 ): sdk.Environment | undefined {
   if (!environment) return undefined;
-  const { Runtime, Variables } = environment;
-  if (Variables && runtimeVariable in Variables) {
-    throw new Error(
-      `The environment variable ${runtimeVariable} is reserved for Notation. Give the variable another name.`,
-    );
-  }
-  if (Runtime === undefined) {
-    return Variables === undefined ? {} : { Variables };
-  }
-  const runtime = encodeRuntime(Runtime);
-  const variables = { ...Variables, [runtimeVariable]: runtime };
-  const size = Buffer.byteLength(JSON.stringify(variables));
+  const { Variables } = environment;
+  if (Variables === undefined) return {};
+  const size = Buffer.byteLength(JSON.stringify(Variables));
   if (size > LAMBDA_ENVIRONMENT_MAX_BYTES) {
     throw new Error(
-      `Lambda function ${functionName}: the environment is ${size} bytes, over Lambda's limit of ${LAMBDA_ENVIRONMENT_MAX_BYTES} bytes. ${runtimeVariable}, which holds the routes and queues that the function handles, is ${Buffer.byteLength(runtime)} bytes of it. Split the runtime module into smaller modules, so that each function handles fewer routes and queues.`,
+      `Lambda function ${functionName}: the environment variables are ${size} bytes, over Lambda's limit of ${LAMBDA_ENVIRONMENT_MAX_BYTES} bytes. Bind fewer or shorter values in the declaration's env.`,
     );
   }
-  return { Variables: variables };
-}
-
-// A runtime variable that doesn't decode stays in `Variables`, so drift shows
-// it and the next update replaces it.
-function decodeEnvironment(
-  environment: sdk.EnvironmentResponse | undefined,
-): LambdaEnvironment | undefined {
-  const encoded = environment?.Variables?.[runtimeVariable];
-  if (!environment || encoded === undefined) return environment;
-  let runtime: LambdaRuntime;
-  try {
-    runtime = decodeRuntime(encoded);
-  } catch {
-    return environment;
-  }
-  const { [runtimeVariable]: _, ...variables } = environment.Variables!;
-  const { Variables: __, ...rest } = environment;
-  return {
-    ...rest,
-    // The drift diff counts an undefined key as a change, so an empty
-    // `Variables` is left out rather than set to undefined.
-    ...(Object.keys(variables).length > 0 && { Variables: variables }),
-    Runtime: runtime,
-  };
+  return { Variables };
 }
 
 export type LambdaFunctionConfig = NonNullable<

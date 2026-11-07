@@ -1,19 +1,26 @@
 import path from "node:path";
-import esbuild from "esbuild";
 import {
-  createRuntimeEntry,
+  rolldown,
+  watch as rolldownWatch,
+  type InputOptions,
+  type OutputOptions,
+} from "rolldown";
+import {
   infraPlugin,
-  type RuntimeModuleEntry,
-} from "@notation/esbuild-plugins";
+  ModuleAnalyses,
+  runtimeEntry,
+  runtimePlugin,
+  type DeclarationModule,
+} from "@notation/build";
 import {
-  defaultRuntimeModules,
   filePaths,
-  fromProjectRoot,
+  projectRoot,
+  toProjectRoot,
   type Build,
 } from "@notation/core";
 import { defaultLogger, type Logger } from "./logger";
 
-export type { RuntimeModuleEntry };
+export type { DeclarationModule };
 
 export type CompileOptions = {
   watch?: boolean;
@@ -21,40 +28,46 @@ export type CompileOptions = {
 };
 
 /**
- * Compiles the infra entry, then bundles the runtime modules that the infra
- * build replaced. In watch mode, each infra rebuild that changes that set of
- * modules restarts the runtime bundles.
+ * Compiles the infra entry, then bundles each declaration module that the
+ * infra build found. In watch mode, each infra rebuild that changes that set
+ * of modules restarts the runtime bundles. Returns a function that stops
+ * watching.
  */
 export async function compile(
-  { entryPoint, runtimeModules }: Build,
+  { entryPoint }: Pick<Build, "entryPoint">,
   opts: CompileOptions = {},
-) {
+): Promise<() => Promise<void>> {
   const watch = opts.watch ?? false;
   const logger = opts.logger ?? defaultLogger;
+  const analyses = new ModuleAnalyses();
 
   logger.info(`${watch ? "Watching" : "Compiling"} infrastructure`, entryPoint);
 
   if (!watch) {
-    const modules = await compileInfra(entryPoint, { runtimeModules });
+    const { modules } = await compileInfra(entryPoint, { analyses });
     logger.info("Compiling runtime modules");
-    await compileRuntimeModules(modules);
-    return;
+    await compileRuntimeModules(modules, { analyses });
+    return async () => {};
   }
 
-  let modules: RuntimeModuleEntry[] | undefined;
+  let modules: DeclarationModule[] | undefined;
   let disposeRuntime = async () => {};
   let updating = Promise.resolve();
 
-  // Updates run one at a time, so two rebuilds never dispose the same
-  // contexts.
-  const update = (found: RuntimeModuleEntry[]) => {
+  // Updates run one at a time, so two rebuilds never close the same
+  // watcher.
+  const update = (found: DeclarationModule[]) => {
     updating = updating.then(async () => {
       try {
         if (modules && sameModules(found, modules)) return;
         if (!modules) logger.info("Watching runtime modules");
         await disposeRuntime();
         disposeRuntime = async () => {};
-        disposeRuntime = await compileRuntimeModules(found, true);
+        disposeRuntime = await compileRuntimeModules(found, {
+          analyses,
+          watch: true,
+          onError: (error) => logger.error(error),
+        });
         // Set only after a successful start, so that a failed start is
         // retried on the next rebuild with the same modules.
         modules = found;
@@ -65,11 +78,12 @@ export async function compile(
   };
 
   // Deploys need a successful build, so watch waits until the first one.
-  await compileInfra(entryPoint, {
+  const infra = await compileInfra(entryPoint, {
     watch,
-    runtimeModules,
-    onRuntimeModules: update,
-    onBuildFailed: () => {
+    analyses,
+    onDeclarationModules: update,
+    onBuildFailed: (error) => {
+      logger.error(error);
       if (modules) return;
       logger.info(
         "The infrastructure build failed. Fix the errors above; watch starts deploying after the first build that succeeds.",
@@ -77,146 +91,169 @@ export async function compile(
     },
   });
   await updating;
+  return async () => {
+    await infra.close();
+    await updating;
+    await disposeRuntime();
+  };
 }
 
 export type CompileInfraOptions = {
   watch?: boolean;
-  runtimeModules?: string[];
+  analyses?: ModuleAnalyses;
   /**
-   * Called after each build without errors, with the runtime modules that the
-   * build replaced. In watch mode this includes every rebuild.
+   * Called after each build without errors, with the declaration modules in
+   * the build. In watch mode this includes every rebuild.
    */
-  onRuntimeModules?: (modules: RuntimeModuleEntry[]) => void;
-  onBuildFailed?: () => void;
+  onDeclarationModules?: (modules: DeclarationModule[]) => void;
+  /** Called in watch mode for each build that fails. */
+  onBuildFailed?: (error: unknown) => void;
+};
+
+/** The output name of a file under `dist`, without the extension. */
+const outputName = (file: string) =>
+  toProjectRoot(file).replace(/\.[cm]?[jt]sx?$/, "");
+
+const outputOptions: OutputOptions = {
+  dir: filePaths.dist.dir(),
+  format: "esm",
+  entryFileNames: "[name].mjs",
+  chunkFileNames: "chunks/[name]-[hash].mjs",
 };
 
 /**
- * Bundles the infra entry to `dist/`. Returns the runtime modules that the
- * build replaced, sorted by path. In watch mode, resolves after the first
- * build without errors.
+ * Bundles the infra entry to `dist/`. Each declaration module that the entry
+ * reaches is replaced by its stripped copy. Returns the declaration modules,
+ * sorted by path, and a function that stops watching. In watch mode,
+ * resolves after the first build without errors.
  */
 export async function compileInfra(
   entryPoint: string,
   opts: CompileInfraOptions = {},
-): Promise<RuntimeModuleEntry[]> {
-  const runtimeModules = opts.runtimeModules ?? defaultRuntimeModules;
-  let resolveFirst!: (modules: RuntimeModuleEntry[]) => void;
-  const first = new Promise<RuntimeModuleEntry[]>((resolve) => {
-    resolveFirst = resolve;
-  });
-  const onRuntimeModules = (modules: RuntimeModuleEntry[]) => {
-    opts.onRuntimeModules?.(modules);
-    resolveFirst(modules);
+): Promise<{ modules: DeclarationModule[]; close: () => Promise<void> }> {
+  const analyses = opts.analyses ?? new ModuleAnalyses();
+  let found: DeclarationModule[] = [];
+  const input: InputOptions = {
+    input: { [outputName(entryPoint)]: entryPoint },
+    cwd: projectRoot(),
+    platform: "node",
+    tsconfig: true,
+    plugins: [
+      infraPlugin({
+        analyses,
+        onDeclarationModules: (modules) => {
+          found = modules;
+        },
+      }),
+    ],
+  };
+  // With source maps, a resource's declaredAt names the user's source file
+  // and line, not the bundle's.
+  const output: OutputOptions = {
+    ...outputOptions,
+    dir: filePaths.dist.dir(),
+    sourcemap: true,
   };
 
-  const context = await esbuild.context({
-    entryPoints: [entryPoint],
-    plugins: [
-      infraPlugin({ runtimeModules, onRuntimeModules }),
-      {
-        name: "notation-build-failed",
-        setup(build) {
-          build.onEnd((result) => {
-            if (result.errors.length > 0) opts.onBuildFailed?.();
-          });
-        },
-      },
-    ],
-    outdir: filePaths.dist.dir(),
-    outbase: fromProjectRoot("."),
-    outExtension: { ".js": ".mjs" },
-    bundle: true,
-    format: "esm",
-    platform: "node",
-    treeShaking: true,
-    packages: "external",
-    // With source maps enabled, a resource's declaredAt names the user's
-    // source file and line, not the bundle's.
-    sourcemap: true,
-  });
-
-  if (opts.watch) {
-    await context.watch();
-  } else {
+  if (!opts.watch) {
+    const bundle = await rolldown(input);
     try {
-      await context.rebuild();
+      await bundle.write(output);
     } finally {
-      await context.dispose();
+      await bundle.close();
     }
+    opts.onDeclarationModules?.(found);
+    return { modules: found, close: async () => {} };
   }
-  return first;
+
+  const watcher = rolldownWatch({ ...input, output });
+  const close = () => watcher.close();
+  return new Promise((resolve) => {
+    watcher.on("event", async (event) => {
+      if (event.code === "BUNDLE_END") {
+        await event.result.close();
+        opts.onDeclarationModules?.(found);
+        resolve({ modules: found, close });
+      }
+      if (event.code === "ERROR") {
+        await event.result.close();
+        opts.onBuildFailed?.(event.error);
+      }
+    });
+  });
 }
+
+export type CompileRuntimeOptions = {
+  analyses?: ModuleAnalyses;
+  watch?: boolean;
+  /** Called in watch mode for each runtime build that fails. */
+  onError?: (error: unknown) => void;
+};
 
 /**
- * Bundles each runtime module to `dist/<module path>/index.mjs`. The bundle's
- * entry is generated: its `handler` export dispatches each event to an export
- * of the module. Returns a function that stops watching.
+ * Bundles each declaration module to `dist/<module path>/index.mjs`, as one
+ * file. The bundle's entry is generated: it re-exports the module's entry,
+ * such as `handler`. Returns a function that stops watching.
  */
 export async function compileRuntimeModules(
-  modules: RuntimeModuleEntry[],
-  watch: boolean = false,
-) {
+  modules: DeclarationModule[],
+  opts: CompileRuntimeOptions = {},
+): Promise<() => Promise<void>> {
   if (modules.length === 0) return async () => {};
+  const analyses = opts.analyses ?? new ModuleAnalyses();
   const distDir = filePaths.dist.dir();
-  const entryPoints = Object.fromEntries(
-    modules.map((module) => [
-      path
-        .relative(distDir, filePaths.dist.runtime.index(module.path))
-        .replace(/\.mjs$/, ""),
-      `${runtimeEntryNamespace}:${module.path}`,
-    ]),
-  );
+  const configs = modules.map((module) => ({
+    input: {
+      input: {
+        [path
+          .relative(distDir, filePaths.dist.runtime.index(module.path))
+          .replace(/\.mjs$/, "")]: runtimeEntry,
+      },
+      cwd: projectRoot(),
+      platform: "node",
+      tsconfig: true,
+      resolve: {
+        conditionNames: ["notation-runtime", "node", "import", "default"],
+      },
+      plugins: [runtimePlugin({ analyses, module })],
+    } satisfies InputOptions,
+    output: {
+      ...outputOptions,
+      dir: distDir,
+      codeSplitting: false,
+    } satisfies OutputOptions,
+  }));
 
-  const context = await esbuild.context({
-    entryPoints,
-    plugins: [runtimeEntryPlugin(modules)],
-    outdir: distDir,
-    outExtension: { ".js": ".mjs" },
-    bundle: true,
-    format: "esm",
-    platform: "node",
-    treeShaking: true,
-  });
-
-  if (watch) {
-    await context.watch();
-  } else {
-    try {
-      await context.rebuild();
-    } finally {
-      await context.dispose();
-    }
+  if (!opts.watch) {
+    await Promise.all(
+      configs.map(async ({ input, output }) => {
+        const bundle = await rolldown(input);
+        try {
+          await bundle.write(output);
+        } finally {
+          await bundle.close();
+        }
+      }),
+    );
+    return async () => {};
   }
-  return () => context.dispose();
-}
 
-const runtimeEntryNamespace = "notation-runtime-entry";
-
-// Serves the generated entry of each runtime module's bundle.
-function runtimeEntryPlugin(modules: RuntimeModuleEntry[]): esbuild.Plugin {
-  const services = new Map(
-    modules.map((module) => [module.path, module.service]),
+  const watcher = rolldownWatch(
+    configs.map(({ input, output }) => ({ ...input, output })),
   );
-  const prefix = `${runtimeEntryNamespace}:`;
-  return {
-    name: runtimeEntryNamespace,
-    setup(build) {
-      build.onResolve({ filter: new RegExp(`^${prefix}`) }, (args) => ({
-        path: args.path.slice(prefix.length),
-        namespace: runtimeEntryNamespace,
-      }));
-      build.onLoad(
-        { filter: /.*/, namespace: runtimeEntryNamespace },
-        (args) => ({
-          contents: createRuntimeEntry(args.path, services.get(args.path)!),
-          resolveDir: path.dirname(args.path),
-          loader: "ts",
-        }),
-      );
-    },
-  };
+  await new Promise<void>((resolve) => {
+    watcher.on("event", async (event) => {
+      if (event.code === "BUNDLE_END") await event.result.close();
+      if (event.code === "ERROR") {
+        await event.result.close();
+        opts.onError?.(event.error);
+      }
+      if (event.code === "END") resolve();
+    });
+  });
+  return () => watcher.close();
 }
 
-function sameModules(a: RuntimeModuleEntry[], b: RuntimeModuleEntry[]) {
+function sameModules(a: DeclarationModule[], b: DeclarationModule[]) {
   return JSON.stringify(a) === JSON.stringify(b);
 }

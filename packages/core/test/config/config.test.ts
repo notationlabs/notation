@@ -115,8 +115,8 @@ describe("parseConfig", () => {
 describe("resolveRuntimeModules", () => {
   const valid = { app: "orders-app", entry: "infra/api.ts" };
 
-  it("defaults to **/*.fn.ts", () => {
-    expect(resolveRuntimeModules(valid)).toEqual(["**/*.fn.ts"]);
+  it("defaults to runtime/**/*.ts", () => {
+    expect(resolveRuntimeModules(valid)).toEqual(["runtime/**/*.ts"]);
   });
 
   it("returns a single glob as an array", () => {

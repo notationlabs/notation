@@ -8,10 +8,10 @@ import { compileInfra } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
 
 export async function visualise(
-  { entryPoint, runtimeModules }: Build,
+  { entryPoint }: Pick<Build, "entryPoint">,
   logger: Logger = defaultLogger,
 ) {
-  await compileInfra(entryPoint, { runtimeModules });
+  await compileInfra(entryPoint);
   await generateGraph(entryPoint, logger);
 }
 

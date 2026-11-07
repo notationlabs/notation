@@ -1,5 +1,10 @@
 import * as aws from "@notation/aws.iac";
-import { resolveLambdaTarget, type LambdaTarget } from "src/lambda";
+import {
+  resolveLambda,
+  whenLoaded,
+  type LambdaTarget,
+} from "src/lambda/lambda-declaration";
+import type { LambdaGroup } from "src/lambda/lambda";
 import type { ApiGroup } from "./api";
 import { AuthorizerConfig } from "./auth";
 import { authorizerKey, mapAuthConfig, mapAuthType } from "./utils";
@@ -9,20 +14,18 @@ type RouteGroupConfig = {
   method: string;
   path: `/${string}`;
   auth: AuthorizerConfig;
-  handler: LambdaTarget<unknown>;
+  lambdaGroup: LambdaGroup;
 };
 
 export class RouteGroup extends aws.AwsResourceGroup {
   readonly route: aws.apiGateway.RouteInstance;
 
-  constructor({ apiGroup, method, path, auth, handler }: RouteGroupConfig) {
+  constructor({ apiGroup, method, path, auth, lambdaGroup }: RouteGroupConfig) {
     const apiResource = apiGroup.api;
     const routeId = `${apiResource.id}-${method}-${path}`;
     const routeKey = `${method} ${path}`;
-    const target = resolveLambdaTarget(handler, "route()");
     super("API Gateway/Route", routeId);
 
-    const lambdaGroup = target.group;
     const lambdaResource = lambdaGroup.fn;
 
     // a lambda needs one integration and permission per api, however many
@@ -48,13 +51,6 @@ export class RouteGroup extends aws.AwsResourceGroup {
         },
       },
     );
-
-    if (target.export !== undefined) {
-      lambdaGroup.addDispatchEntry(routeId, {
-        export: target.export,
-        match: { apiId: apiResource.outputValue("ApiId"), routeKey },
-      });
-    }
 
     let authorizer: aws.apiGateway.AuthInstance | undefined;
 
@@ -90,15 +86,25 @@ export class RouteGroup extends aws.AwsResourceGroup {
 }
 
 /**
- * Routes requests for `method` and `path` on the API to an export of a
- * runtime module, or to a Lambda group from `lambda()`.
+ * Routes requests for `method` and `path` on the API to a Lambda: a
+ * declaration from `$lambda`, passed as `() => lambda`, or a Lambda
+ * group from `lambda()`. A route with a JWT authorizer takes a declaration
+ * with `http({ auth: jwt() })`, and a route without one takes `http()`. The
+ * route is made when infra has finished loading.
+ * @resource
  */
-export const route = (
+export function route(
   apiGroup: ApiGroup,
   method: string, // todo: http methods only
   path: `/${string}`,
   auth: AuthorizerConfig,
-  handler: LambdaTarget<unknown>,
-) => {
-  return new RouteGroup({ apiGroup, method, path, auth, handler });
-};
+  target: LambdaTarget<"http" | "http-jwt" | "none">,
+): void {
+  whenLoaded(() => {
+    const lambdaGroup = resolveLambda(target, "route()", [
+      auth.type === "jwt" ? "http-jwt" : "http",
+      "none",
+    ]);
+    new RouteGroup({ apiGroup, method, path, auth, lambdaGroup });
+  });
+}

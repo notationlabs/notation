@@ -46,7 +46,7 @@ Retryable provider conditions and consistency reads suspend on durable SQLite ti
 
 ## What happens
 
-1. **Compile** – esbuild compiles infrastructure and runtime modules to `dist/`.
+1. **Compile** – Rolldown compiles infrastructure and runtime modules to `dist/`. See [notation compile](./compile.md).
 
 2. **Build resource graph** – the CLI imports the compiled output in-process and collects declared resources.
 

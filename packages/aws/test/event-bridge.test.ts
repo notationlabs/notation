@@ -1,8 +1,9 @@
 import { test, expect } from "vitest";
 import { eventBridge } from "@notation/aws.iac";
-import { rate, schedule } from "src/event-bridge";
-import { lambda, LambdaGroup } from "src/lambda";
-import { runtimeRef } from "./runtime-ref";
+import { collectResourceGraph, type ResourceGraph } from "@notation/resource";
+import { rate, schedule, ScheduleGroup } from "src/event-bridge";
+import { $lambda, lambda, LambdaGroup, scheduled, sqs } from "src/lambda";
+import { inModule, lambdaGroup } from "./declare";
 
 const declareLambda = () =>
   lambda({
@@ -10,26 +11,38 @@ const declareLambda = () =>
     code: { type: "file", path: "src/fns/handler.fn.js" },
   });
 
-test("each schedule on a lambda gets its own invoke permission", () => {
-  const fn = declareLambda();
-  const handler = runtimeRef(fn, "handler");
-  const daily = schedule({ name: "daily", schedule: rate(1, "day"), handler });
-  const hourly = schedule({
-    name: "hourly",
-    schedule: rate(1, "hour"),
-    handler,
+const scheduleGroup = (graph: ResourceGraph, name: string) =>
+  graph.resourceGroups.find(
+    (g): g is ScheduleGroup => g instanceof ScheduleGroup && g.id === name,
+  )!;
+
+test("each schedule on a lambda gets its own invoke permission", async () => {
+  let fn!: LambdaGroup;
+  const graph = await collectResourceGraph(() => {
+    fn = declareLambda();
+    schedule({ name: "daily", schedule: rate(1, "day"), target: fn });
+    schedule({ name: "hourly", schedule: rate(1, "hour"), target: fn });
   });
 
   const rules = fn.resources
     .filter((r) => r instanceof eventBridge.LambdaEventBridgeRulePermission)
     .map((r) => r.dependencies.eventBridgeRule);
 
-  expect(rules).toEqual([daily.rule, hourly.rule]);
+  expect(rules).toEqual([
+    scheduleGroup(graph, "daily").rule,
+    scheduleGroup(graph, "hourly").rule,
+  ]);
 });
 
-test("a schedule group is identified by its name", () => {
-  const handler = runtimeRef(declareLambda(), "handler");
-  const daily = schedule({ name: "daily", schedule: rate(1, "day"), handler });
+test("a schedule group is identified by its name", async () => {
+  const graph = await collectResourceGraph(() => {
+    schedule({
+      name: "daily",
+      schedule: rate(1, "day"),
+      target: declareLambda(),
+    });
+  });
+  const daily = scheduleGroup(graph, "daily");
 
   expect(daily.id).toBe("daily");
   expect(daily.rule.group).toEqual({
@@ -38,59 +51,62 @@ test("a schedule group is identified by its name", () => {
   });
 });
 
-test("the rule's target names the export and passes on the original event", async () => {
-  const fn = declareLambda();
-  const daily = schedule({
-    name: "daily",
-    schedule: rate(1, "day"),
-    handler: runtimeRef(fn, "sendDigest"),
+test("the rule sends the bare event to the function", async () => {
+  let fn!: LambdaGroup;
+  const graph = await collectResourceGraph(() => {
+    fn = declareLambda();
+    schedule({ name: "daily", schedule: rate(1, "day"), target: fn });
   });
   fn.fn.setOutput({
     FunctionName: "handler",
     FunctionArn: "arn:aws:lambda:eu-west-2:123456789012:function:handler",
   } as any);
 
-  expect((await daily.rule.getParams()).Targets).toEqual([
+  expect(
+    (await scheduleGroup(graph, "daily").rule.getParams()).Targets,
+  ).toEqual([
     {
       Id: "handler",
       Arn: "arn:aws:lambda:eu-west-2:123456789012:function:handler",
-      InputTransformer: {
-        InputTemplate:
-          '{"export":"sendDigest","event":<aws.events.event.json>}',
-      },
     },
   ]);
   expect(fn.fn.config.Environment).toBeUndefined();
 });
 
-test("the rule sends the bare event to a lambda group from lambda()", async () => {
-  const fn = declareLambda();
-  const daily = schedule({
-    name: "daily",
-    schedule: rate(1, "day"),
-    handler: fn,
+test("a schedule invokes a $lambda declaration", async () => {
+  const graph = await collectResourceGraph(() => {
+    const fn = inModule($lambda({ id: "digest", event: () => scheduled() }));
+    schedule({ name: "daily", schedule: rate(1, "day"), target: () => fn });
   });
-  fn.fn.setOutput({
-    FunctionName: "handler",
-    FunctionArn: "arn:aws:lambda:eu-west-2:123456789012:function:handler",
-  } as any);
+  const fn = lambdaGroup(graph, "digest");
 
-  expect((await daily.rule.getParams()).Targets).toEqual([
-    {
-      Id: "handler",
-      Arn: "arn:aws:lambda:eu-west-2:123456789012:function:handler",
-    },
-  ]);
+  expect(scheduleGroup(graph, "daily").rule.dependencies.lambda).toBe(fn.fn);
 });
 
-test("schedule rejects a value that is not a reference to a runtime export", () => {
+test("a schedule of a declaration with an sqs event throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const fn = inModule($lambda({ id: "process", event: () => sqs() }));
+      schedule({
+        name: "daily",
+        schedule: rate(1, "day"),
+        // @ts-expect-error a schedule can't invoke a function of SQS messages
+        target: () => fn,
+      });
+    }),
+  ).rejects.toThrow(
+    'schedule() sends scheduled events, but the Lambda "process" is declared with event: () => sqs().',
+  );
+});
+
+test("schedule rejects a value that is not a declaration or a lambda group", () => {
   expect(() =>
     schedule({
       name: "daily",
       schedule: rate(1, "day"),
-      handler: (async () => {}) as any,
+      target: {} as any,
     }),
-  ).toThrow("schedule() expects an export of a runtime module");
+  ).toThrow("schedule() expects a function that returns a Lambda declaration");
 });
 
 test("schedule takes a lambda group from another copy of the package", () => {
@@ -105,6 +121,6 @@ test("schedule takes a lambda group from another copy of the package", () => {
   expect(fn).not.toBeInstanceOf(LambdaGroup);
 
   expect(() =>
-    schedule({ name: "daily", schedule: rate(1, "day"), handler: fn }),
+    schedule({ name: "daily", schedule: rate(1, "day"), target: fn }),
   ).not.toThrow();
 });

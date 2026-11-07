@@ -1,10 +1,9 @@
 import { test, expect } from "vitest";
 import { collectResourceGraph } from "@notation/resource";
 import { api } from "src/api-gateway";
-import { rate, schedule } from "src/event-bridge";
+import { rate, schedule, ScheduleGroup } from "src/event-bridge";
 import { lambda } from "src/lambda";
 import { queue } from "src/sqs";
-import { runtimeRef } from "./runtime-ref";
 
 const code = { type: "file", path: "src/fns/handler.fn.js" } as const;
 const scope = { app: "orders-app", stage: "prod" };
@@ -20,19 +19,27 @@ const collect = <T>(declare: () => T, collectScope = scope) => {
 };
 
 test("AWS names start with the app and stage", async () => {
-  const declared = await collect(() => {
-    const fn = lambda({ id: "get-orders", code });
-    return {
-      fn,
-      api: api({ name: "orders-api" }),
-      queue: queue({ name: "orders" }),
-      schedule: schedule({
-        name: "nightly",
-        schedule: rate(1, "day"),
-        handler: runtimeRef(fn, "getOrders"),
-      }),
-    };
-  });
+  let fn!: ReturnType<typeof lambda>;
+  let ordersApi!: ReturnType<typeof api>;
+  let ordersQueue!: ReturnType<typeof queue>;
+  const graph = await collectResourceGraph(
+    () => {
+      fn = lambda({ id: "get-orders", code });
+      ordersApi = api({ name: "orders-api" });
+      ordersQueue = queue({ name: "orders" });
+      schedule({ name: "nightly", schedule: rate(1, "day"), target: fn });
+    },
+    { scope },
+  );
+  const nightly = graph.resourceGroups.find(
+    (g): g is ScheduleGroup => g instanceof ScheduleGroup,
+  )!;
+  const declared = {
+    fn,
+    api: ordersApi,
+    queue: ordersQueue,
+    schedule: nightly,
+  };
 
   expect(declared.fn.fn.config.FunctionName).toBe(
     "orders-app--prod--get-orders",

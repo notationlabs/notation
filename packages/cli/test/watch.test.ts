@@ -14,7 +14,9 @@ const { deployInChild } = vi.hoisted(() => ({
   deployInChild: vi.fn(),
 }));
 
-vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
+vi.mock("../src/compile", () => ({
+  compile: vi.fn(async () => async () => {}),
+}));
 vi.mock("../src/deploy-child", () => ({ deployInChild }));
 
 import { watch } from "../src/watch";
@@ -23,7 +25,7 @@ const deployment: Deployment = {
   app: "orders-app",
   stage: "dev",
   entryPoint: "infra/api.ts",
-  runtimeModules: ["**/*.fn.ts"],
+  runtimeModules: ["**/*.ts"],
 };
 
 const logger = () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() });
