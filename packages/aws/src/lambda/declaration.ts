@@ -87,8 +87,11 @@ export interface Lambda<
   Env extends EnvVars = EnvVars,
 > {
   readonly id: string;
-  /** Exists only as a type. It carries the event and the bound variables. */
-  readonly "~lambda": { kind: KindOf<E>; event: E; env: Env };
+  /**
+   * Carries the event and the bound variables for the type helpers. It is
+   * never set, so it is optional.
+   */
+  readonly "~lambda"?: { kind: KindOf<E>; event: E; env: Env };
   /**
    * The variables that the declaration binds, read from the function's
    * environment. Throws when one of them is not set.
@@ -125,12 +128,12 @@ type HandlerFor = {
  * declaration: `export const handler: LambdaHandler<typeof lambda> = ...`.
  */
 export type LambdaHandler<
-  L extends { readonly "~lambda": { kind: LambdaEventKind } },
-> = HandlerFor[L["~lambda"]["kind"]];
+  L extends { readonly "~lambda"?: { kind: LambdaEventKind } },
+> = HandlerFor[NonNullable<L["~lambda"]>["kind"]];
 
 /** The variables that a Lambda's declaration binds. */
-export type LambdaEnv<L extends { readonly "~lambda": { env: EnvVars } }> =
-  Readonly<L["~lambda"]["env"]>;
+export type LambdaEnv<L extends { readonly "~lambda"?: { env: EnvVars } }> =
+  Readonly<NonNullable<L["~lambda"]>["env"]>;
 
 /** Thrown by `decode()` when an item is not valid. */
 export class DecodeError extends Error {

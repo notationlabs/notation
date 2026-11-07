@@ -114,9 +114,13 @@ function buildGroup(
   return group;
 }
 
-/** A Lambda that infra can wire: a declaration, or a group from `lambda()`. */
+/**
+ * A Lambda that infra can wire: a declaration, or a group from `lambda()`.
+ * The return type has only optional properties, so TypeScript rejects a
+ * function that returns an object with none of them, such as a queue.
+ */
 export type LambdaTarget<K extends LambdaEventKind = LambdaEventKind> =
-  (() => { readonly "~lambda": { kind: K } }) | LambdaGroup;
+  (() => { readonly "~lambda"?: { kind: K } }) | LambdaGroup;
 
 /**
  * Finds the Lambda group of a target. A declaration is passed as a function,

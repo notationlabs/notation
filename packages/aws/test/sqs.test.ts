@@ -193,6 +193,18 @@ test("consume of a function that returns no declaration throws", async () => {
   );
 });
 
+test("consume of a function that returns another resource throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const other = queue({ name: "other" });
+      // @ts-expect-error a queue is not a Lambda declaration
+      queue({ name: "orders" }).consume(() => other);
+    }),
+  ).rejects.toThrow(
+    "queue.consume() expects a function that returns a Lambda declaration from createLambda(), but it returned another value.",
+  );
+});
+
 test("consume after evaluation has ended throws", async () => {
   let fn!: LambdaGroup;
   let orders!: ReturnType<typeof queue>;
