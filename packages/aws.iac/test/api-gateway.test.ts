@@ -22,7 +22,7 @@ afterEach(() => {
 
 function mockSend(handler: (command: unknown) => unknown) {
   return vi
-    .spyOn(apiGatewayClient, "send")
+    .spyOn(apiGatewayClient(), "send")
     .mockImplementation(async (command) => handler(command) as any);
 }
 

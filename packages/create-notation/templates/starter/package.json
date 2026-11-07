@@ -8,5 +8,8 @@
     "destroy": "notation destroy",
     "viz": "notation viz",
     "watch": "notation watch"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4"
   }
 }

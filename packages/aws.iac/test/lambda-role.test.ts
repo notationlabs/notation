@@ -36,7 +36,7 @@ function getRoleResponse(
 }
 
 function mockGetRole(response: sdk.GetRoleResponse) {
-  vi.spyOn(iamClient, "send").mockImplementation(async (command: unknown) => {
+  vi.spyOn(iamClient(), "send").mockImplementation(async (command: unknown) => {
     if (command instanceof sdk.GetRoleCommand) return response;
     throw new Error(
       `unexpected command ${(command as object).constructor.name}`,

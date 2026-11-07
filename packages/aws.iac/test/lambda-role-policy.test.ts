@@ -60,7 +60,7 @@ describe("LambdaRolePolicy document", () => {
     const policy = createPolicy();
     policy.contribute({ PolicyDocument: { Statement: [orders] } });
     const send = vi
-      .spyOn(iamClient, "send")
+      .spyOn(iamClient(), "send")
       .mockImplementation(async () => ({}));
 
     await policy.create(await policy.getParams());
@@ -78,7 +78,7 @@ describe("LambdaRolePolicy document", () => {
     policy.contribute({ PolicyDocument: { Statement: [orders] } });
     const params = await policy.getParams();
     const send = vi
-      .spyOn(iamClient, "send")
+      .spyOn(iamClient(), "send")
       .mockImplementation(async () => ({}));
 
     await policy.update!(
@@ -97,7 +97,7 @@ describe("LambdaRolePolicy document", () => {
   it("does not send a document with no statements", async () => {
     const policy = createPolicy();
     policy.contribute({ PolicyDocument: { Statement: [] } });
-    const send = vi.spyOn(iamClient, "send");
+    const send = vi.spyOn(iamClient(), "send");
 
     await expect(policy.create(await policy.getParams())).rejects.toThrow(
       "Role policy app-role-policy has no statements",
@@ -108,7 +108,7 @@ describe("LambdaRolePolicy document", () => {
 
 describe("LambdaRolePolicy drift detection", () => {
   async function planUnchanged(document: unknown) {
-    vi.spyOn(iamClient, "send").mockImplementation(async (command) => {
+    vi.spyOn(iamClient(), "send").mockImplementation(async (command) => {
       if (command instanceof sdk.GetRolePolicyCommand) {
         return {
           RoleName: "app-role",

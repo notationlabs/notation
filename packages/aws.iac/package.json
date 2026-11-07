@@ -2,6 +2,7 @@
   "type": "module",
   "name": "@notation/aws.iac",
   "version": "0.16.0",
+  "sideEffects": false,
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",

@@ -97,11 +97,11 @@ export const LambdaEventBridgeRulePermission =
   LambdaEventBridgeRulePermissionSchema.defineOperations({
     create: async (params) => {
       const command = new sdk.AddPermissionCommand(params);
-      await lambdaClient.send(command);
+      await lambdaClient().send(command);
     },
     delete: async (key) => {
       const command = new sdk.RemovePermissionCommand(key);
-      await lambdaClient.send(command);
+      await lambdaClient().send(command);
     },
   })
     .requireDependencies<LambdaEventBridgeRulePermissionDependencies>()

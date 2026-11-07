@@ -36,7 +36,7 @@ it("reads VPC and SnapStart config in the shape they are configured in", async (
       SnapStart: { ApplyOn: "PublishedVersions", OptimizationStatus: "On" },
     },
   };
-  vi.spyOn(lambdaClient, "send").mockImplementation(async (command) => {
+  vi.spyOn(lambdaClient(), "send").mockImplementation(async (command) => {
     if (command instanceof sdk.GetFunctionCommand) return response;
     throw new Error("unexpected command");
   });
@@ -144,7 +144,7 @@ describe("Lambda code", () => {
       },
       Concurrency: { ReservedConcurrentExecutions: 1 },
     };
-    vi.spyOn(lambdaClient, "send").mockImplementation(async (command) => {
+    vi.spyOn(lambdaClient(), "send").mockImplementation(async (command) => {
       if (command instanceof sdk.GetFunctionCommand) return response;
       throw new Error("unexpected command");
     });
@@ -189,7 +189,7 @@ describe("Lambda code", () => {
   it("uploads the archive without passing CodeFilePath to AWS", async () => {
     const lambda = await createLambda();
     const send = vi
-      .spyOn(lambdaClient, "send")
+      .spyOn(lambdaClient(), "send")
       .mockImplementation(async () => ({}));
 
     await lambda.create(await lambda.getParams(), undefined, "token");
@@ -217,7 +217,7 @@ describe("Lambda code", () => {
     };
     lambda.contribute({ Environment: { Runtime: runtime } });
     const send = vi
-      .spyOn(lambdaClient, "send")
+      .spyOn(lambdaClient(), "send")
       .mockImplementation(async () => ({}));
 
     await lambda.create(await lambda.getParams());
@@ -233,7 +233,7 @@ describe("Lambda code", () => {
     const params = await lambda.getParams();
     await writeFile(filePath, "changed bytes");
     const changedSha256 = await sha256Base64(filePath);
-    const send = vi.spyOn(lambdaClient, "send");
+    const send = vi.spyOn(lambdaClient(), "send");
 
     await expect(lambda.create(params)).rejects.toThrow(
       `Lambda code at ${filePath} has SHA-256 ${changedSha256}, but this deploy expects ${params.CodeSha256}`,
@@ -245,7 +245,7 @@ describe("Lambda code", () => {
     const lambda = await createLambda();
     const params = await lambda.getParams();
     await writeFile(filePath, "changed bytes");
-    const send = vi.spyOn(lambdaClient, "send");
+    const send = vi.spyOn(lambdaClient(), "send");
 
     await expect(
       lambda.update!(
@@ -277,7 +277,7 @@ describe("Lambda create token", () => {
   });
 
   function mockTags(Tags: Record<string, string> | undefined) {
-    vi.spyOn(lambdaClient, "send").mockImplementation(async (command) => {
+    vi.spyOn(lambdaClient(), "send").mockImplementation(async (command) => {
       if (command instanceof sdk.GetFunctionCommand) return { Tags };
       throw new Error("unexpected command");
     });
@@ -300,7 +300,7 @@ describe("Lambda create token", () => {
   });
 
   it("reports a missing function as not found", async () => {
-    vi.spyOn(lambdaClient, "send").mockImplementation(async () => {
+    vi.spyOn(lambdaClient(), "send").mockImplementation(async () => {
       throw new sdk.ResourceNotFoundException({
         message: "missing",
         $metadata: {},
@@ -355,7 +355,7 @@ describe("Lambda environment", () => {
 
   it("clears the variables when the environment is removed", async () => {
     const send = vi
-      .spyOn(lambdaClient, "send")
+      .spyOn(lambdaClient(), "send")
       .mockImplementation(async () => ({}));
 
     await createLambda().update!(
@@ -408,7 +408,7 @@ describe("Lambda environment", () => {
 
   it("encodes the runtime map into one variable on update", async () => {
     const send = vi
-      .spyOn(lambdaClient, "send")
+      .spyOn(lambdaClient(), "send")
       .mockImplementation(async () => ({}));
 
     await createLambda().update!(
@@ -431,7 +431,7 @@ describe("Lambda environment", () => {
   });
 
   it("rejects a variable that uses the reserved name", async () => {
-    vi.spyOn(lambdaClient, "send").mockImplementation(async () => ({}));
+    vi.spyOn(lambdaClient(), "send").mockImplementation(async () => ({}));
 
     await expect(
       createLambda().update!(
@@ -449,7 +449,7 @@ describe("Lambda environment", () => {
   });
 
   it("decodes the runtime map on read", async () => {
-    vi.spyOn(lambdaClient, "send").mockImplementation(async () => ({
+    vi.spyOn(lambdaClient(), "send").mockImplementation(async () => ({
       Configuration: {
         FunctionName: "app",
         State: "Active",
@@ -475,7 +475,7 @@ describe("Lambda environment", () => {
   });
 
   it("reads an environment that holds only the runtime map without variables", async () => {
-    vi.spyOn(lambdaClient, "send").mockImplementation(async () => ({
+    vi.spyOn(lambdaClient(), "send").mockImplementation(async () => ({
       Configuration: {
         FunctionName: "app",
         State: "Active",
@@ -495,7 +495,7 @@ describe("Lambda environment", () => {
   });
 
   function mockRead(Variables: Record<string, string>) {
-    vi.spyOn(lambdaClient, "send").mockImplementation(async () => ({
+    vi.spyOn(lambdaClient(), "send").mockImplementation(async () => ({
       Configuration: {
         FunctionName: "app",
         State: "Active",
@@ -537,7 +537,7 @@ describe("Lambda environment", () => {
   });
 
   it("rejects an environment over Lambda's 4 KB limit", async () => {
-    const send = vi.spyOn(lambdaClient, "send");
+    const send = vi.spyOn(lambdaClient(), "send");
     const dispatch: Record<string, unknown> = {};
     for (let i = 0; i < 100; i++) {
       dispatch[`todo-api-GET-/todos/${i}`] = {
@@ -561,7 +561,7 @@ describe("Lambda environment", () => {
 
   it("clears the variables when an update sets an empty environment", async () => {
     const send = vi
-      .spyOn(lambdaClient, "send")
+      .spyOn(lambdaClient(), "send")
       .mockImplementation(async () => ({}));
 
     await createLambda().update!(

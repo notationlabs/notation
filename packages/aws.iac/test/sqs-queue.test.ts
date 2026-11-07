@@ -18,7 +18,7 @@ const queueDoesNotExist = () =>
 
 function mockSend(respond: (command: unknown) => unknown) {
   return vi
-    .spyOn(sqsClient, "send")
+    .spyOn(sqsClient(), "send")
     .mockImplementation(async (command) => respond(command));
 }
 

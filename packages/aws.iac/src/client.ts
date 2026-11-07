@@ -1,4 +1,4 @@
-import { ResourceGroup } from "@notation/core";
+import { ResourceGroup } from "@notation/resource";
 
 export class AwsResourceGroup<
   C extends Record<string, any> = Record<string, any>,

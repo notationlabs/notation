@@ -2,6 +2,7 @@
   "type": "module",
   "name": "@notation/aws",
   "version": "0.16.0",
+  "sideEffects": false,
   "exports": {
     "./*": {
       "import": "./dist/*/index.js",

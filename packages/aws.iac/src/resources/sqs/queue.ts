@@ -126,7 +126,7 @@ export const Queue = queueSchema.defineOperations({
         : undefined,
     });
     try {
-      const result = await sqsClient.send(command);
+      const result = await sqsClient().send(command);
       return { QueueUrl: result.QueueUrl! };
     } catch (error) {
       if (error instanceof sdk.QueueDeletedRecently) {
@@ -142,7 +142,7 @@ export const Queue = queueSchema.defineOperations({
   find: async (params, token) => {
     const QueueUrl = await getQueueUrl(params.QueueName);
     if (QueueUrl) {
-      const { Tags } = await sqsClient.send(
+      const { Tags } = await sqsClient().send(
         new sdk.ListQueueTagsCommand({ QueueUrl }),
       );
       if (Tags?.[CREATE_TOKEN_TAG] === createTokenTagValue(token)) {
@@ -156,7 +156,7 @@ export const Queue = queueSchema.defineOperations({
 
   read: async (key) => {
     try {
-      const { Attributes = {} } = await sqsClient.send(
+      const { Attributes = {} } = await sqsClient().send(
         new sdk.GetQueueAttributesCommand({
           QueueUrl: key.QueueUrl,
           AttributeNames: ["All"],
@@ -191,7 +191,7 @@ export const Queue = queueSchema.defineOperations({
         attributes[name] = patch[name] ?? ATTRIBUTE_DEFAULTS[name];
     }
     if (Object.keys(attributes).length === 0) return;
-    await sqsClient.send(
+    await sqsClient().send(
       new sdk.SetQueueAttributesCommand({
         QueueUrl: key.QueueUrl,
         Attributes: toAttributes(attributes),
@@ -201,7 +201,7 @@ export const Queue = queueSchema.defineOperations({
 
   delete: async (key) => {
     try {
-      await sqsClient.send(new sdk.DeleteQueueCommand(key));
+      await sqsClient().send(new sdk.DeleteQueueCommand(key));
     } catch (error) {
       if (!(error instanceof sdk.QueueDoesNotExist)) throw error;
     }
@@ -212,7 +212,7 @@ export type QueueInstance = InstanceType<typeof Queue>;
 
 async function getQueueUrl(QueueName: string): Promise<string | undefined> {
   try {
-    const { QueueUrl } = await sqsClient.send(
+    const { QueueUrl } = await sqsClient().send(
       new sdk.GetQueueUrlCommand({ QueueName }),
     );
     return QueueUrl;

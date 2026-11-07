@@ -131,14 +131,14 @@ export const Api = apiSchema.defineOperations({
       ? { ...params.Tags, [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
       : params.Tags;
     const command = new sdk.CreateApiCommand({ ...params, Tags: tags });
-    const result = await apiGatewayClient.send(command);
+    const result = await apiGatewayClient().send(command);
     return { ApiId: result.ApiId! };
   }),
   async find(_params, token) {
     const value = createTokenTagValue(token);
     const api = await findInPages(
       (NextToken) =>
-        apiGatewayClient.send(new sdk.GetApisCommand({ NextToken })),
+        apiGatewayClient().send(new sdk.GetApisCommand({ NextToken })),
       (item) => item.Tags?.[CREATE_TOKEN_TAG] === value,
     );
     if (api) return { ApiId: api.ApiId! };
@@ -147,7 +147,7 @@ export const Api = apiSchema.defineOperations({
   async read(key) {
     try {
       const command = new sdk.GetApiCommand(key);
-      const result = await apiGatewayClient.send(command);
+      const result = await apiGatewayClient().send(command);
       // todo: check types or correct or if RouteKey is actually in result
       // if not, need to pass the original params to read
       return {
@@ -166,12 +166,12 @@ export const Api = apiSchema.defineOperations({
   },
   async update(key, params) {
     const command = new sdk.UpdateApiCommand({ ...key, ...params });
-    await apiGatewayClient.send(command);
+    await apiGatewayClient().send(command);
   },
   async delete(pk) {
     try {
       const command = new sdk.DeleteApiCommand(pk);
-      await apiGatewayClient.send(command);
+      await apiGatewayClient().send(command);
     } catch (error) {
       if (!(error instanceof sdk.NotFoundException)) throw error;
     }

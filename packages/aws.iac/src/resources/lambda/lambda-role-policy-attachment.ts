@@ -38,11 +38,11 @@ export const LambdaRolePolicyAttachment = lambdaRolePolicyAttachmentSchema
   .defineOperations({
     create: async (params) => {
       const command = new sdk.AttachRolePolicyCommand(params);
-      await iamClient.send(command);
+      await iamClient().send(command);
     },
     delete: async (key) => {
       const command = new sdk.DetachRolePolicyCommand(key);
-      await iamClient.send(command);
+      await iamClient().send(command);
     },
   })
   .requireDependencies<LambdaRolePolicyAttachmentDependencies>()
