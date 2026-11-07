@@ -93,6 +93,16 @@ describe("stripForInfra", () => {
     );
   });
 
+  it("keeps a satisfies after the call that records the module", () => {
+    const source = handlerModule.replace(
+      /\n\}\);\n\nexport const handler/,
+      "\n}) satisfies object;\n\nexport const handler",
+    );
+    expect(infra(source).code).toMatch(
+      /"runtime\/handler\.ts", "lambda"\) satisfies object;/,
+    );
+  });
+
   it("replaces runtime-only options with a function that throws", () => {
     const source = `
       /** @declaration runtime: class */

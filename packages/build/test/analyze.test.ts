@@ -34,6 +34,14 @@ describe("analyzeModule", () => {
       "a marked wrapper",
       `import { $lambda } from "@notation/aws/lambda";\n/** @declaration shared: event */\nexport function myLambda(config) { return $lambda({ ...config }); }\nconst l = myLambda({});`,
     ],
+    [
+      "satisfies",
+      `import { $lambda } from "@notation/aws/lambda";\nconst l = $lambda({}) satisfies object;`,
+    ],
+    [
+      "as const and parentheses",
+      `import { $lambda } from "@notation/aws/lambda";\nconst l = ($lambda({}) as const);`,
+    ],
   ])("finds a declaration through %s", (_, source) => {
     const { declaration } = run(source, {
       "runtime/barrel.ts": `export * from "@notation/aws/lambda";`,

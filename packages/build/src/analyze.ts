@@ -169,13 +169,15 @@ function readDeclaration(
   if (!call || call.type !== "CallExpression") {
     return fail(reference.node, `${name} can only be called. ${shape(name)}`);
   }
-  const callIndex = ancestors.indexOf(call);
-  const declarator = ancestors[callIndex - 1];
-  const variableStatement = ancestors[callIndex - 2];
+  // Skips parentheses and TS wrappers around the call, such as `satisfies`.
+  let index = ancestors.indexOf(call) - 1;
+  while (index >= 0 && unwrap(ancestors[index]!) === call) index--;
+  const declarator = ancestors[index];
+  const variableStatement = ancestors[index - 1];
   const top = ancestors[0]!;
   const isTopLevel =
     declarator?.type === "VariableDeclarator" &&
-    declarator.init === call &&
+    unwrap(declarator.init) === call &&
     variableStatement?.type === "VariableDeclaration" &&
     variableStatement.declarations.length === 1 &&
     (top === variableStatement ||
