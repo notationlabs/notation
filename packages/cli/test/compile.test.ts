@@ -236,7 +236,32 @@ describe("declaration modules", () => {
     );
     const modules = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts, imported through runtime/process-orders.ts → infra/orders.ts.",
+      "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts, because the function uses orders at runtime/process-orders.ts:16:38.",
+    );
+  });
+
+  it("names the use of an infra module in a module that the function imports", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { Order } from "./schema";`,
+          `import { Order } from "./schema";\n  import { queueUrl } from "./queue-url";`,
+        )
+        .replace(
+          "export const handler = async () =>",
+          "export const handler = async () => queueUrl() ??",
+        ),
+    );
+    write(
+      "runtime/queue-url.ts",
+      [
+        `import { orders } from "../infra/orders";`,
+        `export const queueUrl = () => orders.url;`,
+      ].join("\n"),
+    );
+    const modules = await compileInfra(path.join(root, "infra/orders.ts"));
+    await expect(compileRuntimeModules(modules)).rejects.toThrow(
+      "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts, because the function uses orders at runtime/queue-url.ts:2:31.",
     );
   });
 
@@ -254,7 +279,7 @@ describe("declaration modules", () => {
     );
     const modules = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes a function that declares infrastructure, from node_modules/@notation/aws/sqs.js, imported through runtime/process-orders.ts → node_modules/@notation/aws/sqs.js.",
+      "The bundle of runtime/process-orders.ts includes a function that declares infrastructure, from node_modules/@notation/aws/sqs.js, because the function uses queue at runtime/process-orders.ts:17:38.",
     );
   });
 

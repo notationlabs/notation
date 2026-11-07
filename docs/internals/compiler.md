@@ -184,10 +184,12 @@ The provider packages declare `"sideEffects": false` in their `package.json`, so
 In `generateBundle`, the plugin checks that no infra module is left in the bundle. A handler that reads `orderQueue.url` directly keeps `infra/orders.ts` in the bundle, and the build fails:
 
 ```
-The bundle of runtime/orders.fn.ts includes the infra module infra/orders.ts, imported through runtime/orders.fn.ts → infra/orders.ts. The runtime build leaves infra out, so runtime code can't use it. Read infra values in the function through the declaration's env().
+The bundle of runtime/orders.fn.ts includes the infra module infra/orders.ts, because the function uses orderQueue at runtime/orders.fn.ts:15:33. The runtime build leaves infra out, so runtime code can't use it. Read infra values in the function through the declaration's env().
 ```
 
-The plugin also checks infra functions from packages. `sideEffects: false` only drops what the function doesn't use, so a handler that calls `queue()` from `@notation/aws/sqs` would bundle it, with the AWS SDK. For each package module in the bundle, the plugin looks up the mark of each export that is left after tree-shaking. An export marked `@resource` or `@declaration` fails the build, with the import chain. `createLambda` from the runtime entry of `@notation/aws/lambda` has no mark, so it passes.
+The error lists each reference to an import from the infra module, in any project module in the bundle. References in the declaration's options are left out, because the strip has removed or checked them. The list can include a reference in code that tree-shaking dropped, since the module is in the bundle either way. If the plugin finds no reference, such as for an `export { orderQueue } from "../infra/orders"`, the error names the chain of imports instead.
+
+The plugin also checks infra functions from packages. `sideEffects: false` only drops what the function doesn't use, so a handler that calls `queue()` from `@notation/aws/sqs` would bundle it, with the AWS SDK. For each package module in the bundle, the plugin looks up the mark of each export that is left after tree-shaking. An export marked `@resource` or `@declaration` fails the build, and the error names each reference to it, such as `queue at runtime/orders.fn.ts:15:20`. `createLambda` from the runtime entry of `@notation/aws/lambda` has no mark, so it passes.
 
 ## Import cycles
 

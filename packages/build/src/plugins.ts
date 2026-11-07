@@ -3,8 +3,9 @@ import path from "node:path";
 import { projectRoot, toProjectRoot } from "@notation/core";
 import type { Plugin } from "rolldown";
 import { analyzeModule, type ModuleAnalysis } from "./analyze";
+import { location } from "./ast";
 import { stripForInfra, type DeclarationModule } from "./infra-strip";
-import { Marks } from "./marks";
+import { Marks, type ImportBinding, type Mark } from "./marks";
 import { stripForRuntime } from "./runtime-strip";
 
 const nodeModules = /[\\/]node_modules[\\/]/;
@@ -243,11 +244,17 @@ export function runtimePlugin({
         for (const id of infraModules) {
           const rendered = output.modules[id];
           if (!rendered || rendered.renderedLength === 0) continue;
+          const uses = usesOfImports(
+            output.modules,
+            analyses,
+            (binding, file) =>
+              analyses.marks.resolve(binding.source, file) === id,
+          );
           const chain = importChain(this, id).map((file) =>
             toProjectRoot(file),
           );
           this.error(
-            `The bundle of ${toProjectRoot(module.path)} includes the infra module ${toProjectRoot(id)}, imported through ${chain.join(" → ")}. The runtime build leaves infra out, so runtime code can't use it. ${envAdvice}`,
+            `The bundle of ${toProjectRoot(module.path)} includes the infra module ${toProjectRoot(id)}, ${because(uses, chain)}. The runtime build leaves infra out, so runtime code can't use it. ${envAdvice}`,
           );
         }
         // Infra functions from packages, such as queue() from
@@ -262,17 +269,88 @@ export function runtimePlugin({
             const mark = analyses.marks.exportMark(id, name);
             if (mark?.kind !== "resource" && mark?.kind !== "declaration")
               continue;
+            const uses = usesOfImports(
+              output.modules,
+              analyses,
+              (_binding, _file, importMark) =>
+                importMark?.kind === "resource" ||
+                importMark?.kind === "declaration",
+            );
             const chain = importChain(this, id).map((file) =>
               toProjectRoot(file),
             );
             this.error(
-              `The bundle of ${toProjectRoot(module.path)} includes a function that declares infrastructure, from ${toProjectRoot(id)}, imported through ${chain.join(" → ")}. Infra functions can't run in a function. ${envAdvice}`,
+              `The bundle of ${toProjectRoot(module.path)} includes a function that declares infrastructure, from ${toProjectRoot(id)}, ${because(uses, chain)}. Infra functions can't run in a function. ${envAdvice}`,
             );
           }
         }
       }
     },
   };
+}
+
+type ImportUse = { at: string; name: string };
+
+/**
+ * The references in the bundle's project modules to imports that `matches`
+ * accepts, as `file:line:column`. References in a declaration's options are
+ * left out: the runtime strip removes them or has already checked them.
+ * `importMark` is the mark of the imported function, if it has one.
+ */
+function usesOfImports(
+  modules: Record<string, { renderedLength: number }>,
+  analyses: ModuleAnalyses,
+  matches: (binding: ImportBinding, file: string, importMark?: Mark) => boolean,
+): ImportUse[] {
+  const uses: ImportUse[] = [];
+  for (const [file, rendered] of Object.entries(modules)) {
+    if (rendered.renderedLength === 0) continue;
+    const analysis = analyses.fromFile(file);
+    if (!analysis) continue;
+    const { table, declaration } = analysis;
+    for (const { node, ancestors } of analysis.references) {
+      const binding = table.imports.get(node.name);
+      if (!binding) continue;
+      if (
+        declaration &&
+        node.start >= declaration.call.start &&
+        node.end <= declaration.call.end
+      )
+        continue;
+      let name = node.name;
+      let member: string | undefined;
+      const parent = ancestors.at(-1);
+      if (
+        binding.imported === "*" &&
+        parent?.type === "MemberExpression" &&
+        !parent.computed &&
+        parent.object === node
+      ) {
+        member = parent.property.name;
+        name = `${node.name}.${member}`;
+      }
+      const importMark = analyses.marks.importMark(
+        file,
+        binding,
+        undefined,
+        member,
+      );
+      if (!matches(binding, file, importMark)) continue;
+      uses.push({
+        at: `${toProjectRoot(file)}:${location(table.module.source, node.start)}`,
+        name,
+      });
+    }
+  }
+  return uses;
+}
+
+// Why a module is in the bundle: the references that use it, or else the
+// chain of imports that brings it in.
+function because(uses: ImportUse[], chain: string[]): string {
+  if (uses.length === 0) return `imported through ${chain.join(" → ")}`;
+  const listed = uses.map(({ at, name }) => `${name} at ${at}`);
+  return `because the function uses ${listed.join(", ")}`;
 }
 
 type ModuleGraph = {
