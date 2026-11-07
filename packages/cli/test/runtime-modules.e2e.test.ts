@@ -92,7 +92,7 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
   );
 
   await compileRuntimeModules(
-    await compileInfra(path.join(root, "infra/orders.ts")),
+    (await compileInfra(path.join(root, "infra/orders.ts"))).modules,
   );
 
   // Evaluates the infra bundle, fills in the outputs that the lambda's params

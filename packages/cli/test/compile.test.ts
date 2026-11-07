@@ -153,7 +153,9 @@ function writeProject(handler = handlerModule) {
 describe("declaration modules", () => {
   it("returns the declaration modules that the infra entry reaches", async () => {
     writeProject();
-    expect(await compileInfra(path.join(root, "infra/orders.ts"))).toEqual([
+    expect(
+      (await compileInfra(path.join(root, "infra/orders.ts"))).modules,
+    ).toEqual([
       {
         path: path.join(root, "runtime/process-orders.ts"),
         binding: "lambda",
@@ -196,7 +198,7 @@ describe("declaration modules", () => {
   it("bundles a declaration module without its infra", async () => {
     writeProject();
     await compileRuntimeModules(
-      await compileInfra(path.join(root, "infra/orders.ts")),
+      (await compileInfra(path.join(root, "infra/orders.ts"))).modules,
     );
 
     const file = path.join(root, "dist/runtime/process-orders/index.mjs");
@@ -234,7 +236,7 @@ describe("declaration modules", () => {
         "export const handler = async () => orders.url ??",
       ),
     );
-    const modules = await compileInfra(path.join(root, "infra/orders.ts"));
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
       "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts, because the function uses orders at runtime/process-orders.ts:16:38.",
     );
@@ -259,7 +261,7 @@ describe("declaration modules", () => {
         `export const queueUrl = () => orders.url;`,
       ].join("\n"),
     );
-    const modules = await compileInfra(path.join(root, "infra/orders.ts"));
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
       "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts, because the function uses orders at runtime/queue-url.ts:2:31.",
     );
@@ -280,7 +282,7 @@ describe("declaration modules", () => {
         compilerOptions: { paths: { "infra/*": ["./infra/*"] } },
       }),
     );
-    const modules = await compileInfra(path.join(root, "infra/orders.ts"));
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
       "because the function uses orders at runtime/process-orders.ts:16:38.",
     );
@@ -298,7 +300,7 @@ describe("declaration modules", () => {
           "export const handler = async () => queue({ name: 'x' }) &&",
         ),
     );
-    const modules = await compileInfra(path.join(root, "infra/orders.ts"));
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
       "The bundle of runtime/process-orders.ts includes a function that declares infrastructure, from node_modules/@notation/aws/sqs.js, because the function uses queue at runtime/process-orders.ts:17:38.",
     );

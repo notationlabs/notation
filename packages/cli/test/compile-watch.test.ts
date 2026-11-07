@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, expect, it, onTestFinished, vi } from "vitest";
 import { setConfigFile } from "@notation/core";
 import { compile, compileInfra, type DeclarationModule } from "../src/compile";
 import type { Logger } from "../src/logger";
@@ -66,7 +66,8 @@ it("reports the declaration modules after each rebuild", async () => {
     watch: true,
     onDeclarationModules: (modules) => seen.push(modules),
   });
-  expect(names(initial)).toEqual(["todos.ts"]);
+  onTestFinished(initial.close);
+  expect(names(initial.modules)).toEqual(["todos.ts"]);
 
   // todos.ts does not change, so the rebuild must still report it.
   write(
@@ -85,7 +86,9 @@ it("bundles the runtime modules that an infra rebuild adds", async () => {
   const bundle = (name: string) =>
     path.join(root, `dist/watch-b/${name}/index.mjs`);
 
-  await compile(build("watch-b/main.ts"), { watch: true, logger });
+  onTestFinished(
+    await compile(build("watch-b/main.ts"), { watch: true, logger }),
+  );
   await waitFor(() => expect(existsSync(bundle("todos"))).toBe(true));
   expect(existsSync(bundle("jobs"))).toBe(false);
 
@@ -103,8 +106,9 @@ it("waits for a build that succeeds, and says so", async () => {
   const compiling = compile(build("watch-c/main.ts"), {
     watch: true,
     logger: watchLogger,
-  }).then(() => {
+  }).then((close) => {
     resolved = true;
+    onTestFinished(close);
   });
 
   await waitFor(() =>
@@ -116,4 +120,23 @@ it("waits for a build that succeeds, and says so", async () => {
 
   write("watch-c/main.ts", `import { fn } from "./todos";\nconsole.log(fn);\n`);
   await compiling;
+});
+
+it("stops rebuilding after close", async () => {
+  write("watch-d/todos.ts", runtimeModule("todos"));
+  write("watch-d/jobs.ts", runtimeModule("jobs"));
+  write("watch-d/main.ts", `import { fn } from "./todos";\nconsole.log(fn);\n`);
+  const bundle = (name: string) =>
+    path.join(root, `dist/watch-d/${name}/index.mjs`);
+
+  const close = await compile(build("watch-d/main.ts"), {
+    watch: true,
+    logger,
+  });
+  await waitFor(() => expect(existsSync(bundle("todos"))).toBe(true));
+  await close();
+
+  write("watch-d/main.ts", `import { fn } from "./jobs";\nconsole.log(fn);\n`);
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  expect(existsSync(bundle("jobs"))).toBe(false);
 });

@@ -14,7 +14,9 @@ const { deployInChild } = vi.hoisted(() => ({
   deployInChild: vi.fn(),
 }));
 
-vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
+vi.mock("../src/compile", () => ({
+  compile: vi.fn(async () => async () => {}),
+}));
 vi.mock("../src/deploy-child", () => ({ deployInChild }));
 
 import { watch } from "../src/watch";

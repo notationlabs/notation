@@ -30,12 +30,13 @@ export type CompileOptions = {
 /**
  * Compiles the infra entry, then bundles each declaration module that the
  * infra build found. In watch mode, each infra rebuild that changes that set
- * of modules restarts the runtime bundles.
+ * of modules restarts the runtime bundles. Returns a function that stops
+ * watching.
  */
 export async function compile(
   { entryPoint }: Pick<Build, "entryPoint">,
   opts: CompileOptions = {},
-) {
+): Promise<() => Promise<void>> {
   const watch = opts.watch ?? false;
   const logger = opts.logger ?? defaultLogger;
   const analyses = new ModuleAnalyses();
@@ -43,10 +44,10 @@ export async function compile(
   logger.info(`${watch ? "Watching" : "Compiling"} infrastructure`, entryPoint);
 
   if (!watch) {
-    const modules = await compileInfra(entryPoint, { analyses });
+    const { modules } = await compileInfra(entryPoint, { analyses });
     logger.info("Compiling runtime modules");
     await compileRuntimeModules(modules, { analyses });
-    return;
+    return async () => {};
   }
 
   let modules: DeclarationModule[] | undefined;
@@ -77,7 +78,7 @@ export async function compile(
   };
 
   // Deploys need a successful build, so watch waits until the first one.
-  await compileInfra(entryPoint, {
+  const infra = await compileInfra(entryPoint, {
     watch,
     analyses,
     onDeclarationModules: update,
@@ -90,6 +91,11 @@ export async function compile(
     },
   });
   await updating;
+  return async () => {
+    await infra.close();
+    await updating;
+    await disposeRuntime();
+  };
 }
 
 export type CompileInfraOptions = {
@@ -118,13 +124,13 @@ const outputOptions: OutputOptions = {
 /**
  * Bundles the infra entry to `dist/`. Each declaration module that the entry
  * reaches is replaced by its stripped copy. Returns the declaration modules,
- * sorted by path. In watch mode, resolves after the first build without
- * errors.
+ * sorted by path, and a function that stops watching. In watch mode,
+ * resolves after the first build without errors.
  */
 export async function compileInfra(
   entryPoint: string,
   opts: CompileInfraOptions = {},
-): Promise<DeclarationModule[]> {
+): Promise<{ modules: DeclarationModule[]; close: () => Promise<void> }> {
   const analyses = opts.analyses ?? new ModuleAnalyses();
   let found: DeclarationModule[] = [];
   const input: InputOptions = {
@@ -157,16 +163,17 @@ export async function compileInfra(
       await bundle.close();
     }
     opts.onDeclarationModules?.(found);
-    return found;
+    return { modules: found, close: async () => {} };
   }
 
+  const watcher = rolldownWatch({ ...input, output });
+  const close = () => watcher.close();
   return new Promise((resolve) => {
-    const watcher = rolldownWatch({ ...input, output });
     watcher.on("event", async (event) => {
       if (event.code === "BUNDLE_END") {
         await event.result.close();
         opts.onDeclarationModules?.(found);
-        resolve(found);
+        resolve({ modules: found, close });
       }
       if (event.code === "ERROR") {
         await event.result.close();

@@ -8,7 +8,7 @@ Source: `@notation/build` (plugins and source transforms), `@notation/cli` (`pac
 
 `compile({ entryPoint })` in `@notation/cli` runs two passes:
 
-1. **Infra pass** – `compileInfra` bundles the infra entry with `infraPlugin`. It returns the declaration modules that the entry reaches, as `DeclarationModule[]`.
+1. **Infra pass** – `compileInfra` bundles the infra entry with `infraPlugin`. It returns the declaration modules that the entry reaches, as `DeclarationModule[]`, and a `close` function that stops the watcher in watch mode. `compile` returns a function that stops both watchers.
 2. **Runtime pass** – `compileRuntimeModules` bundles each of those modules with `runtimePlugin`, as the code for one function. The bundles build at the same time.
 
 ```ts [@notation/build]
