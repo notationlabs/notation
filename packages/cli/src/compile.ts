@@ -9,6 +9,7 @@ import {
   infraEntry,
   infraEntryPlugin,
   infraPlugin,
+  infraWatchExclude,
   ModuleAnalyses,
   runtimeEntry,
   runtimePlugin,
@@ -194,16 +195,8 @@ export async function compileInfra(
     ...input,
     output,
     // The infra entry plugin watches the base directory of each runtime
-    // glob, which can be the project root. Writes to these directories must
-    // not start a rebuild: dist/ is the build's output, and deploy writes
-    // .notation/.
-    watch: {
-      exclude: [
-        new RegExp(
-          String.raw`^${escapeRegExp(root)}[\\/](?:dist|node_modules|\.[^\\/]+)(?:[\\/]|$)`,
-        ),
-      ],
-    },
+    // glob, which can be the project root.
+    watch: runtimeModules ? { exclude: infraWatchExclude(root) } : undefined,
   });
   const close = () => watcher.close();
   return new Promise((resolve) => {
@@ -291,9 +284,6 @@ export async function compileRuntimeModules(
   });
   return () => watcher.close();
 }
-
-const escapeRegExp = (text: string) =>
-  text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function sameModules(a: DeclarationModule[], b: DeclarationModule[]) {
   return JSON.stringify(a) === JSON.stringify(b);

@@ -2,6 +2,8 @@
 
 Build and deploy a todo API to AWS in under 5 minutes.
 
+Notation requires Node.js 22 or later.
+
 ## 1. Create a project
 
 ```sh

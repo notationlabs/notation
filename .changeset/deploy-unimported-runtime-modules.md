@@ -8,4 +8,6 @@ Deploy now includes runtime modules that infra doesn't import. The infra build r
 
 - `infraEntryPlugin()` and `infraEntry` in `@notation/build` generate this entry. `findRuntimeDeclarations()` returns the runtime files that hold a declaration.
 - `compile()` and `compileInfra()` take `runtimeModules`. Without it, the build finds declaration modules only through the entry's imports.
-- In watch mode, the base directory of each glob is watched, so a new runtime file is deployed without a restart.
+- In watch mode, the base directory of each glob is watched, or its nearest existing parent, so a new runtime file is deployed without a restart.
+- The scan and the infra watcher skip `dist/`, `node_modules/` and dot-directories at any depth. `infraWatchExclude()` builds the watcher's pattern.
+- A file in the globs that can't be parsed fails the build, and the error names the file.

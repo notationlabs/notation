@@ -35,7 +35,9 @@ The output keeps the entry's name, such as `dist/infra/index.mjs`. `runtime/todo
 
 **The generated entry imports only files that hold a declaration.** A runtime file without one, such as a file that calls `Sentry.init()`, doesn't run at deploy time.
 
-In watch mode, the plugin adds the base directory of each glob to the watched files, such as `runtime/` for `runtime/**/*.ts`. A new file in that directory starts a rebuild, and the `load` hook globs the files again. The base directory of a glob such as `**/*.ts` is the project root. So the infra watcher excludes `dist/`, `node_modules/` and the dot-directories in the project root, or each build's output and each deploy's writes to `.notation/` would start another build. A base directory that doesn't exist when watch starts is not watched.
+In watch mode, the plugin adds the base directory of each glob to the watched files, such as `runtime/` for `runtime/**/*.ts`. A new file in that directory starts a rebuild, and the `load` hook globs the files again. If the base directory doesn't exist yet, the plugin watches its nearest parent that exists, up to the project root, so a `runtime/` directory created during watch is seen.
+
+The base directory of a glob such as `**/*.ts` is the project root, so the watcher would see each build's output in `dist/` and each deploy's writes to `.notation/`. **Both would start another build, and in `notation watch` another deploy.** So the scan and the infra watcher skip the same directories at any depth: `dist/`, `node_modules/` and dot-directories. `infraWatchExclude(root)` builds the watcher's pattern. The watcher uses it only when `runtimeModules` is set.
 
 ## Marks
 

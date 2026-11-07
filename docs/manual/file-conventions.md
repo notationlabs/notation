@@ -114,7 +114,13 @@ The build reads each file that matches the globs. A file that calls a declaratio
 
 **A runtime module outside these globs is deployed only if infra imports it.** The build doesn't scan other files.
 
-The build doesn't run a file in the globs that makes no declaration, such as `runtime/utils.ts`. A file in the globs that can't be parsed fails the build.
+The build doesn't run a file in the globs that makes no declaration, such as `runtime/utils.ts`. The scan skips `dist/`, `node_modules/` and dot-directories at any depth.
+
+**A file in the globs that can't be parsed fails the build**, even if nothing imports it. For example, with `**/*.ts`, a scratch file with a syntax error fails the deploy:
+
+```text
+scratch.ts matches runtimeModules, but it can't be analysed: Unexpected token
+```
 
 ### Runtime code and infra
 

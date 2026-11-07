@@ -165,7 +165,7 @@ it("bundles a runtime file that is created during watch", async () => {
   await waitFor(() => expect(existsSync(bundle("jobs/nightly"))).toBe(true));
 });
 
-it("doesn't rebuild on its own output or on deploy state when a glob covers the project root", async () => {
+it("doesn't rebuild on build output, packages or deploy state when a glob covers the project root", async () => {
   write("watch-f/todos.ts", runtimeModule("todos"));
   write("watch-f/main.ts", `import { fn } from "./todos";\nconsole.log(fn);\n`);
 
@@ -184,6 +184,29 @@ it("doesn't rebuild on its own output or on deploy state when a glob covers the 
   await wait(500);
   const settled = builds;
   write(".notation/workflows.db", "state");
+  write("packages/app/dist/index.js", "built");
+  write("packages/app/node_modules/dep/index.js", "installed");
   await wait(1000);
   expect(builds).toBe(settled);
+});
+
+it("bundles a runtime file in a glob directory that is created during watch", async () => {
+  write("watch-g/main.ts", `console.log("no imports");\n`);
+  const bundle = path.join(root, "dist/watch-g/runtime/todos/index.mjs");
+
+  onTestFinished(
+    await compile(
+      {
+        ...build("watch-g/main.ts"),
+        runtimeModules: ["watch-g/runtime/**/*.ts"],
+      },
+      { watch: true, logger },
+    ),
+  );
+
+  // Lets the rebuild from macOS's late report of main.ts pass first, so
+  // that only the watch on watch-g/ can start the next one.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  write("watch-g/runtime/todos.ts", runtimeModule("todos"));
+  await waitFor(() => expect(existsSync(bundle)).toBe(true));
 });

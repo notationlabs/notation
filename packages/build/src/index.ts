@@ -15,6 +15,7 @@ export {
   findRuntimeDeclarations,
   infraEntry,
   infraEntryPlugin,
+  infraWatchExclude,
   type FindRuntimeDeclarationsOptions,
   type InfraEntryPluginOptions,
 } from "./infra-entry";

@@ -532,6 +532,8 @@ describe("runtime modules that infra doesn't import", () => {
     write("runtime/broken.ts", `export const broken = ;`);
     await expect(
       compileInfra(entryPoint(), { runtimeModules }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(
+      "runtime/broken.ts matches runtimeModules, but it can't be analysed: Unexpected token",
+    );
   });
 });
