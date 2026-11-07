@@ -271,6 +271,12 @@ test("a JWT declaration types the claims in its handler's event", () => {
   expectTypeOf<
     Parameters<LambdaHandler<typeof plain>>[0]
   >().toEqualTypeOf<APIGatewayProxyEventV2>();
+
+  const orders = $lambda({ id: "orders", event: () => sqs() });
+  const ordersHandler: LambdaHandler<typeof orders> = async () => {};
+  // @ts-expect-error an SQS handler can't serve a JWT Lambda
+  const wrong: LambdaHandler<typeof user> = ordersHandler;
+  void wrong;
 });
 
 test("decode() reads the body of a request to a JWT declaration", async () => {
