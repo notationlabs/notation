@@ -11,8 +11,9 @@ export type NotationConfig = {
   defaultStage?: string;
   /**
    * Globs, relative to the directory of the config, for the runtime files.
-   * Defaults to `runtime/**\/*.ts`. The build doesn't read them yet: it finds
-   * declaration modules through the infra entry's imports.
+   * Defaults to `runtime/**\/*.ts`. Deploy includes each runtime file that
+   * calls a declaration function, such as `$lambda`, even if infra doesn't
+   * import it.
    */
   runtimeModules?: string | string[];
 };

@@ -40,7 +40,7 @@ const todoRouter = router(todoApi);
 todoRouter.get("/todos", () => todos);
 ```
 
-The CLI deploys the entry file and the modules that it imports. To deploy part of a project separately, give that part its own config. See [Project Config](./project-config.md).
+The CLI deploys the entry file, the modules that it imports, and the runtime modules in the `runtimeModules` globs. To deploy part of a project separately, give that part its own config. See [Project Config](./project-config.md).
 
 ## Runtime modules
 
@@ -96,11 +96,25 @@ A shared module is an ordinary module that both files import, such as `runtime/u
 
 An effect that the declaration doesn't refer to by name is also removed. For example, if a side-effect import such as a `.env` loader sets a value that an option reads, the infra build doesn't run the import, and the option reads the value without it. `notation plan` shows the function's settings, so you can check them.
 
-### Runtime modules must be imported
+### Runtime modules that infra doesn't import
 
-**The CLI deploys a runtime module only when the infra entry imports it, directly or through other modules.** If nothing in infra imports the module, Notation doesn't deploy its function and reports no error.
+A runtime module doesn't have to be imported by infra to be deployed. For example, if `runtime/nightly-report.ts` declares a function with `$lambda` and nothing in infra imports it, the CLI still deploys the function.
 
-`notation.config.ts` accepts `runtimeModules`, a glob or an array of globs for the files that can be runtime modules. The default is `runtime/**/*.ts`. The plan is that deploy scans these files for runtime modules that infra doesn't import. That scan isn't built, and the build doesn't read `runtimeModules` yet.
+`runtimeModules` in `notation.config.ts` sets the files that the build scans for runtime modules. It takes a glob or an array of globs, relative to the config. The default is `runtime/**/*.ts`.
+
+```ts [notation.config.ts]
+export default defineConfig({
+  app: "todos",
+  entry: "infra/index.ts",
+  runtimeModules: ["runtime/**/*.ts", "jobs/*.ts"],
+});
+```
+
+The build reads each file that matches the globs. A file that calls a declaration function, such as `$lambda`, is a runtime module, and the CLI deploys it. The infra bundle runs the infra entry first, and then each runtime module that the entry didn't import.
+
+**A runtime module outside these globs is deployed only if infra imports it.** The build doesn't scan other files.
+
+The build doesn't run a file in the globs that makes no declaration, such as `runtime/utils.ts`. A file in the globs that can't be parsed fails the build.
 
 ### Runtime code and infra
 

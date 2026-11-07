@@ -55,7 +55,7 @@ function __notation_declaredIn(value, path, binding) {
 
 2. **Runtime compilation** – the compiler bundles each runtime module that the first pass found to `dist/<module path>/index.mjs`, such as `dist/runtime/todos/index.mjs`. The bundle exports the module's `handler`, so Lambda calls `index.handler`. The declaration keeps only `id`, `event`, and the names in `env`. Infra modules are left out, and the build fails if the function uses an infra module or calls a resource function such as `queue()`.
 
-**A runtime module that the entry doesn't import isn't compiled or deployed.** `runtimeModules` in `notation.config.ts` is not read by the build yet. See [Runtime modules must be imported](../manual/file-conventions.md#runtime-modules-must-be-imported).
+**The first pass also compiles runtime modules that the entry doesn't import.** It scans the files in `runtimeModules` in `notation.config.ts`, and the infra bundle imports each runtime module that it finds after the entry. See [Runtime modules that infra doesn't import](../manual/file-conventions.md#runtime-modules-that-infra-doesnt-import).
 
 The build fails with the file and line when:
 

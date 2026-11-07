@@ -6,6 +6,8 @@ import {
   type OutputOptions,
 } from "rolldown";
 import {
+  infraEntry,
+  infraEntryPlugin,
   infraPlugin,
   ModuleAnalyses,
   runtimeEntry,
@@ -32,9 +34,15 @@ export type CompileOptions = {
  * infra build found. In watch mode, each infra rebuild that changes that set
  * of modules restarts the runtime bundles. Returns a function that stops
  * watching.
+ *
+ * Without `runtimeModules`, the infra build finds declaration modules only
+ * through the imports of the infra entry.
  */
 export async function compile(
-  { entryPoint }: Pick<Build, "entryPoint">,
+  {
+    entryPoint,
+    runtimeModules,
+  }: Pick<Build, "entryPoint"> & Partial<Pick<Build, "runtimeModules">>,
   opts: CompileOptions = {},
 ): Promise<() => Promise<void>> {
   const watch = opts.watch ?? false;
@@ -44,7 +52,10 @@ export async function compile(
   logger.info(`${watch ? "Watching" : "Compiling"} infrastructure`, entryPoint);
 
   if (!watch) {
-    const { modules } = await compileInfra(entryPoint, { analyses });
+    const { modules } = await compileInfra(entryPoint, {
+      analyses,
+      runtimeModules,
+    });
     logger.info("Compiling runtime modules");
     await compileRuntimeModules(modules, { analyses });
     return async () => {};
@@ -81,6 +92,7 @@ export async function compile(
   const infra = await compileInfra(entryPoint, {
     watch,
     analyses,
+    runtimeModules,
     onDeclarationModules: update,
     onBuildFailed: (error) => {
       logger.error(error);
@@ -102,6 +114,11 @@ export type CompileInfraOptions = {
   watch?: boolean;
   analyses?: ModuleAnalyses;
   /**
+   * Globs, relative to the project root, for the runtime files. The infra
+   * build also imports each one that holds a declaration.
+   */
+  runtimeModules?: string[];
+  /**
    * Called after each build without errors, with the declaration modules in
    * the build. In watch mode this includes every rebuild.
    */
@@ -122,10 +139,11 @@ const outputOptions: OutputOptions = {
 };
 
 /**
- * Bundles the infra entry to `dist/`. Each declaration module that the entry
- * reaches is replaced by its stripped copy. Returns the declaration modules,
- * sorted by path, and a function that stops watching. In watch mode,
- * resolves after the first build without errors.
+ * Bundles the infra entry to `dist/`. With `runtimeModules`, the bundle
+ * also imports each runtime file that holds a declaration, after the entry.
+ * Each declaration module in the build is replaced by its stripped copy.
+ * Returns the declaration modules, sorted by path, and a function that stops
+ * watching. In watch mode, resolves after the first build without errors.
  */
 export async function compileInfra(
   entryPoint: string,
@@ -133,12 +151,18 @@ export async function compileInfra(
 ): Promise<{ modules: DeclarationModule[]; close: () => Promise<void> }> {
   const analyses = opts.analyses ?? new ModuleAnalyses();
   let found: DeclarationModule[] = [];
+  const root = projectRoot();
+  const runtimeModules = opts.runtimeModules;
   const input: InputOptions = {
-    input: { [outputName(entryPoint)]: entryPoint },
-    cwd: projectRoot(),
+    input: {
+      [outputName(entryPoint)]: runtimeModules ? infraEntry : entryPoint,
+    },
+    cwd: root,
     platform: "node",
     tsconfig: true,
     plugins: [
+      runtimeModules &&
+        infraEntryPlugin({ analyses, entryPoint, root, runtimeModules }),
       infraPlugin({
         analyses,
         onDeclarationModules: (modules) => {
@@ -166,7 +190,21 @@ export async function compileInfra(
     return { modules: found, close: async () => {} };
   }
 
-  const watcher = rolldownWatch({ ...input, output });
+  const watcher = rolldownWatch({
+    ...input,
+    output,
+    // The infra entry plugin watches the base directory of each runtime
+    // glob, which can be the project root. Writes to these directories must
+    // not start a rebuild: dist/ is the build's output, and deploy writes
+    // .notation/.
+    watch: {
+      exclude: [
+        new RegExp(
+          String.raw`^${escapeRegExp(root)}[\\/](?:dist|node_modules|\.[^\\/]+)(?:[\\/]|$)`,
+        ),
+      ],
+    },
+  });
   const close = () => watcher.close();
   return new Promise((resolve) => {
     watcher.on("event", async (event) => {
@@ -253,6 +291,9 @@ export async function compileRuntimeModules(
   });
   return () => watcher.close();
 }
+
+const escapeRegExp = (text: string) =>
+  text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function sameModules(a: DeclarationModule[], b: DeclarationModule[]) {
   return JSON.stringify(a) === JSON.stringify(b);

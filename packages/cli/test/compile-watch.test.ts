@@ -140,3 +140,50 @@ it("stops rebuilding after close", async () => {
   await new Promise((resolve) => setTimeout(resolve, 1000));
   expect(existsSync(bundle("jobs"))).toBe(false);
 });
+
+it("bundles a runtime file that is created during watch", async () => {
+  write("watch-e/runtime/todos.ts", runtimeModule("todos"));
+  write(
+    "watch-e/main.ts",
+    `import { fn } from "./runtime/todos";\nconsole.log(fn);\n`,
+  );
+  const bundle = (name: string) =>
+    path.join(root, `dist/watch-e/runtime/${name}/index.mjs`);
+
+  onTestFinished(
+    await compile(
+      {
+        ...build("watch-e/main.ts"),
+        runtimeModules: ["watch-e/runtime/**/*.ts"],
+      },
+      { watch: true, logger },
+    ),
+  );
+  await waitFor(() => expect(existsSync(bundle("todos"))).toBe(true));
+
+  write("watch-e/runtime/jobs/nightly.ts", runtimeModule("nightly"));
+  await waitFor(() => expect(existsSync(bundle("jobs/nightly"))).toBe(true));
+});
+
+it("doesn't rebuild on its own output or on deploy state when a glob covers the project root", async () => {
+  write("watch-f/todos.ts", runtimeModule("todos"));
+  write("watch-f/main.ts", `import { fn } from "./todos";\nconsole.log(fn);\n`);
+
+  let builds = 0;
+  const infra = await compileInfra(path.join(root, "watch-f/main.ts"), {
+    watch: true,
+    runtimeModules: ["**/*.ts"],
+    onDeclarationModules: () => builds++,
+  });
+  onTestFinished(infra.close);
+  const wait = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+  // macOS can report the files written above after the watcher starts,
+  // which starts one more build.
+  await wait(500);
+  const settled = builds;
+  write(".notation/workflows.db", "state");
+  await wait(1000);
+  expect(builds).toBe(settled);
+});
