@@ -6,6 +6,7 @@ export * from "./diff-params";
 export * from "./resource-operation";
 export * from "./resource-group";
 export * from "./standard-schema";
+export * from "./declared-in";
 export * from "./value-validation";
 export {
   collectResourceGraph,

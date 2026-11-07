@@ -4,6 +4,11 @@
   "version": "0.16.0",
   "sideEffects": false,
   "exports": {
+    "./lambda": {
+      "types": "./dist/lambda/index.d.ts",
+      "notation-runtime": "./dist/lambda/runtime.js",
+      "import": "./dist/lambda/index.js"
+    },
     "./*": {
       "import": "./dist/*/index.js",
       "types": "./dist/*/index.d.ts"
@@ -19,6 +24,7 @@
   },
   "dependencies": {
     "@notation/aws.iac": "workspace:*",
+    "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/std.iac": "workspace:*",
     "@types/aws-lambda": "^8.10.147",

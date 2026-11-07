@@ -1,4 +1,6 @@
-# @notation/esbuild-plugins
+# @notation/build
+
+This package was `@notation/esbuild-plugins` until 0.16.0.
 
 ## 0.16.0
 

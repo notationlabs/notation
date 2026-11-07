@@ -1,20 +1,16 @@
-import type { LambdaResource } from "@notation/aws/lambda/runtime";
-import { handle } from "@notation/aws/lambda/runtime";
+import { createLambda, http, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 
-const todos = await api.get<any[]>("/todos");
-
-export const getTodos = handle.apiRequest(() => {
-  return todos;
-});
-
-export const getTodoCount = handle.apiRequest(() => {
-  return todos.length;
-});
-
-export const resource: LambdaResource = {
-  service: "aws/lambda",
+export const lambda = createLambda({
   id: "todos",
   timeout: 5,
   memory: 64,
+  event: () => http(),
+});
+
+const todos = await api.get<any[]>("/todos");
+
+export const handler: LambdaHandler<typeof lambda> = async (event) => {
+  if (event.routeKey === "GET /todos/count") return todos.length;
+  return todos;
 };

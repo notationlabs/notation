@@ -8,10 +8,9 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import esbuild from "esbuild";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { setConfigFile } from "@notation/core";
-import { compile, compileInfra, type RuntimeModuleEntry } from "../src/compile";
+import { compile, compileInfra, type DeclarationModule } from "../src/compile";
 import type { Logger } from "../src/logger";
 
 // Inside the repository, so the bundle's imports of @notation packages
@@ -28,51 +27,54 @@ beforeAll(() => {
   setConfigFile(path.join(root, "notation.config.ts"));
 });
 
-// Watch mode gives no handle to stop its contexts, so this stops esbuild.
 afterAll(async () => {
-  await esbuild.stop();
   setConfigFile(undefined);
   rmSync(root, { recursive: true, force: true });
 });
 
-const build = (entry: string) => ({
-  entryPoint: path.join(root, entry),
-  runtimeModules: ["**/*.fn.ts"],
-});
+const build = (entry: string) => ({ entryPoint: path.join(root, entry) });
 
 const write = (file: string, contents: string) => {
   mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
   writeFileSync(path.join(root, file), contents);
 };
 
+// A declaration module with its own marked declaration function, so the
+// project needs no package.
 const runtimeModule = (id: string) =>
-  `export const run = () => "${id}";\nexport const resource = { service: "aws/lambda", id: "${id}" };\n`;
+  [
+    `/** @declaration entry: handler */`,
+    `function declare(config) { return config; }`,
+    `export const fn = declare({ id: "${id}" });`,
+    `export const handler = () => "${id}";`,
+    ``,
+  ].join("\n");
 
-const names = (modules: RuntimeModuleEntry[]) =>
+const names = (modules: DeclarationModule[]) =>
   modules.map((module) => path.basename(module.path));
 
 const waitFor = (check: () => void) =>
   vi.waitFor(check, { timeout: 5000, interval: 50 });
 
-it("reports the replaced runtime modules after each rebuild", async () => {
+it("reports the declaration modules after each rebuild", async () => {
   write("watch-a/todos.fn.ts", runtimeModule("todos"));
   write("watch-a/jobs.fn.ts", runtimeModule("jobs"));
   write(
     "watch-a/main.ts",
-    `import { run } from "./todos.fn";\nconsole.log(run);\n`,
+    `import { fn } from "./todos.fn";\nconsole.log(fn);\n`,
   );
 
-  const seen: RuntimeModuleEntry[][] = [];
+  const seen: DeclarationModule[][] = [];
   const initial = await compileInfra(path.join(root, "watch-a/main.ts"), {
     watch: true,
-    onRuntimeModules: (modules) => seen.push(modules),
+    onDeclarationModules: (modules) => seen.push(modules),
   });
   expect(names(initial)).toEqual(["todos.fn.ts"]);
 
   // todos.fn.ts does not change, so the rebuild must still report it.
   write(
     "watch-a/main.ts",
-    `import { run } from "./todos.fn";\nimport { run as job } from "./jobs.fn";\nconsole.log(run, job);\n`,
+    `import { fn } from "./todos.fn";\nimport { fn as job } from "./jobs.fn";\nconsole.log(fn, job);\n`,
   );
   await waitFor(() =>
     expect(names(seen.at(-1)!)).toEqual(["jobs.fn.ts", "todos.fn.ts"]),
@@ -80,24 +82,11 @@ it("reports the replaced runtime modules after each rebuild", async () => {
 });
 
 it("bundles the runtime modules that an infra rebuild adds", async () => {
-  // Stands in for the service's runtime package.
-  write(
-    "node_modules/@notation/aws/package.json",
-    JSON.stringify({
-      name: "@notation/aws",
-      type: "module",
-      exports: { "./lambda/runtime": "./lambda-runtime.js" },
-    }),
-  );
-  write(
-    "node_modules/@notation/aws/lambda-runtime.js",
-    `export const createDispatcher = (mod) => (event) => mod[event.export](event);`,
-  );
   write("watch-b/todos.fn.ts", runtimeModule("todos"));
   write("watch-b/jobs.fn.ts", runtimeModule("jobs"));
   write(
     "watch-b/main.ts",
-    `import { run } from "./todos.fn";\nconsole.log(run);\n`,
+    `import { fn } from "./todos.fn";\nconsole.log(fn);\n`,
   );
   const bundle = (name: string) =>
     path.join(root, `dist/watch-b/${name}/index.mjs`);
@@ -108,7 +97,7 @@ it("bundles the runtime modules that an infra rebuild adds", async () => {
 
   write(
     "watch-b/main.ts",
-    `import { run } from "./jobs.fn";\nconsole.log(run);\n`,
+    `import { fn } from "./jobs.fn";\nconsole.log(fn);\n`,
   );
   await waitFor(() => expect(existsSync(bundle("jobs.fn"))).toBe(true));
 });
@@ -136,7 +125,7 @@ it("waits for a build that succeeds, and says so", async () => {
 
   write(
     "watch-c/main.ts",
-    `import { run } from "./todos.fn";\nconsole.log(run);\n`,
+    `import { fn } from "./todos.fn";\nconsole.log(fn);\n`,
   );
   await compiling;
 });

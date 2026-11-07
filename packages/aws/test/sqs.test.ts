@@ -1,19 +1,30 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { expect, expectTypeOf, test } from "vitest";
+import { expect, test } from "vitest";
 import { lambda as awsLambda } from "@notation/aws.iac";
 import { createPlan } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
 import { collectResourceGraph } from "@notation/resource";
-import { lambda, type LambdaGroup, type RuntimeRef } from "src/lambda";
-import type { ApiGatewayHandler } from "src/shared";
+import {
+  createLambda,
+  http,
+  lambda,
+  sqs,
+  type Lambda,
+  type LambdaGroup,
+  type SqsEvent,
+} from "src/lambda";
 import { queue } from "src/sqs";
-import { runtimeRef } from "./runtime-ref";
+import { inModule, lambdaGroup } from "./declare";
 
 const code = { type: "file", path: "src/fns/handler.fn.js" } as const;
 
-const ref = (resource: LambdaGroup) => runtimeRef(resource, "processOrders");
+const mappingOf = (q: ReturnType<typeof queue>) =>
+  q.resources.find(
+    (r): r is awsLambda.LambdaEventSourceMappingInstance =>
+      r instanceof awsLambda.LambdaEventSourceMapping,
+  )!;
 
 const queueArn = (name: string) => `arn:aws:sqs:eu-west-2:123456789012:${name}`;
 
@@ -41,8 +52,9 @@ test("consume grants the function access to the queue and maps the queue to it",
   await collectResourceGraph(() => {
     fn = lambda({ id: "process", code });
     orders = queue({ name: "orders" });
-    mapping = orders.consume(ref(fn), { batchSize: 5 });
+    orders.consume(fn, { batchSize: 5 });
   });
+  mapping = mappingOf(orders);
   deploy(orders);
   fn.role.setOutput({ RoleName: "process-role" } as any);
   fn.fn.setOutput({ FunctionName: "process" } as any);
@@ -71,8 +83,8 @@ test("two queues feeding one function each add a statement", async () => {
     fn = lambda({ id: "process", code });
     refunds = queue({ name: "refunds" });
     orders = queue({ name: "orders" });
-    refunds.consume(ref(fn));
-    orders.consume(ref(fn));
+    refunds.consume(fn);
+    orders.consume(fn);
   });
   deploy(orders, refunds);
   fn.role.setOutput({ RoleName: "process-role" } as any);
@@ -81,36 +93,6 @@ test("two queues feeding one function each add a statement", async () => {
     readStatement("orders"),
     readStatement("refunds"),
   ]);
-});
-
-test("each queue adds a dispatch entry keyed by the mapping's id", async () => {
-  let fn!: LambdaGroup;
-  let orders!: ReturnType<typeof queue>;
-  let refunds!: ReturnType<typeof queue>;
-  await collectResourceGraph(() => {
-    fn = lambda({ id: "process", code });
-    orders = queue({ name: "orders" });
-    refunds = queue({ name: "refunds" });
-    orders.consume(runtimeRef(fn, "processOrders"));
-    refunds.consume(runtimeRef(fn, "processRefunds"));
-  });
-  deploy(orders, refunds);
-  fn.role.setOutput({ Arn: "arn:role" } as any);
-  fn.fn.dependencies.zipFile.setOutput({
-    filePath: "process.zip",
-    fileSha256: "sha",
-  } as any);
-
-  expect((await fn.fn.getParams()).Environment?.Runtime?.dispatch).toEqual({
-    "orders-process-mapping": {
-      export: "processOrders",
-      match: { queueArn: queueArn("orders") },
-    },
-    "refunds-process-mapping": {
-      export: "processRefunds",
-      match: { queueArn: queueArn("refunds") },
-    },
-  });
 });
 
 test("a function that consumes nothing has no inline policy", async () => {
@@ -128,18 +110,19 @@ test("consuming one queue twice with one function throws", async () => {
     collectResourceGraph(() => {
       const fn = lambda({ id: "process", code });
       const orders = queue({ name: "orders" });
-      orders.consume(ref(fn));
-      orders.consume(ref(fn));
+      orders.consume(fn);
+      orders.consume(fn);
     }),
   ).rejects.toThrow("Queue orders already feeds process");
 });
 
-test("consume with a lambda group from lambda() maps the queue without a dispatch entry", async () => {
+test("consume with a lambda group from lambda() sets no environment", async () => {
   let fn!: LambdaGroup;
-  let mapping!: awsLambda.LambdaEventSourceMappingInstance;
+  let orders!: ReturnType<typeof queue>;
   await collectResourceGraph(() => {
     fn = lambda({ id: "process", code });
-    mapping = queue({ name: "orders" }).consume(fn);
+    orders = queue({ name: "orders" });
+    orders.consume(fn);
   });
 
   fn.role.setOutput({ Arn: "arn:role" } as any);
@@ -148,19 +131,66 @@ test("consume with a lambda group from lambda() maps the queue without a dispatc
     fileSha256: "sha",
   } as any);
 
-  expect(mapping.id).toBe("orders-process-mapping");
+  expect(mappingOf(orders).id).toBe("orders-process-mapping");
   expect((await fn.fn.getParams()).Environment).toBeUndefined();
 });
 
-test("consume takes only handlers of SQS events", () => {
-  const fn = lambda({ id: "process", code });
-  const apiHandler = runtimeRef(fn, "getTodos") as RuntimeRef &
-    ApiGatewayHandler;
+test("consume maps the queue to a createLambda declaration", async () => {
+  let orders!: ReturnType<typeof queue>;
+  const graph = await collectResourceGraph(() => {
+    const fn = inModule(createLambda({ id: "process", event: () => sqs() }));
+    orders = queue({ name: "orders" });
+    orders.consume(() => fn);
+  });
+  const fn = lambdaGroup(graph, "process");
 
-  const orders = queue({ name: "orders" });
+  expect(mappingOf(orders).id).toBe("orders-process-mapping");
+  expect(mappingOf(orders).getDependencies()).toContain(fn.policy);
+});
 
-  // @ts-expect-error an API handler can't consume a queue
-  expectTypeOf(orders.consume).toBeCallableWith(apiHandler);
+test("consume takes a declaration with no event", async () => {
+  let orders!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    const fn = inModule(createLambda({ id: "process" }));
+    orders = queue({ name: "orders" });
+    orders.consume(() => fn);
+  });
+
+  expect(mappingOf(orders).id).toBe("orders-process-mapping");
+});
+
+test("consume of a declaration that a later module declares waits for evaluation to end", async () => {
+  let fn!: Lambda<SqsEvent<undefined>>;
+  let orders!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    orders = queue({ name: "orders" });
+    orders.consume(() => fn);
+    fn = inModule(createLambda({ id: "process", event: () => sqs() }));
+  });
+
+  expect(mappingOf(orders).id).toBe("orders-process-mapping");
+});
+
+test("consume of a declaration with an http event throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const fn = inModule(createLambda({ id: "api", event: () => http() }));
+      // @ts-expect-error a queue can't feed a function of HTTP requests
+      queue({ name: "orders" }).consume(() => fn);
+    }),
+  ).rejects.toThrow(
+    'queue.consume() sends sqs events, but the Lambda "api" is declared with event: () => http().',
+  );
+});
+
+test("consume of a function that returns no declaration throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      queue({ name: "orders" }).consume((() => undefined) as any);
+    }),
+  ).rejects.toThrow(
+    "queue.consume() expects a function that returns a Lambda declaration from createLambda(), but it returned undefined.",
+  );
 });
 
 test("consume after evaluation has ended throws", async () => {
@@ -172,7 +202,7 @@ test("consume after evaluation has ended throws", async () => {
     fn.policy;
   });
 
-  expect(() => orders.consume(ref(fn))).toThrow("evaluation has ended");
+  expect(() => orders.consume(fn)).toThrow("evaluation has ended");
 });
 
 test("grant allows the actions on the queue", () => {
@@ -195,7 +225,7 @@ test("a plan creates the queue and the policy before the mapping", async () => {
       id: "process",
       code: { type: "zip", path: zipPath },
     });
-    queue({ name: "orders" }).consume(ref(fn));
+    queue({ name: "orders" }).consume(fn);
   });
 
   const plan = await createPlan({

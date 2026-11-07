@@ -1,6 +1,6 @@
 {
   "type": "module",
-  "name": "@notation/esbuild-plugins",
+  "name": "@notation/build",
   "version": "0.16.0",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,8 +14,7 @@
   },
   "dependencies": {
     "@notation/core": "workspace:*",
-    "esbuild": "^0.25.0",
-    "minimatch": "^10.2.5",
-    "typescript": "^6.0.3"
+    "magic-string": "^0.30.21",
+    "rolldown": "^1.2.16"
   }
 }

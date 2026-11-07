@@ -70,107 +70,185 @@ const write = (file: string, contents: string) => {
   writeFileSync(path.join(root, file), contents);
 };
 
-const todos = `
-  export const getTodos = (event: unknown) => ["todos", event];
-  export const createTodo = () => "created";
-  export const resource = { service: "aws/lambda", id: "todos", timeout: 5 };
+// Stands in for @notation/aws, with the marks that the builds read. The
+// runtime build resolves `./lambda` through the `notation-runtime` condition.
+function writeAwsPackage() {
+  write(
+    "node_modules/@notation/aws/package.json",
+    JSON.stringify({
+      name: "@notation/aws",
+      type: "module",
+      exports: {
+        "./lambda": {
+          "notation-runtime": "./lambda-runtime.js",
+          import: "./lambda.js",
+        },
+        "./sqs": "./sqs.js",
+      },
+    }),
+  );
+  write(
+    "node_modules/@notation/aws/lambda.js",
+    [
+      `/** @declaration shared: event, env; keys: env; entry: handler */`,
+      `export function createLambda(config) { globalThis.declared = config; return { infra: true }; }`,
+      `/** @runtime schema */`,
+      `export function sqs(schema) { return { kind: "sqs", schema }; }`,
+    ].join("\n"),
+  );
+  write(
+    "node_modules/@notation/aws/lambda-runtime.js",
+    [
+      `export function createLambda(config) {`,
+      `  return { options: Object.keys(config), env: () => config.env(), event: () => config.event() };`,
+      `}`,
+      `export function sqs(schema) { return { kind: "sqs", schema }; }`,
+    ].join("\n"),
+  );
+  write(
+    "node_modules/@notation/aws/sqs.js",
+    [
+      `import "./sdk.js";`,
+      `/** @resource */`,
+      `export function queue(config) { return { url: "placeholder-url", consume: () => {} }; }`,
+    ].join("\n"),
+  );
+  write("node_modules/@notation/aws/sdk.js", `console.log("sdk loaded");`);
+}
+
+const handlerModule = `
+  import "./polyfill";
+  import { createLambda, sqs } from "@notation/aws/lambda";
+  import { orders } from "../infra/orders";
+  import { Order } from "./schema";
+
+  console.log("handler module loaded");
+
+  export const lambda = createLambda({
+    id: "process-orders",
+    event: () => sqs(Order),
+    policy: () => [orders.url],
+    env: () => ({ QUEUE_URL: orders.url }),
+  });
+
+  export const handler = async () => [lambda.options, lambda.env(), lambda.event(), globalThis.polyfilled];
 `;
 
-describe("runtime modules", () => {
-  it("returns the runtime modules that the infra build replaced", async () => {
-    write(
-      "infra/main.ts",
-      [
-        `import { getTodos } from "../runtime/todos.fn";`,
-        `import { util } from "../runtime/utils.fn";`,
-        `import { createTodo } from "../runtime/jobs";`,
-        `console.log(getTodos, util, createTodo);`,
-      ].join("\n"),
-    );
-    write("runtime/todos.fn.ts", todos);
-    write("runtime/utils.fn.ts", `export const util = 1;`);
-    write("runtime/jobs.ts", todos.replace(`"todos"`, `"jobs"`));
-    write("runtime/unused.fn.ts", todos.replace(`"todos"`, `"unused"`));
-    const entryPoint = path.join(root, "infra/main.ts");
+function writeProject(handler = handlerModule) {
+  writeAwsPackage();
+  write(
+    "infra/orders.ts",
+    [
+      `import { queue } from "@notation/aws/sqs";`,
+      `import { lambda } from "../runtime/process-orders";`,
+      `export const orders = queue({ name: "orders" });`,
+      `orders.consume(() => lambda);`,
+    ].join("\n"),
+  );
+  write("runtime/process-orders.ts", handler);
+  write("runtime/schema.ts", `export const Order = { name: "Order" };`);
+  write("runtime/polyfill.ts", `globalThis.polyfilled = true;`);
+}
 
-    expect(
-      await compileInfra(entryPoint, { runtimeModules: ["**/*.fn.ts"] }),
-    ).toEqual([
-      { path: path.join(root, "runtime/todos.fn.ts"), service: "aws/lambda" },
-    ]);
-    expect(
-      await compileInfra(entryPoint, { runtimeModules: ["runtime/**"] }),
-    ).toEqual([
-      { path: path.join(root, "runtime/jobs.ts"), service: "aws/lambda" },
-      { path: path.join(root, "runtime/todos.fn.ts"), service: "aws/lambda" },
+describe("declaration modules", () => {
+  it("returns the declaration modules that the infra entry reaches", async () => {
+    writeProject();
+    expect(await compileInfra(path.join(root, "infra/orders.ts"))).toEqual([
+      {
+        path: path.join(root, "runtime/process-orders.ts"),
+        binding: "lambda",
+        entry: "handler",
+      },
     ]);
   });
 
-  it("fails for a matching module that exports config", async () => {
-    write(
-      "infra/main.ts",
-      `import { getTodos } from "../runtime/todos.fn";\nconsole.log(getTodos);\n`,
-    );
-    write(
-      "runtime/todos.fn.ts",
-      `export const getTodos = () => [];\nexport const config = { service: "aws/lambda", id: "todos" };`,
-    );
+  it("runs only the declaration in the infra bundle, and records its module", async () => {
+    writeProject();
+    await compileInfra(path.join(root, "infra/orders.ts"));
 
-    await expect(
-      compileInfra(path.join(root, "infra/main.ts")),
-    ).rejects.toThrow(
-      'runtime/todos.fn.ts: rename the "config" export to "resource"',
+    const bundle = readFileSync(
+      path.join(root, "dist/infra/orders.mjs"),
+      "utf8",
     );
-  });
+    expect(bundle).not.toContain("handler module loaded");
+    expect(bundle).not.toContain("polyfilled");
 
-  it("bundles a runtime module behind a dispatching handler", async () => {
-    // Stands in for the service's runtime package.
-    write(
-      "node_modules/@notation/aws/package.json",
-      JSON.stringify({
-        name: "@notation/aws",
-        type: "module",
-        exports: { "./lambda/runtime": "./lambda-runtime.js" },
-      }),
+    const script = `
+      const lambda = (await import("./dist/infra/orders.mjs"), globalThis.declared);
+      console.log(JSON.stringify({ id: lambda.id, env: lambda.env() }));
+    `;
+    const output = execFileSync(
+      process.execPath,
+      ["--input-type=module", "-e", script],
+      {
+        cwd: root,
+        encoding: "utf8",
+      },
     );
-    write(
-      "node_modules/@notation/aws/lambda-runtime.js",
-      `export const createDispatcher = (mod) => (event) => mod[event.export](event);`,
-    );
-    write("runtime/todos.fn.ts", todos);
-    write(
-      "infra/main.ts",
-      `import { getTodos } from "../runtime/todos.fn";\nconsole.log(getTodos);\n`,
-    );
-
-    await compileRuntimeModules(
-      await compileInfra(path.join(root, "infra/main.ts")),
-    );
-
-    const bundle = path.join(root, "dist/runtime/todos.fn/index.mjs");
-    const { handler } = await import(pathToFileURL(bundle).href);
-    expect(handler({ export: "getTodos" })).toEqual([
-      "todos",
-      { export: "getTodos" },
-    ]);
-    expect(handler({ export: "createTodo" })).toBe("created");
-  });
-
-  it("replaces runtime modules in the infra bundle", async () => {
-    write(
-      "infra/main.ts",
-      `import { getTodos } from "../runtime/todos";\nconsole.log(getTodos);\n`,
-    );
-    write("runtime/todos.ts", `console.log("init");\n${todos}`);
-
-    await compileInfra(path.join(root, "infra/main.ts"), {
-      runtimeModules: ["runtime/**"],
+    expect(JSON.parse(output.trim().split("\n").at(-1)!)).toEqual({
+      id: "process-orders",
+      env: { QUEUE_URL: "placeholder-url" },
     });
+    expect(bundle).toContain(
+      `"${pathToFileURL(path.join(root, "runtime/process-orders.ts")).href}", "lambda")`,
+    );
+  });
 
-    const bundle = readFileSync(path.join(root, "dist/infra/main.mjs"), "utf8");
-    expect(bundle).toContain(`from "@notation/aws/lambda"`);
-    expect(bundle).toContain(`"id": "todos"`);
-    expect(bundle).toContain(`"path": "dist/runtime/todos/index.mjs"`);
-    expect(bundle).not.toContain("init");
+  it("bundles a declaration module without its infra", async () => {
+    writeProject();
+    await compileRuntimeModules(
+      await compileInfra(path.join(root, "infra/orders.ts")),
+    );
+
+    const file = path.join(root, "dist/runtime/process-orders/index.mjs");
+    const bundle = readFileSync(file, "utf8");
+    expect(bundle).not.toContain("placeholder-url");
+    expect(bundle).not.toContain("sdk loaded");
+    expect(bundle).not.toContain('process-orders"');
+
+    const script = `
+      const { handler } = await import(${JSON.stringify(pathToFileURL(file).href)});
+      const [options, env, ...rest] = await handler();
+      console.log(JSON.stringify([options, Object.entries(env), ...rest]));
+    `;
+    const output = execFileSync(
+      process.execPath,
+      ["--input-type=module", "-e", script],
+      {
+        cwd: root,
+        encoding: "utf8",
+      },
+    );
+    expect(output.split("\n")[0]).toBe("handler module loaded");
+    expect(JSON.parse(output.split("\n")[1]!)).toEqual([
+      ["event", "env"],
+      [["QUEUE_URL", null]],
+      { kind: "sqs", schema: { name: "Order" } },
+      true,
+    ]);
+  });
+
+  it("fails when the function reads an infra module directly", async () => {
+    writeProject(
+      handlerModule.replace(
+        "export const handler = async () =>",
+        "export const handler = async () => orders.url ??",
+      ),
+    );
+    const modules = await compileInfra(path.join(root, "infra/orders.ts"));
+    await expect(compileRuntimeModules(modules)).rejects.toThrow(
+      "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts, imported through runtime/process-orders.ts → infra/orders.ts.",
+    );
+  });
+
+  it("fails when a declaration module doesn't export handler", async () => {
+    writeProject(
+      handlerModule.replace("export const handler", "const handler"),
+    );
+    await expect(
+      compileInfra(path.join(root, "infra/orders.ts")),
+    ).rejects.toThrow(
+      "runtime/process-orders.ts: the module declares a function with createLambda, so it must export `handler`",
+    );
   });
 });

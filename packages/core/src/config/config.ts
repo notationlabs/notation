@@ -10,9 +10,9 @@ export type NotationConfig = {
   /** The stage to use when a command is given no `--stage`. */
   defaultStage?: string;
   /**
-   * Globs, relative to the directory of the config, for the files that can be
-   * runtime modules. A matching file is a runtime module only if it exports
-   * `resource`. Defaults to `**\/*.fn.ts`.
+   * Globs, relative to the directory of the config, for the runtime files.
+   * Defaults to `**\/*.fn.ts`. The build doesn't read them yet: it finds
+   * declaration modules through the infra entry's imports.
    */
   runtimeModules?: string | string[];
 };

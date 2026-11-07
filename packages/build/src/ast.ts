@@ -1,0 +1,352 @@
+import { parseSync } from "rolldown/utils";
+
+export type Node = {
+  type: string;
+  start: number;
+  end: number;
+  [key: string]: any;
+};
+
+export type Comment = {
+  type: "Line" | "Block";
+  value: string;
+  start: number;
+  end: number;
+};
+
+export type ParsedModule = {
+  file: string;
+  source: string;
+  body: Node[];
+  comments: Comment[];
+};
+
+/** Parses a JS or TS module. Throws with the first syntax error. */
+export function parseModule(file: string, source: string): ParsedModule {
+  const lang = /\.[cm]?tsx?$/.test(file)
+    ? file.endsWith("x")
+      ? "tsx"
+      : "ts"
+    : "js";
+  const result = parseSync(file, source, { lang, sourceType: "module" });
+  if (result.errors.length > 0) {
+    const [error] = result.errors;
+    throw new Error(`${file}: ${error!.message}`);
+  }
+  return {
+    file,
+    source,
+    body: result.program.body as unknown as Node[],
+    comments: result.comments as Comment[],
+  };
+}
+
+/** The `line:column` of an offset, both counted from 1. */
+export function location(source: string, offset: number): string {
+  const before = source.slice(0, offset).split("\n");
+  return `${before.length}:${before.at(-1)!.length + 1}`;
+}
+
+// Fields that only hold types. Types are erased, so names in them are not
+// references.
+const typeFields = new Set([
+  "typeAnnotation",
+  "typeParameters",
+  "typeArguments",
+  "returnType",
+  "superTypeArguments",
+  "implements",
+]);
+
+// TS nodes that wrap a value. Only their `expression` holds references.
+const typeWrappers = new Set([
+  "TSAsExpression",
+  "TSSatisfiesExpression",
+  "TSNonNullExpression",
+  "TSTypeAssertion",
+  "TSInstantiationExpression",
+]);
+
+// TS nodes that declare values, so they are walked like JS nodes.
+const valueTsNodes = new Set([
+  "TSEnumDeclaration",
+  "TSEnumBody",
+  "TSEnumMember",
+  "TSModuleDeclaration",
+  "TSModuleBlock",
+  "TSParameterProperty",
+  "TSExportAssignment",
+]);
+
+export function isNode(value: unknown): value is Node {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as Node).type === "string" &&
+    typeof (value as Node).start === "number"
+  );
+}
+
+export function isFunction(node: Node): boolean {
+  return (
+    node.type === "FunctionDeclaration" ||
+    node.type === "FunctionExpression" ||
+    node.type === "ArrowFunctionExpression"
+  );
+}
+
+/** Strips parentheses and TS wrappers such as `as` and `satisfies`. */
+export function unwrap(node: Node): Node {
+  while (
+    node.type === "ParenthesizedExpression" ||
+    typeWrappers.has(node.type)
+  ) {
+    node = node.expression;
+  }
+  return node;
+}
+
+/**
+ * Calls `visit` for each node under `node`, in source order, skipping types.
+ * `visit` returns `false` to skip the children of a node.
+ */
+export function walk(
+  node: Node,
+  visit: (
+    node: Node,
+    parent: Node | undefined,
+    ancestors: Node[],
+  ) => boolean | void,
+  ancestors: Node[] = [],
+): void {
+  if (visit(node, ancestors.at(-1), ancestors) === false) return;
+  if (node.type.startsWith("TS") && !valueTsNodes.has(node.type)) {
+    if (typeWrappers.has(node.type)) {
+      walk(node.expression, visit, [...ancestors, node]);
+    }
+    return;
+  }
+  const next = [...ancestors, node];
+  for (const [key, value] of Object.entries(node)) {
+    if (typeFields.has(key)) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) if (isNode(item)) walk(item, visit, next);
+    } else if (isNode(value)) {
+      walk(value, visit, next);
+    }
+  }
+}
+
+/** The names that a binding pattern, such as `{ a, b: [c] }`, declares. */
+export function patternNames(pattern: Node | null | undefined): string[] {
+  if (!pattern) return [];
+  switch (pattern.type) {
+    case "Identifier":
+      return [pattern.name];
+    case "ObjectPattern":
+      return pattern.properties.flatMap((property: Node) =>
+        property.type === "RestElement"
+          ? patternNames(property.argument)
+          : patternNames(property.value),
+      );
+    case "ArrayPattern":
+      return pattern.elements.flatMap((element: Node | null) =>
+        patternNames(element),
+      );
+    case "RestElement":
+      return patternNames(pattern.argument);
+    case "AssignmentPattern":
+      return patternNames(pattern.left);
+    case "TSParameterProperty":
+      return patternNames(pattern.parameter);
+    default:
+      return [];
+  }
+}
+
+// The names declared inside a function: its parameters, and the variables,
+// functions and classes in its body, without those of nested functions. Block
+// scope is ignored, so a name declared in any block of the function counts.
+function functionScope(fn: Node): Set<string> {
+  const names = new Set<string>(
+    fn.params.flatMap((param: Node) => patternNames(param)),
+  );
+  if (fn.id && fn.type === "FunctionExpression") names.add(fn.id.name);
+  if (!fn.body) return names;
+  walk(fn.body, (node) => {
+    if (isFunction(node)) {
+      if (node.type === "FunctionDeclaration" && node.id)
+        names.add(node.id.name);
+      return false;
+    }
+    if (node.type === "VariableDeclarator") {
+      for (const name of patternNames(node.id)) names.add(name);
+    }
+    if (node.type === "ClassDeclaration" && node.id) names.add(node.id.name);
+    if (node.type === "CatchClause") {
+      for (const name of patternNames(node.param)) names.add(name);
+    }
+  });
+  return names;
+}
+
+// Whether an identifier is a name in a reference position, rather than a
+// property name, a label or a binding.
+function isReference(
+  node: Node,
+  parent: Node | undefined,
+  key: string | undefined,
+): boolean {
+  if (!parent) return true;
+  switch (parent.type) {
+    case "MemberExpression":
+      return key !== "property" || parent.computed;
+    case "Property":
+    case "MethodDefinition":
+    case "PropertyDefinition":
+    case "AccessorProperty":
+      return key !== "key" || parent.computed;
+    case "LabeledStatement":
+    case "BreakStatement":
+    case "ContinueStatement":
+      return false;
+    case "VariableDeclarator":
+      return key !== "id";
+    case "FunctionDeclaration":
+    case "FunctionExpression":
+    case "ArrowFunctionExpression":
+      return key !== "id" && key !== "params";
+    case "ClassDeclaration":
+    case "ClassExpression":
+      return key !== "id";
+    case "CatchClause":
+      return key !== "param";
+    case "ImportSpecifier":
+    case "ImportDefaultSpecifier":
+    case "ImportNamespaceSpecifier":
+    case "ExportSpecifier":
+    case "MetaProperty":
+      return false;
+    default:
+      return true;
+  }
+}
+
+/** An identifier in a reference position, with the nodes above it. */
+export type Reference = { node: Node; ancestors: Node[] };
+
+/**
+ * The identifiers under `node` that refer to a binding outside it. Names in
+ * types, property names, labels and bindings don't count. A name declared
+ * inside a function under `node` shadows the outer binding in that function.
+ * @param skip Nodes whose subtrees are left out.
+ */
+export function freeReferences(
+  node: Node,
+  skip: Set<Node> = new Set(),
+): Reference[] {
+  const found: Reference[] = [];
+  const visit = (
+    current: Node,
+    ancestors: Node[],
+    key: string | undefined,
+    shadowed: Set<string>,
+  ) => {
+    if (skip.has(current)) return;
+    if (current.type === "Identifier") {
+      if (
+        isReference(current, ancestors.at(-1), key) &&
+        !shadowed.has(current.name)
+      ) {
+        found.push({ node: current, ancestors });
+      }
+      return;
+    }
+    const next = [...ancestors, current];
+    if (current.type.startsWith("TS") && !valueTsNodes.has(current.type)) {
+      if (typeWrappers.has(current.type))
+        visit(current.expression, next, "expression", shadowed);
+      return;
+    }
+    let scope = shadowed;
+    if (isFunction(current)) {
+      scope = new Set([...shadowed, ...functionScope(current)]);
+    }
+    for (const [childKey, value] of Object.entries(current)) {
+      if (typeFields.has(childKey)) continue;
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (isNode(item)) visitChild(item, next, childKey, scope);
+        }
+      } else if (isNode(value)) {
+        visitChild(value, next, childKey, scope);
+      }
+    }
+  };
+  // A pattern holds bindings, but its defaults and computed keys hold
+  // references.
+  const visitPattern = (
+    pattern: Node,
+    ancestors: Node[],
+    shadowed: Set<string>,
+  ) => {
+    if (skip.has(pattern)) return;
+    const next = [...ancestors, pattern];
+    switch (pattern.type) {
+      case "ObjectPattern":
+        for (const property of pattern.properties) {
+          if (property.type === "RestElement") {
+            visitPattern(property.argument, [...next, property], shadowed);
+          } else {
+            if (property.computed)
+              visit(property.key, [...next, property], "key", shadowed);
+            visitPattern(property.value, [...next, property], shadowed);
+          }
+        }
+        return;
+      case "ArrayPattern":
+        for (const element of pattern.elements)
+          if (element) visitPattern(element, next, shadowed);
+        return;
+      case "RestElement":
+        return visitPattern(pattern.argument, next, shadowed);
+      case "AssignmentPattern":
+        visitPattern(pattern.left, next, shadowed);
+        return visit(pattern.right, next, "right", shadowed);
+      case "TSParameterProperty":
+        return visitPattern(pattern.parameter, next, shadowed);
+    }
+  };
+  const visitChild = (
+    child: Node,
+    ancestors: Node[],
+    key: string,
+    shadowed: Set<string>,
+  ) => {
+    const parent = ancestors.at(-1)!;
+    const isPattern =
+      (parent.type === "VariableDeclarator" && key === "id") ||
+      (isFunction(parent) && key === "params") ||
+      (parent.type === "CatchClause" && key === "param");
+    if (isPattern) visitPattern(child, ancestors, shadowed);
+    else visit(child, ancestors, key, shadowed);
+  };
+  visit(node, [], undefined, new Set());
+  return found;
+}
+
+/** The JSDoc comment right before `start`, with only whitespace between. */
+export function leadingJsDoc(
+  module: ParsedModule,
+  start: number,
+): string | undefined {
+  for (let i = module.comments.length - 1; i >= 0; i--) {
+    const comment = module.comments[i]!;
+    if (comment.end > start) continue;
+    if (module.source.slice(comment.end, start).trim() !== "") return undefined;
+    if (comment.type === "Block" && comment.value.startsWith("*"))
+      return comment.value;
+    return undefined;
+  }
+  return undefined;
+}

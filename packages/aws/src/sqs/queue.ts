@@ -1,6 +1,9 @@
 import * as aws from "@notation/aws.iac";
-import { resolveLambdaTarget, type LambdaTarget } from "src/lambda";
-import type { SqsBatchHandler, SqsHandler } from "src/shared";
+import {
+  resolveLambda,
+  whenLoaded,
+  type LambdaTarget,
+} from "src/lambda/create-lambda";
 import { awsName } from "src/naming";
 
 export type QueueConfig = {
@@ -72,26 +75,27 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
   }
 
   /**
-   * Invokes an export of a runtime module, or a Lambda group from `lambda()`,
-   * with the queue's messages. Gives the function's role permission to read
-   * the queue, and maps the queue to the function.
+   * Invokes a Lambda with the queue's messages: a declaration from
+   * `createLambda`, passed as `() => lambda`, or a Lambda group from
+   * `lambda()`. Gives the function's role permission to read the queue, and
+   * maps the queue to the function. The mapping is made when infra has
+   * finished loading.
    */
   consume(
-    handler: LambdaTarget<SqsHandler | SqsBatchHandler>,
+    target: LambdaTarget<"sqs" | "none">,
     options: ConsumeOptions = {},
-  ): aws.lambda.LambdaEventSourceMappingInstance {
-    const target = resolveLambdaTarget(handler, "queue.consume()");
-    const lambdaGroup = target.group;
+  ): void {
+    whenLoaded(() => this.#consume(target, options));
+  }
+
+  #consume(target: LambdaTarget<"sqs" | "none">, options: ConsumeOptions) {
+    const lambdaGroup = resolveLambda(target, "queue.consume()", [
+      "sqs",
+      "none",
+    ]);
     const id = `${this.id}-${lambdaGroup.fn.id}-mapping`;
     if (this.resources.some((resource) => resource.id === id)) {
       throw new Error(`Queue ${this.id} already feeds ${lambdaGroup.fn.id}`);
-    }
-
-    if (target.export !== undefined) {
-      lambdaGroup.addDispatchEntry(id, {
-        export: target.export,
-        match: { queueArn: this.arn },
-      });
     }
 
     lambdaGroup.policy.contribute({
@@ -115,4 +119,10 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
   }
 }
 
-export const queue = (config: QueueConfig) => new QueueGroup(config);
+/**
+ * Declares an SQS queue.
+ * @resource
+ */
+export function queue(config: QueueConfig): QueueGroup {
+  return new QueueGroup(config);
+}

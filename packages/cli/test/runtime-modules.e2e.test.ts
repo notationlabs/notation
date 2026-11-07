@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -35,42 +36,65 @@ const write = (file: string, contents: string) => {
   writeFileSync(path.join(root, file), contents);
 };
 
-it("deploys a runtime module as one lambda that dispatches to each export", async () => {
-  write(
-    "runtime/todos.fn.ts",
-    `
-    import { handle, type LambdaResource } from "@notation/aws/lambda/runtime";
+// A Standard Schema validator, so the project needs no validator library.
+const schemaModule = `
+  export const Order = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: (value) =>
+        typeof value?.id === "string"
+          ? { value }
+          : { issues: [{ message: "id must be a string" }] },
+    },
+  };
+`;
 
-    export const getTodos = handle.apiRequest(() => "get");
-    export const createTodo = handle.apiRequest(() => "create");
-    export const cleanUp = handle.eventBridgeScheduledEvent((event) => {
-      return "clean " + event.source;
+it("deploys a declaration module as a lambda that reads its bound variables", async () => {
+  write("runtime/schema.ts", schemaModule);
+  write(
+    "runtime/process-orders.ts",
+    `
+    import { createLambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+    import { ordersQueue } from "../infra/orders";
+    import { Order } from "./schema";
+
+    export const lambda = createLambda({
+      id: "process-orders",
+      timeout: 5,
+      event: () => sqs(Order),
+      policy: () => [ordersQueue.grant(["SendMessage"])],
+      env: () => ({ QUEUE_URL: ordersQueue.url, LOG_LEVEL: "info" }),
     });
 
-    export const resource: LambdaResource = {
-      service: "aws/lambda",
-      id: "todos",
-      timeout: 5,
-      memory: 64,
+    export const handler: LambdaHandler<typeof lambda> = async (event) => {
+      const batchItemFailures = [];
+      const orders = [];
+      for (const record of event.Records) {
+        try {
+          orders.push(await lambda.decode(record));
+        } catch {
+          batchItemFailures.push({ itemIdentifier: record.messageId });
+        }
+      }
+      console.log(JSON.stringify({ orders, env: lambda.env() }));
+      return { batchItemFailures };
     };
     `,
   );
   write(
-    "infra/main.ts",
+    "infra/orders.ts",
     `
-    import { api, router } from "@notation/aws/api-gateway";
-    import { schedule, rate } from "@notation/aws/event-bridge";
-    import { getTodos, createTodo, cleanUp } from "../runtime/todos.fn";
+    import { queue } from "@notation/aws/sqs";
+    import { lambda } from "../runtime/process-orders";
 
-    const todoRouter = router(api({ name: "todo-api" }));
-    todoRouter.get("/todos", getTodos);
-    todoRouter.post("/todos", createTodo);
-    schedule({ name: "clean-up", schedule: rate(1, "hour"), handler: cleanUp });
+    export const ordersQueue = queue({ name: "orders" });
+    ordersQueue.consume(() => lambda, { batchSize: 5 });
     `,
   );
 
   await compileRuntimeModules(
-    await compileInfra(path.join(root, "infra/main.ts")),
+    await compileInfra(path.join(root, "infra/orders.ts")),
   );
 
   // Evaluates the infra bundle, fills in the outputs that the lambda's params
@@ -78,35 +102,34 @@ it("deploys a runtime module as one lambda that dispatches to each export", asyn
   // deploy would give the lambda. A separate process gives the runtime bundle
   // a fresh environment and module cache.
   const script = `
-    import { collectResourceGraph } from "@notation/resource";
-    import { encodeRuntime } from "@notation/aws.iac/shared";
+    import { collectResourceGraph, resolveOutputValues, deployLookup } from "@notation/resource";
 
-    const graph = await collectResourceGraph(() => import("./dist/infra/main.mjs"));
+    const graph = await collectResourceGraph(() => import("./dist/infra/orders.mjs"));
     const ofType = (type) => graph.resources.filter((r) => r.type === type);
     const [fn, ...otherFns] = ofType("aws/lambda/LambdaFunction");
-    ofType("aws/apiGateway/Api")[0].setOutput({ ApiId: "api-1" });
+    const [queue] = ofType("aws/sqs/Queue");
+    queue.setOutput({ QueueUrl: "https://sqs/orders", QueueArn: "arn:orders", QueueName: "orders" });
     fn.dependencies.role.setOutput({ Arn: "arn:role" });
-    fn.dependencies.zipFile.setOutput({ filePath: "todos.zip", fileSha256: "sha" });
+    fn.dependencies.zipFile.setOutput({ filePath: "fn.zip", fileSha256: "sha" });
     const params = await fn.getParams();
-    const [rule] = ofType("aws/eventBridge/rule");
-    const template = rule.config.Targets[0].InputTransformer.InputTemplate;
+    const [policy] = ofType("aws/lambda/LambdaRolePolicy");
+    const statements = (await policy.getParams()).PolicyDocument.Statement;
+    const mappings = ofType("aws/lambda/LambdaEventSourceMapping");
 
-    process.env.NOTATION_RUNTIME = encodeRuntime(params.Environment.Runtime);
-    const { handler } = await import("./dist/runtime/todos.fn/index.mjs");
-    const request = (routeKey) => ({ routeKey, requestContext: { apiId: "api-1" } });
-    const scheduled = JSON.parse(
-      template.replace("<aws.events.event.json>", JSON.stringify({ source: "aws.events" })),
-    );
+    Object.assign(process.env, params.Environment.Variables);
+    const { handler } = await import("./dist/runtime/process-orders/index.mjs");
+    const record = (messageId, body) => ({ messageId, body: JSON.stringify(body) });
+    const result = await handler({ Records: [record("1", { id: "o1" }), record("2", { id: 2 })] }, {});
 
     console.log(JSON.stringify({
       lambdas: 1 + otherFns.length,
       handler: params.Handler,
       timeout: params.Timeout,
-      memory: params.MemorySize,
+      variables: params.Environment.Variables,
+      actions: statements.flatMap((s) => s.Action),
+      mappings: mappings.map((m) => m.id),
       zipSource: fn.dependencies.zipFile.config.sourceFilePath,
-      get: await handler(request("GET /todos"), {}),
-      post: await handler(request("POST /todos"), {}),
-      scheduled: await handler(scheduled, {}),
+      result,
     }));
   `;
   const output = execFileSync(
@@ -114,15 +137,31 @@ it("deploys a runtime module as one lambda that dispatches to each export", asyn
     ["--input-type=module", "-e", script],
     { cwd: root, encoding: "utf8" },
   );
+  const [logged, summary] = output.trim().split("\n");
 
-  expect(JSON.parse(output)).toEqual({
+  expect(JSON.parse(summary!)).toEqual({
     lambdas: 1,
     handler: "index.handler",
     timeout: 5,
-    memory: 64,
-    zipSource: "dist/runtime/todos.fn/index.mjs",
-    get: "get",
-    post: "create",
-    scheduled: "clean aws.events",
+    variables: { QUEUE_URL: "https://sqs/orders", LOG_LEVEL: "info" },
+    actions: [
+      "sqs:ReceiveMessage",
+      "sqs:DeleteMessage",
+      "sqs:GetQueueAttributes",
+      "sqs:SendMessage",
+    ],
+    mappings: ["orders-process-orders-mapping"],
+    zipSource: "dist/runtime/process-orders/index.mjs",
+    result: { batchItemFailures: [{ itemIdentifier: "2" }] },
   });
+  expect(JSON.parse(logged!)).toEqual({
+    orders: [{ id: "o1" }],
+    env: { QUEUE_URL: "https://sqs/orders", LOG_LEVEL: "info" },
+  });
+
+  const bundle = readFileSync(
+    path.join(root, "dist/runtime/process-orders/index.mjs"),
+    "utf8",
+  );
+  expect(bundle).not.toMatch(/@aws-sdk|aws\.iac|LambdaGroup|ordersQueue/);
 });

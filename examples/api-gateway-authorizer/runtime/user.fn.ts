@@ -1,18 +1,15 @@
-import type { LambdaResource } from "@notation/aws/lambda/runtime";
-import { handle } from "@notation/aws/lambda/runtime";
+import { createLambda, http } from "@notation/aws/lambda";
+import type { APIGatewayJWTProxyEventV2 } from "@notation/aws/shared";
 import type { JWTClaims } from "shared/jwt";
 
-export const getUserHandler = handle.jwtAuthorizedApiRequest<JWTClaims>(
-  async (event) => {
-    return {
-      message: event.requestContext.authorizer.jwt.claims.$username,
-    };
-  },
-);
-
-export const resource: LambdaResource = {
-  service: "aws/lambda",
+export const lambda = createLambda({
   id: "user",
   timeout: 5,
   memory: 64,
+  event: () => http(),
+});
+
+// The route's JWT authorizer adds the claims to the request.
+export const handler = async (event: APIGatewayJWTProxyEventV2<JWTClaims>) => {
+  return { message: event.requestContext.authorizer.jwt.claims.$username };
 };
