@@ -161,11 +161,32 @@ export function resolveLambda(
   const event = registered.kind();
   if (!kinds.includes(event)) {
     throw new Error(
-      `${caller} sends ${kinds.filter((k) => k !== "none").join(" or ")} events, but the Lambda "${group.id}" is declared with ${event === "none" ? "no event" : `event: () => ${event}()`}.`,
+      `${caller} sends ${kinds
+        .filter((k) => k !== "none")
+        .map((k) => eventNames[k])
+        .join(
+          " or ",
+        )}, but the Lambda "${group.id}" is declared with ${event === "none" ? "no event" : `event: () => ${eventCalls[event]}`}.`,
     );
   }
   return group;
 }
+
+const eventNames: Record<LambdaEventKind, string> = {
+  sqs: "sqs events",
+  http: "http events",
+  "http-jwt": "http events with a JWT authorizer",
+  scheduled: "scheduled events",
+  none: "any events",
+};
+
+const eventCalls: Record<LambdaEventKind, string> = {
+  sqs: "sqs()",
+  http: "http()",
+  "http-jwt": "http({ auth: jwt() })",
+  scheduled: "scheduled()",
+  none: "",
+};
 
 /**
  * Runs `wire` when infra has finished loading, so that a declaration in a

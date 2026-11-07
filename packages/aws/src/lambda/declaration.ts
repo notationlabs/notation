@@ -1,5 +1,6 @@
 import type { StandardSchemaV1 } from "@notation/resource";
 import type {
+  APIGatewayEventRequestContextJWTAuthorizer,
   APIGatewayProxyEventV2,
   Context,
   EventBridgeEvent,
@@ -7,7 +8,10 @@ import type {
   SQSEvent,
   SQSRecord,
 } from "aws-lambda";
-import type { ApiGatewayResult } from "src/shared/lambda.handler";
+import type {
+  APIGatewayJWTProxyEventV2,
+  ApiGatewayResult,
+} from "src/shared/lambda.handler";
 
 // This module is part of both builds. In the runtime build it must not import
 // infra code, so it imports only types.
@@ -20,12 +24,46 @@ export type SqsEvent<
   schema: S;
 };
 
-/** The function receives HTTP API requests, whose JSON body `decode()` validates with `schema`. */
+/**
+ * The function receives requests through a route with a JWT authorizer.
+ * `Claims` types the token's claims in the event. It is not checked against
+ * the tokens.
+ */
+export type JwtAuth<Claims = JwtClaims> = {
+  type: "jwt";
+  /** Carries the claims type. It is never set. */
+  readonly "~claims"?: Claims;
+};
+
+type JwtClaims = APIGatewayEventRequestContextJWTAuthorizer["jwt"]["claims"];
+
+export type HttpAuth = JwtAuth<any>;
+
+/**
+ * The function receives HTTP API requests, whose JSON body `decode()`
+ * validates with `schema`. A request through a route with a JWT authorizer
+ * has the kind `http-jwt`, because its event also holds the token's claims.
+ */
 export type HttpEvent<
   S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
+  A extends HttpAuth | undefined = HttpAuth | undefined,
 > = {
-  kind: "http";
+  kind: A extends HttpAuth ? "http-jwt" : "http";
   schema: S;
+  auth: A;
+};
+
+export type HttpOptions<
+  S extends StandardSchemaV1 | undefined,
+  A extends HttpAuth | undefined,
+> = {
+  /** Validates the JSON body of a request in `decode()`. */
+  body?: S;
+  /**
+   * The route's authorizer, such as `jwt<Claims>()`. Infra can only wire the
+   * function to routes with this authorizer.
+   */
+  auth?: A;
 };
 
 /** The function receives EventBridge scheduled events. */
@@ -49,13 +87,25 @@ export function sqs<S extends StandardSchemaV1 | undefined = undefined>(
 
 /**
  * The function receives HTTP API requests, from routes on an API.
- * @param schema Validates the JSON body of a request in `decode()`.
- * @runtime schema
+ * @runtime options
  */
-export function http<S extends StandardSchemaV1 | undefined = undefined>(
-  schema?: S,
-): HttpEvent<S> {
-  return { kind: "http", schema: schema as S };
+export function http<
+  S extends StandardSchemaV1 | undefined = undefined,
+  A extends HttpAuth | undefined = undefined,
+>(options: HttpOptions<S, A> = {}): HttpEvent<S, A> {
+  return {
+    kind: (options.auth ? "http-jwt" : "http") as HttpEvent<S, A>["kind"],
+    schema: options.body as S,
+    auth: options.auth as A,
+  };
+}
+
+/**
+ * The function's routes have a JWT authorizer. `Claims` types the token's
+ * claims in the handler's event.
+ */
+export function jwt<Claims = JwtClaims>(): JwtAuth<Claims> {
+  return { type: "jwt" };
 }
 
 /** The function receives EventBridge scheduled events, from a schedule. */
@@ -72,7 +122,7 @@ type Decoded<S> = S extends StandardSchemaV1
 type DecodeFor<E> =
   E extends SqsEvent<infer S>
     ? (record: SQSRecord) => Promise<Decoded<S>>
-    : E extends HttpEvent<infer S>
+    : E extends HttpEvent<infer S, any>
       ? (
           event: Pick<APIGatewayProxyEventV2, "body" | "isBase64Encoded">,
         ) => Promise<Decoded<S>>
@@ -107,29 +157,35 @@ export interface Lambda<
 
 export type EnvVars = Record<string, string>;
 
-type HandlerFor = {
-  sqs: (
-    event: SQSEvent,
-    context: Context,
-  ) => SQSBatchResponse | void | Promise<SQSBatchResponse | void>;
-  http: (
-    event: APIGatewayProxyEventV2,
-    context: Context,
-  ) => ApiGatewayResult | Promise<ApiGatewayResult>;
-  scheduled: (
-    event: EventBridgeEvent<"Scheduled Event", unknown>,
-    context: Context,
-  ) => void | Promise<void>;
-  none: (event: unknown, context: Context) => unknown;
-};
+type HttpHandler<Event> = (
+  event: Event,
+  context: Context,
+) => ApiGatewayResult | Promise<ApiGatewayResult>;
+
+type HandlerFor<E> =
+  E extends SqsEvent
+    ? (
+        event: SQSEvent,
+        context: Context,
+      ) => SQSBatchResponse | void | Promise<SQSBatchResponse | void>
+    : E extends HttpEvent<any, JwtAuth<infer Claims>>
+      ? HttpHandler<APIGatewayJWTProxyEventV2<Claims>>
+      : E extends HttpEvent
+        ? HttpHandler<APIGatewayProxyEventV2>
+        : E extends ScheduledEvent
+          ? (
+              event: EventBridgeEvent<"Scheduled Event", unknown>,
+              context: Context,
+            ) => void | Promise<void>
+          : (event: unknown, context: Context) => unknown;
 
 /**
  * The type of the `handler` export of a Lambda's module, from the
  * declaration: `export const handler: LambdaHandler<typeof lambda> = ...`.
  */
 export type LambdaHandler<
-  L extends { readonly "~lambda"?: { kind: LambdaEventKind } },
-> = HandlerFor[NonNullable<L["~lambda"]>["kind"]];
+  L extends { readonly "~lambda"?: { event: LambdaEvent | undefined } },
+> = HandlerFor<NonNullable<L["~lambda"]>["event"]>;
 
 /** The variables that a Lambda's declaration binds. */
 export type LambdaEnv<L extends { readonly "~lambda"?: { env: EnvVars } }> =
@@ -167,13 +223,13 @@ export function createDecode(
   let event: LambdaEvent | undefined;
   return async (item) => {
     event ??= options.event?.();
-    if (event?.kind !== "sqs" && event?.kind !== "http") {
+    if (!event || event.kind === "scheduled") {
       throw new Error(
-        `decode() needs a Lambda declared with event: () => sqs(schema) or event: () => http(schema).`,
+        `decode() needs a Lambda declared with event: () => sqs(schema) or event: () => http({ body: schema }).`,
       );
     }
     const body =
-      event.kind === "http" && item?.isBase64Encoded
+      event.kind !== "sqs" && item?.isBase64Encoded
         ? Buffer.from(item.body ?? "", "base64").toString("utf8")
         : item?.body;
     let value: unknown;

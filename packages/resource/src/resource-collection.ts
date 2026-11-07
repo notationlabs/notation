@@ -45,7 +45,7 @@ export function claimSingleCopy(url: string) {
   if (loaded === undefined) registry[loadedKey] = url;
   else if (loaded !== url) {
     throw new Error(
-      `Two copies of @notation/resource are loaded, from ${loaded} and ${url}. Resources made through one copy are missing from the other's graph. Install one version of the @notation packages, for example with \`pnpm dedupe\` or \`npm dedupe\`.`,
+      `Two versions of @notation/resource were detected at ${loaded} and ${url}. Please install one version (for example with npm dedupe).`pnpm dedupe\` or \`npm dedupe\`.`,
     );
   }
 }

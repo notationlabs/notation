@@ -2,7 +2,15 @@ import { test, expect } from "vitest";
 import { collectResourceGraph, type ResourceGraph } from "@notation/resource";
 import { NO_AUTH, api, router } from "src/api-gateway";
 import { route, RouteGroup } from "src/api-gateway/route";
-import { $lambda, http, lambda, sqs, type LambdaGroup } from "src/lambda";
+import type { JWTAuthorizerConfig } from "src/api-gateway/auth";
+import {
+  $lambda,
+  http,
+  jwt,
+  lambda,
+  sqs,
+  type LambdaGroup,
+} from "src/lambda";
 import { inModule, lambdaGroup } from "./declare";
 
 const declareLambda = () =>
@@ -167,6 +175,57 @@ test("a route to a declaration with an sqs event throws", async () => {
     }),
   ).rejects.toThrow(
     'route() sends http events, but the Lambda "process" is declared with event: () => sqs().',
+  );
+});
+
+const jwtAuth: JWTAuthorizerConfig = {
+  type: "jwt",
+  issuer: "https://auth.example.com/",
+  audience: ["https://api.example.com"],
+  scopes: [],
+};
+
+test("a route with a JWT authorizer integrates a JWT declaration", async () => {
+  const graph = await collectResourceGraph(() => {
+    const user = inModule(
+      $lambda({ id: "user", event: () => http({ auth: jwt() }) }),
+    );
+    router(api({ name: "user-api" }))
+      .withJWTAuthorizer(jwtAuth)
+      .get("/user", () => user);
+  });
+
+  expect(
+    routeGroup(graph, "user-api-GET-/user").route.dependencies
+      .lambdaIntegration.dependencies.lambda,
+  ).toBe(lambdaGroup(graph, "user").fn);
+});
+
+test("a route without an authorizer to a JWT declaration throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const user = inModule(
+        $lambda({ id: "user", event: () => http({ auth: jwt() }) }),
+      );
+      // @ts-expect-error the request has no claims
+      router(api({ name: "user-api" })).get("/user", () => user);
+    }),
+  ).rejects.toThrow(
+    'route() sends http events, but the Lambda "user" is declared with event: () => http({ auth: jwt() }).',
+  );
+});
+
+test("a route with a JWT authorizer to a plain http declaration throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const todos = inModule($lambda({ id: "todos", event: () => http() }));
+      router(api({ name: "todo-api" }))
+        .withJWTAuthorizer(jwtAuth)
+        // @ts-expect-error the declaration doesn't expect the claims
+        .get("/todos", () => todos);
+    }),
+  ).rejects.toThrow(
+    'route() sends http events with a JWT authorizer, but the Lambda "todos" is declared with event: () => http().',
   );
 });
 

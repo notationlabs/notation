@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, expect, expectTypeOf, test, vi } from "vitest";
-import type { SQSEvent, SQSRecord } from "aws-lambda";
+import type {
+  APIGatewayProxyEventV2,
+  SQSEvent,
+  SQSRecord,
+} from "aws-lambda";
 import { setConfigFile } from "@notation/core";
 import {
   collectResourceGraph,
@@ -10,6 +14,7 @@ import {
   $lambda,
   DecodeError,
   http,
+  jwt,
   sqs,
   type LambdaHandler,
 } from "src/lambda";
@@ -180,7 +185,7 @@ test("decode() without a schema returns the parsed body", async () => {
 });
 
 test("decode() for http reads a base64 body", async () => {
-  const fn = $lambda({ id: "orders", event: () => http(Order) });
+  const fn = $lambda({ id: "orders", event: () => http({ body: Order }) });
   const body = Buffer.from('{"id":"1"}').toString("base64");
 
   await expect(fn.decode({ body, isBase64Encoded: true })).resolves.toEqual({
@@ -246,4 +251,34 @@ test("a declaration types its handler, env() and decode()", () => {
 
   // @ts-expect-error env values are strings
   $lambda({ id: "numbers", env: () => ({ N: 1 }) });
+});
+
+test("a JWT declaration types the claims in its handler's event", () => {
+  type Claims = { sub: string };
+  const user = $lambda({
+    id: "user",
+    event: () => http({ body: Order, auth: jwt<Claims>() }),
+  });
+  type Event = Parameters<LambdaHandler<typeof user>>[0];
+
+  expectTypeOf<Event>().toExtend<APIGatewayProxyEventV2>();
+  expectTypeOf<
+    Event["requestContext"]["authorizer"]["jwt"]["claims"]
+  >().toEqualTypeOf<Claims>();
+  expectTypeOf(user.decode).returns.resolves.toEqualTypeOf<Order>();
+
+  const plain = $lambda({ id: "plain", event: () => http() });
+  expectTypeOf<
+    Parameters<LambdaHandler<typeof plain>>[0]
+  >().toEqualTypeOf<APIGatewayProxyEventV2>();
+});
+
+test("decode() reads the body of a request to a JWT declaration", async () => {
+  const fn = $lambda({
+    id: "user",
+    event: () => http({ body: Order, auth: jwt() }),
+  });
+  await expect(fn.decode({ body: '{"id":"o1"}', isBase64Encoded: false })).resolves.toEqual({
+    id: "o1",
+  });
 });

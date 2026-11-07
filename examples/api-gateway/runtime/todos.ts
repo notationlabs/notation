@@ -11,7 +11,7 @@ export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,
-  event: () => http(NewTodo),
+  event: () => http({ body: NewTodo }),
 });
 
 const todos = await api.get<any[]>("/todos");

@@ -32,11 +32,12 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 ::
 
-| Infra API                  | Accepts a declaration with  |
-| -------------------------- | --------------------------- |
-| `queue.consume(target)`    | `sqs()` or no `event`       |
-| `router.get(path, target)` | `http()` or no `event`      |
-| `schedule({ target })`     | `scheduled()` or no `event` |
+| Infra API                                          | Accepts a declaration with            |
+| -------------------------------------------------- | ------------------------------------- |
+| `queue.consume(target)`                            | `sqs()` or no `event`                 |
+| `router.get(path, target)`                         | `http()` or no `event`                |
+| `router.withJWTAuthorizer(auth).get(path, target)` | `http({ auth: jwt() })` or no `event` |
+| `schedule({ target })`                             | `scheduled()` or no `event`           |
 
 The infra APIs also check the event when infra runs, so a mismatch that TypeScript misses, such as one behind an `any`, fails with an error that names the Lambda and its event.
 
@@ -73,7 +74,7 @@ lambda.env().ORDERS_URL; // type error: the declaration doesn't bind ORDERS_URL
 
 ## Bodies are typed by the schema
 
-`sqs(schema)` and `http(schema)` take a [Standard Schema](https://standardschema.dev). `lambda.decode()` returns the schema's output type:
+`sqs(schema)` and `http({ body: schema })` take a [Standard Schema](https://standardschema.dev). `lambda.decode()` returns the schema's output type:
 
 ```ts [runtime/orders.ts]
 export const lambda = $lambda({
@@ -88,7 +89,7 @@ Nothing checks the other end. A producer that sends to the queue isn't checked a
 
 ## JWT claims
 
-`withJWTAuthorizer()` doesn't carry a claims type. Type the claims in the handler, with `APIGatewayJWTProxyEventV2` from `@notation/aws/shared`:
+A request through a route with a JWT authorizer holds the token's claims, so it is a different event from a plain HTTP request. The declaration says so with `http({ auth: jwt<Claims>() })`, and `LambdaHandler<typeof lambda>` types the claims as `Claims`:
 
 ::code-group
 
@@ -108,17 +109,16 @@ authedRouter.get("/user", () => user);
 ```
 
 ```ts [runtime/user.ts]
-import { $lambda, http } from "@notation/aws/lambda";
-import type { APIGatewayJWTProxyEventV2 } from "@notation/aws/shared";
+import { $lambda, http, jwt, type LambdaHandler } from "@notation/aws/lambda";
 
 type JWTClaims = { sub: string; email: string };
 
 export const lambda = $lambda({
   id: "user",
-  event: () => http(),
+  event: () => http({ auth: jwt<JWTClaims>() }),
 });
 
-export const handler = async (event: APIGatewayJWTProxyEventV2<JWTClaims>) => {
+export const handler: LambdaHandler<typeof lambda> = async (event) => {
   const { sub, email } = event.requestContext.authorizer.jwt.claims;
   return { sub, email };
 };
@@ -126,4 +126,6 @@ export const handler = async (event: APIGatewayJWTProxyEventV2<JWTClaims>) => {
 
 ::
 
-The handler has no `LambdaHandler<typeof lambda>` annotation, because `LambdaHandler` types an HTTP event as `APIGatewayProxyEventV2`, which has no JWT claims. TypeScript doesn't check `JWTClaims` against the tokens that the issuer sends.
+- The routes of `withJWTAuthorizer()` accept only a declaration with `http({ auth: jwt() })`, or one with no `event`. A plain router's routes reject it, because the request would have no claims.
+- TypeScript doesn't check `JWTClaims` against the tokens that the issuer sends.
+- `jwt()` doesn't hold the issuer or the audience. Those stay in infra, in `withJWTAuthorizer()`.

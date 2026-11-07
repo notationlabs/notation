@@ -88,7 +88,9 @@ export class RouteGroup extends aws.AwsResourceGroup {
 /**
  * Routes requests for `method` and `path` on the API to a Lambda: a
  * declaration from `$lambda`, passed as `() => lambda`, or a Lambda
- * group from `lambda()`. The route is made when infra has finished loading.
+ * group from `lambda()`. A route with a JWT authorizer takes a declaration
+ * with `http({ auth: jwt() })`, and a route without one takes `http()`. The
+ * route is made when infra has finished loading.
  * @resource
  */
 export function route(
@@ -96,10 +98,13 @@ export function route(
   method: string, // todo: http methods only
   path: `/${string}`,
   auth: AuthorizerConfig,
-  target: LambdaTarget<"http" | "none">,
+  target: LambdaTarget<"http" | "http-jwt" | "none">,
 ): void {
   whenLoaded(() => {
-    const lambdaGroup = resolveLambda(target, "route()", ["http", "none"]);
+    const lambdaGroup = resolveLambda(target, "route()", [
+      auth.type === "jwt" ? "http-jwt" : "http",
+      "none",
+    ]);
     new RouteGroup({ apiGroup, method, path, auth, lambdaGroup });
   });
 }

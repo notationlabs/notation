@@ -12,6 +12,6 @@ it("records the copy that is loaded", () => {
 
 it("fails when another copy is loaded", () => {
   expect(() => claimSingleCopy("file:///other/resource-collection.js")).toThrow(
-    `Two copies of @notation/resource are loaded, from ${loaded} and file:///other/resource-collection.js.`,
+    `Two versions of @notation/resource were detected at ${loaded} and file:///other/resource-collection.js. Please install one version (for example with npm dedupe).`,
   );
 });

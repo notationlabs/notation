@@ -4,6 +4,7 @@ import type { ApiGroup } from "./api";
 import { AuthorizerConfig, JWTAuthorizerConfig, NO_AUTH } from "./auth";
 
 type HttpTarget = LambdaTarget<"http" | "none">;
+type JwtHttpTarget = LambdaTarget<"http-jwt" | "none">;
 
 /**
  * Adds routes to an API. Each method takes a path and a Lambda, such as
@@ -39,7 +40,7 @@ class AuthorizedRouteBuilder {
 
   private createJWTAuthorizedRouteCallback =
     (method: string, authorizer: JWTAuthorizerConfig) =>
-    (path: `/${string}`, target: HttpTarget) => {
+    (path: `/${string}`, target: JwtHttpTarget) => {
       route(this.apiGroup, method, path, authorizer, target);
     };
 
