@@ -84,6 +84,7 @@ function writeAwsPackage() {
           import: "./lambda.js",
         },
         "./sqs": "./sqs.js",
+        "./helpers": "./helpers.js",
       },
     }),
   );
@@ -111,6 +112,13 @@ function writeAwsPackage() {
       `import "./sdk.js";`,
       `/** @resource */`,
       `export function queue(config) { return { url: "placeholder-url", consume: () => {} }; }`,
+    ].join("\n"),
+  );
+  write(
+    "node_modules/@notation/aws/helpers.js",
+    [
+      `import { queue } from "./sqs.js";`,
+      `export const ordersQueue = () => queue({ name: "orders" });`,
     ].join("\n"),
   );
   write("node_modules/@notation/aws/sdk.js", `console.log("sdk loaded");`);
@@ -302,7 +310,25 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes a function that declares infrastructure, from node_modules/@notation/aws/sqs.js, because the function uses queue at runtime/process-orders.ts:17:38.",
+      "The bundle of runtime/process-orders.ts includes a function that declares infrastructure, from @notation/aws/sqs.js, because the function uses queue at runtime/process-orders.ts:17:38.",
+    );
+  });
+
+  it("names the import chain by package when a package function declares infra", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { orders } from "../infra/orders";`,
+          `import { orders } from "../infra/orders";\n  import { ordersQueue } from "@notation/aws/helpers";`,
+        )
+        .replace(
+          "export const handler = async () =>",
+          "export const handler = async () => ordersQueue() &&",
+        ),
+    );
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
+    await expect(compileRuntimeModules(modules)).rejects.toThrow(
+      "from @notation/aws/sqs.js, imported through runtime/process-orders.ts → @notation/aws/helpers.js → @notation/aws/sqs.js.",
     );
   });
 

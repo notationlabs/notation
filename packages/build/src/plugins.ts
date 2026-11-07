@@ -54,6 +54,25 @@ function isInstalledPackage(
   return installed;
 }
 
+// A file for an error message. A package file is named by its package, such
+// as `@notation/aws/dist/sqs/index.js`. A workspace package resolves to its
+// real path, so a path relative to the project root would read as
+// `../../aws/dist/sqs/index.js`.
+function displayPath(file: string): string {
+  const relative = toProjectRoot(file);
+  if (!nodeModules.test(file) && !relative.startsWith("..")) return relative;
+  for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
+    const manifest = path.join(dir, "package.json");
+    if (fs.existsSync(manifest)) {
+      const { name } = JSON.parse(fs.readFileSync(manifest, "utf8"));
+      if (typeof name === "string") {
+        return [name, ...path.relative(dir, file).split(path.sep)].join("/");
+      }
+    }
+    if (dir === path.dirname(dir)) return relative;
+  }
+}
+
 const envAdvice =
   "Read infra values in the function through the declaration's env().";
 
@@ -256,9 +275,7 @@ export function runtimePlugin({
             (binding, file) =>
               analyses.marks.resolve(binding.source, file) === id,
           );
-          const chain = importChain(this, id).map((file) =>
-            toProjectRoot(file),
-          );
+          const chain = importChain(this, id).map(displayPath);
           this.error(
             `The bundle of ${toProjectRoot(module.path)} includes the infra module ${toProjectRoot(id)}, ${because(uses, chain)}. The runtime build leaves infra out, so runtime code can't use it. ${envAdvice}`,
           );
@@ -282,11 +299,9 @@ export function runtimePlugin({
                 importMark?.kind === "resource" ||
                 importMark?.kind === "declaration",
             );
-            const chain = importChain(this, id).map((file) =>
-              toProjectRoot(file),
-            );
+            const chain = importChain(this, id).map(displayPath);
             this.error(
-              `The bundle of ${toProjectRoot(module.path)} includes a function that declares infrastructure, from ${toProjectRoot(id)}, ${because(uses, chain)}. Infra functions can't run in a function. ${envAdvice}`,
+              `The bundle of ${toProjectRoot(module.path)} includes a function that declares infrastructure, from ${displayPath(id)}, ${because(uses, chain)}. Infra functions can't run in a function. ${envAdvice}`,
             );
           }
         }
