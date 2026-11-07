@@ -4,8 +4,8 @@ const declaredInKey = Symbol.for("@notation/declaredIn");
 
 /** The module of a declaration, as the infra build records it. */
 export type DeclaredIn = {
-  /** The file URL of the module. */
-  url: string;
+  /** The path of the module, relative to the project root, with `/` separators. */
+  path: string;
   /** The local name of the binding that holds the declaration. */
   binding: string;
 };
@@ -15,12 +15,12 @@ export type DeclaredIn = {
  * returns, and returns the value. The infra build wraps each declaration in
  * a call like this one.
  */
-export function declaredIn<T>(value: T, url: string, binding: string): T {
+export function declaredIn<T>(value: T, path: string, binding: string): T {
   if (
     (typeof value === "object" && value !== null) ||
     typeof value === "function"
   ) {
-    Object.defineProperty(value, declaredInKey, { value: { url, binding } });
+    Object.defineProperty(value, declaredInKey, { value: { path, binding } });
   }
   return value;
 }

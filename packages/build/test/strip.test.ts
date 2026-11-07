@@ -51,7 +51,7 @@ function setup(source = handlerModule) {
 
 describe("stripForInfra", () => {
   it("keeps only the declaration and the statements that it uses", () => {
-    const { code, declaration } = stripForInfra(setup().analysis);
+    const { code, declaration } = stripForInfra(setup().analysis, root);
     expect(declaration).toEqual({
       path: file,
       binding: "lambda",
@@ -76,11 +76,11 @@ describe("stripForInfra", () => {
   });
 
   it("wraps the declaration in a call that records its module", () => {
-    const { code } = stripForInfra(setup().analysis);
+    const { code } = stripForInfra(setup().analysis, root);
     expect(code).toMatch(
-      /export const lambda = \$declaredIn\(createLambda\(\{[\s\S]*\}\), "file:\/\/\/project\/runtime\/handler\.ts", "lambda"\);/,
+      /export const lambda = \$declaredIn\(createLambda\(\{[\s\S]*\}\), "runtime\/handler\.ts", "lambda"\);/,
     );
-    expect(code).toContain("function $declaredIn(value, url, binding)");
+    expect(code).toContain("function $declaredIn(value, path, binding)");
   });
 
   it("replaces runtime-only options with a function that throws", () => {
@@ -90,7 +90,7 @@ describe("stripForInfra", () => {
       const counters = createNamespace({ id: "counters", class: class Counter {} });
       export const handler = 1;
     `;
-    const { code } = stripForInfra(setup(source).analysis);
+    const { code } = stripForInfra(setup(source).analysis, root);
     expect(code).toContain(
       `class: () => { throw new Error("class only runs in the function, not in the infra build."); }`,
     );
@@ -102,7 +102,7 @@ describe("stripForInfra", () => {
       "export const handler",
       "const handler",
     );
-    expect(() => stripForInfra(setup(source).analysis)).toThrow(
+    expect(() => stripForInfra(setup(source).analysis, root)).toThrow(
       "runtime/handler.ts: the module declares a function with createLambda, so it must export `handler`",
     );
   });
@@ -119,6 +119,7 @@ describe("stripForRuntime", () => {
     const { code } = stripForRuntime(analysis, marks, isInfraModule)!;
     expect(code).toContain(
       `export const lambda = createLambda({
+  id: "process-orders",
   event: () => sqs(Order, undefined),
   env: () => ({ QUEUE_URL: undefined, LOG_LEVEL: undefined }),
 });`,
@@ -129,12 +130,12 @@ describe("stripForRuntime", () => {
   it("removes the last option with the comma before it", () => {
     const source = `
       import { createLambda } from "@notation/aws/lambda";
-      export const lambda = createLambda({ event: () => null, id: "a", memory: 1 });
+      export const lambda = createLambda({ event: () => null, memory: 1, id: "a", timeout: 2 });
       export const handler = 1;
     `;
     const { analysis, marks, isInfraModule } = setup(source);
     expect(stripForRuntime(analysis, marks, isInfraModule)!.code).toContain(
-      "createLambda({ event: () => null });",
+      'createLambda({ event: () => null, id: "a" });',
     );
   });
 

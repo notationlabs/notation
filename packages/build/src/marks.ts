@@ -12,7 +12,7 @@ import {
 
 /**
  * Marks a function that declares a function resource, such as a Lambda.
- * Written `@declaration shared: event, env; keys: env; entry: handler`.
+ * Written `@declaration shared: id, event, env; keys: env; entry: handler`.
  */
 export type DeclarationMark = {
   kind: "declaration";

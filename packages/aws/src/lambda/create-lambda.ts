@@ -1,6 +1,5 @@
-import { fileURLToPath } from "node:url";
 import * as aws from "@notation/aws.iac";
-import { filePaths, toProjectRoot } from "@notation/core";
+import { filePaths, fromProjectRoot, toProjectRoot } from "@notation/core";
 import {
   getActiveResourceCollection,
   getDeclaredIn,
@@ -55,7 +54,7 @@ const declarations = new WeakMap<object, Registered>();
  * The function's resources are made when infra has finished loading, or when
  * infra first wires the declaration, so the options can refer to infra
  * modules that import this one.
- * @declaration shared: event, env; keys: env; entry: handler
+ * @declaration shared: id, event, env; keys: env; entry: handler
  */
 export function createLambda<
   const Id extends string,
@@ -92,7 +91,7 @@ function buildGroup(
       `The Lambda "${config.id}" has no module. The infra build records the module of each createLambda call; run the infra through notation compile, plan or deploy.`,
     );
   }
-  const modulePath = fileURLToPath(record.url);
+  const modulePath = fromProjectRoot(record.path);
   const group = new LambdaGroup({
     id: config.id,
     code: {

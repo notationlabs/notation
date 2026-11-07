@@ -1,4 +1,4 @@
-import { pathToFileURL } from "node:url";
+import path from "node:path";
 import MagicString from "magic-string";
 import { freeReferences, type Node } from "./ast";
 import type { Declaration, ModuleAnalysis } from "./analyze";
@@ -10,9 +10,9 @@ export const declaredInHelper = "$declaredIn";
 // The helper is written into the module, so the user's project doesn't have
 // to resolve a notation package from the module's directory.
 const helper = `
-function ${declaredInHelper}(value, url, binding) {
+function ${declaredInHelper}(value, path, binding) {
   if ((typeof value === "object" && value !== null) || typeof value === "function") {
-    Object.defineProperty(value, Symbol.for("@notation/declaredIn"), { value: { url, binding } });
+    Object.defineProperty(value, Symbol.for("@notation/declaredIn"), { value: { path, binding } });
   }
   return value;
 }
@@ -88,10 +88,16 @@ function exportsName(analysis: ModuleAnalysis, name: string): boolean {
  * declaration and the top-level statements that the declaration uses, and
  * removes everything else, such as the handler, SDK clients and side-effect
  * imports. The declaration is wrapped in a call that records the module's
- * file URL and the binding's name against the declaration's value. Options
- * that only run in the function are replaced with a function that throws.
+ * path and the binding's name against the declaration's value. Options that
+ * only run in the function are replaced with a function that throws.
+ *
+ * The path is relative to `root`, the project root, so that the bundle is
+ * the same on every machine.
  */
-export function stripForInfra(analysis: ModuleAnalysis): {
+export function stripForInfra(
+  analysis: ModuleAnalysis,
+  root: string,
+): {
   code: string;
   map: ReturnType<MagicString["generateMap"]>;
   declaration: DeclarationModule;
@@ -168,7 +174,7 @@ export function stripForInfra(analysis: ModuleAnalysis): {
   s.prependLeft(declaration.call.start, `${declaredInHelper}(`);
   s.appendRight(
     declaration.call.end,
-    `, ${JSON.stringify(pathToFileURL(module.file).href)}, ${JSON.stringify(declaration.binding)})`,
+    `, ${JSON.stringify(path.relative(root, module.file).split(path.sep).join("/"))}, ${JSON.stringify(declaration.binding)})`,
   );
   s.append(helper);
 

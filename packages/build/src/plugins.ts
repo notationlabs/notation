@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { toProjectRoot } from "@notation/core";
+import { projectRoot, toProjectRoot } from "@notation/core";
 import type { Plugin } from "rolldown";
 import { analyzeModule, type ModuleAnalysis } from "./analyze";
 import { stripForInfra, type DeclarationModule } from "./infra-strip";
@@ -31,13 +31,30 @@ const packageName = (source: string) =>
 // Whether a bare specifier names an installed package, as opposed to a path
 // alias from tsconfig. Workspace packages are symlinks into the repository,
 // so the resolved path doesn't tell them apart from project files.
-function isInstalledPackage(source: string, importer: string): boolean {
+function isInstalledPackage(
+  source: string,
+  importer: string,
+  cache: Map<string, boolean>,
+): boolean {
   const name = packageName(source);
-  for (let dir = path.dirname(importer); ; dir = path.dirname(dir)) {
-    if (fs.existsSync(path.join(dir, "node_modules", name))) return true;
-    if (dir === path.dirname(dir)) return false;
+  const key = `${path.dirname(importer)}\0${name}`;
+  let installed = cache.get(key);
+  if (installed === undefined) {
+    installed = false;
+    for (let dir = path.dirname(importer); ; dir = path.dirname(dir)) {
+      if (fs.existsSync(path.join(dir, "node_modules", name))) {
+        installed = true;
+        break;
+      }
+      if (dir === path.dirname(dir)) break;
+    }
+    cache.set(key, installed);
   }
+  return installed;
 }
+
+const envAdvice =
+  "Read infra values in the function through the declaration's env().";
 
 /**
  * Analyses project modules for both builds. An analysis is kept until its
@@ -104,13 +121,19 @@ export function infraPlugin({
   onDeclarationModules,
 }: InfraPluginOptions): Plugin {
   const declarations = new Map<string, DeclarationModule>();
+  // By importer directory and package name. Cleared on each build, so that
+  // a package installed during watch is seen.
+  const installed = new Map<string, boolean>();
   return {
     name: "notation-infra",
+    buildStart() {
+      installed.clear();
+    },
     resolveId(source, importer) {
       if (
         !importer ||
         !isBareSpecifier(source) ||
-        !isInstalledPackage(source, importer)
+        !isInstalledPackage(source, importer, installed)
       )
         return null;
       return { id: source, external: true };
@@ -123,7 +146,7 @@ export function infraPlugin({
         if (!mayHoldMarks(code)) return null;
         const analysis = analyses.fromSource(id, code);
         if (!analysis.declaration) return null;
-        const stripped = stripForInfra(analysis);
+        const stripped = stripForInfra(analysis, projectRoot());
         declarations.set(id, stripped.declaration);
         return { code: stripped.code, map: stripped.map };
       },
@@ -172,8 +195,8 @@ export type RuntimePluginOptions = {
  * 2. Reduces each declaration to its runtime options.
  * 3. Marks infra modules free of side effects, so the bundler drops each one
  *    whose bindings are no longer used.
- * 4. Fails the build if an infra module is still in the bundle, and names the
- *    import chain.
+ * 4. Fails the build if an infra module, or an infra function from a
+ *    package, is still in the bundle, and names the import chain.
  */
 export function runtimePlugin({
   analyses,
@@ -224,8 +247,28 @@ export function runtimePlugin({
             toProjectRoot(file),
           );
           this.error(
-            `The bundle of ${toProjectRoot(module.path)} includes the infra module ${toProjectRoot(id)}, imported through ${chain.join(" → ")}. The runtime build leaves infra out, so runtime code can't use it. Read infra values in the function through the declaration's env().`,
+            `The bundle of ${toProjectRoot(module.path)} includes the infra module ${toProjectRoot(id)}, imported through ${chain.join(" → ")}. The runtime build leaves infra out, so runtime code can't use it. ${envAdvice}`,
           );
+        }
+        // Infra functions from packages, such as queue() from
+        // @notation/aws/sqs. A package module can hold both infra and runtime
+        // functions, so the check looks at the exports that are left after
+        // tree-shaking.
+        for (const [id, rendered] of Object.entries(output.modules)) {
+          if (rendered.renderedLength === 0) continue;
+          const code = this.getModuleInfo(id)?.code;
+          if (!code || !/@resource|@declaration/.test(code)) continue;
+          for (const name of rendered.renderedExports) {
+            const mark = analyses.marks.exportMark(id, name);
+            if (mark?.kind !== "resource" && mark?.kind !== "declaration")
+              continue;
+            const chain = importChain(this, id).map((file) =>
+              toProjectRoot(file),
+            );
+            this.error(
+              `The bundle of ${toProjectRoot(module.path)} includes a function that declares infrastructure, from ${toProjectRoot(id)}, imported through ${chain.join(" → ")}. Infra functions can't run in a function. ${envAdvice}`,
+            );
+          }
         }
       }
     },

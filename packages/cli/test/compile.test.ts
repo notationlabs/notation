@@ -90,7 +90,7 @@ function writeAwsPackage() {
   write(
     "node_modules/@notation/aws/lambda.js",
     [
-      `/** @declaration shared: event, env; keys: env; entry: handler */`,
+      `/** @declaration shared: id, event, env; keys: env; entry: handler */`,
       `export function createLambda(config) { globalThis.declared = config; return { infra: true }; }`,
       `/** @runtime schema */`,
       `export function sqs(schema) { return { kind: "sqs", schema }; }`,
@@ -189,9 +189,8 @@ describe("declaration modules", () => {
       id: "process-orders",
       env: { QUEUE_URL: "placeholder-url" },
     });
-    expect(bundle).toContain(
-      `"${pathToFileURL(path.join(root, "runtime/process-orders.ts")).href}", "lambda")`,
-    );
+    expect(bundle).toContain(`"runtime/process-orders.ts", "lambda")`);
+    expect(bundle).not.toContain(root);
   });
 
   it("bundles a declaration module without its infra", async () => {
@@ -204,7 +203,7 @@ describe("declaration modules", () => {
     const bundle = readFileSync(file, "utf8");
     expect(bundle).not.toContain("placeholder-url");
     expect(bundle).not.toContain("sdk loaded");
-    expect(bundle).not.toContain('process-orders"');
+    expect(bundle).not.toContain("policy");
 
     const script = `
       const { handler } = await import(${JSON.stringify(pathToFileURL(file).href)});
@@ -221,7 +220,7 @@ describe("declaration modules", () => {
     );
     expect(output.split("\n")[0]).toBe("handler module loaded");
     expect(JSON.parse(output.split("\n")[1]!)).toEqual([
-      ["event", "env"],
+      ["id", "event", "env"],
       [["QUEUE_URL", null]],
       { kind: "sqs", schema: { name: "Order" } },
       true,
@@ -238,6 +237,24 @@ describe("declaration modules", () => {
     const modules = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
       "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts, imported through runtime/process-orders.ts → infra/orders.ts.",
+    );
+  });
+
+  it("fails when the function calls a resource function from a package", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { orders } from "../infra/orders";`,
+          `import { orders } from "../infra/orders";\n  import { queue } from "@notation/aws/sqs";`,
+        )
+        .replace(
+          "export const handler = async () =>",
+          "export const handler = async () => queue({ name: 'x' }) &&",
+        ),
+    );
+    const modules = await compileInfra(path.join(root, "infra/orders.ts"));
+    await expect(compileRuntimeModules(modules)).rejects.toThrow(
+      "The bundle of runtime/process-orders.ts includes a function that declares infrastructure, from node_modules/@notation/aws/sqs.js, imported through runtime/process-orders.ts → node_modules/@notation/aws/sqs.js.",
     );
   });
 

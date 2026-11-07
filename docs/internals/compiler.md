@@ -30,7 +30,7 @@ The compiler finds declaration functions and resource functions by JSDoc tags in
 ```ts [packages/aws/src/lambda/create-lambda.ts]
 /**
  * Declares the Lambda function that its module deploys as.
- * @declaration shared: event, env; keys: env; entry: handler
+ * @declaration shared: id, event, env; keys: env; entry: handler
  */
 export function createLambda(config) { /* ... */ }
 ```
@@ -105,11 +105,11 @@ export const lambda = $declaredIn(createLambda({
   id: "orders",
   event: () => sqs(),
   env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
-}), "file:///path/to/my-app/runtime/orders.fn.ts", "lambda");
+}), "runtime/orders.fn.ts", "lambda");
 
-function $declaredIn(value, url, binding) {
+function $declaredIn(value, path, binding) {
   if ((typeof value === "object" && value !== null) || typeof value === "function") {
-    Object.defineProperty(value, Symbol.for("@notation/declaredIn"), { value: { url, binding } });
+    Object.defineProperty(value, Symbol.for("@notation/declaredIn"), { value: { path, binding } });
   }
   return value;
 }
@@ -118,7 +118,7 @@ function $declaredIn(value, url, binding) {
 ::
 
 1. `Sentry.init()` and the `handler` are removed, so neither runs at deploy.
-2. The declaration is wrapped in `$declaredIn`, which records the module's file URL and the binding's name on the declaration's value, under `Symbol.for("@notation/declaredIn")`. `getDeclaredIn` in `@notation/resource` reads the same key. The helper is written into the module, so the user's project doesn't need to resolve `@notation/resource`. The name `$declaredIn` is reserved: a module that declares it fails the build.
+2. The declaration is wrapped in `$declaredIn`, which records the module's path and the binding's name on the declaration's value, under `Symbol.for("@notation/declaredIn")`. `getDeclaredIn` in `@notation/resource` reads the same key. The helper is written into the module, so the user's project doesn't need to resolve `@notation/resource`. The path is relative to the project root, so the infra bundle is the same on every machine. The name `$declaredIn` is reserved: a module that declares it fails the build.
 3. Each option that the mark lists under `runtime:` is replaced with a function that throws. `createLambda` lists none.
 
 The strip fails the build if the module doesn't export the mark's `entry`, such as `handler`.
@@ -160,6 +160,7 @@ export const lambda = createLambda({
 
 ```ts [runtime build]
 export const lambda = createLambda({
+  id: "orders",
   event: () => sqs(Order),
   env: () => ({ ORDER_QUEUE_URL: undefined }),
 });
@@ -167,7 +168,7 @@ export const lambda = createLambda({
 
 ::
 
-1. Options that the mark lists under neither `shared:` nor `runtime:` are removed. For `createLambda`, `id`, `policy`, `runtime`, `timeout` and `memory` go.
+1. Options that the mark lists under neither `shared:` nor `runtime:` are removed. For `createLambda`, `policy`, `runtime`, `timeout` and `memory` go. `id` stays, so the function can read `lambda.id`.
 2. Each `keys:` option keeps the keys of the object that it returns, and each value becomes `undefined`. The option must be `() => ({ ... })`, or a function whose body is one `return { ... }`, with no spread or computed keys.
 3. A call to a function marked `@runtime`, such as `sqs(Order)`, keeps its runtime arguments. The others become `undefined`.
 4. The binding and its export stay, so an infra module that imports `lambda` still links.
@@ -178,13 +179,15 @@ The strip then checks the kept options. A reference to an import from an infra m
 
 The runtime plugin marks each infra module free of side effects, through the `moduleSideEffects` result of its `transform` hook. Once the strip has removed `orderQueue` from the options, nothing uses the infra module, and the bundler drops it. Other modules keep their side effects, such as a polyfill import.
 
-`@notation/aws` declares `"sideEffects": false` in its `package.json`, for the same reason.
+The provider packages declare `"sideEffects": false` in their `package.json`, so the bundler also drops a package module whose exports the function doesn't use.
 
 In `generateBundle`, the plugin checks that no infra module is left in the bundle. A handler that reads `orderQueue.url` directly keeps `infra/orders.ts` in the bundle, and the build fails:
 
 ```
 The bundle of runtime/orders.fn.ts includes the infra module infra/orders.ts, imported through runtime/orders.fn.ts → infra/orders.ts. The runtime build leaves infra out, so runtime code can't use it. Read infra values in the function through the declaration's env().
 ```
+
+The plugin also checks infra functions from packages. `sideEffects: false` only drops what the function doesn't use, so a handler that calls `queue()` from `@notation/aws/sqs` would bundle it, with the AWS SDK. For each package module in the bundle, the plugin looks up the mark of each export that is left after tree-shaking. An export marked `@resource` or `@declaration` fails the build, with the import chain. `createLambda` from the runtime entry of `@notation/aws/lambda` has no mark, so it passes.
 
 ## Import cycles
 

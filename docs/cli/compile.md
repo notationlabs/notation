@@ -38,16 +38,16 @@ export const lambda = $declaredIn(createLambda({
   timeout: 5,
   memory: 64,
   event: () => http(),
-}), "file:///path/to/my-app/runtime/todos.fn.ts", "lambda");
+}), "runtime/todos.fn.ts", "lambda");
 
-function $declaredIn(value, url, binding) { /* ... */ }
+function $declaredIn(value, path, binding) { /* ... */ }
 ```
 
 ::
 
-`$declaredIn` records the module's file URL against the declaration. When infra runs, `createLambda` reads the record to find the function's bundle.
+`$declaredIn` records the module's path, relative to the project root, against the declaration. When infra runs, `createLambda` reads the record to find the function's bundle.
 
-2. **Runtime compilation** – the compiler bundles each runtime module that the first pass found to `dist/<module path>/index.mjs`, such as `dist/runtime/todos.fn/index.mjs`. The bundle exports the module's `handler`, so Lambda calls `index.handler`. The declaration keeps only `event`, and the names in `env`. Infra modules are left out.
+2. **Runtime compilation** – the compiler bundles each runtime module that the first pass found to `dist/<module path>/index.mjs`, such as `dist/runtime/todos.fn/index.mjs`. The bundle exports the module's `handler`, so Lambda calls `index.handler`. The declaration keeps only `id`, `event`, and the names in `env`. Infra modules are left out, and the build fails if the function uses an infra module or calls a resource function such as `queue()`.
 
 **A runtime module that the entry doesn't import isn't compiled or deployed.** `runtimeModules` in `notation.config.ts` is not read by the build yet. See [Runtime modules must be imported](../manual/file-conventions.md#runtime-modules-must-be-imported).
 
