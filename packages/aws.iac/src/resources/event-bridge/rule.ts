@@ -228,8 +228,8 @@ export const EventBridgeRule = eventBridgeRuleSchema
 
         const [ruleDescriptionResult, listRuleTargetsResult] =
           await Promise.all([
-            eventBridgeClient.send(describeRuleCommand),
-            eventBridgeClient.send(listRuleTargetsCommand),
+            eventBridgeClient().send(describeRuleCommand),
+            eventBridgeClient().send(listRuleTargetsCommand),
           ]);
 
         return {
@@ -254,11 +254,11 @@ export const EventBridgeRule = eventBridgeRuleSchema
         Targets: params.Targets,
       });
 
-      await eventBridgeClient.send(createRuleCommand);
+      await eventBridgeClient().send(createRuleCommand);
       assertNoFailedTargets(
         "put",
         params.Name,
-        await eventBridgeClient.send(createTargetsCommand),
+        await eventBridgeClient().send(createTargetsCommand),
       );
     },
     update: async (key, patch, params) => {
@@ -267,13 +267,13 @@ export const EventBridgeRule = eventBridgeRuleSchema
       const { Targets, ...ruleConfig } = params;
 
       const updateRuleCommand = new sdk.PutRuleCommand(ruleConfig);
-      await eventBridgeClient.send(updateRuleCommand);
+      await eventBridgeClient().send(updateRuleCommand);
 
       // PutTargets only adds or replaces targets, so any target no longer in
       // config has to be removed explicitly. The rule's current targets are
       // listed rather than taken from state, so targets added outside of
       // Notation are removed too.
-      const existingTargets = await eventBridgeClient.send(
+      const existingTargets = await eventBridgeClient().send(
         new sdk.ListTargetsByRuleCommand({
           Rule: ruleConfig.Name,
           EventBusName: ruleConfig.EventBusName,
@@ -296,7 +296,7 @@ export const EventBridgeRule = eventBridgeRuleSchema
         assertNoFailedTargets(
           "remove",
           ruleConfig.Name,
-          await eventBridgeClient.send(removeTargetsCommand),
+          await eventBridgeClient().send(removeTargetsCommand),
         );
       }
 
@@ -309,14 +309,14 @@ export const EventBridgeRule = eventBridgeRuleSchema
         assertNoFailedTargets(
           "put",
           ruleConfig.Name,
-          await eventBridgeClient.send(updateTargetsCommand),
+          await eventBridgeClient().send(updateTargetsCommand),
         );
       }
     },
     delete: async (key) => {
       try {
         // The targets must be deleted first, otherwise the API will return an error response
-        const existingTargets = await eventBridgeClient.send(
+        const existingTargets = await eventBridgeClient().send(
           new sdk.ListTargetsByRuleCommand({
             Rule: key.Name,
             EventBusName: key.EventBusName,
@@ -333,12 +333,12 @@ export const EventBridgeRule = eventBridgeRuleSchema
           assertNoFailedTargets(
             "remove",
             key.Name,
-            await eventBridgeClient.send(deleteTargetsCommand),
+            await eventBridgeClient().send(deleteTargetsCommand),
           );
         }
 
         const deleteRuleCommand = new sdk.DeleteRuleCommand(key);
-        await eventBridgeClient.send(deleteRuleCommand);
+        await eventBridgeClient().send(deleteRuleCommand);
       } catch (error) {
         if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
       }

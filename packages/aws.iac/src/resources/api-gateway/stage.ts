@@ -98,12 +98,12 @@ export const Stage = stageSchema
   .defineOperations({
     create: async (params) => {
       const command = new sdk.CreateStageCommand(params);
-      await apiGatewayClient.send(command);
+      await apiGatewayClient().send(command);
     },
     read: async (key) => {
       try {
         const command = new sdk.GetStageCommand(key);
-        const output = await apiGatewayClient.send(command);
+        const output = await apiGatewayClient().send(command);
         return output;
       } catch (error) {
         if (error instanceof sdk.NotFoundException) {
@@ -116,12 +116,12 @@ export const Stage = stageSchema
     },
     update: async (key, params) => {
       const command = new sdk.UpdateStageCommand({ ...key, ...params });
-      await apiGatewayClient.send(command);
+      await apiGatewayClient().send(command);
     },
     delete: async (key) => {
       try {
         const command = new sdk.DeleteStageCommand(key);
-        await apiGatewayClient.send(command);
+        await apiGatewayClient().send(command);
       } catch (error) {
         if (!(error instanceof sdk.NotFoundException)) throw error;
       }

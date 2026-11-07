@@ -107,7 +107,7 @@ export const Route = routeSchema
   .defineOperations({
     create: awsCreate(async (params) => {
       const command = new sdk.CreateRouteCommand(params);
-      const result = await apiGatewayClient.send(command);
+      const result = await apiGatewayClient().send(command);
 
       return { RouteId: result.RouteId! };
     }),
@@ -116,7 +116,7 @@ export const Route = routeSchema
     find: async (params) => {
       const route = await findInPages(
         (NextToken) =>
-          apiGatewayClient.send(
+          apiGatewayClient().send(
             new sdk.GetRoutesCommand({ ApiId: params.ApiId, NextToken }),
           ),
         (item) => item.RouteKey === params.RouteKey,
@@ -127,7 +127,7 @@ export const Route = routeSchema
     read: async (key) => {
       try {
         const command = new sdk.GetRouteCommand(key);
-        const result = await apiGatewayClient.send(command);
+        const result = await apiGatewayClient().send(command);
         return { ...key, ...result };
       } catch (error) {
         if (error instanceof sdk.NotFoundException) {
@@ -140,12 +140,12 @@ export const Route = routeSchema
     },
     update: async (key, patch, params) => {
       const command = new sdk.UpdateRouteCommand({ ...key, ...params });
-      await apiGatewayClient.send(command);
+      await apiGatewayClient().send(command);
     },
     delete: async (key) => {
       try {
         const command = new sdk.DeleteRouteCommand(key);
-        await apiGatewayClient.send(command);
+        await apiGatewayClient().send(command);
       } catch (error) {
         if (!(error instanceof sdk.NotFoundException)) throw error;
       }

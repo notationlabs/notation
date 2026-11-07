@@ -4,7 +4,7 @@ import { eventBridgeClient } from "src/utils/aws-clients";
 import { validateValues } from "@notation/resource";
 import { EventBridgeRule } from "src/resources/event-bridge/rule";
 
-const send = vi.spyOn(eventBridgeClient, "send");
+const send = vi.spyOn(eventBridgeClient(), "send");
 
 const rule = new EventBridgeRule("rule", {
   config: {

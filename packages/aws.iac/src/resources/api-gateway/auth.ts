@@ -64,7 +64,7 @@ export const RouteAuth = apiSchema
   .defineOperations({
     create: async (params) => {
       const command = new sdk.CreateAuthorizerCommand(params);
-      const result = await apiGatewayClient.send(command);
+      const result = await apiGatewayClient().send(command);
 
       return {
         AuthorizerId: result.AuthorizerId!,
@@ -73,7 +73,7 @@ export const RouteAuth = apiSchema
     read: async (key) => {
       try {
         const command = new sdk.GetAuthorizerCommand(key);
-        const output = await apiGatewayClient.send(command);
+        const output = await apiGatewayClient().send(command);
         return output;
       } catch (error) {
         if (error instanceof sdk.NotFoundException) {
@@ -87,12 +87,12 @@ export const RouteAuth = apiSchema
     },
     update: async (key, patch, params) => {
       const command = new sdk.UpdateAuthorizerCommand({ ...key, ...params });
-      await apiGatewayClient.send(command);
+      await apiGatewayClient().send(command);
     },
     delete: async (params) => {
       try {
         const command = new sdk.DeleteAuthorizerCommand(params);
-        await apiGatewayClient.send(command);
+        await apiGatewayClient().send(command);
       } catch (error) {
         if (!(error instanceof sdk.NotFoundException)) throw error;
       }

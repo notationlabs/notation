@@ -121,7 +121,9 @@ export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
           ? { [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
           : undefined,
       });
-      const result = await runMappingMutation(() => lambdaClient.send(command));
+      const result = await runMappingMutation(() =>
+        lambdaClient().send(command),
+      );
       return { UUID: result.UUID! };
     }),
 
@@ -129,7 +131,7 @@ export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
       const value = createTokenTagValue(token);
       let Marker: string | undefined;
       do {
-        const page = await lambdaClient.send(
+        const page = await lambdaClient().send(
           new sdk.ListEventSourceMappingsCommand({
             EventSourceArn: params.EventSourceArn,
             FunctionName: params.FunctionName,
@@ -137,7 +139,7 @@ export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
           }),
         );
         for (const mapping of page.EventSourceMappings ?? []) {
-          const { Tags } = await lambdaClient.send(
+          const { Tags } = await lambdaClient().send(
             new sdk.ListTagsCommand({
               Resource: mapping.EventSourceMappingArn,
             }),
@@ -154,7 +156,7 @@ export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
 
     read: async (key) => {
       try {
-        const result = await lambdaClient.send(
+        const result = await lambdaClient().send(
           new sdk.GetEventSourceMappingCommand(key),
         );
         if (TRANSITIONAL_STATES.has(result.State!)) {
@@ -201,7 +203,7 @@ export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
         ]),
       );
       await runMappingMutation(() =>
-        lambdaClient.send(
+        lambdaClient().send(
           new sdk.UpdateEventSourceMappingCommand({ ...key, ...changes }),
         ),
       );
@@ -210,7 +212,7 @@ export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
     delete: async (key) => {
       try {
         await runMappingMutation(() =>
-          lambdaClient.send(new sdk.DeleteEventSourceMappingCommand(key)),
+          lambdaClient().send(new sdk.DeleteEventSourceMappingCommand(key)),
         );
       } catch (error) {
         if (!(error instanceof sdk.ResourceNotFoundException)) throw error;

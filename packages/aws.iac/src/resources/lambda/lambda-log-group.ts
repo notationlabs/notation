@@ -44,20 +44,20 @@ export const LambdaLogGroup = lambdaLogGroupSchema
   .defineOperations({
     create: async (params) => {
       const command = new sdk.CreateLogGroupCommand(params);
-      await cloudWatchLogsClient.send(command);
+      await cloudWatchLogsClient().send(command);
       const retentionCommand = new sdk.PutRetentionPolicyCommand({
         logGroupName: params.logGroupName,
         retentionInDays: params.retentionInDays,
       });
-      await cloudWatchLogsClient.send(retentionCommand);
+      await cloudWatchLogsClient().send(retentionCommand);
     },
     update: async (key, params) => {
       const command = new sdk.PutRetentionPolicyCommand({ ...key, ...params });
-      await cloudWatchLogsClient.send(command);
+      await cloudWatchLogsClient().send(command);
     },
     delete: async (key) => {
       const command = new sdk.DeleteLogGroupCommand(key);
-      await cloudWatchLogsClient.send(command);
+      await cloudWatchLogsClient().send(command);
     },
   })
   .requireDependencies<LambdaLogGroupDependencies>()

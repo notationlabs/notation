@@ -290,14 +290,14 @@ export const LambdaFunction = lambdaFunctionSchema
         Code: { ZipFile: await readCode(CodeFilePath, params.CodeSha256) },
       });
 
-      await runLambdaMutation(() => lambdaClient.send(command));
+      await runLambdaMutation(() => lambdaClient().send(command));
 
       // if (params.ReservedConcurrentExecutions) {
       //   const concurrencyCommand = new sdk.PutFunctionConcurrencyCommand({
       //     FunctionName: params.FunctionName,
       //     ReservedConcurrentExecutions: params.ReservedConcurrentExecutions,
       //   });
-      //   await lambdaClient.send(concurrencyCommand);
+      //   await lambdaClient().send(concurrencyCommand);
       // }
     }),
 
@@ -305,7 +305,7 @@ export const LambdaFunction = lambdaFunctionSchema
     // as not found makes create fail on the name, instead of taking it over.
     find: async (params, token) => {
       try {
-        const { Tags } = await lambdaClient.send(
+        const { Tags } = await lambdaClient().send(
           new sdk.GetFunctionCommand({ FunctionName: params.FunctionName }),
         );
         if (Tags?.[CREATE_TOKEN_TAG] === createTokenTagValue(token)) return;
@@ -320,7 +320,8 @@ export const LambdaFunction = lambdaFunctionSchema
     read: async (key) => {
       try {
         const command = new sdk.GetFunctionCommand(key);
-        const { Configuration, Concurrency } = await lambdaClient.send(command);
+        const { Configuration, Concurrency } =
+          await lambdaClient().send(command);
 
         if (Configuration?.State !== "Active") {
           throw new ResourceOperationPendingError(
@@ -379,7 +380,7 @@ export const LambdaFunction = lambdaFunctionSchema
           ...key,
           ...conf,
         });
-        await runLambdaMutation(() => lambdaClient.send(confCommand));
+        await runLambdaMutation(() => lambdaClient().send(confCommand));
       }
 
       if (CodeSha256) {
@@ -387,14 +388,14 @@ export const LambdaFunction = lambdaFunctionSchema
           ...key,
           ZipFile: await readCode(params.CodeFilePath, params.CodeSha256),
         });
-        await runLambdaMutation(() => lambdaClient.send(codeCommand));
+        await runLambdaMutation(() => lambdaClient().send(codeCommand));
       }
     },
 
     delete: async (key) => {
       try {
         const command = new sdk.DeleteFunctionCommand(key);
-        await runLambdaMutation(() => lambdaClient.send(command));
+        await runLambdaMutation(() => lambdaClient().send(command));
       } catch (error) {
         if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
       }

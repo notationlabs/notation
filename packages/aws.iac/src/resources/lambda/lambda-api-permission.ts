@@ -94,11 +94,11 @@ export const LambdaApiGatewayV2Permission = lambdaApiGatewayV2PermissionSchema
   .defineOperations({
     create: async (params) => {
       const command = new sdk.AddPermissionCommand(params);
-      await lambdaClient.send(command);
+      await lambdaClient().send(command);
     },
     delete: async (key) => {
       const command = new sdk.RemovePermissionCommand(key);
-      await lambdaClient.send(command);
+      await lambdaClient().send(command);
     },
   })
   .requireDependencies<LambdaApiGatewayV2PermissionDependencies>()

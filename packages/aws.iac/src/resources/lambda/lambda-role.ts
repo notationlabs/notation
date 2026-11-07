@@ -92,12 +92,12 @@ const lambdaIamRoleSchema = lambdaIamRole.defineSchema({
 export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
   create: async (params) => {
     const command = new sdk.CreateRoleCommand(params);
-    await iamClient.send(command);
+    await iamClient().send(command);
   },
   read: async (key) => {
     try {
       const command = new sdk.GetRoleCommand(key);
-      const { Role } = await iamClient.send(command);
+      const { Role } = await iamClient().send(command);
       return toReadResult(Role!);
     } catch (error) {
       if (error instanceof sdk.NoSuchEntityException) {
@@ -110,12 +110,12 @@ export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
   },
   update: async (key, params) => {
     const command = new sdk.UpdateRoleCommand({ ...key, ...params });
-    await iamClient.send(command);
+    await iamClient().send(command);
   },
   delete: async (key) => {
     try {
       const command = new sdk.DeleteRoleCommand(key);
-      await iamClient.send(command);
+      await iamClient().send(command);
     } catch (error) {
       if (!(error instanceof sdk.NoSuchEntityException)) throw error;
     }

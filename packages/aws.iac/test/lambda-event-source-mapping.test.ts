@@ -14,7 +14,7 @@ function createMapping() {
 
 function mockSend(respond: (command: unknown) => unknown) {
   return vi
-    .spyOn(lambdaClient, "send")
+    .spyOn(lambdaClient(), "send")
     .mockImplementation(async (command) => respond(command));
 }
 

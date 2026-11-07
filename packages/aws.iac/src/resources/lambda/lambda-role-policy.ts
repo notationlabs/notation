@@ -114,7 +114,9 @@ export const LambdaRolePolicy = lambdaRolePolicySchema
     },
     read: async (key) => {
       try {
-        const result = await iamClient.send(new sdk.GetRolePolicyCommand(key));
+        const result = await iamClient().send(
+          new sdk.GetRolePolicyCommand(key),
+        );
         return {
           RoleName: result.RoleName!,
           PolicyName: result.PolicyName!,
@@ -136,7 +138,7 @@ export const LambdaRolePolicy = lambdaRolePolicySchema
     },
     delete: async (key) => {
       try {
-        await iamClient.send(new sdk.DeleteRolePolicyCommand(key));
+        await iamClient().send(new sdk.DeleteRolePolicyCommand(key));
       } catch (error) {
         if (!(error instanceof sdk.NoSuchEntityException)) throw error;
       }
@@ -155,7 +157,7 @@ async function putRolePolicy(params: LambdaRolePolicyParams) {
       `Role policy ${params.PolicyName} has no statements. IAM does not accept an empty policy document.`,
     );
   }
-  await iamClient.send(
+  await iamClient().send(
     new sdk.PutRolePolicyCommand({
       ...params,
       PolicyDocument: JSON.stringify(params.PolicyDocument),
