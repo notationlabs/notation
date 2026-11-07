@@ -6,3 +6,4 @@ const todoRouter = router(todoApi);
 
 todoRouter.get("/todos", () => todos);
 todoRouter.get("/todos/count", () => todos);
+todoRouter.post("/todos", () => todos);
