@@ -17,7 +17,7 @@ notation watch --stage dev
 
 ## What it does
 
-1. Compiles infra and runtime with esbuild in watch mode.
+1. Compiles infra and runtime with Rolldown in watch mode. When an infra rebuild finds a different set of runtime modules, the runtime builds restart for the new set.
 2. Deploys the initial stack.
 3. Watches `dist/` for changes (debounced at 500ms).
 4. On change, redeploys – only changed resources are updated (same reconciler as `deploy`).

@@ -56,7 +56,7 @@ describe("resolveDeployment", () => {
       app: "orders-app",
       stage: "prod",
       entryPoint: path.join(root, "infra/api.ts"),
-      runtimeModules: ["**/*.fn.ts"],
+      runtimeModules: ["runtime/**/*.ts"],
     });
   });
 

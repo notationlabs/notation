@@ -8,31 +8,62 @@ notation compile [--config <path>]
 | ----------------- | ----------------------------------------------------------- |
 | `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
 
-Compiles the entry file and its runtime modules to `dist/`. The output is the same for every stage, so `compile` takes no `--stage`. There are two passes:
+Compiles the entry file and its runtime modules to `dist/`. The output is the same for every stage, so `compile` takes no `--stage`. The compiler uses Rolldown, and runs two passes:
 
-1. **Infrastructure compilation** – esbuild bundles the infra entry point to `dist/infra/<entry>.mjs`. When the entry imports a [runtime module](../manual/file-conventions.md#runtime-modules), the compiler replaces the module with a generated module that declares its resource. The example below is simplified. The real module starts its own names with `__notation`, so they don't clash with the module's exports:
+1. **Infrastructure compilation** – the compiler bundles the infra entry point to `dist/infra/<entry>.mjs`, with a source map. Packages stay external, and imports through tsconfig `paths` are bundled. Each [runtime module](../manual/file-conventions.md#runtime-modules) that the entry imports is replaced by a stripped copy, which keeps only the declaration and the top-level statements that it uses:
 
 ::code-group
 
-```ts [runtime/todos.fn.ts]
-export const getTodos = handle.apiRequest(() => { ... });
+```ts [runtime/todos.ts]
+import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { api } from "./utils";
 
-export const resource: LambdaResource = { service: "aws/lambda", id: "todos" };
-```
-
-```ts [generated module]
-import { lambda } from "@notation/aws/lambda";
-
-const resource = lambda({
+export const lambda = $lambda({
   id: "todos",
-  code: { type: "file", path: "dist/runtime/todos.fn/index.mjs" },
+  timeout: 5,
+  memory: 64,
+  event: () => http(),
 });
 
-export const getTodos = { resource, export: "getTodos" };
+const todos = await api.get<any[]>("/todos");
+
+export const handler: LambdaHandler<typeof lambda> = async () => todos;
+```
+
+```ts [infra build]
+import { $lambda, http } from "@notation/aws/lambda";
+
+export const lambda = __notation_declaredIn(
+  $lambda({
+    id: "todos",
+    timeout: 5,
+    memory: 64,
+    event: () => http(),
+  }),
+  "runtime/todos.ts",
+  "lambda",
+);
+
+function __notation_declaredIn(value, path, binding) {
+  /* ... */
+}
 ```
 
 ::
 
-2. **Runtime compilation** – the compiler bundles each runtime module that the first pass replaced to `dist/<module path>/index.mjs`. A runtime module that the entry doesn't import isn't bundled. The bundle exports one `handler`, which sends each event to an export of the module. See [Dispatch](../resources/lambda.md#dispatch).
+`__notation_declaredIn` records the module's path, relative to the project root, against the declaration. When infra runs, `$lambda` reads the record to find the function's bundle.
 
-If a file that matches `runtimeModules` exports the old `config` object (one with a `service` property) and no `resource`, the build fails with a message to rename the export.
+2. **Runtime compilation** – the compiler bundles each runtime module that the first pass found to `dist/<module path>/index.mjs`, such as `dist/runtime/todos/index.mjs`. The bundle exports the module's `handler`, so Lambda calls `index.handler`. The declaration keeps only `id`, `event`, and the names in `env`. Infra modules are left out, and the build fails if the function uses an infra module or calls a resource function such as `queue()`.
+
+**A runtime module that the entry doesn't import isn't compiled or deployed.** `runtimeModules` in `notation.config.ts` is not read by the build yet. See [Runtime modules must be imported](../manual/file-conventions.md#runtime-modules-must-be-imported).
+
+The build fails with the file and line when:
+
+- a runtime module doesn't export `handler`,
+- a runtime module has more than one declaration,
+- an infra module imports a name from a runtime module that the declaration doesn't use,
+- `$lambda` is not called as `const name = $lambda({ ... })` at the top level, with an object literal,
+- `event` refers to an infra module, or
+- the function's bundle still contains an infra module. The error names the chain of imports.
+
+See [Compiler](../internals/compiler.md) for how each pass works.

@@ -3,7 +3,7 @@
 "@notation/cli": minor
 "@notation/aws": minor
 "@notation/resource": minor
-"@notation/esbuild-plugins": minor
+"@notation/build": minor
 ---
 
 Notation identifies a deployment by its app and its stage (RFC 0005). You can deploy one codebase to several stages.

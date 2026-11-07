@@ -1,0 +1,20 @@
+{
+  "type": "module",
+  "name": "@notation/build",
+  "version": "0.16.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@notation/core": "workspace:*",
+    "magic-string": "^0.30.21",
+    "rolldown": "^1.2.16"
+  }
+}

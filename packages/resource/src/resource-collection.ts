@@ -32,6 +32,26 @@ export type CollectOptions = {
   declarationChecks?: boolean;
 };
 
+const loadedKey = Symbol.for("@notation/resource/loaded");
+
+/**
+ * Records that the copy of this package at `url` is loaded, and throws if
+ * another copy is. Each copy has its own collection, so resources made
+ * through a second copy would be missing from the graph.
+ */
+export function claimSingleCopy(url: string) {
+  const registry = globalThis as { [loadedKey]?: string };
+  const loaded = registry[loadedKey];
+  if (loaded === undefined) registry[loadedKey] = url;
+  else if (loaded !== url) {
+    throw new Error(
+      `Two versions of @notation/resource were detected at ${loaded} and ${url}. Please install one version (for example with npm dedupe).`,
+    );
+  }
+}
+
+claimSingleCopy((import.meta as ImportMeta & { url: string }).url);
+
 let activeCollection: ResourceCollection | undefined;
 
 /**

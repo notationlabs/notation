@@ -15,12 +15,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@notation/build": "workspace:*",
     "@notation/core": "workspace:*",
     "@notation/dashboard": "workspace:*",
-    "@notation/esbuild-plugins": "workspace:*",
     "chokidar": "^4.0.3",
     "commander": "^13.1.0",
-    "esbuild": "^0.25.0"
+    "rolldown": "^1.2.16"
   },
   "devDependencies": {
     "@notation/aws": "workspace:*",

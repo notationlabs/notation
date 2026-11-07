@@ -25,4 +25,10 @@ export class ApiGroup extends aws.AwsResourceGroup<{ name: string }> {
   }
 }
 
-export const api = (rgConfig: { name: string }) => new ApiGroup(rgConfig);
+/**
+ * Declares an HTTP API, with a default stage that deploys each change.
+ * @resource
+ */
+export function api(rgConfig: { name: string }): ApiGroup {
+  return new ApiGroup(rgConfig);
+}

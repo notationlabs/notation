@@ -315,7 +315,7 @@ A resource can depend on other resources. After `defineOperations`, chain `requi
 const LambdaIntegration = defineResource<{ ... }>({ type: "aws/apiGateway/LambdaIntegration" })
   .defineSchema({ ... })
   .defineOperations({ ... })
-  .requireDependencies<{ api: ApiResource; lambda: LambdaResource }>()
+  .requireDependencies<{ api: ApiInstance; lambda: LambdaFunctionInstance }>()
   .deriveParams(({ id, config, deps }) => ({
     IntegrationUri: deps.lambda.output.FunctionArn,
     ApiId: deps.api.output.ApiId,
@@ -447,7 +447,11 @@ As an aside, a provider that stores a collected map as one string should still k
 
 Contributions close when evaluation ends, and `contribute` and `dependOn` throw from then on. This keeps the params that plan and deploy read the same as the params that the infra code built. A resource made outside `collectResourceGraph` closes once code reads its params or dependencies.
 
-`onEvaluationEnd(callback)` registers a callback that runs after evaluation and before the close, for generated code whose values do not exist while modules are still being evaluated. It is an engine mechanism, not user-facing API.
+`onEvaluationEnd(callback)` registers a callback that runs after evaluation and before the close, for code whose values do not exist while modules are still being evaluated. It throws when no resource graph is being collected. In `@notation/aws`, `$lambda` uses it to build a Lambda's resources, and `queue.consume()`, `route()` and `schedule()` use it to wire a declaration. A runtime module and the infra module that wires it often import each other, so a declaration can be read safely only after every module has loaded. It is an engine mechanism, not user-facing API.
+
+### Declared modules
+
+The infra build wraps each declaration, such as a `$lambda` call, in a call that records the declaration's module. `declaredIn(value, path, binding)` records the module's path, relative to the project root, and the local name of the binding on `value`, under `Symbol.for("@notation/declaredIn")`, and returns `value`. `getDeclaredIn(value)` returns the record, or `undefined`. `$lambda` reads the record to find the module, and so the path of the function's bundle. See [Compiler](./compiler.md#the-infra-strip).
 
 When you delete a `contribute` call, the collected value changes, and the resource updates on the next deploy. When the API cannot unset a removed field, the provider resets it to the API's default. When there is no default, mark the field `immutable`, so that removing it replaces the resource.
 
@@ -495,6 +499,6 @@ Groups don't declare dependencies. Edges between groups follow from the dependen
 
 `addOnce` adds a resource unless the group already has one with the same ID, and returns the one the group holds. Use it for resources that bind two others, such as an API integration, which several call sites may create. It throws if the existing resource has a different class.
 
-During graph construction, the group and each resource added via `add()` become part of the active graph automatically. This is how a construct like `export const getTodos = lambda({ ... })` maps to the 4–6 actual AWS resources required to run it.
+During graph construction, the group and each resource added via `add()` become part of the active graph automatically. This is how a construct like `export const external = lambda({ ... })` maps to the 4–6 actual AWS resources required to run it.
 
 Resource groups are collected during graph construction and used by the reconciler to determine the full set of resources to deploy or destroy.
