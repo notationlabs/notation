@@ -2,6 +2,7 @@ import path from "node:path";
 import MagicString from "magic-string";
 import { freeReferences, type Node } from "./ast";
 import type { Declaration, ModuleAnalysis } from "./analyze";
+import type { Marks } from "./marks";
 
 /** The name of the helper that records the module of a declaration. */
 export const declaredInHelper = "__notation_declaredIn";
@@ -79,10 +80,6 @@ function namesOf(pattern: Node): string[] {
   return names;
 }
 
-function exportsName(analysis: ModuleAnalysis, name: string): boolean {
-  return analysis.table.exports.has(name) || analysis.table.stars.length > 0;
-}
-
 /**
  * The copy of a declaration module that the infra build runs. It keeps the
  * declaration and the top-level statements that the declaration uses, and
@@ -96,6 +93,7 @@ function exportsName(analysis: ModuleAnalysis, name: string): boolean {
  */
 export function stripForInfra(
   analysis: ModuleAnalysis,
+  marks: Marks,
   root: string,
 ): {
   code: string;
@@ -105,7 +103,7 @@ export function stripForInfra(
   const declaration = analysis.declaration!;
   const { module } = analysis.table;
   const entry = declaration.mark.entry;
-  if (entry && !exportsName(analysis, entry)) {
+  if (entry && !marks.hasExport(module.file, entry)) {
     throw new Error(
       `${module.file}: the module declares a function with ${declaration.name}, so it must export \`${entry}\`, the entry that the platform calls.`,
     );

@@ -147,7 +147,7 @@ export function infraPlugin({
         if (!mayHoldMarks(code)) return null;
         const analysis = analyses.fromSource(id, code);
         if (!analysis.declaration) return null;
-        const stripped = stripForInfra(analysis, projectRoot());
+        const stripped = stripForInfra(analysis, analyses.marks, projectRoot());
         declarations.set(id, stripped.declaration);
         return { code: stripped.code, map: stripped.map };
       },

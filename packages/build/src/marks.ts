@@ -413,6 +413,29 @@ export class Marks {
     return undefined;
   }
 
+  /**
+   * Whether a module exports `name`, directly or through `export * from`.
+   * A star source that doesn't resolve to a JS or TS file counts as
+   * exporting the name, so that a resolver that differs from the bundler's
+   * doesn't cause a false error. The bundler reports a name that is missing.
+   */
+  hasExport(
+    file: string,
+    name: string,
+    seen: Set<string> = new Set(),
+  ): boolean {
+    if (seen.has(file)) return false;
+    seen.add(file);
+    const table = this.table(file);
+    if (!table) return true;
+    if (table.exports.has(name)) return true;
+    if (name === "default") return false;
+    return table.stars.some((source) => {
+      const resolved = this.resolve(source, file);
+      return !resolved || this.hasExport(resolved, name, seen);
+    });
+  }
+
   /** The mark of an import binding, or of `member` of a namespace import. */
   importMark(
     importer: string,

@@ -49,9 +49,17 @@ function setup(source = handlerModule) {
   return { marks, analysis, isInfraModule };
 }
 
+function infra(source?: string, extra: Record<string, string> = {}) {
+  const marks = virtualMarks(
+    { ...files, "runtime/handler.ts": source ?? handlerModule, ...extra },
+    packages,
+  );
+  return stripForInfra(analyzeModule(marks.table(file)!, marks), marks, root);
+}
+
 describe("stripForInfra", () => {
   it("keeps only the declaration and the statements that it uses", () => {
-    const { code, declaration } = stripForInfra(setup().analysis, root);
+    const { code, declaration } = infra();
     expect(declaration).toEqual({
       path: file,
       binding: "lambda",
@@ -76,7 +84,7 @@ describe("stripForInfra", () => {
   });
 
   it("wraps the declaration in a call that records its module", () => {
-    const { code } = stripForInfra(setup().analysis, root);
+    const { code } = infra();
     expect(code).toMatch(
       /export const lambda = __notation_declaredIn\(\$lambda\(\{[\s\S]*\}\), "runtime\/handler\.ts", "lambda"\);/,
     );
@@ -92,7 +100,7 @@ describe("stripForInfra", () => {
       const counters = createNamespace({ id: "counters", class: class Counter {} });
       export const handler = 1;
     `;
-    const { code } = stripForInfra(setup(source).analysis, root);
+    const { code } = infra(source);
     expect(code).toContain(
       `class: () => { throw new Error("class only runs in the function, not in the infra build."); }`,
     );
@@ -104,7 +112,27 @@ describe("stripForInfra", () => {
       "export const handler",
       "const handler",
     );
-    expect(() => stripForInfra(setup(source).analysis, root)).toThrow(
+    expect(() => infra(source)).toThrow(
+      "runtime/handler.ts: the module declares a function with $lambda, so it must export `handler`",
+    );
+  });
+
+  it("accepts an entry that the module exports through export *", () => {
+    const source = handlerModule.replace(
+      /export const handler[\s\S]*$/,
+      `export * from "./entry";\n`,
+    );
+    const extra = { "runtime/entry.ts": "export const handler = () => {};" };
+    expect(() => infra(source, extra)).not.toThrow();
+  });
+
+  it("fails when no export * provides the entry", () => {
+    const source = handlerModule.replace(
+      /export const handler[\s\S]*$/,
+      `export * from "./entry";\n`,
+    );
+    const extra = { "runtime/entry.ts": "export const other = () => {};" };
+    expect(() => infra(source, extra)).toThrow(
       "runtime/handler.ts: the module declares a function with $lambda, so it must export `handler`",
     );
   });
