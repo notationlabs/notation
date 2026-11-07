@@ -4,7 +4,11 @@ import { projectRoot, toProjectRoot } from "@notation/core";
 import type { Plugin } from "rolldown";
 import { analyzeModule, type ModuleAnalysis } from "./analyze";
 import { location } from "./ast";
-import { stripForInfra, type DeclarationModule } from "./infra-strip";
+import {
+  infraInterface,
+  stripForInfra,
+  type DeclarationModule,
+} from "./infra-strip";
 import { Marks, type ImportBinding, type Mark } from "./marks";
 import { stripForRuntime } from "./runtime-strip";
 
@@ -124,9 +128,10 @@ export class ModuleAnalyses {
 }
 
 // A quick test that skips modules which can't hold a declaration or call a
-// resource function: those need an import or a local mark.
+// resource function, or import from a runtime module: those need an import,
+// a re-export or a local mark.
 const mayHoldMarks = (code: string) =>
-  /\bimport\b|@declaration|@resource/.test(code);
+  /\bimport\b|\bfrom\b|@declaration|@resource/.test(code);
 
 export type InfraPluginOptions = {
   analyses: ModuleAnalyses;
@@ -171,6 +176,7 @@ export function infraPlugin({
         declarations.delete(id);
         if (!mayHoldMarks(code)) return null;
         const analysis = analyses.fromSource(id, code);
+        checkRuntimeImports(analysis, analyses);
         if (!analysis.declaration) return null;
         const stripped = stripForInfra(analysis, analyses.marks, projectRoot());
         declarations.set(id, stripped.declaration);
@@ -189,6 +195,42 @@ export function infraPlugin({
       onDeclarationModules(found);
     },
   };
+}
+
+// Fails if the infra copy of a module imports a name from a runtime module
+// that the runtime module's infra copy doesn't keep. Rolldown would report
+// a missing export, which doesn't say why the export is missing.
+function checkRuntimeImports(
+  analysis: ModuleAnalysis,
+  analyses: ModuleAnalyses,
+) {
+  const { table } = analysis;
+  const file = table.module.file;
+  const kept = analysis.declaration ? infraInterface(analysis) : undefined;
+  const imported: { source: string; name: string }[] = [];
+  for (const [local, binding] of table.imports) {
+    if (kept && !kept.imports.has(local)) continue;
+    imported.push({ source: binding.source, name: binding.imported });
+  }
+  // A declaration module's infra copy drops its re-exports.
+  if (!kept) {
+    for (const target of table.exports.values()) {
+      if ("source" in target) {
+        imported.push({ source: target.source, name: target.imported });
+      }
+    }
+  }
+  for (const { source, name } of imported) {
+    if (name === "*") continue;
+    const resolved = analyses.marks.resolve(source, file);
+    if (!resolved) continue;
+    const target = analyses.fromFile(resolved);
+    if (!target?.declaration) continue;
+    if (infraInterface(target).exports.has(name)) continue;
+    throw new Error(
+      `Illegal import: ${displayPath(file)} imports ${name} from a runtime module, ${displayPath(resolved)}. Move ${name} to a shared module.`,
+    );
+  }
 }
 
 const entryId = "notation:runtime-entry";

@@ -61,6 +61,7 @@ The build fails with the file and line when:
 
 - a runtime module doesn't export `handler`,
 - a runtime module has more than one declaration,
+- an infra module imports a name from a runtime module that the declaration doesn't use,
 - `$lambda` is not called as `const name = $lambda({ ... })` at the top level, with an object literal,
 - `event` refers to an infra module, or
 - the function's bundle still contains an infra module. The error names the chain of imports.

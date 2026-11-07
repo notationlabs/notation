@@ -332,6 +332,43 @@ describe("declaration modules", () => {
     );
   });
 
+  it("fails when infra imports a name that the declaration doesn't use", async () => {
+    writeProject(`${handlerModule}\nexport const ROUTE = "/orders";\n`);
+    write(
+      "infra/routes.ts",
+      [
+        `import { ROUTE } from "../runtime/process-orders";`,
+        `import "./orders";`,
+        `console.log(ROUTE);`,
+      ].join("\n"),
+    );
+    await expect(
+      compileInfra(path.join(root, "infra/routes.ts")),
+    ).rejects.toThrow(
+      "Illegal import: infra/routes.ts imports ROUTE from a runtime module, runtime/process-orders.ts. Move ROUTE to a shared module.",
+    );
+  });
+
+  it("lets infra import a name that the declaration uses", async () => {
+    writeProject(
+      handlerModule
+        .replace("QUEUE_URL: orders.url", "QUEUE_URL: orders.url, NAME")
+        .replace(
+          "export const lambda",
+          `export const NAME = "orders";\nexport const lambda`,
+        ),
+    );
+    write(
+      "infra/names.ts",
+      [
+        `import { NAME } from "../runtime/process-orders";`,
+        `import "./orders";`,
+        `console.log(NAME);`,
+      ].join("\n"),
+    );
+    await compileInfra(path.join(root, "infra/names.ts"));
+  });
+
   it("fails when a declaration module doesn't export handler", async () => {
     writeProject(
       handlerModule.replace("export const handler", "const handler"),

@@ -80,6 +80,51 @@ function namesOf(pattern: Node): string[] {
   return names;
 }
 
+// The statements that the infra copy of a declaration module keeps: the
+// declaration and the top-level statements that it uses, and the imports
+// that those statements use.
+function keptStatements(analysis: ModuleAnalysis) {
+  const { module } = analysis.table;
+  const owners = new Map<string, Node>();
+  for (const statement of module.body) {
+    for (const name of declaredBy(statement)) owners.set(name, statement);
+  }
+
+  const kept = new Set<Node>([analysis.declaration!.statement]);
+  const usedImports = new Set<string>();
+  const queue: Node[] = [analysis.declaration!.statement];
+  while (queue.length > 0) {
+    const statement = queue.pop()!;
+    for (const { node } of freeReferences(statement)) {
+      const owner = owners.get(node.name);
+      if (owner && !kept.has(owner)) {
+        kept.add(owner);
+        queue.push(owner);
+      }
+      if (analysis.table.imports.has(node.name)) usedImports.add(node.name);
+    }
+  }
+  return { owners, kept, usedImports };
+}
+
+/**
+ * The exports of a declaration module that its infra copy keeps, and the
+ * local names of the imports that the copy keeps.
+ */
+export function infraInterface(analysis: ModuleAnalysis): {
+  exports: Set<string>;
+  imports: Set<string>;
+} {
+  const { owners, kept, usedImports } = keptStatements(analysis);
+  const exports = new Set<string>();
+  for (const [name, target] of analysis.table.exports) {
+    if ("local" in target && keptName(target.local, owners, kept)) {
+      exports.add(name);
+    }
+  }
+  return { exports, imports: usedImports };
+}
+
 /**
  * The copy of a declaration module that the infra build runs. It keeps the
  * declaration and the top-level statements that the declaration uses, and
@@ -117,25 +162,7 @@ export function stripForInfra(
     );
   }
 
-  const owners = new Map<string, Node>();
-  for (const statement of module.body) {
-    for (const name of declaredBy(statement)) owners.set(name, statement);
-  }
-
-  const kept = new Set<Node>([declaration.statement]);
-  const usedImports = new Set<string>();
-  const queue: Node[] = [declaration.statement];
-  while (queue.length > 0) {
-    const statement = queue.pop()!;
-    for (const { node } of freeReferences(statement)) {
-      const owner = owners.get(node.name);
-      if (owner && !kept.has(owner)) {
-        kept.add(owner);
-        queue.push(owner);
-      }
-      if (analysis.table.imports.has(node.name)) usedImports.add(node.name);
-    }
-  }
+  const { owners, kept, usedImports } = keptStatements(analysis);
 
   const s = new MagicString(module.source);
   for (const statement of module.body) {
