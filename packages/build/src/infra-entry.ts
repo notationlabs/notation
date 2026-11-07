@@ -3,11 +3,9 @@ import path from "node:path";
 import type { Plugin } from "rolldown";
 import type { ModuleAnalyses } from "./plugins";
 
-const entryId = "notation:infra-entry";
-const resolvedEntryId = `\0${entryId}`;
-
 /** The input to give an infra build that uses `infraEntryPlugin`. */
-export const infraEntry = entryId;
+export const infraEntry = "notation:infra-entry";
+const resolvedInfraEntry = `\0${infraEntry}`;
 
 // The directories that neither the runtime file scan nor the infra watcher
 // enters, at any depth: build output, packages, and dot-directories such as
@@ -16,50 +14,14 @@ const ignoredNames = ["dist", "node_modules"];
 const isIgnoredDirectory = (name: string) =>
   ignoredNames.includes(name) || name.startsWith(".");
 
-const escapeRegExp = (text: string) =>
-  text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 /**
- * The `watch.exclude` pattern for an infra build that uses
- * `infraEntryPlugin`. It matches a path under `root` that passes through a
- * directory that `findRuntimeDeclarations` skips. Rolldown takes only
- * strings and regular expressions here, not a function.
+ * The `watch.exclude` globs for an infra build that uses `infraEntryPlugin`.
+ * They match the directories that the runtime file scan skips.
  */
-export function infraWatchExclude(root: string): RegExp {
-  const separator = String.raw`[\\/]`;
-  const segment = String.raw`[^\\/]+`;
-  const ignored = `(?:${ignoredNames.join("|")}|${String.raw`\.[^\\/]+`})`;
-  return new RegExp(
-    `^${escapeRegExp(root)}${separator}(?:${segment}${separator})*${ignored}(?:${separator}|$)`,
-  );
-}
-
-export type FindRuntimeDeclarationsOptions = {
-  analyses: ModuleAnalyses;
-  /** Absolute path that the globs are relative to. */
-  root: string;
-  globs: string[];
-};
-
-/**
- * Finds the runtime files that call a declaration function, such as
- * `$lambda`. Returns their absolute paths, sorted. A file that can't be
- * analysed throws an error that names the file.
- */
-export function findRuntimeDeclarations({
-  analyses,
-  root,
-  globs,
-}: FindRuntimeDeclarationsOptions): string[] {
-  return fs
-    .globSync(globs, {
-      cwd: root,
-      exclude: (file) => isIgnoredDirectory(path.basename(file)),
-    })
-    .map((file) => path.resolve(root, file))
-    .filter((file) => analyse(analyses, root, file)?.declaration)
-    .sort();
-}
+export const infraWatchExclude = [
+  ...ignoredNames.map((name) => `**/${name}/**`),
+  "**/.*/**",
+];
 
 function analyse(analyses: ModuleAnalyses, root: string, file: string) {
   try {
@@ -68,7 +30,7 @@ function analyse(analyses: ModuleAnalyses, root: string, file: string) {
     const message = error instanceof Error ? error.message : String(error);
     const relative = path.relative(root, file).split(path.sep).join("/");
     throw new Error(
-      `${relative} matches runtimeModules, but it can't be analysed: ${message.replace(`${file}: `, "")}`,
+      `${relative} matches runtimeModules, but it can't be analysed: ${message}`,
       { cause: error },
     );
   }
@@ -99,7 +61,19 @@ function globBases(root: string, globs: string[]): string[] {
   return [...bases];
 }
 
-export type InfraEntryPluginOptions = {
+/**
+ * Generates the infra build's entry. It imports the infra entry first, then
+ * each runtime file that calls a declaration function, such as `$lambda`, so
+ * that a function is deployed even if infra doesn't import its module. ES
+ * modules run once, so a module that the infra entry already imports doesn't
+ * run again. A runtime file that can't be analysed fails the build.
+ *
+ * The runtime files are found again on each build. In watch mode, the base
+ * directory of each glob is watched, so that a new runtime file starts a
+ * rebuild. The watch options must exclude `infraWatchExclude`, or each
+ * build's output in `dist/` starts another build.
+ */
+export function infraEntryPlugin(options: {
   analyses: ModuleAnalyses;
   /** Absolute path of the infra entry in the config. */
   entryPoint: string;
@@ -107,42 +81,28 @@ export type InfraEntryPluginOptions = {
   root: string;
   /** Globs for the runtime files. */
   runtimeModules: string[];
-};
-
-/**
- * Generates the infra build's entry. It imports the infra entry first, then
- * each runtime file that holds a declaration, so that a function is deployed
- * even if infra doesn't import its module. ES modules run once, so a module
- * that the infra entry already imports doesn't run again.
- *
- * The runtime files are found again on each build. In watch mode, the base
- * directory of each glob is watched, so that a new runtime file starts a
- * rebuild. The watch options must exclude `infraWatchExclude(root)`, or
- * each build's output in `dist/` starts another build.
- */
-export function infraEntryPlugin({
-  analyses,
-  entryPoint,
-  root,
-  runtimeModules,
-}: InfraEntryPluginOptions): Plugin {
+}): Plugin {
+  const { analyses, entryPoint, root, runtimeModules } = options;
   return {
     name: "notation-infra-entry",
     resolveId(source) {
-      return source === entryId ? resolvedEntryId : null;
+      return source === infraEntry ? resolvedInfraEntry : null;
     },
     load(id) {
-      if (id !== resolvedEntryId) return null;
+      if (id !== resolvedInfraEntry) return null;
       if (this.meta.watchMode) {
         for (const dir of globBases(root, runtimeModules)) {
           this.addWatchFile(dir);
         }
       }
-      const files = findRuntimeDeclarations({
-        analyses,
-        root,
-        globs: runtimeModules,
-      }).filter((file) => file !== entryPoint);
+      const files = fs
+        .globSync(runtimeModules, {
+          cwd: root,
+          exclude: (file) => isIgnoredDirectory(path.basename(file)),
+        })
+        .map((file) => path.resolve(root, file))
+        .filter((file) => analyse(analyses, root, file)?.declaration)
+        .sort();
       return [entryPoint, ...files]
         .map((file) => `import ${JSON.stringify(file)};\n`)
         .join("");

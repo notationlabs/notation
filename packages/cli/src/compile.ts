@@ -35,15 +35,9 @@ export type CompileOptions = {
  * infra build found. In watch mode, each infra rebuild that changes that set
  * of modules restarts the runtime bundles. Returns a function that stops
  * watching.
- *
- * Without `runtimeModules`, the infra build finds declaration modules only
- * through the imports of the infra entry.
  */
 export async function compile(
-  {
-    entryPoint,
-    runtimeModules,
-  }: Pick<Build, "entryPoint"> & Partial<Pick<Build, "runtimeModules">>,
+  { entryPoint, runtimeModules }: Build,
   opts: CompileOptions = {},
 ): Promise<() => Promise<void>> {
   const watch = opts.watch ?? false;
@@ -116,7 +110,7 @@ export type CompileInfraOptions = {
   analyses?: ModuleAnalyses;
   /**
    * Globs, relative to the project root, for the runtime files. The infra
-   * build also imports each one that holds a declaration.
+   * build also imports each one that holds a declaration. Defaults to none.
    */
   runtimeModules?: string[];
   /**
@@ -140,8 +134,8 @@ const outputOptions: OutputOptions = {
 };
 
 /**
- * Bundles the infra entry to `dist/`. With `runtimeModules`, the bundle
- * also imports each runtime file that holds a declaration, after the entry.
+ * Bundles the infra entry to `dist/`. The bundle also imports each file in
+ * `runtimeModules` that holds a declaration, after the entry.
  * Each declaration module in the build is replaced by its stripped copy.
  * Returns the declaration modules, sorted by path, and a function that stops
  * watching. In watch mode, resolves after the first build without errors.
@@ -153,17 +147,14 @@ export async function compileInfra(
   const analyses = opts.analyses ?? new ModuleAnalyses();
   let found: DeclarationModule[] = [];
   const root = projectRoot();
-  const runtimeModules = opts.runtimeModules;
+  const runtimeModules = opts.runtimeModules ?? [];
   const input: InputOptions = {
-    input: {
-      [outputName(entryPoint)]: runtimeModules ? infraEntry : entryPoint,
-    },
+    input: { [outputName(entryPoint)]: infraEntry },
     cwd: root,
     platform: "node",
     tsconfig: true,
     plugins: [
-      runtimeModules &&
-        infraEntryPlugin({ analyses, entryPoint, root, runtimeModules }),
+      infraEntryPlugin({ analyses, entryPoint, root, runtimeModules }),
       infraPlugin({
         analyses,
         onDeclarationModules: (modules) => {
@@ -196,7 +187,7 @@ export async function compileInfra(
     output,
     // The infra entry plugin watches the base directory of each runtime
     // glob, which can be the project root.
-    watch: runtimeModules ? { exclude: infraWatchExclude(root) } : undefined,
+    watch: { exclude: infraWatchExclude },
   });
   const close = () => watcher.close();
   return new Promise((resolve) => {

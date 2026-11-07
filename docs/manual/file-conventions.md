@@ -119,7 +119,7 @@ The build doesn't run a file in the globs that makes no declaration, such as `ru
 **A file in the globs that can't be parsed fails the build**, even if nothing imports it. For example, with `**/*.ts`, a scratch file with a syntax error fails the deploy:
 
 ```text
-scratch.ts matches runtimeModules, but it can't be analysed: Unexpected token
+scratch.ts matches runtimeModules, but it can't be analysed: /project/scratch.ts: Unexpected token
 ```
 
 ### Runtime code and infra

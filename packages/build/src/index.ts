@@ -11,11 +11,4 @@ export {
 } from "./infra-strip";
 export { stripForRuntime, type IsInfraModule } from "./runtime-strip";
 export * from "./plugins";
-export {
-  findRuntimeDeclarations,
-  infraEntry,
-  infraEntryPlugin,
-  infraWatchExclude,
-  type FindRuntimeDeclarationsOptions,
-  type InfraEntryPluginOptions,
-} from "./infra-entry";
+export { infraEntry, infraEntryPlugin, infraWatchExclude } from "./infra-entry";

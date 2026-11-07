@@ -23,7 +23,7 @@ Only the infra pass decides which modules are declaration modules. The runtime p
 
 ### The generated infra entry
 
-The infra pass also finds declaration modules that the entry doesn't import. With `runtimeModules`, the input of the infra build is not the entry file but a virtual module, `notation:infra-entry`, from `infraEntryPlugin` in `@notation/build`. Its `load` hook globs the runtime files, analyses each one, and imports the entry and then each file that holds a declaration:
+The infra pass also finds declaration modules that the entry doesn't import. The input of the infra build is not the entry file but a virtual module, `notation:infra-entry`, from `infraEntryPlugin` in `@notation/build`. Its `load` hook globs the files in `runtimeModules`, analyses each one, and imports the entry and then each file that holds a declaration:
 
 ```ts [notation:infra-entry]
 import "/project/infra/index.ts";
@@ -37,7 +37,7 @@ The output keeps the entry's name, such as `dist/infra/index.mjs`. `runtime/todo
 
 In watch mode, the plugin adds the base directory of each glob to the watched files, such as `runtime/` for `runtime/**/*.ts`. A new file in that directory starts a rebuild, and the `load` hook globs the files again. If the base directory doesn't exist yet, the plugin watches its nearest parent that exists, up to the project root, so a `runtime/` directory created during watch is seen.
 
-The base directory of a glob such as `**/*.ts` is the project root, so the watcher would see each build's output in `dist/` and each deploy's writes to `.notation/`. **Both would start another build, and in `notation watch` another deploy.** So the scan and the infra watcher skip the same directories at any depth: `dist/`, `node_modules/` and dot-directories. `infraWatchExclude(root)` builds the watcher's pattern. The watcher uses it only when `runtimeModules` is set.
+The base directory of a glob such as `**/*.ts` is the project root, so the watcher would see each build's output in `dist/` and each deploy's writes to `.notation/`. **Both would start another build, and in `notation watch` another deploy.** So the scan and the infra watcher skip the same directories at any depth: `dist/`, `node_modules/` and dot-directories. `infraWatchExclude` holds the watcher's globs.
 
 ## Marks
 

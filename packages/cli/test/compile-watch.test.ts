@@ -32,7 +32,10 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-const build = (entry: string) => ({ entryPoint: path.join(root, entry) });
+const build = (entry: string) => ({
+  entryPoint: path.join(root, entry),
+  runtimeModules: [],
+});
 
 const write = (file: string, contents: string) => {
   mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
