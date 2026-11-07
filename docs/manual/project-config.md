@@ -17,9 +17,9 @@ export default defineConfig({
 | `app`            | Yes      | The name of the app.                                                                                                                                                                       |
 | `entry`          | Yes      | The entry file, relative to the config.                                                                                                                                                    |
 | `defaultStage`   | No       | The stage that a command uses when given no `--stage`.                                                                                                                                     |
-| `runtimeModules` | No       | A glob or an array of globs, relative to the config, for the files that can be runtime modules. The default is `**/*.fn.ts`. See [Runtime modules](./file-conventions.md#runtime-modules). |
+| `runtimeModules` | No       | A glob or an array of globs, relative to the config, for the files that can be runtime modules. The default is `**/*.fn.ts`. The build doesn't read it yet. See [Runtime modules must be imported](./file-conventions.md#runtime-modules-must-be-imported). |
 
-The CLI deploys the entry file and every module that it imports.
+The CLI deploys the entry file and every module that it imports, including runtime modules.
 
 ## Project root
 

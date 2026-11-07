@@ -15,7 +15,8 @@ my-app/
 ├── infra/
 │   └── api.ts
 ├── runtime/
-│   └── todos.fn.ts
+│   ├── todos.fn.ts
+│   └── utils.ts
 ├── notation.config.ts
 ├── package.json
 └── tsconfig.json
@@ -39,43 +40,43 @@ export default defineConfig({
 
 With this config, `npm run deploy` deploys `infra/api.ts` to the `dev` stage. To deploy to another stage, pass `--stage`: `npm run deploy -- --stage prod`. See [Project Config](./project-config.md).
 
-**`infra/api.ts`** – defines the API Gateway and routes:
+**`infra/api.ts`** and **`runtime/todos.fn.ts`** – define the API and the function behind it:
 
 ::code-group
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { getTodos, getTodoCount } from "runtime/todos.fn";
+import { lambda as todos } from "runtime/todos.fn";
 
 const todoApi = api({ name: "todo-api" });
 const todoRouter = router(todoApi);
 
-todoRouter.get("/todos", getTodos);
-todoRouter.get("/todos/count", getTodoCount);
+todoRouter.get("/todos", () => todos);
 ```
 
 ```ts [runtime/todos.fn.ts]
-import { handle, type LambdaResource } from "@notation/aws/lambda/runtime";
+import { createLambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { api } from "./utils";
 
-export const getTodos = handle.apiRequest(() => {
-  return [{ id: 1, text: "Learn Notation" }];
-});
-
-export const getTodoCount = handle.apiRequest(() => {
-  return 1;
-});
-
-export const resource: LambdaResource = {
-  service: "aws/lambda",
+export const lambda = createLambda({
   id: "todos",
   timeout: 5,
   memory: 64,
+  event: () => http(),
+});
+
+const todos = await api.get<any[]>("/todos");
+
+export const handler: LambdaHandler<typeof lambda> = async () => {
+  return todos;
 };
 ```
 
 ::
 
-Infrastructure and runtime live in the same codebase. `runtime/todos.fn.ts` is a runtime module, because it exports `resource`. It deploys as one Lambda function with the ID `todos`, and both handlers run in that function. The router wires each handler to an API Gateway route, and Notation infers the intermediate resources – IAM roles, permissions, integrations, and so on. See [Runtime modules](./file-conventions.md#runtime-modules).
+Infrastructure and runtime live in the same codebase. `runtime/todos.fn.ts` is a runtime module, because it declares a Lambda function with `createLambda`. The function has the ID `todos`, and Lambda calls the module's `handler` export with each request. `api.get` in `runtime/utils.ts` fetches sample todos from `jsonplaceholder.typicode.com`.
+
+`infra/api.ts` imports the declaration, `lambda`, and routes `GET /todos` to it. Notation infers the intermediate resources – IAM roles, permissions, integrations, and so on. See [Runtime modules](./file-conventions.md#runtime-modules).
 
 ## 3. Visualize the graph
 
@@ -84,7 +85,7 @@ npm run viz
 ```
 
 ```sh
-✔ Compiled infra/api.ts → 11 resources
+✔ Compiled infra/api.ts → 10 resources
 → https://notation.dev/viz/abc123
 ```
 
@@ -97,8 +98,8 @@ npm run deploy
 ```
 
 ```sh
-✔ Compiled infra/api.ts → 11 resources
-✔ Diffed against state → 11 to create, 0 to update, 0 to destroy
+✔ Compiled infra/api.ts → 10 resources
+✔ Diffed against state → 10 to create, 0 to update, 0 to destroy
 ✔ Deploying...
 
   ✔ iam-role/todos-role             created
@@ -106,13 +107,11 @@ npm run deploy
   ✔ api-gateway/todo-api            created
   ✔ integration/todo-api-todos      created
   ✔ route/GET /todos                created
-  ✔ route/GET /todos/count          created
   ...
 
-✔ Deployed 11 resources
+✔ Deployed 10 resources
 
   GET https://abc123.execute-api.us-east-1.amazonaws.com/todos
-  GET https://abc123.execute-api.us-east-1.amazonaws.com/todos/count
 ```
 
 Notation compiles your infrastructure, diffs it against the state of the `dev` stage, and deploys resources in dependency order. On first deploy, everything is created.
@@ -122,7 +121,7 @@ curl https://abc123.execute-api.us-east-1.amazonaws.com/todos
 ```
 
 ```json
-[{ "id": 1, "text": "Learn Notation" }]
+[{ "userId": 1, "id": 1, "title": "delectus aut autem", "completed": false }, ...]
 ```
 
 ## 5. Make a change
@@ -130,12 +129,9 @@ curl https://abc123.execute-api.us-east-1.amazonaws.com/todos
 Edit the handler in `runtime/todos.fn.ts`:
 
 ```ts [runtime/todos.fn.ts]
-export const getTodos = handle.apiRequest(() => {
-  return [
-    { id: 1, text: "Learn Notation" },
-    { id: 2, text: "Ship it" },
-  ];
-});
+export const handler: LambdaHandler<typeof lambda> = async () => {
+  return todos.slice(0, 5);
+};
 ```
 
 Then start watch mode:
@@ -162,10 +158,9 @@ npm run destroy
 ```
 
 ```sh
-✔ Compiled infra/api.ts → 11 resources
+✔ Compiled infra/api.ts → 10 resources
 ✔ Destroying in reverse dependency order...
 
-  ✔ route/GET /todos/count          destroyed
   ✔ route/GET /todos                destroyed
   ✔ integration/todo-api-todos      destroyed
   ✔ api-gateway/todo-api            destroyed
@@ -173,7 +168,7 @@ npm run destroy
   ✔ iam-role/todos-role             destroyed
   ...
 
-✔ Destroyed 11 resources
+✔ Destroyed 10 resources
 ```
 
 Everything is removed in reverse dependency order.

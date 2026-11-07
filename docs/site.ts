@@ -27,7 +27,7 @@ export const compiler = {
           icon: "cpu",
           links: [
             { label: "Lambda Handlers", slug: "manual/functions" },
-            { label: "Lambda Resource", slug: "manual/function-config" },
+            { label: "Lambda Declaration", slug: "manual/function-config" },
           ],
         },
         {

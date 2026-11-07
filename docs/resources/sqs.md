@@ -42,7 +42,7 @@ SQS doesn't let you reuse a deleted queue's name for 60 seconds, so a replacemen
 
 An output value can only be placed whole. Turning it into a string, for example in a template string, throws. To build a value from the queue's ARN, contribute a function that receives `orderQueue.queue` as a dep; see [Function contributions](../internals/resource.md#function-contributions).
 
-## `queue.consume(handler)`
+## `queue.consume(target)`
 
 `consume` invokes a function with the queue's messages:
 
@@ -50,36 +50,37 @@ An output value can only be placed whole. Turning it into a string, for example 
 
 ```ts [infra/orders.ts]
 import { queue } from "@notation/aws/sqs";
-import { processOrders } from "runtime/orders.fn";
+import { lambda as processOrders } from "runtime/orders.fn";
 
 export const orderQueue = queue({ name: "orders" });
-orderQueue.consume(processOrders, { batchSize: 5 });
+orderQueue.consume(() => processOrders, { batchSize: 5 });
 ```
 
 ```ts [runtime/orders.fn.ts]
-import { handle, type LambdaResource } from "@notation/aws/lambda/runtime";
+import { createLambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 
-export const processOrders = handle.sqsEvent(async (event) => {
-  for (const record of event.Records) console.log(record.body);
+export const lambda = createLambda({
+  id: "orders",
+  event: () => sqs(),
 });
 
-export const resource: LambdaResource = {
-  service: "aws/lambda",
-  id: "orders",
+export const handler: LambdaHandler<typeof lambda> = async (event) => {
+  for (const record of event.Records) console.log(record.body);
 };
 ```
 
 ::
 
-`processOrders` is an export of the runtime module `runtime/orders.fn.ts`, so in infra code it is a `RuntimeRef`: the module's Lambda group, plus the name of the export. See [Lambda](lambda.md#runtime-modules). `consume` also takes a Lambda group from [`lambda()`](lambda.md#lambdaconfig).
+`processOrders` is the declaration from the runtime module `runtime/orders.fn.ts`. `consume` takes it as a function, `() => processOrders`, and calls the function when infra has finished loading. The declaration must have `event: () => sqs()`, or no `event`. See [Wiring a declaration](lambda.md#wiring-a-declaration). `consume` also takes a Lambda group from [`lambda()`](lambda.md#lambdaconfig), as it is.
 
-`consume` changes three things, and the function's own config doesn't mention the queue:
+`consume` changes two things, and the function's declaration doesn't mention the queue:
 
 1. **The role's inline policy.** `consume` contributes a statement that allows `sqs:ReceiveMessage`, `sqs:DeleteMessage` and `sqs:GetQueueAttributes` on the queue to the function's [inline policy](lambda.md#inline-policy).
 2. **An event source mapping**, `orders-orders-mapping`, which connects the queue to the function.
-3. **The function's dispatch map.** `consume` adds an entry that sends messages from the queue's ARN to `processOrders`. A Lambda group from `lambda()` gets no entry. See [Dispatch](lambda.md#dispatch).
 
 The mapping depends on the policy, even though it reads nothing from it. This matters because AWS checks the role's permissions when it creates the mapping, so the policy has to exist first. Notation retries the create while the new permissions propagate through IAM.
+
+The mapping doesn't turn on `ReportBatchItemFailures`. So if the handler returns `{ batchItemFailures }`, Lambda ignores it, and a batch either succeeds or fails as a whole.
 
 ### Options
 
@@ -92,24 +93,64 @@ type ConsumeOptions = {
 
 When you remove `batchSize` or `maxBatchingWindow`, Notation sets the mapping back to the Lambda defaults: a batch size of 10 and a batching window of 0 seconds.
 
+### Validating messages
+
+`sqs(schema)` gives the declaration a [Standard Schema](https://standardschema.dev) for the message bodies. The handler validates each record with `lambda.decode(record)`, which parses the body as JSON and returns the schema's output type. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
+
+The queue doesn't carry the schema, and nothing checks the messages that a sender writes. To send messages, use `@aws-sdk/client-sqs` in your own code.
+
 ### Several queues
 
-Each queue contributes its own statement and its own dispatch entry, so two queues can feed one function. The two queues can call the same export, or two exports of one module:
+Each queue contributes its own statement and its own mapping, so two queues can feed one function:
 
 ```ts [infra/orders.ts]
-import { processOrders, processRefunds } from "runtime/orders.fn";
+import { lambda as processOrders } from "runtime/orders.fn";
 
-orderQueue.consume(processOrders);
-refundQueue.consume(processRefunds);
+orderQueue.consume(() => processOrders);
+refundQueue.consume(() => processOrders);
 ```
 
 The function's policy then has two statements. When you delete the `refundQueue.consume` line, its statement and mapping go with it, and the next deploy updates the policy and deletes the mapping.
 
-A queue can feed a given function once. A second `consume` with the same function throws, even with a different export of the module, because the dispatch map sends all of a queue's messages to one export.
+The function's one `handler` receives the messages of both queues. Each record's `eventSourceARN` names its queue. To compare it with a queue in the handler, bind the queue's ARN in `env`:
+
+```ts [runtime/orders.fn.ts]
+import { createLambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { refundQueue } from "infra/orders";
+
+export const lambda = createLambda({
+  id: "orders",
+  event: () => sqs(),
+  env: () => ({ REFUND_QUEUE_ARN: refundQueue.arn }),
+});
+
+export const handler: LambdaHandler<typeof lambda> = async (event) => {
+  for (const record of event.Records) {
+    const kind = record.eventSourceARN === lambda.env().REFUND_QUEUE_ARN ? "refund" : "order";
+    console.log(kind, record.body);
+  }
+};
+```
+
+A queue can feed a given function once. A second `consume` with the same function throws.
 
 ## `queue.grant(actions)`
 
-`grant` returns a policy statement for the queue. Contribute it to a Lambda group's inline policy to give the function other access, such as sending messages:
+`grant` returns a policy statement for the queue. A declaration adds it to its function's role with the `policy` option. For example, to let the `orders` function send messages to `refundQueue`, and read the queue's URL:
+
+```ts [runtime/orders.fn.ts]
+import { createLambda, sqs } from "@notation/aws/lambda";
+import { refundQueue } from "infra/orders";
+
+export const lambda = createLambda({
+  id: "orders",
+  event: () => sqs(),
+  policy: () => [refundQueue.grant(["SendMessage"])],
+  env: () => ({ REFUND_QUEUE_URL: refundQueue.url }),
+});
+```
+
+For a Lambda group from `lambda()`, contribute the statement to the group's inline policy:
 
 ```ts [infra/orders.ts]
 import { lambda } from "@notation/aws/lambda";
@@ -123,18 +164,6 @@ importer.policy.contribute({
   PolicyDocument: { Statement: [orderQueue.grant(["SendMessage"])] },
 });
 ```
-
-A function from a runtime module has no variable like `importer` to call `policy` on. Instead, every export of the module carries the module's Lambda group as `resource`. For example, to let `processOrders` send messages to `refundQueue`, contribute the grant to `processOrders.resource.policy`:
-
-```ts [infra/orders.ts]
-import { processOrders } from "runtime/orders.fn";
-
-processOrders.resource.policy.contribute({
-  PolicyDocument: { Statement: [refundQueue.grant(["SendMessage"])] },
-});
-```
-
-All the exports of `runtime/orders.fn.ts` run in one function with one role. So the grant applies to every export of the module, not only to `processOrders`.
 
 ```ts [@notation/aws/sqs]
 type SqsAction =

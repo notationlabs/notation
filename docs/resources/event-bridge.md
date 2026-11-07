@@ -6,16 +6,16 @@
 
 ```ts [infra/schedule.ts]
 import * as eventBridge from "@notation/aws/event-bridge";
-import { logEvent } from "runtime/log-event.fn";
+import { lambda as logEvent } from "runtime/log-event.fn";
 
 eventBridge.schedule({
   name: "log-every-minute",
   schedule: eventBridge.rate(1, "minute"),
-  handler: logEvent,
+  target: () => logEvent,
 });
 ```
 
-`logEvent` is an export of the runtime module `runtime/log-event.fn.ts`, so in infra code it is a `RuntimeRef`: the module's Lambda function, plus the name of the export. See [Lambda](lambda.md#runtime-modules). `handler` can also be a Lambda group from [`lambda()`](lambda.md#lambdaconfig). `schedule` creates an EventBridge rule that targets the function, and the permission that lets the rule invoke it.
+`logEvent` is the declaration from the runtime module `runtime/log-event.fn.ts`. `schedule` takes it as a function, `() => logEvent`, and calls the function when infra has finished loading. The declaration must have `event: () => scheduled()`, or no `event`. See [Wiring a declaration](lambda.md#wiring-a-declaration). `target` can also be a Lambda group from [`lambda()`](lambda.md#lambdaconfig), as it is. `schedule` creates an EventBridge rule that targets the function, and the permission that lets the rule invoke it. It returns nothing.
 
 ### Config
 
@@ -23,11 +23,11 @@ eventBridge.schedule({
 type ScheduleConfig = {
   name: string;
   schedule: Schedule;
-  handler: EventBridgeScheduleHandler | LambdaGroup;
+  target: LambdaTarget<"scheduled" | "none">; // () => declaration, or a Lambda group
 };
 ```
 
-For a runtime module's export, the rule doesn't send the EventBridge event to the function as it is. It sends `{ "export": "logEvent", "event": <the EventBridge event> }`, so the function knows which export to call. The function's dispatcher calls `logEvent` with the EventBridge event. See [Dispatch](lambda.md#dispatch). For a Lambda group from `lambda()`, the rule sends the EventBridge event as it is.
+The rule sends the EventBridge event to the function as it is.
 
 `name` keys the schedule in state. In AWS, the EventBridge rule is named `<app>--<stage>--<name>`, such as `my-app--prod--log-every-minute`. See [AWS names](../manual/project-config.md#aws-names).
 
@@ -63,14 +63,16 @@ eventBridge.once(new Date("2027-12-31T23:59:00Z"));
 ## Handler
 
 ```ts [runtime/log-event.fn.ts]
-import { handle, type LambdaResource } from "@notation/aws/lambda/runtime";
+import { createLambda, scheduled, type LambdaHandler } from "@notation/aws/lambda";
 
-export const logEvent = handle.eventBridgeScheduledEvent((event) => {
-  console.log("Scheduled event fired:", event);
+export const lambda = createLambda({
+  id: "log-event",
+  event: () => scheduled(),
 });
 
-export const resource: LambdaResource = {
-  service: "aws/lambda",
-  id: "log-event",
+export const handler: LambdaHandler<typeof lambda> = async (event) => {
+  console.log("Scheduled event fired:", event);
 };
 ```
+
+`event` is typed as an `EventBridgeEvent<"Scheduled Event", unknown>`.

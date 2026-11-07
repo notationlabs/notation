@@ -1,128 +1,75 @@
 # Lambda
 
-`@notation/aws/lambda` declares Lambda functions. Most functions come from runtime modules, and the compiler declares them for you. To deploy code that Notation doesn't build, call `lambda()` directly.
+`@notation/aws/lambda` declares Lambda functions. Most functions are declared with `createLambda` in a runtime module, next to their code, and Notation builds the code. To deploy code that Notation doesn't build, call `lambda()` in infra.
 
-## Runtime modules
+## `createLambda(config)`
 
-A [runtime module](../manual/file-conventions.md#runtime-modules) whose `resource.service` is `"aws/lambda"` deploys as one Lambda function:
+A [runtime module](../manual/file-conventions.md#runtime-modules) calls `createLambda` to declare the function that it deploys as, and exports `handler`. Infra imports the declaration and wires it:
 
 ::code-group
 
 ```ts [runtime/todos.fn.ts]
-import { handle, type LambdaResource } from "@notation/aws/lambda/runtime";
+import { createLambda, http, type LambdaHandler } from "@notation/aws/lambda";
 
-export const getTodos = handle.apiRequest(() => []);
-export const createTodo = handle.apiRequest(() => {
-  id: 2;
-});
-
-export const resource: LambdaResource = {
-  service: "aws/lambda",
+export const lambda = createLambda({
   id: "todos",
   timeout: 5,
+  event: () => http(),
+});
+
+export const handler: LambdaHandler<typeof lambda> = async (event) => {
+  if (event.routeKey === "POST /todos") return { id: 2 };
+  return [];
 };
 ```
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { getTodos, createTodo } from "runtime/todos.fn";
+import { lambda as todos } from "runtime/todos.fn";
 
 const todoRouter = router(api({ name: "todo-api" }));
-todoRouter.get("/todos", getTodos);
-todoRouter.post("/todos", createTodo);
+todoRouter.get("/todos", () => todos);
+todoRouter.post("/todos", () => todos);
 ```
 
 ::
 
-When infra imports `runtime/todos.fn.ts`, the compiler replaces the module with a generated one. The module below is simplified: the real one gives its import and its resource aliased names, so they can't clash with the names of the module's exports.
+When infra has finished loading, the declaration adds a Lambda group with:
 
-```ts [generated module]
-import { lambda } from "@notation/aws/lambda";
-
-const resource = lambda({
-  id: "todos",
-  code: { type: "file", path: "dist/runtime/todos.fn/index.mjs" },
-  timeout: 5,
-});
-
-export const getTodos = { resource, export: "getTodos" };
-export const createTodo = { resource, export: "createTodo" };
-```
-
-`lambda()` declares:
-
-- the **Lambda function** `todos`, which runs the bundle `dist/runtime/todos.fn/index.mjs`,
+- the **Lambda function** `todos`, which runs the bundle `dist/runtime/todos.fn/index.mjs` and calls `index.handler`,
 - the **IAM execution role** `todos-role`,
 - the **CloudWatch log group** `todos-log-group`, with 30-day retention,
 - the **zip package** `todos-zip` of the bundle.
 
-Each export of the generated module is a `RuntimeRef`: the Lambda group, plus the name of the export to call. Infra APIs such as `router.get`, `queue.consume` and `schedule` take a `RuntimeRef`, or a Lambda group from [`lambda()`](#lambdaconfig).
+The declaration adds the function even when nothing wires it. The options are listed in [Lambda Declaration](../manual/function-config.md).
 
-```ts [@notation/aws/lambda]
-type RuntimeRef = { resource: LambdaGroup; export: string };
-```
+### Wiring a declaration
 
-TypeScript types the import from the original module, so `handle.*` returns the handler type and `RuntimeRef` together. Infra code can read `getTodos.resource` without a cast. Each infra API checks the handler type: `router.get` takes an API request handler, and `queue.consume` takes an SQS handler. A router with a JWT authorizer takes only handlers for the same claims type.
+Infra APIs take the declaration as a function that returns it, such as `() => todos`. They call the function when infra has finished loading, so the runtime module and the infra module can import each other.
 
-The `RuntimeRef` type also applies inside the runtime module, where it is wrong. There, `getTodos` is the handler function, and `getTodos.resource` is `undefined`. TypeScript doesn't report the mistake. Only read `resource` and `export` in infra code.
+| Infra API                                   | Accepts                                       |
+| ------------------------------------------- | --------------------------------------------- |
+| [`queue.consume`](sqs.md#queueconsumetarget) | A declaration with `sqs()` or no `event`      |
+| [`router.get`](api-gateway.md#routerapi), `.post`, ... | A declaration with `http()` or no `event` |
+| [`schedule`](event-bridge.md#scheduleconfig) | A declaration with `scheduled()` or no `event` |
+
+Each API also takes a Lambda group from [`lambda()`](#lambdaconfig), as it is, with no function around it.
+
+A declaration whose event doesn't match is a type error. If TypeScript doesn't catch it, the infra API throws when infra runs, for example `route() sends http events, but the Lambda "orders" is declared with a sqs event.`
+
+### One handler for each function
+
+The function has one entry point, `handler`, and Notation doesn't route events to it. In the example, both routes call the `todos` function, and the handler reads `event.routeKey` to tell them apart. A function that two queues feed reads `record.eventSourceARN` in the same way.
 
 ## IDs
 
 Every Lambda function has an ID. It names the function and the resources that support it (`<id>`, `<id>-role`, `<id>-zip`, `<id>-policy`, `<id>-role-policy` and `<id>-log-group`), and keys them in state. Changing an ID replaces the function.
 
-In a runtime module, the ID is `resource.id`. The ID doesn't come from the module's path, so you can move or rename the module and keep its function.
+In a runtime module, the ID is the declaration's `id`. The ID doesn't come from the module's path, so you can move or rename the module and keep its function.
 
 In AWS, the function is named `<app>--<stage>--<id>` and its role `<app>--<stage>--<id>-role`. If a name is longer than 64 characters, Notation shortens it. See [AWS names](../manual/project-config.md#aws-names).
 
-IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. `lambda()` only accepts string literals that follow this rule, and throws at runtime if it gets anything else. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, count as the same, because IAM role names ignore case.
-
-## Dispatch
-
-A Lambda function has one entry point, but the `todos` function serves two handlers. The entry point of the runtime bundle is a `handler` export that the compiler generates:
-
-```ts [generated runtime entry]
-import * as mod from "/path/to/my-app/runtime/todos.fn.ts";
-import { createDispatcher } from "@notation/aws/lambda/runtime";
-
-export const handler = createDispatcher(mod);
-```
-
-`createDispatcher` picks the export for each event:
-
-| Event                | Export                                                           |
-| -------------------- | ---------------------------------------------------------------- |
-| Scheduled invocation | The export named in the event, if it is a schedule handler       |
-| HTTP API request     | The export that the dispatch map gives for the API and route key |
-| SQS messages         | The export that the dispatch map gives for the queue's ARN       |
-
-### The dispatch map
-
-A request for `GET /todos` and a request for `POST /todos` have the same shape, so the function can't tell from the event which handler to call. Only infra knows which route goes to which export. So each route adds an entry to the function's dispatch map:
-
-```json
-{
-  "todo-api-GET-/todos": {
-    "export": "getTodos",
-    "match": { "apiId": "a1b2c3", "routeKey": "GET /todos" }
-  },
-  "todo-api-POST-/todos": {
-    "export": "createTodo",
-    "match": { "apiId": "a1b2c3", "routeKey": "POST /todos" }
-  }
-}
-```
-
-The map is keyed by the ID of the route, or of the event source mapping for a queue. Notation stores the map in the function's `NOTATION_RUNTIME` environment variable, and `createDispatcher` reads it when the function starts. A plan shows each entry as a change to `Environment.Runtime`.
-
-Lambda limits a function's environment variables to 4 KB in total, and the map counts towards the limit. The variable holds the map as JSON. A route's entry takes about 50 bytes, plus the length of its ID, the export's name and the route key. A queue's entry takes about 40 bytes, plus the length of its ID, the export's name and the queue's ARN. If the variables are over 4 KB, the deploy fails with an error that names the function. To fix it, split the runtime module into smaller modules, so that each function serves fewer routes and queues.
-
-A schedule adds no entry. Instead, the EventBridge rule sends `{ "export": "<name>", "event": <the EventBridge event> }`, and `createDispatcher` calls the named export with the EventBridge event. Anyone allowed to invoke the function can send this shape, so the named export must be made with `handle.eventBridgeScheduledEvent`. A scheduled invocation of any other export throws.
-
-### Events with no entry
-
-If an event is not a scheduled invocation and has no entry in the dispatch map, the function throws an error that describes the event. This includes a request from a route that was given the module's Lambda group, such as `getTodos.resource`, instead of an export: the group is treated as external code, so the route adds no entry.
-
-A handler is an export made with `handle.*`. Other exported functions, such as helpers, can't be the target of a scheduled invocation.
+IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. `createLambda` and `lambda()` only accept string literals that follow this rule, and throw at runtime if they get anything else. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, count as the same, because IAM role names ignore case.
 
 ## `lambda(config)`
 
@@ -150,17 +97,29 @@ type LambdaConfig = {
 
 Lambda calls `<file name>.<handler>`, so for `external/lambda.mjs` with the default `handler`, Lambda calls `lambda.handler`.
 
-`lambda()` returns a Lambda group. Infra APIs take the group in place of a `RuntimeRef`:
+`lambda()` returns a Lambda group. Infra APIs take the group as it is:
 
 ```ts [infra/api.ts]
 helloRouter.get("/hello", external);
 ```
 
-The code doesn't use `createDispatcher`, so a bare group adds no entry to the dispatch map, and a schedule sends the EventBridge event as it is.
+A group has no event, so every infra API accepts it, and nothing checks that the code handles the events it receives.
 
 ## Inline policy
 
-A Lambda group's `policy` is an inline policy on the function's role, named `<id>-role-policy`. Other code adds statements to it with `contribute`, and the statements from every contribution are joined into one policy document. For example, to let the `external` function from above send to an [SQS queue](sqs.md):
+A Lambda function's role has an inline policy, named `<id>-role-policy`. The policy's statements are collected: each contribution adds statements, and the statements from every contribution are joined into one policy document.
+
+A declaration adds statements with its `policy` option. For example, to let the `orders` function send to an [SQS queue](sqs.md):
+
+```ts [runtime/orders.fn.ts]
+export const lambda = createLambda({
+  id: "orders",
+  event: () => sqs(),
+  policy: () => [refundQueue.grant(["SendMessage"])],
+});
+```
+
+A Lambda group from `lambda()` adds statements with `contribute`:
 
 ```ts [infra/lambda.ts]
 external.policy.contribute({
@@ -172,13 +131,25 @@ external.policy.contribute({
 });
 ```
 
-[`queue.consume`](sqs.md#queueconsumehandler) uses the same policy for the read permission it adds.
+[`queue.consume`](sqs.md#queueconsumetarget) adds its read permission to the same policy.
 
-The group creates the policy resource only when code first reads `lambdaGroup.policy`. This matters because IAM rejects a policy with no statements, so a function that nothing contributes to must have no inline policy. A role's inline policies share a limit of 10,240 characters.
+The group creates the policy resource only when code first contributes to it. This matters because IAM rejects a policy with no statements, so a function that nothing contributes to must have no inline policy. A role's inline policies share a limit of 10,240 characters.
 
 ## Environment
 
-A function's `Environment` is collected: any code can contribute to it, and the contributions are merged key by key. Two contributions that set one key to different values fail the plan, and the error names both contributors.
+A function's `Environment.Variables` is collected: any code can contribute to it, and the contributions are merged key by key. Two contributions that set one key to different values fail the plan, and the error names both contributors.
+
+A declaration contributes the values that it binds in `env`. The function reads them with `lambda.env()`; see [Lambda Handlers](../manual/functions.md#reading-bound-values-with-env).
+
+```ts [runtime/orders.fn.ts]
+export const lambda = createLambda({
+  id: "orders",
+  event: () => sqs(),
+  env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
+});
+```
+
+A Lambda group from `lambda()` contributes with `fn.contribute`:
 
 ```ts [infra/lambda.ts]
 external.fn.contribute({
@@ -189,12 +160,12 @@ external.fn.contribute({
 A variable that waits on an undeployed output shows as unknown at its own key in a plan, and the other variables stay visible:
 
 ```
-Environment.Variables.QUEUE_URL = (known after apply)
+Environment.Variables.ORDER_QUEUE_URL = (known after apply)
 ```
 
 When the last contribution to `Environment` goes, the next deploy removes the function's variables.
 
-`NOTATION_RUNTIME` is reserved for the dispatch map. A variable with that name fails the deploy.
+Lambda limits a function's environment variables to 4 KB in total. If the variables are over the limit, the deploy fails with an error that names the function.
 
 ## Runtime defaults
 

@@ -8,31 +8,55 @@ notation compile [--config <path>]
 | ----------------- | ----------------------------------------------------------- |
 | `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
 
-Compiles the entry file and its runtime modules to `dist/`. The output is the same for every stage, so `compile` takes no `--stage`. There are two passes:
+Compiles the entry file and its runtime modules to `dist/`. The output is the same for every stage, so `compile` takes no `--stage`. The compiler uses Rolldown, and runs two passes:
 
-1. **Infrastructure compilation** – esbuild bundles the infra entry point to `dist/infra/<entry>.mjs`. When the entry imports a [runtime module](../manual/file-conventions.md#runtime-modules), the compiler replaces the module with a generated module that declares its resource. The example below is simplified. The real module starts its own names with `__notation`, so they don't clash with the module's exports:
+1. **Infrastructure compilation** – the compiler bundles the infra entry point to `dist/infra/<entry>.mjs`, with a source map. Packages stay external, and imports through tsconfig `paths` are bundled. Each [runtime module](../manual/file-conventions.md#runtime-modules) that the entry imports is replaced by a stripped copy, which keeps only the declaration and the top-level statements that it uses:
 
 ::code-group
 
 ```ts [runtime/todos.fn.ts]
-export const getTodos = handle.apiRequest(() => { ... });
+import { createLambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { api } from "./utils";
 
-export const resource: LambdaResource = { service: "aws/lambda", id: "todos" };
-```
-
-```ts [generated module]
-import { lambda } from "@notation/aws/lambda";
-
-const resource = lambda({
+export const lambda = createLambda({
   id: "todos",
-  code: { type: "file", path: "dist/runtime/todos.fn/index.mjs" },
+  timeout: 5,
+  memory: 64,
+  event: () => http(),
 });
 
-export const getTodos = { resource, export: "getTodos" };
+const todos = await api.get<any[]>("/todos");
+
+export const handler: LambdaHandler<typeof lambda> = async () => todos;
+```
+
+```ts [infra build]
+import { createLambda, http } from "@notation/aws/lambda";
+
+export const lambda = $declaredIn(createLambda({
+  id: "todos",
+  timeout: 5,
+  memory: 64,
+  event: () => http(),
+}), "file:///path/to/my-app/runtime/todos.fn.ts", "lambda");
+
+function $declaredIn(value, url, binding) { /* ... */ }
 ```
 
 ::
 
-2. **Runtime compilation** – the compiler bundles each runtime module that the first pass replaced to `dist/<module path>/index.mjs`. A runtime module that the entry doesn't import isn't bundled. The bundle exports one `handler`, which sends each event to an export of the module. See [Dispatch](../resources/lambda.md#dispatch).
+`$declaredIn` records the module's file URL against the declaration. When infra runs, `createLambda` reads the record to find the function's bundle.
 
-If a file that matches `runtimeModules` exports the old `config` object (one with a `service` property) and no `resource`, the build fails with a message to rename the export.
+2. **Runtime compilation** – the compiler bundles each runtime module that the first pass found to `dist/<module path>/index.mjs`, such as `dist/runtime/todos.fn/index.mjs`. The bundle exports the module's `handler`, so Lambda calls `index.handler`. The declaration keeps only `event`, and the names in `env`. Infra modules are left out.
+
+**A runtime module that the entry doesn't import isn't compiled or deployed.** `runtimeModules` in `notation.config.ts` is not read by the build yet. See [Runtime modules must be imported](../manual/file-conventions.md#runtime-modules-must-be-imported).
+
+The build fails with the file and line when:
+
+- a runtime module doesn't export `handler`,
+- a runtime module has more than one declaration,
+- `createLambda` is not called as `const name = createLambda({ ... })` at the top level, with an object literal,
+- `event` refers to an infra module, or
+- the function's bundle still contains an infra module. The error names the chain of imports.
+
+See [Compiler](../internals/compiler.md) for how each pass works.
