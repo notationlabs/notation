@@ -103,6 +103,31 @@ describe("stripForInfra", () => {
     );
   });
 
+  it.each([
+    ["a const in a block", "if (x) { const Order = 1; } return sqs(Order);"],
+    ["a function in a block", "{ function Order() {} } return sqs(Order);"],
+    ["a const in a for head", "for (const Order of []) {} return sqs(Order);"],
+    ["a catch parameter", "try {} catch (Order) {} return sqs(Order);"],
+    [
+      "a case of a switch",
+      "switch (x) { case 1: { let Order; } } return sqs(Order);",
+    ],
+  ])("keeps an import that %s doesn't shadow outside it", (_, body) => {
+    const source = handlerModule.replace(
+      "event: () => sqs(Order, { infra: ordersQueue.arn })",
+      `event: () => { ${body} }`,
+    );
+    expect(infra(source).code).toContain(`import { Order } from "./schema";`);
+  });
+
+  it("drops an import that a var in a block shadows in its function", () => {
+    const source = handlerModule.replace(
+      "event: () => sqs(Order, { infra: ordersQueue.arn })",
+      "event: () => { if (x) { var Order = 1; } return sqs(Order); }",
+    );
+    expect(infra(source).code).not.toContain("./schema");
+  });
+
   it("replaces runtime-only options with a function that throws", () => {
     const source = `
       /** @declaration runtime: class */

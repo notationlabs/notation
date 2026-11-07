@@ -164,30 +164,64 @@ export function patternNames(pattern: Node | null | undefined): string[] {
   }
 }
 
-// The names declared inside a function: its parameters, and the variables,
-// functions and classes in its body, without those of nested functions. Block
-// scope is ignored, so a name declared in any block of the function counts.
-function functionScope(fn: Node): Set<string> {
-  const names = new Set<string>(
-    fn.params.flatMap((param: Node) => patternNames(param)),
-  );
-  if (fn.id && fn.type === "FunctionExpression") names.add(fn.id.name);
+// The function-scoped names of a function: its parameters, its own name if
+// it is a function expression, and the `var` declarations in its body,
+// without those of nested functions.
+function functionScope(fn: Node): string[] {
+  const names = fn.params.flatMap((param: Node) => patternNames(param));
+  if (fn.id && fn.type === "FunctionExpression") names.push(fn.id.name);
   if (!fn.body) return names;
   walk(fn.body, (node) => {
-    if (isFunction(node)) {
-      if (node.type === "FunctionDeclaration" && node.id)
-        names.add(node.id.name);
-      return false;
-    }
-    if (node.type === "VariableDeclarator") {
-      for (const name of patternNames(node.id)) names.add(name);
-    }
-    if (node.type === "ClassDeclaration" && node.id) names.add(node.id.name);
-    if (node.type === "CatchClause") {
-      for (const name of patternNames(node.param)) names.add(name);
+    if (isFunction(node)) return false;
+    if (node.type === "VariableDeclaration" && node.kind === "var") {
+      for (const declarator of node.declarations)
+        names.push(...patternNames(declarator.id));
     }
   });
   return names;
+}
+
+// The block-scoped names that a list of statements declares. Modules are
+// strict code, so a function declared in a block is scoped to the block.
+function lexicalNames(statements: Node[]): string[] {
+  return statements.flatMap((statement: Node) => {
+    if (statement.type === "VariableDeclaration" && statement.kind !== "var")
+      return statement.declarations.flatMap((declarator: Node) =>
+        patternNames(declarator.id),
+      );
+    if (
+      (statement.type === "FunctionDeclaration" ||
+        statement.type === "ClassDeclaration") &&
+      statement.id
+    )
+      return [statement.id.name];
+    return [];
+  });
+}
+
+// The names that a node declares for its own subtree.
+function scopeOf(node: Node): string[] {
+  if (isFunction(node)) return functionScope(node);
+  switch (node.type) {
+    case "BlockStatement":
+    case "StaticBlock":
+      return lexicalNames(node.body);
+    case "SwitchStatement":
+      return lexicalNames(
+        node.cases.flatMap((switchCase: Node) => switchCase.consequent),
+      );
+    case "ForStatement":
+      return node.init ? lexicalNames([node.init]) : [];
+    case "ForInStatement":
+    case "ForOfStatement":
+      return lexicalNames([node.left]);
+    case "CatchClause":
+      return patternNames(node.param);
+    case "ClassExpression":
+      return node.id ? [node.id.name] : [];
+    default:
+      return [];
+  }
 }
 
 // Whether an identifier is a name in a reference position, rather than a
@@ -238,7 +272,9 @@ export type Reference = { node: Node; ancestors: Node[] };
 /**
  * The identifiers under `node` that refer to a binding outside it. Names in
  * types, property names, labels and bindings don't count. A name declared
- * inside a function under `node` shadows the outer binding in that function.
+ * under `node` shadows the outer binding in its scope: a parameter or `var`
+ * in its function, and a `let`, `const`, class or function declaration in
+ * its block.
  * @param skip Nodes whose subtrees are left out.
  */
 export function freeReferences(
@@ -268,10 +304,9 @@ export function freeReferences(
         visit(current.expression, next, "expression", shadowed);
       return;
     }
-    let scope = shadowed;
-    if (isFunction(current)) {
-      scope = new Set([...shadowed, ...functionScope(current)]);
-    }
+    const declared = scopeOf(current);
+    const scope =
+      declared.length > 0 ? new Set([...shadowed, ...declared]) : shadowed;
     for (const [childKey, value] of Object.entries(current)) {
       if (typeFields.has(childKey)) continue;
       if (Array.isArray(value)) {
