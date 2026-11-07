@@ -1,10 +1,6 @@
-import {
-  createLambda,
-  scheduled,
-  type LambdaHandler,
-} from "@notation/aws/lambda";
+import { $lambda, scheduled, type LambdaHandler } from "@notation/aws/lambda";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "log-event",
   timeout: 5,
   memory: 64,

@@ -1,8 +1,8 @@
-import { createLambda, http } from "@notation/aws/lambda";
+import { $lambda, http } from "@notation/aws/lambda";
 import type { APIGatewayJWTProxyEventV2 } from "@notation/aws/shared";
 import type { JWTClaims } from "shared/jwt";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "user",
   timeout: 5,
   memory: 64,

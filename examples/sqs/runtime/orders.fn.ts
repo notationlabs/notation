@@ -1,7 +1,7 @@
-import { createLambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import { orderQueue } from "infra/orders";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "orders",
   timeout: 5,
   memory: 64,

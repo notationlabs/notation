@@ -4,7 +4,7 @@ import { freeReferences, type Node } from "./ast";
 import type { Declaration, ModuleAnalysis } from "./analyze";
 
 /** The name of the helper that records the module of a declaration. */
-export const declaredInHelper = "$declaredIn";
+export const declaredInHelper = "__notation_declaredIn";
 
 // The same key as `declaredIn` in @notation/resource, which reads the record.
 // The helper is written into the module, so the user's project doesn't have

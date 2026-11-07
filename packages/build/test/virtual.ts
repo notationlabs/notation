@@ -48,7 +48,7 @@ export function analyze(
 // A stand-in for @notation/aws/lambda, with its marks.
 export const awsLambda = `
 /** @declaration shared: id, event, env; keys: env; entry: handler */
-export function createLambda(config) { return config; }
+export function $lambda(config) { return config; }
 
 /** @runtime schema */
 export function sqs(schema, options) { return { kind: "sqs", schema, options }; }

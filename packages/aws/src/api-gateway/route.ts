@@ -3,7 +3,7 @@ import {
   resolveLambda,
   whenLoaded,
   type LambdaTarget,
-} from "src/lambda/create-lambda";
+} from "src/lambda/lambda-declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import type { ApiGroup } from "./api";
 import { AuthorizerConfig } from "./auth";
@@ -87,7 +87,7 @@ export class RouteGroup extends aws.AwsResourceGroup {
 
 /**
  * Routes requests for `method` and `path` on the API to a Lambda: a
- * declaration from `createLambda`, passed as `() => lambda`, or a Lambda
+ * declaration from `$lambda`, passed as `() => lambda`, or a Lambda
  * group from `lambda()`. The route is made when infra has finished loading.
  * @resource
  */

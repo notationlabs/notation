@@ -1,7 +1,7 @@
-import { createLambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,

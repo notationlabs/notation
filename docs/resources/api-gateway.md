@@ -80,11 +80,11 @@ authedRouter.get("/user", () => user);
 The authorizer adds the token's claims to the request. `withJWTAuthorizer()` doesn't carry a claims type, so the handler types the event itself, with `APIGatewayJWTProxyEventV2` from `@notation/aws/shared`:
 
 ```ts [runtime/user.fn.ts]
-import { createLambda, http } from "@notation/aws/lambda";
+import { $lambda, http } from "@notation/aws/lambda";
 import type { APIGatewayJWTProxyEventV2 } from "@notation/aws/shared";
 import type { JWTClaims } from "shared/jwt";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "user",
   event: () => http(),
 });
@@ -138,10 +138,10 @@ todoRouter.get("/todos/count", () => todos);
 ```
 
 ```ts [runtime/todos.fn.ts]
-import { createLambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,

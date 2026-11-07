@@ -5,7 +5,7 @@ import { packageFiles, packages, root, virtualMarks } from "./virtual";
 
 const handlerModule = `
 import "./sentry";
-import { createLambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import { SQSClient } from "@aws-sdk/client-sqs";
 import { ordersQueue, unused } from "../infra/orders";
 import { Order, type OrderType } from "./schema";
@@ -15,7 +15,7 @@ const client = new SQSClient({});
 const memory = 512;
 const config = await fetch("https://example.com");
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "process-orders",
   memory,
   event: () => sqs(Order, { infra: ordersQueue.arn }),
@@ -58,7 +58,7 @@ describe("stripForInfra", () => {
       entry: "handler",
     });
     expect(code).toContain(
-      `import { createLambda, sqs } from "@notation/aws/lambda";`,
+      `import { $lambda, sqs } from "@notation/aws/lambda";`,
     );
     expect(code).toContain(`import { ordersQueue } from "../infra/orders";`);
     expect(code).toContain(`import { Order } from "./schema";`);
@@ -78,9 +78,11 @@ describe("stripForInfra", () => {
   it("wraps the declaration in a call that records its module", () => {
     const { code } = stripForInfra(setup().analysis, root);
     expect(code).toMatch(
-      /export const lambda = \$declaredIn\(createLambda\(\{[\s\S]*\}\), "runtime\/handler\.ts", "lambda"\);/,
+      /export const lambda = __notation_declaredIn\(\$lambda\(\{[\s\S]*\}\), "runtime\/handler\.ts", "lambda"\);/,
     );
-    expect(code).toContain("function $declaredIn(value, path, binding)");
+    expect(code).toContain(
+      "function __notation_declaredIn(value, path, binding)",
+    );
   });
 
   it("replaces runtime-only options with a function that throws", () => {
@@ -103,7 +105,7 @@ describe("stripForInfra", () => {
       "const handler",
     );
     expect(() => stripForInfra(setup(source).analysis, root)).toThrow(
-      "runtime/handler.ts: the module declares a function with createLambda, so it must export `handler`",
+      "runtime/handler.ts: the module declares a function with $lambda, so it must export `handler`",
     );
   });
 });
@@ -118,7 +120,7 @@ describe("stripForRuntime", () => {
     const { analysis, marks, isInfraModule } = setup(runtimeSource);
     const { code } = stripForRuntime(analysis, marks, isInfraModule)!;
     expect(code).toContain(
-      `export const lambda = createLambda({
+      `export const lambda = $lambda({
   id: "process-orders",
   event: () => sqs(Order, undefined),
   env: () => ({ QUEUE_URL: undefined, LOG_LEVEL: undefined }),
@@ -129,13 +131,13 @@ describe("stripForRuntime", () => {
 
   it("removes the last option with the comma before it", () => {
     const source = `
-      import { createLambda } from "@notation/aws/lambda";
-      export const lambda = createLambda({ event: () => null, memory: 1, id: "a", timeout: 2 });
+      import { $lambda } from "@notation/aws/lambda";
+      export const lambda = $lambda({ event: () => null, memory: 1, id: "a", timeout: 2 });
       export const handler = 1;
     `;
     const { analysis, marks, isInfraModule } = setup(source);
     expect(stripForRuntime(analysis, marks, isInfraModule)!.code).toContain(
-      'createLambda({ event: () => null, id: "a" });',
+      '$lambda({ event: () => null, id: "a" });',
     );
   });
 
@@ -147,7 +149,7 @@ describe("stripForRuntime", () => {
       ),
     );
     expect(() => stripForRuntime(analysis, marks, isInfraModule)).toThrow(
-      "runtime/handler.ts:16:20: an option of createLambda that the function keeps refers to ordersQueue, from the infra module ../infra/orders",
+      "runtime/handler.ts:16:20: an option of $lambda that the function keeps refers to ordersQueue, from the infra module ../infra/orders",
     );
   });
 
@@ -158,7 +160,7 @@ describe("stripForRuntime", () => {
     );
     const { analysis, marks, isInfraModule } = setup(source);
     expect(() => stripForRuntime(analysis, marks, isInfraModule)).toThrow(
-      "the env option of createLambda must be a function that returns an object literal",
+      "the env option of $lambda must be a function that returns an object literal",
     );
   });
 });

@@ -15,7 +15,7 @@ import {
 import { isLambdaGroup, LambdaGroup, type LambdaConfig } from "./lambda";
 import { assertLambdaId, type NameSafe } from "./lambda-id";
 
-export type CreateLambdaConfig<
+export type LambdaDeclarationConfig<
   Id extends string,
   E extends LambdaEvent | undefined,
   Env extends EnvVars,
@@ -56,11 +56,11 @@ const declarations = new WeakMap<object, Registered>();
  * modules that import this one.
  * @declaration shared: id, event, env; keys: env; entry: handler
  */
-export function createLambda<
+export function $lambda<
   const Id extends string,
   E extends LambdaEvent | undefined = undefined,
   Env extends EnvVars = {},
->(config: CreateLambdaConfig<Id, E, Env>): Lambda<E, Env> {
+>(config: LambdaDeclarationConfig<Id, E, Env>): Lambda<E, Env> {
   assertLambdaId(config.id);
   const declaration = {
     id: config.id,
@@ -81,14 +81,14 @@ export function createLambda<
 function buildGroup(
   declaration: Lambda<any, any>,
   config: Omit<
-    CreateLambdaConfig<string, LambdaEvent | undefined, EnvVars>,
+    LambdaDeclarationConfig<string, LambdaEvent | undefined, EnvVars>,
     "id"
   > & { id: string },
 ): LambdaGroup {
   const record = getDeclaredIn(declaration);
   if (!record) {
     throw new Error(
-      `The Lambda "${config.id}" has no module. The infra build records the module of each createLambda call; run the infra through notation compile, plan or deploy.`,
+      `The Lambda "${config.id}" has no module. The infra build records the module of each $lambda call; run the infra through notation compile, plan or deploy.`,
     );
   }
   const modulePath = fromProjectRoot(record.path);
@@ -143,7 +143,7 @@ export function resolveLambda(
   const registered = declarations.get(declaration);
   if (!registered) {
     throw new Error(
-      `${caller} expects a function that returns a Lambda declaration from createLambda(), but it returned ${declaration === undefined ? "undefined" : "another value"}.`,
+      `${caller} expects a function that returns a Lambda declaration from $lambda(), but it returned ${declaration === undefined ? "undefined" : "another value"}.`,
     );
   }
   const group = registered.build();

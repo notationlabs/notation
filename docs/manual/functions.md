@@ -2,12 +2,12 @@
 
 A Lambda function's code is a `handler` export in a runtime module. Lambda calls `handler` with each event. Notation doesn't wrap the handler and doesn't route events to it, so you write it with Lambda's own API and the types from `aws-lambda`.
 
-The same module declares the function with `createLambda`. The declaration says which events the function receives, and it gives the handler its types and a small runtime API: `env()` and `decode()`. See [Lambda Declaration](./function-config.md) for the options.
+The same module declares the function with `$lambda`. The declaration says which events the function receives, and it gives the handler its types and a small runtime API: `env()` and `decode()`. See [Lambda Declaration](./function-config.md) for the options.
 
 ```ts [runtime/orders.fn.ts]
-import { createLambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "orders",
   event: () => sqs(),
 });
@@ -17,6 +17,8 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 };
 ```
 
+The `$` marks a function that the build handles specially. `$lambda` must be called at the top level of the module, with one object literal. The build reads the call, and each build keeps only the options it needs. Functions without a `$`, such as `queue()` or `lambda()`, declare resources in infra.
+
 `LambdaHandler<typeof lambda>` reads the event from the declaration. Here the event is `sqs()`, so `event` is typed as an `SQSEvent`.
 
 **The build doesn't yet check `handler` against the declaration.** Without the `LambdaHandler<typeof lambda>` annotation, nothing stops you from writing an SQS handler in a module that declares an HTTP event. The RFC plans a build-time check for this, but it isn't built. Until then, annotate each handler.
@@ -25,12 +27,12 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 `event` in the declaration chooses the type of the handler:
 
-| `event`             | `LambdaHandler<typeof lambda>`                                                   |
-| ------------------- | -------------------------------------------------------------------------------- |
-| `() => sqs()`       | `(event: SQSEvent, context: Context) => SQSBatchResponse \| void` (or a promise) |
-| `() => http()`      | `(event: APIGatewayProxyEventV2, context: Context) => ApiGatewayResult` (or a promise) |
+| `event`             | `LambdaHandler<typeof lambda>`                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------ |
+| `() => sqs()`       | `(event: SQSEvent, context: Context) => SQSBatchResponse \| void` (or a promise)                 |
+| `() => http()`      | `(event: APIGatewayProxyEventV2, context: Context) => ApiGatewayResult` (or a promise)           |
 | `() => scheduled()` | `(event: EventBridgeEvent<"Scheduled Event", unknown>, context: Context) => void` (or a promise) |
-| no `event`          | `(event: unknown, context: Context) => unknown`                                  |
+| no `event`          | `(event: unknown, context: Context) => unknown`                                                  |
 
 `event` also decides where infra can wire the function: an SQS Lambda to a queue, an HTTP Lambda to a route, and a scheduled Lambda to a schedule. A Lambda with no `event` can be wired to any of them. See [End-to-End Types](./types.md).
 
@@ -41,10 +43,10 @@ Notation has no event kind for DynamoDB streams. A function for another event so
 A Lambda function has one entry point, so a module has one `handler`. A function that serves several routes reads the route from the event. For example, the `todos` function serves `GET /todos` and `GET /todos/count`, and branches on `event.routeKey`:
 
 ```ts [runtime/todos.fn.ts]
-import { createLambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,
@@ -66,10 +68,10 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 The handler reads infra values, such as a queue's URL, through the declaration. The declaration binds each value to a name in `env`, and `lambda.env()` returns the values by name:
 
 ```ts [runtime/orders.fn.ts]
-import { createLambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import { orderQueue } from "infra/orders";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "orders",
   event: () => sqs(),
   env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
@@ -89,11 +91,11 @@ Deploy sets `ORDER_QUEUE_URL` as an environment variable of the function. In the
 `lambda.decode()` parses the JSON body of one item, and validates it with the schema in `event`. For an SQS Lambda the item is one record. For an HTTP Lambda the item is the request, and a base64 body is decoded first:
 
 ```ts [runtime/orders.fn.ts]
-import { createLambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import type { SQSBatchResponse } from "aws-lambda";
 import { Order } from "./schema";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "orders",
   event: () => sqs(Order),
 });

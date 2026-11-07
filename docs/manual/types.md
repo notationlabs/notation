@@ -18,9 +18,9 @@ myRouter.get("/orders", () => orders); // type error: orders is an SQS Lambda
 ```
 
 ```ts [runtime/orders.fn.ts]
-import { createLambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "orders",
   event: () => sqs(),
 });
@@ -32,11 +32,11 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 ::
 
-| Infra API                   | Accepts a declaration with |
-| --------------------------- | -------------------------- |
-| `queue.consume(target)`     | `sqs()` or no `event`      |
-| `router.get(path, target)`  | `http()` or no `event`     |
-| `schedule({ target })`      | `scheduled()` or no `event` |
+| Infra API                  | Accepts a declaration with  |
+| -------------------------- | --------------------------- |
+| `queue.consume(target)`    | `sqs()` or no `event`       |
+| `router.get(path, target)` | `http()` or no `event`      |
+| `schedule({ target })`     | `scheduled()` or no `event` |
 
 The infra APIs also check the event when infra runs, so a mismatch that TypeScript misses, such as one behind an `any`, fails with an error that names the Lambda and its event.
 
@@ -59,7 +59,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 `lambda.env()` returns the values that the declaration binds in `env`, typed by name:
 
 ```ts [runtime/orders.fn.ts]
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "orders",
   event: () => sqs(),
   env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
@@ -76,7 +76,7 @@ lambda.env().ORDERS_URL; // type error: the declaration doesn't bind ORDERS_URL
 `sqs(schema)` and `http(schema)` take a [Standard Schema](https://standardschema.dev). `lambda.decode()` returns the schema's output type:
 
 ```ts [runtime/orders.fn.ts]
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "orders",
   event: () => sqs(Order),
 });
@@ -108,12 +108,12 @@ authedRouter.get("/user", () => user);
 ```
 
 ```ts [runtime/user.fn.ts]
-import { createLambda, http } from "@notation/aws/lambda";
+import { $lambda, http } from "@notation/aws/lambda";
 import type { APIGatewayJWTProxyEventV2 } from "@notation/aws/shared";
 
 type JWTClaims = { sub: string; email: string };
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "user",
   event: () => http(),
 });

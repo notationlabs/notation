@@ -1,8 +1,8 @@
 export {
-  createLambda,
-  type CreateLambdaConfig,
+  $lambda,
+  type LambdaDeclarationConfig,
   type LambdaTarget,
-} from "./create-lambda";
+} from "./lambda-declaration";
 export * from "./declaration";
 export {
   isLambdaGroup,

@@ -5,7 +5,7 @@ import {
   type Lambda,
   type LambdaEvent,
 } from "./declaration";
-import type { CreateLambdaConfig } from "./create-lambda";
+import type { LambdaDeclarationConfig } from "./lambda-declaration";
 
 // The runtime build resolves `@notation/aws/lambda` to this module, through
 // the `notation-runtime` export condition. It has the same exports as
@@ -16,11 +16,11 @@ export * from "./declaration";
 export { isNameSafe, LAMBDA_ID_MAX_LENGTH } from "./lambda-id";
 
 /** The function's view of its declaration: `env()` and `decode()`. */
-export function createLambda<
+export function $lambda<
   const Id extends string,
   E extends LambdaEvent | undefined = undefined,
   Env extends EnvVars = {},
->(config: CreateLambdaConfig<Id, E, Env>): Lambda<E, Env> {
+>(config: LambdaDeclarationConfig<Id, E, Env>): Lambda<E, Env> {
   return {
     id: config.id,
     env: createRuntimeEnv(config),

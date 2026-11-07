@@ -55,11 +55,11 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
   write(
     "runtime/process-orders.ts",
     `
-    import { createLambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+    import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
     import { ordersQueue } from "../infra/orders";
     import { Order } from "./schema";
 
-    export const lambda = createLambda({
+    export const lambda = $lambda({
       id: "process-orders",
       timeout: 5,
       event: () => sqs(Order),

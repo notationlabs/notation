@@ -91,7 +91,7 @@ function writeAwsPackage() {
     "node_modules/@notation/aws/lambda.js",
     [
       `/** @declaration shared: id, event, env; keys: env; entry: handler */`,
-      `export function createLambda(config) { globalThis.declared = config; return { infra: true }; }`,
+      `export function $lambda(config) { globalThis.declared = config; return { infra: true }; }`,
       `/** @runtime schema */`,
       `export function sqs(schema) { return { kind: "sqs", schema }; }`,
     ].join("\n"),
@@ -99,7 +99,7 @@ function writeAwsPackage() {
   write(
     "node_modules/@notation/aws/lambda-runtime.js",
     [
-      `export function createLambda(config) {`,
+      `export function $lambda(config) {`,
       `  return { options: Object.keys(config), env: () => config.env(), event: () => config.event() };`,
       `}`,
       `export function sqs(schema) { return { kind: "sqs", schema }; }`,
@@ -118,13 +118,13 @@ function writeAwsPackage() {
 
 const handlerModule = `
   import "./polyfill";
-  import { createLambda, sqs } from "@notation/aws/lambda";
+  import { $lambda, sqs } from "@notation/aws/lambda";
   import { orders } from "../infra/orders";
   import { Order } from "./schema";
 
   console.log("handler module loaded");
 
-  export const lambda = createLambda({
+  export const lambda = $lambda({
     id: "process-orders",
     event: () => sqs(Order),
     policy: () => [orders.url],
@@ -311,7 +311,7 @@ describe("declaration modules", () => {
     await expect(
       compileInfra(path.join(root, "infra/orders.ts")),
     ).rejects.toThrow(
-      "runtime/process-orders.ts: the module declares a function with createLambda, so it must export `handler`",
+      "runtime/process-orders.ts: the module declares a function with $lambda, so it must export `handler`",
     );
   });
 });

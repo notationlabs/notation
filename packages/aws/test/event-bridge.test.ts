@@ -2,7 +2,7 @@ import { test, expect } from "vitest";
 import { eventBridge } from "@notation/aws.iac";
 import { collectResourceGraph, type ResourceGraph } from "@notation/resource";
 import { rate, schedule, ScheduleGroup } from "src/event-bridge";
-import { createLambda, lambda, LambdaGroup, scheduled, sqs } from "src/lambda";
+import { $lambda, lambda, LambdaGroup, scheduled, sqs } from "src/lambda";
 import { inModule, lambdaGroup } from "./declare";
 
 const declareLambda = () =>
@@ -73,11 +73,9 @@ test("the rule sends the bare event to the function", async () => {
   expect(fn.fn.config.Environment).toBeUndefined();
 });
 
-test("a schedule invokes a createLambda declaration", async () => {
+test("a schedule invokes a $lambda declaration", async () => {
   const graph = await collectResourceGraph(() => {
-    const fn = inModule(
-      createLambda({ id: "digest", event: () => scheduled() }),
-    );
+    const fn = inModule($lambda({ id: "digest", event: () => scheduled() }));
     schedule({ name: "daily", schedule: rate(1, "day"), target: () => fn });
   });
   const fn = lambdaGroup(graph, "digest");
@@ -88,7 +86,7 @@ test("a schedule invokes a createLambda declaration", async () => {
 test("a schedule of a declaration with an sqs event throws", async () => {
   await expect(
     collectResourceGraph(() => {
-      const fn = inModule(createLambda({ id: "process", event: () => sqs() }));
+      const fn = inModule($lambda({ id: "process", event: () => sqs() }));
       schedule({
         name: "daily",
         schedule: rate(1, "day"),

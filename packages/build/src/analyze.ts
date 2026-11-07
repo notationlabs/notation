@@ -13,11 +13,11 @@ export type MarkedReference = Reference & {
   mark: Mark;
   /** The call or `new` expression that calls the function, if any. */
   call?: Node;
-  /** The name of the function, as written, such as `ns.createLambda`. */
+  /** The name of the function, as written, such as `ns.$lambda`. */
   name: string;
 };
 
-/** A call to a declaration function, such as `createLambda({ ... })`. */
+/** A call to a declaration function, such as `$lambda({ ... })`. */
 export type Declaration = {
   mark: DeclarationMark;
   name: string;
@@ -135,7 +135,7 @@ function markOf(
 const module = (table: ModuleTable) => table.module.file;
 
 // A reference inside a marked function of the same module, such as a wrapper
-// that calls `createLambda`, belongs to the wrapper's own declarations.
+// that calls `$lambda`, belongs to the wrapper's own declarations.
 function insideMarkedWrapper(
   reference: Reference,
   table: ModuleTable,

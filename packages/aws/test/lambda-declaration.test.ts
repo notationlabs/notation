@@ -7,7 +7,7 @@ import {
 } from "@notation/resource";
 import * as infra from "src/lambda";
 import {
-  createLambda,
+  $lambda,
   DecodeError,
   http,
   sqs,
@@ -39,7 +39,7 @@ afterEach(() => {
 
 test("the function deploys the runtime bundle of the declaration's module", async () => {
   const graph = await collectResourceGraph(() => {
-    inModule(createLambda({ id: "orders" }), "runtime/orders.ts");
+    inModule($lambda({ id: "orders" }), "runtime/orders.ts");
   });
   const group = lambdaGroup(graph, "orders");
 
@@ -52,7 +52,7 @@ test("the function deploys the runtime bundle of the declaration's module", asyn
 test("runtime, timeout and memory are applied to the function", async () => {
   const graph = await collectResourceGraph(() => {
     inModule(
-      createLambda({
+      $lambda({
         id: "orders",
         runtime: "nodejs20.x",
         timeout: 5,
@@ -71,7 +71,7 @@ test("runtime, timeout and memory are applied to the function", async () => {
 test("env is set as the function's environment variables", async () => {
   const graph = await collectResourceGraph(() => {
     inModule(
-      createLambda({
+      $lambda({
         id: "orders",
         env: () => ({ TABLE: "orders", STAGE: "dev" }),
       }),
@@ -91,7 +91,7 @@ test("env is set as the function's environment variables", async () => {
 
 test("a declaration without env sets no environment", async () => {
   const graph = await collectResourceGraph(() => {
-    inModule(createLambda({ id: "orders" }));
+    inModule($lambda({ id: "orders" }));
   });
   const group = lambdaGroup(graph, "orders");
   group.role.setOutput({ Arn: "arn:role" } as any);
@@ -110,7 +110,7 @@ test("policy statements are added to the role's inline policy", async () => {
     Resource: "arn:aws:dynamodb:eu-west-2:123456789012:table/orders",
   };
   const graph = await collectResourceGraph(() => {
-    inModule(createLambda({ id: "orders", policy: () => [statement] }));
+    inModule($lambda({ id: "orders", policy: () => [statement] }));
   });
   const group = lambdaGroup(graph, "orders");
   group.role.setOutput({ RoleName: "orders-role" } as any);
@@ -124,21 +124,21 @@ test("policy statements are added to the role's inline policy", async () => {
 test("a declaration that the infra build did not record throws when it is built", async () => {
   await expect(
     collectResourceGraph(() => {
-      createLambda({ id: "orders" });
+      $lambda({ id: "orders" });
     }),
   ).rejects.toThrow(
-    'The Lambda "orders" has no module. The infra build records the module of each createLambda call',
+    'The Lambda "orders" has no module. The infra build records the module of each $lambda call',
   );
 });
 
 test("an invalid id throws when the declaration is made", () => {
-  expect(() => createLambda({ id: "bad.id" as any })).toThrow(
+  expect(() => $lambda({ id: "bad.id" as any })).toThrow(
     'Invalid lambda id "bad.id"',
   );
 });
 
 test("env() in infra returns the evaluated env", () => {
-  const fn = createLambda({
+  const fn = $lambda({
     id: "orders",
     env: () => ({ TABLE: "orders" }),
   });
@@ -147,13 +147,13 @@ test("env() in infra returns the evaluated env", () => {
 });
 
 test("decode() validates the body of an SQS record", async () => {
-  const fn = createLambda({ id: "orders", event: () => sqs(Order) });
+  const fn = $lambda({ id: "orders", event: () => sqs(Order) });
 
   await expect(fn.decode(record('{"id":"1"}'))).resolves.toEqual({ id: "1" });
 });
 
 test("decode() throws a DecodeError for a body that is not valid", async () => {
-  const fn = createLambda({ id: "orders", event: () => sqs(Order) });
+  const fn = $lambda({ id: "orders", event: () => sqs(Order) });
 
   const error = await fn.decode(record('{"id":1}')).catch((e) => e);
   expect(error).toBeInstanceOf(DecodeError);
@@ -164,7 +164,7 @@ test("decode() throws a DecodeError for a body that is not valid", async () => {
 });
 
 test("decode() throws a DecodeError for a body that is not JSON", async () => {
-  const fn = createLambda({ id: "orders", event: () => sqs(Order) });
+  const fn = $lambda({ id: "orders", event: () => sqs(Order) });
 
   const error = await fn.decode(record("not json")).catch((e) => e);
   expect(error).toBeInstanceOf(DecodeError);
@@ -172,7 +172,7 @@ test("decode() throws a DecodeError for a body that is not JSON", async () => {
 });
 
 test("decode() without a schema returns the parsed body", async () => {
-  const fn = createLambda({ id: "orders", event: () => sqs() });
+  const fn = $lambda({ id: "orders", event: () => sqs() });
 
   await expect(fn.decode(record('{"any":true}'))).resolves.toEqual({
     any: true,
@@ -180,7 +180,7 @@ test("decode() without a schema returns the parsed body", async () => {
 });
 
 test("decode() for http reads a base64 body", async () => {
-  const fn = createLambda({ id: "orders", event: () => http(Order) });
+  const fn = $lambda({ id: "orders", event: () => http(Order) });
   const body = Buffer.from('{"id":"1"}').toString("base64");
 
   await expect(fn.decode({ body, isBase64Encoded: true })).resolves.toEqual({
@@ -190,7 +190,7 @@ test("decode() for http reads a base64 body", async () => {
 
 test("the runtime variant reads env names from the option and values from process.env", () => {
   vi.stubEnv("TABLE", "orders-table");
-  const fn = runtime.createLambda({
+  const fn = runtime.$lambda({
     id: "orders",
     // The runtime build keeps the names and removes the values.
     env: () => ({ TABLE: undefined as unknown as string }),
@@ -201,7 +201,7 @@ test("the runtime variant reads env names from the option and values from proces
 
 test("the runtime variant throws when a bound variable is not set", () => {
   vi.stubEnv("TABLE", undefined);
-  const fn = runtime.createLambda({
+  const fn = runtime.$lambda({
     id: "orders",
     env: () => ({ TABLE: undefined as unknown as string }),
   });
@@ -210,7 +210,7 @@ test("the runtime variant throws when a bound variable is not set", () => {
 });
 
 test("the runtime variant decodes as infra does", async () => {
-  const fn = runtime.createLambda({ id: "orders", event: () => sqs(Order) });
+  const fn = runtime.$lambda({ id: "orders", event: () => sqs(Order) });
 
   await expect(fn.decode(record('{"id":"1"}'))).resolves.toEqual({ id: "1" });
   await expect(fn.decode(record("{}"))).rejects.toBeInstanceOf(DecodeError);
@@ -227,7 +227,7 @@ test("the runtime variant's infra APIs throw", () => {
 });
 
 test("a declaration types its handler, env() and decode()", () => {
-  const sqsLambda = createLambda({
+  const sqsLambda = $lambda({
     id: "orders",
     event: () => sqs(Order),
     env: () => ({ TABLE: "orders", STAGE: "dev" }),
@@ -245,5 +245,5 @@ test("a declaration types its handler, env() and decode()", () => {
   sqsLambda.env().TABEL;
 
   // @ts-expect-error env values are strings
-  createLambda({ id: "numbers", env: () => ({ N: 1 }) });
+  $lambda({ id: "numbers", env: () => ({ N: 1 }) });
 });

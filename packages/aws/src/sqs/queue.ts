@@ -3,7 +3,7 @@ import {
   resolveLambda,
   whenLoaded,
   type LambdaTarget,
-} from "src/lambda/create-lambda";
+} from "src/lambda/lambda-declaration";
 import { awsName } from "src/naming";
 
 export type QueueConfig = {
@@ -76,7 +76,7 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
 
   /**
    * Invokes a Lambda with the queue's messages: a declaration from
-   * `createLambda`, passed as `() => lambda`, or a Lambda group from
+   * `$lambda`, passed as `() => lambda`, or a Lambda group from
    * `lambda()`. Gives the function's role permission to read the queue, and
    * maps the queue to the function. The mapping is made when infra has
    * finished loading.

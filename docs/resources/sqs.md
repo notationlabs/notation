@@ -57,9 +57,9 @@ orderQueue.consume(() => processOrders, { batchSize: 5 });
 ```
 
 ```ts [runtime/orders.fn.ts]
-import { createLambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "orders",
   event: () => sqs(),
 });
@@ -115,10 +115,10 @@ The function's policy then has two statements. When you delete the `refundQueue.
 The function's one `handler` receives the messages of both queues. Each record's `eventSourceARN` names its queue. To compare it with a queue in the handler, bind the queue's ARN in `env`:
 
 ```ts [runtime/orders.fn.ts]
-import { createLambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import { refundQueue } from "infra/orders";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "orders",
   event: () => sqs(),
   env: () => ({ REFUND_QUEUE_ARN: refundQueue.arn }),
@@ -126,7 +126,10 @@ export const lambda = createLambda({
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
   for (const record of event.Records) {
-    const kind = record.eventSourceARN === lambda.env().REFUND_QUEUE_ARN ? "refund" : "order";
+    const kind =
+      record.eventSourceARN === lambda.env().REFUND_QUEUE_ARN
+        ? "refund"
+        : "order";
     console.log(kind, record.body);
   }
 };
@@ -139,10 +142,10 @@ A queue can feed a given function once. A second `consume` with the same functio
 `grant` returns a policy statement for the queue. A declaration adds it to its function's role with the `policy` option. For example, to let the `orders` function send messages to `refundQueue`, and read the queue's URL:
 
 ```ts [runtime/orders.fn.ts]
-import { createLambda, sqs } from "@notation/aws/lambda";
+import { $lambda, sqs } from "@notation/aws/lambda";
 import { refundQueue } from "infra/orders";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "orders",
   event: () => sqs(),
   policy: () => [refundQueue.grant(["SendMessage"])],

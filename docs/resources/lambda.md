@@ -1,17 +1,17 @@
 # Lambda
 
-`@notation/aws/lambda` declares Lambda functions. Most functions are declared with `createLambda` in a runtime module, next to their code, and Notation builds the code. To deploy code that Notation doesn't build, call `lambda()` in infra.
+`@notation/aws/lambda` declares Lambda functions. Most functions are declared with `$lambda` in a runtime module, next to their code, and Notation builds the code. To deploy code that Notation doesn't build, call `lambda()` in infra.
 
-## `createLambda(config)`
+## `$lambda(config)`
 
-A [runtime module](../manual/file-conventions.md#runtime-modules) calls `createLambda` to declare the function that it deploys as, and exports `handler`. Infra imports the declaration and wires it:
+A [runtime module](../manual/file-conventions.md#runtime-modules) calls `$lambda` to declare the function that it deploys as, and exports `handler`. Infra imports the declaration and wires it:
 
 ::code-group
 
 ```ts [runtime/todos.fn.ts]
-import { createLambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   event: () => http(),
@@ -47,11 +47,11 @@ The declaration adds the function even when nothing wires it. The options are li
 
 Infra APIs take the declaration as a function that returns it, such as `() => todos`. They call the function when infra has finished loading, so the runtime module and the infra module can import each other.
 
-| Infra API                                   | Accepts                                       |
-| ------------------------------------------- | --------------------------------------------- |
-| [`queue.consume`](sqs.md#queueconsumetarget) | A declaration with `sqs()` or no `event`      |
-| [`router.get`](api-gateway.md#routerapi), `.post`, ... | A declaration with `http()` or no `event` |
-| [`schedule`](event-bridge.md#scheduleconfig) | A declaration with `scheduled()` or no `event` |
+| Infra API                                              | Accepts                                        |
+| ------------------------------------------------------ | ---------------------------------------------- |
+| [`queue.consume`](sqs.md#queueconsumetarget)           | A declaration with `sqs()` or no `event`       |
+| [`router.get`](api-gateway.md#routerapi), `.post`, ... | A declaration with `http()` or no `event`      |
+| [`schedule`](event-bridge.md#scheduleconfig)           | A declaration with `scheduled()` or no `event` |
 
 Each API also takes a Lambda group from [`lambda()`](#lambdaconfig), as it is, with no function around it.
 
@@ -69,7 +69,7 @@ In a runtime module, the ID is the declaration's `id`. The ID doesn't come from 
 
 In AWS, the function is named `<app>--<stage>--<id>` and its role `<app>--<stage>--<id>-role`. If a name is longer than 64 characters, Notation shortens it. See [AWS names](../manual/project-config.md#aws-names).
 
-IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. `createLambda` and `lambda()` only accept string literals that follow this rule, and throw at runtime if they get anything else. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, count as the same, because IAM role names ignore case.
+IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. `$lambda` and `lambda()` only accept string literals that follow this rule, and throw at runtime if they get anything else. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, count as the same, because IAM role names ignore case.
 
 ## `lambda(config)`
 
@@ -112,7 +112,7 @@ A Lambda function's role has an inline policy, named `<id>-role-policy`. The pol
 A declaration adds statements with its `policy` option. For example, to let the `orders` function send to an [SQS queue](sqs.md):
 
 ```ts [runtime/orders.fn.ts]
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "orders",
   event: () => sqs(),
   policy: () => [refundQueue.grant(["SendMessage"])],
@@ -142,7 +142,7 @@ A function's `Environment.Variables` is collected: any code can contribute to it
 A declaration contributes the values that it binds in `env`. The function reads them with `lambda.env()`; see [Lambda Handlers](../manual/functions.md#reading-bound-values-with-env).
 
 ```ts [runtime/orders.fn.ts]
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "orders",
   event: () => sqs(),
   env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),

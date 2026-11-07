@@ -1,4 +1,4 @@
-import type { LambdaTarget } from "src/lambda/create-lambda";
+import type { LambdaTarget } from "src/lambda/lambda-declaration";
 import { route } from "./route";
 import type { ApiGroup } from "./api";
 import { AuthorizerConfig, JWTAuthorizerConfig, NO_AUTH } from "./auth";

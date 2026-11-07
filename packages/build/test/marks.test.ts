@@ -56,25 +56,23 @@ describe("parseMark", () => {
 });
 
 describe("Marks", () => {
-  const lambda = `/** @declaration shared: event */\nexport function createLambda(config) {}\n`;
+  const lambda = `/** @declaration shared: event */\nexport function $lambda(config) {}\n`;
   const at = (file: string) => path.join(root, file);
 
   it("follows re-exports to the module that has the mark", () => {
     const marks = virtualMarks({
       "pkg/lambda.ts": lambda,
-      "pkg/renamed.ts": `export { createLambda as declare } from "./lambda";`,
+      "pkg/renamed.ts": `export { $lambda as declare } from "./lambda";`,
       "pkg/barrel.ts": `export * from "./renamed";`,
-      "pkg/local.ts": `import { createLambda } from "./lambda";\nexport { createLambda };`,
+      "pkg/local.ts": `import { $lambda } from "./lambda";\nexport { $lambda };`,
     });
     expect(marks.exportMark(at("pkg/barrel.ts"), "declare")?.kind).toBe(
       "declaration",
     );
-    expect(marks.exportMark(at("pkg/local.ts"), "createLambda")?.kind).toBe(
+    expect(marks.exportMark(at("pkg/local.ts"), "$lambda")?.kind).toBe(
       "declaration",
     );
-    expect(
-      marks.exportMark(at("pkg/barrel.ts"), "createLambda"),
-    ).toBeUndefined();
+    expect(marks.exportMark(at("pkg/barrel.ts"), "$lambda")).toBeUndefined();
   });
 
   it("finds a mark on a function that is exported later under another name", () => {

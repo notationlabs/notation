@@ -55,10 +55,10 @@ todoRouter.get("/todos", () => todos);
 ```
 
 ```ts [runtime/todos.fn.ts]
-import { createLambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,
@@ -74,7 +74,7 @@ export const handler: LambdaHandler<typeof lambda> = async () => {
 
 ::
 
-Infrastructure and runtime live in the same codebase. `runtime/todos.fn.ts` is a runtime module, because it declares a Lambda function with `createLambda`. The function has the ID `todos`, and Lambda calls the module's `handler` export with each request. `api.get` in `runtime/utils.ts` fetches sample todos from `jsonplaceholder.typicode.com`.
+Infrastructure and runtime live in the same codebase. `runtime/todos.fn.ts` is a runtime module, because it declares a Lambda function with `$lambda`. The function has the ID `todos`, and Lambda calls the module's `handler` export with each request. `api.get` in `runtime/utils.ts` fetches sample todos from `jsonplaceholder.typicode.com`.
 
 `infra/api.ts` imports the declaration, `lambda`, and routes `GET /todos` to it. Notation infers the intermediate resources – IAM roles, permissions, integrations, and so on. See [Runtime modules](./file-conventions.md#runtime-modules).
 

@@ -7,11 +7,11 @@
 A runtime module declares the Lambda function that it deploys as, next to the function's code (RFC 0015). The code is written with Lambda's own API, and the module exports `handler`.
 
 ```ts
-import { createLambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import { ordersQueue } from "../infra/orders";
 import { Order } from "./schema";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "process-orders",
   event: () => sqs(Order),
   policy: () => [ordersQueue.grant(["SendMessage"])],
@@ -25,7 +25,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 };
 ```
 
-- `createLambda` in `@notation/aws/lambda` declares the function. It takes `id`, `event`, `env`, `policy`, `runtime`, `timeout` and `memory`.
+- `$lambda` in `@notation/aws/lambda` declares the function. It takes `id`, `event`, `env`, `policy`, `runtime`, `timeout` and `memory`.
 - `event` is `() => sqs(schema)`, `() => http(schema)` or `() => scheduled()`. The schema is any Standard Schema, and is optional.
 - `env` binds values by name. Deploy sets each one as an environment variable of the function. `lambda.env()` returns them, typed by name, and throws when one is not set. `env` must return an object literal with no spread or computed keys.
 - `lambda.decode(item)` parses the JSON body of an SQS record or an HTTP request, and validates it with the event's schema. It throws a `DecodeError` when the body is not valid.

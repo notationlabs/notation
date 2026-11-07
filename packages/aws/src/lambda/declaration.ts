@@ -79,7 +79,7 @@ type DecodeFor<E> =
       : never;
 
 /**
- * A Lambda function, as `createLambda` declares it. Infra wires it, and the
+ * A Lambda function, as `$lambda` declares it. Infra wires it, and the
  * function's code uses its types and its runtime API.
  */
 export interface Lambda<

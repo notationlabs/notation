@@ -63,9 +63,9 @@ eventBridge.once(new Date("2027-12-31T23:59:00Z"));
 ## Handler
 
 ```ts [runtime/log-event.fn.ts]
-import { createLambda, scheduled, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, scheduled, type LambdaHandler } from "@notation/aws/lambda";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "log-event",
   event: () => scheduled(),
 });

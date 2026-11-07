@@ -2,7 +2,7 @@ import {
   resolveLambda,
   whenLoaded,
   type LambdaTarget,
-} from "src/lambda/create-lambda";
+} from "src/lambda/lambda-declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import { Schedule } from "./schedule";
 import * as aws from "@notation/aws.iac";
@@ -13,7 +13,7 @@ type ScheduleConfig = {
   name: string;
   schedule: Schedule;
   /**
-   * The Lambda to invoke on the schedule: a declaration from `createLambda`,
+   * The Lambda to invoke on the schedule: a declaration from `$lambda`,
    * passed as `() => lambda`, or a Lambda group from `lambda()`.
    */
   target: LambdaTarget<"scheduled" | "none">;

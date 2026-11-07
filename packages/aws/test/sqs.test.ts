@@ -7,7 +7,7 @@ import { createPlan } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
 import { collectResourceGraph } from "@notation/resource";
 import {
-  createLambda,
+  $lambda,
   http,
   lambda,
   sqs,
@@ -135,10 +135,10 @@ test("consume with a lambda group from lambda() sets no environment", async () =
   expect((await fn.fn.getParams()).Environment).toBeUndefined();
 });
 
-test("consume maps the queue to a createLambda declaration", async () => {
+test("consume maps the queue to a $lambda declaration", async () => {
   let orders!: ReturnType<typeof queue>;
   const graph = await collectResourceGraph(() => {
-    const fn = inModule(createLambda({ id: "process", event: () => sqs() }));
+    const fn = inModule($lambda({ id: "process", event: () => sqs() }));
     orders = queue({ name: "orders" });
     orders.consume(() => fn);
   });
@@ -151,7 +151,7 @@ test("consume maps the queue to a createLambda declaration", async () => {
 test("consume takes a declaration with no event", async () => {
   let orders!: ReturnType<typeof queue>;
   await collectResourceGraph(() => {
-    const fn = inModule(createLambda({ id: "process" }));
+    const fn = inModule($lambda({ id: "process" }));
     orders = queue({ name: "orders" });
     orders.consume(() => fn);
   });
@@ -165,7 +165,7 @@ test("consume of a declaration that a later module declares waits for evaluation
   await collectResourceGraph(() => {
     orders = queue({ name: "orders" });
     orders.consume(() => fn);
-    fn = inModule(createLambda({ id: "process", event: () => sqs() }));
+    fn = inModule($lambda({ id: "process", event: () => sqs() }));
   });
 
   expect(mappingOf(orders).id).toBe("orders-process-mapping");
@@ -174,7 +174,7 @@ test("consume of a declaration that a later module declares waits for evaluation
 test("consume of a declaration with an http event throws", async () => {
   await expect(
     collectResourceGraph(() => {
-      const fn = inModule(createLambda({ id: "api", event: () => http() }));
+      const fn = inModule($lambda({ id: "api", event: () => http() }));
       // @ts-expect-error a queue can't feed a function of HTTP requests
       queue({ name: "orders" }).consume(() => fn);
     }),
@@ -189,7 +189,7 @@ test("consume of a function that returns no declaration throws", async () => {
       queue({ name: "orders" }).consume((() => undefined) as any);
     }),
   ).rejects.toThrow(
-    "queue.consume() expects a function that returns a Lambda declaration from createLambda(), but it returned undefined.",
+    "queue.consume() expects a function that returns a Lambda declaration from $lambda(), but it returned undefined.",
   );
 });
 
@@ -201,7 +201,7 @@ test("consume of a function that returns another resource throws", async () => {
       queue({ name: "orders" }).consume(() => other);
     }),
   ).rejects.toThrow(
-    "queue.consume() expects a function that returns a Lambda declaration from createLambda(), but it returned another value.",
+    "queue.consume() expects a function that returns a Lambda declaration from $lambda(), but it returned another value.",
   );
 });
 

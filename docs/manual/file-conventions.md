@@ -44,13 +44,13 @@ The CLI deploys the entry file and the modules that it imports. To deploy part o
 
 ## Runtime modules
 
-A runtime module holds the code of one deployed function, and declares that function. A module is a runtime module when it calls a declaration function, such as `createLambda` from `@notation/aws/lambda`:
+A runtime module holds the code of one deployed function, and declares that function. A module is a runtime module when it calls a declaration function, such as `$lambda` from `@notation/aws/lambda`:
 
 ```ts [runtime/todos.fn.ts]
-import { createLambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,
@@ -69,7 +69,7 @@ The module has two parts:
 
 **Each runtime module deploys as one function.** A module can hold one declaration, and must export the entry that the platform calls. For a Lambda the entry is `handler`. A module with two declarations, or a Lambda module with no `handler` export, fails the build.
 
-The `.fn.ts` ending is a naming convention. The build doesn't read file names: it finds runtime modules by their call to `createLambda`. `runtime/utils.ts` makes no such call, so it is an ordinary module. Runtime modules can import ordinary modules, and Notation bundles the shared code into each function that imports it.
+The `.fn.ts` ending is a naming convention. The build doesn't read file names: it finds runtime modules by their call to `$lambda`. `runtime/utils.ts` makes no such call, so it is an ordinary module. Runtime modules can import ordinary modules, and Notation bundles the shared code into each function that imports it.
 
 ### Infra imports the declaration
 
@@ -99,10 +99,10 @@ An effect that the declaration doesn't refer to by name is also removed. For exa
 A runtime module imports infra to read values for its declaration, such as a queue's URL in `env`. The function's own code can't use infra directly:
 
 ```ts [runtime/orders.fn.ts]
-import { createLambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import { orderQueue } from "infra/orders";
 
-export const lambda = createLambda({
+export const lambda = $lambda({
   id: "orders",
   event: () => sqs(),
   env: () => ({ ORDER_QUEUE_URL: orderQueue.url }), // ✔ bound by name
