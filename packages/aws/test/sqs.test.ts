@@ -253,3 +253,18 @@ test("a plan creates the queue and the policy before the mapping", async () => {
   expect(order.indexOf("process")).toBeLessThan(mapping);
   expect(plan.nodes.every((node) => node.decision === "create")).toBe(true);
 });
+
+test("consume accepts a declaration from another copy of the package", async () => {
+  // A second instance of the module that declares $lambda, with its own
+  // module state.
+  const other: typeof import("src/lambda/lambda-declaration") = await import(
+    // @ts-expect-error the query string makes a second instance
+    "src/lambda/lambda-declaration?copy"
+  );
+  expect(other.$lambda).not.toBe($lambda);
+  const graph = await collectResourceGraph(() => {
+    const fn = inModule(other.$lambda({ id: "process", event: () => sqs() }));
+    queue({ name: "orders" }).consume(() => fn);
+  });
+  expect(lambdaGroup(graph, "process").id).toBe("process");
+});

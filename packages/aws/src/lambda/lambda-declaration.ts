@@ -45,7 +45,16 @@ export type LambdaDeclarationConfig<
 
 type Registered = { build: () => LambdaGroup; kind: () => LambdaEventKind };
 
-const declarations = new WeakMap<object, Registered>();
+// Holds a declaration's registration, on the declaration. Two installed
+// copies of this package each have their own module state, so a registry in
+// one copy can't find a declaration from the other. `Symbol.for` returns the
+// same symbol in both, as for LambdaGroup.
+const registration = Symbol.for("@notation/aws/LambdaDeclaration");
+
+const registeredOf = (value: unknown): Registered | undefined =>
+  typeof value === "object" && value !== null && registration in value
+    ? (value as { [registration]: Registered })[registration]
+    : undefined;
 
 /**
  * Declares the Lambda function that its module deploys as. The module
@@ -70,9 +79,11 @@ export function $lambda<
 
   let group: LambdaGroup | undefined;
   const build = () => (group ??= buildGroup(declaration, config));
-  declarations.set(declaration, {
-    build,
-    kind: () => config.event?.()?.kind ?? "none",
+  Object.defineProperty(declaration, registration, {
+    value: {
+      build,
+      kind: () => config.event?.()?.kind ?? "none",
+    } satisfies Registered,
   });
   if (getActiveResourceCollection()) onEvaluationEnd(build);
   return declaration;
@@ -140,7 +151,7 @@ export function resolveLambda(
     );
   }
   const declaration = target();
-  const registered = declarations.get(declaration);
+  const registered = registeredOf(declaration);
   if (!registered) {
     throw new Error(
       `${caller} expects a function that returns a Lambda declaration from $lambda(), but it returned ${declaration === undefined ? "undefined" : "another value"}.`,
