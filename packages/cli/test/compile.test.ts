@@ -265,6 +265,27 @@ describe("declaration modules", () => {
     );
   });
 
+  it("names the use of an infra module imported through a tsconfig path", async () => {
+    writeProject(
+      handlerModule
+        .replace(`from "../infra/orders"`, `from "infra/orders"`)
+        .replace(
+          "export const handler = async () =>",
+          "export const handler = async () => orders.url ??",
+        ),
+    );
+    write(
+      "tsconfig.json",
+      JSON.stringify({
+        compilerOptions: { paths: { "infra/*": ["./infra/*"] } },
+      }),
+    );
+    const modules = await compileInfra(path.join(root, "infra/orders.ts"));
+    await expect(compileRuntimeModules(modules)).rejects.toThrow(
+      "because the function uses orders at runtime/process-orders.ts:16:38.",
+    );
+  });
+
   it("fails when the function calls a resource function from a package", async () => {
     writeProject(
       handlerModule

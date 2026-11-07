@@ -289,20 +289,49 @@ const extensions = [
 
 /**
  * A resolver for reading marks. It uses the default export conditions, and
- * the nearest tsconfig's `paths`.
+ * the `paths` of the importer's nearest tsconfig.
  */
 export function createResolve(): Resolve {
-  const resolver = new ResolverFactory({
-    tsconfig: "auto",
-    conditionNames: ["node", "import", "default"],
-    extensions,
-    extensionAlias: { ".js": [".ts", ".tsx", ".js"], ".mjs": [".mts", ".mjs"] },
-  });
+  // ResolverFactory ignores `tsconfig: "auto"`, so each tsconfig gets its own
+  // resolver.
+  const resolvers = new Map<string | undefined, ResolverFactory>();
+  const tsconfigs = new Map<string, string | undefined>();
+  const resolverFor = (dir: string) => {
+    let configFile = tsconfigs.get(dir);
+    if (!tsconfigs.has(dir)) {
+      configFile = nearestTsconfig(dir);
+      tsconfigs.set(dir, configFile);
+    }
+    let resolver = resolvers.get(configFile);
+    if (!resolver) {
+      resolver = new ResolverFactory({
+        tsconfig: configFile ? { configFile } : undefined,
+        conditionNames: ["node", "import", "default"],
+        extensions,
+        extensionAlias: {
+          ".js": [".ts", ".tsx", ".js"],
+          ".mjs": [".mts", ".mjs"],
+        },
+      });
+      resolvers.set(configFile, resolver);
+    }
+    return resolver;
+  };
   return (specifier, importer) => {
     if (specifier.startsWith("node:")) return undefined;
-    const result = resolver.sync(path.dirname(importer), specifier);
+    const dir = path.dirname(importer);
+    const result = resolverFor(dir).sync(dir, specifier);
     return result.path ?? undefined;
   };
+}
+
+function nearestTsconfig(dir: string): string | undefined {
+  for (; ; dir = path.dirname(dir)) {
+    if (dir.split(path.sep).includes("node_modules")) return undefined;
+    const file = path.join(dir, "tsconfig.json");
+    if (fs.existsSync(file)) return file;
+    if (dir === path.dirname(dir)) return undefined;
+  }
 }
 
 /**
