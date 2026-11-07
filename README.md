@@ -56,6 +56,8 @@ Provides well-designed types for every resource, and ensures compatibility betwe
 
 ## Quick Start
 
+Notation requires Node.js 22 or later.
+
 ```sh
 npm create notation@alpha my-app
 ```

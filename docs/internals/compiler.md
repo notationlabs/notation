@@ -6,9 +6,9 @@ Source: `@notation/build` (plugins and source transforms), `@notation/cli` (`pac
 
 ## Two-pass compilation
 
-`compile({ entryPoint })` in `@notation/cli` runs two passes:
+`compile({ entryPoint, runtimeModules })` in `@notation/cli` runs two passes:
 
-1. **Infra pass** – `compileInfra` bundles the infra entry with `infraPlugin`. It returns the declaration modules that the entry reaches, as `DeclarationModule[]`, and a `close` function that stops the watcher in watch mode. `compile` returns a function that stops both watchers.
+1. **Infra pass** – `compileInfra` bundles the infra entry with `infraPlugin`. It returns the declaration modules in the bundle, as `DeclarationModule[]`, and a `close` function that stops the watcher in watch mode. `compile` returns a function that stops both watchers.
 2. **Runtime pass** – `compileRuntimeModules` bundles each of those modules with `runtimePlugin`, as the code for one function. The bundles build at the same time.
 
 ```ts [@notation/build]
@@ -21,7 +21,23 @@ type DeclarationModule = {
 
 Only the infra pass decides which modules are declaration modules. The runtime pass bundles the list that the infra pass returns and no others, so the two passes can't disagree.
 
-**The infra pass finds only the modules that the entry imports.** The RFC plans a scan of the `runtimeModules` files for declaration modules that the entry doesn't import. The scan isn't built, so `compile` doesn't read `runtimeModules`.
+### The generated infra entry
+
+The infra pass also finds declaration modules that the entry doesn't import. The input of the infra build is not the entry file but a virtual module, `notation:infra-entry`, from `infraEntryPlugin` in `@notation/build`. Its `load` hook globs the files in `runtimeModules`, analyses each one, and imports the entry and then each file that holds a declaration:
+
+```ts [notation:infra-entry]
+import "/project/infra/index.ts";
+import "/project/runtime/nightly-report.ts";
+import "/project/runtime/todos.ts";
+```
+
+The output keeps the entry's name, such as `dist/infra/index.mjs`. `runtime/todos.ts` is imported by the entry as well, but an ES module runs once, so the second import does nothing. `infraPlugin` then strips each of these modules as usual.
+
+**The generated entry imports only files that hold a declaration.** A runtime file without one, such as a file that calls `Sentry.init()`, doesn't run at deploy time.
+
+In watch mode, the plugin adds the base directory of each glob to the watched files, such as `runtime/` for `runtime/**/*.ts`. A new file in that directory starts a rebuild, and the `load` hook globs the files again. If the base directory doesn't exist yet, the plugin watches its nearest parent that exists, up to the project root, so a `runtime/` directory created during watch is seen.
+
+The base directory of a glob such as `**/*.ts` is the project root, so the watcher would see each build's output in `dist/` and each deploy's writes to `.notation/`. **Both would start another build, and in `notation watch` another deploy.** So the scan and the infra watcher skip the same directories at any depth: `dist/`, `node_modules/` and dot-directories. `infraWatchExclude` holds the watcher's globs.
 
 ## Marks
 
@@ -245,7 +261,7 @@ In watch mode (`notation watch`), both passes run in Rolldown's `watch()`. Chang
 
 After each infra rebuild without errors, the CLI compares the declaration modules with the previous list. When the list changes, it closes the runtime watcher and starts one for the modules in the new list:
 
-- **New declaration modules** – a module that infra starts to import, or that starts to call `$lambda`, gets its own runtime build.
+- **New declaration modules** – a module that infra starts to import, a new file in the `runtimeModules` globs, or a module that starts to call `$lambda`, gets its own runtime build.
 - **Removed declaration modules** – a module that infra stops importing, or that stops calling `$lambda`, loses its runtime build. The reconciler deletes its resources.
 
 Deploys need a successful build, so watch waits for the first infra build that succeeds. A change to the config file makes `notation watch` exit, so you restart it with the new config.

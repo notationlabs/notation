@@ -12,14 +12,14 @@ export default defineConfig({
 });
 ```
 
-| Field            | Required | Meaning                                                                                                                                                                                                                                                          |
-| ---------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app`            | Yes      | The name of the app.                                                                                                                                                                                                                                             |
-| `entry`          | Yes      | The entry file, relative to the config.                                                                                                                                                                                                                          |
-| `defaultStage`   | No       | The stage that a command uses when given no `--stage`.                                                                                                                                                                                                           |
-| `runtimeModules` | No       | A glob or an array of globs, relative to the config, for the files that can be runtime modules. The default is `runtime/**/*.ts`. The build doesn't read it yet. See [Runtime modules must be imported](./file-conventions.md#runtime-modules-must-be-imported). |
+| Field            | Required | Meaning                                                                                                                                                                                                                                            |
+| ---------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app`            | Yes      | The name of the app.                                                                                                                                                                                                                               |
+| `entry`          | Yes      | The entry file, relative to the config.                                                                                                                                                                                                            |
+| `defaultStage`   | No       | The stage that a command uses when given no `--stage`.                                                                                                                                                                                             |
+| `runtimeModules` | No       | A glob or an array of globs, relative to the config, for the files that can be runtime modules. The default is `runtime/**/*.ts`. See [Runtime modules that infra doesn't import](./file-conventions.md#runtime-modules-that-infra-doesnt-import). |
 
-The CLI deploys the entry file and every module that it imports, including runtime modules.
+The CLI deploys the entry file, every module that it imports, and each runtime module in the `runtimeModules` globs.
 
 ## Project root
 

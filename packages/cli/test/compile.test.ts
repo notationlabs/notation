@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -9,9 +10,10 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setConfigFile } from "@notation/core";
-import { compileInfra, compileRuntimeModules } from "../src/compile";
+import { compile, compileInfra, compileRuntimeModules } from "../src/compile";
+import type { Logger } from "../src/logger";
 
 // Inside the repository, so the bundle's imports of @notation packages
 // resolve from the root node_modules.
@@ -65,6 +67,8 @@ it("reports a declaration error at the line of the user's source", async () => {
   expect(declaredAt).toBe("infra/main.ts:6");
 });
 
+const toRoot = (file: string) => path.relative(root, file);
+
 const write = (file: string, contents: string) => {
   mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
   writeFileSync(path.join(root, file), contents);
@@ -92,7 +96,7 @@ function writeAwsPackage() {
     "node_modules/@notation/aws/lambda.js",
     [
       `/** @declaration shared: id, event, env; keys: env; entry: handler */`,
-      `export function $lambda(config) { globalThis.declared = config; return { infra: true }; }`,
+      `export function $lambda(config) { globalThis.declared = config; (globalThis.ran ??= []).push(config.id); return { infra: true }; }`,
       `/** @runtime schema */`,
       `export function sqs(schema) { return { kind: "sqs", schema }; }`,
     ].join("\n"),
@@ -446,6 +450,90 @@ describe("declaration modules", () => {
       compileInfra(path.join(root, "infra/orders.ts")),
     ).rejects.toThrow(
       "runtime/process-orders.ts: the module declares a function with $lambda, so it must export `handler`",
+    );
+  });
+});
+
+describe("runtime modules that infra doesn't import", () => {
+  const entryPoint = () => path.join(root, "infra/orders.ts");
+  const runtimeModules = ["runtime/**/*.ts"];
+
+  const writeUnimported = () => {
+    writeProject();
+    write(
+      "runtime/send-receipts.ts",
+      handlerModule.replace(`id: "process-orders"`, `id: "send-receipts"`),
+    );
+  };
+
+  it("adds a declaration module that infra doesn't import", async () => {
+    writeUnimported();
+    const { modules } = await compileInfra(entryPoint(), { runtimeModules });
+    expect(modules.map((module) => toRoot(module.path))).toEqual([
+      "runtime/process-orders.ts",
+      "runtime/send-receipts.ts",
+    ]);
+  });
+
+  it("runs the infra entry before the declaration modules that it doesn't import", async () => {
+    writeUnimported();
+    write(
+      "infra/orders.ts",
+      [
+        `import { queue } from "@notation/aws/sqs";`,
+        `import { lambda } from "../runtime/process-orders";`,
+        `export const orders = queue({ name: "orders" });`,
+        `orders.consume(() => lambda);`,
+        `(globalThis.ran ??= []).push("entry");`,
+      ].join("\n"),
+    );
+    await compileInfra(entryPoint(), { runtimeModules });
+
+    const script = `
+      await import("./dist/infra/orders.mjs");
+      console.log(JSON.stringify(globalThis.ran));
+    `;
+    const output = execFileSync(
+      process.execPath,
+      ["--input-type=module", "-e", script],
+      { cwd: root, encoding: "utf8" },
+    );
+    expect(JSON.parse(output.trim().split("\n").at(-1)!)).toEqual([
+      "process-orders",
+      "entry",
+      "send-receipts",
+    ]);
+  });
+
+  it("doesn't import a runtime file without a declaration", async () => {
+    writeProject();
+    write("runtime/setup.ts", `console.log("setup ran");`);
+    await compileInfra(entryPoint(), { runtimeModules });
+    const bundle = readFileSync(
+      path.join(root, "dist/infra/orders.mjs"),
+      "utf8",
+    );
+    expect(bundle).not.toContain("setup ran");
+  });
+
+  it("bundles the runtime code of a declaration module that infra doesn't import", async () => {
+    writeUnimported();
+    await compile(
+      { entryPoint: entryPoint(), runtimeModules },
+      { logger: { info: () => {}, error: vi.fn() } as unknown as Logger },
+    );
+    expect(
+      existsSync(path.join(root, "dist/runtime/send-receipts/index.mjs")),
+    ).toBe(true);
+  });
+
+  it("fails when a runtime file can't be analysed", async () => {
+    writeProject();
+    write("runtime/broken.ts", `export const broken = ;`);
+    await expect(
+      compileInfra(entryPoint(), { runtimeModules }),
+    ).rejects.toThrow(
+      `runtime/broken.ts matches runtimeModules, but it can't be analysed: ${path.join(root, "runtime/broken.ts")}: Unexpected token`,
     );
   });
 });
