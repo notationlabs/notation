@@ -10,14 +10,14 @@ A runtime module's declaration carries types to two places: to the infra code th
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { lambda as orders } from "runtime/orders.fn";
+import { lambda as orders } from "runtime/orders";
 
 const myApi = api({ name: "order-api" });
 const myRouter = router(myApi);
 myRouter.get("/orders", () => orders); // type error: orders is an SQS Lambda
 ```
 
-```ts [runtime/orders.fn.ts]
+```ts [runtime/orders.ts]
 import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 
 export const lambda = $lambda({
@@ -46,7 +46,7 @@ A Lambda group from `lambda()` has no event, so every infra API accepts it.
 
 `LambdaHandler<typeof lambda>` gives the handler the event type that the declaration names:
 
-```ts [runtime/orders.fn.ts]
+```ts [runtime/orders.ts]
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
   // event is an SQSEvent, because the declaration has event: () => sqs()
 };
@@ -58,7 +58,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 `lambda.env()` returns the values that the declaration binds in `env`, typed by name:
 
-```ts [runtime/orders.fn.ts]
+```ts [runtime/orders.ts]
 export const lambda = $lambda({
   id: "orders",
   event: () => sqs(),
@@ -75,7 +75,7 @@ lambda.env().ORDERS_URL; // type error: the declaration doesn't bind ORDERS_URL
 
 `sqs(schema)` and `http(schema)` take a [Standard Schema](https://standardschema.dev). `lambda.decode()` returns the schema's output type:
 
-```ts [runtime/orders.fn.ts]
+```ts [runtime/orders.ts]
 export const lambda = $lambda({
   id: "orders",
   event: () => sqs(Order),
@@ -94,7 +94,7 @@ Nothing checks the other end. A producer that sends to the queue isn't checked a
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { lambda as user } from "runtime/user.fn";
+import { lambda as user } from "runtime/user";
 
 const myApi = api({ name: "user-api" });
 const authedRouter = router(myApi).withJWTAuthorizer({
@@ -107,7 +107,7 @@ const authedRouter = router(myApi).withJWTAuthorizer({
 authedRouter.get("/user", () => user);
 ```
 
-```ts [runtime/user.fn.ts]
+```ts [runtime/user.ts]
 import { $lambda, http } from "@notation/aws/lambda";
 import type { APIGatewayJWTProxyEventV2 } from "@notation/aws/shared";
 

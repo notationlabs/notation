@@ -24,7 +24,7 @@ type ApiConfig = {
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { lambda as users } from "runtime/users.fn";
+import { lambda as users } from "runtime/users";
 
 const myApi = api({ name: "user-api" });
 const myRouter = router(myApi);
@@ -33,7 +33,7 @@ myRouter.get("/users", () => users);
 myRouter.post("/users", () => users);
 ```
 
-`users` is the declaration from the runtime module `runtime/users.fn.ts`. The router methods take it as a function, `() => users`, and call the function when infra has finished loading. The declaration must have `event: () => http()`, or no `event`. See [Wiring a declaration](lambda.md#wiring-a-declaration). The methods also take a Lambda group from [`lambda()`](lambda.md#lambdaconfig), as it is.
+`users` is the declaration from the runtime module `runtime/users.ts`. The router methods take it as a function, `() => users`, and call the function when infra has finished loading. The declaration must have `event: () => http()`, or no `event`. See [Wiring a declaration](lambda.md#wiring-a-declaration). The methods also take a Lambda group from [`lambda()`](lambda.md#lambdaconfig), as it is.
 
 Both routes call the one `users` function. Its handler reads `event.routeKey`, such as `GET /users` or `POST /users`, to tell them apart.
 
@@ -63,7 +63,7 @@ Each route call produces a full resource subgraph:
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { lambda as user } from "runtime/user.fn";
+import { lambda as user } from "runtime/user";
 
 const myApi = api({ name: "user-api" });
 
@@ -79,7 +79,7 @@ authedRouter.get("/user", () => user);
 
 The authorizer adds the token's claims to the request. `withJWTAuthorizer()` doesn't carry a claims type, so the handler types the event itself, with `APIGatewayJWTProxyEventV2` from `@notation/aws/shared`:
 
-```ts [runtime/user.fn.ts]
+```ts [runtime/user.ts]
 import { $lambda, http } from "@notation/aws/lambda";
 import type { APIGatewayJWTProxyEventV2 } from "@notation/aws/shared";
 import type { JWTClaims } from "shared/jwt";
@@ -128,7 +128,7 @@ Infrastructure and runtime side-by-side:
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { lambda as todos } from "runtime/todos.fn";
+import { lambda as todos } from "runtime/todos";
 
 const todoApi = api({ name: "todo-api" });
 const todoRouter = router(todoApi);
@@ -137,7 +137,7 @@ todoRouter.get("/todos", () => todos);
 todoRouter.get("/todos/count", () => todos);
 ```
 
-```ts [runtime/todos.fn.ts]
+```ts [runtime/todos.ts]
 import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 

@@ -11,7 +11,7 @@ export type NotationConfig = {
   defaultStage?: string;
   /**
    * Globs, relative to the directory of the config, for the runtime files.
-   * Defaults to `**\/*.fn.ts`. The build doesn't read them yet: it finds
+   * Defaults to `runtime/**\/*.ts`. The build doesn't read them yet: it finds
    * declaration modules through the infra entry's imports.
    */
   runtimeModules?: string | string[];
@@ -88,7 +88,7 @@ export function parseConfig(
   return value as NotationConfig;
 }
 
-export const defaultRuntimeModules = ["**/*.fn.ts"];
+export const defaultRuntimeModules = ["runtime/**/*.ts"];
 
 /** The config's `runtimeModules` as an array, or the default globs. */
 export function resolveRuntimeModules(config: NotationConfig): string[] {

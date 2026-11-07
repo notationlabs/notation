@@ -1,5 +1,5 @@
 import { api, router } from "@notation/aws/api-gateway";
-import { lambda as todos } from "runtime/todos.fn";
+import { lambda as todos } from "runtime/todos";
 
 const todoApi = api({ name: "todo-api" });
 const todoRouter = router(todoApi);

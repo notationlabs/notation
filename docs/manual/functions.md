@@ -4,7 +4,7 @@ A Lambda function's code is a `handler` export in a runtime module. Lambda calls
 
 The same module declares the function with `$lambda`. The declaration says which events the function receives, and it gives the handler its types and a small runtime API: `env()` and `decode()`. See [Lambda Declaration](./function-config.md) for the options.
 
-```ts [runtime/orders.fn.ts]
+```ts [runtime/orders.ts]
 import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 
 export const lambda = $lambda({
@@ -42,7 +42,7 @@ Notation has no event kind for DynamoDB streams. A function for another event so
 
 A Lambda function has one entry point, so a module has one `handler`. A function that serves several routes reads the route from the event. For example, the `todos` function serves `GET /todos` and `GET /todos/count`, and branches on `event.routeKey`:
 
-```ts [runtime/todos.fn.ts]
+```ts [runtime/todos.ts]
 import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 
@@ -67,7 +67,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 The handler reads infra values, such as a queue's URL, through the declaration. The declaration binds each value to a name in `env`, and `lambda.env()` returns the values by name:
 
-```ts [runtime/orders.fn.ts]
+```ts [runtime/orders.ts]
 import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import { orderQueue } from "infra/orders";
 
@@ -90,7 +90,7 @@ Deploy sets `ORDER_QUEUE_URL` as an environment variable of the function. In the
 
 `lambda.decode()` parses the JSON body of one item, and validates it with the schema in `event`. For an SQS Lambda the item is one record. For an HTTP Lambda the item is the request, and a base64 body is decoded first:
 
-```ts [runtime/orders.fn.ts]
+```ts [runtime/orders.ts]
 import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import type { SQSBatchResponse } from "aws-lambda";
 import { Order } from "./schema";
@@ -127,7 +127,7 @@ As an aside, `queue.consume()` doesn't turn on `ReportBatchItemFailures` for the
 
 An HTTP handler can return a plain value, such as an object or an array. API Gateway sends a value that has no `statusCode` as a JSON body, with status 200:
 
-```ts [runtime/todos.fn.ts]
+```ts [runtime/todos.ts]
 export const handler: LambdaHandler<typeof lambda> = async () => {
   return [{ id: 1, text: "Learn Notation" }];
 };

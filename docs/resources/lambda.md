@@ -8,7 +8,7 @@ A [runtime module](../manual/file-conventions.md#runtime-modules) calls `$lambda
 
 ::code-group
 
-```ts [runtime/todos.fn.ts]
+```ts [runtime/todos.ts]
 import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
 
 export const lambda = $lambda({
@@ -25,7 +25,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { lambda as todos } from "runtime/todos.fn";
+import { lambda as todos } from "runtime/todos";
 
 const todoRouter = router(api({ name: "todo-api" }));
 todoRouter.get("/todos", () => todos);
@@ -36,7 +36,7 @@ todoRouter.post("/todos", () => todos);
 
 When infra has finished loading, the declaration adds a Lambda group with:
 
-- the **Lambda function** `todos`, which runs the bundle `dist/runtime/todos.fn/index.mjs` and calls `index.handler`,
+- the **Lambda function** `todos`, which runs the bundle `dist/runtime/todos/index.mjs` and calls `index.handler`,
 - the **IAM execution role** `todos-role`,
 - the **CloudWatch log group** `todos-log-group`, with 30-day retention,
 - the **zip package** `todos-zip` of the bundle.
@@ -111,7 +111,7 @@ A Lambda function's role has an inline policy, named `<id>-role-policy`. The pol
 
 A declaration adds statements with its `policy` option. For example, to let the `orders` function send to an [SQS queue](sqs.md):
 
-```ts [runtime/orders.fn.ts]
+```ts [runtime/orders.ts]
 export const lambda = $lambda({
   id: "orders",
   event: () => sqs(),
@@ -141,7 +141,7 @@ A function's `Environment.Variables` is collected: any code can contribute to it
 
 A declaration contributes the values that it binds in `env`. The function reads them with `lambda.env()`; see [Lambda Handlers](../manual/functions.md#reading-bound-values-with-env).
 
-```ts [runtime/orders.fn.ts]
+```ts [runtime/orders.ts]
 export const lambda = $lambda({
   id: "orders",
   event: () => sqs(),

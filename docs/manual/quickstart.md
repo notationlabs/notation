@@ -15,7 +15,7 @@ my-app/
 ├── infra/
 │   └── api.ts
 ├── runtime/
-│   ├── todos.fn.ts
+│   ├── todos.ts
 │   └── utils.ts
 ├── notation.config.ts
 ├── package.json
@@ -40,13 +40,13 @@ export default defineConfig({
 
 With this config, `npm run deploy` deploys `infra/api.ts` to the `dev` stage. To deploy to another stage, pass `--stage`: `npm run deploy -- --stage prod`. See [Project Config](./project-config.md).
 
-**`infra/api.ts`** and **`runtime/todos.fn.ts`** – define the API and the function behind it:
+**`infra/api.ts`** and **`runtime/todos.ts`** – define the API and the function behind it:
 
 ::code-group
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { lambda as todos } from "runtime/todos.fn";
+import { lambda as todos } from "runtime/todos";
 
 const todoApi = api({ name: "todo-api" });
 const todoRouter = router(todoApi);
@@ -54,7 +54,7 @@ const todoRouter = router(todoApi);
 todoRouter.get("/todos", () => todos);
 ```
 
-```ts [runtime/todos.fn.ts]
+```ts [runtime/todos.ts]
 import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 
@@ -74,7 +74,7 @@ export const handler: LambdaHandler<typeof lambda> = async () => {
 
 ::
 
-Infrastructure and runtime live in the same codebase. `runtime/todos.fn.ts` is a runtime module, because it declares a Lambda function with `$lambda`. The function has the ID `todos`, and Lambda calls the module's `handler` export with each request. `api.get` in `runtime/utils.ts` fetches sample todos from `jsonplaceholder.typicode.com`.
+Infrastructure and runtime live in the same codebase. `runtime/todos.ts` is a runtime module, because it declares a Lambda function with `$lambda`. The function has the ID `todos`, and Lambda calls the module's `handler` export with each request. `api.get` in `runtime/utils.ts` fetches sample todos from `jsonplaceholder.typicode.com`.
 
 `infra/api.ts` imports the declaration, `lambda`, and routes `GET /todos` to it. Notation infers the intermediate resources – IAM roles, permissions, integrations, and so on. See [Runtime modules](./file-conventions.md#runtime-modules).
 
@@ -126,9 +126,9 @@ curl https://abc123.execute-api.us-east-1.amazonaws.com/todos
 
 ## 5. Make a change
 
-Edit the handler in `runtime/todos.fn.ts`:
+Edit the handler in `runtime/todos.ts`:
 
-```ts [runtime/todos.fn.ts]
+```ts [runtime/todos.ts]
 export const handler: LambdaHandler<typeof lambda> = async () => {
   return todos.slice(0, 5);
 };
@@ -142,7 +142,7 @@ npm run watch
 
 ```sh
 ✔ Watching infra/api.ts...
-✔ runtime/todos.fn.ts changed
+✔ runtime/todos.ts changed
 ✔ Recompiled → 1 resource changed
 ✔ lambda/todos                    updated
 

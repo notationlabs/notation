@@ -6,7 +6,7 @@
 
 ```ts [infra/schedule.ts]
 import * as eventBridge from "@notation/aws/event-bridge";
-import { lambda as logEvent } from "runtime/log-event.fn";
+import { lambda as logEvent } from "runtime/log-event";
 
 eventBridge.schedule({
   name: "log-every-minute",
@@ -15,7 +15,7 @@ eventBridge.schedule({
 });
 ```
 
-`logEvent` is the declaration from the runtime module `runtime/log-event.fn.ts`. `schedule` takes it as a function, `() => logEvent`, and calls the function when infra has finished loading. The declaration must have `event: () => scheduled()`, or no `event`. See [Wiring a declaration](lambda.md#wiring-a-declaration). `target` can also be a Lambda group from [`lambda()`](lambda.md#lambdaconfig), as it is. `schedule` creates an EventBridge rule that targets the function, and the permission that lets the rule invoke it. It returns nothing.
+`logEvent` is the declaration from the runtime module `runtime/log-event.ts`. `schedule` takes it as a function, `() => logEvent`, and calls the function when infra has finished loading. The declaration must have `event: () => scheduled()`, or no `event`. See [Wiring a declaration](lambda.md#wiring-a-declaration). `target` can also be a Lambda group from [`lambda()`](lambda.md#lambdaconfig), as it is. `schedule` creates an EventBridge rule that targets the function, and the permission that lets the rule invoke it. It returns nothing.
 
 ### Config
 
@@ -62,7 +62,7 @@ eventBridge.once(new Date("2027-12-31T23:59:00Z"));
 
 ## Handler
 
-```ts [runtime/log-event.fn.ts]
+```ts [runtime/log-event.ts]
 import { $lambda, scheduled, type LambdaHandler } from "@notation/aws/lambda";
 
 export const lambda = $lambda({

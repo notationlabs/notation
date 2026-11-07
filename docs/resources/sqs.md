@@ -50,13 +50,13 @@ An output value can only be placed whole. Turning it into a string, for example 
 
 ```ts [infra/orders.ts]
 import { queue } from "@notation/aws/sqs";
-import { lambda as processOrders } from "runtime/orders.fn";
+import { lambda as processOrders } from "runtime/orders";
 
 export const orderQueue = queue({ name: "orders" });
 orderQueue.consume(() => processOrders, { batchSize: 5 });
 ```
 
-```ts [runtime/orders.fn.ts]
+```ts [runtime/orders.ts]
 import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 
 export const lambda = $lambda({
@@ -71,7 +71,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 ::
 
-`processOrders` is the declaration from the runtime module `runtime/orders.fn.ts`. `consume` takes it as a function, `() => processOrders`, and calls the function when infra has finished loading. The declaration must have `event: () => sqs()`, or no `event`. See [Wiring a declaration](lambda.md#wiring-a-declaration). `consume` also takes a Lambda group from [`lambda()`](lambda.md#lambdaconfig), as it is.
+`processOrders` is the declaration from the runtime module `runtime/orders.ts`. `consume` takes it as a function, `() => processOrders`, and calls the function when infra has finished loading. The declaration must have `event: () => sqs()`, or no `event`. See [Wiring a declaration](lambda.md#wiring-a-declaration). `consume` also takes a Lambda group from [`lambda()`](lambda.md#lambdaconfig), as it is.
 
 `consume` changes two things, and the function's declaration doesn't mention the queue:
 
@@ -104,7 +104,7 @@ The queue doesn't carry the schema, and nothing checks the messages that a sende
 Each queue contributes its own statement and its own mapping, so two queues can feed one function:
 
 ```ts [infra/orders.ts]
-import { lambda as processOrders } from "runtime/orders.fn";
+import { lambda as processOrders } from "runtime/orders";
 
 orderQueue.consume(() => processOrders);
 refundQueue.consume(() => processOrders);
@@ -114,7 +114,7 @@ The function's policy then has two statements. When you delete the `refundQueue.
 
 The function's one `handler` receives the messages of both queues. Each record's `eventSourceARN` names its queue. To compare it with a queue in the handler, bind the queue's ARN in `env`:
 
-```ts [runtime/orders.fn.ts]
+```ts [runtime/orders.ts]
 import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import { refundQueue } from "infra/orders";
 
@@ -141,7 +141,7 @@ A queue can feed a given function once. A second `consume` with the same functio
 
 `grant` returns a policy statement for the queue. A declaration adds it to its function's role with the `policy` option. For example, to let the `orders` function send messages to `refundQueue`, and read the queue's URL:
 
-```ts [runtime/orders.fn.ts]
+```ts [runtime/orders.ts]
 import { $lambda, sqs } from "@notation/aws/lambda";
 import { refundQueue } from "infra/orders";
 

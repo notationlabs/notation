@@ -1,5 +1,5 @@
 import { api, router } from "@notation/aws/api-gateway";
-import { lambda as user } from "runtime/user.fn";
+import { lambda as user } from "runtime/user";
 
 const userApi = api({ name: "user-api-jwt" });
 

@@ -28,7 +28,7 @@ type LambdaDeclarationConfig = {
 
 ## Usage
 
-```ts [runtime/orders.fn.ts]
+```ts [runtime/orders.ts]
 import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import { orderQueue, refundQueue } from "infra/orders";
 import { Order } from "./schema";

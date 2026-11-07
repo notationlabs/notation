@@ -57,53 +57,44 @@ const waitFor = (check: () => void) =>
   vi.waitFor(check, { timeout: 5000, interval: 50 });
 
 it("reports the declaration modules after each rebuild", async () => {
-  write("watch-a/todos.fn.ts", runtimeModule("todos"));
-  write("watch-a/jobs.fn.ts", runtimeModule("jobs"));
-  write(
-    "watch-a/main.ts",
-    `import { fn } from "./todos.fn";\nconsole.log(fn);\n`,
-  );
+  write("watch-a/todos.ts", runtimeModule("todos"));
+  write("watch-a/jobs.ts", runtimeModule("jobs"));
+  write("watch-a/main.ts", `import { fn } from "./todos";\nconsole.log(fn);\n`);
 
   const seen: DeclarationModule[][] = [];
   const initial = await compileInfra(path.join(root, "watch-a/main.ts"), {
     watch: true,
     onDeclarationModules: (modules) => seen.push(modules),
   });
-  expect(names(initial)).toEqual(["todos.fn.ts"]);
+  expect(names(initial)).toEqual(["todos.ts"]);
 
-  // todos.fn.ts does not change, so the rebuild must still report it.
+  // todos.ts does not change, so the rebuild must still report it.
   write(
     "watch-a/main.ts",
-    `import { fn } from "./todos.fn";\nimport { fn as job } from "./jobs.fn";\nconsole.log(fn, job);\n`,
+    `import { fn } from "./todos";\nimport { fn as job } from "./jobs";\nconsole.log(fn, job);\n`,
   );
   await waitFor(() =>
-    expect(names(seen.at(-1)!)).toEqual(["jobs.fn.ts", "todos.fn.ts"]),
+    expect(names(seen.at(-1)!)).toEqual(["jobs.ts", "todos.ts"]),
   );
 });
 
 it("bundles the runtime modules that an infra rebuild adds", async () => {
-  write("watch-b/todos.fn.ts", runtimeModule("todos"));
-  write("watch-b/jobs.fn.ts", runtimeModule("jobs"));
-  write(
-    "watch-b/main.ts",
-    `import { fn } from "./todos.fn";\nconsole.log(fn);\n`,
-  );
+  write("watch-b/todos.ts", runtimeModule("todos"));
+  write("watch-b/jobs.ts", runtimeModule("jobs"));
+  write("watch-b/main.ts", `import { fn } from "./todos";\nconsole.log(fn);\n`);
   const bundle = (name: string) =>
     path.join(root, `dist/watch-b/${name}/index.mjs`);
 
   await compile(build("watch-b/main.ts"), { watch: true, logger });
-  await waitFor(() => expect(existsSync(bundle("todos.fn"))).toBe(true));
-  expect(existsSync(bundle("jobs.fn"))).toBe(false);
+  await waitFor(() => expect(existsSync(bundle("todos"))).toBe(true));
+  expect(existsSync(bundle("jobs"))).toBe(false);
 
-  write(
-    "watch-b/main.ts",
-    `import { fn } from "./jobs.fn";\nconsole.log(fn);\n`,
-  );
-  await waitFor(() => expect(existsSync(bundle("jobs.fn"))).toBe(true));
+  write("watch-b/main.ts", `import { fn } from "./jobs";\nconsole.log(fn);\n`);
+  await waitFor(() => expect(existsSync(bundle("jobs"))).toBe(true));
 });
 
 it("waits for a build that succeeds, and says so", async () => {
-  write("watch-c/todos.fn.ts", runtimeModule("todos"));
+  write("watch-c/todos.ts", runtimeModule("todos"));
   write("watch-c/main.ts", `export const broken = ;\n`);
   const info = vi.fn();
   const watchLogger = { info, error: () => {} } as unknown as Logger;
@@ -123,9 +114,6 @@ it("waits for a build that succeeds, and says so", async () => {
   );
   expect(resolved).toBe(false);
 
-  write(
-    "watch-c/main.ts",
-    `import { fn } from "./todos.fn";\nconsole.log(fn);\n`,
-  );
+  write("watch-c/main.ts", `import { fn } from "./todos";\nconsole.log(fn);\n`);
   await compiling;
 });
