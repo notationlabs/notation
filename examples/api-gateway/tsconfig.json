@@ -1,6 +1,7 @@
 {
   "extends": "tsconfig/base.json",
   "compilerOptions": {
+    "types": ["node"],
     "paths": {
       "runtime/*": ["./runtime/*"],
       "infra/*": ["./infra/*"]

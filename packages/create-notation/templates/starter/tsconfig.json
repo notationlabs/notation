@@ -22,6 +22,7 @@
     "skipLibCheck": true,
     "strict": true,
     "strictNullChecks": true,
+    "types": ["node"],
 
     "paths": {
       "runtime/*": ["./runtime/*"],
