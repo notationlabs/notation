@@ -16,6 +16,13 @@ export type NotationConfig = {
    * import it.
    */
   runtimeModules?: string | string[];
+  /**
+   * Globs, relative to the directory of the config, for modules that are
+   * shared: both builds bundle them as written. A shared module can't
+   * declare a function or resources, or import an infra or runtime module.
+   * Defaults to none.
+   */
+  sharedModules?: string | string[];
 };
 
 export type NotationConfigInput<App extends string, Stage extends string> = {
@@ -23,6 +30,7 @@ export type NotationConfigInput<App extends string, Stage extends string> = {
   entry: string;
   defaultStage?: NameSafe<Stage>;
   runtimeModules?: string | string[];
+  sharedModules?: string | string[];
 };
 
 /**
@@ -41,6 +49,7 @@ const configKeys = [
   "entry",
   "defaultStage",
   "runtimeModules",
+  "sharedModules",
 ] as const satisfies readonly (keyof NotationConfig)[];
 
 /**
@@ -66,7 +75,7 @@ export function parseConfig(
     );
   }
 
-  const { app, entry, defaultStage, runtimeModules } = value;
+  const { app, entry, defaultStage, runtimeModules, sharedModules } = value;
   assertNameSafe(app, `${prefix} app`);
 
   if (typeof entry !== "string" || entry === "") {
@@ -76,13 +85,17 @@ export function parseConfig(
   if (defaultStage !== undefined)
     assertNameSafe(defaultStage, `${prefix} defaultStage`);
 
-  if (runtimeModules !== undefined) {
-    const globs = [runtimeModules].flat();
+  for (const [key, globs] of [
+    ["runtimeModules", runtimeModules],
+    ["sharedModules", sharedModules],
+  ] as const) {
+    if (globs === undefined) continue;
+    const list = [globs].flat();
     if (
-      globs.length === 0 ||
-      !globs.every((glob) => typeof glob === "string" && glob !== "")
+      list.length === 0 ||
+      !list.every((glob) => typeof glob === "string" && glob !== "")
     ) {
-      fail("runtimeModules must be a glob or a non-empty array of globs");
+      fail(`${key} must be a glob or a non-empty array of globs`);
     }
   }
 
@@ -95,6 +108,13 @@ export const defaultRuntimeModules = ["runtime/**/*.ts"];
 export function resolveRuntimeModules(config: NotationConfig): string[] {
   if (config.runtimeModules === undefined) return defaultRuntimeModules;
   return [config.runtimeModules].flat();
+}
+
+/** The config's `sharedModules` as an array. Defaults to none. */
+export function resolveSharedModules(config: NotationConfig): string[] {
+  return config.sharedModules === undefined
+    ? []
+    : [config.sharedModules].flat();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

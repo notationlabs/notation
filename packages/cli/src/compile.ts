@@ -37,12 +37,12 @@ export type CompileOptions = {
  * watching.
  */
 export async function compile(
-  { entryPoint, runtimeModules }: Build,
+  { entryPoint, runtimeModules, sharedModules }: Build,
   opts: CompileOptions = {},
 ): Promise<() => Promise<void>> {
   const watch = opts.watch ?? false;
   const logger = opts.logger ?? defaultLogger;
-  const analyses = new ModuleAnalyses();
+  const analyses = new ModuleAnalyses({ sharedModules });
 
   logger.info(`${watch ? "Watching" : "Compiling"} infrastructure`, entryPoint);
 
@@ -107,6 +107,10 @@ export async function compile(
 
 export type CompileInfraOptions = {
   watch?: boolean;
+  /**
+   * The module analyses to share with the runtime pass. They hold the
+   * `sharedModules` globs. Defaults to analyses with no shared globs.
+   */
   analyses?: ModuleAnalyses;
   /**
    * Globs, relative to the project root, for the runtime files. The infra

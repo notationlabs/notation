@@ -2,22 +2,23 @@ import fs from "node:fs";
 import path from "node:path";
 import { projectRoot, toProjectRoot } from "@notation/core";
 import type { Plugin } from "rolldown";
-import { analyzeModule, type ModuleAnalysis } from "./analyze";
+import type { ModuleAnalysis } from "./analyze";
 import { location } from "./ast";
 import {
   infraInterface,
   stripForInfra,
   type DeclarationModule,
 } from "./infra-strip";
-import { Marks, type ImportBinding, type Mark } from "./marks";
+import type { ImportBinding, Mark } from "./marks";
+import {
+  displayPath,
+  ModuleAnalyses,
+  nodeModules,
+  scriptFile,
+} from "./modules";
 import { stripForRuntime } from "./runtime-strip";
 
-const nodeModules = /[\\/]node_modules[\\/]/;
-const scriptFile = /\.[cm]?[jt]sx?$/;
-
-// The modules that the strips read: the project's own JS and TS files.
-const isProjectModule = (id: string) =>
-  !id.startsWith("\0") && scriptFile.test(id) && !nodeModules.test(id);
+export { ModuleAnalyses };
 
 const isBareSpecifier = (source: string) =>
   !source.startsWith(".") &&
@@ -56,72 +57,6 @@ function isInstalledPackage(
     cache.set(key, installed);
   }
   return installed;
-}
-
-// A file for an error message. A package file is named by its package, such
-// as `@notation/aws/dist/sqs/index.js`. A workspace package resolves to its
-// real path, so a path relative to the project root would read as
-// `../../aws/dist/sqs/index.js`.
-function displayPath(file: string): string {
-  const relative = toProjectRoot(file);
-  if (!nodeModules.test(file) && !relative.startsWith("..")) return relative;
-  for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
-    const manifest = path.join(dir, "package.json");
-    if (fs.existsSync(manifest)) {
-      const { name } = JSON.parse(fs.readFileSync(manifest, "utf8"));
-      if (typeof name === "string") {
-        return [name, ...path.relative(dir, file).split(path.sep)].join("/");
-      }
-    }
-    if (dir === path.dirname(dir)) return relative;
-  }
-}
-
-/**
- * Analyses project modules for both builds. An analysis is kept until its
- * file changes.
- */
-export class ModuleAnalyses {
-  readonly marks: Marks;
-  #analyses = new Map<string, ModuleAnalysis>();
-
-  constructor(marks: Marks = new Marks()) {
-    this.marks = marks;
-  }
-
-  /**
-   * Analyses a module from the source that a transform hook sees. Each
-   * runtime build transforms the same files, so an analysis of the same
-   * source is reused.
-   */
-  fromSource(file: string, source: string): ModuleAnalysis {
-    const cached = this.#analyses.get(file);
-    if (cached?.table.module.source === source) return cached;
-    const analysis = analyzeModule(
-      this.marks.setSource(file, source),
-      this.marks,
-    );
-    this.#analyses.set(file, analysis);
-    return analysis;
-  }
-
-  /** Analyses a module from the file system. */
-  fromFile(file: string): ModuleAnalysis | undefined {
-    if (!isProjectModule(file)) return undefined;
-    let analysis = this.#analyses.get(file);
-    if (!analysis) {
-      const table = this.marks.table(file);
-      if (!table) return undefined;
-      analysis = analyzeModule(table, this.marks);
-      this.#analyses.set(file, analysis);
-    }
-    return analysis;
-  }
-
-  invalidate(file: string) {
-    this.#analyses.delete(file);
-    this.marks.invalidate(file);
-  }
 }
 
 // A quick test that skips modules which can't hold a declaration or call a
@@ -169,10 +104,11 @@ export function infraPlugin({
     transform: {
       filter: { id: { include: scriptFile, exclude: nodeModules } },
       handler(code, id) {
-        if (!isProjectModule(id)) return null;
+        if (!analyses.isProjectModule(id)) return null;
         declarations.delete(id);
         if (!mayHoldMarks(code)) return null;
         const analysis = analyses.fromSource(id, code);
+        analyses.checkShared(id);
         checkRuntimeImports(analysis, analyses);
         if (!analysis.declaration) return null;
         const stripped = stripForInfra(analysis, analyses.marks, projectRoot());
@@ -268,8 +204,10 @@ export function runtimePlugin({
   module,
 }: RuntimePluginOptions): Plugin {
   const infraModules = new Set<string>();
-  const isInfraModule = (file: string) =>
-    analyses.fromFile(file)?.isInfra ?? false;
+  const describeInfra = (file: string) =>
+    analyses.kind(file)?.kind === "infra"
+      ? { module: displayPath(file), reason: analyses.describeKind(file)! }
+      : undefined;
   return {
     name: "notation-runtime",
     resolveId(source) {
@@ -281,21 +219,23 @@ export function runtimePlugin({
     transform: {
       filter: { id: { include: scriptFile, exclude: nodeModules } },
       handler(code, id) {
-        if (!isProjectModule(id)) return null;
+        if (!analyses.isProjectModule(id)) return null;
         infraModules.delete(id);
         if (!mayHoldMarks(code)) return null;
         const analysis = analyses.fromSource(id, code);
-        if (analysis.isInfra) infraModules.add(id);
+        analyses.checkShared(id);
+        const isInfra = analyses.kind(id)?.kind === "infra";
+        if (isInfra) infraModules.add(id);
         const stripped = stripForRuntime(
           analysis,
           analyses.marks,
-          isInfraModule,
+          describeInfra,
         );
-        if (!stripped && !analysis.isInfra) return null;
+        if (!stripped && !isInfra) return null;
         return {
           code: stripped?.code ?? code,
           map: stripped?.map,
-          moduleSideEffects: analysis.isInfra ? false : undefined,
+          moduleSideEffects: isInfra ? false : undefined,
         };
       },
     },
@@ -305,18 +245,23 @@ export function runtimePlugin({
     generateBundle(_, bundle) {
       for (const output of Object.values(bundle)) {
         if (output.type !== "chunk") continue;
-        for (const id of infraModules) {
-          const rendered = output.modules[id];
-          if (!rendered || rendered.renderedLength === 0) continue;
+        // Of the infra modules left in the bundle, the error names the one
+        // closest to the entry.
+        const [left] = [...infraModules]
+          .filter((id) => (output.modules[id]?.renderedLength ?? 0) > 0)
+          .map((id) => ({ id, chain: importChain(this, id) }))
+          .sort((a, b) => a.chain.length - b.chain.length);
+        if (left) {
+          const { id } = left;
           const uses = usesOfImports(
             output.modules,
             analyses,
             (binding, file) =>
               analyses.marks.resolve(binding.source, file) === id,
           );
-          const chain = importChain(this, id).map(displayPath);
+          const chain = left.chain.map((file) => displayPath(file));
           this.error(
-            `The bundle of ${toProjectRoot(module.path)} includes the infra module ${toProjectRoot(id)}. ${because(uses, chain)} The runtime build leaves infra out, so runtime code can't use it.`,
+            `The bundle of ${toProjectRoot(module.path)} includes the infra module ${toProjectRoot(id)}. ${because(uses, chain)} ${toProjectRoot(id)} is ${analyses.describeKind(id)}. The runtime build leaves infra modules out, so runtime code can't use them. Read infra values through the declaration's env(), and move code that both builds need to a shared module.`,
           );
         }
         // Infra functions from packages, such as queue() from
@@ -338,7 +283,9 @@ export function runtimePlugin({
                 importMark?.kind === "resource" ||
                 importMark?.kind === "declaration",
             );
-            const chain = importChain(this, id).map(displayPath);
+            const chain = importChain(this, id).map((file) =>
+              displayPath(file),
+            );
             this.error(
               `The bundle of ${toProjectRoot(module.path)} includes ${name} from ${displayPath(id)}, a function that declares infrastructure. ${because(uses, chain)} Infra functions can't run in a runtime module.`,
             );

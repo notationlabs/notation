@@ -31,16 +31,33 @@ export type Declaration = {
   properties: Map<string, Node>;
 };
 
+/** A resource function that a module imports or re-exports. */
+export type ResourceImport = {
+  /** The name of the function, as written, such as `queue` or `sqs.queue`. */
+  name: string;
+  /** The specifier of the module that it comes from. */
+  source: string;
+  /** The position of the import specifier, or of the namespace member. */
+  start: number;
+};
+
 export type ModuleAnalysis = {
   table: ModuleTable;
   references: Reference[];
   marked: MarkedReference[];
   declaration?: Declaration;
-  /** Whether the module calls a resource function at its top level. */
-  isInfra: boolean;
+  /**
+   * The first resource function that the module imports, if any. Such a
+   * module is an infra module, whether it calls the function at its top
+   * level or only inside a function.
+   */
+  resource?: ResourceImport;
 };
 
-/** Reads the declaration of a module, and whether it is an infra module. */
+/**
+ * Reads the declaration of a module, and the first resource function that
+ * it imports.
+ */
 export function analyzeModule(
   table: ModuleTable,
   marks: Marks,
@@ -61,14 +78,8 @@ export function analyzeModule(
   };
 
   const declarations: Declaration[] = [];
-  let isInfra = false;
   for (const reference of marked) {
     const { mark } = reference;
-    if (mark.kind === "resource") {
-      if (reference.call && !reference.ancestors.some(isFunction))
-        isInfra = true;
-      continue;
-    }
     if (mark.kind !== "declaration") continue;
     if (insideMarkedWrapper(reference, table)) continue;
     declarations.push(readDeclaration(reference, mark, fail));
@@ -83,7 +94,63 @@ export function analyzeModule(
     );
   }
 
-  return { table, references, marked, declaration: declarations[0], isInfra };
+  return {
+    table,
+    references,
+    marked,
+    declaration: declarations[0],
+    resource: resourceImport(table, marked, marks),
+  };
+}
+
+function resourceImport(
+  table: ModuleTable,
+  marked: MarkedReference[],
+  marks: Marks,
+): ResourceImport | undefined {
+  const file = module(table);
+  for (const [local, binding] of table.imports) {
+    if (binding.imported === "*") continue;
+    if (marks.importMark(file, binding)?.kind === "resource") {
+      return {
+        name: local,
+        source: binding.source,
+        start: binding.specifier.start,
+      };
+    }
+  }
+  // A namespace import counts through the members that the module uses,
+  // such as `sqs.queue`.
+  for (const reference of marked) {
+    const binding = table.imports.get(reference.node.name);
+    if (reference.mark.kind === "resource" && binding?.imported === "*") {
+      return {
+        name: reference.name,
+        source: binding.source,
+        start: reference.node.start,
+      };
+    }
+  }
+  for (const statement of table.module.body) {
+    if (
+      statement.type !== "ExportNamedDeclaration" ||
+      !statement.source ||
+      statement.exportKind === "type"
+    )
+      continue;
+    const resolved = marks.resolve(statement.source.value, file);
+    if (!resolved) continue;
+    for (const specifier of statement.specifiers) {
+      if (specifier.exportKind === "type") continue;
+      const imported = specifier.local;
+      const name =
+        imported.type === "Identifier" ? imported.name : imported.value;
+      if (marks.exportMark(resolved, name)?.kind === "resource") {
+        return { name, source: statement.source.value, start: specifier.start };
+      }
+    }
+  }
+  return undefined;
 }
 
 function markOf(

@@ -57,6 +57,7 @@ describe("resolveDeployment", () => {
       stage: "prod",
       entryPoint: path.join(root, "infra/api.ts"),
       runtimeModules: ["runtime/**/*.ts"],
+      sharedModules: [],
     });
   });
 

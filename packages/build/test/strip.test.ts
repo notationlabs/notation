@@ -1,6 +1,11 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { analyzeModule, stripForInfra, stripForRuntime } from "src/index";
+import {
+  analyzeModule,
+  ModuleAnalyses,
+  stripForInfra,
+  stripForRuntime,
+} from "src/index";
 import { packageFiles, packages, root, virtualMarks } from "./virtual";
 
 const handlerModule = `
@@ -44,8 +49,11 @@ function setup(source = handlerModule) {
     packages,
   );
   const analysis = analyzeModule(marks.table(file)!, marks);
+  const analyses = new ModuleAnalyses({ marks, root });
   const isInfraModule = (f: string) =>
-    analyzeModule(marks.table(f)!, marks).isInfra;
+    analyses.kind(f)?.kind === "infra"
+      ? { module: path.relative(root, f), reason: analyses.describeKind(f)! }
+      : undefined;
   return { marks, analysis, isInfraModule };
 }
 
@@ -234,7 +242,7 @@ describe("stripForRuntime", () => {
       ),
     );
     expect(() => stripForRuntime(analysis, marks, isInfraModule)).toThrow(
-      "runtime/handler.ts:16:20: an option of $lambda that the function keeps refers to ordersQueue, from the infra module ../infra/orders",
+      "runtime/handler.ts:16:20: an option of $lambda that the function keeps refers to ordersQueue, from infra/orders.ts, which is an infra module because it imports createQueue from @notation/aws/sqs. The runtime build removes infra.",
     );
   });
 

@@ -164,6 +164,7 @@ describe("resolving a loaded project", () => {
       stage: "prod",
       entryPoint: path.join(root, "infra/api.ts"),
       runtimeModules: ["runtime/**/*.ts"],
+      sharedModules: [],
     });
   });
 });

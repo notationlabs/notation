@@ -12,11 +12,11 @@ const run = (source: string, extra: Record<string, string> = {}) =>
 
 describe("analyzeModule", () => {
   it("finds the declaration and its options", () => {
-    const { declaration, isInfra } = run(`
+    const { declaration, resource } = run(`
       import { $lambda, sqs } from "@notation/aws/lambda";
       export const lambda = $lambda({ id: "fn", event: () => sqs(null), "env": () => ({}) });
     `);
-    expect(isInfra).toBe(false);
+    expect(resource).toBeUndefined();
     expect(declaration?.binding).toBe("lambda");
     expect(declaration?.name).toBe("$lambda");
     expect([...declaration!.properties.keys()]).toEqual(["id", "event", "env"]);
@@ -91,17 +91,43 @@ describe("analyzeModule", () => {
     expect(() => run(`\n${source}`)).toThrow(message);
   });
 
-  it("marks a module that calls a resource function at the top level as infra", () => {
+  it.each([
+    [
+      "calls it at the top level",
+      `import { createQueue } from "@notation/aws/sqs";\nexport const q = createQueue({});`,
+      "createQueue",
+    ],
+    [
+      "calls it only inside a function",
+      `import { createQueue } from "@notation/aws/sqs";\nexport const q = () => createQueue({});`,
+      "createQueue",
+    ],
+    [
+      "doesn't call it",
+      `import { createQueue as make } from "@notation/aws/sqs";`,
+      "make",
+    ],
+    [
+      "uses it through a namespace",
+      `import * as sqs from "@notation/aws/sqs";\nexport const q = () => sqs.createQueue({});`,
+      "sqs.createQueue",
+    ],
+    [
+      "re-exports it",
+      `export { createQueue } from "@notation/aws/sqs";`,
+      "createQueue",
+    ],
+  ])("records the resource function of a module that %s", (_, source, name) => {
+    expect(run(source).resource).toMatchObject({
+      name,
+      source: "@notation/aws/sqs",
+    });
+  });
+
+  it("records no resource function for a type import", () => {
     expect(
-      run(
-        `import { createQueue } from "@notation/aws/sqs";\nexport const q = createQueue({});`,
-      ).isInfra,
-    ).toBe(true);
-    expect(
-      run(
-        `import { createQueue } from "@notation/aws/sqs";\nexport const q = () => createQueue({});`,
-      ).isInfra,
-    ).toBe(false);
+      run(`import type { createQueue } from "@notation/aws/sqs";`).resource,
+    ).toBeUndefined();
   });
 
   it("ignores a name that shadows the import", () => {
@@ -114,7 +140,10 @@ describe("analyzeModule", () => {
 
 describe("ModuleAnalyses", () => {
   it("reuses the analysis of a source that hasn't changed", () => {
-    const analyses = new ModuleAnalyses(virtualMarks(packageFiles, packages));
+    const analyses = new ModuleAnalyses({
+      marks: virtualMarks(packageFiles, packages),
+      root,
+    });
     const file = path.join(root, "runtime/fn.ts");
     const source = `export const a = 1;`;
     const first = analyses.fromSource(file, source);

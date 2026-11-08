@@ -11,10 +11,14 @@ import type { Declaration, ModuleAnalysis } from "./analyze";
 import type { Marks } from "./marks";
 
 /**
- * Whether a module is an infra module, by its absolute path. Modules that
- * can't be read, such as packages, are not.
+ * Describes an infra module, by its absolute path: its path for an error
+ * message, and why it is infra, such as `an infra module because it imports
+ * queue from @notation/aws/sqs`. Returns `undefined` for a module that isn't
+ * infra, or that the build doesn't classify, such as a package.
  */
-export type IsInfraModule = (file: string) => boolean;
+export type DescribeInfra = (
+  file: string,
+) => { module: string; reason: string } | undefined;
 
 /**
  * Reduces the declaration of a module to its runtime options, for the runtime
@@ -37,7 +41,7 @@ export type IsInfraModule = (file: string) => boolean;
 export function stripForRuntime(
   analysis: ModuleAnalysis,
   marks: Marks,
-  isInfraModule: IsInfraModule,
+  describeInfra: DescribeInfra,
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | undefined {
   const declaration = analysis.declaration;
   if (!declaration) return undefined;
@@ -106,7 +110,7 @@ export function stripForRuntime(
         declaration,
         analysis,
         marks,
-        isInfraModule,
+        describeInfra,
       );
     }
   }
@@ -192,7 +196,7 @@ function checkReference(
   declaration: Declaration,
   analysis: ModuleAnalysis,
   marks: Marks,
-  isInfraModule: IsInfraModule,
+  describeInfra: DescribeInfra,
 ) {
   const { table } = analysis;
   const { file, source } = table.module;
@@ -202,9 +206,10 @@ function checkReference(
   const advice =
     "The runtime build removes infra. Read infra values in the function through the declaration's env().";
   const resolved = marks.resolve(binding.source, file);
-  if (resolved && isInfraModule(resolved)) {
+  const infra = resolved && describeInfra(resolved);
+  if (infra) {
     throw new Error(
-      `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from the infra module ${binding.source}. ${advice}`,
+      `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from ${infra.module}, which is ${infra.reason}. ${advice}`,
     );
   }
   const mark =

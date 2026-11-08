@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { configPath, fromProjectRoot } from "src/utils/paths";
-import { resolveRuntimeModules } from "./config";
+import { resolveRuntimeModules, resolveSharedModules } from "./config";
 import { assertNameSafe, isNameSafe } from "./name-safe";
 import type { Project } from "./project";
 
@@ -17,6 +17,8 @@ export type Build = {
   entryPoint: string;
   /** Globs for the files that can be runtime modules. */
   runtimeModules: string[];
+  /** Globs for the modules that are shared. Defaults to none. */
+  sharedModules?: string[];
 };
 
 /** A deployment identity with what it deploys. */
@@ -55,11 +57,12 @@ export function resolveEntryPoint(project: Project): string {
   return entryPoint;
 }
 
-/** Resolves the config's entry and runtime module globs. */
+/** Resolves the config's entry, and its runtime and shared module globs. */
 export function resolveBuild(project: Project): Build {
   return {
     entryPoint: resolveEntryPoint(project),
     runtimeModules: resolveRuntimeModules(project.config),
+    sharedModules: resolveSharedModules(project.config),
   };
 }
 

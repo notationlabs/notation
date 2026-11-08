@@ -3,6 +3,7 @@ import {
   defineConfig,
   parseConfig,
   resolveRuntimeModules,
+  resolveSharedModules,
 } from "src/config/config";
 
 describe("defineConfig", () => {
@@ -77,7 +78,7 @@ describe("parseConfig", () => {
     [{ ...valid, defaultStage: "Dev" }, 'defaultStage "Dev" is not name-safe'],
     [
       { ...valid, stage: "dev" },
-      'unknown key "stage". Known keys: app, entry, defaultStage, runtimeModules',
+      'unknown key "stage". Known keys: app, entry, defaultStage, runtimeModules, sharedModules',
     ],
     [{ ...valid, name: "x", entries: {} }, 'unknown keys "name", "entries"'],
     [
@@ -105,10 +106,34 @@ describe("parseConfig", () => {
     }
   });
 
+  it("accepts sharedModules as a glob or an array of globs", () => {
+    for (const sharedModules of ["shared/**", ["shared/**", "lib/*.ts"]]) {
+      const config = { ...valid, sharedModules };
+      expect(parseConfig(config)).toBe(config);
+    }
+  });
+
+  it("rejects sharedModules that aren't globs", () => {
+    expect(() => parseConfig({ ...valid, sharedModules: [] })).toThrow(
+      "Invalid notation.config.ts: sharedModules must be a glob or a non-empty array of globs",
+    );
+  });
+
   it("names the given config file in errors", () => {
     expect(() => parseConfig({ app: "orders-app" }, "jobs.config.ts")).toThrow(
       "Invalid jobs.config.ts: entry must be a path to an entry file",
     );
+  });
+});
+
+describe("resolveSharedModules", () => {
+  const valid = { app: "orders-app", entry: "infra/api.ts" };
+
+  it("defaults to no globs, and returns a single glob as an array", () => {
+    expect(resolveSharedModules(valid)).toEqual([]);
+    expect(
+      resolveSharedModules({ ...valid, sharedModules: "shared/**" }),
+    ).toEqual(["shared/**"]);
   });
 });
 
