@@ -89,6 +89,7 @@ function writeAwsPackage() {
         },
         "./sqs": "./sqs.js",
         "./helpers": "./helpers.js",
+        "./sns": "./sns.js",
       },
     }),
   );
@@ -123,6 +124,13 @@ function writeAwsPackage() {
     [
       `import { queue } from "./sqs.js";`,
       `export const ordersQueue = () => queue({ name: "orders" });`,
+    ].join("\n"),
+  );
+  write(
+    "node_modules/@notation/aws/sns.js",
+    [
+      `/** @resource */`,
+      `export function topic(config) { return { arn: "placeholder-arn" }; }`,
     ].join("\n"),
   );
   write("node_modules/@notation/aws/sdk.js", `console.log("sdk loaded");`);
@@ -250,7 +258,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts. The bundle imports it through runtime/process-orders.ts → infra/orders.ts, and uses orders at runtime/process-orders.ts:16:38.",
+      "The function in runtime/process-orders.ts uses the infra module infra/orders.ts: orders at runtime/process-orders.ts:16:38. It imports infra/orders.ts through runtime/process-orders.ts → infra/orders.ts. The runtime build leaves infra out, so runtime code can't use it.",
     );
   });
 
@@ -275,7 +283,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts. The bundle imports it through runtime/process-orders.ts → runtime/queue-url.ts → infra/orders.ts, and uses orders at runtime/queue-url.ts:2:31.",
+      "The function in runtime/process-orders.ts uses the infra module infra/orders.ts: orders at runtime/queue-url.ts:2:31. It imports infra/orders.ts through runtime/process-orders.ts → runtime/queue-url.ts → infra/orders.ts.",
     );
   });
 
@@ -296,7 +304,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "and uses orders at runtime/process-orders.ts:16:38.",
+      "uses the infra module infra/orders.ts: orders at runtime/process-orders.ts:16:38.",
     );
   });
 
@@ -314,7 +322,25 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes queue from @notation/aws/sqs.js, a function that declares infrastructure. The bundle imports it through runtime/process-orders.ts → @notation/aws/sqs.js, and uses queue at runtime/process-orders.ts:17:38.",
+      "The function in runtime/process-orders.ts uses queue from @notation/aws/sqs.js, a function that declares infrastructure: queue at runtime/process-orders.ts:17:38. It imports @notation/aws/sqs.js through runtime/process-orders.ts → @notation/aws/sqs.js. Infra functions can't run in a runtime module.",
+    );
+  });
+
+  it("lists only the uses of the resource function that the error names", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { orders } from "../infra/orders";`,
+          `import { orders } from "../infra/orders";\n  import { queue } from "@notation/aws/sqs";\n  import { topic } from "@notation/aws/sns";`,
+        )
+        .replace(
+          "export const handler = async () =>",
+          "export const handler = async () => topic({ name: 'x' }) && queue({ name: 'x' }) &&",
+        ),
+    );
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
+    await expect(compileRuntimeModules(modules)).rejects.toThrow(
+      "a function that declares infrastructure: queue at runtime/process-orders.ts:18:62. It imports",
     );
   });
 
@@ -332,7 +358,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle imports it through runtime/process-orders.ts → @notation/aws/helpers.js → @notation/aws/sqs.js.",
+      "The function in runtime/process-orders.ts uses queue from @notation/aws/sqs.js, a function that declares infrastructure. It imports @notation/aws/sqs.js through runtime/process-orders.ts → @notation/aws/helpers.js → @notation/aws/sqs.js. Infra functions can't run in a runtime module.",
     );
   });
 
@@ -401,7 +427,55 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes queue from @notation/aws/sqs.js, a function that declares infrastructure. The bundle imports it through runtime/process-orders.ts → runtime/labels.ts → infra/orders.ts → infra/helpers.ts → @notation/aws/sqs.js, and uses queue at infra/helpers.ts:2:50. Infra functions can't run in a runtime module.",
+      "The function in runtime/process-orders.ts uses queue from @notation/aws/sqs.js, a function that declares infrastructure: queue at infra/helpers.ts:2:50. It imports @notation/aws/sqs.js through runtime/process-orders.ts → runtime/labels.ts → infra/orders.ts → infra/helpers.ts → @notation/aws/sqs.js. Infra functions can't run in a runtime module.",
+    );
+  });
+
+  // The bundle check reads the code before minify. Rolldown's default
+  // "dce-only" minify drops each of these unused calls, and the build still
+  // fails.
+  it("fails when the function's only use of an infra module is a call with an unused result", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { Order } from "./schema";`,
+          `import { Order } from "./schema";\n  import { queueConfig } from "../infra/names";`,
+        )
+        .replace(
+          "export const handler = async () => [lambda.options",
+          `export const handler = async () => { queueConfig("scratch"); return [lambda.options`,
+        )
+        .replace("globalThis.polyfilled];", "globalThis.polyfilled]; };"),
+    );
+    write(
+      "infra/names.ts",
+      [
+        `import { queue } from "@notation/aws/sqs";`,
+        `export const audit = queue({ name: "audit" });`,
+        `export function queueConfig(name: string) { return { name, retries: 3 }; }`,
+      ].join("\n"),
+    );
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
+    await expect(compileRuntimeModules(modules)).rejects.toThrow(
+      "The function in runtime/process-orders.ts uses the infra module infra/names.ts: queueConfig at runtime/process-orders.ts:17:40. It imports infra/names.ts through runtime/process-orders.ts → infra/names.ts.",
+    );
+  });
+
+  it("fails when the function's only use of a resource function is a call with an unused result", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { orders } from "../infra/orders";`,
+          `import { orders } from "../infra/orders";\n  import { queue } from "@notation/aws/sqs";`,
+        )
+        .replace(
+          "export const handler = async () => [",
+          `export const handler = async () => [queue({ name: "scratch" })] && [`,
+        ),
+    );
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
+    await expect(compileRuntimeModules(modules)).rejects.toThrow(
+      "The function in runtime/process-orders.ts uses queue from @notation/aws/sqs.js, a function that declares infrastructure: queue at runtime/process-orders.ts:17:39.",
     );
   });
 

@@ -316,7 +316,7 @@ export function runtimePlugin({
           );
           const chain = importChain(this, id).map(displayPath);
           this.error(
-            `The bundle of ${toProjectRoot(module.path)} includes the infra module ${toProjectRoot(id)}. ${because(uses, chain)} The runtime build leaves infra out, so runtime code can't use it.`,
+            `The function in ${toProjectRoot(module.path)} uses the infra module ${toProjectRoot(id)}${listUses(uses)}. It imports ${toProjectRoot(id)} through ${chain.join(" → ")}. The runtime build leaves infra out, so runtime code can't use it.`,
           );
         }
         // Infra functions from packages, such as queue() from
@@ -331,16 +331,16 @@ export function runtimePlugin({
             const mark = analyses.marks.exportMark(id, name);
             if (mark?.kind !== "resource" && mark?.kind !== "declaration")
               continue;
+            // Marks are cached per module, so an import of this export,
+            // through any re-export or alias, has the same mark object.
             const uses = usesOfImports(
               output.modules,
               analyses,
-              (_binding, _file, importMark) =>
-                importMark?.kind === "resource" ||
-                importMark?.kind === "declaration",
+              (_binding, _file, importMark) => importMark === mark,
             );
             const chain = importChain(this, id).map(displayPath);
             this.error(
-              `The bundle of ${toProjectRoot(module.path)} includes ${name} from ${displayPath(id)}, a function that declares infrastructure. ${because(uses, chain)} Infra functions can't run in a runtime module.`,
+              `The function in ${toProjectRoot(module.path)} uses ${name} from ${displayPath(id)}, a function that declares infrastructure${listUses(uses)}. It imports ${displayPath(id)} through ${chain.join(" → ")}. Infra functions can't run in a runtime module.`,
             );
           }
         }
@@ -405,13 +405,10 @@ function usesOfImports(
   return uses;
 }
 
-// Why a module is in the bundle: the chain of imports that brings it in, and
-// the references that use it.
-function because(uses: ImportUse[], chain: string[]): string {
-  const imported = `The bundle imports it through ${chain.join(" → ")}`;
-  if (uses.length === 0) return `${imported}.`;
-  const listed = uses.map(({ at, name }) => `${name} at ${at}`);
-  return `${imported}, and uses ${listed.join(", ")}.`;
+// The uses that the bundle check names, as `: name at file:line:column, ...`.
+function listUses(uses: ImportUse[]): string {
+  if (uses.length === 0) return "";
+  return `: ${uses.map(({ at, name }) => `${name} at ${at}`).join(", ")}`;
 }
 
 type ModuleGraph = {

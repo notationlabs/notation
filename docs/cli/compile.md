@@ -64,6 +64,6 @@ The build fails with the file and line when:
 - an infra module imports a name from a runtime module that the declaration doesn't use,
 - `$lambda` is not called as `const name = $lambda({ ... })` at the top level, with an object literal,
 - `event` refers to an infra module, or
-- the function's bundle still contains an infra module. The error names the chain of imports.
+- the function uses an infra module, or a resource function from a package. The error names each use and the chain of imports. The check reads the code before minify, so an unused call to an infra helper or to `queue()` also fails the build.
 
 See [Compiler](../internals/compiler.md) for how each pass works.
