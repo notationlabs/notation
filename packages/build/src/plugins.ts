@@ -331,12 +331,12 @@ export function runtimePlugin({
             const mark = analyses.marks.exportMark(id, name);
             if (mark?.kind !== "resource" && mark?.kind !== "declaration")
               continue;
+            // Marks are cached per module, so an import of this export,
+            // through any re-export or alias, has the same mark object.
             const uses = usesOfImports(
               output.modules,
               analyses,
-              (_binding, _file, importMark) =>
-                importMark?.kind === "resource" ||
-                importMark?.kind === "declaration",
+              (_binding, _file, importMark) => importMark === mark,
             );
             const chain = importChain(this, id).map(displayPath);
             this.error(

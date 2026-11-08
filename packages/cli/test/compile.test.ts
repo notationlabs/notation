@@ -89,6 +89,7 @@ function writeAwsPackage() {
         },
         "./sqs": "./sqs.js",
         "./helpers": "./helpers.js",
+        "./sns": "./sns.js",
       },
     }),
   );
@@ -123,6 +124,13 @@ function writeAwsPackage() {
     [
       `import { queue } from "./sqs.js";`,
       `export const ordersQueue = () => queue({ name: "orders" });`,
+    ].join("\n"),
+  );
+  write(
+    "node_modules/@notation/aws/sns.js",
+    [
+      `/** @resource */`,
+      `export function topic(config) { return { arn: "placeholder-arn" }; }`,
     ].join("\n"),
   );
   write("node_modules/@notation/aws/sdk.js", `console.log("sdk loaded");`);
@@ -315,6 +323,24 @@ describe("declaration modules", () => {
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
       "The function in runtime/process-orders.ts uses queue from @notation/aws/sqs.js, a function that declares infrastructure: queue at runtime/process-orders.ts:17:38. It imports @notation/aws/sqs.js through runtime/process-orders.ts → @notation/aws/sqs.js. Infra functions can't run in a runtime module.",
+    );
+  });
+
+  it("lists only the uses of the resource function that the error names", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { orders } from "../infra/orders";`,
+          `import { orders } from "../infra/orders";\n  import { queue } from "@notation/aws/sqs";\n  import { topic } from "@notation/aws/sns";`,
+        )
+        .replace(
+          "export const handler = async () =>",
+          "export const handler = async () => topic({ name: 'x' }) && queue({ name: 'x' }) &&",
+        ),
+    );
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
+    await expect(compileRuntimeModules(modules)).rejects.toThrow(
+      "a function that declares infrastructure: queue at runtime/process-orders.ts:18:62. It imports",
     );
   });
 
