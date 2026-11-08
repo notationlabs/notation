@@ -109,9 +109,13 @@ function parseFiles(files: unknown, fail: (message: string) => never) {
         `unknown key "${kind}" in files. Known keys: ${moduleKinds.join(", ")}`,
       );
     }
-    const globs = [value].flat();
-    if (!globs.every((glob) => typeof glob === "string" && glob !== "")) {
-      fail(`files.${kind} must be a glob or an array of globs`);
+    const globs: unknown[] = [value].flat();
+    if (
+      !globs.every(
+        (glob): glob is string => typeof glob === "string" && glob !== "",
+      )
+    ) {
+      return fail(`files.${kind} must be a glob or an array of globs`);
     }
     if (globs.length > 0 && globs.every((glob) => glob.startsWith("!"))) {
       fail(

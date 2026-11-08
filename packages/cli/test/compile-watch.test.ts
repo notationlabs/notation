@@ -208,3 +208,60 @@ it("bundles a runtime file in a glob directory that is created during watch", as
   write("watch-g/runtime/todos.ts", runtimeModule("todos"));
   await waitFor(() => expect(existsSync(bundle)).toBe(true));
 });
+
+it("checks a shared module again when a module that it imports changes", async () => {
+  write("watch-i/infra/orders.ts", `export const orders = { url: "u" };\n`);
+  write("watch-i/lib/util.ts", `export const util = () => "util";\n`);
+  write(
+    "watch-i/shared/schema.ts",
+    `import { util } from "../lib/util";\nexport const Order = { util };\n`,
+  );
+  write(
+    "watch-i/main.ts",
+    `import { Order } from "./shared/schema";\nconsole.log(Order);\n`,
+  );
+  const errors: unknown[] = [];
+  onTestFinished(
+    await compile(
+      {
+        entryPoint: path.join(root, "watch-i/main.ts"),
+        files: {
+          infra: ["watch-i/infra/**"],
+          runtime: [],
+          shared: ["watch-i/shared/**"],
+        },
+      },
+      {
+        watch: true,
+        logger: { ...logger, error: (error: unknown) => errors.push(error) },
+      },
+    ),
+  );
+  expect(errors).toEqual([]);
+
+  write(
+    "watch-i/lib/util.ts",
+    `import { orders } from "../infra/orders";\nexport const util = () => orders.url;\n`,
+  );
+  await waitFor(() =>
+    expect(String(errors.at(-1))).toContain(
+      "through watch-i/shared/schema.ts:1:1 → watch-i/lib/util.ts:1:1 → watch-i/infra/orders.ts.",
+    ),
+  );
+});
+
+// Last, because the default globs read runtime/ at the root, which the
+// other tests don't use.
+it("bundles a file that is added under runtime/ with the default globs", async () => {
+  write("watch-h/main.ts", `console.log("no imports");\n`);
+  const bundle = path.join(root, "dist/runtime/added/index.mjs");
+  onTestFinished(
+    await compile(
+      { entryPoint: path.join(root, "watch-h/main.ts"), files: {} },
+      { watch: true, logger },
+    ),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  write("runtime/added.ts", runtimeModule("added"));
+  await waitFor(() => expect(existsSync(bundle)).toBe(true));
+});
