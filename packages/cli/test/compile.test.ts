@@ -310,7 +310,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "uses the infra module infra/orders.ts: orders at runtime/process-orders.ts:16:38.",
+      'uses infra/orders.ts, an infra module (files.infra: "infra/**", the default): orders at runtime/process-orders.ts:16:38.',
     );
   });
 
@@ -748,7 +748,7 @@ describe("modules that the runtime bundle keeps as on main", () => {
       `console.log("labels loaded");\nexport const label = () => "orders";`,
     );
     await expect(buildProject()).rejects.toThrow(
-      'The bundle of runtime/process-orders.ts includes infra/labels.ts, an infra module (files.infra: "infra/**", the default). The bundle imports it through runtime/process-orders.ts → infra/labels.ts, and uses label at runtime/process-orders.ts:17:38.',
+      'The function in runtime/process-orders.ts uses infra/labels.ts, an infra module (files.infra: "infra/**", the default): label at runtime/process-orders.ts:17:38. It imports infra/labels.ts through runtime/process-orders.ts → infra/labels.ts.',
     );
   });
 
@@ -765,7 +765,7 @@ describe("modules that the runtime bundle keeps as on main", () => {
       ].join("\n"),
     );
     await expect(buildProject()).rejects.toThrow(
-      "includes queue from @notation/aws/sqs.js, a function that declares infrastructure. The bundle imports it through runtime/process-orders.ts → lib/labels.ts → @notation/aws/sqs.js",
+      "uses queue from @notation/aws/sqs.js, a function that declares infrastructure: queue at lib/labels.ts:2:20. It imports @notation/aws/sqs.js through runtime/process-orders.ts → lib/labels.ts → @notation/aws/sqs.js",
     );
   });
 
@@ -823,7 +823,7 @@ describe("workspace packages outside the project root", () => {
     writeProject(withHandler(`import { dlq } from "acme-lib";`, "dlq"));
     writePackage("acme-lib", acmeLib);
     await expect(buildProject()).rejects.toThrow(
-      "includes acme-lib/queues.ts, an infra module (it calls queue at its top level).",
+      "uses acme-lib/queues.ts, an infra module (it calls queue at its top level).",
     );
   });
 
