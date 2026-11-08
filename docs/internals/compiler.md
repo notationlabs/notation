@@ -82,7 +82,7 @@ The tags are in JSDoc because Rolldown and tsdown keep JSDoc comments in a packa
 `analyzeModule` in `packages/build/src/analyze.ts` reads two facts from each project module:
 
 1. **The declaration**, if the module has one. Every reference to a function marked `@declaration` must be a call written `const name = fn({ ... })` at the top level, with one object literal that has no spread, computed keys or accessors. Any other reference fails the build with its file and line. A module with two declarations fails too. The analysis records the declaration's binding, its call, and its options by key.
-2. **The first resource function that the module imports**, as `resource`, if it imports one. A named or default import counts, and so does `export { queue } from`. A namespace import counts through the members that the module uses, such as `sqs.queue`. The module doesn't have to call the function.
+2. **The first resource function that the module imports**, as `resource`, if it imports one. A named or default import counts, and so do `export { queue } from` and `export * from` a module that exports a resource function. A namespace import counts through the members that the module uses, such as `sqs.queue`. The module doesn't have to call the function, but it must use the import as a value. An import that the module uses only in types, such as `typeof queue`, doesn't count, because TypeScript removes it.
 
 A reference inside a function that is itself marked `@declaration` in the same module is skipped. This lets a user write a wrapper around `$lambda` and mark the wrapper.
 
@@ -96,7 +96,7 @@ A reference inside a function that is itself marked `@declaration` in the same m
 type ModuleKind =
   | { kind: "runtime"; declaration: string } // such as "$lambda"
   | { kind: "infra"; reason: InfraReason }
-  | { kind: "shared"; listed: boolean }; // listed: sharedModules matches it
+  | { kind: "shared" };
 
 type InfraReason =
   | { resource: string; source: string; start: number } // imports queue
@@ -111,15 +111,17 @@ The rules apply in order:
 4. A module that imports an infra module is infra.
 5. Any other module is shared.
 
-Rule 4 is transitive. `kind` walks the imports and re-exports of the module, including side-effect imports such as `import "./orders"`, and leaves out imports whose specifiers are all `type`. The walk stops at runtime modules and listed shared modules, because rules 1 and 2 don't depend on imports, so the cycle between a runtime module and the infra module that wires it ends there. Then `kind` marks infra in rounds: each round marks the modules that import a module marked in an earlier round, until a round marks none. Each module's `reason` points to a module from an earlier round, so the reasons form a shortest chain to a resource import.
+Rule 4 is transitive. `kind` walks the imports and re-exports of the module, including side-effect imports such as `import "./orders"` and `export {} from "./orders"`. It leaves out imports whose specifiers are all `type`, and imports whose bindings the module uses only in types, such as `import { orders } from "./orders"` with only `typeof orders`. TypeScript removes such imports, so they don't load the module. The walk stops at runtime modules and listed shared modules, because rules 1 and 2 don't depend on imports, so the cycle between a runtime module and the infra module that wires it ends there.
+
+Then `kind` marks infra with a breadth-first walk from the infra modules to the modules that import them. Each infra module has a depth: 0 for a module that imports a resource function, and one more than the module it imports for the others. A module takes its first import, in source order, of an infra module with the smallest depth. So each `reason` points to a shortest chain to a resource import. Kinds from an earlier walk keep their depth, so a cached module doesn't lengthen the chain.
 
 Without rule 4, a barrel such as `infra/index.ts` with `export * from "./orders"` would be shared, since it imports no resource function. Without the import rule in 3, a factory that calls `queue()` only inside a function would be shared, and so would every module that calls the factory.
 
-`describeKind(file)` turns the chain into text for errors, such as `an infra module because it imports infra/orders.ts, which imports queue from @notation/aws/sqs`.
+`describeKind(file)` turns the chain into text for errors, with the position of each import, such as `an infra module because it imports infra/orders.ts (lib/format.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10)`.
 
-`kind` caches each result until any analysis changes, because a change to one module can change the kind of every module that imports it.
+`kind` caches each result. The cache is cleared when a file changes in watch mode, and when a module's analysis is replaced by one of a different source, or a module that a walk reached gets its first analysis. A change to one module can change the kind of every module that imports it.
 
-**Packages have no kind.** `isProjectModule` leaves out a file in `node_modules`, and a file whose nearest `package.json` with a `name` is in a directory that doesn't contain the project root. A workspace package resolves to its real path, such as `packages/aws/dist/sqs/index.js`, so the `node_modules` test alone doesn't catch it. The walk doesn't follow an import into a package. A resource function from a package still makes the importer infra through rule 3, through its mark.
+**Packages have no kind.** `isProjectModule` leaves out a file in `node_modules`. Every other file under the project root is a project module, even in a folder with its own `package.json`, such as `packages/api/` in a monorepo whose config is at the repository root. A file outside the project root is left out when its nearest `package.json` with a `name` is in a directory that doesn't contain the project root. A workspace package resolves to its real path, such as `packages/aws/dist/sqs/index.js` for a project in `examples/sqs`, so the `node_modules` test alone doesn't catch it. The walk doesn't follow an import into a package. A resource function from a package still makes the importer infra through rule 3, through its mark.
 
 ### The shared-module check
 
@@ -247,8 +249,10 @@ export const lambda = $lambda({
 The strip then checks the kept options. A reference to an import from an infra module, or a call to a resource function, fails the build with its file and line. For an infra module, the error says why the module is infra:
 
 ```
-runtime/orders.ts:11:22: an option of $lambda that the function keeps refers to orderQueue, from infra/index.ts, which is an infra module because it imports infra/orders.ts, which imports queue from @notation/aws/sqs. ...
+runtime/orders.ts:11:22: an option of $lambda that the function keeps refers to orderQueue, from infra/index.ts, which is an infra module because it imports infra/orders.ts (infra/index.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build removes infra. Read infra values in the function through the declaration's env().
 ```
+
+The advice depends on where the name is defined. The strip follows the import through re-exports to the module that defines the name. If that module imports a resource function itself, the name is likely an infra value, such as a queue, and the error advises `env()`. Otherwise the name is a plain value in a module that is infra only through its imports, such as `Order` in a schema module that imports a queue for a helper. Then the error advises moving the name to a module that doesn't import infra, or removing the import that makes its module infra.
 
 ### Leaving infra out
 
@@ -256,15 +260,23 @@ An import loads its module and runs the module's top-level code, even when nothi
 
 An infra module can also be reached through a module that the strip doesn't change, such as a helper module that imports `orderQueue` for one of its functions. Rule 4 of [Module kinds](#module-kinds) makes that helper module infra as well. The runtime plugin marks each infra module free of side effects, through the `moduleSideEffects` result of its `transform` hook. The bundler then drops an infra module if nothing in the bundle uses its bindings, and with it the modules that only it imports, such as the AWS SDK. Shared modules keep their side effects, so the bundle runs them as written.
 
+Dropping an infra module also drops its top-level code. So a module that isn't infra must not import an infra module only for its side effects, such as a setup module that also reads a queue's URL in one of its functions. `ModuleAnalyses.checkEffectImports` runs in the runtime plugin's `transform` hook and fails the build for such an import:
+
+```
+runtime/orders.ts:2:1: runtime/orders.ts imports lib/setup.ts for its side effects, but lib/setup.ts is an infra module because it imports infra/orders.ts (lib/setup.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build leaves infra modules out, so lib/setup.ts doesn't run in the function. ...
+```
+
+Only a runtime module can hit this check. A shared module with such an import is infra by rule 4, and a listed shared module fails `checkShared` first.
+
 The provider packages declare `"sideEffects": false` in their `package.json`, so the bundler also drops a package module whose exports the function doesn't use.
 
 In `generateBundle`, the plugin checks that no infra module is left in the bundle. A handler that reads `orderQueue.url` directly keeps `infra/orders.ts` in the bundle, and the build fails:
 
 ```
-The bundle of runtime/orders.ts includes the infra module infra/orders.ts. The bundle imports it through runtime/orders.ts → infra/orders.ts, and uses orderQueue at runtime/orders.ts:15:31. infra/orders.ts is an infra module because it imports queue from @notation/aws/sqs. The runtime build leaves infra modules out, so runtime code can't use them. ...
+The bundle of runtime/orders.ts includes the infra module infra/orders.ts. The bundle imports it through runtime/orders.ts → infra/orders.ts, and uses orderQueue at runtime/orders.ts:15:31. infra/orders.ts is an infra module because it imports queue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build leaves infra modules out, so runtime code can't use them. ...
 ```
 
-If several infra modules are left, the error names the one with the shortest chain of imports from the function's module. The error names that chain, then lists each reference to an import from the infra module, in any project module in the bundle. References in the declaration's options are left out, because the strip has removed or checked them. The list can include a reference in code that tree-shaking dropped, since the module is in the bundle either way. If the plugin finds no reference, such as for an `export { orderQueue } from "../infra/orders"`, the error names only the chain. Last, the error says why the module is infra, from `describeKind`.
+If several infra modules are left, the error names the one with the shortest chain of imports from the function's module. The chain follows static and dynamic imports. The error names that chain, then lists each reference to an import from the infra module, in any project module in the bundle. References in the declaration's options are left out, because the strip has removed or checked them. The list can include a reference in code that tree-shaking dropped, since the module is in the bundle either way. If the plugin finds no reference, such as for an `export { orderQueue } from "../infra/orders"`, the error names only the chain. Last, the error says why the module is infra, from `describeKind`.
 
 The plugin also checks infra functions from packages. `sideEffects: false` only drops what the function doesn't use, so a handler that calls `queue()` from `@notation/aws/sqs` would bundle it, with the AWS SDK. For each package module in the bundle, the plugin looks up the mark of each export that is left after tree-shaking. An export marked `@resource` or `@declaration` fails the build. The error names the chain of imports to the package module and each reference to the export, such as `queue at infra/helpers.ts:4:10`. This check catches a package helper that calls a resource function, such as a factory exported by a package, since packages have no kind. `$lambda` from the runtime entry of `@notation/aws/lambda` has no mark, so it passes.
 
