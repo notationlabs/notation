@@ -41,7 +41,7 @@ describe("ModuleAnalyses.kind", () => {
     expect(kind("infra/orders.ts")).toBe("infra");
     expect(kind("shared/schema.ts")).toBe("shared");
     expect(describe("infra/orders.ts")).toBe(
-      "an infra module because it imports createQueue from @notation/aws/sqs (infra/orders.ts:1:10)",
+      "an infra module because it calls createQueue at its top level (infra/orders.ts:2:23)",
     );
     expect(describe("runtime/fn.ts")).toBe(
       "a runtime module because it declares a function with $lambda",
@@ -49,198 +49,53 @@ describe("ModuleAnalyses.kind", () => {
     expect(describe("shared/schema.ts")).toBeUndefined();
   });
 
-  it("counts a factory that calls a resource function only inside a function as infra", () => {
+  it("doesn't count a factory that calls a resource function only inside a function as infra", () => {
     const { kind } = setup({
-      "infra/factory.ts": `import { createQueue } from "@notation/aws/sqs";\nexport const makeQueue = (id) => createQueue({ id });`,
+      "lib/factory.ts": `import { createQueue } from "@notation/aws/sqs";\nexport const makeQueue = (id) => createQueue({ id });`,
     });
-    expect(kind("infra/factory.ts")).toBe("infra");
+    expect(kind("lib/factory.ts")).toBe("shared");
   });
 
-  it("counts a barrel that re-exports infra as infra, and names the chain", () => {
-    const { kind, describe } = setup({
+  it("doesn't count a module that imports or re-exports infra as infra", () => {
+    const { kind } = setup({
       "infra/orders.ts": queueModule,
       "infra/index.ts": `export * from "./orders";`,
-      "infra/named.ts": `export { orders } from "./index";`,
+      "lib/url.ts": `import { orders } from "../infra/orders";\nexport const url = () => orders.url;`,
+      "lib/setup.ts": `import "../infra/orders";`,
     });
-    expect(kind("infra/index.ts")).toBe("infra");
-    expect(describe("infra/named.ts")).toBe(
-      "an infra module because it imports infra/index.ts (infra/named.ts:1:1), which imports infra/orders.ts (infra/index.ts:1:1), which imports createQueue from @notation/aws/sqs (infra/orders.ts:1:10)",
-    );
+    expect(kind("infra/index.ts")).toBe("shared");
+    expect(kind("lib/url.ts")).toBe("shared");
+    expect(kind("lib/setup.ts")).toBe("shared");
   });
 
-  it("counts a module that calls a factory from an infra module as infra", () => {
+  it("names a resource function that a module calls by its exported name, not its alias", () => {
     const { describe } = setup({
-      "infra/factory.ts": `import { createQueue } from "@notation/aws/sqs";\nexport const makeQueue = (id) => createQueue({ id });`,
-      "infra/orders.ts": `import { makeQueue } from "./factory";\nexport const orders = makeQueue("orders");`,
+      "infra/alias.ts": `import { createQueue as make } from "@notation/aws/sqs";\nexport const q = make({});`,
     });
-    expect(describe("infra/orders.ts")).toBe(
-      "an infra module because it imports infra/factory.ts (infra/orders.ts:1:1), which imports createQueue from @notation/aws/sqs (infra/factory.ts:1:10)",
+    expect(describe("infra/alias.ts")).toBe(
+      "an infra module because it calls createQueue at its top level (infra/alias.ts:2:18)",
     );
   });
 
-  it("counts a module that imports infra only for its side effects as infra", () => {
+  it("counts a module with a declaration as runtime, even if it calls a resource function", () => {
     const { kind } = setup({
+      "runtime/fn.ts": `${lambdaModule}\nimport { createQueue } from "@notation/aws/sqs";\nexport const dlq = createQueue({});`,
       "infra/orders.ts": queueModule,
-      "infra/main.ts": `import "./orders";`,
-    });
-    expect(kind("infra/main.ts")).toBe("infra");
-  });
-
-  it("follows an import cycle", () => {
-    const { kind } = setup({
-      "infra/orders.ts": queueModule,
-      "lib/a.ts": `import { b } from "./b";\nexport const a = () => b;`,
-      "lib/b.ts": `import { a } from "./a";\nimport { orders } from "../infra/orders";\nexport const b = () => [a, orders];`,
-    });
-    expect(kind("lib/a.ts")).toBe("infra");
-    expect(kind("lib/b.ts")).toBe("infra");
-  });
-
-  it("doesn't count a runtime module, or a module that imports one, as infra", () => {
-    const { kind } = setup({
-      "infra/orders.ts": `${queueModule}\nimport { lambda } from "../runtime/fn";`,
-      "runtime/fn.ts": lambdaModule,
-      "lib/route.ts": `import { lambda } from "../runtime/fn";\nexport const id = () => lambda.id;`,
     });
     expect(kind("runtime/fn.ts")).toBe("runtime");
-    expect(kind("lib/route.ts")).toBe("shared");
   });
 
-  it("ignores a type import of an infra module", () => {
+  it("doesn't classify files in node_modules", () => {
     const { kind } = setup({
-      "infra/orders.ts": queueModule,
-      "lib/types.ts": `import type { orders } from "../infra/orders";\nimport { type orders as o } from "../infra/orders";\nexport type Q = typeof orders | typeof o;`,
-    });
-    expect(kind("lib/types.ts")).toBe("shared");
-  });
-
-  it("ignores an import whose bindings are used only in typeof", () => {
-    const { kind } = setup({
-      "infra/orders.ts": queueModule,
-      "lib/format.ts": `import { orders } from "../infra/orders";\nexport type Q = typeof orders;\nexport const format = (q: Q) => String(q);`,
-    });
-    expect(kind("lib/format.ts")).toBe("shared");
-  });
-
-  it("ignores an import of an interface without the type keyword", () => {
-    const { kind } = setup({
-      "infra/types.ts": `import { createQueue } from "@notation/aws/sqs";\nexport interface OrderMsg { id: string }\nexport const q = () => createQueue({});`,
-      "lib/format.ts": `import { OrderMsg } from "../infra/types";\nexport const format = (m: OrderMsg): string => m.id;`,
-    });
-    expect(kind("infra/types.ts")).toBe("infra");
-    expect(kind("lib/format.ts")).toBe("shared");
-  });
-
-  it("ignores a resource function that is used only in types", () => {
-    const { kind } = setup({
-      "lib/types.ts": `import { createQueue } from "@notation/aws/sqs";\nexport type Q = ReturnType<typeof createQueue>;`,
-    });
-    expect(kind("lib/types.ts")).toBe("shared");
-  });
-
-  it("counts an import that is used only as a JSX element", () => {
-    const { kind } = setup({
-      "infra/orders.ts": queueModule,
-      "infra/view.ts": `import { orders } from "./orders";\nexport const View = () => orders;`,
-      "lib/page.tsx": `import { View } from "../infra/view";\nexport const Page = () => <View />;`,
-    });
-    expect(kind("lib/page.tsx")).toBe("infra");
-  });
-
-  it("ignores an import whose name is used only as a lowercase JSX tag", () => {
-    const { kind } = setup({
-      "infra/orders.ts": queueModule,
-      "lib/view.tsx": `import { orders } from "../infra/orders";\nexport const View = () => <orders />;`,
-    });
-    expect(kind("lib/view.tsx")).toBe("shared");
-  });
-
-  it("counts an import that is used as the object of a JSX member tag", () => {
-    const { kind } = setup({
-      "infra/orders.ts": queueModule,
-      "lib/view.tsx": `import { orders } from "../infra/orders";\nexport const View = () => <orders.View />;`,
-    });
-    expect(kind("lib/view.tsx")).toBe("infra");
-  });
-
-  it("names a resource function by its exported name, not its alias", () => {
-    const { describe } = setup({
-      "lib/alias.ts": `import { createQueue as make } from "@notation/aws/sqs";\nexport const q = () => make({});`,
-    });
-    expect(describe("lib/alias.ts")).toBe(
-      "an infra module because it imports createQueue from @notation/aws/sqs (lib/alias.ts:1:10)",
-    );
-  });
-
-  it("counts a module that re-exports all of a package with resource functions as infra", () => {
-    const { describe } = setup({
-      "lib/aws.ts": `export * from "@notation/aws/sqs";`,
-    });
-    expect(describe("lib/aws.ts")).toBe(
-      "an infra module because it imports createQueue from @notation/aws/sqs (lib/aws.ts:1:1)",
-    );
-  });
-
-  it("names a shortest chain when a module imports infra through a cached long chain", () => {
-    const { kind, describe } = setup({
-      "infra/orders.ts": queueModule,
-      "lib/c.ts": `import { orders } from "../infra/orders";\nexport const c = () => orders;`,
-      "lib/b.ts": `import { c } from "./c";\nexport const b = () => c;`,
-      "lib/a.ts": `import { b } from "./b";\nexport const a = () => b;`,
-      "lib/x.ts": `import { a } from "./a";\nimport { orders } from "../infra/orders";\nexport const x = () => [a, orders];`,
-    });
-    expect(kind("lib/a.ts")).toBe("infra");
-    expect(describe("lib/x.ts")).toBe(
-      "an infra module because it imports infra/orders.ts (lib/x.ts:2:1), which imports createQueue from @notation/aws/sqs (infra/orders.ts:1:10)",
-    );
-  });
-
-  it("doesn't classify packages, or follow imports into them", () => {
-    const { kind } = setup({
-      "node_modules/helpers/index.js": `import { createQueue } from "@notation/aws/sqs";\nexport const label = "x";\nexport const make = () => createQueue({});`,
-      "lib/label.ts": `import { label } from "helpers";\nexport const text = label;`,
+      "node_modules/helpers/index.js": `import { createQueue } from "@notation/aws/sqs";\nexport const q = createQueue({});`,
     });
     expect(kind("node_modules/helpers/index.js")).toBeUndefined();
-    expect(kind("lib/label.ts")).toBe("shared");
   });
 
-  it("makes a module that sharedModules matches shared, and stops there", () => {
-    const { kind } = setup(
-      {
-        "infra/orders.ts": queueModule,
-        "shared/format.ts": `import { orders } from "../infra/orders";\nexport const format = () => orders;`,
-        "lib/uses-format.ts": `import { format } from "../shared/format";\nexport const f = format;`,
-      },
-      ["shared/**"],
-    );
-    expect(kind("shared/format.ts")).toBe("shared");
-    expect(kind("lib/uses-format.ts")).toBe("shared");
-  });
-
-  it("accepts a sharedModules glob with a leading ./", () => {
-    const { analyses, kind } = setup(
-      {
-        "infra/orders.ts": queueModule,
-        "shared/format.ts": `import { orders } from "../infra/orders";\nexport const format = () => orders;`,
-      },
-      ["./shared/**"],
-    );
-    expect(analyses.isListedShared(path.join(root, "shared/format.ts"))).toBe(
-      true,
-    );
-    expect(kind("shared/format.ts")).toBe("shared");
-  });
-
-  it("recomputes kinds after a module changes", () => {
-    const { analyses, kind } = setup({
-      "infra/orders.ts": queueModule,
-      "lib/a.ts": `export const a = 1;`,
-    });
+  it("recomputes a kind after its module changes", () => {
+    const { analyses, kind } = setup({ "lib/a.ts": `export const a = 1;` });
     expect(kind("lib/a.ts")).toBe("shared");
-    analyses.fromSource(
-      path.join(root, "lib/a.ts"),
-      `import { orders } from "../infra/orders";\nexport const a = orders;`,
-    );
+    analyses.fromSource(path.join(root, "lib/a.ts"), queueModule);
     expect(kind("lib/a.ts")).toBe("infra");
   });
 });
@@ -253,242 +108,211 @@ describe("ModuleAnalyses.checkShared", () => {
     "shared/schema.ts": `export const Order = {};`,
   };
   const reason =
-    "A shared module runs in both builds, so it can't declare a function or resources, or import an infra or runtime module.";
+    "A shared module runs in both builds, so it can't declare a function or import a resource function, directly or through the modules that it imports.";
+  const check = (extra: Record<string, string>, globs = ["shared/**"]) =>
+    setup({ ...files, ...extra }, globs).checkShared;
 
   it("fails for a listed module that imports infra, with the line and the chain", () => {
-    const { checkShared } = setup(
-      {
-        ...files,
-        "shared/format.ts": `import { Order } from "./schema";\nimport { orders } from "../infra/index";\nexport const format = () => [Order, orders];`,
-      },
-      ["shared/**"],
-    );
+    const checkShared = check({
+      "shared/format.ts": `import { Order } from "./schema";\nimport { orders } from "../infra/index";\nexport const format = () => [Order, orders];`,
+    });
     expect(checkShared("shared/format.ts")).toThrow(
-      `shared/format.ts:2:1: shared/format.ts matches sharedModules, but it imports infra/index.ts, which is an infra module because it imports infra/orders.ts (infra/index.ts:1:1), which imports createQueue from @notation/aws/sqs (infra/orders.ts:1:10). ${reason}`,
+      `shared/format.ts:2:1: shared/format.ts matches sharedModules, but it imports infra/index.ts, which imports infra/orders.ts (infra/index.ts:1:1), which imports the resource function createQueue from @notation/aws/sqs (infra/orders.ts:1:10). ${reason}`,
+    );
+  });
+
+  it("fails for a listed module that imports infra through an unlisted module", () => {
+    const checkShared = check({
+      "lib/url.ts": `import { orders } from "../infra/orders";\nexport const url = () => orders.url;`,
+      "shared/format.ts": `import { url } from "../lib/url";\nexport const format = () => url();`,
+    });
+    expect(checkShared("shared/format.ts")).toThrow(
+      "shared/format.ts:1:1: shared/format.ts matches sharedModules, but it imports lib/url.ts, which imports infra/orders.ts (lib/url.ts:1:1), which imports the resource function createQueue from @notation/aws/sqs (infra/orders.ts:1:10).",
+    );
+  });
+
+  it("fails for a listed module that imports a module with a resource function that it doesn't call at its top level", () => {
+    const checkShared = check({
+      "lib/factory.ts": `import { createQueue } from "@notation/aws/sqs";\nexport const makeQueue = (id) => createQueue({ id });`,
+      "shared/format.ts": `import { makeQueue } from "../lib/factory";\nexport const format = () => makeQueue;`,
+    });
+    expect(checkShared("shared/format.ts")).toThrow(
+      "shared/format.ts:1:1: shared/format.ts matches sharedModules, but it imports lib/factory.ts, which imports the resource function createQueue from @notation/aws/sqs (lib/factory.ts:1:10).",
     );
   });
 
   it("fails for a listed module that imports a runtime module", () => {
-    const { checkShared } = setup(
+    const checkShared = check(
       {
-        ...files,
         "shared/id.ts": `import { lambda } from "../runtime/fn";\nexport const id = () => lambda.id;`,
       },
       ["shared/*.ts"],
     );
     expect(checkShared("shared/id.ts")).toThrow(
-      "shared/id.ts:1:1: shared/id.ts matches sharedModules, but it imports runtime/fn.ts, which is a runtime module because it declares a function with $lambda.",
+      "shared/id.ts:1:1: shared/id.ts matches sharedModules, but it imports runtime/fn.ts, which declares a function with $lambda (runtime/fn.ts:4:23).",
     );
   });
 
   it("fails for a listed module that imports a resource function", () => {
-    const { checkShared, kind } = setup(
-      { ...files, "shared/queue.ts": queueModule },
-      ["shared/**"],
-    );
-    expect(kind("shared/queue.ts")).toBe("shared");
+    const checkShared = check({ "shared/queue.ts": queueModule });
     expect(checkShared("shared/queue.ts")).toThrow(
       "shared/queue.ts:1:10: shared/queue.ts matches sharedModules, but it imports the resource function createQueue from @notation/aws/sqs.",
     );
   });
 
-  it("fails for a listed module that re-exports all of a package with resource functions", () => {
-    const { checkShared } = setup(
-      { ...files, "shared/aws.ts": `export * from "@notation/aws/sqs";` },
-      ["shared/**"],
+  it("names a resource function by its exported name, not its alias", () => {
+    const checkShared = check({
+      "shared/alias.ts": `import { createQueue as make } from "@notation/aws/sqs";\nexport const q = () => make({});`,
+    });
+    expect(checkShared("shared/alias.ts")).toThrow(
+      "shared/alias.ts:1:10: shared/alias.ts matches sharedModules, but it imports the resource function createQueue from @notation/aws/sqs.",
     );
+  });
+
+  it("fails for a listed module that re-exports all of a package with resource functions", () => {
+    const checkShared = check({
+      "shared/aws.ts": `export * from "@notation/aws/sqs";`,
+    });
     expect(checkShared("shared/aws.ts")).toThrow(
       "shared/aws.ts:1:1: shared/aws.ts matches sharedModules, but it imports the resource function createQueue from @notation/aws/sqs.",
     );
   });
 
-  it("fails for a listed module that loads infra through an empty re-export", () => {
-    const { checkShared } = setup(
-      { ...files, "shared/load.ts": `export {} from "../infra/orders";` },
-      ["shared/**"],
+  it("fails for a listed module that uses a namespace import of a package with resource functions", () => {
+    const checkShared = check({
+      "shared/aws.ts": `import * as sqs from "@notation/aws/sqs";\nexport const all = () => sqs;`,
+    });
+    expect(checkShared("shared/aws.ts")).toThrow(
+      "shared/aws.ts:1:8: shared/aws.ts matches sharedModules, but it imports the resource function createQueue from @notation/aws/sqs.",
     );
+  });
+
+  it("fails for a listed module that loads infra through an empty re-export", () => {
+    const checkShared = check({
+      "shared/load.ts": `export {} from "../infra/orders";`,
+    });
     expect(checkShared("shared/load.ts")).toThrow(
       "shared/load.ts:1:1: shared/load.ts matches sharedModules, but it imports infra/orders.ts",
     );
   });
 
-  it("passes a listed module that imports infra only for types", () => {
-    const { checkShared } = setup(
-      {
-        ...files,
-        "shared/format.ts": `import { orders } from "../infra/orders";\nexport type Q = typeof orders;`,
-      },
-      ["shared/**"],
-    );
+  it.each([
+    [
+      "a type import",
+      `import type { orders } from "../infra/orders";\nimport { type orders as o } from "../infra/orders";\nexport type Q = typeof orders | typeof o;`,
+    ],
+    [
+      "an import used only in typeof",
+      `import { orders } from "../infra/orders";\nexport type Q = typeof orders;\nexport const format = (q: Q) => String(q);`,
+    ],
+    [
+      "an import of an interface without the type keyword",
+      `import { OrderMsg } from "../infra/types";\nexport const format = (m: OrderMsg): string => m.id;`,
+    ],
+    [
+      "a resource function used only in types",
+      `import { createQueue } from "@notation/aws/sqs";\nexport type Q = ReturnType<typeof createQueue>;`,
+    ],
+  ])("passes a listed module with %s", (_, source) => {
+    const checkShared = check({
+      "infra/types.ts": `import { createQueue } from "@notation/aws/sqs";\nexport interface OrderMsg { id: string }\nexport const q = createQueue({});`,
+      "shared/format.ts": source,
+    });
     expect(checkShared("shared/format.ts")).not.toThrow();
   });
 
-  it("names the first problem in the module", () => {
-    const { checkShared } = setup(
-      {
-        ...files,
-        "shared/format.ts": `import { orders } from "../infra/orders";\nimport { createQueue } from "@notation/aws/sqs";\nexport const format = () => [orders, createQueue];`,
-      },
-      ["shared/**"],
+  it("counts an import that is used only as a JSX element", () => {
+    const checkShared = check({
+      "lib/view.ts": `import { orders } from "../infra/orders";\nexport const View = () => orders;`,
+      "shared/page.tsx": `import { View } from "../lib/view";\nexport const Page = () => <View />;`,
+    });
+    expect(checkShared("shared/page.tsx")).toThrow(
+      "shared/page.tsx:1:1: shared/page.tsx matches sharedModules, but it imports lib/view.ts",
     );
+  });
+
+  it("ignores an import whose name is used only as a lowercase JSX tag", () => {
+    const checkShared = check({
+      "shared/view.tsx": `import { orders } from "../infra/orders";\nexport const View = () => <orders />;`,
+    });
+    expect(checkShared("shared/view.tsx")).not.toThrow();
+  });
+
+  it("counts an import that is used as the object of a JSX member tag", () => {
+    const checkShared = check({
+      "shared/view.tsx": `import { orders } from "../infra/orders";\nexport const View = () => <orders.View />;`,
+    });
+    expect(checkShared("shared/view.tsx")).toThrow(
+      "shared/view.tsx:1:1: shared/view.tsx matches sharedModules, but it imports infra/orders.ts",
+    );
+  });
+
+  it("names the first problem in the module", () => {
+    const checkShared = check({
+      "shared/format.ts": `import { orders } from "../infra/orders";\nimport { createQueue } from "@notation/aws/sqs";\nexport const format = () => [orders, createQueue];`,
+    });
     expect(checkShared("shared/format.ts")).toThrow(
       "shared/format.ts:1:1: shared/format.ts matches sharedModules, but it imports infra/orders.ts",
     );
   });
 
+  it("names a shortest chain", () => {
+    const checkShared = check({
+      "lib/c.ts": `import { orders } from "../infra/orders";\nexport const c = () => orders;`,
+      "lib/b.ts": `import { c } from "./c";\nexport const b = () => c;`,
+      "lib/a.ts": `import { b } from "./b";\nexport const a = () => b;`,
+      "lib/x.ts": `import { a } from "./a";\nimport { orders } from "../infra/orders";\nexport const x = () => [a, orders];`,
+      "shared/format.ts": `import { x } from "../lib/x";\nexport const format = () => x;`,
+    });
+    expect(checkShared("shared/format.ts")).toThrow(
+      "but it imports lib/x.ts, which imports infra/orders.ts (lib/x.ts:2:1), which imports the resource function",
+    );
+  });
+
+  it("follows an import cycle", () => {
+    const checkShared = check({
+      "shared/a.ts": `import { b } from "./b";\nexport const a = () => b;`,
+      "shared/b.ts": `import { a } from "./a";\nimport { orders } from "../infra/orders";\nexport const b = () => [a, orders];`,
+    });
+    expect(checkShared("shared/a.ts")).toThrow(
+      "but it imports shared/b.ts, which imports infra/orders.ts (shared/b.ts:2:1)",
+    );
+  });
+
   it("fails for a listed module with a declaration", () => {
-    const { checkShared } = setup(files, ["runtime/**"]);
+    const checkShared = check({}, ["runtime/**"]);
     expect(checkShared("runtime/fn.ts")).toThrow(
       "runtime/fn.ts:4:23: runtime/fn.ts matches sharedModules, but it declares a function with $lambda.",
     );
   });
 
   it("passes a listed module that imports shared modules and packages", () => {
-    const { checkShared } = setup(
-      {
-        ...files,
-        "shared/format.ts": `import { Order } from "./schema";\nimport { sqs } from "@notation/aws/lambda";\nexport const format = () => [Order, sqs];`,
-      },
-      ["shared/**"],
-    );
+    const checkShared = check({
+      "node_modules/helpers/index.js": `import { createQueue } from "@notation/aws/sqs";\nexport const label = "x";\nexport const make = () => createQueue({});`,
+      "shared/format.ts": `import { Order } from "./schema";\nimport { sqs } from "@notation/aws/lambda";\nimport { label } from "helpers";\nexport const format = () => [Order, sqs, label];`,
+    });
     expect(checkShared("shared/format.ts")).not.toThrow();
+  });
+
+  it("accepts a sharedModules glob with a leading ./", () => {
+    const { analyses, checkShared } = setup(
+      { ...files, "shared/queue.ts": queueModule },
+      ["./shared/**"],
+    );
+    expect(analyses.isListedShared(path.join(root, "shared/queue.ts"))).toBe(
+      true,
+    );
+    expect(checkShared("shared/queue.ts")).toThrow("matches sharedModules");
   });
 
   it("doesn't check a module that sharedModules doesn't match", () => {
-    const { checkShared, kind } = setup({
-      ...files,
-      "shared/format.ts": `import { orders } from "../infra/orders";\nexport const format = () => orders;`,
-    });
+    const checkShared = check(
+      {
+        "shared/format.ts": `import { orders } from "../infra/orders";\nexport const format = () => orders;`,
+      },
+      [],
+    );
     expect(checkShared("shared/format.ts")).not.toThrow();
-    expect(kind("shared/format.ts")).toBe("infra");
-  });
-});
-
-describe("ModuleAnalyses.checkEffectImports", () => {
-  it("fails for a runtime module that imports an infra module for its side effects", () => {
-    const { analyses } = setup({
-      "infra/orders.ts": queueModule,
-      "lib/setup.ts": `import { orders } from "../infra/orders";\nglobalThis.setupRan = true;\nexport const url = () => orders.url;`,
-      "runtime/fn.ts": `import "../lib/setup";\n${lambdaModule}`,
-    });
-    expect(() =>
-      analyses.checkEffectImports(path.join(root, "runtime/fn.ts")),
-    ).toThrow(
-      "runtime/fn.ts:1:1: runtime/fn.ts loads lib/setup.ts only through side-effect imports and `export *`, along runtime/fn.ts → lib/setup.ts. lib/setup.ts is an infra module because it imports infra/orders.ts (lib/setup.ts:1:1), which imports createQueue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build leaves infra modules out, so the top-level code of lib/setup.ts doesn't run in the function. Move the top-level code that the function needs to a module that doesn't import infra, and import that module instead.",
-    );
-  });
-
-  const check = (files: Record<string, string>) => {
-    const { analyses } = setup({ "infra/orders.ts": queueModule, ...files });
-    return () => analyses.checkEffectImports(path.join(root, "runtime/fn.ts"));
-  };
-
-  it("fails for an export * of an infra module with top-level code", () => {
-    expect(
-      check({
-        "lib/setup.ts": `import { orders } from "../infra/orders";\nglobalThis.setupRan = true;\nexport const url = () => orders.url;`,
-        "runtime/fn.ts": `export * from "../lib/setup";\n${lambdaModule}`,
-      }),
-    ).toThrow(
-      "runtime/fn.ts:1:1: runtime/fn.ts loads lib/setup.ts only through side-effect imports and `export *`, along runtime/fn.ts → lib/setup.ts.",
-    );
-  });
-
-  it("passes a side-effect import of a barrel", () => {
-    expect(
-      check({
-        "infra/index.ts": `import type { X } from "./types";\nexport * from "./orders";\nexport { orders as o } from "./orders";\ntype Y = X;`,
-        "runtime/fn.ts": `import "../infra/index";\n${lambdaModule}`,
-      }),
-    ).not.toThrow();
-  });
-
-  it("follows the side-effect imports and export * of a barrel", () => {
-    expect(
-      check({
-        "infra/index.ts": `import "../lib/setup";\nexport * from "./orders";`,
-        "lib/setup.ts": `import { orders } from "../infra/orders";\nglobalThis.setupRan = true;\nexport const url = () => orders.url;`,
-        "runtime/fn.ts": `import "../infra/index";\n${lambdaModule}`,
-      }),
-    ).toThrow(
-      "runtime/fn.ts:1:1: runtime/fn.ts loads lib/setup.ts only through side-effect imports and `export *`, along runtime/fn.ts → infra/index.ts → lib/setup.ts. lib/setup.ts is an infra module because",
-    );
-  });
-
-  it("passes a side-effect import of a module that has only declarations", () => {
-    expect(
-      check({
-        "lib/urls.ts": [
-          `"use strict";`,
-          `import { orders } from "../infra/orders";`,
-          `export const prefix = "orders-", limits = { max: -1, tags: [\`a\`] };`,
-          `export const url = () => orders.url;`,
-          `export function name() { return prefix; }`,
-          `export class Client { static kind = "sqs"; send() {} }`,
-          `export default function () {}`,
-          `export interface Message { id: string }`,
-          `declare const env: string;`,
-        ].join("\n"),
-        "runtime/fn.ts": `import "../lib/urls";\n${lambdaModule}`,
-      }),
-    ).not.toThrow();
-  });
-
-  it.each([
-    ["a call", `const client = connect();`],
-    ["a member read", `const region = process.env.REGION;`],
-    ["a static block", `class Client { static { register(); } }`],
-    ["an enum", `enum Level { Low }`],
-  ])("fails for a module with %s at its top level", (_name, statement) => {
-    expect(
-      check({
-        "lib/client.ts": `import { orders } from "../infra/orders";\n${statement}\nexport const url = () => orders.url;`,
-        "runtime/fn.ts": `import "../lib/client";\n${lambdaModule}`,
-      }),
-    ).toThrow("the top-level code of lib/client.ts doesn't run");
-  });
-
-  it("fails for a module that imports a resource function without calling it at its top level", () => {
-    expect(
-      check({
-        "lib/factory.ts": `import { createQueue } from "@notation/aws/sqs";\nglobalThis.setupRan = true;\nexport const make = (id) => createQueue({ id });`,
-        "runtime/fn.ts": `import "../lib/factory";\n${lambdaModule}`,
-      }),
-    ).toThrow(
-      "lib/factory.ts is an infra module because it imports createQueue from @notation/aws/sqs (lib/factory.ts:1:10)",
-    );
-  });
-
-  it("checks only runtime modules", () => {
-    const { analyses } = setup({
-      "infra/orders.ts": queueModule,
-      "lib/setup.ts": `import { orders } from "../infra/orders";\nglobalThis.setupRan = true;\nexport const url = () => orders.url;`,
-      "lib/helper.ts": `import "./setup";\nexport const x = 1;`,
-    });
-    expect(() =>
-      analyses.checkEffectImports(path.join(root, "lib/helper.ts")),
-    ).not.toThrow();
-  });
-
-  it("passes a side-effect import of a module that imports a resource function itself", () => {
-    const { analyses } = setup({
-      "infra/orders.ts": queueModule,
-      "runtime/fn.ts": `import "../infra/orders";\n${lambdaModule}`,
-    });
-    expect(() =>
-      analyses.checkEffectImports(path.join(root, "runtime/fn.ts")),
-    ).not.toThrow();
-  });
-
-  it("passes a side-effect import of a shared module", () => {
-    const { analyses } = setup({
-      "infra/orders.ts": queueModule,
-      "lib/setup.ts": `globalThis.setupRan = true;`,
-      "runtime/fn.ts": `import "../lib/setup";\n${lambdaModule}`,
-    });
-    expect(() =>
-      analyses.checkEffectImports(path.join(root, "runtime/fn.ts")),
-    ).not.toThrow();
   });
 });
 

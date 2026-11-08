@@ -2,39 +2,34 @@ import fs from "node:fs";
 import path from "node:path";
 import { projectRoot } from "@notation/core";
 import { analyzeModule, type ModuleAnalysis } from "./analyze";
-import { location, unwrap, type Node } from "./ast";
+import { location, type Node } from "./ast";
 import { Marks } from "./marks";
 
 export const nodeModules = /[\\/]node_modules[\\/]/;
 export const scriptFile = /\.[cm]?[jt]sx?$/;
 
 /**
- * The kind of a module.
+ * The kind of a module, by its own code. The modules that it imports don't
+ * change its kind.
  *
  * - `runtime`: the module has a declaration, such as `$lambda`.
- * - `infra`: a project module that imports a resource function, or imports
- *   an infra module. A package module outside `node_modules` is infra only
- *   if it calls a resource function at its top level.
+ * - `infra`: the module calls a resource function at its top level.
  * - `shared`: any other module.
  */
 export type ModuleKind =
   | { kind: "runtime"; declaration: string }
-  | { kind: "infra"; reason: InfraReason }
+  | { kind: "infra"; call: string; start: number }
   | { kind: "shared" };
-
-/**
- * Why a module is infra: the resource function that it imports, the infra
- * module that it imports, or, for a package module, the resource function
- * that it calls at its top level. `source` is the specifier of the import,
- * and `start` is the position of the import or the call in the module.
- */
-export type InfraReason =
-  | { resource: string; source: string; start: number }
-  | { module: string; source: string; start: number }
-  | { call: string; start: number };
 
 /** An import or re-export of a module, by its specifier. */
 type ModuleImport = { source: string; statement: Node };
+
+// A reason that a module can't be shared, at a position in the module.
+type Problem = { message: string; start: number };
+
+// A module that the walk of `checkShared` reaches, the position of the
+// import that reached it, and the module that has that import.
+type Step = { file: string; start: number; previous?: Step };
 
 export type ModuleAnalysesOptions = {
   marks?: Marks;
@@ -48,19 +43,14 @@ export type ModuleAnalysesOptions = {
 };
 
 /**
- * Analyses and classifies project modules for both builds. An analysis is
- * kept until its file changes. A classification is kept until any analysis
- * changes, since it depends on the modules that the module imports.
+ * Analyses and classifies modules for both builds. An analysis is kept until
+ * its file changes.
  */
 export class ModuleAnalyses {
   readonly marks: Marks;
   readonly sharedModules: string[];
   #root?: string;
   #analyses = new Map<string, ModuleAnalysis>();
-  #kinds = new Map<string, ModuleKind | undefined>();
-  // For each infra module in #kinds, the number of infra modules in its
-  // chain after it.
-  #depths = new Map<string, number>();
   // Directories, and whether the nearest package.json with a name above
   // each one belongs to a package.
   #packageDirs = new Map<string, boolean>();
@@ -78,13 +68,13 @@ export class ModuleAnalyses {
   }
 
   /**
-   * Whether a file is a project module, which `kind` classifies by its
-   * imports. A file in `node_modules` is in a package. Any other file under
-   * the project root is a project module, even in a folder with its own
-   * package.json. A file outside the root is in a package when its nearest
-   * package.json with a name is in a directory that doesn't contain the
-   * root: a workspace package resolves to its real path, outside
-   * `node_modules`.
+   * Whether a file is a project module, which `sharedModules` can match and
+   * whose imports `checkShared` follows. A file in `node_modules` is in a
+   * package. Any other file under the project root is a project module, even
+   * in a folder with its own package.json. A file outside the root is in a
+   * package when its nearest package.json with a name is in a directory that
+   * doesn't contain the root: a workspace package resolves to its real path,
+   * outside `node_modules`.
    */
   isProjectModule(file: string): boolean {
     if (!isLocalModule(file)) return false;
@@ -109,8 +99,7 @@ export class ModuleAnalyses {
   /**
    * Analyses a module from the source that a transform hook sees. Each
    * runtime build transforms the same files, so an analysis of the same
-   * source is reused. The kinds are cleared only if a kind could depend on
-   * the module: it replaces an analysis, or a walk reached the module.
+   * source is reused.
    */
   fromSource(file: string, source: string): ModuleAnalysis {
     const cached = this.#analyses.get(file);
@@ -120,13 +109,7 @@ export class ModuleAnalyses {
       this.marks,
     );
     this.#analyses.set(file, analysis);
-    if (cached || this.#kinds.has(file)) this.#clearKinds();
     return analysis;
-  }
-
-  #clearKinds() {
-    this.#kinds.clear();
-    this.#depths.clear();
   }
 
   /**
@@ -148,7 +131,6 @@ export class ModuleAnalyses {
   invalidate(file: string) {
     this.#analyses.delete(file);
     this.marks.invalidate(file);
-    this.#clearKinds();
     this.#packageDirs.clear();
   }
 
@@ -161,109 +143,22 @@ export class ModuleAnalyses {
 
   /**
    * The kind of a module, or `undefined` for a file that the build doesn't
-   * analyse, such as a file in `node_modules`. A package module outside
-   * `node_modules` is runtime if it has a declaration, infra if it calls a
-   * resource function at its top level, and shared otherwise. The rules
-   * below apply to project modules.
-   *
-   * 1. A module with a declaration is runtime.
-   * 2. A module that `sharedModules` matches is shared.
-   * 3. A module that imports a resource function is infra.
-   * 4. A module that imports an infra module is infra. This repeats until
-   *    no module changes, over the modules that the first module reaches.
-   *    A package module ends the walk with its own kind, so its imports
-   *    aren't followed. Runtime and listed shared modules end the walk too,
-   *    since their kind doesn't depend on their imports.
-   * 5. Any other module is shared.
+   * analyse, such as a file in `node_modules`. A module with a declaration is
+   * runtime, even if it also calls a resource function.
    */
   kind(file: string): ModuleKind | undefined {
-    if (this.#kinds.has(file)) return this.#kinds.get(file);
-    if (!this.isProjectModule(file)) {
-      const kind = packageKind(this.#tryFromFile(file));
-      this.#kinds.set(file, kind);
-      return kind;
+    const analysis = this.#tryFromFile(file);
+    if (!analysis) return undefined;
+    const { declaration, resourceCall } = analysis;
+    if (declaration) return { kind: "runtime", declaration: declaration.name };
+    if (resourceCall) {
+      return {
+        kind: "infra",
+        call: exportedName(analysis, resourceCall),
+        start: resourceCall.call!.start,
+      };
     }
-    const found = new Map<string, ModuleKind | undefined>();
-    const pending = new Map<string, { file: string; import: ModuleImport }[]>();
-    const queue = [file];
-    for (let i = 0; i < queue.length; i++) {
-      const next = queue[i]!;
-      if (found.has(next) || pending.has(next)) continue;
-      if (this.#kinds.has(next)) {
-        found.set(next, this.#kinds.get(next));
-        continue;
-      }
-      // A file outside the project ends the walk with its own kind.
-      if (!this.isProjectModule(next)) {
-        found.set(next, this.kind(next));
-        continue;
-      }
-      const analysis = this.#tryFromFile(next);
-      if (!analysis) {
-        found.set(next, undefined);
-        continue;
-      }
-      const base = baseKind(analysis, this.isListedShared(next));
-      if (base) {
-        found.set(next, base);
-        continue;
-      }
-      const edges = this.#imports(analysis).flatMap((imported) => {
-        const target = this.marks.resolve(imported.source, next);
-        return target && isLocalModule(target)
-          ? [{ file: target, import: imported }]
-          : [];
-      });
-      pending.set(next, edges);
-      queue.push(...edges.map((edge) => edge.file));
-    }
-
-    // A breadth-first walk from the infra modules to the modules that import
-    // them, in order of depth. Each module takes its first import of an
-    // infra module with the smallest depth, so each reason points to a
-    // shortest chain.
-    const importers = new Map<string, string[]>();
-    for (const [module, edges] of pending) {
-      for (const edge of edges) {
-        const list = importers.get(edge.file) ?? [];
-        list.push(module);
-        importers.set(edge.file, list);
-      }
-    }
-    const depths = new Map<string, number>();
-    const byDepth: string[][] = [];
-    for (const [module, kind] of found) {
-      if (kind?.kind !== "infra") continue;
-      const depth = this.#depths.get(module) ?? 0;
-      depths.set(module, depth);
-      (byDepth[depth] ??= []).push(module);
-    }
-    for (let depth = 0; depth < byDepth.length; depth++) {
-      for (const infra of byDepth[depth] ?? []) {
-        for (const module of importers.get(infra) ?? []) {
-          if (depths.has(module)) continue;
-          const edge = pending
-            .get(module)!
-            .find((edge) => depths.get(edge.file) === depth)!;
-          depths.set(module, depth + 1);
-          (byDepth[depth + 1] ??= []).push(module);
-          found.set(module, {
-            kind: "infra",
-            reason: {
-              module: edge.file,
-              source: edge.import.source,
-              start: edge.import.statement.start,
-            },
-          });
-        }
-      }
-    }
-    for (const module of pending.keys()) {
-      if (!depths.has(module)) found.set(module, { kind: "shared" });
-    }
-    for (const [module, kind] of found) this.#kinds.set(module, kind);
-    for (const [module, depth] of depths) this.#depths.set(module, depth);
-    return found.get(file);
+    return { kind: "shared" };
   }
 
   // A module that can't be analysed has no kind here. The bundler reports
@@ -306,12 +201,28 @@ export class ModuleAnalyses {
     return imports;
   }
 
+  // The local modules that the value imports of a module load, each with the
+  // position of its import.
+  #edges(file: string, analysis: ModuleAnalysis): Step[] {
+    return this.#imports(analysis).flatMap(({ source, statement }) => {
+      const target = this.marks.resolve(source, file);
+      return target && isLocalModule(target)
+        ? [{ file: target, start: statement.start }]
+        : [];
+    });
+  }
+
+  // A position in a module for an error message, such as `infra/orders.ts:3:23`.
+  #at(file: string, start: number): string {
+    const source = this.#analyses.get(file)?.table.module.source;
+    const name = displayPath(file, this.root);
+    return source === undefined ? name : `${name}:${location(source, start)}`;
+  }
+
   /**
    * Says why a module is an infra or runtime module, such as `an infra
-   * module because it imports infra/orders.ts (lib/format.ts:1:1), which
-   * imports queue from @notation/aws/sqs (infra/orders.ts:1:10)`. Each step
-   * gives the position of the import. Returns `undefined` for a shared
-   * module.
+   * module because it calls queue at its top level (infra/orders.ts:3:23)`.
+   * Returns `undefined` for a shared module.
    */
   describeKind(file: string): string | undefined {
     const kind = this.kind(file);
@@ -319,271 +230,128 @@ export class ModuleAnalyses {
     if (kind.kind === "runtime") {
       return `a runtime module because it declares a function with ${kind.declaration}`;
     }
-    const at = (module: string, start: number) => {
-      const source = this.#analyses.get(module)?.table.module.source;
-      const name = displayPath(module, this.root);
-      return source === undefined ? name : `${name}:${location(source, start)}`;
-    };
-    const steps: string[] = [];
-    let module = file;
-    let reason = kind.reason;
-    while ("module" in reason) {
-      steps.push(
-        `imports ${displayPath(reason.module, this.root)} (${at(module, reason.start)})`,
-      );
-      const next = this.kind(reason.module);
-      if (next?.kind !== "infra")
-        return `an infra module because it ${steps.join(", which ")}`;
-      module = reason.module;
-      reason = next.reason;
-    }
-    steps.push(
-      "call" in reason
-        ? `calls ${reason.call} at its top level (${at(module, reason.start)})`
-        : `imports ${reason.resource} from ${reason.source} (${at(module, reason.start)})`,
-    );
-    return `an infra module because it ${steps.join(", which ")}`;
+    return `an infra module because it calls ${kind.call} at its top level (${this.#at(file, kind.start)})`;
   }
 
-  /**
-   * Fails if a runtime module loads a module only through side-effect
-   * imports and `export *`, the runtime build leaves that module out, and
-   * the module has top-level code that may have effects. Before module
-   * kinds, that code ran in the function. The walk follows such imports
-   * from the runtime module through modules that the runtime build leaves
-   * out, such as a barrel with `import "./setup"`. It skips a module that
-   * calls a resource function at its top level, since the runtime build
-   * left that module out before too.
-   */
-  checkEffectImports(file: string) {
-    if (!this.isProjectModule(file) || this.kind(file)?.kind !== "runtime")
-      return;
-    const analysis = this.fromFile(file);
-    if (!analysis) return;
-    const { source, body } = analysis.table.module;
-    const seen = new Set([file]);
-    for (const statement of body) {
-      if (!loadsForEffects(statement)) continue;
-      const chain = this.#droppedCode(file, statement, seen);
-      if (!chain) continue;
-      const names = [file, ...chain].map((module) =>
-        displayPath(module, this.root),
-      );
-      const [name, target] = [names[0]!, names.at(-1)!];
-      throw new Error(
-        `${name}:${location(source, statement.start)}: ${name} loads ${target} only through side-effect imports and \`export *\`, along ${names.join(" → ")}. ${target} is ${this.describeKind(chain.at(-1)!)}. The runtime build leaves infra modules out, so the top-level code of ${target} doesn't run in the function. Move the top-level code that the function needs to a module that doesn't import infra, and import that module instead.`,
-      );
+  // Why a module can't be shared, by its own code. A file outside the
+  // project counts only if it declares a function or calls a resource
+  // function at its top level, which are the same tests as for its kind.
+  #problem(file: string, analysis: ModuleAnalysis): Problem | undefined {
+    const { declaration, resource, resourceCall } = analysis;
+    if (declaration) {
+      return {
+        message: `declares a function with ${declaration.name}`,
+        start: declaration.call.start,
+      };
     }
+    if (resource && this.isProjectModule(file)) {
+      return {
+        message: `imports the resource function ${resource.name} from ${resource.source}`,
+        start: resource.start,
+      };
+    }
+    if (resourceCall) {
+      return {
+        message: `calls ${exportedName(analysis, resourceCall)} at its top level`,
+        start: resourceCall.call!.start,
+      };
+    }
+    return undefined;
   }
 
-  // The chain of modules from the target of `statement` in `file` to a
-  // module with top-level code that the runtime build leaves out.
-  #droppedCode(
-    file: string,
-    statement: Node,
+  // A breadth-first walk from `first` to the closest module that can't be
+  // shared. It follows the imports of project modules only. `seen` holds the
+  // modules that an earlier walk found no problem in.
+  #findProblem(
+    first: Step,
     seen: Set<string>,
-  ): string[] | undefined {
-    const target = this.marks.resolve(statement.source.value, file);
-    if (!target || seen.has(target) || !this.isProjectModule(target))
-      return undefined;
-    seen.add(target);
-    if (this.kind(target)?.kind !== "infra") return undefined;
-    const analysis = this.#tryFromFile(target);
-    if (!analysis || analysis.resourceCall) return undefined;
-    const { body } = analysis.table.module;
-    if (body.some(hasEffects)) return [target];
-    for (const next of body) {
-      if (!loadsForEffects(next)) continue;
-      const chain = this.#droppedCode(target, next, seen);
-      if (chain) return [target, ...chain];
+  ): { step: Step; problem: Problem } | undefined {
+    const queue = [first];
+    for (let i = 0; i < queue.length; i++) {
+      const step = queue[i]!;
+      if (seen.has(step.file)) continue;
+      seen.add(step.file);
+      const analysis = this.#tryFromFile(step.file);
+      if (!analysis) continue;
+      const problem = this.#problem(step.file, analysis);
+      if (problem) return { step, problem };
+      if (!this.isProjectModule(step.file)) continue;
+      for (const edge of this.#edges(step.file, analysis)) {
+        queue.push({ ...edge, previous: step });
+      }
     }
     return undefined;
   }
 
   /**
-   * Fails if a module that `sharedModules` matches can't be shared: it has a
-   * declaration, imports a resource function, or imports an infra or runtime
-   * module. The error names the declaration, or else the first import that
-   * causes a problem.
+   * Fails if a module that `sharedModules` matches can't be shared: it
+   * declares a function or imports a resource function, or a module that it
+   * imports, directly or through other project modules, does. A file outside
+   * the project ends the walk, and fails the check only if it declares a
+   * function or calls a resource function at its top level. The error names
+   * the first problem in the listed module, and the shortest chain of
+   * imports to a module with a problem.
    */
   checkShared(file: string) {
     if (!this.isListedShared(file)) return;
     const analysis = this.fromFile(file);
     if (!analysis) return;
-    const { source } = analysis.table.module;
+    const own = this.#problem(file, analysis);
+    let found: { step: Step; problem: Problem } | undefined;
+    if (!analysis.declaration) {
+      const seen = new Set([file]);
+      for (const edge of this.#edges(file, analysis)) {
+        if (own && own.start < edge.start) break;
+        found = this.#findProblem(edge, seen);
+        if (found) break;
+      }
+    }
+    let start: number;
+    let message: string;
+    if (found) {
+      const steps: Step[] = [];
+      for (let step: Step | undefined = found.step; step; step = step.previous)
+        steps.unshift(step);
+      const parts = steps.map((step, i) =>
+        i === 0
+          ? `imports ${displayPath(step.file, this.root)}`
+          : `imports ${displayPath(step.file, this.root)} (${this.#at(steps[i - 1]!.file, step.start)})`,
+      );
+      parts.push(
+        `${found.problem.message} (${this.#at(found.step.file, found.problem.start)})`,
+      );
+      start = steps[0]!.start;
+      message = parts.join(", which ");
+    } else if (own) {
+      start = own.start;
+      message = own.message;
+    } else {
+      return;
+    }
     const name = displayPath(file, this.root);
-    const problems: { start: number; message: string }[] = [];
-    if (analysis.resource) {
-      problems.push({
-        start: analysis.resource.start,
-        message: `it imports the resource function ${analysis.resource.name} from ${analysis.resource.source}`,
-      });
-    }
-    for (const imported of this.#imports(analysis)) {
-      const target = this.marks.resolve(imported.source, file);
-      if (!target) continue;
-      const why = this.describeKind(target);
-      if (!why) continue;
-      problems.push({
-        start: imported.statement.start,
-        message: `it imports ${displayPath(target, this.root)}, which is ${why}`,
-      });
-      break;
-    }
-    const first = analysis.declaration
-      ? {
-          start: analysis.declaration.call.start,
-          message: `it declares a function with ${analysis.declaration.name}`,
-        }
-      : problems.reduce<(typeof problems)[number] | undefined>(
-          (a, b) => (a && a.start <= b.start ? a : b),
-          undefined,
-        );
-    if (!first) return;
+    const { source } = analysis.table.module;
     throw new Error(
-      `${name}:${location(source, first.start)}: ${name} matches sharedModules, but ${first.message}. A shared module runs in both builds, so it can't declare a function or resources, or import an infra or runtime module.`,
+      `${name}:${location(source, start)}: ${name} matches sharedModules, but it ${message}. A shared module runs in both builds, so it can't declare a function or import a resource function, directly or through the modules that it imports.`,
     );
   }
 }
 
-function baseKind(
+// The name of a called resource function as its module exports it, such as
+// `queue` for `import { queue as q }`.
+function exportedName(
   analysis: ModuleAnalysis,
-  listed: boolean,
-): ModuleKind | undefined {
-  if (analysis.declaration) {
-    return { kind: "runtime", declaration: analysis.declaration.name };
-  }
-  if (listed) return { kind: "shared" };
-  if (analysis.resource) {
-    const { name, source, start } = analysis.resource;
-    return { kind: "infra", reason: { resource: name, source, start } };
-  }
-  return undefined;
-}
-
-function packageKind(
-  analysis: ModuleAnalysis | undefined,
-): ModuleKind | undefined {
-  if (!analysis) return undefined;
-  if (analysis.declaration) {
-    return { kind: "runtime", declaration: analysis.declaration.name };
-  }
-  const call = analysis.resourceCall;
-  if (call) {
-    return {
-      kind: "infra",
-      reason: { call: call.name, start: call.call!.start },
-    };
-  }
-  return { kind: "shared" };
+  reference: NonNullable<ModuleAnalysis["resourceCall"]>,
+): string {
+  const binding = analysis.table.imports.get(reference.node.name);
+  return binding && binding.imported !== "*" && binding.imported !== "default"
+    ? binding.imported
+    : reference.name;
 }
 
 // The files that the builds analyse: JS and TS files outside `node_modules`.
 export function isLocalModule(file: string): boolean {
   return (
     !file.startsWith("\0") && scriptFile.test(file) && !nodeModules.test(file)
-  );
-}
-
-// An import or re-export that loads a module only for its side effects, as
-// far as the runtime bundle goes: one with no bindings, such as
-// `import "./setup"` or `export {} from "./setup"`, or an `export *`, whose
-// names the runtime entry doesn't re-export.
-function loadsForEffects(statement: Node): boolean {
-  if (!statement.source) return false;
-  if (statement.type === "ExportAllDeclaration")
-    return !statement.exported && statement.exportKind !== "type";
-  if (statement.specifiers?.length !== 0) return false;
-  return statement.type === "ImportDeclaration"
-    ? statement.importKind !== "type"
-    : statement.type === "ExportNamedDeclaration" &&
-        statement.exportKind !== "type";
-}
-
-// Whether a top-level statement may have effects when its module loads.
-// Imports, re-exports, type declarations and function declarations have
-// none, and neither do classes and variables whose values are literals,
-// names, functions, or arrays, objects and classes of these.
-function hasEffects(statement: Node): boolean {
-  if (statement.declare) return false;
-  switch (statement.type) {
-    case "ImportDeclaration":
-    case "ExportAllDeclaration":
-    case "EmptyStatement":
-    case "FunctionDeclaration":
-    case "TSDeclareFunction":
-    case "TSTypeAliasDeclaration":
-    case "TSInterfaceDeclaration":
-      return false;
-    case "ExpressionStatement":
-      return !statement.directive;
-    case "ExportNamedDeclaration":
-      return statement.declaration ? hasEffects(statement.declaration) : false;
-    case "ExportDefaultDeclaration": {
-      const { declaration } = statement;
-      return /Declaration$|^TSDeclareFunction$/.test(declaration.type)
-        ? hasEffects(declaration)
-        : !isInert(declaration);
-    }
-    case "ClassDeclaration":
-      return !isInertClass(statement);
-    case "VariableDeclaration":
-      return statement.declarations.some(
-        (declarator: Node) =>
-          declarator.id.type !== "Identifier" ||
-          (declarator.init && !isInert(declarator.init)),
-      );
-    default:
-      return true;
-  }
-}
-
-// Whether evaluating an expression has no effects.
-function isInert(node: Node): boolean {
-  node = unwrap(node);
-  switch (node.type) {
-    case "Literal":
-    case "Identifier":
-    case "FunctionExpression":
-    case "ArrowFunctionExpression":
-      return true;
-    case "TemplateLiteral":
-      return node.expressions.length === 0;
-    case "UnaryExpression":
-      return node.operator !== "delete" && isInert(node.argument);
-    case "ArrayExpression":
-      return node.elements.every(
-        (element: Node | null) =>
-          !element || (element.type !== "SpreadElement" && isInert(element)),
-      );
-    case "ObjectExpression":
-      return node.properties.every(
-        (property: Node) =>
-          property.type === "Property" &&
-          (!property.computed || isInert(property.key)) &&
-          isInert(property.value),
-      );
-    case "ClassExpression":
-      return isInertClass(node);
-    default:
-      return false;
-  }
-}
-
-// A class runs code when it is defined only through decorators, its
-// superclass, computed keys, static blocks and static initialisers.
-function isInertClass(node: Node): boolean {
-  if (node.decorators?.length > 0) return false;
-  if (node.superClass && !isInert(node.superClass)) return false;
-  return node.body.body.every(
-    (member: Node) =>
-      member.type !== "StaticBlock" &&
-      !(member.decorators?.length > 0) &&
-      (!member.computed || isInert(member.key)) &&
-      (!member.static ||
-        member.type === "MethodDefinition" ||
-        !member.value ||
-        isInert(member.value)),
   );
 }
 

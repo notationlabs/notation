@@ -55,22 +55,20 @@ export type ModuleAnalysis = {
   marked: MarkedReference[];
   declaration?: Declaration;
   /**
-   * The first resource function that the module imports, if any. Such a
-   * module is an infra module, whether it calls the function at its top
-   * level or only inside a function.
+   * The first resource function that the module imports, if any. A module
+   * that `sharedModules` matches can't import one.
    */
   resource?: ResourceImport;
   /**
    * The first call to a resource function at the top level of the module,
-   * outside any function. The build uses it to tell whether a package
-   * module outside `node_modules` declares resources when it loads.
+   * outside any function. A module with such a call is an infra module.
    */
   resourceCall?: MarkedReference;
 };
 
 /**
- * Reads the declaration of a module, and the first resource function that
- * it imports.
+ * Reads the declaration of a module, the first resource function that it
+ * imports, and its first call to a resource function at its top level.
  */
 export function analyzeModule(
   table: ModuleTable,

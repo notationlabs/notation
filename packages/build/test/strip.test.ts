@@ -55,7 +55,6 @@ function setup(source = handlerModule) {
       ? {
           module: path.relative(root, f),
           reason: analyses.describeKind(f)!,
-          infraValue: true,
         }
       : undefined;
   return { marks, analysis, isInfraModule };
@@ -246,7 +245,7 @@ describe("stripForRuntime", () => {
       ),
     );
     expect(() => stripForRuntime(analysis, marks, isInfraModule, root)).toThrow(
-      "runtime/handler.ts:16:20: an option of $lambda that the function keeps refers to ordersQueue, from infra/orders.ts, which is an infra module because it imports createQueue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build removes infra.",
+      "runtime/handler.ts:16:20: an option of $lambda that the function keeps refers to ordersQueue, from infra/orders.ts, which is an infra module because it calls createQueue at its top level (infra/orders.ts:2:28). The runtime build removes infra.",
     );
   });
 

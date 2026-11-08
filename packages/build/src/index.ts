@@ -12,9 +12,5 @@ export {
 } from "./infra-strip";
 export { stripForRuntime, type DescribeInfra } from "./runtime-strip";
 export * from "./plugins";
-export {
-  type InfraReason,
-  type ModuleAnalysesOptions,
-  type ModuleKind,
-} from "./modules";
+export { type ModuleAnalysesOptions, type ModuleKind } from "./modules";
 export { infraEntry, infraEntryPlugin, infraWatchExclude } from "./infra-entry";

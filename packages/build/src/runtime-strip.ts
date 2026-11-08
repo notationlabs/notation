@@ -15,16 +15,16 @@ import { displayPath } from "./modules";
 /**
  * Describes an infra module that a name is imported from, by the module's
  * absolute path: its path for an error message, and why it is infra, such
- * as `an infra module because it imports queue from @notation/aws/sqs`.
- * `infraValue` is true when the module that defines the name imports or
- * calls a resource function itself, so the name is likely an infra value,
- * such as a queue. Returns `undefined` for a module that isn't infra, or that the
- * build doesn't classify, such as a package.
+ * as `an infra module because it calls queue at its top level`.
+ * `definedIn` is the path of the module that defines the name, when that
+ * module is shared, such as a module that the infra module re-exports.
+ * Returns `undefined` for a module that isn't infra, or that the build
+ * doesn't classify, such as a package.
  */
 export type DescribeInfra = (
   file: string,
   name: string,
-) => { module: string; reason: string; infraValue: boolean } | undefined;
+) => { module: string; reason: string; definedIn?: string } | undefined;
 
 /**
  * Reduces the declaration of a module to its runtime options, for the runtime
@@ -218,9 +218,9 @@ function checkReference(
   const resolved = marks.resolve(binding.source, file);
   const infra = resolved && describeInfra(resolved, binding.imported);
   if (infra) {
-    const fix = infra.infraValue
-      ? advice
-      : `Move ${node.name} to a module that doesn't import infra, or remove the import that makes ${infra.module} infra.`;
+    const fix = infra.definedIn
+      ? `${node.name} is defined in ${infra.definedIn}, which isn't infra, so import it from there.`
+      : advice;
     throw new Error(
       `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from ${infra.module}, which is ${infra.reason}. ${fix}`,
     );

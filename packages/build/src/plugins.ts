@@ -196,10 +196,7 @@ export type RuntimePluginOptions = {
  * 1. Serves the generated entry.
  * 2. Reduces each declaration to its runtime options.
  * 3. Marks infra modules free of side effects, so the bundler drops each one
- *    whose bindings are no longer used. A runtime module fails the build if
- *    it loads, through side-effect imports and `export *` only, an infra
- *    module with top-level code that ran in the function before module
- *    kinds.
+ *    whose bindings are no longer used.
  * 4. Fails the build if an infra module, or an infra function from a
  *    package, is still in the bundle, and names the import chain.
  */
@@ -210,11 +207,14 @@ export function runtimePlugin({
   const infraModules = new Set<string>();
   const describeInfra = (file: string, name: string) => {
     if (analyses.kind(file)?.kind !== "infra") return undefined;
-    const origin = analyses.kind(analyses.marks.exportOrigin(file, name));
+    const origin = analyses.marks.exportOrigin(file, name);
     return {
       module: displayPath(file, analyses.root),
       reason: analyses.describeKind(file)!,
-      infraValue: origin?.kind === "infra" && !("module" in origin.reason),
+      definedIn:
+        analyses.kind(origin)?.kind === "shared"
+          ? displayPath(origin, analyses.root)
+          : undefined,
     };
   };
   return {
@@ -233,7 +233,6 @@ export function runtimePlugin({
         if (!mayHoldMarks(code)) return null;
         const analysis = analyses.fromSource(id, code);
         analyses.checkShared(id);
-        analyses.checkEffectImports(id);
         const isInfra = analyses.kind(id)?.kind === "infra";
         if (isInfra) infraModules.add(id);
         const stripped = stripForRuntime(

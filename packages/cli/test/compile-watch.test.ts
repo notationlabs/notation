@@ -215,7 +215,7 @@ it("bundles a runtime file in a glob directory that is created during watch", as
   await waitFor(() => expect(existsSync(bundle)).toBe(true));
 });
 
-it("checks a listed shared module again when a module that it imports becomes infra", async () => {
+it("checks a listed shared module again when a module that it imports starts to import a resource function", async () => {
   write(
     "watch-h/infra/queue.ts",
     `/** @resource */\nexport function makeQueue(name) { return { name }; }\n`,
@@ -243,45 +243,7 @@ it("checks a listed shared module again when a module that it imports becomes in
   );
   await waitFor(() =>
     expect(String(failures.at(-1))).toContain(
-      "watch-h/shared/format.ts:1:1: watch-h/shared/format.ts matches sharedModules, but it imports watch-h/lib/util.ts, which is an infra module because it imports makeQueue from ../infra/queue",
-    ),
-  );
-});
-
-it("fails the runtime build when a module that the function imports for its side effects becomes infra", async () => {
-  write(
-    "watch-i/infra/queue.ts",
-    `/** @resource */\nexport function makeQueue(name) { return { name }; }\n`,
-  );
-  write("watch-i/lib/dep.ts", `export const dep = 1;\n`);
-  write(
-    "watch-i/lib/setup.ts",
-    `import { dep } from "./dep";\nglobalThis.dep = dep;\n`,
-  );
-  write("watch-i/todos.ts", `import "./lib/setup";\n${runtimeModule("todos")}`);
-  write("watch-i/main.ts", `import { fn } from "./todos";\nconsole.log(fn);\n`);
-  const error = vi.fn();
-  const watchLogger = { info: () => {}, error } as unknown as Logger;
-  onTestFinished(
-    await compile(build("watch-i/main.ts"), {
-      watch: true,
-      logger: watchLogger,
-    }),
-  );
-  await waitFor(() =>
-    expect(existsSync(path.join(root, "dist/watch-i/todos/index.mjs"))).toBe(
-      true,
-    ),
-  );
-  expect(error).not.toHaveBeenCalled();
-
-  write(
-    "watch-i/lib/dep.ts",
-    `import { makeQueue } from "../infra/queue";\nexport const dep = () => makeQueue("orders");\n`,
-  );
-  await waitFor(() =>
-    expect(String(error.mock.calls.at(-1)?.[0])).toContain(
-      "watch-i/todos.ts:1:1: watch-i/todos.ts loads watch-i/lib/setup.ts only through side-effect imports and `export *`, along watch-i/todos.ts → watch-i/lib/setup.ts. watch-i/lib/setup.ts is an infra module because it imports watch-i/lib/dep.ts (watch-i/lib/setup.ts:1:1), which imports makeQueue from ../infra/queue",
+      "watch-h/shared/format.ts:1:1: watch-h/shared/format.ts matches sharedModules, but it imports watch-h/lib/util.ts, which imports the resource function makeQueue from ../infra/queue (watch-h/lib/util.ts:1:10)",
     ),
   );
 });
