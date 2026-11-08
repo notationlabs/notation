@@ -116,6 +116,7 @@ function writeAwsPackage() {
       `import "./sdk.js";`,
       `/** @resource */`,
       `export function queue(config) { return { url: "placeholder-url", consume: () => {} }; }`,
+      `export function parseMessage(body) { return JSON.parse(body); }`,
     ].join("\n"),
   );
   write(
@@ -215,6 +216,8 @@ describe("declaration modules", () => {
 
     const file = path.join(root, "dist/runtime/process-orders/index.mjs");
     const bundle = readFileSync(file, "utf8");
+    expect(existsSync(`${file}.map`)).toBe(false);
+    expect(bundle).not.toContain("sourceMappingURL");
     expect(bundle).not.toContain("placeholder-url");
     expect(bundle).not.toContain("sdk loaded");
     expect(bundle).not.toContain("policy");
@@ -403,6 +406,64 @@ describe("declaration modules", () => {
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
       "The bundle of runtime/process-orders.ts includes queue from @notation/aws/sqs.js, a function that declares infrastructure. The bundle imports it through runtime/process-orders.ts → runtime/labels.ts → infra/orders.ts → infra/helpers.ts → @notation/aws/sqs.js, and uses queue at infra/helpers.ts:2:50. Infra functions can't run in a runtime module.",
     );
+  });
+
+  // Rolldown keeps a call whose result is unused, and its render info counts
+  // the called function. The "dce-only" minify pass that runs after
+  // rendering finds that the function has no effects, and drops the call
+  // and the function.
+  it("leaves out an infra module whose only use the bundler's minify pass drops", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { Order } from "./schema";`,
+          `import { Order } from "./schema";\n  import { queueConfig } from "../infra/names";`,
+        )
+        .replace(
+          "export const handler = async () => [lambda.options",
+          `export const handler = async () => { queueConfig("scratch"); return [lambda.options`,
+        )
+        .replace("globalThis.polyfilled];", "globalThis.polyfilled]; };"),
+    );
+    write(
+      "infra/names.ts",
+      [
+        `import { queue } from "@notation/aws/sqs";`,
+        `export const audit = queue({ name: "audit" });`,
+        `export function queueConfig(name: string) { return { name, retries: 3 }; }`,
+      ].join("\n"),
+    );
+    await compileRuntimeModules(
+      (await compileInfra(path.join(root, "infra/orders.ts"))).modules,
+    );
+    const bundle = readFileSync(
+      path.join(root, "dist/runtime/process-orders/index.mjs"),
+      "utf8",
+    );
+    expect(bundle).not.toContain("retries");
+  });
+
+  it("leaves out a resource function whose only use the bundler's minify pass drops", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { orders } from "../infra/orders";`,
+          `import { orders } from "../infra/orders";\n  import { queue, parseMessage } from "@notation/aws/sqs";`,
+        )
+        .replace(
+          "export const handler = async () => [",
+          `export const handler = async () => [queue({ name: "scratch" }), parseMessage("{}")] && [`,
+        ),
+    );
+    await compileRuntimeModules(
+      (await compileInfra(path.join(root, "infra/orders.ts"))).modules,
+    );
+    const bundle = readFileSync(
+      path.join(root, "dist/runtime/process-orders/index.mjs"),
+      "utf8",
+    );
+    expect(bundle).toContain("JSON.parse");
+    expect(bundle).not.toContain("placeholder-url");
   });
 
   it("fails when infra imports a name that the declaration doesn't use", async () => {
