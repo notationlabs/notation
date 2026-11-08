@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@jridgewell/sourcemap-codec": "^1.5.5",
     "@notation/core": "workspace:*",
     "magic-string": "^0.30.21",
     "rolldown": "^1.2.16"

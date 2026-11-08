@@ -269,6 +269,9 @@ importers:
 
   packages/build:
     dependencies:
+      '@jridgewell/sourcemap-codec':
+        specifier: ^1.5.5
+        version: 1.6.0
       '@notation/core':
         specifier: workspace:*
         version: link:../core
