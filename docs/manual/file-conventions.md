@@ -54,14 +54,14 @@ An import that a module uses only in types doesn't count, with or without the `t
 
 **A runtime module is never infra.** A runtime module usually imports infra to read values for its declaration, and the runtime build removes those imports. So the kind of a runtime module doesn't depend on its imports, and a module that imports a runtime module doesn't become infra through it.
 
-The build doesn't follow imports into packages, so a module doesn't become infra through a package. An import of a resource function from a package, such as `queue` from `@notation/aws/sqs`, still makes the importing module infra.
+The build doesn't follow imports into packages. An import of a resource function from a package, such as `queue` from `@notation/aws/sqs`, still makes the importing module infra. An import of a file of a workspace package outside the project root makes the importing module infra only if that file is infra by the rule below, which means it calls a resource function at its top level. An import of the package's barrel doesn't, because the build doesn't follow the barrel's imports.
 
 Every file under the project root that isn't in `node_modules` is part of the project, even in a folder with its own `package.json`. So in a monorepo with `notation.config.ts` at the repository root, `packages/api/handler.ts` is part of the project. A file outside the project root is part of the project unless its nearest `package.json` with a `name` is in a folder that doesn't contain the project root. For example, with the config in `apps/api/`, `common/schema.ts` is part of the project when `common/` has no `package.json` of its own, and `packages/aws/` is a workspace package.
 
 A file of a workspace package outside the project root, such as `packages/aws/`, is handled as it was before module kinds:
 
 - A module that calls a declaration function is a runtime module. If infra imports it, the build deploys its function and strips it from the infra bundle.
-- A module that calls a resource function at its top level is infra, and the runtime build leaves it out when the function doesn't use it.
+- A module that calls a resource function at its top level is infra, and the runtime build leaves it out when the function doesn't use it. A project module that imports it is infra too.
 - Any other module is shared. Its imports don't change its kind.
 
 ## Infrastructure modules
@@ -196,10 +196,26 @@ The bundle of runtime/orders.ts includes the infra module runtime/format.ts. The
 
 In this example, `runtime/format.ts` imports `orderQueue` for one helper, so the whole module is infra, and the function can't use its other helpers either. Put code that infra and runtime share, such as a schema, in a shared module, and import infra only where infra is needed.
 
-An import only for side effects, as in `import "./setup"`, depends on why the imported module is infra:
+The runtime build leaves an infra module out of the function's bundle when the function doesn't use its exports, and its top-level code doesn't run in the function. Before module kinds, only a module that called a resource function at its top level was left out. So a module that is infra only through its imports, such as a setup module that also reads a queue's URL in one of its functions, or that imports a resource function without calling it at its top level, used to run in the function, and now doesn't.
 
-- If the module imports a resource function itself, such as `infra/alarms.ts` with `queue({ name: "dlq" })`, the runtime build leaves it out. Its top-level code declares resources, which must not run in the function.
-- If the module is infra only through its imports, such as a setup module that also reads a queue's URL in one of its functions, the build fails. The runtime build would leave the module out, so its top-level code wouldn't run in the function. The error names the import and the chain that makes the module infra. Move the code that the function needs to run to a module that doesn't import infra.
+The build fails when this drops code that may have effects, and a runtime module loads the module only through side-effect imports, as in `import "./setup"`, or through `export *`:
+
+```text
+runtime/orders.ts:2:1: runtime/orders.ts loads lib/setup.ts only through side-effect imports and `export *`, along runtime/orders.ts → lib/setup.ts. lib/setup.ts is an infra module because it imports infra/orders.ts (lib/setup.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build leaves infra modules out, so the top-level code of lib/setup.ts doesn't run in the function. Move the top-level code that the function needs to a module that doesn't import infra, and import that module instead.
+```
+
+The check skips a module that has no top-level code with effects. These top-level statements have no effects:
+
+- imports, re-exports, and type declarations,
+- function declarations,
+- variables and classes whose values are literals, names, functions, or arrays, objects and classes made of these. A class with decorators, a static block, or a static property with another value counts as code.
+
+Any other top-level statement counts as code, such as a call, an assignment, a read of a property such as `process.env.REGION`, or an `enum`. So a side-effect import of a barrel such as `infra/index.ts`, with only `export * from "./orders"`, passes. The check then follows the barrel's own side-effect imports and `export *`, so `import "./setup"` in the barrel still leads to `setup.ts`. The check also skips a module that calls a resource function at its top level, such as `infra/alarms.ts` with `queue({ name: "dlq" })`, since the runtime build left it out before too.
+
+In two cases, top-level code that ran in the function before is left out without an error:
+
+- The function's module imports a name from such a module, and the bundle drops the code that uses the name, such as an export that the function's entry doesn't re-export.
+- A module that the runtime build leaves out imports another module, and nothing else in the bundle imports that module. The bundler leaves out the imported module too, even a shared one. The check follows only side-effect imports and `export *` into infra modules, so it doesn't catch a named import, or a side-effect import of a shared module.
 
 ## Shared modules
 
