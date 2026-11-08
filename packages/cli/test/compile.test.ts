@@ -10,9 +10,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { rolldown, type Plugin } from "rolldown";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ModuleAnalyses, runtimeEntry, runtimePlugin } from "@notation/build";
 import { setConfigFile } from "@notation/core";
 import { compile, compileInfra, compileRuntimeModules } from "../src/compile";
 import type { Logger } from "../src/logger";
@@ -21,33 +19,9 @@ import type { Logger } from "../src/logger";
 // resolve from the root node_modules.
 const tmpDir = fileURLToPath(new URL("../../../tmp", import.meta.url));
 
-// The final code of each chunk in the last build, by file name. A plugin
-// before the others records it, so it is there when a later plugin fails the
-// build in generateBundle.
-const finalCode = vi.hoisted(() => new Map<string, string>());
-
-vi.mock("rolldown", async (importOriginal) => {
-  const original = await importOriginal<typeof import("rolldown")>();
-  const capture: Plugin = {
-    name: "capture-final-code",
-    generateBundle(_, bundle) {
-      for (const output of Object.values(bundle)) {
-        if (output.type === "chunk")
-          finalCode.set(output.fileName, output.code);
-      }
-    },
-  };
-  return {
-    ...original,
-    rolldown: (input: Parameters<typeof original.rolldown>[0]) =>
-      original.rolldown({ ...input, plugins: [capture, input.plugins] }),
-  };
-});
-
 let root: string;
 
 beforeEach(() => {
-  finalCode.clear();
   mkdirSync(tmpDir, { recursive: true });
   root = realpathSync(mkdtempSync(path.join(tmpDir, "notation-compile-")));
   mkdirSync(path.join(root, "infra"));
@@ -142,7 +116,6 @@ function writeAwsPackage() {
       `import "./sdk.js";`,
       `/** @resource */`,
       `export function queue(config) { return { url: "placeholder-url", consume: () => {} }; }`,
-      `export function parseMessage(body) { return JSON.parse(body); }`,
     ].join("\n"),
   );
   write(
@@ -277,7 +250,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts. The bundle imports it through runtime/process-orders.ts → infra/orders.ts, and uses orders at runtime/process-orders.ts:16:38.",
+      "The function in runtime/process-orders.ts uses the infra module infra/orders.ts: orders at runtime/process-orders.ts:16:38. It imports infra/orders.ts through runtime/process-orders.ts → infra/orders.ts. The runtime build leaves infra out, so runtime code can't use it.",
     );
   });
 
@@ -302,7 +275,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes the infra module infra/orders.ts. The bundle imports it through runtime/process-orders.ts → runtime/queue-url.ts → infra/orders.ts, and uses orders at runtime/queue-url.ts:2:31.",
+      "The function in runtime/process-orders.ts uses the infra module infra/orders.ts: orders at runtime/queue-url.ts:2:31. It imports infra/orders.ts through runtime/process-orders.ts → runtime/queue-url.ts → infra/orders.ts.",
     );
   });
 
@@ -323,7 +296,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "and uses orders at runtime/process-orders.ts:16:38.",
+      "uses the infra module infra/orders.ts: orders at runtime/process-orders.ts:16:38.",
     );
   });
 
@@ -341,7 +314,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes queue from @notation/aws/sqs.js, a function that declares infrastructure. The bundle imports it through runtime/process-orders.ts → @notation/aws/sqs.js, and uses queue at runtime/process-orders.ts:17:38.",
+      "The function in runtime/process-orders.ts uses queue from @notation/aws/sqs.js, a function that declares infrastructure: queue at runtime/process-orders.ts:17:38. It imports @notation/aws/sqs.js through runtime/process-orders.ts → @notation/aws/sqs.js. Infra functions can't run in a runtime module.",
     );
   });
 
@@ -359,7 +332,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle imports it through runtime/process-orders.ts → @notation/aws/helpers.js → @notation/aws/sqs.js.",
+      "The function in runtime/process-orders.ts uses queue from @notation/aws/sqs.js, a function that declares infrastructure. It imports @notation/aws/sqs.js through runtime/process-orders.ts → @notation/aws/helpers.js → @notation/aws/sqs.js. Infra functions can't run in a runtime module.",
     );
   });
 
@@ -428,14 +401,14 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes queue from @notation/aws/sqs.js, a function that declares infrastructure. The bundle imports it through runtime/process-orders.ts → runtime/labels.ts → infra/orders.ts → infra/helpers.ts → @notation/aws/sqs.js, and uses queue at infra/helpers.ts:2:50. Infra functions can't run in a runtime module.",
+      "The function in runtime/process-orders.ts uses queue from @notation/aws/sqs.js, a function that declares infrastructure: queue at infra/helpers.ts:2:50. It imports @notation/aws/sqs.js through runtime/process-orders.ts → runtime/labels.ts → infra/orders.ts → infra/helpers.ts → @notation/aws/sqs.js. Infra functions can't run in a runtime module.",
     );
   });
 
-  // The check reads Rolldown's render info. These tests check that the final
-  // code holds what the check reports: a minify pass that runs after
-  // rendering drops each of these unused calls, and the function with it.
-  it("reports an infra module whose only use is a call with an unused result", async () => {
+  // The bundle check reads the code before minify. Rolldown's default
+  // "dce-only" minify drops each of these unused calls, and the build still
+  // fails.
+  it("fails when the function's only use of an infra module is a call with an unused result", async () => {
     writeProject(
       handlerModule
         .replace(
@@ -458,52 +431,26 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "includes the infra module infra/names.ts.",
-    );
-    expect(finalCode.get("runtime/process-orders/index.mjs")).toContain(
-      "retries: 3",
+      "The function in runtime/process-orders.ts uses the infra module infra/names.ts: queueConfig at runtime/process-orders.ts:17:40. It imports infra/names.ts through runtime/process-orders.ts → infra/names.ts.",
     );
   });
 
-  it("reports a resource function whose only use is a call with an unused result", async () => {
+  it("fails when the function's only use of a resource function is a call with an unused result", async () => {
     writeProject(
       handlerModule
         .replace(
           `import { orders } from "../infra/orders";`,
-          `import { orders } from "../infra/orders";\n  import { queue, parseMessage } from "@notation/aws/sqs";`,
+          `import { orders } from "../infra/orders";\n  import { queue } from "@notation/aws/sqs";`,
         )
         .replace(
           "export const handler = async () => [",
-          `export const handler = async () => [queue({ name: "scratch" }), parseMessage("{}")] && [`,
+          `export const handler = async () => [queue({ name: "scratch" })] && [`,
         ),
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "includes queue from @notation/aws/sqs.js, a function that declares infrastructure.",
+      "The function in runtime/process-orders.ts uses queue from @notation/aws/sqs.js, a function that declares infrastructure: queue at runtime/process-orders.ts:17:39.",
     );
-    expect(finalCode.get("runtime/process-orders/index.mjs")).toContain(
-      "placeholder-url",
-    );
-  });
-
-  it("fails a runtime build that minifies", async () => {
-    writeProject();
-    const [module] = (await compileInfra(path.join(root, "infra/orders.ts")))
-      .modules;
-    const bundle = await rolldown({
-      input: runtimeEntry,
-      cwd: root,
-      plugins: [
-        runtimePlugin({ analyses: new ModuleAnalyses(), module: module! }),
-      ],
-    });
-    try {
-      await expect(bundle.generate({})).rejects.toThrow(
-        'The runtime build needs minify: false in its output options, because the bundle check reads the code before minify. It has minify: "dce-only".',
-      );
-    } finally {
-      await bundle.close();
-    }
   });
 
   it("fails when infra imports a name that the declaration doesn't use", async () => {
