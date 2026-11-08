@@ -6,7 +6,7 @@ Source: `@notation/build` (plugins and source transforms), `@notation/cli` (`pac
 
 ## Two-pass compilation
 
-`compile({ entryPoint, runtimeModules })` in `@notation/cli` runs two passes:
+`compile({ entryPoint, files })` in `@notation/cli` runs two passes. Both share one `ModuleAnalyses`, which holds the kind of each file. See [Module kinds](#module-kinds).
 
 1. **Infra pass** – `compileInfra` bundles the infra entry with `infraPlugin`. It returns the declaration modules in the bundle, as `DeclarationModule[]`, and a `close` function that stops the watcher in watch mode. `compile` returns a function that stops both watchers.
 2. **Runtime pass** – `compileRuntimeModules` bundles each of those modules with `runtimePlugin`, as the code for one function. The bundles build at the same time.
@@ -23,7 +23,7 @@ Only the infra pass decides which modules are declaration modules. The runtime p
 
 ### The generated infra entry
 
-The infra pass also finds declaration modules that the entry doesn't import. The input of the infra build is not the entry file but a virtual module, `notation:infra-entry`, from `infraEntryPlugin` in `@notation/build`. Its `load` hook globs the files in `runtimeModules`, analyses each one, and imports the entry and then each file that holds a declaration:
+The infra pass also finds declaration modules that the entry doesn't import. The input of the infra build is not the entry file but a virtual module, `notation:infra-entry`, from `infraEntryPlugin` in `@notation/build`. Its `load` hook globs the files that `files.runtime` matches, analyses each one, and imports the entry and then each file that holds a declaration:
 
 ```ts [notation:infra-entry]
 import "/project/infra/index.ts";
@@ -35,9 +35,54 @@ The output keeps the entry's name, such as `dist/infra/index.mjs`. `runtime/todo
 
 **The generated entry imports only files that hold a declaration.** A runtime file without one, such as a file that calls `Sentry.init()`, doesn't run at deploy time.
 
-In watch mode, the plugin adds the base directory of each glob to the watched files, such as `runtime/` for `runtime/**/*.ts`. A new file in that directory starts a rebuild, and the `load` hook globs the files again. If the base directory doesn't exist yet, the plugin watches its nearest parent that exists, up to the project root, so a `runtime/` directory created during watch is seen.
+In watch mode, the plugin adds the base directory of each glob to the watched files, such as `runtime/` for `runtime/**`. A new file in that directory starts a rebuild, and the `load` hook globs the files again. If the base directory doesn't exist yet, the plugin watches its nearest parent that exists, up to the project root, so a `runtime/` directory created during watch is seen.
 
 The base directory of a glob such as `**/*.ts` is the project root, so the watcher would see each build's output in `dist/` and each deploy's writes to `.notation/`. **Both would start another build, and in `notation watch` another deploy.** So the scan and the infra watcher skip the same directories at any depth: `dist/`, `node_modules/` and dot-directories. `infraWatchExclude` holds the watcher's globs.
+
+## Module kinds
+
+Both plugins read the kind of each module from `FileKinds` in `packages/build/src/files.ts`. `FileKinds` takes the globs of `files` from the config, and uses the default globs for each kind that the config doesn't set:
+
+```ts [@notation/core]
+const defaultModuleGlobs = {
+  infra: ["infra/**"],
+  runtime: ["runtime/**"],
+  shared: ["shared/**"],
+};
+```
+
+`kindOf(file)` matches the file's path, relative to the project root, against the globs with `path.matchesGlob`. A glob that starts with `!` excludes the files that it matches from its kind. A file in `dist/`, `node_modules/` or a dot-directory has no kind, and so does a file outside the root. `kindOf` fails if two kinds match the file. The result depends only on the path, so `FileKinds` keeps it for the life of the watcher.
+
+**The infra entry checks every file for two kinds on each build.** Its `load` hook globs the files of all three kinds, and calls `kindOf` on each, so a conflict fails the build even for a file that nothing imports.
+
+Each kind changes the builds in one place:
+
+| Kind      | Where                         | What                                                                                  |
+| --------- | ----------------------------- | ------------------------------------------------------------------------------------- |
+| `infra`   | `runtimePlugin`'s `transform` | Returns `moduleSideEffects: false`, and adds the module to the bundle check.          |
+| `runtime` | `infraEntryPlugin`'s `load`   | Imports each file with a declaration after the entry.                                 |
+| `shared`  | `buildEnd` of both plugins    | Calls `ModuleAnalyses.checkShared` for each shared module in the build.               |
+| any       | `infraPlugin`'s `transform`   | Fails for a declaration in an `infra` or `shared` module, through `checkDeclaration`. |
+
+A declaration is found and stripped in any project module outside `node_modules`, whatever its kind. So a `$lambda` module that infra imports is deployed even if no glob matches it.
+
+### Package files
+
+A package file has no kind. `FileKinds.isPackageFile` counts a file in `node_modules/`, a file outside the project root, and a file under a folder below the root whose `package.json` has a `name`. A workspace package resolves to its real path, outside `node_modules/`, so the last two rules cover it. A package file that a glob matches keeps its kind.
+
+For a package file outside `node_modules/`, the runtime plugin infers infra as before: `analyzeModule` records the first call to a resource function at the module's top level as `resourceCall`, and a module with such a call is marked free of side effects. A project file with no kind is not inferred. It keeps its side effects.
+
+### The shared check
+
+`checkShared` fails for a shared module that:
+
+1. holds a declaration,
+2. imports or re-exports a resource function, by name, through a namespace member such as `sqs.queue`, or through `export * from`,
+3. reaches an infra or runtime module through its imports.
+
+For step 3, the check walks the imports breadth first, so the error names the shortest chain. An edge is an `import` with no specifiers, an `import` with a name that the module uses as a value, an `export { x } from` or an `export * from`. The value names come from `analysis.references`, which leaves out names in types, and from local `export { x }` specifiers. The walk passes through shared modules and files with no kind. It stops at package files and doesn't follow dynamic `import()`.
+
+The check runs in `buildEnd`, not in `transform`. It reads the modules that the shared module imports, and in watch mode an edit to one of them doesn't run the shared module's `transform` again. `buildEnd` runs on every rebuild, so the check sees the edit.
 
 ## Marks
 
@@ -82,7 +127,7 @@ The tags are in JSDoc because Rolldown and tsdown keep JSDoc comments in a packa
 `analyzeModule` in `packages/build/src/analyze.ts` reads two facts from each project module:
 
 1. **The declaration**, if the module has one. Every reference to a function marked `@declaration` must be a call written `const name = fn({ ... })` at the top level, with one object literal that has no spread, computed keys or accessors. Any other reference fails the build with its file and line. A module with two declarations fails too. The analysis records the declaration's binding, its call, and its options by key.
-2. **Whether the module is an infra module.** A module is an infra module when it calls a function marked `@resource` at its top level, outside any function.
+2. **The first call to a resource function at the top level**, outside any function, as `resourceCall`. The runtime plugin uses it only for package files, which have no kind. See [Package files](#package-files).
 
 A reference inside a function that is itself marked `@declaration` in the same module is skipped. This lets a user write a wrapper around `$lambda` and mark the wrapper.
 
@@ -213,17 +258,17 @@ The strip then checks the kept options. A reference to an import from an infra m
 
 An import loads its module and runs the module's top-level code, even when nothing uses the import's bindings. So step 4 of the strip is what keeps `infra/orders.ts` out of the bundle of `runtime/orders.ts`. The TypeScript transform removes an unused import by default, but with `verbatimModuleSyntax` it keeps every import that isn't `import type`, so the strip doesn't rely on it.
 
-An infra module can also be reached through a module that the strip doesn't change, such as a shared module that imports `orderQueue` and uses it in a function the handler never calls. For that case, the runtime plugin marks each infra module free of side effects, through the `moduleSideEffects` result of its `transform` hook. The bundler then drops the infra module if nothing in the bundle uses its bindings. Other modules keep their side effects. A module counts as infra only if it calls a resource function, such as `queue()`, at its top level. A module that calls `queue()` through a factory of its own, such as `makeQueue("orders")`, is not marked, so in this case the bundler keeps it, and the check below fails the build.
+An infra module can also be reached through a module that the strip doesn't change, such as a shared module that imports `orderQueue` and uses it in a function the handler never calls. For that case, the runtime plugin marks each infra module free of side effects, through the `moduleSideEffects` result of its `transform` hook. The bundler then drops the infra module if nothing in the bundle uses its bindings. Other modules keep their side effects, so a setup module that imports infra still runs its top-level code. An infra module is a file that `files.infra` matches, or a package file outside `node_modules/` that calls a resource function at its top level. A file with no kind that calls `queue()` at its top level, such as `lib/queues.ts`, is not marked, so the bundler keeps it if the function imports it, and the check below fails the build.
 
 The provider packages declare `"sideEffects": false` in their `package.json`, so the bundler also drops a package module whose exports the function doesn't use.
 
 In `generateBundle`, the plugin checks that no infra module is left in the bundle. A handler that reads `orderQueue.url` directly keeps `infra/orders.ts` in the bundle, and the build fails:
 
 ```
-The function in runtime/orders.ts uses the infra module infra/orders.ts: orderQueue at runtime/orders.ts:15:31. It imports infra/orders.ts through runtime/orders.ts → infra/orders.ts. The runtime build leaves infra out, so runtime code can't use it.
+The function in runtime/orders.ts uses infra/orders.ts, an infra module (files.infra: "infra/**", the default): orderQueue at runtime/orders.ts:15:31. It imports infra/orders.ts through runtime/orders.ts → infra/orders.ts. The runtime build leaves infra out, so runtime code can't use it.
 ```
 
-The error lists each reference to an import from the infra module, in any project module in the bundle. Then it names the shortest chain of imports from the function's module to the infra module. References in the declaration's options are left out, because the strip has removed or checked them. The list can include a reference in code that tree-shaking dropped, since the module is in the bundle either way. If the plugin finds no reference, such as for an `export { orderQueue } from "../infra/orders"`, the error names only the chain.
+The error says why the module is infra, and lists each reference to an import from the infra module, in any project module in the bundle. Then it names the shortest chain of imports from the function's module to the infra module. References in the declaration's options are left out, because the strip has removed or checked them. The list can include a reference in code that tree-shaking dropped, since the module is in the bundle either way. If the plugin finds no reference, such as for an `export { orderQueue } from "../infra/orders"`, the error names only the chain.
 
 The check reads Rolldown's render info for each module, `renderedLength` and `renderedExports`. Rolldown computes it before the minify pass, and the runtime build keeps Rolldown's default minify, `"dce-only"`, which drops unused code after rendering. So code that refers to infra fails the build even when the minify pass would remove it. For example, a handler that calls a helper from an infra module and ignores the result fails the build, although the final bundle doesn't contain the call. This is why the error says that the function uses the infra module at a line, and not that the final bundle contains it.
 
@@ -263,7 +308,7 @@ In watch mode (`notation watch`), both passes run in Rolldown's `watch()`. Chang
 
 After each infra rebuild without errors, the CLI compares the declaration modules with the previous list. When the list changes, it closes the runtime watcher and starts one for the modules in the new list:
 
-- **New declaration modules** – a module that infra starts to import, a new file in the `runtimeModules` globs, or a module that starts to call `$lambda`, gets its own runtime build.
+- **New declaration modules** – a module that infra starts to import, a new file that `files.runtime` matches, or a module that starts to call `$lambda`, gets its own runtime build.
 - **Removed declaration modules** – a module that infra stops importing, or that stops calling `$lambda`, loses its runtime build. The reconciler deletes its resources.
 
 Deploys need a successful build, so watch waits for the first infra build that succeeds. A change to the config file makes `notation watch` exit, so you restart it with the new config.

@@ -12,14 +12,53 @@ export default defineConfig({
 });
 ```
 
-| Field            | Required | Meaning                                                                                                                                                                                                                                            |
-| ---------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app`            | Yes      | The name of the app.                                                                                                                                                                                                                               |
-| `entry`          | Yes      | The entry file, relative to the config.                                                                                                                                                                                                            |
-| `defaultStage`   | No       | The stage that a command uses when given no `--stage`.                                                                                                                                                                                             |
-| `runtimeModules` | No       | A glob or an array of globs, relative to the config, for the files that can be runtime modules. The default is `runtime/**/*.ts`. See [Runtime modules that infra doesn't import](./file-conventions.md#runtime-modules-that-infra-doesnt-import). |
+| Field          | Required | Meaning                                                                                                  |
+| -------------- | -------- | -------------------------------------------------------------------------------------------------------- |
+| `app`          | Yes      | The name of the app.                                                                                     |
+| `entry`        | Yes      | The entry file, relative to the config.                                                                  |
+| `defaultStage` | No       | The stage that a command uses when given no `--stage`.                                                   |
+| `files`        | No       | Globs that give each file its kind of module: `infra`, `runtime` or `shared`. See [Files](#files) below. |
 
-The CLI deploys the entry file, every module that it imports, and each runtime module in the `runtimeModules` globs.
+The CLI deploys the entry file, every module that it imports, and each runtime module that `files.runtime` matches.
+
+## Files
+
+`files` sets which files are infra, runtime and shared modules. Each key takes a glob or an array of globs, relative to the config:
+
+```ts [notation.config.ts]
+export default defineConfig({
+  app: "todos",
+  entry: "infra/index.ts",
+  files: {
+    infra: ["infra/**"],
+    runtime: ["runtime/**", "jobs/*.ts"],
+    shared: ["shared/**"],
+  },
+});
+```
+
+| Key       | Default          | What the build does with a matching file                                                                    |
+| --------- | ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| `infra`   | `["infra/**"]`   | Leaves it out of each function's bundle, unless the function uses it, which fails the build.                |
+| `runtime` | `["runtime/**"]` | Reads it for a declaration, such as `$lambda`, and deploys the function even if infra doesn't import it.    |
+| `shared`  | `["shared/**"]`  | Bundles it as written in both builds, and fails if it declares a function or imports infra or runtime code. |
+
+See [Module kinds](./file-conventions.md#module-kinds) for each kind.
+
+**Each key replaces only its own default.** With `files: { shared: ["lib/**"] }`, `lib/` holds the shared modules, `shared/` holds no modules of any kind, and `infra/` and `runtime/` keep their defaults. Set a key to `[]` to give no file that kind.
+
+The globs follow these rules:
+
+- A leading `./` is allowed: `./runtime/**` is the same as `runtime/**`.
+- A glob that starts with `!` excludes files. For example, `infra: ["infra/**", "!infra/**/*.test.ts"]` makes the test files in `infra/` have no kind.
+- The build reads only JS and TS files, so a glob such as `infra/**` matches the same modules as `infra/**/*.ts` when the folder holds only `.ts` files.
+- No file in `dist/`, `node_modules/` or a dot-directory such as `.notation/` has a kind, and no file outside the project root has one.
+
+**A file that two kinds match fails the build**, even if nothing imports it. The error names the file and both globs, and says which glob is a default:
+
+```text
+shared/format.ts matches both files.infra and files.shared (files.infra: "**/*.ts"; files.shared: "shared/**", the default). A file can have only one kind. Change the globs so that only one of them matches it. files.shared isn't set in the config, so it has its default globs. Set it to replace them, or set it to [] for no shared modules.
+```
 
 ## Project root
 
