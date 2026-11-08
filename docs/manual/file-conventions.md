@@ -20,13 +20,13 @@ my-app/
 
 ## Module kinds
 
-The build sorts each module of the project into one of three kinds. The kind decides what each build does with the module.
+The build sorts each module into one of three kinds by the module's own code. The kind decides what each build does with the module.
 
-| Kind    | A module of this kind                                                      | Infra build                | Runtime build (the function's bundle)                             |
-| ------- | -------------------------------------------------------------------------- | -------------------------- | ----------------------------------------------------------------- |
-| Runtime | calls a declaration function, such as `$lambda`                            | keeps only the declaration | keeps the code, and strips the declaration to its runtime options |
-| Infra   | imports a resource function, such as `queue()`, or imports an infra module | bundles it as written      | leaves it out                                                     |
-| Shared  | is neither of the above, such as a schema, a constant or a helper          | bundles it as written      | bundles it as written                                             |
+| Kind    | A module of this kind                                                       | Infra build                | Runtime build (the function's bundle)                             |
+| ------- | --------------------------------------------------------------------------- | -------------------------- | ----------------------------------------------------------------- |
+| Runtime | calls a declaration function, such as `$lambda`                             | keeps only the declaration | keeps the code, and strips the declaration to its runtime options |
+| Infra   | calls a resource function, such as `queue()`, at its top level              | bundles it as written      | leaves it out unless the function uses its exports                |
+| Shared  | is neither of the above, such as a schema, a constant, a helper or a barrel | bundles it as written      | bundles it as written                                             |
 
 The build reads the kind from the code, not from the file's path or name. For example, in this project:
 
@@ -39,30 +39,37 @@ export const orderQueue = queue({ name: "orders" });
 export * from "./orders";
 ```
 
-```ts [shared/schema.ts]
-import * as v from "valibot";
-export const Order = v.object({ id: v.string() });
+```ts [lib/queues.ts]
+import { queue } from "@notation/aws/sqs";
+import { orderQueue } from "../infra/orders";
+export const makeQueue = (name: string) => queue({ name });
+export const ordersUrl = () => orderQueue.url;
+export const label = (id: string) => `order-${id}`;
 ```
 
-- `infra/orders.ts` is an infra module, because it imports `queue`.
-- `infra/index.ts` is an infra module too, because it imports the infra module `infra/orders.ts`. **Infra is transitive:** a module that imports an infra module is an infra module, through any number of imports.
-- `shared/schema.ts` is a shared module, because it imports neither a resource function nor an infra module.
+- `infra/orders.ts` is an infra module, because it calls `queue()` when it loads.
+- `infra/index.ts` is a shared module. It only re-exports `infra/orders.ts`.
+- `lib/queues.ts` is a shared module too. It calls `queue()` only inside a function, and it reads `orderQueue` only inside a function.
 
-The import is enough. A module that calls `queue()` only inside a function, such as a factory `makeQueue(name)`, is an infra module, and so is every module that imports the factory.
+**Imports don't change a module's kind.** A module that imports an infra module, or imports a resource function, keeps the kind of its own code. A runtime module is the usual example: it imports infra to read values for its declaration, and the runtime build removes those uses.
 
-An import that a module uses only in types doesn't count, with or without the `type` keyword. For example, `import { orderQueue } from "../infra/orders"` with only `typeof orderQueue` in the module doesn't make the module infra, because TypeScript removes the import.
+So the rule for the function's bundle is about uses, not modules. Any module can import infra, as long as the function's bundle doesn't keep that use:
 
-**A runtime module is never infra.** A runtime module usually imports infra to read values for its declaration, and the runtime build removes those imports. So the kind of a runtime module doesn't depend on its imports, and a module that imports a runtime module doesn't become infra through it.
+1. The runtime build marks each infra module free of side effects.
+2. The bundler drops the imports and exports that the function doesn't use. An infra module that nothing in the bundle uses is dropped with them.
+3. The build fails if an infra module, or a resource function from a package, is still in the bundle. See [Runtime code and infra](#runtime-code-and-infra).
 
-The build doesn't follow imports into packages. An import of a resource function from a package, such as `queue` from `@notation/aws/sqs`, still makes the importing module infra. An import of a file of a workspace package outside the project root makes the importing module infra only if that file is infra by the rule below, which means it calls a resource function at its top level. An import of the package's barrel doesn't, because the build doesn't follow the barrel's imports.
+For example, a function that calls `label()` from `lib/queues.ts` bundles `label`. The bundler drops `makeQueue` and `ordersUrl`, and with them `queue` and `infra/orders.ts`. A function that calls `ordersUrl()` fails the build, because the bundle keeps `infra/orders.ts`.
 
-Every file under the project root that isn't in `node_modules` is part of the project, even in a folder with its own `package.json`. So in a monorepo with `notation.config.ts` at the repository root, `packages/api/handler.ts` is part of the project. A file outside the project root is part of the project unless its nearest `package.json` with a `name` is in a folder that doesn't contain the project root. For example, with the config in `apps/api/`, `common/schema.ts` is part of the project when `common/` has no `package.json` of its own, and `packages/aws/` is a workspace package.
+A module with a declaration is a runtime module, even if it also calls a resource function at its top level.
 
-A file of a workspace package outside the project root, such as `packages/aws/`, is handled as it was before module kinds:
+The rule applies to every file outside `node_modules`, including the files of a workspace package that resolve to a path outside the project root. If infra imports a runtime module in a workspace package, the build deploys its function and strips it from the infra bundle.
 
-- A module that calls a declaration function is a runtime module. If infra imports it, the build deploys its function and strips it from the infra bundle.
-- A module that calls a resource function at its top level is infra, and the runtime build leaves it out when the function doesn't use it. A project module that imports it is infra too.
-- Any other module is shared. Its imports don't change its kind.
+### Project modules
+
+`sharedModules` matches only project modules, and its check follows imports only through project modules. Every file under the project root that isn't in `node_modules` is a project module, even in a folder with its own `package.json`. So in a monorepo with `notation.config.ts` at the repository root, `packages/api/handler.ts` is a project module.
+
+A file outside the project root is a project module unless its nearest `package.json` with a `name` is in a folder that doesn't contain the project root. For example, with the config in `apps/api/`, `common/schema.ts` is a project module when `common/` has no `package.json` of its own, and the files of the workspace package `packages/aws/` are not.
 
 ## Infrastructure modules
 
@@ -115,7 +122,7 @@ The module has two parts:
 
 **Each runtime module deploys as one function.** A module can hold one declaration, and must export the entry that the platform calls. For a Lambda the entry is `handler`. A module with two declarations, or a Lambda module with no `handler` export, fails the build.
 
-The build doesn't read file names: it finds runtime modules by their call to `$lambda`. `runtime/utils.ts` makes no such call and imports no infra, so it is a shared module. Runtime modules can import shared modules, and Notation bundles the shared code into each function that imports it.
+The build doesn't read file names: it finds runtime modules by their call to `$lambda`. `runtime/utils.ts` makes no such call and declares no resources, so it is a shared module. Runtime modules can import shared modules, and Notation bundles the shared code into each function that imports it.
 
 ### Infra imports the declaration
 
@@ -188,40 +195,21 @@ export const handler: LambdaHandler<typeof lambda> = async () => {
 };
 ```
 
-The runtime build leaves infra modules out of the function's bundle. If the function's code uses an infra module, the build fails. The error names the chain of imports from the function's module, and the chain of imports that makes the module infra:
+The runtime build leaves infra modules out of the function's bundle. If the function's code uses an infra module, the build fails. The error names the chain of imports from the function's module to the infra module, and the position of the call that makes the module infra:
 
 ```text
-The bundle of runtime/orders.ts includes the infra module runtime/format.ts. The bundle imports it through runtime/orders.ts → runtime/format.ts, and uses format at runtime/orders.ts:14:5. runtime/format.ts is an infra module because it imports infra/index.ts (runtime/format.ts:1:1), which imports infra/orders.ts (infra/index.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10). ...
+The bundle of runtime/orders.ts includes the infra module infra/orders.ts. The bundle imports it through runtime/orders.ts → lib/queues.ts → infra/orders.ts, and uses orderQueue at lib/queues.ts:4:32. infra/orders.ts is an infra module because it calls queue at its top level (infra/orders.ts:2:27). ...
 ```
 
-In this example, `runtime/format.ts` imports `orderQueue` for one helper, so the whole module is infra, and the function can't use its other helpers either. Put code that infra and runtime share, such as a schema, in a shared module, and import infra only where infra is needed.
+In this example, the function calls `ordersUrl()` from `lib/queues.ts`. The function can still use `label()` from the same module, because the bundler drops `ordersUrl` when nothing calls it. Put code that infra and runtime share, such as a schema, in a module that declares no resources.
 
-The runtime build leaves an infra module out of the function's bundle when the function doesn't use its exports, and its top-level code doesn't run in the function. Before module kinds, only a module that called a resource function at its top level was left out. So a module that is infra only through its imports, such as a setup module that also reads a queue's URL in one of its functions, or that imports a resource function without calling it at its top level, used to run in the function, and now doesn't.
-
-The build fails when this drops code that may have effects, and a runtime module loads the module only through side-effect imports, as in `import "./setup"`, or through `export *`:
-
-```text
-runtime/orders.ts:2:1: runtime/orders.ts loads lib/setup.ts only through side-effect imports and `export *`, along runtime/orders.ts → lib/setup.ts. lib/setup.ts is an infra module because it imports infra/orders.ts (lib/setup.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build leaves infra modules out, so the top-level code of lib/setup.ts doesn't run in the function. Move the top-level code that the function needs to a module that doesn't import infra, and import that module instead.
-```
-
-The check skips a module that has no top-level code with effects. These top-level statements have no effects:
-
-- imports, re-exports, and type declarations,
-- function declarations,
-- variables and classes whose values are literals, names, functions, or arrays, objects and classes made of these. A class with decorators, a static block, or a static property with another value counts as code.
-
-Any other top-level statement counts as code, such as a call, an assignment, a read of a property such as `process.env.REGION`, or an `enum`. So a side-effect import of a barrel such as `infra/index.ts`, with only `export * from "./orders"`, passes. The check then follows the barrel's own side-effect imports and `export *`, so `import "./setup"` in the barrel still leads to `setup.ts`. The check also skips a module that calls a resource function at its top level, such as `infra/alarms.ts` with `queue({ name: "dlq" })`, since the runtime build left it out before too.
-
-In two cases, top-level code that ran in the function before is left out without an error:
-
-- The function's module imports a name from such a module, and the bundle drops the code that uses the name, such as an export that the function's entry doesn't re-export.
-- A module that the runtime build leaves out imports another module, and nothing else in the bundle imports that module. The bundler leaves out the imported module too, even a shared one. The check follows only side-effect imports and `export *` into infra modules, so it doesn't catch a named import, or a side-effect import of a shared module.
+The runtime build leaves an infra module out even when a runtime module imports it only for its side effects, as in `import "../infra/orders"`. The top-level code of an infra module declares resources, so it doesn't run in the function. A shared module that imports infra, such as a setup module that sets a global and reads a queue's URL in one of its functions, keeps its top-level code in the function.
 
 ## Shared modules
 
-The build infers that a module is shared when it imports no resource function and no infra module. A module can stop being shared without any change to its own code, for example when a module that it imports starts to import infra. The build then reports an error where the function uses the module, as in the example above.
+The build infers that a module is shared when it declares no function and no resources. A module that imports infra is still shared, so the function can use its other exports. The build reports an error only where the function's bundle keeps infra, as in the example above.
 
-`sharedModules` in `notation.config.ts` lists the modules that must be shared. It takes a glob or an array of globs, relative to the config, in the same forms as `runtimeModules`. A leading `./` is allowed:
+`sharedModules` in `notation.config.ts` lists modules that must stay free of infra in both builds. It takes a glob or an array of globs, relative to the config, in the same forms as `runtimeModules`. A leading `./` is allowed:
 
 ```ts [notation.config.ts]
 export default defineConfig({
@@ -231,20 +219,22 @@ export default defineConfig({
 });
 ```
 
-A module that matches `sharedModules` is checked when either build loads it. The build fails if the module:
+A module that matches `sharedModules` is checked when either build loads it. The build fails if the module, or a project module that it imports directly or through other project modules:
 
 - calls a declaration function, such as `$lambda`,
-- imports a resource function, such as `queue`,
-- imports an infra module or a runtime module.
+- imports a resource function, such as `queue`, including through `export *` or a namespace import of a package,
+- calls a resource function at its top level, such as a function marked `@resource` in the project.
 
-The error names the module, the line of the import, the imported module, and why that module is infra or runtime:
+The check stops at a file outside the project, such as a workspace package. That file fails the check only if it calls a declaration function, or calls a resource function at its top level. The check doesn't follow imports into `node_modules`.
+
+An import that a module uses only in types doesn't count, with or without the `type` keyword. For example, `import { orderQueue } from "../infra/orders"` with only `typeof orderQueue` in the module passes, because TypeScript removes the import.
+
+The error names the first problem in the listed module, and the shortest chain of imports to a module with a problem, with the position of each import:
 
 ```text
-shared/format.ts:2:1: shared/format.ts matches sharedModules, but it imports infra/orders.ts, which is an infra module because it imports queue from @notation/aws/sqs (infra/orders.ts:1:10). A shared module runs in both builds, so it can't declare a function or resources, or import an infra or runtime module.
+shared/format.ts:1:1: shared/format.ts matches sharedModules, but it imports lib/queues.ts, which imports the resource function queue from @notation/aws/sqs (lib/queues.ts:1:10). A shared module runs in both builds, so it can't declare a function or import a resource function, directly or through the modules that it imports.
 ```
 
-The build reads static imports and re-exports. It doesn't follow a dynamic `import()` or an `import x = require()`, so a listed module that loads infra that way passes the check. If the function then uses the infra module, the runtime build still fails.
+**The check is stricter than the function's bundle.** `lib/queues.ts` is a shared module, and a function can use `label()` from it. A listed module that imports `lib/queues.ts` still fails, because `lib/queues.ts` imports `queue`. Listing a module is a promise that nothing it loads touches infra, whichever exports a build uses.
 
-**`sharedModules` can't make an infra module shared.** A listed module that imports `queue` fails the build, whether it calls `queue()` or not.
-
-A module that imports a listed module doesn't become infra through it, because the listed module is shared or the build fails.
+The build reads static imports and re-exports. It doesn't follow a dynamic `import()` or an `import x = require()`, so a listed module that loads infra that way passes the check. If the function then uses an infra module, the runtime build still fails.
