@@ -59,9 +59,9 @@ function isInstalledPackage(
   return installed;
 }
 
-// A quick test that skips modules which can't hold a declaration or call a
-// resource function, or import from a runtime module: those need an import,
-// a re-export or a local mark.
+// A quick test that skips modules which can't hold a declaration, or import
+// a resource function, an infra module or a runtime module: those need an
+// import, a re-export or a local mark.
 const mayHoldMarks = (code: string) =>
   /\bimport\b|\bfrom\b|@declaration|@resource/.test(code);
 
