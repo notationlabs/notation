@@ -323,6 +323,19 @@ describe("ModuleAnalyses.checkShared", () => {
     expect(checkShared("shared/format.ts")).not.toThrow();
   });
 
+  it("names the first problem in the module", () => {
+    const { checkShared } = setup(
+      {
+        ...files,
+        "shared/format.ts": `import { orders } from "../infra/orders";\nimport { createQueue } from "@notation/aws/sqs";\nexport const format = () => [orders, createQueue];`,
+      },
+      ["shared/**"],
+    );
+    expect(checkShared("shared/format.ts")).toThrow(
+      "shared/format.ts:1:1: shared/format.ts matches sharedModules, but it imports infra/orders.ts",
+    );
+  });
+
   it("fails for a listed module with a declaration", () => {
     const { checkShared } = setup(files, ["runtime/**"]);
     expect(checkShared("runtime/fn.ts")).toThrow(
@@ -361,8 +374,100 @@ describe("ModuleAnalyses.checkEffectImports", () => {
     expect(() =>
       analyses.checkEffectImports(path.join(root, "runtime/fn.ts")),
     ).toThrow(
-      "runtime/fn.ts:1:1: runtime/fn.ts imports lib/setup.ts for its side effects, but lib/setup.ts is an infra module because it imports infra/orders.ts (lib/setup.ts:1:1), which imports createQueue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build leaves infra modules out",
+      "runtime/fn.ts:1:1: runtime/fn.ts loads lib/setup.ts only through side-effect imports and `export *`, along runtime/fn.ts → lib/setup.ts. lib/setup.ts is an infra module because it imports infra/orders.ts (lib/setup.ts:1:1), which imports createQueue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build leaves infra modules out, so the top-level code of lib/setup.ts doesn't run in the function. Move the top-level code that the function needs to a module that doesn't import infra, and import that module instead.",
     );
+  });
+
+  const check = (files: Record<string, string>) => {
+    const { analyses } = setup({ "infra/orders.ts": queueModule, ...files });
+    return () => analyses.checkEffectImports(path.join(root, "runtime/fn.ts"));
+  };
+
+  it("fails for an export * of an infra module with top-level code", () => {
+    expect(
+      check({
+        "lib/setup.ts": `import { orders } from "../infra/orders";\nglobalThis.setupRan = true;\nexport const url = () => orders.url;`,
+        "runtime/fn.ts": `export * from "../lib/setup";\n${lambdaModule}`,
+      }),
+    ).toThrow(
+      "runtime/fn.ts:1:1: runtime/fn.ts loads lib/setup.ts only through side-effect imports and `export *`, along runtime/fn.ts → lib/setup.ts.",
+    );
+  });
+
+  it("passes a side-effect import of a barrel", () => {
+    expect(
+      check({
+        "infra/index.ts": `import type { X } from "./types";\nexport * from "./orders";\nexport { orders as o } from "./orders";\ntype Y = X;`,
+        "runtime/fn.ts": `import "../infra/index";\n${lambdaModule}`,
+      }),
+    ).not.toThrow();
+  });
+
+  it("follows the side-effect imports and export * of a barrel", () => {
+    expect(
+      check({
+        "infra/index.ts": `import "../lib/setup";\nexport * from "./orders";`,
+        "lib/setup.ts": `import { orders } from "../infra/orders";\nglobalThis.setupRan = true;\nexport const url = () => orders.url;`,
+        "runtime/fn.ts": `import "../infra/index";\n${lambdaModule}`,
+      }),
+    ).toThrow(
+      "runtime/fn.ts:1:1: runtime/fn.ts loads lib/setup.ts only through side-effect imports and `export *`, along runtime/fn.ts → infra/index.ts → lib/setup.ts. lib/setup.ts is an infra module because",
+    );
+  });
+
+  it("passes a side-effect import of a module that has only declarations", () => {
+    expect(
+      check({
+        "lib/urls.ts": [
+          `"use strict";`,
+          `import { orders } from "../infra/orders";`,
+          `export const prefix = "orders-", limits = { max: -1, tags: [\`a\`] };`,
+          `export const url = () => orders.url;`,
+          `export function name() { return prefix; }`,
+          `export class Client { static kind = "sqs"; send() {} }`,
+          `export default function () {}`,
+          `export interface Message { id: string }`,
+          `declare const env: string;`,
+        ].join("\n"),
+        "runtime/fn.ts": `import "../lib/urls";\n${lambdaModule}`,
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    ["a call", `const client = connect();`],
+    ["a member read", `const region = process.env.REGION;`],
+    ["a static block", `class Client { static { register(); } }`],
+    ["an enum", `enum Level { Low }`],
+  ])("fails for a module with %s at its top level", (_name, statement) => {
+    expect(
+      check({
+        "lib/client.ts": `import { orders } from "../infra/orders";\n${statement}\nexport const url = () => orders.url;`,
+        "runtime/fn.ts": `import "../lib/client";\n${lambdaModule}`,
+      }),
+    ).toThrow("the top-level code of lib/client.ts doesn't run");
+  });
+
+  it("fails for a module that imports a resource function without calling it at its top level", () => {
+    expect(
+      check({
+        "lib/factory.ts": `import { createQueue } from "@notation/aws/sqs";\nglobalThis.setupRan = true;\nexport const make = (id) => createQueue({ id });`,
+        "runtime/fn.ts": `import "../lib/factory";\n${lambdaModule}`,
+      }),
+    ).toThrow(
+      "lib/factory.ts is an infra module because it imports createQueue from @notation/aws/sqs (lib/factory.ts:1:10)",
+    );
+  });
+
+  it("checks only runtime modules", () => {
+    const { analyses } = setup({
+      "infra/orders.ts": queueModule,
+      "lib/setup.ts": `import { orders } from "../infra/orders";\nglobalThis.setupRan = true;\nexport const url = () => orders.url;`,
+      "lib/helper.ts": `import "./setup";\nexport const x = 1;`,
+    });
+    expect(() =>
+      analyses.checkEffectImports(path.join(root, "lib/helper.ts")),
+    ).not.toThrow();
   });
 
   it("passes a side-effect import of a module that imports a resource function itself", () => {

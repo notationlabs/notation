@@ -566,6 +566,73 @@ describe("workspace packages outside the project root", () => {
     expect(bundle).not.toContain("sdk loaded");
   });
 
+  // acme-lib/queues.ts declares a queue when it loads, so it is infra.
+  // acme-lib/index.ts only re-exports it, and the build doesn't follow its
+  // imports, so it is shared.
+  const writeQueuesPackage = () =>
+    writePackage("acme-lib", {
+      "index.ts": `export * from "./queues";`,
+      "queues.ts": `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
+    });
+
+  // The function uses lib/dlq.ts, whose `name` export doesn't use dlq.
+  const writeDlqHelper = (from: string) => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { Order } from "./schema";`,
+          `import { Order } from "./schema";\n  import { name } from "../lib/dlq";`,
+        )
+        .replace(
+          "export const handler = async () =>",
+          "export const handler = async () => name() &&",
+        ),
+    );
+    write(
+      "lib/dlq.ts",
+      `import { dlq } from "${from}";\nexport const name = () => "dlq";\nexport const url = () => dlq.url;`,
+    );
+  };
+
+  it("makes a project module that imports a package module that declares resources infra", async () => {
+    writeQueuesPackage();
+    writeDlqHelper("acme-lib/queues.ts");
+    const analyses = new ModuleAnalyses();
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"), {
+      analyses,
+    });
+    await expect(compileRuntimeModules(modules, { analyses })).rejects.toThrow(
+      "The bundle of runtime/process-orders.ts includes the infra module lib/dlq.ts. The bundle imports it through runtime/process-orders.ts → lib/dlq.ts, and uses name at runtime/process-orders.ts:17:38. lib/dlq.ts is an infra module because it imports acme-lib/queues.ts (lib/dlq.ts:1:1), which calls queue at its top level (acme-lib/queues.ts:2:20).",
+    );
+  });
+
+  it("doesn't follow a package's re-exports to make a project module infra", async () => {
+    writeQueuesPackage();
+    writeDlqHelper("acme-lib");
+    const analyses = new ModuleAnalyses({ sharedModules: ["lib/**"] });
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"), {
+      analyses,
+    });
+    await compileRuntimeModules(modules, { analyses });
+    const bundle = readFileSync(
+      path.join(root, "dist/runtime/process-orders/index.mjs"),
+      "utf8",
+    );
+    expect(bundle).not.toContain("sdk loaded");
+  });
+
+  it("fails for a listed shared module that imports a package module that declares resources", async () => {
+    writeQueuesPackage();
+    writeDlqHelper("acme-lib/queues.ts");
+    const analyses = new ModuleAnalyses({ sharedModules: ["lib/**"] });
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"), {
+      analyses,
+    });
+    await expect(compileRuntimeModules(modules, { analyses })).rejects.toThrow(
+      "lib/dlq.ts:1:1: lib/dlq.ts matches sharedModules, but it imports acme-lib/queues.ts, which is an infra module because it calls queue at its top level (acme-lib/queues.ts:2:20).",
+    );
+  });
+
   it("finds and strips a declaration module in a package that infra imports by path", async () => {
     writeProject();
     const fns = writePackage("acme-fns", {
@@ -827,7 +894,65 @@ describe("shared modules", () => {
       ].join("\n"),
     );
     await expect(build()).rejects.toThrow(
-      "runtime/process-orders.ts:6:3: runtime/process-orders.ts imports lib/setup.ts for its side effects, but lib/setup.ts is an infra module because it imports infra/orders.ts (lib/setup.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build leaves infra modules out, so the top-level code of lib/setup.ts doesn't run in the function.",
+      "runtime/process-orders.ts:6:3: runtime/process-orders.ts loads lib/setup.ts only through side-effect imports and `export *`, along runtime/process-orders.ts → lib/setup.ts. lib/setup.ts is an infra module because it imports infra/orders.ts (lib/setup.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build leaves infra modules out, so the top-level code of lib/setup.ts doesn't run in the function. Move the top-level code",
+    );
+  });
+
+  it("fails when the function re-exports all of a module with top-level code that imports infra", async () => {
+    writeProject(
+      handlerModule.replace(
+        `import { Order } from "./schema";`,
+        `import { Order } from "./schema";\n  export * from "../lib/setup";`,
+      ),
+    );
+    write(
+      "lib/setup.ts",
+      [
+        `import { orders } from "../infra/orders";`,
+        `globalThis.setupRan = "yes";`,
+        `export const url = () => orders.url;`,
+      ].join("\n"),
+    );
+    await expect(build()).rejects.toThrow(
+      "runtime/process-orders.ts:6:3: runtime/process-orders.ts loads lib/setup.ts only through side-effect imports and `export *`, along runtime/process-orders.ts → lib/setup.ts.",
+    );
+  });
+
+  it("leaves out a barrel that the function imports for its side effects", async () => {
+    writeProject(
+      handlerModule.replace(
+        `import { Order } from "./schema";`,
+        `import { Order } from "./schema";\n  import "../infra";`,
+      ),
+    );
+    write("infra/index.ts", `export * from "./orders";`);
+    await build();
+    const bundle = readFileSync(bundleFile(), "utf8");
+    expect(bundle).not.toContain("placeholder-url");
+    expect(bundle).not.toContain("sdk loaded");
+  });
+
+  it("fails when a barrel that the function imports for its side effects imports a module with top-level code", async () => {
+    writeProject(
+      handlerModule.replace(
+        `import { Order } from "./schema";`,
+        `import { Order } from "./schema";\n  import "../infra";`,
+      ),
+    );
+    write(
+      "infra/index.ts",
+      `import "../lib/setup";\nexport * from "./orders";`,
+    );
+    write(
+      "lib/setup.ts",
+      [
+        `import { orders } from "../infra/orders";`,
+        `globalThis.setupRan = "yes";`,
+        `export const url = () => orders.url;`,
+      ].join("\n"),
+    );
+    await expect(build()).rejects.toThrow(
+      "runtime/process-orders.ts:6:3: runtime/process-orders.ts loads lib/setup.ts only through side-effect imports and `export *`, along runtime/process-orders.ts → infra/index.ts → lib/setup.ts. lib/setup.ts is an infra module because it imports infra/orders.ts (lib/setup.ts:1:1)",
     );
   });
 

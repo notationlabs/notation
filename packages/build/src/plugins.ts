@@ -196,9 +196,10 @@ export type RuntimePluginOptions = {
  * 1. Serves the generated entry.
  * 2. Reduces each declaration to its runtime options.
  * 3. Marks infra modules free of side effects, so the bundler drops each one
- *    whose bindings are no longer used. A project module that isn't infra
- *    fails the build if it imports, only for its side effects, a module that
- *    is infra only through its imports.
+ *    whose bindings are no longer used. A runtime module fails the build if
+ *    it loads, through side-effect imports and `export *` only, an infra
+ *    module with top-level code that ran in the function before module
+ *    kinds.
  * 4. Fails the build if an infra module, or an infra function from a
  *    package, is still in the bundle, and names the import chain.
  */

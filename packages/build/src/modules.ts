@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { projectRoot } from "@notation/core";
 import { analyzeModule, type ModuleAnalysis } from "./analyze";
-import { location, type Node } from "./ast";
+import { location, unwrap, type Node } from "./ast";
 import { Marks } from "./marks";
 
 export const nodeModules = /[\\/]node_modules[\\/]/;
@@ -171,9 +171,9 @@ export class ModuleAnalyses {
    * 3. A module that imports a resource function is infra.
    * 4. A module that imports an infra module is infra. This repeats until
    *    no module changes, over the modules that the first module reaches.
-   *    Imports of packages aren't followed, and runtime and listed shared
-   *    modules stop the walk, since their kind doesn't depend on their
-   *    imports.
+   *    A package module ends the walk with its own kind, so its imports
+   *    aren't followed. Runtime and listed shared modules end the walk too,
+   *    since their kind doesn't depend on their imports.
    * 5. Any other module is shared.
    */
   kind(file: string): ModuleKind | undefined {
@@ -193,6 +193,11 @@ export class ModuleAnalyses {
         found.set(next, this.#kinds.get(next));
         continue;
       }
+      // A file outside the project ends the walk with its own kind.
+      if (!this.isProjectModule(next)) {
+        found.set(next, this.kind(next));
+        continue;
+      }
       const analysis = this.#tryFromFile(next);
       if (!analysis) {
         found.set(next, undefined);
@@ -205,7 +210,7 @@ export class ModuleAnalyses {
       }
       const edges = this.#imports(analysis).flatMap((imported) => {
         const target = this.marks.resolve(imported.source, next);
-        return target && this.isProjectModule(target)
+        return target && isLocalModule(target)
           ? [{ file: target, import: imported }]
           : [];
       });
@@ -341,38 +346,65 @@ export class ModuleAnalyses {
   }
 
   /**
-   * Fails if a project module that isn't infra imports a module only for its
-   * side effects, as in `import "./setup"`, and the imported module is infra
-   * only through its imports. The runtime build leaves infra modules out, so
-   * the imported module's own top-level code wouldn't run in the function.
-   * A module that imports a resource function itself is left out silently:
-   * its top-level code declares resources, which must not run in the
-   * function.
+   * Fails if a runtime module loads a module only through side-effect
+   * imports and `export *`, the runtime build leaves that module out, and
+   * the module has top-level code that may have effects. Before module
+   * kinds, that code ran in the function. The walk follows such imports
+   * from the runtime module through modules that the runtime build leaves
+   * out, such as a barrel with `import "./setup"`. It skips a module that
+   * calls a resource function at its top level, since the runtime build
+   * left that module out before too.
    */
   checkEffectImports(file: string) {
-    if (!this.isProjectModule(file) || this.kind(file)?.kind === "infra")
+    if (!this.isProjectModule(file) || this.kind(file)?.kind !== "runtime")
       return;
     const analysis = this.fromFile(file);
     if (!analysis) return;
     const { source, body } = analysis.table.module;
-    const name = displayPath(file, this.root);
+    const seen = new Set([file]);
     for (const statement of body) {
-      if (!isEffectImport(statement)) continue;
-      const target = this.marks.resolve(statement.source.value, file);
-      if (!target) continue;
-      const kind = this.kind(target);
-      if (kind?.kind !== "infra" || !("module" in kind.reason)) continue;
-      const imported = displayPath(target, this.root);
+      if (!loadsForEffects(statement)) continue;
+      const chain = this.#droppedCode(file, statement, seen);
+      if (!chain) continue;
+      const names = [file, ...chain].map((module) =>
+        displayPath(module, this.root),
+      );
+      const [name, target] = [names[0]!, names.at(-1)!];
       throw new Error(
-        `${name}:${location(source, statement.start)}: ${name} imports ${imported} for its side effects, but ${imported} is ${this.describeKind(target)}. The runtime build leaves infra modules out, so the top-level code of ${imported} doesn't run in the function. Move the code that the function needs to run to a module that doesn't import infra, and import that module instead.`,
+        `${name}:${location(source, statement.start)}: ${name} loads ${target} only through side-effect imports and \`export *\`, along ${names.join(" → ")}. ${target} is ${this.describeKind(chain.at(-1)!)}. The runtime build leaves infra modules out, so the top-level code of ${target} doesn't run in the function. Move the top-level code that the function needs to a module that doesn't import infra, and import that module instead.`,
       );
     }
+  }
+
+  // The chain of modules from the target of `statement` in `file` to a
+  // module with top-level code that the runtime build leaves out.
+  #droppedCode(
+    file: string,
+    statement: Node,
+    seen: Set<string>,
+  ): string[] | undefined {
+    const target = this.marks.resolve(statement.source.value, file);
+    if (!target || seen.has(target) || !this.isProjectModule(target))
+      return undefined;
+    seen.add(target);
+    if (this.kind(target)?.kind !== "infra") return undefined;
+    const analysis = this.#tryFromFile(target);
+    if (!analysis || analysis.resourceCall) return undefined;
+    const { body } = analysis.table.module;
+    if (body.some(hasEffects)) return [target];
+    for (const next of body) {
+      if (!loadsForEffects(next)) continue;
+      const chain = this.#droppedCode(target, next, seen);
+      if (chain) return [target, ...chain];
+    }
+    return undefined;
   }
 
   /**
    * Fails if a module that `sharedModules` matches can't be shared: it has a
    * declaration, imports a resource function, or imports an infra or runtime
-   * module. The error names the line of the import.
+   * module. The error names the declaration, or else the first import that
+   * causes a problem.
    */
   checkShared(file: string) {
     if (!this.isListedShared(file)) return;
@@ -380,33 +412,37 @@ export class ModuleAnalyses {
     if (!analysis) return;
     const { source } = analysis.table.module;
     const name = displayPath(file, this.root);
-    const fail = (start: number, message: string): never => {
-      throw new Error(
-        `${name}:${location(source, start)}: ${name} matches sharedModules, but ${message}. A shared module runs in both builds, so it can't declare a function or resources, or import an infra or runtime module.`,
-      );
-    };
-    if (analysis.declaration) {
-      fail(
-        analysis.declaration.call.start,
-        `it declares a function with ${analysis.declaration.name}`,
-      );
-    }
+    const problems: { start: number; message: string }[] = [];
     if (analysis.resource) {
-      fail(
-        analysis.resource.start,
-        `it imports the resource function ${analysis.resource.name} from ${analysis.resource.source}`,
-      );
+      problems.push({
+        start: analysis.resource.start,
+        message: `it imports the resource function ${analysis.resource.name} from ${analysis.resource.source}`,
+      });
     }
     for (const imported of this.#imports(analysis)) {
       const target = this.marks.resolve(imported.source, file);
       if (!target) continue;
       const why = this.describeKind(target);
       if (!why) continue;
-      fail(
-        imported.statement.start,
-        `it imports ${displayPath(target, this.root)}, which is ${why}`,
-      );
+      problems.push({
+        start: imported.statement.start,
+        message: `it imports ${displayPath(target, this.root)}, which is ${why}`,
+      });
+      break;
     }
+    const first = analysis.declaration
+      ? {
+          start: analysis.declaration.call.start,
+          message: `it declares a function with ${analysis.declaration.name}`,
+        }
+      : problems.reduce<(typeof problems)[number] | undefined>(
+          (a, b) => (a && a.start <= b.start ? a : b),
+          undefined,
+        );
+    if (!first) return;
+    throw new Error(
+      `${name}:${location(source, first.start)}: ${name} matches sharedModules, but ${first.message}. A shared module runs in both builds, so it can't declare a function or resources, or import an infra or runtime module.`,
+    );
   }
 }
 
@@ -449,14 +485,106 @@ export function isLocalModule(file: string): boolean {
   );
 }
 
-// An import or re-export with no bindings, such as `import "./setup"` or
-// `export {} from "./setup"`, which loads a module only for its side effects.
-function isEffectImport(statement: Node): boolean {
-  if (!statement.source || statement.specifiers?.length !== 0) return false;
+// An import or re-export that loads a module only for its side effects, as
+// far as the runtime bundle goes: one with no bindings, such as
+// `import "./setup"` or `export {} from "./setup"`, or an `export *`, whose
+// names the runtime entry doesn't re-export.
+function loadsForEffects(statement: Node): boolean {
+  if (!statement.source) return false;
+  if (statement.type === "ExportAllDeclaration")
+    return !statement.exported && statement.exportKind !== "type";
+  if (statement.specifiers?.length !== 0) return false;
   return statement.type === "ImportDeclaration"
     ? statement.importKind !== "type"
     : statement.type === "ExportNamedDeclaration" &&
         statement.exportKind !== "type";
+}
+
+// Whether a top-level statement may have effects when its module loads.
+// Imports, re-exports, type declarations and function declarations have
+// none, and neither do classes and variables whose values are literals,
+// names, functions, or arrays, objects and classes of these.
+function hasEffects(statement: Node): boolean {
+  if (statement.declare) return false;
+  switch (statement.type) {
+    case "ImportDeclaration":
+    case "ExportAllDeclaration":
+    case "EmptyStatement":
+    case "FunctionDeclaration":
+    case "TSDeclareFunction":
+    case "TSTypeAliasDeclaration":
+    case "TSInterfaceDeclaration":
+      return false;
+    case "ExpressionStatement":
+      return !statement.directive;
+    case "ExportNamedDeclaration":
+      return statement.declaration ? hasEffects(statement.declaration) : false;
+    case "ExportDefaultDeclaration": {
+      const { declaration } = statement;
+      return /Declaration$|^TSDeclareFunction$/.test(declaration.type)
+        ? hasEffects(declaration)
+        : !isInert(declaration);
+    }
+    case "ClassDeclaration":
+      return !isInertClass(statement);
+    case "VariableDeclaration":
+      return statement.declarations.some(
+        (declarator: Node) =>
+          declarator.id.type !== "Identifier" ||
+          (declarator.init && !isInert(declarator.init)),
+      );
+    default:
+      return true;
+  }
+}
+
+// Whether evaluating an expression has no effects.
+function isInert(node: Node): boolean {
+  node = unwrap(node);
+  switch (node.type) {
+    case "Literal":
+    case "Identifier":
+    case "FunctionExpression":
+    case "ArrowFunctionExpression":
+      return true;
+    case "TemplateLiteral":
+      return node.expressions.length === 0;
+    case "UnaryExpression":
+      return node.operator !== "delete" && isInert(node.argument);
+    case "ArrayExpression":
+      return node.elements.every(
+        (element: Node | null) =>
+          !element || (element.type !== "SpreadElement" && isInert(element)),
+      );
+    case "ObjectExpression":
+      return node.properties.every(
+        (property: Node) =>
+          property.type === "Property" &&
+          (!property.computed || isInert(property.key)) &&
+          isInert(property.value),
+      );
+    case "ClassExpression":
+      return isInertClass(node);
+    default:
+      return false;
+  }
+}
+
+// A class runs code when it is defined only through decorators, its
+// superclass, computed keys, static blocks and static initialisers.
+function isInertClass(node: Node): boolean {
+  if (node.decorators?.length > 0) return false;
+  if (node.superClass && !isInert(node.superClass)) return false;
+  return node.body.body.every(
+    (member: Node) =>
+      member.type !== "StaticBlock" &&
+      !(member.decorators?.length > 0) &&
+      (!member.computed || isInert(member.key)) &&
+      (!member.static ||
+        member.type === "MethodDefinition" ||
+        !member.value ||
+        isInert(member.value)),
+  );
 }
 
 // Whether `file` is `dir` or is under it.

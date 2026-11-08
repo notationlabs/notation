@@ -281,7 +281,7 @@ it("fails the runtime build when a module that the function imports for its side
   );
   await waitFor(() =>
     expect(String(error.mock.calls.at(-1)?.[0])).toContain(
-      "watch-i/todos.ts:1:1: watch-i/todos.ts imports watch-i/lib/setup.ts for its side effects, but watch-i/lib/setup.ts is an infra module because it imports watch-i/lib/dep.ts (watch-i/lib/setup.ts:1:1), which imports makeQueue from ../infra/queue",
+      "watch-i/todos.ts:1:1: watch-i/todos.ts loads watch-i/lib/setup.ts only through side-effect imports and `export *`, along watch-i/todos.ts → watch-i/lib/setup.ts. watch-i/lib/setup.ts is an infra module because it imports watch-i/lib/dep.ts (watch-i/lib/setup.ts:1:1), which imports makeQueue from ../infra/queue",
     ),
   );
 });
