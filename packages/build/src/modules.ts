@@ -9,11 +9,12 @@ export const nodeModules = /[\\/]node_modules[\\/]/;
 export const scriptFile = /\.[cm]?[jt]sx?$/;
 
 /**
- * The kind of a project module.
+ * The kind of a module.
  *
  * - `runtime`: the module has a declaration, such as `$lambda`.
- * - `infra`: the module imports a resource function, or imports an infra
- *   module.
+ * - `infra`: a project module that imports a resource function, or imports
+ *   an infra module. A package module outside `node_modules` is infra only
+ *   if it calls a resource function at its top level.
  * - `shared`: any other module.
  */
 export type ModuleKind =
@@ -22,13 +23,15 @@ export type ModuleKind =
   | { kind: "shared" };
 
 /**
- * Why a module is infra: the resource function that it imports, or the
- * infra module that it imports. `source` is the specifier of the import, and
- * `start` is its position in the module.
+ * Why a module is infra: the resource function that it imports, the infra
+ * module that it imports, or, for a package module, the resource function
+ * that it calls at its top level. `source` is the specifier of the import,
+ * and `start` is the position of the import or the call in the module.
  */
 export type InfraReason =
   | { resource: string; source: string; start: number }
-  | { module: string; source: string; start: number };
+  | { module: string; source: string; start: number }
+  | { call: string; start: number };
 
 /** An import or re-export of a module, by its specifier. */
 type ModuleImport = { source: string; statement: Node };
@@ -75,16 +78,16 @@ export class ModuleAnalyses {
   }
 
   /**
-   * Whether a file is a project module, which the builds analyse. A file in
-   * `node_modules` is in a package. Any other file under the project root is
-   * a project module, even in a folder with its own package.json. A file
-   * outside the root is in a package when its nearest package.json with a
-   * name is in a directory that doesn't contain the root: a workspace
-   * package resolves to its real path, outside `node_modules`.
+   * Whether a file is a project module, which `kind` classifies by its
+   * imports. A file in `node_modules` is in a package. Any other file under
+   * the project root is a project module, even in a folder with its own
+   * package.json. A file outside the root is in a package when its nearest
+   * package.json with a name is in a directory that doesn't contain the
+   * root: a workspace package resolves to its real path, outside
+   * `node_modules`.
    */
   isProjectModule(file: string): boolean {
-    if (file.startsWith("\0") || !scriptFile.test(file)) return false;
-    if (nodeModules.test(file)) return false;
+    if (!isLocalModule(file)) return false;
     if (isInside(this.root, file)) return true;
     return !this.#inPackage(path.dirname(file));
   }
@@ -126,9 +129,12 @@ export class ModuleAnalyses {
     this.#depths.clear();
   }
 
-  /** Analyses a module from the file system. */
+  /**
+   * Analyses a module from the file system: a project module, or a package
+   * module outside `node_modules`, such as a file of a workspace package.
+   */
   fromFile(file: string): ModuleAnalysis | undefined {
-    if (!this.isProjectModule(file)) return undefined;
+    if (!isLocalModule(file)) return undefined;
     let analysis = this.#analyses.get(file);
     if (!analysis) {
       const table = this.marks.table(file);
@@ -146,16 +152,19 @@ export class ModuleAnalyses {
     this.#packageDirs.clear();
   }
 
-  /** Whether `sharedModules` matches a file. */
   isListedShared(file: string): boolean {
-    if (this.sharedModules.length === 0) return false;
+    if (this.sharedModules.length === 0 || !this.isProjectModule(file))
+      return false;
     const relative = path.relative(this.root, file).split(path.sep).join("/");
     return this.sharedModules.some((glob) => path.matchesGlob(relative, glob));
   }
 
   /**
-   * The kind of a module, or `undefined` for a file that isn't a project
-   * module.
+   * The kind of a module, or `undefined` for a file that the build doesn't
+   * analyse, such as a file in `node_modules`. A package module outside
+   * `node_modules` is runtime if it has a declaration, infra if it calls a
+   * resource function at its top level, and shared otherwise. The rules
+   * below apply to project modules.
    *
    * 1. A module with a declaration is runtime.
    * 2. A module that `sharedModules` matches is shared.
@@ -169,6 +178,11 @@ export class ModuleAnalyses {
    */
   kind(file: string): ModuleKind | undefined {
     if (this.#kinds.has(file)) return this.#kinds.get(file);
+    if (!this.isProjectModule(file)) {
+      const kind = packageKind(this.#tryFromFile(file));
+      this.#kinds.set(file, kind);
+      return kind;
+    }
     const found = new Map<string, ModuleKind | undefined>();
     const pending = new Map<string, { file: string; import: ModuleImport }[]>();
     const queue = [file];
@@ -319,18 +333,25 @@ export class ModuleAnalyses {
       reason = next.reason;
     }
     steps.push(
-      `imports ${reason.resource} from ${reason.source} (${at(module, reason.start)})`,
+      "call" in reason
+        ? `calls ${reason.call} at its top level (${at(module, reason.start)})`
+        : `imports ${reason.resource} from ${reason.source} (${at(module, reason.start)})`,
     );
     return `an infra module because it ${steps.join(", which ")}`;
   }
 
   /**
-   * Fails if a module that isn't infra imports an infra module only for its
-   * side effects, as in `import "./setup"`. The runtime build leaves infra
-   * modules out, so the imported module wouldn't run in the function.
+   * Fails if a project module that isn't infra imports a module only for its
+   * side effects, as in `import "./setup"`, and the imported module is infra
+   * only through its imports. The runtime build leaves infra modules out, so
+   * the imported module's own top-level code wouldn't run in the function.
+   * A module that imports a resource function itself is left out silently:
+   * its top-level code declares resources, which must not run in the
+   * function.
    */
   checkEffectImports(file: string) {
-    if (this.kind(file)?.kind === "infra") return;
+    if (!this.isProjectModule(file) || this.kind(file)?.kind === "infra")
+      return;
     const analysis = this.fromFile(file);
     if (!analysis) return;
     const { source, body } = analysis.table.module;
@@ -338,10 +359,12 @@ export class ModuleAnalyses {
     for (const statement of body) {
       if (!isEffectImport(statement)) continue;
       const target = this.marks.resolve(statement.source.value, file);
-      if (!target || this.kind(target)?.kind !== "infra") continue;
+      if (!target) continue;
+      const kind = this.kind(target);
+      if (kind?.kind !== "infra" || !("module" in kind.reason)) continue;
       const imported = displayPath(target, this.root);
       throw new Error(
-        `${name}:${location(source, statement.start)}: ${name} imports ${imported} for its side effects, but ${imported} is ${this.describeKind(target)}. The runtime build leaves infra modules out, so ${imported} doesn't run in the function. Move the code that the function needs to run to a module that doesn't import infra.`,
+        `${name}:${location(source, statement.start)}: ${name} imports ${imported} for its side effects, but ${imported} is ${this.describeKind(target)}. The runtime build leaves infra modules out, so the top-level code of ${imported} doesn't run in the function. Move the code that the function needs to run to a module that doesn't import infra, and import that module instead.`,
       );
     }
   }
@@ -402,6 +425,30 @@ function baseKind(
   return undefined;
 }
 
+function packageKind(
+  analysis: ModuleAnalysis | undefined,
+): ModuleKind | undefined {
+  if (!analysis) return undefined;
+  if (analysis.declaration) {
+    return { kind: "runtime", declaration: analysis.declaration.name };
+  }
+  const call = analysis.resourceCall;
+  if (call) {
+    return {
+      kind: "infra",
+      reason: { call: call.name, start: call.call!.start },
+    };
+  }
+  return { kind: "shared" };
+}
+
+// The files that the builds analyse: JS and TS files outside `node_modules`.
+export function isLocalModule(file: string): boolean {
+  return (
+    !file.startsWith("\0") && scriptFile.test(file) && !nodeModules.test(file)
+  );
+}
+
 // An import or re-export with no bindings, such as `import "./setup"` or
 // `export {} from "./setup"`, which loads a module only for its side effects.
 function isEffectImport(statement: Node): boolean {
@@ -436,18 +483,19 @@ function hasName(manifest: string): boolean {
  * A file for an error message, relative to the project root. A package file
  * is named by its package, such as `@notation/aws/dist/sqs/index.js`. A
  * workspace package resolves to its real path, so a path relative to the
- * project root would read as `../../aws/dist/sqs/index.js`.
+ * project root would read as `../../aws/dist/sqs/index.js`. A file counts as
+ * a package file by the rule of `isProjectModule`, so a project module
+ * outside the root keeps its relative path, such as `../common/fmt.ts`.
  */
 export function displayPath(file: string, root: string = projectRoot()) {
   const relative = path.relative(root, file).split(path.sep).join("/");
   if (!nodeModules.test(file) && !relative.startsWith("..")) return relative;
   for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
     const manifest = path.join(dir, "package.json");
-    if (fs.existsSync(manifest)) {
+    if (fs.existsSync(manifest) && hasName(manifest)) {
+      if (!nodeModules.test(file) && isInside(dir, root)) return relative;
       const { name } = JSON.parse(fs.readFileSync(manifest, "utf8"));
-      if (typeof name === "string") {
-        return [name, ...path.relative(dir, file).split(path.sep)].join("/");
-      }
+      return [name, ...path.relative(dir, file).split(path.sep)].join("/");
     }
     if (dir === path.dirname(dir)) return relative;
   }

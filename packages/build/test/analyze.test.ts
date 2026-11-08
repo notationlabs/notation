@@ -105,7 +105,12 @@ describe("analyzeModule", () => {
     [
       "doesn't call it",
       `import { createQueue as make } from "@notation/aws/sqs";\nexport const q = () => make({});`,
-      "make",
+      "createQueue",
+    ],
+    [
+      "uses a namespace import as a value",
+      `import * as sqs from "@notation/aws/sqs";\nexport const all = () => sqs;`,
+      "createQueue",
     ],
     [
       "uses it through a namespace",
@@ -122,6 +127,19 @@ describe("analyzeModule", () => {
       name,
       source: "@notation/aws/sqs",
     });
+  });
+
+  it("records a call to a resource function at the top level only", () => {
+    expect(
+      run(
+        `import { createQueue } from "@notation/aws/sqs";\nexport const q = createQueue({});`,
+      ).resourceCall?.name,
+    ).toBe("createQueue");
+    expect(
+      run(
+        `import { createQueue } from "@notation/aws/sqs";\nexport const q = () => createQueue({});`,
+      ).resourceCall,
+    ).toBeUndefined();
   });
 
   it("records no resource function for a type import", () => {

@@ -6,6 +6,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -21,6 +22,8 @@ import type { Logger } from "../src/logger";
 const tmpDir = fileURLToPath(new URL("../../../tmp", import.meta.url));
 
 let root: string;
+// Directories next to the project root, which tests remove afterwards.
+let outside: string[] = [];
 
 beforeEach(() => {
   mkdirSync(tmpDir, { recursive: true });
@@ -33,6 +36,8 @@ beforeEach(() => {
 afterEach(() => {
   setConfigFile(undefined);
   rmSync(root, { recursive: true, force: true });
+  for (const dir of outside) rmSync(dir, { recursive: true, force: true });
+  outside = [];
 });
 
 it("reports a declaration error at the line of the user's source", async () => {
@@ -507,6 +512,93 @@ describe("runtime modules in a named package under the project root", () => {
   });
 });
 
+describe("workspace packages outside the project root", () => {
+  // A package outside the root, linked into the project's node_modules as a
+  // workspace package is. It resolves @notation/aws from the project.
+  const writePackage = (name: string, files: Record<string, string>) => {
+    const dir = realpathSync(mkdtempSync(path.join(tmpDir, `${name}-`)));
+    outside.push(dir);
+    writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name, type: "module", main: "./index.ts" }),
+    );
+    for (const [file, contents] of Object.entries(files)) {
+      writeFileSync(path.join(dir, file), contents);
+    }
+    mkdirSync(path.join(dir, "node_modules/@notation"), { recursive: true });
+    symlinkSync(
+      path.join(root, "node_modules/@notation/aws"),
+      path.join(dir, "node_modules/@notation/aws"),
+    );
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    symlinkSync(dir, path.join(root, "node_modules", name));
+    return dir;
+  };
+
+  it("leaves out a package module that calls a resource function at its top level", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { Order } from "./schema";`,
+          `import { Order } from "./schema";\n  import { fmt } from "acme-lib";`,
+        )
+        .replace(
+          "export const handler = async () =>",
+          "export const handler = async () => fmt() &&",
+        ),
+    );
+    writePackage("acme-lib", {
+      "index.ts": `export * from "./queues";\nexport * from "./fmt";`,
+      "queues.ts": `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
+      "fmt.ts": `export const fmt = () => "formatted";`,
+    });
+    const analyses = new ModuleAnalyses();
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"), {
+      analyses,
+    });
+    await compileRuntimeModules(modules, { analyses });
+    const bundle = readFileSync(
+      path.join(root, "dist/runtime/process-orders/index.mjs"),
+      "utf8",
+    );
+    expect(bundle).toContain("formatted");
+    expect(bundle).not.toContain("dlq");
+    expect(bundle).not.toContain("sdk loaded");
+  });
+
+  it("finds and strips a declaration module in a package that infra imports by path", async () => {
+    writeProject();
+    const fns = writePackage("acme-fns", {
+      "fn.ts": [
+        `import { $lambda } from "@notation/aws/lambda";`,
+        `console.log("external module loaded");`,
+        `export const lambda = $lambda({ id: "external" });`,
+        `export const handler = async () => "external";`,
+      ].join("\n"),
+    });
+    write(
+      "infra/orders.ts",
+      [
+        `import { queue } from "@notation/aws/sqs";`,
+        `import { lambda } from "../runtime/process-orders";`,
+        `import { lambda as external } from "${path.relative(path.join(root, "infra"), fns)}/fn";`,
+        `export const orders = queue({ name: "orders" });`,
+        `orders.consume(() => [lambda, external]);`,
+      ].join("\n"),
+    );
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
+    expect(modules.map((module) => module.path)).toEqual([
+      path.join(fns, "fn.ts"),
+      path.join(root, "runtime/process-orders.ts"),
+    ]);
+    const bundle = readFileSync(
+      path.join(root, "dist/infra/orders.mjs"),
+      "utf8",
+    );
+    expect(bundle).not.toContain("external module loaded");
+  });
+});
+
 describe("runtime modules that infra doesn't import", () => {
   const entryPoint = () => path.join(root, "infra/orders.ts");
   const runtimeModules = ["runtime/**/*.ts"];
@@ -659,15 +751,26 @@ describe("shared modules", () => {
     ]);
   });
 
+  // In these tests, the function's module uses an import in an export that
+  // the bundle drops, so the import stays and the bundle loads the module.
+  // The module's top-level code is left out only if the module is infra.
   it("leaves out a barrel that re-exports infra", async () => {
     writeProject(
-      handlerModule.replace(`from "../infra/orders"`, `from "../infra"`),
+      handlerModule
+        .replace(`from "../infra/orders"`, `from "../infra"`)
+        .replace(
+          "export const handler",
+          "export const url = () => orders.url;\n  export const handler",
+        ),
     );
-    write("infra/index.ts", `export * from "./orders";`);
+    write(
+      "infra/index.ts",
+      `console.log("barrel loaded");\nexport * from "./orders";`,
+    );
     await build();
     const bundle = readFileSync(bundleFile(), "utf8");
+    expect(bundle).not.toContain("barrel loaded");
     expect(bundle).not.toContain("placeholder-url");
-    expect(bundle).not.toContain("infra/index.ts");
   });
 
   it("names the chain through a barrel when a kept option refers to it", async () => {
@@ -684,21 +787,27 @@ describe("shared modules", () => {
 
   it("leaves out an unlisted module that imports infra, when the function doesn't use its import", async () => {
     writeProject(
-      handlerModule.replace(
-        `import { Order } from "./schema";`,
-        `import { Order } from "./schema";\n  import { format } from "../shared/format";`,
-      ),
+      handlerModule
+        .replace(
+          `import { Order } from "./schema";`,
+          `import { Order } from "./schema";\n  import { format } from "../shared/format";`,
+        )
+        .replace(
+          "export const handler",
+          "export const formatted = () => format();\n  export const handler",
+        ),
     );
     write(
       "shared/format.ts",
       [
         `import { orders } from "../infra/orders";`,
+        `console.log("format loaded");`,
         `export const format = () => orders.url;`,
       ].join("\n"),
     );
     await build();
     const bundle = readFileSync(bundleFile(), "utf8");
-    expect(bundle).not.toContain("format = ");
+    expect(bundle).not.toContain("format loaded");
     expect(bundle).not.toContain("sdk loaded");
   });
 
@@ -718,7 +827,52 @@ describe("shared modules", () => {
       ].join("\n"),
     );
     await expect(build()).rejects.toThrow(
-      "runtime/process-orders.ts:6:3: runtime/process-orders.ts imports lib/setup.ts for its side effects, but lib/setup.ts is an infra module because it imports infra/orders.ts (lib/setup.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build leaves infra modules out, so lib/setup.ts doesn't run in the function.",
+      "runtime/process-orders.ts:6:3: runtime/process-orders.ts imports lib/setup.ts for its side effects, but lib/setup.ts is an infra module because it imports infra/orders.ts (lib/setup.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build leaves infra modules out, so the top-level code of lib/setup.ts doesn't run in the function.",
+    );
+  });
+
+  it("leaves out a module that imports a resource function, when the function imports it for its side effects", async () => {
+    writeProject(
+      handlerModule.replace(
+        `import { Order } from "./schema";`,
+        `import { Order } from "./schema";\n  import "../infra/alarms";`,
+      ),
+    );
+    write(
+      "infra/alarms.ts",
+      `import { queue } from "@notation/aws/sqs";\nqueue({ name: "dlq" });`,
+    );
+    await build();
+    const bundle = readFileSync(bundleFile(), "utf8");
+    expect(bundle).not.toContain("dlq");
+    expect(bundle).not.toContain("sdk loaded");
+  });
+
+  it("names a project module outside the root by its relative path", async () => {
+    const common = realpathSync(mkdtempSync(path.join(tmpDir, "common-")));
+    outside.push(common);
+    const relative = path.relative(root, common);
+    writeFileSync(
+      path.join(common, "fmt.ts"),
+      [
+        `import { orders } from "${path.relative(common, root)}/infra/orders";`,
+        `export const format = () => "orders";`,
+        `export const url = () => orders.url;`,
+      ].join("\n"),
+    );
+    writeProject(
+      handlerModule
+        .replace(
+          `import { Order } from "./schema";`,
+          `import { Order } from "./schema";\n  import { format } from "../${relative}/fmt";`,
+        )
+        .replace(
+          "export const handler = async () =>",
+          "export const handler = async () => format() &&",
+        ),
+    );
+    await expect(build()).rejects.toThrow(
+      `The bundle of runtime/process-orders.ts includes the infra module ${relative}/fmt.ts. The bundle imports it through runtime/process-orders.ts → ${relative}/fmt.ts, and uses format at runtime/process-orders.ts:17:38. ${relative}/fmt.ts is an infra module because it imports infra/orders.ts (${relative}/fmt.ts:1:1)`,
     );
   });
 

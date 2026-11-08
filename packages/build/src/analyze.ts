@@ -3,6 +3,7 @@ import {
   isFunction,
   location,
   unwrap,
+  walk,
   type Node,
   type Reference,
 } from "./ast";
@@ -59,6 +60,12 @@ export type ModuleAnalysis = {
    * level or only inside a function.
    */
   resource?: ResourceImport;
+  /**
+   * The first call to a resource function at the top level of the module,
+   * outside any function. The build uses it to tell whether a package
+   * module outside `node_modules` declares resources when it loads.
+   */
+  resourceCall?: MarkedReference;
 };
 
 /**
@@ -85,8 +92,14 @@ export function analyzeModule(
   };
 
   const declarations: Declaration[] = [];
+  let resourceCall: MarkedReference | undefined;
   for (const reference of marked) {
     const { mark } = reference;
+    if (mark.kind === "resource") {
+      if (reference.call && !reference.ancestors.some(isFunction))
+        resourceCall ??= reference;
+      continue;
+    }
     if (mark.kind !== "declaration") continue;
     if (insideMarkedWrapper(reference, table)) continue;
     declarations.push(readDeclaration(reference, mark, fail));
@@ -106,7 +119,7 @@ export function analyzeModule(
     if ("local" in target) valueNames.add(target.local);
   }
   if (/\.[cm]?[jt]sx$/.test(module.file)) {
-    for (const statement of module.body) jsxNames(statement, valueNames);
+    for (const statement of module.body) addJsxNames(statement, valueNames);
   }
 
   return {
@@ -115,31 +128,29 @@ export function analyzeModule(
     valueNames,
     marked,
     declaration: declarations[0],
-    resource: resourceImport(table, valueNames, marked, marks),
+    resource: resourceImport(table, references, valueNames, marked, marks),
+    resourceCall,
   };
 }
 
-// Adds the names of JSX elements, such as `Orders` in `<Orders />` and
-// `ui` in `<ui.Orders />`, which `freeReferences` doesn't visit.
-function jsxNames(node: Node, names: Set<string>) {
-  if (node.type === "JSXOpeningElement") {
+// Adds the names of JSX elements that refer to bindings, such as `Orders` in
+// `<Orders />` and `ui` in `<ui.Orders />`, which `freeReferences` doesn't
+// visit. A lowercase name such as `<div />` is an intrinsic element, as in
+// TypeScript, so it doesn't refer to a binding.
+function addJsxNames(statement: Node, names: Set<string>) {
+  walk(statement, (node) => {
+    if (node.type !== "JSXOpeningElement") return;
     let name = node.name;
+    const isMember = name.type === "JSXMemberExpression";
     while (name.type === "JSXMemberExpression") name = name.object;
-    if (name.type === "JSXIdentifier") names.add(name.name);
-  }
-  for (const value of Object.values(node)) {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        if (item && typeof item.type === "string") jsxNames(item, names);
-      }
-    } else if (value && typeof value.type === "string") {
-      jsxNames(value, names);
-    }
-  }
+    if (name.type !== "JSXIdentifier") return;
+    if (isMember || /^[A-Z_$]/.test(name.name)) names.add(name.name);
+  });
 }
 
 function resourceImport(
   table: ModuleTable,
+  references: Reference[],
   valueNames: Set<string>,
   marked: MarkedReference[],
   marks: Marks,
@@ -149,7 +160,7 @@ function resourceImport(
     if (binding.imported === "*" || !valueNames.has(local)) continue;
     if (marks.importMark(file, binding)?.kind === "resource") {
       return {
-        name: local,
+        name: binding.imported === "default" ? local : binding.imported,
         source: binding.source,
         start: binding.specifier.start,
       };
@@ -165,6 +176,25 @@ function resourceImport(
         source: binding.source,
         start: reference.node.start,
       };
+    }
+  }
+  // A namespace that the module uses as a value, other than to read a
+  // member, such as `export const all = () => sqs`, holds every resource
+  // function of the module.
+  for (const { node, ancestors } of references) {
+    const binding = table.imports.get(node.name);
+    if (binding?.imported !== "*") continue;
+    const parent = ancestors.at(-1);
+    if (
+      parent?.type === "MemberExpression" &&
+      !parent.computed &&
+      parent.object === node
+    )
+      continue;
+    const resolved = marks.resolve(binding.source, file);
+    const name = resolved && marks.resourceExport(resolved);
+    if (name) {
+      return { name, source: binding.source, start: binding.specifier.start };
     }
   }
   for (const statement of table.module.body) {

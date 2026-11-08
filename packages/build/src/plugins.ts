@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { projectRoot, toProjectRoot } from "@notation/core";
+import { projectRoot } from "@notation/core";
 import type { Plugin } from "rolldown";
 import type { ModuleAnalysis } from "./analyze";
 import { location } from "./ast";
@@ -12,6 +12,7 @@ import {
 import type { ImportBinding, Mark } from "./marks";
 import {
   displayPath,
+  isLocalModule,
   ModuleAnalyses,
   nodeModules,
   scriptFile,
@@ -104,7 +105,7 @@ export function infraPlugin({
     transform: {
       filter: { id: { include: scriptFile, exclude: nodeModules } },
       handler(code, id) {
-        if (!analyses.isProjectModule(id)) return null;
+        if (!isLocalModule(id)) return null;
         declarations.delete(id);
         if (!mayHoldMarks(code)) return null;
         const analysis = analyses.fromSource(id, code);
@@ -195,8 +196,9 @@ export type RuntimePluginOptions = {
  * 1. Serves the generated entry.
  * 2. Reduces each declaration to its runtime options.
  * 3. Marks infra modules free of side effects, so the bundler drops each one
- *    whose bindings are no longer used. A module that isn't infra and
- *    imports an infra module only for its side effects fails the build.
+ *    whose bindings are no longer used. A project module that isn't infra
+ *    fails the build if it imports, only for its side effects, a module that
+ *    is infra only through its imports.
  * 4. Fails the build if an infra module, or an infra function from a
  *    package, is still in the bundle, and names the import chain.
  */
@@ -211,7 +213,7 @@ export function runtimePlugin({
     return {
       module: displayPath(file, analyses.root),
       reason: analyses.describeKind(file)!,
-      infraValue: origin?.kind === "infra" && "resource" in origin.reason,
+      infraValue: origin?.kind === "infra" && !("module" in origin.reason),
     };
   };
   return {
@@ -225,7 +227,7 @@ export function runtimePlugin({
     transform: {
       filter: { id: { include: scriptFile, exclude: nodeModules } },
       handler(code, id) {
-        if (!analyses.isProjectModule(id)) return null;
+        if (!isLocalModule(id)) return null;
         infraModules.delete(id);
         if (!mayHoldMarks(code)) return null;
         const analysis = analyses.fromSource(id, code);
@@ -253,25 +255,25 @@ export function runtimePlugin({
     generateBundle(_, bundle) {
       for (const output of Object.values(bundle)) {
         if (output.type !== "chunk") continue;
+        const show = (file: string) => displayPath(file, analyses.root);
         // Of the infra modules left in the bundle, the error names the one
         // closest to the entry.
-        const [left] = [...infraModules]
-          .filter((id) => (output.modules[id]?.renderedLength ?? 0) > 0)
-          .map((id) => ({ id, chain: importChain(this, id) }))
-          .sort((a, b) => a.chain.length - b.chain.length);
-        if (left) {
-          const { id } = left;
+        const left = importChain(
+          this,
+          (id) =>
+            infraModules.has(id) &&
+            (output.modules[id]?.renderedLength ?? 0) > 0,
+        );
+        if (left.length > 0) {
+          const id = left.at(-1)!;
           const uses = usesOfImports(
             output.modules,
             analyses,
             (binding, file) =>
               analyses.marks.resolve(binding.source, file) === id,
           );
-          const chain = left.chain.map((file) =>
-            displayPath(file, analyses.root),
-          );
           this.error(
-            `The bundle of ${toProjectRoot(module.path)} includes the infra module ${toProjectRoot(id)}. ${because(uses, chain)} ${toProjectRoot(id)} is ${analyses.describeKind(id)}. The runtime build leaves infra modules out, so runtime code can't use them. Read infra values through the declaration's env(), and move code that both builds need to a shared module.`,
+            `The bundle of ${show(module.path)} includes the infra module ${show(id)}. ${because(uses, left.map(show))} ${show(id)} is ${analyses.describeKind(id)}. The runtime build leaves infra modules out, so runtime code can't use them. Read infra values through the declaration's env(), and move code that both builds need to a shared module.`,
           );
         }
         // Infra functions from packages, such as queue() from
@@ -293,11 +295,9 @@ export function runtimePlugin({
                 importMark?.kind === "resource" ||
                 importMark?.kind === "declaration",
             );
-            const chain = importChain(this, id).map((file) =>
-              displayPath(file, analyses.root),
-            );
+            const chain = importChain(this, (next) => next === id).map(show);
             this.error(
-              `The bundle of ${toProjectRoot(module.path)} includes ${name} from ${displayPath(id, analyses.root)}, a function that declares infrastructure. ${because(uses, chain)} Infra functions can't run in a runtime module.`,
+              `The bundle of ${show(module.path)} includes ${name} from ${show(id)}, a function that declares infrastructure. ${because(uses, chain)} Infra functions can't run in a runtime module.`,
             );
           }
         }
@@ -354,7 +354,7 @@ function usesOfImports(
       );
       if (!matches(binding, file, importMark)) continue;
       uses.push({
-        at: `${toProjectRoot(file)}:${location(table.module.source, node.start)}`,
+        at: `${displayPath(file, analyses.root)}:${location(table.module.source, node.start)}`,
         name,
       });
     }
@@ -378,16 +378,24 @@ type ModuleGraph = {
   } | null;
 };
 
-// The shortest chain of static and dynamic imports from the entry to
-// `target`, without the generated entry.
-function importChain(graph: ModuleGraph, target: string): string[] {
+// The shortest chain of static and dynamic imports from the entry to the
+// closest module that `isTarget` accepts, without the generated entry. The
+// chain is empty if no module in the graph is accepted.
+function importChain(
+  graph: ModuleGraph,
+  isTarget: (id: string) => boolean,
+): string[] {
   const previous = new Map<string, string | undefined>([
     [resolvedEntryId, undefined],
   ]);
   const queue = [resolvedEntryId];
+  let target: string | undefined;
   while (queue.length > 0) {
     const id = queue.shift()!;
-    if (id === target) break;
+    if (isTarget(id)) {
+      target = id;
+      break;
+    }
     const info = graph.getModuleInfo(id);
     const imported = [
       ...(info?.importedIds ?? []),

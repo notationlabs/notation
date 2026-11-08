@@ -16,9 +16,9 @@ import { displayPath } from "./modules";
  * Describes an infra module that a name is imported from, by the module's
  * absolute path: its path for an error message, and why it is infra, such
  * as `an infra module because it imports queue from @notation/aws/sqs`.
- * `infraValue` is true when the module that defines the name imports a
- * resource function itself, so the name is likely an infra value, such as
- * a queue. Returns `undefined` for a module that isn't infra, or that the
+ * `infraValue` is true when the module that defines the name imports or
+ * calls a resource function itself, so the name is likely an infra value,
+ * such as a queue. Returns `undefined` for a module that isn't infra, or that the
  * build doesn't classify, such as a package.
  */
 export type DescribeInfra = (

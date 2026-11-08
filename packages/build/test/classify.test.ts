@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ModuleAnalyses } from "src/index";
+import { displayPath } from "src/modules";
 import { packageFiles, packages, root, virtualMarks } from "./virtual";
 
 const queueModule = `import { createQueue } from "@notation/aws/sqs";\nexport const orders = createQueue({ id: "orders" });`;
@@ -144,6 +145,31 @@ describe("ModuleAnalyses.kind", () => {
       "lib/page.tsx": `import { View } from "../infra/view";\nexport const Page = () => <View />;`,
     });
     expect(kind("lib/page.tsx")).toBe("infra");
+  });
+
+  it("ignores an import whose name is used only as a lowercase JSX tag", () => {
+    const { kind } = setup({
+      "infra/orders.ts": queueModule,
+      "lib/view.tsx": `import { orders } from "../infra/orders";\nexport const View = () => <orders />;`,
+    });
+    expect(kind("lib/view.tsx")).toBe("shared");
+  });
+
+  it("counts an import that is used as the object of a JSX member tag", () => {
+    const { kind } = setup({
+      "infra/orders.ts": queueModule,
+      "lib/view.tsx": `import { orders } from "../infra/orders";\nexport const View = () => <orders.View />;`,
+    });
+    expect(kind("lib/view.tsx")).toBe("infra");
+  });
+
+  it("names a resource function by its exported name, not its alias", () => {
+    const { describe } = setup({
+      "lib/alias.ts": `import { createQueue as make } from "@notation/aws/sqs";\nexport const q = () => make({});`,
+    });
+    expect(describe("lib/alias.ts")).toBe(
+      "an infra module because it imports createQueue from @notation/aws/sqs (lib/alias.ts:1:10)",
+    );
   });
 
   it("counts a module that re-exports all of a package with resource functions as infra", () => {
@@ -339,6 +365,16 @@ describe("ModuleAnalyses.checkEffectImports", () => {
     );
   });
 
+  it("passes a side-effect import of a module that imports a resource function itself", () => {
+    const { analyses } = setup({
+      "infra/orders.ts": queueModule,
+      "runtime/fn.ts": `import "../infra/orders";\n${lambdaModule}`,
+    });
+    expect(() =>
+      analyses.checkEffectImports(path.join(root, "runtime/fn.ts")),
+    ).not.toThrow();
+  });
+
   it("passes a side-effect import of a shared module", () => {
     const { analyses } = setup({
       "infra/orders.ts": queueModule,
@@ -373,6 +409,13 @@ describe("ModuleAnalyses.isProjectModule", () => {
       expect(isProject("common/schema.ts")).toBe(true);
       expect(isProject("packages/aws/dist/sqs/index.js")).toBe(false);
       expect(isProject("apps/api/node_modules/x/index.js")).toBe(false);
+      const root = path.join(dir, "apps/api");
+      expect(displayPath(path.join(dir, "common/schema.ts"), root)).toBe(
+        "../../common/schema.ts",
+      );
+      expect(
+        displayPath(path.join(dir, "packages/aws/dist/sqs/index.js"), root),
+      ).toBe("@x/aws/dist/sqs/index.js");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
