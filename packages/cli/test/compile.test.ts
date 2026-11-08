@@ -276,7 +276,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes the infra module runtime/queue-url.ts. The bundle imports it through runtime/process-orders.ts → runtime/queue-url.ts, and uses queueUrl at runtime/process-orders.ts:17:38. runtime/queue-url.ts is an infra module because it imports infra/orders.ts, which imports queue from @notation/aws/sqs.",
+      "The bundle of runtime/process-orders.ts includes the infra module runtime/queue-url.ts. The bundle imports it through runtime/process-orders.ts → runtime/queue-url.ts, and uses queueUrl at runtime/process-orders.ts:17:38. runtime/queue-url.ts is an infra module because it imports infra/orders.ts (runtime/queue-url.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10).",
     );
   });
 
@@ -403,7 +403,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes the infra module runtime/labels.ts. The bundle imports it through runtime/process-orders.ts → runtime/labels.ts, and uses label at runtime/process-orders.ts:17:38. runtime/labels.ts is an infra module because it imports infra/orders.ts, which imports infra/helpers.ts, which imports queue from @notation/aws/sqs. The runtime build leaves infra modules out, so runtime code can't use them.",
+      "The bundle of runtime/process-orders.ts includes the infra module runtime/labels.ts. The bundle imports it through runtime/process-orders.ts → runtime/labels.ts, and uses label at runtime/process-orders.ts:17:38. runtime/labels.ts is an infra module because it imports infra/orders.ts (runtime/labels.ts:1:1), which imports infra/helpers.ts (infra/orders.ts:1:1), which imports queue from @notation/aws/sqs (infra/helpers.ts:1:10). The runtime build leaves infra modules out, so runtime code can't use them.",
     );
   });
 
@@ -453,6 +453,57 @@ describe("declaration modules", () => {
     ).rejects.toThrow(
       "runtime/process-orders.ts: the module declares a function with $lambda, so it must export `handler`",
     );
+  });
+});
+
+describe("runtime modules in a named package under the project root", () => {
+  const writeMonorepo = () => {
+    writeProject();
+    write("package.json", JSON.stringify({ name: "monorepo" }));
+    write("packages/api/package.json", JSON.stringify({ name: "@acme/api" }));
+    write(
+      "packages/api/handler.ts",
+      handlerModule
+        .replace(`"./polyfill"`, `"../../runtime/polyfill"`)
+        .replace(`"../infra/orders"`, `"../../infra/orders"`)
+        .replace(`"./schema"`, `"../../runtime/schema"`)
+        .replace(`id: "process-orders"`, `id: "api"`),
+    );
+  };
+
+  it("finds and strips a declaration module that infra imports", async () => {
+    writeMonorepo();
+    write(
+      "infra/orders.ts",
+      [
+        `import { queue } from "@notation/aws/sqs";`,
+        `import { lambda } from "../runtime/process-orders";`,
+        `import { lambda as api } from "../packages/api/handler";`,
+        `export const orders = queue({ name: "orders" });`,
+        `orders.consume(() => [lambda, api]);`,
+      ].join("\n"),
+    );
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
+    expect(modules.map((module) => toRoot(module.path))).toEqual([
+      "packages/api/handler.ts",
+      "runtime/process-orders.ts",
+    ]);
+    const bundle = readFileSync(
+      path.join(root, "dist/infra/orders.mjs"),
+      "utf8",
+    );
+    expect(bundle).not.toContain("handler module loaded");
+  });
+
+  it("finds a declaration module through runtimeModules", async () => {
+    writeMonorepo();
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"), {
+      runtimeModules: ["packages/*/handler.ts"],
+    });
+    expect(modules.map((module) => toRoot(module.path))).toEqual([
+      "packages/api/handler.ts",
+      "runtime/process-orders.ts",
+    ]);
   });
 });
 
@@ -627,11 +678,11 @@ describe("shared modules", () => {
     );
     write("infra/index.ts", `export * from "./orders";`);
     await expect(build()).rejects.toThrow(
-      "runtime/process-orders.ts:11:22: an option of $lambda that the function keeps refers to orders, from infra/index.ts, which is an infra module because it imports infra/orders.ts, which imports queue from @notation/aws/sqs.",
+      "runtime/process-orders.ts:11:22: an option of $lambda that the function keeps refers to orders, from infra/index.ts, which is an infra module because it imports infra/orders.ts (infra/index.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build removes infra.",
     );
   });
 
-  it("leaves out an unlisted module that imports infra, when the function doesn't use it", async () => {
+  it("leaves out an unlisted module that imports infra, when the function doesn't use its import", async () => {
     writeProject(
       handlerModule.replace(
         `import { Order } from "./schema";`,
@@ -642,14 +693,95 @@ describe("shared modules", () => {
       "shared/format.ts",
       [
         `import { orders } from "../infra/orders";`,
-        `console.log("format loaded");`,
         `export const format = () => orders.url;`,
       ].join("\n"),
     );
     await build();
     const bundle = readFileSync(bundleFile(), "utf8");
-    expect(bundle).not.toContain("format loaded");
+    expect(bundle).not.toContain("format = ");
     expect(bundle).not.toContain("sdk loaded");
+  });
+
+  it("fails when the function imports an unlisted module that imports infra for its side effects", async () => {
+    writeProject(
+      handlerModule.replace(
+        `import { Order } from "./schema";`,
+        `import { Order } from "./schema";\n  import "../lib/setup";`,
+      ),
+    );
+    write(
+      "lib/setup.ts",
+      [
+        `import { orders } from "../infra/orders";`,
+        `globalThis.setupRan = "yes";`,
+        `export const url = () => orders.url;`,
+      ].join("\n"),
+    );
+    await expect(build()).rejects.toThrow(
+      "runtime/process-orders.ts:6:3: runtime/process-orders.ts imports lib/setup.ts for its side effects, but lib/setup.ts is an infra module because it imports infra/orders.ts (lib/setup.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build leaves infra modules out, so lib/setup.ts doesn't run in the function.",
+    );
+  });
+
+  it("bundles a helper that imports infra only for types", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { Order } from "./schema";`,
+          `import { Order } from "./schema";\n  import { format } from "../lib/format";`,
+        )
+        .replace(
+          "export const handler = async () =>",
+          "export const handler = async () => format() &&",
+        ),
+    );
+    write(
+      "lib/format.ts",
+      [
+        `import { orders } from "../infra/orders";`,
+        `export type Queue = typeof orders;`,
+        `export const format = (queue?: Queue) => "formatted";`,
+      ].join("\n"),
+    );
+    await build();
+    const bundle = readFileSync(bundleFile(), "utf8");
+    expect(bundle).toContain("formatted");
+    expect(bundle).not.toContain("placeholder-url");
+  });
+
+  it("advises moving a plain value out of a module that is infra through its imports", async () => {
+    writeProject(
+      handlerModule.replace(`from "./schema"`, `from "../shared/schema"`),
+    );
+    write(
+      "shared/schema.ts",
+      [
+        `import { orders } from "../infra/orders";`,
+        `export const Order = { name: "Order" };`,
+        `export const url = () => orders.url;`,
+      ].join("\n"),
+    );
+    await expect(build()).rejects.toThrow(
+      "runtime/process-orders.ts:11:22: an option of $lambda that the function keeps refers to Order, from shared/schema.ts, which is an infra module because it imports infra/orders.ts (shared/schema.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10). Move Order to a module that doesn't import infra, or remove the import that makes shared/schema.ts infra.",
+    );
+  });
+
+  it("names a dynamic import in the chain", async () => {
+    writeProject(
+      handlerModule.replace(
+        "export const handler = async () =>",
+        `export const handler = async () => (await import("../lib/lazy")).url() &&`,
+      ),
+    );
+    write(
+      "lib/lazy.ts",
+      [
+        `import { orders } from "../infra/orders";`,
+        `export const url = () => orders.url;`,
+      ].join("\n"),
+    );
+    await expect(build()).rejects.toThrow(
+      "The bundle of runtime/process-orders.ts includes the infra module lib/lazy.ts. The bundle imports it through runtime/process-orders.ts → lib/lazy.ts.",
+    );
   });
 
   it("fails when the function uses an unlisted module that imports infra", async () => {
@@ -673,7 +805,7 @@ describe("shared modules", () => {
       ].join("\n"),
     );
     await expect(build()).rejects.toThrow(
-      "The bundle of runtime/process-orders.ts includes the infra module shared/format.ts. The bundle imports it through runtime/process-orders.ts → shared/format.ts, and uses format at runtime/process-orders.ts:17:38. shared/format.ts is an infra module because it imports infra/orders.ts, which imports queue from @notation/aws/sqs.",
+      "The bundle of runtime/process-orders.ts includes the infra module shared/format.ts. The bundle imports it through runtime/process-orders.ts → shared/format.ts, and uses format at runtime/process-orders.ts:17:38. shared/format.ts is an infra module because it imports infra/orders.ts (shared/format.ts:1:1), which imports queue from @notation/aws/sqs (infra/orders.ts:1:10).",
     );
   });
 
@@ -693,7 +825,7 @@ describe("shared modules", () => {
       ].join("\n"),
     );
     await expect(build(["shared/**"])).rejects.toThrow(
-      "shared/format.ts:2:1: shared/format.ts matches sharedModules, but it imports infra/orders.ts, which is an infra module because it imports queue from @notation/aws/sqs. A shared module runs in both builds, so it can't declare a function or resources, or import an infra or runtime module.",
+      "shared/format.ts:2:1: shared/format.ts matches sharedModules, but it imports infra/orders.ts, which is an infra module because it imports queue from @notation/aws/sqs (infra/orders.ts:1:10). A shared module runs in both builds, so it can't declare a function or resources, or import an infra or runtime module.",
     );
   });
 
@@ -723,7 +855,7 @@ describe("shared modules", () => {
     );
   });
 
-  it("fails when a listed shared module calls a resource function", async () => {
+  it("fails when a listed shared module imports a resource function", async () => {
     writeProject();
     write(
       "infra/orders.ts",
@@ -739,11 +871,18 @@ describe("shared modules", () => {
     );
   });
 
+  it("accepts sharedModules globs with a leading ./", async () => {
+    writeProject();
+    await expect(build(["./infra/**"])).rejects.toThrow(
+      "infra/orders.ts:1:10: infra/orders.ts matches sharedModules, but it imports the resource function queue from @notation/aws/sqs.",
+    );
+  });
+
   it("reads sharedModules from the build", async () => {
     writeProject();
     write(
       "runtime/schema.ts",
-      `import { orders } from "../infra/orders";\nexport const Order = { name: "Order" };`,
+      `import { orders } from "../infra/orders";\nexport const Order = { name: "Order", queue: () => orders };`,
     );
     await expect(
       compile(

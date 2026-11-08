@@ -104,7 +104,7 @@ describe("analyzeModule", () => {
     ],
     [
       "doesn't call it",
-      `import { createQueue as make } from "@notation/aws/sqs";`,
+      `import { createQueue as make } from "@notation/aws/sqs";\nexport const q = () => make({});`,
       "make",
     ],
     [

@@ -13,7 +13,6 @@ export {
 export { stripForRuntime, type DescribeInfra } from "./runtime-strip";
 export * from "./plugins";
 export {
-  displayPath,
   type InfraReason,
   type ModuleAnalysesOptions,
   type ModuleKind,

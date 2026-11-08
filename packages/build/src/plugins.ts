@@ -161,7 +161,7 @@ function checkRuntimeImports(
     if (!target?.declaration) continue;
     if (infraInterface(target).exports.has(name)) continue;
     throw new Error(
-      `Illegal import: ${displayPath(file)} imports ${name} from a runtime module, ${displayPath(resolved)}. Move ${name} to a shared module.`,
+      `Illegal import: ${displayPath(file, analyses.root)} imports ${name} from a runtime module, ${displayPath(resolved, analyses.root)}. Move ${name} to a shared module.`,
     );
   }
 }
@@ -195,7 +195,8 @@ export type RuntimePluginOptions = {
  * 1. Serves the generated entry.
  * 2. Reduces each declaration to its runtime options.
  * 3. Marks infra modules free of side effects, so the bundler drops each one
- *    whose bindings are no longer used.
+ *    whose bindings are no longer used. A module that isn't infra and
+ *    imports an infra module only for its side effects fails the build.
  * 4. Fails the build if an infra module, or an infra function from a
  *    package, is still in the bundle, and names the import chain.
  */
@@ -204,10 +205,15 @@ export function runtimePlugin({
   module,
 }: RuntimePluginOptions): Plugin {
   const infraModules = new Set<string>();
-  const describeInfra = (file: string) =>
-    analyses.kind(file)?.kind === "infra"
-      ? { module: displayPath(file), reason: analyses.describeKind(file)! }
-      : undefined;
+  const describeInfra = (file: string, name: string) => {
+    if (analyses.kind(file)?.kind !== "infra") return undefined;
+    const origin = analyses.kind(analyses.marks.exportOrigin(file, name));
+    return {
+      module: displayPath(file, analyses.root),
+      reason: analyses.describeKind(file)!,
+      infraValue: origin?.kind === "infra" && "resource" in origin.reason,
+    };
+  };
   return {
     name: "notation-runtime",
     resolveId(source) {
@@ -224,12 +230,14 @@ export function runtimePlugin({
         if (!mayHoldMarks(code)) return null;
         const analysis = analyses.fromSource(id, code);
         analyses.checkShared(id);
+        analyses.checkEffectImports(id);
         const isInfra = analyses.kind(id)?.kind === "infra";
         if (isInfra) infraModules.add(id);
         const stripped = stripForRuntime(
           analysis,
           analyses.marks,
           describeInfra,
+          analyses.root,
         );
         if (!stripped && !isInfra) return null;
         return {
@@ -259,7 +267,9 @@ export function runtimePlugin({
             (binding, file) =>
               analyses.marks.resolve(binding.source, file) === id,
           );
-          const chain = left.chain.map((file) => displayPath(file));
+          const chain = left.chain.map((file) =>
+            displayPath(file, analyses.root),
+          );
           this.error(
             `The bundle of ${toProjectRoot(module.path)} includes the infra module ${toProjectRoot(id)}. ${because(uses, chain)} ${toProjectRoot(id)} is ${analyses.describeKind(id)}. The runtime build leaves infra modules out, so runtime code can't use them. Read infra values through the declaration's env(), and move code that both builds need to a shared module.`,
           );
@@ -284,10 +294,10 @@ export function runtimePlugin({
                 importMark?.kind === "declaration",
             );
             const chain = importChain(this, id).map((file) =>
-              displayPath(file),
+              displayPath(file, analyses.root),
             );
             this.error(
-              `The bundle of ${toProjectRoot(module.path)} includes ${name} from ${displayPath(id)}, a function that declares infrastructure. ${because(uses, chain)} Infra functions can't run in a runtime module.`,
+              `The bundle of ${toProjectRoot(module.path)} includes ${name} from ${displayPath(id, analyses.root)}, a function that declares infrastructure. ${because(uses, chain)} Infra functions can't run in a runtime module.`,
             );
           }
         }
@@ -362,11 +372,14 @@ function because(uses: ImportUse[], chain: string[]): string {
 }
 
 type ModuleGraph = {
-  getModuleInfo(id: string): { importedIds: readonly string[] } | null;
+  getModuleInfo(id: string): {
+    importedIds: readonly string[];
+    dynamicallyImportedIds: readonly string[];
+  } | null;
 };
 
-// The shortest chain of imports from the entry to `target`, without the
-// generated entry.
+// The shortest chain of static and dynamic imports from the entry to
+// `target`, without the generated entry.
 function importChain(graph: ModuleGraph, target: string): string[] {
   const previous = new Map<string, string | undefined>([
     [resolvedEntryId, undefined],
@@ -375,7 +388,12 @@ function importChain(graph: ModuleGraph, target: string): string[] {
   while (queue.length > 0) {
     const id = queue.shift()!;
     if (id === target) break;
-    for (const next of graph.getModuleInfo(id)?.importedIds ?? []) {
+    const info = graph.getModuleInfo(id);
+    const imported = [
+      ...(info?.importedIds ?? []),
+      ...(info?.dynamicallyImportedIds ?? []),
+    ];
+    for (const next of imported) {
       if (previous.has(next)) continue;
       previous.set(next, id);
       queue.push(next);

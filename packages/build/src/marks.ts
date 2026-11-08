@@ -414,6 +414,63 @@ export class Marks {
   }
 
   /**
+   * The module that defines an export, following imports, re-exports and
+   * `export * from`. Returns the last module that it reaches when a
+   * specifier doesn't resolve, or when the export is a namespace.
+   */
+  exportOrigin(
+    file: string,
+    name: string,
+    seen: Set<string> = new Set(),
+  ): string {
+    const key = `${file}#${name}`;
+    if (seen.has(key) || name === "*") return file;
+    seen.add(key);
+    const table = this.table(file);
+    if (!table) return file;
+    const target = table.exports.get(name);
+    const next =
+      target && "local" in target ? table.imports.get(target.local) : target;
+    if (next) {
+      const resolved = this.resolve(next.source, file);
+      return resolved ? this.exportOrigin(resolved, next.imported, seen) : file;
+    }
+    if (target || name === "default") return file;
+    for (const source of table.stars) {
+      const resolved = this.resolve(source, file);
+      if (resolved && this.hasExport(resolved, name)) {
+        return this.exportOrigin(resolved, name, seen);
+      }
+    }
+    return file;
+  }
+
+  /**
+   * The name of the first export of a module that is a resource function,
+   * directly or through `export * from`. A default export is left out, since
+   * `export * from` doesn't re-export it.
+   */
+  resourceExport(
+    file: string,
+    seen: Set<string> = new Set(),
+  ): string | undefined {
+    if (seen.has(file)) return undefined;
+    seen.add(file);
+    const table = this.table(file);
+    if (!table) return undefined;
+    for (const name of table.exports.keys()) {
+      if (name === "default") continue;
+      if (this.exportMark(file, name)?.kind === "resource") return name;
+    }
+    for (const source of table.stars) {
+      const resolved = this.resolve(source, file);
+      const name = resolved && this.resourceExport(resolved, seen);
+      if (name) return name;
+    }
+    return undefined;
+  }
+
+  /**
    * Whether a module exports `name`, directly or through `export * from`.
    * A star source that doesn't resolve to a JS or TS file counts as
    * exporting the name, so that a resolver that differs from the bundler's

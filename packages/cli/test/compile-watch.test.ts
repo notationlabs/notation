@@ -9,6 +9,7 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it, onTestFinished, vi } from "vitest";
+import { ModuleAnalyses } from "@notation/build";
 import { setConfigFile } from "@notation/core";
 import { compile, compileInfra, type DeclarationModule } from "../src/compile";
 import type { Logger } from "../src/logger";
@@ -212,4 +213,37 @@ it("bundles a runtime file in a glob directory that is created during watch", as
   await new Promise((resolve) => setTimeout(resolve, 500));
   write("watch-g/runtime/todos.ts", runtimeModule("todos"));
   await waitFor(() => expect(existsSync(bundle)).toBe(true));
+});
+
+it("checks a listed shared module again when a module that it imports becomes infra", async () => {
+  write(
+    "watch-h/infra/queue.ts",
+    `/** @resource */\nexport function makeQueue(name) { return { name }; }\n`,
+  );
+  write("watch-h/lib/util.ts", `export const util = () => "util";\n`);
+  write(
+    "watch-h/shared/format.ts",
+    `import { util } from "../lib/util";\nexport const format = () => util();\n`,
+  );
+  write(
+    "watch-h/main.ts",
+    `import { format } from "./shared/format";\nconsole.log(format());\n`,
+  );
+  const failures: unknown[] = [];
+  const infra = await compileInfra(path.join(root, "watch-h/main.ts"), {
+    watch: true,
+    analyses: new ModuleAnalyses({ sharedModules: ["watch-h/shared/**"] }),
+    onBuildFailed: (error) => failures.push(error),
+  });
+  onTestFinished(infra.close);
+
+  write(
+    "watch-h/lib/util.ts",
+    `import { makeQueue } from "../infra/queue";\nexport const util = () => makeQueue("orders");\n`,
+  );
+  await waitFor(() =>
+    expect(String(failures.at(-1))).toContain(
+      "watch-h/shared/format.ts:1:1: watch-h/shared/format.ts matches sharedModules, but it imports watch-h/lib/util.ts, which is an infra module because it imports makeQueue from ../infra/queue",
+    ),
+  );
 });

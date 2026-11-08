@@ -1,3 +1,4 @@
+import { projectRoot } from "@notation/core";
 import MagicString from "magic-string";
 import {
   freeReferences,
@@ -9,16 +10,21 @@ import {
 } from "./ast";
 import type { Declaration, ModuleAnalysis } from "./analyze";
 import type { Marks } from "./marks";
+import { displayPath } from "./modules";
 
 /**
- * Describes an infra module, by its absolute path: its path for an error
- * message, and why it is infra, such as `an infra module because it imports
- * queue from @notation/aws/sqs`. Returns `undefined` for a module that isn't
- * infra, or that the build doesn't classify, such as a package.
+ * Describes an infra module that a name is imported from, by the module's
+ * absolute path: its path for an error message, and why it is infra, such
+ * as `an infra module because it imports queue from @notation/aws/sqs`.
+ * `infraValue` is true when the module that defines the name imports a
+ * resource function itself, so the name is likely an infra value, such as
+ * a queue. Returns `undefined` for a module that isn't infra, or that the
+ * build doesn't classify, such as a package.
  */
 export type DescribeInfra = (
   file: string,
-) => { module: string; reason: string } | undefined;
+  name: string,
+) => { module: string; reason: string; infraValue: boolean } | undefined;
 
 /**
  * Reduces the declaration of a module to its runtime options, for the runtime
@@ -36,12 +42,14 @@ export type DescribeInfra = (
  *
  * The binding and its export stay, so that modules which import it still
  * link. Throws when a kept option refers to an infra module, or calls a
- * resource function.
+ * resource function. The error names the module relative to `root`, the
+ * project root.
  */
 export function stripForRuntime(
   analysis: ModuleAnalysis,
   marks: Marks,
   describeInfra: DescribeInfra,
+  root: string = projectRoot(),
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | undefined {
   const declaration = analysis.declaration;
   if (!declaration) return undefined;
@@ -111,6 +119,7 @@ export function stripForRuntime(
         analysis,
         marks,
         describeInfra,
+        root,
       );
     }
   }
@@ -197,19 +206,23 @@ function checkReference(
   analysis: ModuleAnalysis,
   marks: Marks,
   describeInfra: DescribeInfra,
+  root: string,
 ) {
   const { table } = analysis;
   const { file, source } = table.module;
   const binding = table.imports.get(node.name);
   if (!binding) return;
-  const at = `${file}:${location(source, node.start)}`;
+  const at = `${displayPath(file, root)}:${location(source, node.start)}`;
   const advice =
     "The runtime build removes infra. Read infra values in the function through the declaration's env().";
   const resolved = marks.resolve(binding.source, file);
-  const infra = resolved && describeInfra(resolved);
+  const infra = resolved && describeInfra(resolved, binding.imported);
   if (infra) {
+    const fix = infra.infraValue
+      ? advice
+      : `Move ${node.name} to a module that doesn't import infra, or remove the import that makes ${infra.module} infra.`;
     throw new Error(
-      `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from ${infra.module}, which is ${infra.reason}. ${advice}`,
+      `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from ${infra.module}, which is ${infra.reason}. ${fix}`,
     );
   }
   const mark =

@@ -44,6 +44,13 @@ export type ResourceImport = {
 export type ModuleAnalysis = {
   table: ModuleTable;
   references: Reference[];
+  /**
+   * The local names that the module uses as values: free references, JSX
+   * element names and local `export { x }` specifiers. An import whose
+   * bindings are not among them is used only in types, and TypeScript
+   * removes it.
+   */
+  valueNames: Set<string>;
   marked: MarkedReference[];
   declaration?: Declaration;
   /**
@@ -94,23 +101,52 @@ export function analyzeModule(
     );
   }
 
+  const valueNames = new Set(references.map(({ node }) => node.name));
+  for (const target of table.exports.values()) {
+    if ("local" in target) valueNames.add(target.local);
+  }
+  if (/\.[cm]?[jt]sx$/.test(module.file)) {
+    for (const statement of module.body) jsxNames(statement, valueNames);
+  }
+
   return {
     table,
     references,
+    valueNames,
     marked,
     declaration: declarations[0],
-    resource: resourceImport(table, marked, marks),
+    resource: resourceImport(table, valueNames, marked, marks),
   };
+}
+
+// Adds the names of JSX elements, such as `Orders` in `<Orders />` and
+// `ui` in `<ui.Orders />`, which `freeReferences` doesn't visit.
+function jsxNames(node: Node, names: Set<string>) {
+  if (node.type === "JSXOpeningElement") {
+    let name = node.name;
+    while (name.type === "JSXMemberExpression") name = name.object;
+    if (name.type === "JSXIdentifier") names.add(name.name);
+  }
+  for (const value of Object.values(node)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item && typeof item.type === "string") jsxNames(item, names);
+      }
+    } else if (value && typeof value.type === "string") {
+      jsxNames(value, names);
+    }
+  }
 }
 
 function resourceImport(
   table: ModuleTable,
+  valueNames: Set<string>,
   marked: MarkedReference[],
   marks: Marks,
 ): ResourceImport | undefined {
   const file = module(table);
   for (const [local, binding] of table.imports) {
-    if (binding.imported === "*") continue;
+    if (binding.imported === "*" || !valueNames.has(local)) continue;
     if (marks.importMark(file, binding)?.kind === "resource") {
       return {
         name: local,
@@ -148,6 +184,20 @@ function resourceImport(
       if (marks.exportMark(resolved, name)?.kind === "resource") {
         return { name, source: statement.source.value, start: specifier.start };
       }
+    }
+  }
+  // `export * from` and `export * as ns from` re-export every resource
+  // function of the module.
+  for (const statement of table.module.body) {
+    if (
+      statement.type !== "ExportAllDeclaration" ||
+      statement.exportKind === "type"
+    )
+      continue;
+    const resolved = marks.resolve(statement.source.value, file);
+    const name = resolved && marks.resourceExport(resolved);
+    if (name) {
+      return { name, source: statement.source.value, start: statement.start };
     }
   }
   return undefined;

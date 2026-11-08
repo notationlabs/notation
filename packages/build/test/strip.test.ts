@@ -52,7 +52,11 @@ function setup(source = handlerModule) {
   const analyses = new ModuleAnalyses({ marks, root });
   const isInfraModule = (f: string) =>
     analyses.kind(f)?.kind === "infra"
-      ? { module: path.relative(root, f), reason: analyses.describeKind(f)! }
+      ? {
+          module: path.relative(root, f),
+          reason: analyses.describeKind(f)!,
+          infraValue: true,
+        }
       : undefined;
   return { marks, analysis, isInfraModule };
 }
@@ -189,7 +193,7 @@ describe("stripForRuntime", () => {
 
   it("reduces the declaration to its runtime options", () => {
     const { analysis, marks, isInfraModule } = setup(runtimeSource);
-    const { code } = stripForRuntime(analysis, marks, isInfraModule)!;
+    const { code } = stripForRuntime(analysis, marks, isInfraModule, root)!;
     expect(code).toContain(
       `export const lambda = $lambda({
   id: "process-orders",
@@ -202,7 +206,7 @@ describe("stripForRuntime", () => {
 
   it("removes an import whose uses it removed, and keeps the others", () => {
     const { analysis, marks, isInfraModule } = setup(runtimeSource);
-    const { code } = stripForRuntime(analysis, marks, isInfraModule)!;
+    const { code } = stripForRuntime(analysis, marks, isInfraModule, root)!;
     expect(code).not.toContain("../infra/orders");
     expect(code).toContain(`import "./sentry";`);
     expect(code).toContain(`from "@aws-sdk/client-sqs"`);
@@ -216,7 +220,7 @@ describe("stripForRuntime", () => {
       "await client.send(config, unused);",
     );
     const { analysis, marks, isInfraModule } = setup(source);
-    const { code } = stripForRuntime(analysis, marks, isInfraModule)!;
+    const { code } = stripForRuntime(analysis, marks, isInfraModule, root)!;
     expect(code).toContain(
       `import { ordersQueue, unused } from "../infra/orders";`,
     );
@@ -229,9 +233,9 @@ describe("stripForRuntime", () => {
       export const handler = 1;
     `;
     const { analysis, marks, isInfraModule } = setup(source);
-    expect(stripForRuntime(analysis, marks, isInfraModule)!.code).toContain(
-      '$lambda({ event: () => null, id: "a" });',
-    );
+    expect(
+      stripForRuntime(analysis, marks, isInfraModule, root)!.code,
+    ).toContain('$lambda({ event: () => null, id: "a" });');
   });
 
   it("fails when a kept option refers to an infra module", () => {
@@ -241,8 +245,8 @@ describe("stripForRuntime", () => {
         "sqs(ordersQueue.schema)",
       ),
     );
-    expect(() => stripForRuntime(analysis, marks, isInfraModule)).toThrow(
-      "runtime/handler.ts:16:20: an option of $lambda that the function keeps refers to ordersQueue, from infra/orders.ts, which is an infra module because it imports createQueue from @notation/aws/sqs. The runtime build removes infra.",
+    expect(() => stripForRuntime(analysis, marks, isInfraModule, root)).toThrow(
+      "runtime/handler.ts:16:20: an option of $lambda that the function keeps refers to ordersQueue, from infra/orders.ts, which is an infra module because it imports createQueue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build removes infra.",
     );
   });
 
@@ -252,7 +256,7 @@ describe("stripForRuntime", () => {
       `env: () => ({ ...base })`,
     );
     const { analysis, marks, isInfraModule } = setup(source);
-    expect(() => stripForRuntime(analysis, marks, isInfraModule)).toThrow(
+    expect(() => stripForRuntime(analysis, marks, isInfraModule, root)).toThrow(
       "the env option of $lambda must be a function that returns an object literal",
     );
   });

@@ -14,17 +14,17 @@ export const scriptFile = /\.[cm]?[jt]sx?$/;
  * - `runtime`: the module has a declaration, such as `$lambda`.
  * - `infra`: the module imports a resource function, or imports an infra
  *   module.
- * - `shared`: any other module. `listed` is true when `sharedModules`
- *   matches the module.
+ * - `shared`: any other module.
  */
 export type ModuleKind =
   | { kind: "runtime"; declaration: string }
   | { kind: "infra"; reason: InfraReason }
-  | { kind: "shared"; listed: boolean };
+  | { kind: "shared" };
 
 /**
  * Why a module is infra: the resource function that it imports, or the
- * infra module that it imports. `start` is the position of the import.
+ * infra module that it imports. `source` is the specifier of the import, and
+ * `start` is its position in the module.
  */
 export type InfraReason =
   | { resource: string; source: string; start: number }
@@ -36,8 +36,8 @@ type ModuleImport = { source: string; statement: Node };
 export type ModuleAnalysesOptions = {
   marks?: Marks;
   /**
-   * Globs, relative to `root`, for the modules that are shared. Defaults to
-   * none.
+   * Globs, relative to `root`, for the modules that are shared. A leading
+   * `./` is allowed. Defaults to none.
    */
   sharedModules?: string[];
   /** The project root. Defaults to the directory of the config. */
@@ -55,13 +55,18 @@ export class ModuleAnalyses {
   #root?: string;
   #analyses = new Map<string, ModuleAnalysis>();
   #kinds = new Map<string, ModuleKind | undefined>();
+  // For each infra module in #kinds, the number of infra modules in its
+  // chain after it.
+  #depths = new Map<string, number>();
   // Directories, and whether the nearest package.json with a name above
   // each one belongs to a package.
   #packageDirs = new Map<string, boolean>();
 
   constructor(options: ModuleAnalysesOptions = {}) {
     this.marks = options.marks ?? new Marks();
-    this.sharedModules = options.sharedModules ?? [];
+    this.sharedModules = (options.sharedModules ?? []).map((glob) =>
+      glob.replace(/^\.\//, ""),
+    );
     this.#root = options.root;
   }
 
@@ -71,13 +76,16 @@ export class ModuleAnalyses {
 
   /**
    * Whether a file is a project module, which the builds analyse. A file in
-   * `node_modules` is in a package. So is a file whose nearest package.json
-   * with a name is in a directory that doesn't contain the project root:
-   * a workspace package resolves to its real path, outside `node_modules`.
+   * `node_modules` is in a package. Any other file under the project root is
+   * a project module, even in a folder with its own package.json. A file
+   * outside the root is in a package when its nearest package.json with a
+   * name is in a directory that doesn't contain the root: a workspace
+   * package resolves to its real path, outside `node_modules`.
    */
   isProjectModule(file: string): boolean {
     if (file.startsWith("\0") || !scriptFile.test(file)) return false;
     if (nodeModules.test(file)) return false;
+    if (isInside(this.root, file)) return true;
     return !this.#inPackage(path.dirname(file));
   }
 
@@ -87,8 +95,7 @@ export class ModuleAnalyses {
     const manifest = path.join(dir, "package.json");
     const parent = path.dirname(dir);
     if (fs.existsSync(manifest) && hasName(manifest)) {
-      const relative = path.relative(dir, this.root);
-      inPackage = relative.startsWith("..") || path.isAbsolute(relative);
+      inPackage = !isInside(dir, this.root);
     } else {
       inPackage = parent === dir ? false : this.#inPackage(parent);
     }
@@ -99,7 +106,8 @@ export class ModuleAnalyses {
   /**
    * Analyses a module from the source that a transform hook sees. Each
    * runtime build transforms the same files, so an analysis of the same
-   * source is reused.
+   * source is reused. The kinds are cleared only if a kind could depend on
+   * the module: it replaces an analysis, or a walk reached the module.
    */
   fromSource(file: string, source: string): ModuleAnalysis {
     const cached = this.#analyses.get(file);
@@ -109,8 +117,13 @@ export class ModuleAnalyses {
       this.marks,
     );
     this.#analyses.set(file, analysis);
-    this.#kinds.clear();
+    if (cached || this.#kinds.has(file)) this.#clearKinds();
     return analysis;
+  }
+
+  #clearKinds() {
+    this.#kinds.clear();
+    this.#depths.clear();
   }
 
   /** Analyses a module from the file system. */
@@ -129,7 +142,7 @@ export class ModuleAnalyses {
   invalidate(file: string) {
     this.#analyses.delete(file);
     this.marks.invalidate(file);
-    this.#kinds.clear();
+    this.#clearKinds();
     this.#packageDirs.clear();
   }
 
@@ -159,8 +172,8 @@ export class ModuleAnalyses {
     const found = new Map<string, ModuleKind | undefined>();
     const pending = new Map<string, { file: string; import: ModuleImport }[]>();
     const queue = [file];
-    while (queue.length > 0) {
-      const next = queue.shift()!;
+    for (let i = 0; i < queue.length; i++) {
+      const next = queue[i]!;
       if (found.has(next) || pending.has(next)) continue;
       if (this.#kinds.has(next)) {
         found.set(next, this.#kinds.get(next));
@@ -176,7 +189,7 @@ export class ModuleAnalyses {
         found.set(next, base);
         continue;
       }
-      const edges = this.imports(analysis).flatMap((imported) => {
+      const edges = this.#imports(analysis).flatMap((imported) => {
         const target = this.marks.resolve(imported.source, next);
         return target && this.isProjectModule(target)
           ? [{ file: target, import: imported }]
@@ -186,38 +199,51 @@ export class ModuleAnalyses {
       queue.push(...edges.map((edge) => edge.file));
     }
 
-    // Each round adds the modules that import a module found to be infra in
-    // an earlier round, so each reason points to a shortest chain.
-    for (let changed = true; changed;) {
-      changed = false;
-      const infra: [string, ModuleKind][] = [];
-      for (const [module, edges] of pending) {
-        const edge = edges.find(
-          (edge) => found.get(edge.file)?.kind === "infra",
-        );
-        if (!edge) continue;
-        infra.push([
-          module,
-          {
+    // A breadth-first walk from the infra modules to the modules that import
+    // them, in order of depth. Each module takes its first import of an
+    // infra module with the smallest depth, so each reason points to a
+    // shortest chain.
+    const importers = new Map<string, string[]>();
+    for (const [module, edges] of pending) {
+      for (const edge of edges) {
+        const list = importers.get(edge.file) ?? [];
+        list.push(module);
+        importers.set(edge.file, list);
+      }
+    }
+    const depths = new Map<string, number>();
+    const byDepth: string[][] = [];
+    for (const [module, kind] of found) {
+      if (kind?.kind !== "infra") continue;
+      const depth = this.#depths.get(module) ?? 0;
+      depths.set(module, depth);
+      (byDepth[depth] ??= []).push(module);
+    }
+    for (let depth = 0; depth < byDepth.length; depth++) {
+      for (const infra of byDepth[depth] ?? []) {
+        for (const module of importers.get(infra) ?? []) {
+          if (depths.has(module)) continue;
+          const edge = pending
+            .get(module)!
+            .find((edge) => depths.get(edge.file) === depth)!;
+          depths.set(module, depth + 1);
+          (byDepth[depth + 1] ??= []).push(module);
+          found.set(module, {
             kind: "infra",
             reason: {
               module: edge.file,
               source: edge.import.source,
               start: edge.import.statement.start,
             },
-          },
-        ]);
-      }
-      for (const [module, kind] of infra) {
-        found.set(module, kind);
-        pending.delete(module);
-        changed = true;
+          });
+        }
       }
     }
     for (const module of pending.keys()) {
-      found.set(module, { kind: "shared", listed: false });
+      if (!depths.has(module)) found.set(module, { kind: "shared" });
     }
     for (const [module, kind] of found) this.#kinds.set(module, kind);
+    for (const [module, depth] of depths) this.#depths.set(module, depth);
     return found.get(file);
   }
 
@@ -233,9 +259,11 @@ export class ModuleAnalyses {
 
   /**
    * The value imports and re-exports of a module, including side-effect
-   * imports. An import whose specifiers are all `type` is left out.
+   * imports. An import is left out if its specifiers are all `type`, or if
+   * the module uses its bindings only in types, since TypeScript removes
+   * such an import.
    */
-  imports(analysis: ModuleAnalysis): ModuleImport[] {
+  #imports(analysis: ModuleAnalysis): ModuleImport[] {
     const imports: ModuleImport[] = [];
     for (const statement of analysis.table.module.body) {
       if (!statement.source) continue;
@@ -243,10 +271,15 @@ export class ModuleAnalyses {
         statement.type === "ImportDeclaration"
           ? statement.importKind !== "type" &&
             (statement.specifiers.length === 0 ||
-              statement.specifiers.some((s: Node) => s.importKind !== "type"))
+              statement.specifiers.some(
+                (s: Node) =>
+                  s.importKind !== "type" &&
+                  analysis.valueNames.has(s.local.name),
+              ))
           : statement.type === "ExportNamedDeclaration"
             ? statement.exportKind !== "type" &&
-              statement.specifiers.some((s: Node) => s.exportKind !== "type")
+              (statement.specifiers.length === 0 ||
+                statement.specifiers.some((s: Node) => s.exportKind !== "type"))
             : statement.type === "ExportAllDeclaration" &&
               statement.exportKind !== "type";
       if (isValue) imports.push({ source: statement.source.value, statement });
@@ -256,8 +289,10 @@ export class ModuleAnalyses {
 
   /**
    * Says why a module is an infra or runtime module, such as `an infra
-   * module because it imports infra/orders.ts, which imports queue from
-   * @notation/aws/sqs`. Returns `undefined` for a shared module.
+   * module because it imports infra/orders.ts (lib/format.ts:1:1), which
+   * imports queue from @notation/aws/sqs (infra/orders.ts:1:10)`. Each step
+   * gives the position of the import. Returns `undefined` for a shared
+   * module.
    */
   describeKind(file: string): string | undefined {
     const kind = this.kind(file);
@@ -265,19 +300,50 @@ export class ModuleAnalyses {
     if (kind.kind === "runtime") {
       return `a runtime module because it declares a function with ${kind.declaration}`;
     }
-    const chain: string[] = [];
+    const at = (module: string, start: number) => {
+      const source = this.#analyses.get(module)?.table.module.source;
+      const name = displayPath(module, this.root);
+      return source === undefined ? name : `${name}:${location(source, start)}`;
+    };
+    const steps: string[] = [];
+    let module = file;
     let reason = kind.reason;
     while ("module" in reason) {
-      chain.push(displayPath(reason.module, this.root));
+      steps.push(
+        `imports ${displayPath(reason.module, this.root)} (${at(module, reason.start)})`,
+      );
       const next = this.kind(reason.module);
-      if (next?.kind !== "infra") break;
+      if (next?.kind !== "infra")
+        return `an infra module because it ${steps.join(", which ")}`;
+      module = reason.module;
       reason = next.reason;
     }
-    const steps = chain.map((module) => `imports ${module}`);
-    if ("resource" in reason) {
-      steps.push(`imports ${reason.resource} from ${reason.source}`);
-    }
+    steps.push(
+      `imports ${reason.resource} from ${reason.source} (${at(module, reason.start)})`,
+    );
     return `an infra module because it ${steps.join(", which ")}`;
+  }
+
+  /**
+   * Fails if a module that isn't infra imports an infra module only for its
+   * side effects, as in `import "./setup"`. The runtime build leaves infra
+   * modules out, so the imported module wouldn't run in the function.
+   */
+  checkEffectImports(file: string) {
+    if (this.kind(file)?.kind === "infra") return;
+    const analysis = this.fromFile(file);
+    if (!analysis) return;
+    const { source, body } = analysis.table.module;
+    const name = displayPath(file, this.root);
+    for (const statement of body) {
+      if (!isEffectImport(statement)) continue;
+      const target = this.marks.resolve(statement.source.value, file);
+      if (!target || this.kind(target)?.kind !== "infra") continue;
+      const imported = displayPath(target, this.root);
+      throw new Error(
+        `${name}:${location(source, statement.start)}: ${name} imports ${imported} for its side effects, but ${imported} is ${this.describeKind(target)}. The runtime build leaves infra modules out, so ${imported} doesn't run in the function. Move the code that the function needs to run to a module that doesn't import infra.`,
+      );
+    }
   }
 
   /**
@@ -308,7 +374,7 @@ export class ModuleAnalyses {
         `it imports the resource function ${analysis.resource.name} from ${analysis.resource.source}`,
       );
     }
-    for (const imported of this.imports(analysis)) {
+    for (const imported of this.#imports(analysis)) {
       const target = this.marks.resolve(imported.source, file);
       if (!target) continue;
       const why = this.describeKind(target);
@@ -328,12 +394,32 @@ function baseKind(
   if (analysis.declaration) {
     return { kind: "runtime", declaration: analysis.declaration.name };
   }
-  if (listed) return { kind: "shared", listed: true };
+  if (listed) return { kind: "shared" };
   if (analysis.resource) {
     const { name, source, start } = analysis.resource;
     return { kind: "infra", reason: { resource: name, source, start } };
   }
   return undefined;
+}
+
+// An import or re-export with no bindings, such as `import "./setup"` or
+// `export {} from "./setup"`, which loads a module only for its side effects.
+function isEffectImport(statement: Node): boolean {
+  if (!statement.source || statement.specifiers?.length !== 0) return false;
+  return statement.type === "ImportDeclaration"
+    ? statement.importKind !== "type"
+    : statement.type === "ExportNamedDeclaration" &&
+        statement.exportKind !== "type";
+}
+
+// Whether `file` is `dir` or is under it.
+function isInside(dir: string, file: string): boolean {
+  const relative = path.relative(dir, file);
+  return (
+    !path.isAbsolute(relative) &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`)
+  );
 }
 
 function hasName(manifest: string): boolean {

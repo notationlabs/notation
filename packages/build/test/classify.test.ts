@@ -40,7 +40,7 @@ describe("ModuleAnalyses.kind", () => {
     expect(kind("infra/orders.ts")).toBe("infra");
     expect(kind("shared/schema.ts")).toBe("shared");
     expect(describe("infra/orders.ts")).toBe(
-      "an infra module because it imports createQueue from @notation/aws/sqs",
+      "an infra module because it imports createQueue from @notation/aws/sqs (infra/orders.ts:1:10)",
     );
     expect(describe("runtime/fn.ts")).toBe(
       "a runtime module because it declares a function with $lambda",
@@ -63,7 +63,7 @@ describe("ModuleAnalyses.kind", () => {
     });
     expect(kind("infra/index.ts")).toBe("infra");
     expect(describe("infra/named.ts")).toBe(
-      "an infra module because it imports infra/index.ts, which imports infra/orders.ts, which imports createQueue from @notation/aws/sqs",
+      "an infra module because it imports infra/index.ts (infra/named.ts:1:1), which imports infra/orders.ts (infra/index.ts:1:1), which imports createQueue from @notation/aws/sqs (infra/orders.ts:1:10)",
     );
   });
 
@@ -73,7 +73,7 @@ describe("ModuleAnalyses.kind", () => {
       "infra/orders.ts": `import { makeQueue } from "./factory";\nexport const orders = makeQueue("orders");`,
     });
     expect(describe("infra/orders.ts")).toBe(
-      "an infra module because it imports infra/factory.ts, which imports createQueue from @notation/aws/sqs",
+      "an infra module because it imports infra/factory.ts (infra/orders.ts:1:1), which imports createQueue from @notation/aws/sqs (infra/factory.ts:1:10)",
     );
   });
 
@@ -113,6 +113,62 @@ describe("ModuleAnalyses.kind", () => {
     expect(kind("lib/types.ts")).toBe("shared");
   });
 
+  it("ignores an import whose bindings are used only in typeof", () => {
+    const { kind } = setup({
+      "infra/orders.ts": queueModule,
+      "lib/format.ts": `import { orders } from "../infra/orders";\nexport type Q = typeof orders;\nexport const format = (q: Q) => String(q);`,
+    });
+    expect(kind("lib/format.ts")).toBe("shared");
+  });
+
+  it("ignores an import of an interface without the type keyword", () => {
+    const { kind } = setup({
+      "infra/types.ts": `import { createQueue } from "@notation/aws/sqs";\nexport interface OrderMsg { id: string }\nexport const q = () => createQueue({});`,
+      "lib/format.ts": `import { OrderMsg } from "../infra/types";\nexport const format = (m: OrderMsg): string => m.id;`,
+    });
+    expect(kind("infra/types.ts")).toBe("infra");
+    expect(kind("lib/format.ts")).toBe("shared");
+  });
+
+  it("ignores a resource function that is used only in types", () => {
+    const { kind } = setup({
+      "lib/types.ts": `import { createQueue } from "@notation/aws/sqs";\nexport type Q = ReturnType<typeof createQueue>;`,
+    });
+    expect(kind("lib/types.ts")).toBe("shared");
+  });
+
+  it("counts an import that is used only as a JSX element", () => {
+    const { kind } = setup({
+      "infra/orders.ts": queueModule,
+      "infra/view.ts": `import { orders } from "./orders";\nexport const View = () => orders;`,
+      "lib/page.tsx": `import { View } from "../infra/view";\nexport const Page = () => <View />;`,
+    });
+    expect(kind("lib/page.tsx")).toBe("infra");
+  });
+
+  it("counts a module that re-exports all of a package with resource functions as infra", () => {
+    const { describe } = setup({
+      "lib/aws.ts": `export * from "@notation/aws/sqs";`,
+    });
+    expect(describe("lib/aws.ts")).toBe(
+      "an infra module because it imports createQueue from @notation/aws/sqs (lib/aws.ts:1:1)",
+    );
+  });
+
+  it("names a shortest chain when a module imports infra through a cached long chain", () => {
+    const { kind, describe } = setup({
+      "infra/orders.ts": queueModule,
+      "lib/c.ts": `import { orders } from "../infra/orders";\nexport const c = () => orders;`,
+      "lib/b.ts": `import { c } from "./c";\nexport const b = () => c;`,
+      "lib/a.ts": `import { b } from "./b";\nexport const a = () => b;`,
+      "lib/x.ts": `import { a } from "./a";\nimport { orders } from "../infra/orders";\nexport const x = () => [a, orders];`,
+    });
+    expect(kind("lib/a.ts")).toBe("infra");
+    expect(describe("lib/x.ts")).toBe(
+      "an infra module because it imports infra/orders.ts (lib/x.ts:2:1), which imports createQueue from @notation/aws/sqs (infra/orders.ts:1:10)",
+    );
+  });
+
   it("doesn't classify packages, or follow imports into them", () => {
     const { kind } = setup({
       "node_modules/helpers/index.js": `import { createQueue } from "@notation/aws/sqs";\nexport const label = "x";\nexport const make = () => createQueue({});`,
@@ -133,6 +189,20 @@ describe("ModuleAnalyses.kind", () => {
     );
     expect(kind("shared/format.ts")).toBe("shared");
     expect(kind("lib/uses-format.ts")).toBe("shared");
+  });
+
+  it("accepts a sharedModules glob with a leading ./", () => {
+    const { analyses, kind } = setup(
+      {
+        "infra/orders.ts": queueModule,
+        "shared/format.ts": `import { orders } from "../infra/orders";\nexport const format = () => orders;`,
+      },
+      ["./shared/**"],
+    );
+    expect(analyses.isListedShared(path.join(root, "shared/format.ts"))).toBe(
+      true,
+    );
+    expect(kind("shared/format.ts")).toBe("shared");
   });
 
   it("recomputes kinds after a module changes", () => {
@@ -168,7 +238,7 @@ describe("ModuleAnalyses.checkShared", () => {
       ["shared/**"],
     );
     expect(checkShared("shared/format.ts")).toThrow(
-      `shared/format.ts:2:1: shared/format.ts matches sharedModules, but it imports infra/index.ts, which is an infra module because it imports infra/orders.ts, which imports createQueue from @notation/aws/sqs. ${reason}`,
+      `shared/format.ts:2:1: shared/format.ts matches sharedModules, but it imports infra/index.ts, which is an infra module because it imports infra/orders.ts (infra/index.ts:1:1), which imports createQueue from @notation/aws/sqs (infra/orders.ts:1:10). ${reason}`,
     );
   });
 
@@ -194,6 +264,37 @@ describe("ModuleAnalyses.checkShared", () => {
     expect(checkShared("shared/queue.ts")).toThrow(
       "shared/queue.ts:1:10: shared/queue.ts matches sharedModules, but it imports the resource function createQueue from @notation/aws/sqs.",
     );
+  });
+
+  it("fails for a listed module that re-exports all of a package with resource functions", () => {
+    const { checkShared } = setup(
+      { ...files, "shared/aws.ts": `export * from "@notation/aws/sqs";` },
+      ["shared/**"],
+    );
+    expect(checkShared("shared/aws.ts")).toThrow(
+      "shared/aws.ts:1:1: shared/aws.ts matches sharedModules, but it imports the resource function createQueue from @notation/aws/sqs.",
+    );
+  });
+
+  it("fails for a listed module that loads infra through an empty re-export", () => {
+    const { checkShared } = setup(
+      { ...files, "shared/load.ts": `export {} from "../infra/orders";` },
+      ["shared/**"],
+    );
+    expect(checkShared("shared/load.ts")).toThrow(
+      "shared/load.ts:1:1: shared/load.ts matches sharedModules, but it imports infra/orders.ts",
+    );
+  });
+
+  it("passes a listed module that imports infra only for types", () => {
+    const { checkShared } = setup(
+      {
+        ...files,
+        "shared/format.ts": `import { orders } from "../infra/orders";\nexport type Q = typeof orders;`,
+      },
+      ["shared/**"],
+    );
+    expect(checkShared("shared/format.ts")).not.toThrow();
   });
 
   it("fails for a listed module with a declaration", () => {
@@ -224,6 +325,32 @@ describe("ModuleAnalyses.checkShared", () => {
   });
 });
 
+describe("ModuleAnalyses.checkEffectImports", () => {
+  it("fails for a runtime module that imports an infra module for its side effects", () => {
+    const { analyses } = setup({
+      "infra/orders.ts": queueModule,
+      "lib/setup.ts": `import { orders } from "../infra/orders";\nglobalThis.setupRan = true;\nexport const url = () => orders.url;`,
+      "runtime/fn.ts": `import "../lib/setup";\n${lambdaModule}`,
+    });
+    expect(() =>
+      analyses.checkEffectImports(path.join(root, "runtime/fn.ts")),
+    ).toThrow(
+      "runtime/fn.ts:1:1: runtime/fn.ts imports lib/setup.ts for its side effects, but lib/setup.ts is an infra module because it imports infra/orders.ts (lib/setup.ts:1:1), which imports createQueue from @notation/aws/sqs (infra/orders.ts:1:10). The runtime build leaves infra modules out",
+    );
+  });
+
+  it("passes a side-effect import of a shared module", () => {
+    const { analyses } = setup({
+      "infra/orders.ts": queueModule,
+      "lib/setup.ts": `globalThis.setupRan = true;`,
+      "runtime/fn.ts": `import "../lib/setup";\n${lambdaModule}`,
+    });
+    expect(() =>
+      analyses.checkEffectImports(path.join(root, "runtime/fn.ts")),
+    ).not.toThrow();
+  });
+});
+
 describe("ModuleAnalyses.isProjectModule", () => {
   it("leaves out files in node_modules and in other named packages", () => {
     const dir = fs.realpathSync(
@@ -246,6 +373,28 @@ describe("ModuleAnalyses.isProjectModule", () => {
       expect(isProject("common/schema.ts")).toBe(true);
       expect(isProject("packages/aws/dist/sqs/index.js")).toBe(false);
       expect(isProject("apps/api/node_modules/x/index.js")).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("counts files under the root as project modules, even in a named package", () => {
+    const dir = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "notation-")),
+    );
+    const write = (file: string, contents: string) => {
+      fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+      fs.writeFileSync(path.join(dir, file), contents);
+    };
+    try {
+      write("package.json", JSON.stringify({ name: "monorepo" }));
+      write("packages/api/package.json", JSON.stringify({ name: "@acme/api" }));
+      const analyses = new ModuleAnalyses({ root: dir });
+      const isProject = (file: string) =>
+        analyses.isProjectModule(path.join(dir, file));
+      expect(isProject("packages/api/handler.ts")).toBe(true);
+      expect(isProject("infra/orders.ts")).toBe(true);
+      expect(isProject("node_modules/@acme/api/handler.js")).toBe(false);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
