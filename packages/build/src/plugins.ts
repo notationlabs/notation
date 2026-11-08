@@ -1,21 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
-import { decode } from "@jridgewell/sourcemap-codec";
 import { projectRoot, toProjectRoot } from "@notation/core";
-import type { NormalizedOutputOptions, OutputChunk, Plugin } from "rolldown";
+import type { Plugin } from "rolldown";
 import { analyzeModule, type ModuleAnalysis } from "./analyze";
-import { location, type Node } from "./ast";
+import { location } from "./ast";
 import {
   infraInterface,
   stripForInfra,
   type DeclarationModule,
 } from "./infra-strip";
-import {
-  Marks,
-  type ImportBinding,
-  type Mark,
-  type ModuleTable,
-} from "./marks";
+import { Marks, type ImportBinding, type Mark } from "./marks";
 import { stripForRuntime } from "./runtime-strip";
 
 const nodeModules = /[\\/]node_modules[\\/]/;
@@ -268,6 +262,8 @@ export type RuntimePluginOptions = {
  *    whose bindings are no longer used.
  * 4. Fails the build if an infra module, or an infra function from a
  *    package, is still in the bundle, and names the import chain.
+ *
+ * The build must set `minify: false` in its output options.
  */
 export function runtimePlugin({
   analyses,
@@ -276,9 +272,6 @@ export function runtimePlugin({
   const infraModules = new Set<string>();
   const isInfraModule = (file: string) =>
     analyses.fromFile(file)?.isInfra ?? false;
-  // The bundle check reads the chunk's source map. If the build doesn't ask
-  // for one, the plugin turns it on and drops the file.
-  let dropSourcemaps = false;
   return {
     name: "notation-runtime",
     resolveId(source) {
@@ -301,12 +294,9 @@ export function runtimePlugin({
           isInfraModule,
         );
         if (!stripped && !analysis.isInfra) return null;
-        // Code without a map would leave the module out of the chunk's
-        // source map, which the bundle check reads.
-        if (!stripped) return { moduleSideEffects: false };
         return {
-          code: stripped.code,
-          map: stripped.map,
+          code: stripped?.code ?? code,
+          map: stripped?.map,
           moduleSideEffects: analysis.isInfra ? false : undefined,
         };
       },
@@ -314,21 +304,24 @@ export function runtimePlugin({
     watchChange(id) {
       analyses.invalidate(id);
     },
-    outputOptions(options) {
-      dropSourcemaps = !options.sourcemap;
-      return dropSourcemaps ? { ...options, sourcemap: "hidden" } : null;
+    // The bundle check reads Rolldown's render info, which describes the code
+    // before minify. A minify pass, including Rolldown's default "dce-only",
+    // can drop code that the render info still counts.
+    renderStart(options) {
+      if (options.minify !== false) {
+        this.error(
+          `The runtime build needs minify: false in its output options, because the bundle check reads the code before minify. It has minify: ${JSON.stringify(options.minify)}.`,
+        );
+      }
     },
-    generateBundle(options, bundle) {
+    generateBundle(_, bundle) {
       for (const output of Object.values(bundle)) {
         if (output.type !== "chunk") continue;
-        const kept = keptPositions(output, options);
-        const keptModules = Object.keys(output.modules).filter((id) =>
-          kept.has(id),
-        );
         for (const id of infraModules) {
-          if (!kept.has(id)) continue;
+          const rendered = output.modules[id];
+          if (!rendered || rendered.renderedLength === 0) continue;
           const uses = usesOfImports(
-            keptModules,
+            output.modules,
             analyses,
             (binding, file) =>
               analyses.marks.resolve(binding.source, file) === id,
@@ -341,19 +334,17 @@ export function runtimePlugin({
         // Infra functions from packages, such as queue() from
         // @notation/aws/sqs. A package module can hold both infra and runtime
         // functions, so the check looks at the exports that are left after
-        // tree-shaking, and at whether the final code holds their functions.
+        // tree-shaking.
         for (const [id, rendered] of Object.entries(output.modules)) {
-          if (!kept.has(id)) continue;
+          if (rendered.renderedLength === 0) continue;
           const code = this.getModuleInfo(id)?.code;
           if (!code || !/@resource|@declaration/.test(code)) continue;
           for (const name of rendered.renderedExports) {
             const mark = analyses.marks.exportMark(id, name);
             if (mark?.kind !== "resource" && mark?.kind !== "declaration")
               continue;
-            if (!exportKept(analyses.marks.table(id), name, kept.get(id)))
-              continue;
             const uses = usesOfImports(
-              keptModules,
+              output.modules,
               analyses,
               (_binding, _file, importMark) =>
                 importMark?.kind === "resource" ||
@@ -365,109 +356,10 @@ export function runtimePlugin({
             );
           }
         }
-        if (dropSourcemaps && output.sourcemapFileName) {
-          delete bundle[output.sourcemapFileName];
-        }
       }
     },
   };
 }
-
-// A position in a module's source, as a 0-based line and column.
-type Position = [line: number, column: number];
-
-/**
- * The positions in each module's source that the chunk's final code maps
- * to, by module ID. A module that the final code holds nothing of is left
- * out. A rendered module that the source map doesn't list has `undefined`
- * positions, and counts as kept.
- *
- * Rolldown's per-module render info describes the code before the
- * "dce-only" minify pass, which runs after rendering and can drop calls,
- * functions and whole modules. The chunk's source map describes the code
- * after that pass.
- */
-function keptPositions(
-  chunk: OutputChunk,
-  options: NormalizedOutputOptions,
-): Map<string, Position[] | undefined> {
-  const kept = new Map<string, Position[] | undefined>();
-  if (!chunk.map) {
-    throw new Error(
-      `The runtime build has no source map for ${chunk.fileName}, which the bundle check needs.`,
-    );
-  }
-  const dir = path.dirname(
-    path.resolve(
-      options.dir ?? path.dirname(options.file ?? "."),
-      chunk.fileName,
-    ),
-  );
-  const ids = chunk.map.sources.map((source) => path.resolve(dir, source));
-  const mapped = new Set(ids);
-  for (const [id, rendered] of Object.entries(chunk.modules)) {
-    if (rendered.renderedLength > 0 && !mapped.has(id)) kept.set(id, undefined);
-  }
-  for (const line of decode(chunk.map.mappings)) {
-    for (const segment of line) {
-      if (segment.length === 1) continue;
-      const [, source, originalLine, originalColumn] = segment;
-      const id = ids[source]!;
-      const positions = kept.get(id) ?? [];
-      kept.set(id, positions);
-      positions.push([originalLine, originalColumn]);
-    }
-  }
-  return kept;
-}
-
-// Whether the final code holds the function that a module exports as
-// `name`. An export that the module doesn't declare itself counts as kept
-// when the module is.
-function exportKept(
-  table: ModuleTable | null,
-  name: string,
-  positions: Position[] | undefined,
-): boolean {
-  const target = table?.exports.get(name);
-  const node =
-    table && target && "local" in target
-      ? declarationOf(table, target.local)
-      : undefined;
-  if (!table || !node || !positions) return true;
-  const start = position(table.module.source, node.start);
-  const end = position(table.module.source, node.end);
-  return positions.some(
-    (at) => compare(at, start) >= 0 && compare(at, end) < 0,
-  );
-}
-
-function declarationOf(table: ModuleTable, local: string): Node | undefined {
-  for (const statement of table.module.body) {
-    const node =
-      statement.type === "ExportNamedDeclaration" ||
-      statement.type === "ExportDefaultDeclaration"
-        ? statement.declaration
-        : statement;
-    if (node?.type === "FunctionDeclaration" && node.id?.name === local)
-      return node;
-    if (
-      node?.type === "VariableDeclaration" &&
-      node.declarations.some(
-        (d: Node) => d.id.type === "Identifier" && d.id.name === local,
-      )
-    )
-      return node;
-  }
-  return undefined;
-}
-
-function position(source: string, offset: number): Position {
-  const before = source.slice(0, offset).split("\n");
-  return [before.length - 1, before.at(-1)!.length];
-}
-
-const compare = (a: Position, b: Position) => a[0] - b[0] || a[1] - b[1];
 
 type ImportUse = { at: string; name: string };
 
@@ -478,12 +370,13 @@ type ImportUse = { at: string; name: string };
  * `importMark` is the mark of the imported function, if it has one.
  */
 function usesOfImports(
-  modules: string[],
+  modules: Record<string, { renderedLength: number }>,
   analyses: ModuleAnalyses,
   matches: (binding: ImportBinding, file: string, importMark?: Mark) => boolean,
 ): ImportUse[] {
   const uses: ImportUse[] = [];
-  for (const file of modules) {
+  for (const [file, rendered] of Object.entries(modules)) {
+    if (rendered.renderedLength === 0) continue;
     const analysis = analyses.fromFile(file);
     if (!analysis) continue;
     const { table, declaration } = analysis;

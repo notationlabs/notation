@@ -243,6 +243,7 @@ export async function compileRuntimeModules(
       ...outputOptions,
       dir: distDir,
       codeSplitting: false,
+      minify: false,
     } satisfies OutputOptions,
   }));
 

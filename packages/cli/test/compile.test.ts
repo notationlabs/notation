@@ -10,7 +10,9 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { rolldown, type Plugin } from "rolldown";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ModuleAnalyses, runtimeEntry, runtimePlugin } from "@notation/build";
 import { setConfigFile } from "@notation/core";
 import { compile, compileInfra, compileRuntimeModules } from "../src/compile";
 import type { Logger } from "../src/logger";
@@ -19,9 +21,33 @@ import type { Logger } from "../src/logger";
 // resolve from the root node_modules.
 const tmpDir = fileURLToPath(new URL("../../../tmp", import.meta.url));
 
+// The final code of each chunk in the last build, by file name. A plugin
+// before the others records it, so it is there when a later plugin fails the
+// build in generateBundle.
+const finalCode = vi.hoisted(() => new Map<string, string>());
+
+vi.mock("rolldown", async (importOriginal) => {
+  const original = await importOriginal<typeof import("rolldown")>();
+  const capture: Plugin = {
+    name: "capture-final-code",
+    generateBundle(_, bundle) {
+      for (const output of Object.values(bundle)) {
+        if (output.type === "chunk")
+          finalCode.set(output.fileName, output.code);
+      }
+    },
+  };
+  return {
+    ...original,
+    rolldown: (input: Parameters<typeof original.rolldown>[0]) =>
+      original.rolldown({ ...input, plugins: [capture, input.plugins] }),
+  };
+});
+
 let root: string;
 
 beforeEach(() => {
+  finalCode.clear();
   mkdirSync(tmpDir, { recursive: true });
   root = realpathSync(mkdtempSync(path.join(tmpDir, "notation-compile-")));
   mkdirSync(path.join(root, "infra"));
@@ -216,8 +242,6 @@ describe("declaration modules", () => {
 
     const file = path.join(root, "dist/runtime/process-orders/index.mjs");
     const bundle = readFileSync(file, "utf8");
-    expect(existsSync(`${file}.map`)).toBe(false);
-    expect(bundle).not.toContain("sourceMappingURL");
     expect(bundle).not.toContain("placeholder-url");
     expect(bundle).not.toContain("sdk loaded");
     expect(bundle).not.toContain("policy");
@@ -408,11 +432,10 @@ describe("declaration modules", () => {
     );
   });
 
-  // Rolldown keeps a call whose result is unused, and its render info counts
-  // the called function. The "dce-only" minify pass that runs after
-  // rendering finds that the function has no effects, and drops the call
-  // and the function.
-  it("leaves out an infra module whose only use the bundler's minify pass drops", async () => {
+  // The check reads Rolldown's render info. These tests check that the final
+  // code holds what the check reports: a minify pass that runs after
+  // rendering drops each of these unused calls, and the function with it.
+  it("reports an infra module whose only use is a call with an unused result", async () => {
     writeProject(
       handlerModule
         .replace(
@@ -433,17 +456,16 @@ describe("declaration modules", () => {
         `export function queueConfig(name: string) { return { name, retries: 3 }; }`,
       ].join("\n"),
     );
-    await compileRuntimeModules(
-      (await compileInfra(path.join(root, "infra/orders.ts"))).modules,
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
+    await expect(compileRuntimeModules(modules)).rejects.toThrow(
+      "includes the infra module infra/names.ts.",
     );
-    const bundle = readFileSync(
-      path.join(root, "dist/runtime/process-orders/index.mjs"),
-      "utf8",
+    expect(finalCode.get("runtime/process-orders/index.mjs")).toContain(
+      "retries: 3",
     );
-    expect(bundle).not.toContain("retries");
   });
 
-  it("leaves out a resource function whose only use the bundler's minify pass drops", async () => {
+  it("reports a resource function whose only use is a call with an unused result", async () => {
     writeProject(
       handlerModule
         .replace(
@@ -455,15 +477,33 @@ describe("declaration modules", () => {
           `export const handler = async () => [queue({ name: "scratch" }), parseMessage("{}")] && [`,
         ),
     );
-    await compileRuntimeModules(
-      (await compileInfra(path.join(root, "infra/orders.ts"))).modules,
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
+    await expect(compileRuntimeModules(modules)).rejects.toThrow(
+      "includes queue from @notation/aws/sqs.js, a function that declares infrastructure.",
     );
-    const bundle = readFileSync(
-      path.join(root, "dist/runtime/process-orders/index.mjs"),
-      "utf8",
+    expect(finalCode.get("runtime/process-orders/index.mjs")).toContain(
+      "placeholder-url",
     );
-    expect(bundle).toContain("JSON.parse");
-    expect(bundle).not.toContain("placeholder-url");
+  });
+
+  it("fails a runtime build that minifies", async () => {
+    writeProject();
+    const [module] = (await compileInfra(path.join(root, "infra/orders.ts")))
+      .modules;
+    const bundle = await rolldown({
+      input: runtimeEntry,
+      cwd: root,
+      plugins: [
+        runtimePlugin({ analyses: new ModuleAnalyses(), module: module! }),
+      ],
+    });
+    try {
+      await expect(bundle.generate({})).rejects.toThrow(
+        'The runtime build needs minify: false in its output options, because the bundle check reads the code before minify. It has minify: "dce-only".',
+      );
+    } finally {
+      await bundle.close();
+    }
   });
 
   it("fails when infra imports a name that the declaration doesn't use", async () => {
