@@ -37,20 +37,17 @@ export type CompileOptions = {
  * watching.
  */
 export async function compile(
-  { entryPoint, runtimeModules }: Build,
+  { entryPoint, files }: Build,
   opts: CompileOptions = {},
 ): Promise<() => Promise<void>> {
   const watch = opts.watch ?? false;
   const logger = opts.logger ?? defaultLogger;
-  const analyses = new ModuleAnalyses();
+  const analyses = new ModuleAnalyses({ files });
 
   logger.info(`${watch ? "Watching" : "Compiling"} infrastructure`, entryPoint);
 
   if (!watch) {
-    const { modules } = await compileInfra(entryPoint, {
-      analyses,
-      runtimeModules,
-    });
+    const { modules } = await compileInfra(entryPoint, { analyses });
     logger.info("Compiling runtime modules");
     await compileRuntimeModules(modules, { analyses });
     return async () => {};
@@ -87,7 +84,6 @@ export async function compile(
   const infra = await compileInfra(entryPoint, {
     watch,
     analyses,
-    runtimeModules,
     onDeclarationModules: update,
     onBuildFailed: (error) => {
       logger.error(error);
@@ -107,12 +103,8 @@ export async function compile(
 
 export type CompileInfraOptions = {
   watch?: boolean;
+  /** Holds the kinds of the project's files. Defaults to the default globs. */
   analyses?: ModuleAnalyses;
-  /**
-   * Globs, relative to the project root, for the runtime files. The infra
-   * build also imports each one that holds a declaration. Defaults to none.
-   */
-  runtimeModules?: string[];
   /**
    * Called after each build without errors, with the declaration modules in
    * the build. In watch mode this includes every rebuild.
@@ -134,8 +126,9 @@ const outputOptions: OutputOptions = {
 };
 
 /**
- * Bundles the infra entry to `dist/`. The bundle also imports each file in
- * `runtimeModules` that holds a declaration, after the entry.
+ * Bundles the infra entry to `dist/`. The bundle also imports each runtime
+ * file, by the kinds in `analyses`, that holds a declaration, after the
+ * entry.
  * Each declaration module in the build is replaced by its stripped copy.
  * Returns the declaration modules, sorted by path, and a function that stops
  * watching. In watch mode, resolves after the first build without errors.
@@ -147,14 +140,13 @@ export async function compileInfra(
   const analyses = opts.analyses ?? new ModuleAnalyses();
   let found: DeclarationModule[] = [];
   const root = projectRoot();
-  const runtimeModules = opts.runtimeModules ?? [];
   const input: InputOptions = {
     input: { [outputName(entryPoint)]: infraEntry },
     cwd: root,
     platform: "node",
     tsconfig: true,
     plugins: [
-      infraEntryPlugin({ analyses, entryPoint, root, runtimeModules }),
+      infraEntryPlugin({ analyses, entryPoint }),
       infraPlugin({
         analyses,
         onDeclarationModules: (modules) => {
@@ -206,6 +198,7 @@ export async function compileInfra(
 }
 
 export type CompileRuntimeOptions = {
+  /** Holds the kinds of the project's files. Defaults to the default globs. */
   analyses?: ModuleAnalyses;
   watch?: boolean;
   /** Called in watch mode for each runtime build that fails. */

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   defineConfig,
   parseConfig,
-  resolveRuntimeModules,
+  resolveModuleGlobs,
 } from "src/config/config";
 
 describe("defineConfig", () => {
@@ -77,20 +77,32 @@ describe("parseConfig", () => {
     [{ ...valid, defaultStage: "Dev" }, 'defaultStage "Dev" is not name-safe'],
     [
       { ...valid, stage: "dev" },
-      'unknown key "stage". Known keys: app, entry, defaultStage, runtimeModules',
+      'unknown key "stage". Known keys: app, entry, defaultStage, files',
     ],
     [{ ...valid, name: "x", entries: {} }, 'unknown keys "name", "entries"'],
     [
-      { ...valid, runtimeModules: [] },
-      "runtimeModules must be a glob or a non-empty array of globs",
+      { ...valid, runtimeModules: "runtime/**" },
+      'unknown key "runtimeModules"',
     ],
     [
-      { ...valid, runtimeModules: ["runtime/**", 1] },
-      "runtimeModules must be a glob or a non-empty array of globs",
+      { ...valid, files: ["infra/**"] },
+      "files must be an object with the keys infra, runtime, shared",
     ],
     [
-      { ...valid, runtimeModules: "" },
-      "runtimeModules must be a glob or a non-empty array of globs",
+      { ...valid, files: { lib: ["lib/**"] } },
+      'unknown key "lib" in files. Known keys: infra, runtime, shared',
+    ],
+    [
+      { ...valid, files: { runtime: ["runtime/**", 1] } },
+      "files.runtime must be a glob or an array of globs",
+    ],
+    [
+      { ...valid, files: { shared: "" } },
+      "files.shared must be a glob or an array of globs",
+    ],
+    [
+      { ...valid, files: { infra: ["!infra/**/*.test.ts"] } },
+      'files.infra has only globs that start with "!", so it matches no file',
     ],
   ])("rejects %j", (config, message) => {
     expect(() => parseConfig(config)).toThrow(
@@ -98,9 +110,13 @@ describe("parseConfig", () => {
     );
   });
 
-  it("accepts runtimeModules as a glob or an array of globs", () => {
-    for (const runtimeModules of ["runtime/**", ["runtime/**", "jobs/*.ts"]]) {
-      const config = { ...valid, runtimeModules };
+  it("accepts each kind of files as a glob, an array of globs or no globs", () => {
+    for (const globs of [
+      "runtime/**",
+      ["runtime/**", "jobs/*.ts", "!jobs/*.test.ts"],
+      [],
+    ]) {
+      const config = { ...valid, files: { runtime: globs } };
       expect(parseConfig(config)).toBe(config);
     }
   });
@@ -112,16 +128,19 @@ describe("parseConfig", () => {
   });
 });
 
-describe("resolveRuntimeModules", () => {
+describe("resolveModuleGlobs", () => {
   const valid = { app: "orders-app", entry: "infra/api.ts" };
 
-  it("defaults to runtime/**/*.ts", () => {
-    expect(resolveRuntimeModules(valid)).toEqual(["runtime/**/*.ts"]);
+  it("leaves out the kinds that the config doesn't set", () => {
+    expect(resolveModuleGlobs(valid)).toEqual({});
+    expect(
+      resolveModuleGlobs({ ...valid, files: { shared: ["lib/**"] } }),
+    ).toEqual({ shared: ["lib/**"] });
   });
 
   it("returns a single glob as an array", () => {
     expect(
-      resolveRuntimeModules({ ...valid, runtimeModules: "runtime/**" }),
-    ).toEqual(["runtime/**"]);
+      resolveModuleGlobs({ ...valid, files: { runtime: "functions/**" } }),
+    ).toEqual({ runtime: ["functions/**"] });
   });
 });

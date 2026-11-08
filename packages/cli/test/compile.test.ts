@@ -258,7 +258,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The function in runtime/process-orders.ts uses the infra module infra/orders.ts: orders at runtime/process-orders.ts:16:38. It imports infra/orders.ts through runtime/process-orders.ts → infra/orders.ts. The runtime build leaves infra out, so runtime code can't use it.",
+      'The function in runtime/process-orders.ts uses infra/orders.ts, an infra module (files.infra: "infra/**", the default): orders at runtime/process-orders.ts:16:38. It imports infra/orders.ts through runtime/process-orders.ts → infra/orders.ts. The runtime build leaves infra out, so runtime code can\'t use it.',
     );
   });
 
@@ -283,7 +283,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The function in runtime/process-orders.ts uses the infra module infra/orders.ts: orders at runtime/queue-url.ts:2:31. It imports infra/orders.ts through runtime/process-orders.ts → runtime/queue-url.ts → infra/orders.ts.",
+      'The function in runtime/process-orders.ts uses infra/orders.ts, an infra module (files.infra: "infra/**", the default): orders at runtime/queue-url.ts:2:31. It imports infra/orders.ts through runtime/process-orders.ts → runtime/queue-url.ts → infra/orders.ts.',
     );
   });
 
@@ -404,7 +404,9 @@ describe("declaration modules", () => {
     },
   );
 
-  it("names the import chain when a module that the function imports brings in infra", async () => {
+  // On main, the build didn't see that infra/orders.ts is infra, because it
+  // calls queue() through a factory, so the bundle kept queue().
+  it("leaves out an infra module that a helper imports for an export the function doesn't use", async () => {
     writeProject(
       handlerModule
         .replace(
@@ -426,8 +428,39 @@ describe("declaration modules", () => {
       ].join("\n"),
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
+    await compileRuntimeModules(modules);
+    const bundle = readFileSync(
+      path.join(root, "dist/runtime/process-orders/index.mjs"),
+      "utf8",
+    );
+    expect(bundle).toContain(`label = () => "orders"`);
+    expect(bundle).not.toContain("makeQueue");
+    expect(bundle).not.toContain("placeholder-url");
+  });
+
+  it("names the import chain when a module that the function imports brings in a resource function", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { Order } from "./schema";`,
+          `import { Order } from "./schema";\n  import { label } from "../lib/labels";`,
+        )
+        .replace(
+          "export const handler = async () =>",
+          "export const handler = async () => label() &&",
+        ),
+    );
+    write(
+      "lib/labels.ts",
+      [
+        `import { queue } from "@notation/aws/sqs";`,
+        `export const dlq = queue({ name: "dlq" });`,
+        `export const label = () => "orders";`,
+      ].join("\n"),
+    );
+    const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The function in runtime/process-orders.ts uses queue from @notation/aws/sqs.js, a function that declares infrastructure: queue at infra/helpers.ts:2:50. It imports @notation/aws/sqs.js through runtime/process-orders.ts → runtime/labels.ts → infra/orders.ts → infra/helpers.ts → @notation/aws/sqs.js. Infra functions can't run in a runtime module.",
+      "The function in runtime/process-orders.ts uses queue from @notation/aws/sqs.js, a function that declares infrastructure: queue at lib/labels.ts:2:20. It imports @notation/aws/sqs.js through runtime/process-orders.ts → lib/labels.ts → @notation/aws/sqs.js. Infra functions can't run in a runtime module.",
     );
   });
 
@@ -457,7 +490,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      "The function in runtime/process-orders.ts uses the infra module infra/names.ts: queueConfig at runtime/process-orders.ts:17:40. It imports infra/names.ts through runtime/process-orders.ts → infra/names.ts.",
+      'The function in runtime/process-orders.ts uses infra/names.ts, an infra module (files.infra: "infra/**", the default): queueConfig at runtime/process-orders.ts:17:40. It imports infra/names.ts through runtime/process-orders.ts → infra/names.ts.',
     );
   });
 
@@ -530,7 +563,6 @@ describe("declaration modules", () => {
 
 describe("runtime modules that infra doesn't import", () => {
   const entryPoint = () => path.join(root, "infra/orders.ts");
-  const runtimeModules = ["runtime/**/*.ts"];
 
   const writeUnimported = () => {
     writeProject();
@@ -542,7 +574,7 @@ describe("runtime modules that infra doesn't import", () => {
 
   it("adds a declaration module that infra doesn't import", async () => {
     writeUnimported();
-    const { modules } = await compileInfra(entryPoint(), { runtimeModules });
+    const { modules } = await compileInfra(entryPoint());
     expect(modules.map((module) => toRoot(module.path))).toEqual([
       "runtime/process-orders.ts",
       "runtime/send-receipts.ts",
@@ -561,7 +593,7 @@ describe("runtime modules that infra doesn't import", () => {
         `(globalThis.ran ??= []).push("entry");`,
       ].join("\n"),
     );
-    await compileInfra(entryPoint(), { runtimeModules });
+    await compileInfra(entryPoint());
 
     const script = `
       await import("./dist/infra/orders.mjs");
@@ -582,7 +614,7 @@ describe("runtime modules that infra doesn't import", () => {
   it("doesn't import a runtime file without a declaration", async () => {
     writeProject();
     write("runtime/setup.ts", `console.log("setup ran");`);
-    await compileInfra(entryPoint(), { runtimeModules });
+    await compileInfra(entryPoint());
     const bundle = readFileSync(
       path.join(root, "dist/infra/orders.mjs"),
       "utf8",
@@ -593,7 +625,7 @@ describe("runtime modules that infra doesn't import", () => {
   it("bundles the runtime code of a declaration module that infra doesn't import", async () => {
     writeUnimported();
     await compile(
-      { entryPoint: entryPoint(), runtimeModules },
+      { entryPoint: entryPoint(), files: {} },
       { logger: { info: () => {}, error: vi.fn() } as unknown as Logger },
     );
     expect(
@@ -604,10 +636,8 @@ describe("runtime modules that infra doesn't import", () => {
   it("fails when a runtime file can't be analysed", async () => {
     writeProject();
     write("runtime/broken.ts", `export const broken = ;`);
-    await expect(
-      compileInfra(entryPoint(), { runtimeModules }),
-    ).rejects.toThrow(
-      `runtime/broken.ts matches runtimeModules, but it can't be analysed: ${path.join(root, "runtime/broken.ts")}: Unexpected token`,
+    await expect(compileInfra(entryPoint())).rejects.toThrow(
+      `runtime/broken.ts matches files.runtime, but it can't be analysed: ${path.join(root, "runtime/broken.ts")}: Unexpected token`,
     );
   });
 });

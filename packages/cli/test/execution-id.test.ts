@@ -7,7 +7,7 @@ const deployment: Deployment = {
   app: "orders-app",
   stage: "prod",
   entryPoint: "/project/infra/app.ts",
-  runtimeModules: ["**/*.ts"],
+  files: {},
 };
 
 const { deployApp, destroyApp } = vi.hoisted(() => ({

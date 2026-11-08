@@ -10,19 +10,37 @@ export type NotationConfig = {
   /** The stage to use when a command is given no `--stage`. */
   defaultStage?: string;
   /**
-   * Globs, relative to the directory of the config, for the runtime files.
-   * Defaults to `runtime/**\/*.ts`. Deploy includes each runtime file that
-   * calls a declaration function, such as `$lambda`, even if infra doesn't
-   * import it.
+   * Globs, relative to the directory of the config, that give each file its
+   * kind of module. Each kind that isn't set keeps its default, which is the
+   * folder of the same name, such as `infra/**`.
    */
-  runtimeModules?: string | string[];
+  files?: ModuleFiles;
+};
+
+export const moduleKinds = ["infra", "runtime", "shared"] as const;
+
+export type ModuleKind = (typeof moduleKinds)[number];
+
+/**
+ * A glob or an array of globs for each kind of module. A glob that starts
+ * with `!` excludes the files that it matches.
+ */
+export type ModuleFiles = { [Kind in ModuleKind]?: string | string[] };
+
+/** The globs that the config sets, by kind, each as an array. */
+export type ModuleGlobs = { [Kind in ModuleKind]?: string[] };
+
+export const defaultModuleGlobs: Required<ModuleGlobs> = {
+  infra: ["infra/**"],
+  runtime: ["runtime/**"],
+  shared: ["shared/**"],
 };
 
 export type NotationConfigInput<App extends string, Stage extends string> = {
   app: NameSafe<App>;
   entry: string;
   defaultStage?: NameSafe<Stage>;
-  runtimeModules?: string | string[];
+  files?: ModuleFiles;
 };
 
 /**
@@ -40,7 +58,7 @@ const configKeys = [
   "app",
   "entry",
   "defaultStage",
-  "runtimeModules",
+  "files",
 ] as const satisfies readonly (keyof NotationConfig)[];
 
 /**
@@ -66,7 +84,7 @@ export function parseConfig(
     );
   }
 
-  const { app, entry, defaultStage, runtimeModules } = value;
+  const { app, entry, defaultStage, files } = value;
   assertNameSafe(app, `${prefix} app`);
 
   if (typeof entry !== "string" || entry === "") {
@@ -76,25 +94,44 @@ export function parseConfig(
   if (defaultStage !== undefined)
     assertNameSafe(defaultStage, `${prefix} defaultStage`);
 
-  if (runtimeModules !== undefined) {
-    const globs = [runtimeModules].flat();
-    if (
-      globs.length === 0 ||
-      !globs.every((glob) => typeof glob === "string" && glob !== "")
-    ) {
-      fail("runtimeModules must be a glob or a non-empty array of globs");
-    }
-  }
+  if (files !== undefined) parseFiles(files, fail);
 
   return value as NotationConfig;
 }
 
-export const defaultRuntimeModules = ["runtime/**/*.ts"];
+function parseFiles(files: unknown, fail: (message: string) => never) {
+  if (!isRecord(files)) {
+    fail(`files must be an object with the keys ${moduleKinds.join(", ")}`);
+  }
+  for (const [kind, value] of Object.entries(files)) {
+    if (!(moduleKinds as readonly string[]).includes(kind)) {
+      fail(
+        `unknown key "${kind}" in files. Known keys: ${moduleKinds.join(", ")}`,
+      );
+    }
+    const globs = [value].flat();
+    if (!globs.every((glob) => typeof glob === "string" && glob !== "")) {
+      fail(`files.${kind} must be a glob or an array of globs`);
+    }
+    if (globs.length > 0 && globs.every((glob) => glob.startsWith("!"))) {
+      fail(
+        `files.${kind} has only globs that start with "!", so it matches no file. Add a glob for the files to include`,
+      );
+    }
+  }
+}
 
-/** The config's `runtimeModules` as an array, or the default globs. */
-export function resolveRuntimeModules(config: NotationConfig): string[] {
-  if (config.runtimeModules === undefined) return defaultRuntimeModules;
-  return [config.runtimeModules].flat();
+/**
+ * The globs that the config's `files` sets, each as an array. A kind that
+ * the config doesn't set is left out, so that the build uses its default.
+ */
+export function resolveModuleGlobs(config: NotationConfig): ModuleGlobs {
+  const globs: ModuleGlobs = {};
+  for (const kind of moduleKinds) {
+    const value = config.files?.[kind];
+    if (value !== undefined) globs[kind] = [value].flat();
+  }
+  return globs;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

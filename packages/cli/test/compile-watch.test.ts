@@ -9,6 +9,7 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it, onTestFinished, vi } from "vitest";
+import { ModuleAnalyses } from "@notation/build";
 import { setConfigFile } from "@notation/core";
 import { compile, compileInfra, type DeclarationModule } from "../src/compile";
 import type { Logger } from "../src/logger";
@@ -32,9 +33,9 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-const build = (entry: string) => ({
+const build = (entry: string, runtime: string[] = []) => ({
   entryPoint: path.join(root, entry),
-  runtimeModules: [],
+  files: { runtime },
 });
 
 const write = (file: string, contents: string) => {
@@ -154,13 +155,10 @@ it("bundles a runtime file that is created during watch", async () => {
     path.join(root, `dist/watch-e/runtime/${name}/index.mjs`);
 
   onTestFinished(
-    await compile(
-      {
-        ...build("watch-e/main.ts"),
-        runtimeModules: ["watch-e/runtime/**/*.ts"],
-      },
-      { watch: true, logger },
-    ),
+    await compile(build("watch-e/main.ts", ["watch-e/runtime/**/*.ts"]), {
+      watch: true,
+      logger,
+    }),
   );
   await waitFor(() => expect(existsSync(bundle("todos"))).toBe(true));
 
@@ -175,7 +173,7 @@ it("doesn't rebuild on build output, packages or deploy state when a glob covers
   let builds = 0;
   const infra = await compileInfra(path.join(root, "watch-f/main.ts"), {
     watch: true,
-    runtimeModules: ["**/*.ts"],
+    analyses: new ModuleAnalyses({ files: { runtime: ["**/*.ts"] } }),
     onDeclarationModules: () => builds++,
   });
   onTestFinished(infra.close);
@@ -198,13 +196,10 @@ it("bundles a runtime file in a glob directory that is created during watch", as
   const bundle = path.join(root, "dist/watch-g/runtime/todos/index.mjs");
 
   onTestFinished(
-    await compile(
-      {
-        ...build("watch-g/main.ts"),
-        runtimeModules: ["watch-g/runtime/**/*.ts"],
-      },
-      { watch: true, logger },
-    ),
+    await compile(build("watch-g/main.ts", ["watch-g/runtime/**/*.ts"]), {
+      watch: true,
+      logger,
+    }),
   );
 
   // Lets the rebuild from macOS's late report of main.ts pass first, so

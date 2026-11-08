@@ -36,11 +36,17 @@ export type ModuleAnalysis = {
   references: Reference[];
   marked: MarkedReference[];
   declaration?: Declaration;
-  /** Whether the module calls a resource function at its top level. */
-  isInfra: boolean;
+  /**
+   * The first call to a resource function at the top level of the module.
+   * The runtime build marks a package file with such a call as infra.
+   */
+  resourceCall?: MarkedReference;
 };
 
-/** Reads the declaration of a module, and whether it is an infra module. */
+/**
+ * Reads the declaration of a module, and its first call to a resource
+ * function at its top level.
+ */
 export function analyzeModule(
   table: ModuleTable,
   marks: Marks,
@@ -61,12 +67,12 @@ export function analyzeModule(
   };
 
   const declarations: Declaration[] = [];
-  let isInfra = false;
+  let resourceCall: MarkedReference | undefined;
   for (const reference of marked) {
     const { mark } = reference;
     if (mark.kind === "resource") {
       if (reference.call && !reference.ancestors.some(isFunction))
-        isInfra = true;
+        resourceCall ??= reference;
       continue;
     }
     if (mark.kind !== "declaration") continue;
@@ -83,7 +89,13 @@ export function analyzeModule(
     );
   }
 
-  return { table, references, marked, declaration: declarations[0], isInfra };
+  return {
+    table,
+    references,
+    marked,
+    declaration: declarations[0],
+    resourceCall,
+  };
 }
 
 function markOf(
