@@ -924,15 +924,15 @@ describe("workspace packages outside the project root", () => {
     writeProject(withHandler(`import { fmt } from "acme-lib";`, "fmt()"));
     writePackage("acme-lib", acmeLib);
     await expect(buildProject()).rejects.toThrow(
-      'acme-lib/queues.ts calls queue at its top level. If the function doesn\'t use a value from acme-lib/queues.ts, add "sideEffects": false to acme-lib/package.json, so that the bundler can leave it out.',
+      "acme-lib/queues.ts calls queue at its top level. If the function doesn't use a value from acme-lib/queues.ts, add \"sideEffects\": false to the package.json of its package, so that the bundler can leave acme-lib/queues.ts out. If it does, read infra values through the declaration's env(), and move a plain value that the function needs to a file that doesn't call a resource function.",
     );
   });
 
-  it("fails when the function uses a package module that calls a resource function, and says to read infra values through env()", async () => {
+  it("fails when the function uses a value from a package module without side effects that calls a resource function", async () => {
     writeProject(withHandler(`import { dlq } from "acme-lib";`, "dlq"));
     writePackage("acme-lib", acmeLib, { sideEffects: false });
     await expect(buildProject()).rejects.toThrow(
-      "Infra functions can't run in a runtime module. The function uses a value from acme-lib/queues.ts, which calls queue at its top level. The function must read infra values through the declaration's env() instead.",
+      "Infra functions can't run in a runtime module. acme-lib/queues.ts calls queue at its top level. If the function doesn't use a value from acme-lib/queues.ts,",
     );
   });
 
@@ -1088,7 +1088,7 @@ describe("a monorepo with the config at its root", () => {
     expect(runHandler()).toBe("orders");
   });
 
-  it("fails when a module of a package folder with side effects calls a resource function at its top level, and names its package.json", async () => {
+  it("fails when a module of a package folder with side effects calls a resource function at its top level, and says to set sideEffects", async () => {
     writeProject(
       withHandler(`import { label } from "../packages/api";`, "label()"),
     );
@@ -1102,8 +1102,29 @@ describe("a monorepo with the config at its root", () => {
       `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
     );
     await expect(buildProject()).rejects.toThrow(
-      'packages/api/queues.ts calls queue at its top level. If the function doesn\'t use a value from packages/api/queues.ts, add "sideEffects": false to packages/api/package.json, so that the bundler can leave it out.',
+      "packages/api/queues.ts calls queue at its top level. If the function doesn't use a value from packages/api/queues.ts, add \"sideEffects\": false to the package.json of its package, so that the bundler can leave packages/api/queues.ts out. If it does, read infra values through the declaration's env(), and move a plain value that the function needs to a file that doesn't call a resource function.",
     );
+  });
+
+  it("fails without sideEffects advice when a runtime module in a package folder calls a resource function at its top level", async () => {
+    writeProject(
+      withHandler(`import { dlq } from "../packages/api/runtime/q";`, "dlq"),
+    );
+    write("packages/api/package.json", JSON.stringify({ name: "@acme/api" }));
+    write(
+      "packages/api/runtime/q.ts",
+      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
+    );
+    const error = await buildProject({
+      runtime: ["runtime/**", "packages/*/runtime/**"],
+    }).then(
+      () => undefined,
+      (error: Error) => error,
+    );
+    expect(error?.message).toContain(
+      "It imports @notation/aws/sqs.js through runtime/process-orders.ts → packages/api/runtime/q.ts → @notation/aws/sqs.js. Infra functions can't run in a runtime module.",
+    );
+    expect(error?.message).not.toContain("sideEffects");
   });
 
   it("names the line of a kept option that refers to a value from a package folder that calls a resource function", async () => {

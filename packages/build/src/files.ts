@@ -36,9 +36,6 @@ export type KindMatch = {
 /** The characters that make a path a glob. */
 export const globCharacters = /[*?[{]/;
 
-// The fields of a package.json that the build reads.
-type Manifest = { name?: string; sideEffects?: unknown };
-
 // A glob of the config, and the patterns that it matches with.
 type Glob = { written: string; negated: boolean; patterns: string[] };
 
@@ -86,7 +83,7 @@ export class FileKinds {
   #root?: string;
   #realRoot?: string;
   #kinds = new Map<string, KindMatch | undefined>();
-  #manifests = new Map<string, Manifest | undefined>();
+  #packageNames = new Map<string, string | undefined>();
 
   /**
    * @param globs The globs that the config sets, by kind.
@@ -209,38 +206,18 @@ export class FileKinds {
     return false;
   }
 
-  #manifest(dir: string): Manifest | undefined {
-    if (this.#manifests.has(dir)) return this.#manifests.get(dir);
-    let manifest: Manifest | undefined;
-    const file = path.join(dir, "package.json");
-    if (fs.existsSync(file)) {
-      try {
-        manifest = JSON.parse(fs.readFileSync(file, "utf8"));
-      } catch {}
-    }
-    this.#manifests.set(dir, manifest);
-    return manifest;
-  }
-
   /** The `name` in the `package.json` of a folder, if it has one. */
   packageName(dir: string): string | undefined {
-    return this.#manifest(dir)?.name;
-  }
-
-  /**
-   * The folder of the package that a file is in: the nearest folder above
-   * the file with a `package.json` that has a name.
-   */
-  packageDir(file: string): string | undefined {
-    for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
-      if (this.packageName(dir) !== undefined) return dir;
-      if (dir === path.dirname(dir)) return undefined;
+    if (this.#packageNames.has(dir)) return this.#packageNames.get(dir);
+    let name: string | undefined;
+    const manifest = path.join(dir, "package.json");
+    if (fs.existsSync(manifest)) {
+      try {
+        name = JSON.parse(fs.readFileSync(manifest, "utf8")).name;
+      } catch {}
     }
-  }
-
-  /** Whether the `package.json` of a folder sets `"sideEffects": false`. */
-  hasNoSideEffects(dir: string): boolean {
-    return this.#manifest(dir)?.sideEffects === false;
+    this.#packageNames.set(dir, name);
+    return name;
   }
 
   /**
