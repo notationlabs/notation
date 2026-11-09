@@ -65,6 +65,16 @@ function printPlanSummary(result: Plan, logger: Logger) {
           : `    ${field.name} unknown, may force replacement`,
       );
     }
+    for (const { id, known } of node.replacedDependencies ?? []) {
+      logger.info(
+        `    depends on ${id}, which ${known ? "is" : "may be"} replaced`,
+      );
+    }
+    for (const { id, known } of node.deletedDependencies ?? []) {
+      logger.info(
+        `    depends on ${id}, which ${known ? "is" : "may be"} deleted`,
+      );
+    }
   }
 
   const count = (decision: PlanNode["decision"]) =>
