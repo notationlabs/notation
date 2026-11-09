@@ -8,10 +8,10 @@ import { toAwsScheduleExpression } from "./aws-conversions";
 export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleOptions> {
   readonly rule: aws.eventBridge.EventBridgeRuleInstance;
 
-  /** `caller` names the function that declares the schedule, in errors. */
   constructor(
     config: ScheduleOptions,
     lambdaGroup: LambdaGroup,
+    /** Names the function that declares the schedule, in errors. */
     caller = "schedule()",
   ) {
     assertId(caller, config.id);
