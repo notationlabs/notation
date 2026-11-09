@@ -5,6 +5,10 @@ export {
 } from "./lambda-declaration";
 export * from "./declaration";
 export {
+  eventSourceMapping,
+  type EventSourceMappingConfig,
+} from "./event-source-mapping";
+export {
   isLambdaGroup,
   lambda,
   LambdaGroup,

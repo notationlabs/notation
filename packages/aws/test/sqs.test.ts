@@ -11,6 +11,7 @@ import {
 } from "@notation/resource";
 import {
   $lambda,
+  eventSourceMapping,
   http,
   lambda,
   sqs,
@@ -48,14 +49,14 @@ function deploy(...queues: ReturnType<typeof queue>[]) {
   }
 }
 
-test("consume grants the function access to the queue and maps the queue to it", async () => {
+test("eventSourceMapping grants the function access to the queue and maps the queue to it", async () => {
   let fn!: LambdaGroup;
   let orders!: ReturnType<typeof queue>;
   let mapping!: awsLambda.LambdaEventSourceMappingInstance;
   await collectResourceGraph(() => {
     fn = lambda({ id: "process", code });
     orders = queue({ name: "orders" });
-    orders.consume(fn, { batchSize: 5 });
+    eventSourceMapping({ source: orders, target: fn, batchSize: 5 });
   });
   mapping = mappingOf(orders);
   deploy(orders);
@@ -86,8 +87,8 @@ test("two queues feeding one function each add a statement", async () => {
     fn = lambda({ id: "process", code });
     refunds = queue({ name: "refunds" });
     orders = queue({ name: "orders" });
-    refunds.consume(fn);
-    orders.consume(fn);
+    eventSourceMapping({ source: refunds, target: fn });
+    eventSourceMapping({ source: orders, target: fn });
   });
   deploy(orders, refunds);
   fn.role.setOutput({ RoleName: "process-role" } as any);
@@ -108,24 +109,24 @@ test("a function that consumes nothing has no inline policy", async () => {
   ).toBe(false);
 });
 
-test("consuming one queue twice with one function throws", async () => {
+test("mapping one queue twice with one function throws", async () => {
   await expect(
     collectResourceGraph(() => {
       const fn = lambda({ id: "process", code });
       const orders = queue({ name: "orders" });
-      orders.consume(fn);
-      orders.consume(fn);
+      eventSourceMapping({ source: orders, target: fn });
+      eventSourceMapping({ source: orders, target: fn });
     }),
   ).rejects.toThrow("Queue orders already feeds process");
 });
 
-test("consume with a lambda group from lambda() sets no environment", async () => {
+test("eventSourceMapping with a lambda group from lambda() sets no environment", async () => {
   let fn!: LambdaGroup;
   let orders!: ReturnType<typeof queue>;
   await collectResourceGraph(() => {
     fn = lambda({ id: "process", code });
     orders = queue({ name: "orders" });
-    orders.consume(fn);
+    eventSourceMapping({ source: orders, target: fn });
   });
 
   fn.role.setOutput({ Arn: "arn:role" } as any);
@@ -138,12 +139,12 @@ test("consume with a lambda group from lambda() sets no environment", async () =
   expect((await fn.fn.getParams()).Environment).toBeUndefined();
 });
 
-test("consume maps the queue to a $lambda declaration", async () => {
+test("eventSourceMapping maps the queue to a $lambda declaration", async () => {
   let orders!: ReturnType<typeof queue>;
   const graph = await collectResourceGraph(() => {
     const fn = inModule($lambda({ id: "process", event: () => sqs() }));
     orders = queue({ name: "orders" });
-    orders.consume(() => fn);
+    eventSourceMapping({ source: orders, target: () => fn });
   });
   const fn = lambdaGroup(graph, "process");
 
@@ -151,64 +152,73 @@ test("consume maps the queue to a $lambda declaration", async () => {
   expect(mappingOf(orders).getDependencies()).toContain(fn.policy);
 });
 
-test("consume takes a declaration with no event", async () => {
+test("eventSourceMapping takes a declaration with no event", async () => {
   let orders!: ReturnType<typeof queue>;
   await collectResourceGraph(() => {
     const fn = inModule($lambda({ id: "process" }));
     orders = queue({ name: "orders" });
-    orders.consume(() => fn);
+    eventSourceMapping({ source: orders, target: () => fn });
   });
 
   expect(mappingOf(orders).id).toBe("orders-process-mapping");
 });
 
-test("consume of a declaration that a later module declares waits for evaluation to end", async () => {
+test("eventSourceMapping of a declaration that a later module declares waits for evaluation to end", async () => {
   let fn!: Lambda<SqsEvent<undefined>>;
   let orders!: ReturnType<typeof queue>;
   await collectResourceGraph(() => {
     orders = queue({ name: "orders" });
-    orders.consume(() => fn);
+    eventSourceMapping({ source: orders, target: () => fn });
     fn = inModule($lambda({ id: "process", event: () => sqs() }));
   });
 
   expect(mappingOf(orders).id).toBe("orders-process-mapping");
 });
 
-test("consume of a declaration with an http event throws", async () => {
+test("eventSourceMapping of a declaration with an http event throws", async () => {
   await expect(
     collectResourceGraph(() => {
       const fn = inModule($lambda({ id: "api", event: () => http() }));
-      // @ts-expect-error a queue can't feed a function of HTTP requests
-      queue({ name: "orders" }).consume(() => fn);
+      eventSourceMapping({
+        source: queue({ name: "orders" }),
+        // @ts-expect-error a queue can't feed a function of HTTP requests
+        target: () => fn,
+      });
     }),
   ).rejects.toThrow(
-    'queue.consume() sends sqs events, but the Lambda "api" is declared with event: () => http().',
+    'eventSourceMapping() sends sqs events, but the Lambda "api" is declared with event: () => http().',
   );
 });
 
-test("consume of a function that returns no declaration throws", async () => {
+test("eventSourceMapping of a function that returns no declaration throws", async () => {
   await expect(
     collectResourceGraph(() => {
-      queue({ name: "orders" }).consume((() => undefined) as any);
+      eventSourceMapping({
+        source: queue({ name: "orders" }),
+        target: (() => undefined) as any,
+      });
     }),
   ).rejects.toThrow(
-    "queue.consume() expects a function that returns a Lambda declaration from $lambda(), but it returned undefined.",
+    "eventSourceMapping() expects a function that returns a Lambda declaration from $lambda(), but it returned undefined.",
   );
 });
 
-test("consume of a function that returns another resource throws", async () => {
+test("eventSourceMapping of a function that returns another resource throws", async () => {
   await expect(
     collectResourceGraph(() => {
       const other = queue({ name: "other" });
-      // @ts-expect-error a queue is not a Lambda declaration
-      queue({ name: "orders" }).consume(() => other);
+      eventSourceMapping({
+        source: queue({ name: "orders" }),
+        // @ts-expect-error a queue is not a Lambda declaration
+        target: () => other,
+      });
     }),
   ).rejects.toThrow(
-    "queue.consume() expects a function that returns a Lambda declaration from $lambda(), but it returned another value.",
+    "eventSourceMapping() expects a function that returns a Lambda declaration from $lambda(), but it returned another value.",
   );
 });
 
-test("consume after evaluation has ended throws", async () => {
+test("eventSourceMapping after evaluation has ended throws", async () => {
   let fn!: LambdaGroup;
   let orders!: ReturnType<typeof queue>;
   await collectResourceGraph(() => {
@@ -217,7 +227,9 @@ test("consume after evaluation has ended throws", async () => {
     fn.policy;
   });
 
-  expect(() => orders.consume(fn)).toThrow("evaluation has ended");
+  expect(() => eventSourceMapping({ source: orders, target: fn })).toThrow(
+    "evaluation has ended",
+  );
 });
 
 test("grant allows the actions on the queue", () => {
@@ -240,7 +252,7 @@ test("a plan creates the queue and the policy before the mapping", async () => {
       id: "process",
       code: { type: "zip", path: zipPath },
     });
-    queue({ name: "orders" }).consume(fn);
+    eventSourceMapping({ source: queue({ name: "orders" }), target: fn });
   });
 
   const plan = await createPlan({
@@ -257,7 +269,7 @@ test("a plan creates the queue and the policy before the mapping", async () => {
   expect(plan.nodes.every((node) => node.decision === "create")).toBe(true);
 });
 
-test("consume accepts a declaration from another copy of the package", async () => {
+test("eventSourceMapping accepts a declaration from another copy of the package", async () => {
   // A second instance of the module that declares $lambda, with its own
   // module state.
   const other: typeof import("src/lambda/lambda-declaration") = await import(
@@ -267,7 +279,7 @@ test("consume accepts a declaration from another copy of the package", async () 
   expect(other.$lambda).not.toBe($lambda);
   const graph = await collectResourceGraph(() => {
     const fn = inModule(other.$lambda({ id: "process", event: () => sqs() }));
-    queue({ name: "orders" }).consume(() => fn);
+    eventSourceMapping({ source: queue({ name: "orders" }), target: () => fn });
   });
   expect(lambdaGroup(graph, "process").id).toBe("process");
 });
@@ -332,9 +344,30 @@ test("decode() validates a message with the queue's schema", async () => {
 });
 
 test("decode() reads the schema from the object that the runtime build passes", async () => {
-  const fn = $lambda({ id: "process", event: () => sqs({ schema: Order }) });
+  const fn = $lambda({
+    id: "process",
+    // The runtime build replaces the queue with its runtime options.
+    event: () => sqs({ schema: Order } as any),
+  });
 
   await expect(fn.decode({ body: "{}" } as any)).rejects.toThrow(
     "orderId must be a string",
   );
+});
+
+test("eventSourceMapping of a declaration that maps a queue itself throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const orders = queue({ name: "orders" });
+      const fn = inModule($lambda({ id: "process", event: () => sqs(orders) }));
+      eventSourceMapping({ source: orders, target: () => fn });
+    }),
+  ).rejects.toThrow(
+    "eventSourceMapping() targets a Lambda that maps the same queue in its declaration, with event: () => sqs(queue).",
+  );
+});
+
+test("sqs() rejects a schema in place of a queue", () => {
+  // @ts-expect-error a schema is not a queue
+  sqs(Order);
 });

@@ -11,6 +11,7 @@ import {
   type Lambda,
   type LambdaEvent,
   type LambdaEventKind,
+  type SqsSource,
 } from "./declaration";
 import { isLambdaGroup, LambdaGroup, type LambdaConfig } from "./lambda";
 import { assertLambdaId, type NameSafe } from "./lambda-id";
@@ -25,7 +26,7 @@ export type LambdaDeclarationConfig<
    * in state. Changing the id replaces the function, so keep it stable.
    */
   id: NameSafe<Id>;
-  /** The events that the function receives, such as `() => sqs(Order)`. */
+  /** The events that the function receives, such as `() => sqs(orderQueue)`. */
   event?: () => E;
   /**
    * The values that the function's code reads, by name, such as
@@ -43,11 +44,11 @@ export type LambdaDeclarationConfig<
   memory?: number;
 };
 
-type Subscribable = {
-  "~subscribe"(group: LambdaGroup, options?: unknown): unknown;
+type Registered = {
+  build: () => LambdaGroup;
+  kind: () => LambdaEventKind;
+  event: () => LambdaEvent | undefined;
 };
-
-type Registered = { build: () => LambdaGroup; kind: () => LambdaEventKind };
 
 // Holds a declaration's registration, on the declaration. Two installed
 // copies of this package each have their own module state, so a registry in
@@ -87,6 +88,7 @@ export function $lambda<
     value: {
       build,
       kind: () => config.event?.()?.kind ?? "none",
+      event: () => config.event?.(),
     } satisfies Registered,
   });
   if (getActiveResourceCollection()) onEvaluationEnd(build);
@@ -128,7 +130,7 @@ function buildGroup(
   }
   const event = config.event?.();
   if (event?.kind === "sqs" && event.queue) {
-    const queue = event.queue as Partial<Subscribable>;
+    const queue = event.queue as Partial<SqsSource>;
     if (typeof queue["~subscribe"] !== "function") {
       throw new Error(
         `The Lambda "${config.id}" is declared with sqs(queue), but the value passed to sqs() is not a queue from queue().`,
@@ -201,6 +203,16 @@ const eventCalls: Record<LambdaEventKind, string> = {
   scheduled: "scheduled()",
   none: "",
 };
+
+/**
+ * The queue that a target's declaration maps itself, with
+ * `event: () => sqs(queue)`.
+ */
+export function declaredQueueOf(target: unknown): unknown {
+  if (typeof target !== "function" || isLambdaGroup(target)) return undefined;
+  const event = registeredOf(target())?.event();
+  return event?.kind === "sqs" ? event.queue : undefined;
+}
 
 /**
  * Runs `wire` when infra has finished loading, so that a declaration in a

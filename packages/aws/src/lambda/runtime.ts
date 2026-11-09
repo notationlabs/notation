@@ -44,3 +44,7 @@ export class LambdaGroup {
 export function isLambdaGroup(_value: unknown): false {
   return false;
 }
+
+export function eventSourceMapping(): never {
+  throw infraOnly("eventSourceMapping()");
+}

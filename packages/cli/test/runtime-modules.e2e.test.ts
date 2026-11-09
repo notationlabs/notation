@@ -51,18 +51,17 @@ const schemaModule = `
 `;
 
 it("deploys a declaration module as a lambda that reads its bound variables", async () => {
-  write("runtime/schema.ts", schemaModule);
+  write("shared/schema.ts", schemaModule);
   write(
     "runtime/process-orders.ts",
     `
     import { $lambda, DecodeError, sqs, type LambdaHandler } from "@notation/aws/lambda";
     import { ordersQueue } from "../infra/orders";
-    import { Order } from "./schema";
 
     export const lambda = $lambda({
       id: "process-orders",
       timeout: 5,
-      event: () => sqs(Order),
+      event: () => sqs(ordersQueue, { batchSize: 5 }),
       policy: () => [ordersQueue.grant(["SendMessage"])],
       env: () => ({ QUEUE_URL: ordersQueue.url, LOG_LEVEL: "info" }),
     });
@@ -84,10 +83,9 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
     "infra/orders.ts",
     `
     import { queue } from "@notation/aws/sqs";
-    import { lambda } from "../runtime/process-orders";
+    import { Order } from "../shared/schema";
 
-    export const ordersQueue = queue({ name: "orders" });
-    ordersQueue.consume(() => lambda, { batchSize: 5 });
+    export const ordersQueue = queue({ name: "orders", schema: Order });
     `,
   );
 

@@ -19,6 +19,7 @@ import {
   type LambdaHandler,
 } from "src/lambda";
 import * as runtime from "src/lambda/runtime";
+import { queue } from "src/sqs";
 import { inModule, lambdaGroup, projectDir } from "./declare";
 
 type Order = { id: string };
@@ -33,6 +34,8 @@ const Order: StandardSchemaV1<unknown, Order> = {
         : { issues: [{ message: "id must be a string" }] },
   },
 };
+
+const orders = queue({ name: "orders", schema: Order });
 
 const record = (body: string) => ({ body }) as SQSRecord;
 
@@ -152,13 +155,13 @@ test("env() in infra returns the evaluated env", () => {
 });
 
 test("decode() validates the body of an SQS record", async () => {
-  const fn = $lambda({ id: "orders", event: () => sqs(Order) });
+  const fn = $lambda({ id: "orders", event: () => sqs(orders) });
 
   await expect(fn.decode(record('{"id":"1"}'))).resolves.toEqual({ id: "1" });
 });
 
 test("decode() throws a DecodeError for a body that is not valid", async () => {
-  const fn = $lambda({ id: "orders", event: () => sqs(Order) });
+  const fn = $lambda({ id: "orders", event: () => sqs(orders) });
 
   const error = await fn.decode(record('{"id":1}')).catch((e) => e);
   expect(error).toBeInstanceOf(DecodeError);
@@ -169,7 +172,7 @@ test("decode() throws a DecodeError for a body that is not valid", async () => {
 });
 
 test("decode() throws a DecodeError for a body that is not JSON", async () => {
-  const fn = $lambda({ id: "orders", event: () => sqs(Order) });
+  const fn = $lambda({ id: "orders", event: () => sqs(orders) });
 
   const error = await fn.decode(record("not json")).catch((e) => e);
   expect(error).toBeInstanceOf(DecodeError);
@@ -215,7 +218,7 @@ test("the runtime variant throws when a bound variable is not set", () => {
 });
 
 test("the runtime variant decodes as infra does", async () => {
-  const fn = runtime.$lambda({ id: "orders", event: () => sqs(Order) });
+  const fn = runtime.$lambda({ id: "orders", event: () => sqs(orders) });
 
   await expect(fn.decode(record('{"id":"1"}'))).resolves.toEqual({ id: "1" });
   await expect(fn.decode(record("{}"))).rejects.toBeInstanceOf(DecodeError);
@@ -234,7 +237,7 @@ test("the runtime variant's infra APIs throw", () => {
 test("a declaration types its handler, env() and decode()", () => {
   const sqsLambda = $lambda({
     id: "orders",
-    event: () => sqs(Order),
+    event: () => sqs(orders),
     env: () => ({ TABLE: "orders", STAGE: "dev" }),
   });
 

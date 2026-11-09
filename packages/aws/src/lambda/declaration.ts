@@ -8,6 +8,7 @@ import type {
   SQSEvent,
   SQSRecord,
 } from "aws-lambda";
+import type { LambdaGroup } from "./lambda";
 import type {
   APIGatewayJWTProxyEventV2,
   ApiGatewayResult,
@@ -28,12 +29,15 @@ export type SqsEvent<
 };
 
 /**
- * A queue that `sqs()` reads, such as one from `queue()`. In the function it
- * holds only the queue's schema.
+ * A queue that `sqs()` reads, from `queue()`. In the function it holds only
+ * the queue's schema, as the runtime build replaces the queue with it.
  */
 export type SqsSource<
   S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
-> = { readonly schema: S };
+> = {
+  readonly schema: S;
+  "~subscribe"(group: LambdaGroup, options?: SqsOptions): void;
+};
 
 export type SqsOptions = {
   /** The most messages the function receives in one invocation. */
@@ -102,22 +106,17 @@ export function sqs<S extends StandardSchemaV1 | undefined>(
   options?: SqsOptions,
 ): SqsEvent<S>;
 /**
- * The function receives SQS messages, from a queue that infra maps to it.
- * @param schema Validates the JSON body of each message in `decode()`.
+ * The function receives SQS messages, from a queue that infra maps to it with
+ * `eventSourceMapping()`. `decode()` parses each message's JSON body without
+ * validating it.
  */
-export function sqs<S extends StandardSchemaV1 | undefined = undefined>(
-  schema?: S,
-): SqsEvent<S>;
+export function sqs(): SqsEvent<undefined>;
 /**
  * In the runtime build, a queue from an infra module is replaced with its
- * schema, as `{ schema }`.
- * @runtime source
+ * runtime options, as `{ schema }`.
+ * @runtime queue
  */
-export function sqs(source?: unknown, options?: SqsOptions): SqsEvent {
-  if (typeof source === "object" && source !== null && "~standard" in source) {
-    return { kind: "sqs", schema: source as StandardSchemaV1 };
-  }
-  const queue = source as SqsSource | undefined;
+export function sqs(queue?: SqsSource, options?: SqsOptions): SqsEvent {
   return { kind: "sqs", schema: queue?.schema, queue, options };
 }
 
@@ -260,7 +259,7 @@ export function createDecode(
     event ??= options.event?.();
     if (!event || event.kind === "scheduled") {
       throw new Error(
-        `decode() needs a Lambda declared with event: () => sqs(schema) or event: () => http({ body: schema }).`,
+        `decode() needs a Lambda declared with event: () => sqs(queue) or event: () => http({ body: schema }).`,
       );
     }
     const body =

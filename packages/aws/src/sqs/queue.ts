@@ -1,9 +1,4 @@
 import * as aws from "@notation/aws.iac";
-import {
-  resolveLambda,
-  whenLoaded,
-  type LambdaTarget,
-} from "src/lambda/lambda-declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import type { SqsOptions } from "src/lambda/declaration";
 import type { StandardSchemaV1 } from "@notation/resource";
@@ -44,8 +39,6 @@ export type SqsAction =
   | "GetQueueUrl"
   | "PurgeQueue";
 
-export type ConsumeOptions = SqsOptions;
-
 export class QueueGroup<
   S extends StandardSchemaV1 | undefined = undefined,
 > extends aws.AwsResourceGroup<QueueConfig> {
@@ -85,30 +78,8 @@ export class QueueGroup<
   }
 
   /**
-   * Invokes a Lambda with the queue's messages: a declaration from
-   * `$lambda`, passed as `() => lambda`, or a Lambda group from
-   * `lambda()`. Gives the function's role permission to read the queue, and
-   * maps the queue to the function. The mapping is made when infra has
-   * finished loading.
-   */
-  consume(
-    target: LambdaTarget<"sqs" | "none">,
-    options: ConsumeOptions = {},
-  ): void {
-    whenLoaded(() => this.#consume(target, options));
-  }
-
-  #consume(target: LambdaTarget<"sqs" | "none">, options: ConsumeOptions) {
-    const lambdaGroup = resolveLambda(target, "queue.consume()", [
-      "sqs",
-      "none",
-    ]);
-    this["~subscribe"](lambdaGroup, options);
-  }
-
-  /**
    * Maps the queue to a Lambda, for `sqs(queue)` in a declaration and for
-   * `consume()`.
+   * `eventSourceMapping()`.
    */
   "~subscribe"(lambdaGroup: LambdaGroup, options: SqsOptions = {}): void {
     const id = `${this.id}-${lambdaGroup.fn.id}-mapping`;
