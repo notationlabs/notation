@@ -66,7 +66,7 @@ The function has one entry point, `handler`, and Notation doesn't route events t
 
 ## IDs
 
-Every Lambda function has an ID. It names the function and the resources that support it (`<id>`, `<id>-role`, `<id>-zip`, `<id>-policy`, `<id>-role-policy` and `<id>-log-group`), and keys them in state. Changing an ID replaces the function.
+Every Lambda function has an ID. It keys the function and the resources that support it in state, as `lambda:<id>`, `lambda:<id>:role`, `lambda:<id>:zip`, `lambda:<id>:policy-attachment`, `lambda:<id>:role-policy` and `lambda:<id>:log-group`. Changing an ID replaces the function.
 
 In a runtime module, the ID is the declaration's `id`. The ID doesn't come from the module's path, so you can move or rename the module and keep its function.
 
@@ -74,7 +74,7 @@ In AWS, the function is named `<app>--<stage>--<id>` and its role `<app>--<stage
 
 `name` replaces the `id` in the function's AWS name. For example, `$lambda({ id: "orders", name: "order-handler" })` is named `<app>--<stage>--order-handler`. The role and the other resources keep names from the `id`, and the `id` stays the state key. Changing `name` replaces the function, because Lambda can't rename a function.
 
-IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. `$lambda` and `lambda()` only accept string literals that follow this rule, and throw at runtime if they get anything else. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, count as the same, because IAM role names ignore case.
+IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. `$lambda` and `lambda()` only accept string literals that follow this rule, and throw at runtime if they get anything else. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, count as the same, because IAM role names ignore case. Two Lambda functions can't share an AWS name either, so `$lambda({ id: "a", name: "b" })` and `$lambda({ id: "b" })` in one deployment throw.
 
 ## `lambda(config)`
 
