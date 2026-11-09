@@ -282,7 +282,11 @@ describe("stripForRuntime", () => {
           "shared/schema.ts": `export const Order = {};`,
           ...infraFiles,
         },
-        packages,
+        {
+          ...packages,
+          "shared/schema": "shared/schema.ts",
+          "@acme/schemas": "node_modules/@acme/schemas/index.js",
+        },
       );
       const analysis = analyzeModule(marks.table(file)!, marks);
       return stripForRuntime(analysis, new ModuleAnalyses({ marks, root }))!;
@@ -303,6 +307,47 @@ describe("stripForRuntime", () => {
         "event: () => sqs({ schema: __notation_schema_0 }),",
       );
       expect(code).not.toContain("../infra/orders");
+    });
+
+    it("imports a schema from a tsconfig alias by its absolute path", () => {
+      const { code } = strip({
+        "infra/orders.ts": [
+          `import { createQueue } from "@notation/aws/sqs";`,
+          `import { Order } from "shared/schema";`,
+          `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+        ].join("\n"),
+      });
+      expect(code).toContain(
+        `import { Order as __notation_schema_0 } from "/project/shared/schema.ts";`,
+      );
+    });
+
+    it("imports a schema from a package by the package's name", () => {
+      const { code } = strip({
+        "infra/orders.ts": [
+          `import { createQueue } from "@notation/aws/sqs";`,
+          `import { Order } from "@acme/schemas";`,
+          `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+        ].join("\n"),
+        "node_modules/@acme/schemas/index.js": `export const Order = {};`,
+      });
+      expect(code).toContain(
+        `import { Order as __notation_schema_0 } from "@acme/schemas";`,
+      );
+    });
+
+    it("fails when the schema's import doesn't resolve", () => {
+      expect(() =>
+        strip({
+          "infra/orders.ts": [
+            `import { createQueue } from "@notation/aws/sqs";`,
+            `import { Order } from "../shared/missing";`,
+            `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+          ].join("\n"),
+        }),
+      ).toThrow(
+        `infra/orders.ts:3:56: the build can't resolve "../shared/missing", where the schema of ordersQueue is imported from. The function in runtime/handler.ts reads it.`,
+      );
     });
 
     const queueModule = (...lines: string[]) =>

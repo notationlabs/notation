@@ -158,7 +158,8 @@ function removeEmptiedImports(
  * infra module, or `undefined` for any other argument. The argument can be a
  * name, or a member of an object literal or of a namespace import, such as
  * `queues.orders`. Adds an import to `added` for each runtime option of the
- * resource. A value made by a call to a function that isn't a resource
+ * resource: by absolute path for a project file, and by name for a package.
+ * A value made by a call to a function that isn't a resource
  * function, such as a helper, fails, as the build can't find the resource's
  * options.
  */
@@ -231,8 +232,18 @@ function resourceStub(
         `${where(property)}: the ${option} of ${text} must be imported from a shared module (files.shared), because the function in ${analyses.show(file)} reads it.`,
       );
     }
+    if (!from) {
+      throw new Error(
+        `${where(property)}: the build can't resolve "${imported.source}", where the ${option} of ${text} is imported from. The function in ${analyses.show(file)} reads it.`,
+      );
+    }
+    // The import is written in the function's module, so a relative path or
+    // a tsconfig alias could resolve to another file there. A package keeps
+    // its name, so that the runtime build applies its export conditions.
+    const specifier = analyses.files.isPackageFile(from)
+      ? imported.source
+      : from;
     const alias = `__notation_${option}_${added.length}`;
-    const specifier = imported.source.startsWith(".") ? from! : imported.source;
     added.push(
       `import { ${imported.imported} as ${alias} } from ${JSON.stringify(specifier)};\n`,
     );
