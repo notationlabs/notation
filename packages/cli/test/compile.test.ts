@@ -104,8 +104,10 @@ function writeAwsPackage() {
     [
       `/** @declaration shared: id, event, env; keys: env; entry: handler */`,
       `export function $lambda(config) { globalThis.declared = config; (globalThis.ran ??= []).push(config.id); return { infra: true }; }`,
-      `/** @runtime schema */`,
-      `export function sqs(schema) { return { kind: "sqs", schema }; }`,
+      `/** @runtime queue */`,
+      `export function sqs(queue, options) { return { kind: "sqs", schema: queue?.schema }; }`,
+      `/** @resource */`,
+      `export function eventSourceMapping(config) {}`,
     ].join("\n"),
   );
   write(
@@ -114,15 +116,16 @@ function writeAwsPackage() {
       `export function $lambda(config) {`,
       `  return { options: Object.keys(config), env: () => config.env(), event: () => config.event() };`,
       `}`,
-      `export function sqs(schema) { return { kind: "sqs", schema }; }`,
+      `export function sqs(queue, options) { return { kind: "sqs", schema: queue?.schema }; }`,
+      `export function eventSourceMapping() { throw new Error("infra only"); }`,
     ].join("\n"),
   );
   write(
     "node_modules/@notation/aws/sqs.js",
     [
       `import "./sdk.js";`,
-      `/** @resource */`,
-      `export function queue(config) { return { url: "placeholder-url", consume: () => {} }; }`,
+      `/** @resource runtime: schema */`,
+      `export function queue(config) { return { url: "placeholder-url", schema: config.schema }; }`,
     ].join("\n"),
   );
   write(
@@ -142,6 +145,8 @@ function writeAwsPackage() {
   write("node_modules/@notation/aws/sdk.js", `console.log("sdk loaded");`);
 }
 
+// `sqs()` gets the object that the runtime build makes from a queue, so that
+// the kept option uses a value from a runtime module.
 const handlerModule = `
   import "./polyfill";
   import { $lambda, sqs } from "@notation/aws/lambda";
@@ -152,7 +157,7 @@ const handlerModule = `
 
   export const lambda = $lambda({
     id: "process-orders",
-    event: () => sqs(Order),
+    event: () => sqs({ schema: Order }),
     policy: () => [orders.url],
     env: () => ({ QUEUE_URL: orders.url }),
   });
@@ -165,10 +170,11 @@ function writeProject(handler = handlerModule) {
   write(
     "infra/orders.ts",
     [
+      `import { eventSourceMapping } from "@notation/aws/lambda";`,
       `import { queue } from "@notation/aws/sqs";`,
       `import { lambda } from "../runtime/process-orders";`,
       `export const orders = queue({ name: "orders" });`,
-      `orders.consume(() => lambda);`,
+      `eventSourceMapping({ source: orders, target: () => lambda });`,
     ].join("\n"),
   );
   write("runtime/process-orders.ts", handler);
@@ -381,10 +387,11 @@ describe("declaration modules", () => {
     write(
       "infra/orders.ts",
       [
+        `import { eventSourceMapping } from "@notation/aws/lambda";`,
         `import { makeQueue } from "./helpers";`,
         `import { lambda } from "../runtime/process-orders";`,
         `export const orders = makeQueue("orders");`,
-        `orders.consume(() => lambda);`,
+        `eventSourceMapping({ source: orders, target: () => lambda });`,
       ].join("\n"),
     );
   }
@@ -592,10 +599,11 @@ describe("runtime modules that infra doesn't import", () => {
     write(
       "infra/orders.ts",
       [
+        `import { eventSourceMapping } from "@notation/aws/lambda";`,
         `import { queue } from "@notation/aws/sqs";`,
         `import { lambda } from "../runtime/process-orders";`,
         `export const orders = queue({ name: "orders" });`,
-        `orders.consume(() => lambda);`,
+        `eventSourceMapping({ source: orders, target: () => lambda });`,
         `(globalThis.ran ??= []).push("entry");`,
       ].join("\n"),
     );
@@ -799,7 +807,10 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
           `import { Order } from "./schema";`,
           `import { Order } from "./schema";\n  import { dlq } from "../lib/queues";`,
         )
-        .replace("event: () => sqs(Order)", "event: () => sqs(dlq)"),
+        .replace(
+          "event: () => sqs({ schema: Order })",
+          "event: () => sqs(dlq)",
+        ),
     );
     write(
       "lib/queues.ts",
@@ -839,7 +850,7 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
         ].join("\n"),
       );
       await expect(buildProject(files)).rejects.toThrow(
-        `runtime/process-orders.ts:11:22: an option of $lambda that the function keeps refers to Order, ${from} The runtime build removes infra. Read infra values in the function through the declaration's env(). Move a plain value that a kept option uses to a shared module (files.shared), or to a file that no glob matches.`,
+        `runtime/process-orders.ts:11:32: an option of $lambda that the function keeps refers to Order, ${from} The runtime build removes infra. Read infra values in the function through the declaration's env(). Move a plain value that a kept option uses to a shared module (files.shared), or to a file that no glob matches.`,
       );
     },
   );
@@ -869,7 +880,7 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
   it("fails when a kept option refers to an infra module, and says why it is infra", async () => {
     writeProject(
       handlerModule.replace(
-        "event: () => sqs(Order)",
+        "event: () => sqs({ schema: Order })",
         "event: () => sqs(orders.schema)",
       ),
     );
@@ -1177,7 +1188,10 @@ describe("a monorepo with the config at its root", () => {
           `import { Order } from "./schema";`,
           `import { Order } from "./schema";\n  import { dlq } from "../packages/api/queues";`,
         )
-        .replace("event: () => sqs(Order)", "event: () => sqs(dlq)"),
+        .replace(
+          "event: () => sqs({ schema: Order })",
+          "event: () => sqs(dlq)",
+        ),
     );
     write(
       "packages/api/package.json",
@@ -1279,11 +1293,12 @@ describe("shared modules", () => {
     write(
       "infra/orders.ts",
       [
+        `import { eventSourceMapping } from "@notation/aws/lambda";`,
         `import { queue } from "@notation/aws/sqs";`,
         `import { Order } from "../shared/schema";`,
         `import { lambda } from "../runtime/process-orders";`,
         `export const orders = queue({ name: "orders", schema: Order });`,
-        `orders.consume(() => lambda);`,
+        `eventSourceMapping({ source: orders, target: () => lambda });`,
       ].join("\n"),
     );
     const { bundle } = await buildProject();
