@@ -115,7 +115,12 @@ export function parseMark(
     if (tag === "runtime") {
       const mark: RuntimeMark = { kind: "runtime", positions: [], options: [] };
       for (const entry of list(body)) {
-        const [name, option] = entry.split(".");
+        const [name, option, ...rest] = entry.split(".");
+        if (rest.length > 0) {
+          throw new Error(
+            `${where}: the @runtime mark names "${entry}". Name a parameter, such as "options", or one option of a parameter, such as "options.auth".`,
+          );
+        }
         const position = params.indexOf(name!);
         if (position === -1) {
           throw new Error(

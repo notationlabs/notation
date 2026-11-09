@@ -60,6 +60,14 @@ describe("parseMark", () => {
     );
   });
 
+  it("fails for a runtime mark that names an option of an option", () => {
+    expect(() =>
+      parseMark("* @runtime options.auth.claims ", ["options"], "f.js"),
+    ).toThrow(
+      'f.js: the @runtime mark names "options.auth.claims". Name a parameter, such as "options", or one option of a parameter, such as "options.auth".',
+    );
+  });
+
   it("reads a resource mark", () => {
     expect(parseMark("* @resource ", [], "f")).toEqual({ kind: "resource" });
   });
