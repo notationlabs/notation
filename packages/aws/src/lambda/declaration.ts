@@ -369,14 +369,11 @@ export interface Lambda<
    * its decoded parts in place of the raw ones. For SQS the item is a record,
    * and `body` is the JSON body, validated with the event's schema. For API
    * Gateway the item is the request, and a base64 body is decoded first.
-   * `body` is the JSON body, validated with the body schema. When the body is
-   * not JSON, or the schema rejects the parsed value, the body is validated
-   * as a string, so a route takes text with a string schema. An empty body
+   * `body` is the JSON body, validated with the body schema. An empty body
    * is validated as `undefined`. With a body schema of `null`, `body` is
    * `undefined`, and a request with a body is not valid. A request through a
-   * JWT authorizer also
-   * gets `claims`: the JWT claims, validated with the event's claims schema
-   * if it has one. Throws a `DecodeError` when the item is not valid.
+   * JWT authorizer also gets `claims`: the JWT claims, validated with the
+   * event's claims schema if it has one. Throws a `DecodeError` when the item is not valid.
    */
   decode: DecodeFor<E>;
 }
@@ -479,7 +476,7 @@ export function createDecode(
     // A request with no body, such as a GET, has nothing to parse, and the
     // schema decides whether that is valid.
     const body = raw
-      ? await decodeRequestBody(event.schema, raw)
+      ? await decodeBody(event.schema, raw, "request")
       : await validateBody(event.schema, undefined, "request");
     return { ...item, body, ...claims };
   };
@@ -488,7 +485,7 @@ export function createDecode(
 async function decodeBody(
   schema: StandardSchemaV1,
   body: string,
-  name: "message",
+  name: "message" | "request",
 ): Promise<unknown> {
   let value: unknown;
   try {
@@ -497,34 +494,6 @@ async function decodeBody(
     throw new DecodeError(`The ${name} body is not valid JSON.`);
   }
   return validateBody(schema, value, name);
-}
-
-// Validates the JSON body. When the body is not JSON, or the schema rejects
-// the parsed value, the body is validated as a string, so a string schema
-// accepts text such as `hello` or `123`. When both fail, the error is the one
-// for the JSON body.
-async function decodeRequestBody(
-  schema: StandardSchemaV1,
-  raw: string,
-): Promise<unknown> {
-  let parsed: { value: unknown } | undefined;
-  try {
-    parsed = { value: JSON.parse(raw) };
-  } catch {}
-  const text = () => schema["~standard"].validate(raw);
-  if (!parsed) {
-    const result = await text();
-    if (!result.issues) return result.value;
-    throw new DecodeError("The request body is not valid JSON.");
-  }
-  const result = await schema["~standard"].validate(parsed.value);
-  if (!result.issues) return result.value;
-  const asText = await text();
-  if (!asText.issues) return asText.value;
-  throw new DecodeError(
-    `The request body is not valid: ${details(result.issues)}`,
-    result.issues,
-  );
 }
 
 async function validateBody(

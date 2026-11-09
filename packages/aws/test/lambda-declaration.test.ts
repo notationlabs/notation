@@ -451,7 +451,7 @@ test("decode() with a body schema of null returns an undefined body, and rejects
   }
 });
 
-test("decode() with a string schema returns a text body as it came, decoded from base64", async () => {
+test("decode() with a string schema accepts a JSON string body, and rejects plain text", async () => {
   const Text: StandardSchemaV1<unknown, string> = {
     "~standard": {
       version: 1,
@@ -464,18 +464,21 @@ test("decode() with a string schema returns a text body as it came, decoded from
   };
   const fn = $lambda({ id: "text", event: () => apiGateway.schema(Text) });
 
-  for (const body of ["plain text", "a=1&b=2", "123", "true", '"quoted"']) {
-    await expect(fn.decode({ body, isBase64Encoded: false })).resolves.toEqual({
-      body: body === '"quoted"' ? "quoted" : body,
-      isBase64Encoded: false,
-    });
-  }
+  await expect(
+    fn.decode({ body: '"hello"', isBase64Encoded: false }),
+  ).resolves.toEqual({ body: "hello", isBase64Encoded: false });
   await expect(
     fn.decode({
-      body: Buffer.from("plain text").toString("base64"),
+      body: Buffer.from('"hello"').toString("base64"),
       isBase64Encoded: true,
     }),
-  ).resolves.toEqual({ body: "plain text", isBase64Encoded: true });
+  ).resolves.toEqual({ body: "hello", isBase64Encoded: true });
+  await expect(
+    fn.decode({ body: "hello", isBase64Encoded: false }),
+  ).rejects.toThrow("The request body is not valid JSON.");
+  await expect(
+    fn.decode({ body: "123", isBase64Encoded: false }),
+  ).rejects.toThrow("The request body is not valid: expected a string");
 });
 
 test("decode() with an object schema throws for a body that is not JSON", async () => {
