@@ -58,10 +58,8 @@ export const sqs = {
 };
 
 export const apiGateway = {
-  /** @runtime api */
   bind(api) {
     return {
-      /** @runtime options.auth */
       defineRoute(options) {
         return { kind: options.auth ? "apiGateway-jwt" : "apiGateway", schema: options.schema, claims: options.auth?.claims };
       },

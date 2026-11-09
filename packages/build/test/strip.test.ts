@@ -955,32 +955,6 @@ describe("stripForRuntime", () => {
       expect(code).not.toContain("../infra/api");
     });
 
-    it("finds the mark of a method that a named function returns", () => {
-      const code = strip(
-        `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", schema: null, auth: userAuth })`,
-        [userAuth],
-        undefined,
-        {
-          "node_modules/@notation/aws/lambda.js": [
-            `/** @declaration shared: id, event, env; keys: env; entry: handler */`,
-            `export function $lambda(config) { return config; }`,
-            `/** @runtime api */`,
-            `function bindApi(api) {`,
-            `  const kind = "apiGateway";`,
-            `  return {`,
-            `    /** @runtime options.auth */`,
-            `    defineRoute(options) { return { kind, claims: options.auth?.claims }; },`,
-            `  };`,
-            `}`,
-            `export const apiGateway = { bind: bindApi };`,
-          ].join("\n"),
-        },
-      );
-      expect(code).toContain(
-        `apiGateway.bind({}).defineRoute({ method: "GET", path: "/orders", schema: null, auth: { claims: __notation_claims_0 } })`,
-      );
-    });
-
     it("fails when the auth option refers to an infra value that isn't a resource with runtime options", () => {
       expect(() =>
         strip(

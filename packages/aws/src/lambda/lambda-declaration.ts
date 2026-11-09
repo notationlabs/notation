@@ -167,7 +167,11 @@ function wireEvent(group: LambdaGroup, event: LambdaEvent | undefined): void {
       return;
     case "eventBridge":
       if (event.schedule) {
-        new ScheduleGroup(event.schedule, group, "eventBridge.defineSchedule()");
+        new ScheduleGroup(
+          event.schedule,
+          group,
+          "eventBridge.defineSchedule()",
+        );
       }
       return;
   }

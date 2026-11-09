@@ -192,7 +192,6 @@ export const apiGateway = {
    * Binds the function to `api`, an API that infra declares. Call
    * `defineRoute()` on the result. In the runtime build, an API from an infra
    * module is replaced with `{}`.
-   * @runtime api
    */
   bind(api: ApiSource) {
     return {
@@ -201,8 +200,8 @@ export const apiGateway = {
        * infra build makes. `decode()` validates the body with `schema`, and
        * the JWT claims with the claims schema of `auth`. With `schema: null`,
        * `decode()` rejects a request with a body. With `auth`, the event has
-       * the kind `apiGateway-jwt`.
-       * @runtime options.auth
+       * the kind `apiGateway-jwt`. In the runtime build, an authorizer from
+       * an infra module is replaced with `{ claims }`.
        */
       defineRoute<
         S extends StandardSchemaV1 | null,

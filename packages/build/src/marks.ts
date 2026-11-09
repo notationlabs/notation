@@ -35,22 +35,18 @@ export type DeclarationMark = {
 /**
  * Marks a function that builds part of a declaration's options, such as
  * `sqs.bind(queue)`. Written `@runtime queue`, with the names of the parameters
- * that the runtime build keeps. A name with an option, such as
- * `@runtime options.auth`, keeps the parameter, and the runtime build
- * replaces a resource in that option of an object literal argument.
+ * that the runtime build keeps.
  */
 export type RuntimeMark = {
   kind: "runtime";
   /** The positions of the parameters that the runtime build keeps. */
   positions: number[];
-  /** Options of kept parameters, whose resource the runtime build replaces. */
-  options: { position: number; name: string }[];
 };
 
 /**
  * Marks a function that declares a resource. Written `@resource`, or
- * `@resource runtime: schema` when a declaration's event reads options of the
- * resource in the function. The first argument must then be an object
+ * `@resource runtime: schema` when a declaration's kept options read options
+ * of the resource in the function. The first argument must then be an object
  * literal, and each of those options an import from a module that the
  * function can load. `@resource runtime:` with no options means that the
  * resource becomes `{}` in the function. A bare `@resource` has no
@@ -113,22 +109,15 @@ export function parseMark(
         : { kind: "resource" };
     }
     if (tag === "runtime") {
-      const mark: RuntimeMark = { kind: "runtime", positions: [], options: [] };
-      for (const entry of list(body)) {
-        const [name, option, ...rest] = entry.split(".");
-        if (rest.length > 0) {
-          throw new Error(
-            `${where}: the @runtime mark names "${entry}". Name a parameter, such as "options", or one option of a parameter, such as "options.auth".`,
-          );
-        }
-        const position = params.indexOf(name!);
+      const mark: RuntimeMark = { kind: "runtime", positions: [] };
+      for (const name of list(body)) {
+        const position = params.indexOf(name);
         if (position === -1) {
           throw new Error(
             `${where}: the @runtime mark names the parameter "${name}", which the function does not have`,
           );
         }
         if (!mark.positions.includes(position)) mark.positions.push(position);
-        if (option) mark.options.push({ position, name: option });
       }
       return mark;
     }

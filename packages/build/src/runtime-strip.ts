@@ -22,15 +22,13 @@ import type { ModuleAnalyses } from "./modules";
  * 2. A `keys` option keeps the keys of the object that it returns, and each
  *    value becomes `undefined`.
  * 3. A call to a function marked `@runtime` keeps only its runtime
- *    arguments. The others become `undefined`. A runtime argument that names
- *    a resource from an infra module becomes an object of the options that
- *    the resource's mark lists as runtime, imported from where infra imports
- *    them: `sqs.bind(orderQueue)` becomes `sqs.bind({ schema: Order })`. A
- *    mark such as `@runtime options.auth` does the same for the `auth`
- *    option of an object literal argument. The call can be a method of the
- *    object that a call returns, such as
- *    `apiGateway.bind(api).defineRoute({ auth })`.
- * 4. An import whose uses were all removed is removed too, so the bundle
+ *    arguments. The others become `undefined`.
+ * 4. In a kept option, a resource from an infra module becomes an object of
+ *    the options that the resource's mark lists as runtime, imported from
+ *    where infra imports them: `sqs.bind(orderQueue)` becomes
+ *    `sqs.bind({ schema: Order })`. A resource whose mark lists no runtime
+ *    options is left, and fails as any other infra value does.
+ * 5. An import whose uses were all removed is removed too, so the bundle
  *    doesn't load the module it imports from. Without this, the module would
  *    still load when `verbatimModuleSyntax` keeps unused imports.
  *
@@ -106,48 +104,23 @@ export function stripForRuntime(
       const runtimeMark = markOfCallee(node.callee, analysis, analyses);
       if (runtimeMark?.kind !== "runtime") return;
       node.arguments.forEach((argument: Node, position: number) => {
-        if (!runtimeMark.positions.includes(position)) {
-          removed.add(argument);
-          s.overwrite(argument.start, argument.end, "undefined");
-          return;
-        }
-        const options = runtimeMark.options.filter(
-          (option) => option.position === position,
-        );
-        if (options.length === 0) {
-          const stub = resourceStub(argument, free, analysis, analyses, added);
-          if (stub === undefined) return;
-          removed.add(argument);
-          s.overwrite(argument.start, argument.end, stub);
-          return;
-        }
-        // An argument that isn't an object literal is kept, and an infra
-        // value in it fails as for any other kept value.
-        const object = unwrap(argument);
-        if (object.type !== "ObjectExpression") return;
-        for (const option of options) {
-          const property = object.properties.find(
-            (p: Node) => p.type === "Property" && keyOf(p) === option.name,
-          );
-          if (!property) continue;
-          const stub = resourceStub(
-            property.value,
-            free,
-            analysis,
-            analyses,
-            added,
-          );
-          if (stub === undefined) continue;
-          removed.add(property.value);
-          if (property.shorthand)
-            s.overwrite(
-              property.start,
-              property.end,
-              `${option.name}: ${stub}`,
-            );
-          else s.overwrite(property.value.start, property.value.end, stub);
-        }
+        if (runtimeMark.positions.includes(position)) return;
+        removed.add(argument);
+        s.overwrite(argument.start, argument.end, "undefined");
       });
+    });
+    walk(property.value, (node, parent) => {
+      if (removed.has(node)) return false;
+      // A member path, such as `queues.orders`, is replaced as a whole, and
+      // the names in it aren't replaced on their own.
+      if (!memberPath(node)) return;
+      const stub = resourceStub(node, free, analysis, analyses, added);
+      if (stub === undefined) return false;
+      removed.add(node);
+      if (parent?.type === "Property" && parent.shorthand)
+        s.overwrite(parent.start, parent.end, `${keyOf(parent)}: ${stub}`);
+      else s.overwrite(node.start, node.end, stub);
+      return false;
     });
   }
   if (added.length > 0) {
@@ -205,14 +178,15 @@ function removeEmptiedImports(
 }
 
 /**
- * The object that replaces a runtime argument which names a resource from an
- * infra module, or `undefined` for any other argument. The argument can be a
- * name, or a member of an object literal or of a namespace import, such as
- * `queues.orders`. Adds an import to `added` for each runtime option of the
- * resource: by absolute path for a project file, and by name for a package.
- * An option can come from a shared module, a package, or a file that no glob
- * matches and that calls no resource function at its top level, as for any
- * other value that the runtime build bundles.
+ * The object that replaces an expression of a kept option which names a
+ * resource from an infra module, or `undefined` for any other expression.
+ * The expression can be a name, or a member of an object literal or of a
+ * namespace import, such as `queues.orders`. Adds an import to `added` for
+ * each runtime option of the resource: by absolute path for a project file,
+ * and by name for a package. An option can come from a shared module, a
+ * package, or a file that no glob matches and that calls no resource
+ * function at its top level, as for any other value that the runtime build
+ * bundles.
  * A value made by a call to a function that isn't a resource function fails.
  * The value can be a resource that a helper makes, or a plain value such as a
  * schema, and the build can't tell which. A resource whose `@resource` mark
@@ -221,20 +195,20 @@ function removeEmptiedImports(
  * becomes `{}`.
  */
 function resourceStub(
-  argument: Node,
+  expression: Node,
   // The identifiers in the option that refer to a binding outside it.
   free: Set<Node>,
   analysis: ModuleAnalysis,
   analyses: ModuleAnalyses,
   added: string[],
 ): string | undefined {
-  const path = memberPath(unwrap(argument));
+  const path = memberPath(unwrap(expression));
   // A local binding, such as a parameter, can shadow the import's name.
   if (!path || !free.has(path.root)) return undefined;
   const { file, source } = analysis.table.module;
   const binding = analysis.table.imports.get(path.root.name);
   if (!binding) {
-    checkAlias(path.root, argument, analysis, analyses);
+    checkAlias(path.root, expression, analysis, analyses);
     return undefined;
   }
   const resolved = analyses.marks.resolve(binding.source, file);
@@ -249,20 +223,20 @@ function resourceStub(
   const call = unwrap(found.value.node);
   if (call.type !== "CallExpression") return undefined;
 
-  const text = source.slice(argument.start, argument.end);
+  const text = source.slice(expression.start, expression.end);
   const owner = analyses.fromFile(found.value.file);
   const mark = owner && markOfCallee(call.callee, owner, analyses);
   // A member of a resource, such as `orderQueue.schema`, is an infra value.
   if (mark?.kind === "resource" && found.rest > 0) return undefined;
   if (!owner || mark?.kind !== "resource") {
     throw new Error(
-      `${analyses.show(file)}:${location(source, argument.start)}: the function reads ${text} from ${analyses.show(resolved)}, but ${text} isn't a call to a resource function, so the build can't find its options. If ${text} is a resource, declare it with a call such as \`queue({ id: "orders", schema: Order })\`, as a top-level const or in an object literal. If it is a plain value, such as a schema, move it to a shared module (files.shared).`,
+      `${analyses.show(file)}:${location(source, expression.start)}: the function reads ${text} from ${analyses.show(resolved)}, but ${text} isn't a call to a resource function, so the build can't find its options. If ${text} is a resource, declare it with a call such as \`queue({ id: "orders", schema: Order })\`, as a top-level const or in an object literal. If it is a plain value, such as a schema, move it to a shared module (files.shared).`,
     );
   }
   if (!mark.runtime) return undefined;
   if (found.value.mutable) {
     throw new Error(
-      `${analyses.show(file)}:${location(source, argument.start)}: the function reads ${text} from ${analyses.show(resolved)}, where a let or var holds it. Declare it with const, so the build can tell that it holds the resource.`,
+      `${analyses.show(file)}:${location(source, expression.start)}: the function reads ${text} from ${analyses.show(resolved)}, where a let or var holds it. Declare it with const, so the build can tell that it holds the resource.`,
     );
   }
   const definitionFile = found.value.file;
@@ -327,12 +301,12 @@ function resourceStub(
   return entries.length > 0 ? `{ ${entries.join(", ")} }` : "{}";
 }
 
-// Throws when a runtime argument names a top-level const of the module that
+// Throws when an expression of a kept option names a top-level const of the module that
 // holds a resource from an infra module, such as `const local = ordersQueue`.
 // The const would keep the infra import in the function.
 function checkAlias(
   root: Node,
-  argument: Node,
+  expression: Node,
   analysis: ModuleAnalysis,
   analyses: ModuleAnalyses,
 ) {
@@ -348,7 +322,7 @@ function checkAlias(
       if (!resolved || !analyses.describeInfra(resolved)) return;
       const held = source.slice(value.node.start, value.node.end);
       throw new Error(
-        `${analyses.show(file)}:${location(source, argument.start)}: ${root.name} holds ${held}, from ${analyses.show(resolved)}. Pass ${held} to the call directly, so the build can replace it with the resource's runtime options.`,
+        `${analyses.show(file)}:${location(source, expression.start)}: ${root.name} holds ${held}, from ${analyses.show(resolved)}. Pass ${held} to the call directly, so the build can replace it with the resource's runtime options.`,
       );
     }
     value = localValue(file, path.root.name, analyses, seen);
@@ -379,12 +353,10 @@ function memberPath(node: Node): { root: Node; keys: string[] } | undefined {
   return node.type === "Identifier" ? { root: node, keys } : undefined;
 }
 
-// The name that a callee starts from: `sqs` for `sqs.bind`, and `apiGateway`
-// for `apiGateway.bind(api).defineRoute`.
+// The name that a callee starts from, such as `sqs` for `sqs.bind`.
 function calleeRoot(callee: Node): Node | undefined {
   let node = unwrap(callee);
-  while (node.type === "MemberExpression" || node.type === "CallExpression")
-    node = unwrap(node.type === "MemberExpression" ? node.object : node.callee);
+  while (node.type === "MemberExpression") node = unwrap(node.object);
   return node.type === "Identifier" ? node : undefined;
 }
 
@@ -512,9 +484,7 @@ function mergeRanges(ranges: [number, number][]): [number, number][] {
 
 // The mark of the function that a call calls. The callee can be a marked
 // function that the module declares or imports, a member of a namespace
-// import, a member of an imported object literal, such as `sqs.bind`, or a
-// member of the object literal that a call returns, such as
-// `apiGateway.bind(api).defineRoute`.
+// import, or a member of an imported object literal, such as `sqs.bind`.
 function markOfCallee(
   callee: Node,
   analysis: ModuleAnalysis,
@@ -542,8 +512,7 @@ function markOfCallee(
 }
 
 // The object literal that holds the function a callee names, and the
-// function's key in it. For `sqs.bind` it is the object of `sqs`. For
-// `apiGateway.bind(api).defineRoute` it is the object that `bind` returns.
+// function's key in it. For `sqs.bind` it is the object of `sqs`.
 function calleeMember(
   callee: Node,
   analysis: ModuleAnalysis,
@@ -553,16 +522,6 @@ function calleeMember(
   const { table } = analysis;
   const file = table.module.file;
   callee = unwrap(callee);
-  if (callee.type !== "MemberExpression") return undefined;
-  const object = unwrap(callee.object);
-  if (object.type === "CallExpression") {
-    const name = memberKey(callee);
-    const fn = calleeFunction(object.callee, analysis, analyses);
-    const returned = fn && returnedObjectLiteral(fn);
-    return returned && name !== undefined
-      ? { object: returned, name }
-      : undefined;
-  }
   const path = memberPath(callee);
   if (!path) return undefined;
   const binding = table.imports.get(path.root.name);
@@ -576,85 +535,6 @@ function calleeMember(
   const found = start && followKeys(start, keys, analyses);
   if (!found || found.rest > 0 || name === undefined) return undefined;
   return { object: found.value, name };
-}
-
-// The function that a callee names, as a node in the module that declares it.
-function calleeFunction(
-  callee: Node,
-  analysis: ModuleAnalysis,
-  analyses: ModuleAnalyses,
-): Located | undefined {
-  const { marks } = analyses;
-  const { table } = analysis;
-  const file = table.module.file;
-  callee = unwrap(callee);
-  if (callee.type === "Identifier") {
-    return functionAt(
-      localValue(file, callee.name, analyses, new Set()),
-      analyses,
-    );
-  }
-  const path = memberPath(callee);
-  const binding = path && table.imports.get(path.root.name);
-  if (binding?.imported === "*" && path!.keys.length === 1) {
-    const resolved = marks.resolve(binding.source, file);
-    if (!resolved) return undefined;
-    return functionAt(
-      exportedValue(resolved, path!.keys[0]!, analyses, new Set()),
-      analyses,
-    );
-  }
-  const member = calleeMember(callee, analysis, analyses);
-  const node = member && unwrap(member.object.node);
-  const property = node?.properties.find(
-    (p: Node) => p.type === "Property" && keyOf(p) === member!.name,
-  );
-  return property
-    ? functionAt({ file: member!.object.file, node: property.value }, analyses)
-    : undefined;
-}
-
-// Follows names to a function.
-function functionAt(
-  value: Located | undefined,
-  analyses: ModuleAnalyses,
-): Located | undefined {
-  const seen = new Set<string>();
-  while (value) {
-    if (value.mutable) return undefined;
-    const node = unwrap(value.node);
-    if (isFunction(node)) return { file: value.file, node };
-    if (node.type !== "Identifier") return undefined;
-    value = localValue(value.file, node.name, analyses, seen);
-  }
-  return undefined;
-}
-
-// The object literal that a function returns: the body of an arrow function,
-// or the argument of a return statement at the top of its body.
-function returnedObjectLiteral(fn: Located): Located | undefined {
-  const body = fn.node.body;
-  if (!body) return undefined;
-  if (body.type !== "BlockStatement") {
-    const node = unwrap(body);
-    return node.type === "ObjectExpression"
-      ? { file: fn.file, node }
-      : undefined;
-  }
-  for (const statement of body.body) {
-    if (statement.type !== "ReturnStatement" || !statement.argument) continue;
-    const node = unwrap(statement.argument);
-    if (node.type === "ObjectExpression") return { file: fn.file, node };
-  }
-  return undefined;
-}
-
-function memberKey(member: Node): string | undefined {
-  const property = member.property;
-  if (!member.computed && property.type === "Identifier") return property.name;
-  if (member.computed && typeof property.value === "string")
-    return property.value;
-  return undefined;
 }
 
 // The mark of the function that a member of an object literal holds. The

@@ -36,35 +36,13 @@ describe("parseMark", () => {
       {
         kind: "runtime",
         positions: [1],
-        options: [],
       },
     );
-  });
-
-  it("reads an option of a runtime mark's argument", () => {
-    expect(
-      parseMark("* @runtime options.auth, options.api ", ["options"], "f"),
-    ).toEqual({
-      kind: "runtime",
-      positions: [0],
-      options: [
-        { position: 0, name: "auth" },
-        { position: 0, name: "api" },
-      ],
-    });
   });
 
   it("fails for a runtime mark that names a missing parameter", () => {
     expect(() => parseMark("* @runtime schema ", ["s"], "f.js")).toThrow(
       'f.js: the @runtime mark names the parameter "schema", which the function does not have',
-    );
-  });
-
-  it("fails for a runtime mark that names an option of an option", () => {
-    expect(() =>
-      parseMark("* @runtime options.auth.claims ", ["options"], "f.js"),
-    ).toThrow(
-      'f.js: the @runtime mark names "options.auth.claims". Name a parameter, such as "options", or one option of a parameter, such as "options.auth".',
     );
   });
 
