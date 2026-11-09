@@ -86,7 +86,7 @@ SQS doesn't let you reuse a deleted queue's name for 60 seconds, so a replacemen
 
 ### Dead-letter queues
 
-`deadLetterQueue` names a second queue. SQS moves a message to it after the message has been received `maxReceiveCount` times without being deleted. A message is received again when the handler throws, or when the function times out.
+`deadLetterQueue` names a second queue. SQS moves a message to it after the message has been received `maxReceiveCount` times without being deleted. A message is received again when the handler throws, when the function times out, or when the handler reports the message as failed with `reportBatchItemFailures`. See [Failed messages](#failed-messages).
 
 ```ts [infra/orders.ts]
 import { queue } from "@notation/aws/sqs";
