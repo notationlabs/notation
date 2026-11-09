@@ -87,13 +87,16 @@ export function stripForRuntime(
     .map(([, p]) => p);
   const added: string[] = [];
   for (const property of keptProperties) {
+    const free = new Set(
+      freeReferences(property.value).map((reference) => reference.node),
+    );
     walk(property.value, (node) => {
       if (node.type !== "CallExpression") return;
       const runtimeMark = markOfCallee(node.callee, analysis, marks);
       if (runtimeMark?.kind !== "runtime") return;
       node.arguments.forEach((argument: Node, position: number) => {
         if (runtimeMark.positions.includes(position)) {
-          const stub = resourceStub(argument, analysis, analyses, added);
+          const stub = resourceStub(argument, free, analysis, analyses, added);
           if (stub === undefined) return;
           removed.add(argument);
           s.overwrite(argument.start, argument.end, stub);
@@ -166,12 +169,15 @@ function removeEmptiedImports(
  */
 function resourceStub(
   argument: Node,
+  // The identifiers in the option that refer to a binding outside it.
+  free: Set<Node>,
   analysis: ModuleAnalysis,
   analyses: ModuleAnalyses,
   added: string[],
 ): string | undefined {
   const path = memberPath(unwrap(argument));
-  if (!path) return undefined;
+  // A local binding, such as a parameter, can shadow the import's name.
+  if (!path || !free.has(path.root)) return undefined;
   const { file, source } = analysis.table.module;
   const binding = analysis.table.imports.get(path.root.name);
   if (!binding) return undefined;

@@ -399,6 +399,29 @@ describe("stripForRuntime", () => {
       expect(code).not.toContain("../infra/orders");
     });
 
+    it.each([
+      [
+        "a const",
+        "() => { const ordersQueue = { schema: undefined }; return sqs(ordersQueue); }",
+      ],
+      [
+        "a parameter",
+        "(ordersQueue = { schema: undefined }) => sqs(ordersQueue)",
+      ],
+    ])("leaves a name that %s shadows", (_, event) => {
+      const handler = source.replace("() => sqs(ordersQueue)", event);
+      const { code } = strip(
+        {
+          "infra/orders.ts": queueModule(
+            `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+          ),
+        },
+        handler,
+      );
+      expect(code).toContain(`event: ${event},`);
+      expect(code).not.toContain("__notation_");
+    });
+
     it("follows a member of a namespace import", () => {
       const { code } = strip(
         {
