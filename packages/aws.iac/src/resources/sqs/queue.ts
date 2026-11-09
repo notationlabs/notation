@@ -27,6 +27,11 @@ type QueueAttributeParams = {
    * `maxReceiveCount` times without being deleted.
    */
   RedrivePolicy?: RedrivePolicy;
+  /**
+   * The source queues that can use this queue as their dead-letter queue.
+   * Without it, any queue in the account and region can.
+   */
+  RedriveAllowPolicy?: RedriveAllowPolicy;
   /** FIFO only. Deduplicates messages by a hash of their body. */
   ContentBasedDeduplication?: boolean;
   /** FIFO only. Whether deduplication applies to the queue or to each message group. */
@@ -40,15 +45,24 @@ export type RedrivePolicy = {
   maxReceiveCount: number;
 };
 
+export type RedriveAllowPolicy =
+  | { redrivePermission: "allowAll" | "denyAll" }
+  | {
+      redrivePermission: "byQueue";
+      /** The ARNs of the source queues, from 1 to 10. */
+      sourceQueueArns: string[];
+    };
+
 type QueueParams = QueueAttributeParams & {
   QueueName: string;
   FifoQueue?: boolean;
 };
 
 // SQS returns the FIFO attributes only for a FIFO queue, and the redrive
-// policy only for a queue that has one.
+// policies only for a queue that has them.
 type OptionalReadAttributes =
   | "RedrivePolicy"
+  | "RedriveAllowPolicy"
   | "ContentBasedDeduplication"
   | "DeduplicationScope"
   | "FifoThroughputLimit";
@@ -66,7 +80,7 @@ export type QueueSchema = AwsSchema<{
 
 // SetQueueAttributes cannot unset an attribute, so a removed attribute is
 // set to the value SQS gives a new queue. An empty RedrivePolicy removes the
-// dead-letter queue.
+// dead-letter queue, and an empty RedriveAllowPolicy removes the allow policy.
 const ATTRIBUTE_DEFAULTS: Required<AttributeValues> = {
   VisibilityTimeout: 30,
   MessageRetentionPeriod: 345_600,
@@ -74,6 +88,7 @@ const ATTRIBUTE_DEFAULTS: Required<AttributeValues> = {
   ReceiveMessageWaitTimeSeconds: 0,
   MaximumMessageSize: 1_048_576,
   RedrivePolicy: "",
+  RedriveAllowPolicy: "",
   ContentBasedDeduplication: false,
   DeduplicationScope: "queue",
   FifoThroughputLimit: "perQueue",
@@ -162,6 +177,21 @@ const queueSchema = queue.defineSchema({
       ),
     }),
   },
+  RedriveAllowPolicy: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.variant("redrivePermission", [
+      v.object({ redrivePermission: v.picklist(["allowAll", "denyAll"]) }),
+      v.object({
+        redrivePermission: v.literal("byQueue"),
+        sourceQueueArns: v.pipe(
+          v.array(v.string()),
+          v.minLength(1),
+          v.maxLength(10),
+        ),
+      }),
+    ]),
+  },
   ContentBasedDeduplication: {
     propertyType: "param",
     presence: "optional",
@@ -249,6 +279,9 @@ export const Queue = queueSchema.defineOperations({
         ),
         MaximumMessageSize: Number(Attributes.MaximumMessageSize),
         RedrivePolicy: parseRedrivePolicy(Attributes.RedrivePolicy),
+        RedriveAllowPolicy: parseRedriveAllowPolicy(
+          Attributes.RedriveAllowPolicy,
+        ),
         ContentBasedDeduplication:
           Attributes.ContentBasedDeduplication === undefined
             ? undefined
@@ -330,4 +363,15 @@ function parseRedrivePolicy(
   if (!policy) return undefined;
   const { deadLetterTargetArn, maxReceiveCount } = JSON.parse(policy);
   return { deadLetterTargetArn, maxReceiveCount: Number(maxReceiveCount) };
+}
+
+// Only the "byQueue" permission has source queues.
+function parseRedriveAllowPolicy(
+  policy: string | undefined,
+): RedriveAllowPolicy | undefined {
+  if (!policy) return undefined;
+  const { redrivePermission, sourceQueueArns } = JSON.parse(policy);
+  return redrivePermission === "byQueue"
+    ? { redrivePermission, sourceQueueArns }
+    : { redrivePermission };
 }

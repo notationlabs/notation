@@ -13,6 +13,8 @@ const url = "https://sqs.eu-west-2.amazonaws.com/123456789012/orders";
 
 const dlqArn = "arn:aws:sqs:eu-west-2:123456789012:orders-dlq";
 
+const sourceArn = "arn:aws:sqs:eu-west-2:123456789012:orders";
+
 const queue = new Queue("orders-queue", { config: { QueueName: "orders" } });
 
 const queueDoesNotExist = () =>
@@ -78,6 +80,29 @@ describe("SQS queue", () => {
     });
   });
 
+  it("creates the redrive allow policy as JSON", async () => {
+    const send = mockSend((command) => {
+      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
+      return { QueueUrl: url };
+    });
+
+    await queue.create({
+      QueueName: "orders-dlq",
+      RedriveAllowPolicy: {
+        redrivePermission: "byQueue",
+        sourceQueueArns: [sourceArn],
+      },
+    });
+
+    const command = send.mock.calls[1]![0] as sdk.CreateQueueCommand;
+    expect(command.input.Attributes).toEqual({
+      RedriveAllowPolicy: JSON.stringify({
+        redrivePermission: "byQueue",
+        sourceQueueArns: [sourceArn],
+      }),
+    });
+  });
+
   it("does not take over a queue that exists already", async () => {
     const send = mockSend(() => ({ QueueUrl: url }));
 
@@ -137,6 +162,7 @@ describe("SQS queue", () => {
       ReceiveMessageWaitTimeSeconds: 0,
       MaximumMessageSize: 1048576,
       RedrivePolicy: undefined,
+      RedriveAllowPolicy: undefined,
       ContentBasedDeduplication: undefined,
       DeduplicationScope: undefined,
       FifoThroughputLimit: undefined,
@@ -174,6 +200,49 @@ describe("SQS queue", () => {
     });
   });
 
+  it("reads the redrive allow policy", async () => {
+    const attributes = {
+      QueueArn: dlqArn,
+      VisibilityTimeout: "30",
+      MessageRetentionPeriod: "345600",
+      DelaySeconds: "0",
+      ReceiveMessageWaitTimeSeconds: "0",
+      MaximumMessageSize: "1048576",
+    };
+    mockSend(() => ({
+      Attributes: {
+        ...attributes,
+        RedriveAllowPolicy: `{"redrivePermission":"byQueue","sourceQueueArns":["${sourceArn}"]}`,
+      },
+    }));
+
+    const byQueue = await queue.read!({ QueueUrl: url });
+
+    expect(() =>
+      validateValues(queue, queue.toResult(byQueue), "read"),
+    ).not.toThrow();
+    expect(byQueue).toMatchObject({
+      RedriveAllowPolicy: {
+        redrivePermission: "byQueue",
+        sourceQueueArns: [sourceArn],
+      },
+    });
+
+    vi.restoreAllMocks();
+    mockSend(() => ({
+      Attributes: {
+        ...attributes,
+        RedriveAllowPolicy: `{"redrivePermission":"denyAll"}`,
+      },
+    }));
+
+    const denyAll = await queue.read!({ QueueUrl: url });
+
+    expect(denyAll).toMatchObject({
+      RedriveAllowPolicy: { redrivePermission: "denyAll" },
+    });
+  });
+
   it("rejects a visibility timeout that SQS does not allow", () => {
     expect(
       () =>
@@ -200,13 +269,14 @@ describe("SQS queue", () => {
     });
   });
 
-  it("removes a removed redrive policy, and resets the FIFO attributes", async () => {
+  it("removes removed redrive policies, and resets the FIFO attributes", async () => {
     const send = mockSend(() => ({}));
 
     await queue.update!(
       { QueueUrl: url },
       {
         RedrivePolicy: undefined,
+        RedriveAllowPolicy: undefined,
         MaximumMessageSize: undefined,
         ContentBasedDeduplication: undefined,
         DeduplicationScope: undefined,
@@ -219,6 +289,7 @@ describe("SQS queue", () => {
     const command = send.mock.calls[0]![0] as sdk.SetQueueAttributesCommand;
     expect(command.input.Attributes).toEqual({
       RedrivePolicy: "",
+      RedriveAllowPolicy: "",
       MaximumMessageSize: "1048576",
       ContentBasedDeduplication: "false",
       DeduplicationScope: "queue",
@@ -233,6 +304,21 @@ describe("SQS queue", () => {
           config: {
             QueueName: "bad",
             RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 0 },
+          },
+        }),
+    ).toThrow(ValueValidationError);
+  });
+
+  it("rejects a byQueue redrive allow policy without source queues", () => {
+    expect(
+      () =>
+        new Queue("bad-queue", {
+          config: {
+            QueueName: "bad",
+            RedriveAllowPolicy: {
+              redrivePermission: "byQueue",
+              sourceQueueArns: [],
+            },
           },
         }),
     ).toThrow(ValueValidationError);
