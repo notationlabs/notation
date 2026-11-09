@@ -184,17 +184,27 @@ Each route, from `router()` or from `defineRoute()`, produces a full resource su
 
 ### Request bodies
 
-`lambda.decode(event)` returns the request with `body` decoded. It decodes a base64 body first. What happens next depends on the body schema:
+Request bodies are JSON. `lambda.decode(event)` decodes the body in two steps:
 
-| Body schema  | Request body                  | `body` in the result            |
-| ------------ | ----------------------------- | ------------------------------- |
-| `NewTodo`    | `{"title":"Buy milk"}`        | The parsed JSON, validated      |
-| `NewTodo`    | Empty, or none                | `undefined`, validated          |
-| `v.string()` | `Buy milk`, which is not JSON | `"Buy milk"`, validated as text |
-| `null`       | Empty, or none                | `undefined`                     |
-| `null`       | Any other body                | Throws a `DecodeError`          |
+```text
+request body → base64 decode, if isBase64Encoded is set → JSON.parse → body schema → body
+```
 
-`decode()` validates the parsed JSON first. When the body is not JSON, or the schema rejects the parsed value, `decode()` validates the body as a string. So a route that takes text declares a string schema, such as `v.string()`, and a text body such as `123` stays the string `"123"`. A JSON body that the schema rejects throws a `DecodeError` with the issues for the parsed value.
+The body schema only sees the parsed value, never the raw string. So the outcome depends on the body schema and on the body that the client sends:
+
+| Body schema  | Request body           | `body` in the result   |
+| ------------ | ---------------------- | ---------------------- |
+| `NewTodo`    | `{"title":"Buy milk"}` | The parsed JSON        |
+| `NewTodo`    | `Buy milk`             | Throws a `DecodeError` |
+| `NewTodo`    | Empty, or none         | `undefined`, validated |
+| `v.string()` | `"Buy milk"`           | `"Buy milk"`           |
+| `v.string()` | `Buy milk`             | Throws a `DecodeError` |
+| `null`       | Empty, or none         | `undefined`            |
+| `null`       | Any other body         | Throws a `DecodeError` |
+
+**A text body is sent as a JSON string.** A route that takes text declares a string schema, such as `v.string()`, and the client sends the text with its quotes, as `"Buy milk"`. Plain `Buy milk` is not JSON, so `decode()` throws a `DecodeError` with the message "The request body is not valid JSON." A JSON body that the schema rejects throws a `DecodeError` with the schema's issues.
+
+Form bodies and binary bodies are not supported yet.
 
 An empty body is validated as `undefined`, so the schema decides whether a request may have no body. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
 
