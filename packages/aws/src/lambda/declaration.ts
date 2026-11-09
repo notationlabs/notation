@@ -45,6 +45,20 @@ export type SqsOptions = {
   batchSize?: number;
   /** Seconds to wait to fill a batch before the function is invoked. */
   maxBatchingWindow?: number;
+  /**
+   * Lets the handler return `{ batchItemFailures }`, the messages that
+   * failed, so that Lambda deletes the others and only the failed messages
+   * return to the queue. Without it, Lambda ignores the result, and a batch
+   * succeeds or fails as a whole.
+   */
+  reportBatchItemFailures?: boolean;
+  /**
+   * The most instances of the function that the mapping invokes at once,
+   * from 2 to 1,000.
+   */
+  maximumConcurrency?: number;
+  /** `false` pauses the mapping, so Lambda stops reading the queue. */
+  enabled?: boolean;
 };
 
 export type LambdaEvent = SqsEvent | ApiGatewayEvent | EventBridgeScheduleEvent;

@@ -39,6 +39,38 @@ export type QueueConfig<S extends StandardSchemaV1 = StandardSchemaV1> = {
   delaySeconds?: number;
   /** Seconds a receive call waits for a message to arrive. */
   receiveMessageWaitTime?: number;
+  /** The most bytes a message can hold, from 1,024 to 1,048,576. */
+  maximumMessageSize?: number;
+  /**
+   * The queue that SQS moves a message to after the message has been
+   * received `maxReceiveCount` times without being deleted. The dead-letter
+   * queue must be FIFO if this queue is, and standard if this queue is.
+   */
+  deadLetterQueue?: DeadLetterQueueConfig;
+  /**
+   * FIFO only. Deduplicates messages by a SHA-256 hash of the body, so a
+   * sender doesn't have to give a deduplication ID.
+   */
+  contentBasedDeduplication?: boolean;
+  /**
+   * FIFO only. Whether SQS deduplicates messages across the queue, or within
+   * each message group. Set it to `"messageGroup"`, with `fifoThroughputLimit:
+   * "perMessageGroupId"`, for high throughput.
+   */
+  deduplicationScope?: "queue" | "messageGroup";
+  /**
+   * FIFO only. Whether the throughput quota applies to the whole queue, or
+   * to each message group. `"perMessageGroupId"` needs `deduplicationScope:
+   * "messageGroup"`.
+   */
+  fifoThroughputLimit?: "perQueue" | "perMessageGroupId";
+};
+
+export type DeadLetterQueueConfig = {
+  /** The dead-letter queue, from `queue()`. */
+  queue: QueueGroup<any>;
+  /** The number of receives after which SQS moves a message, from 1 to 1,000. */
+  maxReceiveCount: number;
 };
 
 export type SqsAction =
@@ -63,6 +95,7 @@ export class QueueGroup<
   constructor({ schema, ...config }: QueueConfig<S>) {
     assertId("queue()", config.id);
     assertName("queue()", config.name);
+    assertFifoOptions(config);
     const name = config.name ?? config.id;
     const queueName = awsName("sqsQueue", config.fifo ? `${name}.fifo` : name);
     super("aws/sqs/queue", config.id, config);
@@ -81,6 +114,14 @@ export class QueueGroup<
           MessageRetentionPeriod: config.messageRetentionPeriod,
           DelaySeconds: config.delaySeconds,
           ReceiveMessageWaitTimeSeconds: config.receiveMessageWaitTime,
+          MaximumMessageSize: config.maximumMessageSize,
+          RedrivePolicy: config.deadLetterQueue && {
+            deadLetterTargetArn: config.deadLetterQueue.queue.arn,
+            maxReceiveCount: config.deadLetterQueue.maxReceiveCount,
+          },
+          ContentBasedDeduplication: config.contentBasedDeduplication,
+          DeduplicationScope: config.deduplicationScope,
+          FifoThroughputLimit: config.fifoThroughputLimit,
         },
       }),
     );
@@ -121,9 +162,43 @@ export class QueueGroup<
           FunctionName: lambdaGroup.fn.outputValue("FunctionName"),
           BatchSize: options.batchSize,
           MaximumBatchingWindowInSeconds: options.maxBatchingWindow,
+          FunctionResponseTypes: options.reportBatchItemFailures
+            ? ["ReportBatchItemFailures"]
+            : undefined,
+          ScalingConfig:
+            options.maximumConcurrency === undefined
+              ? undefined
+              : { MaximumConcurrency: options.maximumConcurrency },
+          Enabled: options.enabled,
         },
         dependencies: { policy: lambdaGroup.policy },
       }),
+    );
+  }
+}
+
+// SQS rejects the FIFO attributes on a standard queue, and a dead-letter
+// queue of the other type, but only at deploy.
+function assertFifoOptions(config: Omit<QueueConfig, "schema">): void {
+  const fifo = config.fifo ?? false;
+  if (!fifo) {
+    const set = (
+      [
+        "contentBasedDeduplication",
+        "deduplicationScope",
+        "fifoThroughputLimit",
+      ] as const
+    ).filter((option) => config[option] !== undefined);
+    if (set.length > 0) {
+      throw new Error(
+        `queue() "${config.id}" sets ${set.join(", ")}, which only a FIFO queue has. Set fifo: true, or remove ${set.length > 1 ? "them" : "it"}.`,
+      );
+    }
+  }
+  const dlq = config.deadLetterQueue?.queue;
+  if (dlq && (dlq.config.fifo ?? false) !== fifo) {
+    throw new Error(
+      `queue() "${config.id}" is a ${fifo ? "FIFO" : "standard"} queue, but its dead-letter queue "${dlq.id}" is ${fifo ? "a standard" : "a FIFO"} queue. SQS needs both queues to be of the same type.`,
     );
   }
 }

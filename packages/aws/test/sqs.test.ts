@@ -336,6 +336,117 @@ test("a FIFO queue and a standard queue can share a name", async () => {
   ).resolves.toBeDefined();
 });
 
+test("a queue with a dead-letter queue depends on it and sets its redrive policy", async () => {
+  let orders!: ReturnType<typeof queue>;
+  let dlq!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    dlq = queue({ id: "orders-dlq", schema: Unknown });
+    orders = queue({
+      id: "orders",
+      schema: Unknown,
+      deadLetterQueue: { queue: dlq, maxReceiveCount: 3 },
+    });
+  });
+  deploy(dlq);
+
+  expect(orders.queue.getDependencies()).toContain(dlq.queue);
+  expect((await orders.queue.getParams()).RedrivePolicy).toEqual({
+    deadLetterTargetArn: queueArn("orders-dlq"),
+    maxReceiveCount: 3,
+  });
+});
+
+test("a FIFO queue with a standard dead-letter queue throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const dlq = queue({ id: "ledger-dlq", schema: Unknown });
+      queue({
+        id: "ledger",
+        fifo: true,
+        schema: Unknown,
+        deadLetterQueue: { queue: dlq, maxReceiveCount: 3 },
+      });
+    }),
+  ).rejects.toThrow(
+    'queue() "ledger" is a FIFO queue, but its dead-letter queue "ledger-dlq" is a standard queue.',
+  );
+});
+
+test("a standard queue with a FIFO option throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      queue({ id: "orders", schema: Unknown, contentBasedDeduplication: true });
+    }),
+  ).rejects.toThrow(
+    'queue() "orders" sets contentBasedDeduplication, which only a FIFO queue has.',
+  );
+});
+
+test("a FIFO queue passes its FIFO options and message size to the queue", async () => {
+  let ledger!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    ledger = queue({
+      id: "ledger",
+      fifo: true,
+      schema: Unknown,
+      maximumMessageSize: 2_048,
+      contentBasedDeduplication: true,
+      deduplicationScope: "messageGroup",
+      fifoThroughputLimit: "perMessageGroupId",
+    });
+  });
+
+  expect(await ledger.queue.getParams()).toMatchObject({
+    QueueName: expect.stringMatching(/ledger\.fifo$/),
+    FifoQueue: true,
+    MaximumMessageSize: 2_048,
+    ContentBasedDeduplication: true,
+    DeduplicationScope: "messageGroup",
+    FifoThroughputLimit: "perMessageGroupId",
+  });
+});
+
+test("the mapping options set the response types, scaling config and state", async () => {
+  let fn!: LambdaGroup;
+  let orders!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    fn = lambda({ id: "process", code });
+    orders = queue({ id: "orders", schema: Unknown });
+    eventSourceMapping({
+      source: orders,
+      target: fn,
+      reportBatchItemFailures: true,
+      maximumConcurrency: 5,
+      enabled: false,
+    });
+  });
+  deploy(orders);
+  fn.fn.setOutput({ FunctionName: "process" } as any);
+
+  expect(await mappingOf(orders).getParams()).toMatchObject({
+    FunctionResponseTypes: ["ReportBatchItemFailures"],
+    ScalingConfig: { MaximumConcurrency: 5 },
+    Enabled: false,
+  });
+});
+
+test("a mapping without the options leaves them unset", async () => {
+  let fn!: LambdaGroup;
+  let orders!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    fn = lambda({ id: "process", code });
+    orders = queue({ id: "orders", schema: Unknown });
+    eventSourceMapping({ source: orders, target: fn });
+  });
+  deploy(orders);
+  fn.fn.setOutput({ FunctionName: "process" } as any);
+
+  const params = await mappingOf(orders).getParams();
+  expect(params.FunctionResponseTypes).toBeUndefined();
+  expect(params.ScalingConfig).toBeUndefined();
+  expect(params.Enabled).toBeUndefined();
+});
+
 test("grant allows the actions on the queue", () => {
   const orders = queue({ id: "orders", schema: Unknown });
   deploy(orders);
