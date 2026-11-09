@@ -4,6 +4,8 @@ import {
   collectResourceGraph,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
+  SchemaStructureError,
+  validateParams,
   ValueValidationError,
 } from "@notation/resource";
 import { createPlan } from "@notation/reconciler";
@@ -23,6 +25,7 @@ const key = { FunctionName: "app--prod--orders", StatementId: "events-daily" };
 const permission = (config: Record<string, unknown> = {}) =>
   new LambdaPermission("eventbridge-invoke-permission:daily", {
     config: {
+      Action: "lambda:InvokeFunction",
       Principal: "events.amazonaws.com",
       SourceArn: "arn:aws:events:us-west-2:123456789012:rule/daily",
       ...config,
@@ -51,16 +54,26 @@ describe("LambdaPermission", () => {
     });
   });
 
-  it("takes an Action from config in place of lambda:InvokeFunction", async () => {
+  it("takes the Action from config", async () => {
     expect(
       (await permission({ Action: "lambda:InvokeFunctionUrl" }).getParams())
         .Action,
     ).toBe("lambda:InvokeFunctionUrl");
   });
 
+  it("requires an Action", async () => {
+    const resource = new LambdaPermission("p", {
+      config: { Principal: "events.amazonaws.com" } as any,
+      dependencies: { lambda: fn },
+    });
+    await expect(
+      validateParams(resource, await resource.getParams(), "deploy"),
+    ).rejects.toThrow(SchemaStructureError);
+  });
+
   it("can be declared without a SourceArn", async () => {
     const params = await new LambdaPermission("p", {
-      config: { Principal: "123456789012" },
+      config: { Action: "lambda:InvokeFunction", Principal: "123456789012" },
       dependencies: { lambda: fn },
     }).getParams();
     expect(params).not.toHaveProperty("SourceArn");
@@ -79,6 +92,7 @@ describe("LambdaPermission", () => {
       api = new Api("api", { config: { Name: "app", ProtocolType: "HTTP" } });
       held = new LambdaPermission("p", {
         config: {
+          Action: "lambda:InvokeFunction",
           Principal: "apigateway.amazonaws.com",
           SourceArn: api.outputValue("ExecuteApiSourceArn"),
         },
@@ -193,6 +207,7 @@ it("a permission on an API whose state lacks ExecuteApiSourceArn plans its Sourc
       api,
       new LambdaPermission("p", {
         config: {
+          Action: "lambda:InvokeFunction",
           Principal: "apigateway.amazonaws.com",
           SourceArn: api.outputValue("ExecuteApiSourceArn"),
         },

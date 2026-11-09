@@ -55,6 +55,7 @@ export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleOptions> {
     lambdaGroup.add(
       new aws.lambda.LambdaPermission(permissionId, {
         config: {
+          Action: "lambda:InvokeFunction",
           Principal: "events.amazonaws.com",
           SourceArn: this.rule.outputValue("Arn"),
         },

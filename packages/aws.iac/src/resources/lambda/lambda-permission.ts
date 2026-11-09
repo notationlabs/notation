@@ -7,8 +7,6 @@ import { AwsSchema } from "src/utils/types";
 import { statementId } from "src/utils/statement-id";
 import type { LambdaFunctionInstance } from "./lambda";
 
-const DEFAULT_ACTION = "lambda:InvokeFunction";
-
 type LambdaPermissionKey = {
   FunctionName: string;
   StatementId: string;
@@ -16,8 +14,8 @@ type LambdaPermissionKey = {
 };
 
 type LambdaPermissionParams = LambdaPermissionKey & {
-  /** The action the principal may take. Defaults to `lambda:InvokeFunction`. */
-  Action?: string;
+  /** The action the principal may take, such as `lambda:InvokeFunction`. */
+  Action: string;
   /**
    * The service or account that may invoke the function, such as
    * `events.amazonaws.com`.
@@ -69,7 +67,7 @@ const lambdaPermissionSchema = lambdaPermission.defineSchema({
   },
   Action: {
     propertyType: "param",
-    presence: "optional",
+    presence: "required",
     value: v.string(),
   },
   Principal: {
@@ -105,12 +103,7 @@ export const LambdaPermission = lambdaPermissionSchema
     // AddPermission fails when the StatementId exists, so a create whose
     // outcome is unknown is found by `read`, whose key is made of params.
     create: awsCreate(async (params) => {
-      await lambdaClient().send(
-        new sdk.AddPermissionCommand({
-          ...params,
-          Action: params.Action ?? DEFAULT_ACTION,
-        }),
-      );
+      await lambdaClient().send(new sdk.AddPermissionCommand(params));
     }),
     read: async (key) => {
       const statement = await findStatement(key);
@@ -143,16 +136,10 @@ export const LambdaPermission = lambdaPermissionSchema
     },
   })
   .requireDependencies<LambdaPermissionDependencies>()
-  .deriveParams(({ id, config, deps }) => {
-    const params = {
-      FunctionName: deps.lambda.output.FunctionName,
-      StatementId: statementId(id),
-    };
-    // Set outside the returned type: a key in that type is taken out of
-    // config, and config must still be able to set Action.
-    Object.assign(params, { Action: config.Action ?? DEFAULT_ACTION });
-    return params;
-  });
+  .deriveParams(({ id, deps }) => ({
+    FunctionName: deps.lambda.output.FunctionName,
+    StatementId: statementId(id),
+  }));
 
 export type LambdaPermissionInstance = InstanceType<typeof LambdaPermission>;
 

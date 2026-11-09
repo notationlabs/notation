@@ -143,6 +143,7 @@ it("deploy creates a group's new permission before it deletes the old one as an 
       (fn, rule) =>
         new LambdaPermission("eventbridge-invoke-permission:daily", {
           config: {
+            Action: "lambda:InvokeFunction",
             Principal: "events.amazonaws.com",
             SourceArn: rule.outputValue("Arn"),
           },
