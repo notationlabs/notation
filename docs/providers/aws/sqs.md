@@ -36,7 +36,7 @@ type QueueConfig = {
 
 `id` keys the queue in state, so changing it replaces the queue. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. In AWS, the queue is named `<app>--<stage>--<id>`, such as `my-app--prod--orders`.
 
-`name` replaces the `id` in the AWS name, so `queue({ id: "orders", name: "order-events" })` is named `my-app--prod--order-events`. Changing `name` also replaces the queue. See [AWS names](../manual/project-config.md#aws-names).
+`name` replaces the `id` in the AWS name, so `queue({ id: "orders", name: "order-events" })` is named `my-app--prod--order-events`. Changing `name` also replaces the queue. See [AWS names](../../manual/project-config.md#aws-names).
 
 `fifo: true` makes a FIFO queue. Notation adds `.fifo` to its AWS name, as SQS requires, so `queue({ id: "ledger", fifo: true })` is named `my-app--prod--ledger.fifo`. `fifo` can't change after the queue is created.
 
@@ -72,9 +72,9 @@ SQS doesn't let you reuse a deleted queue's name for 60 seconds, so a replacemen
 
 ### `arn` and `url`
 
-`orderQueue.arn` and `orderQueue.url` are output values: they don't exist until AWS creates the queue, but you can place them in another resource's config now. Notation makes that resource depend on the queue and fills in the real value at deploy. See [Output values](../internals/resource.md#output-values).
+`orderQueue.arn` and `orderQueue.url` are output values: they don't exist until AWS creates the queue, but you can place them in another resource's config now. Notation makes that resource depend on the queue and fills in the real value at deploy. See [Output values](../../reference/resource.md#output-values).
 
-An output value can only be placed whole. Turning it into a string, for example in a template string, throws. To build a value from the queue's ARN, contribute a function that receives `orderQueue.queue` as a dep; see [Function contributions](../internals/resource.md#function-contributions).
+An output value can only be placed whole. Turning it into a string, for example in a template string, throws. To build a value from the queue's ARN, contribute a function that receives `orderQueue.queue` as a dep; see [Function contributions](../../reference/resource.md#function-contributions).
 
 ## `sqs.bind(queue, options)`
 
@@ -130,7 +130,7 @@ When you remove `batchSize` or `maxBatchingWindow`, Notation sets the mapping ba
 
 ### Validating messages
 
-`lambda.decode(record)` parses the record's body as JSON, and validates it with the queue's `schema`. It returns the record with `body` in place of the JSON string, so `body` has the schema's output type. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
+`lambda.decode(record)` parses the record's body as JSON, and validates it with the queue's `schema`. It returns the record with `body` in place of the JSON string, so `body` has the schema's output type. See [Validating bodies with `decode()`](../../manual/functions.md#validating-bodies-with-decode).
 
 Import the schema from a shared module, such as `shared/schema.ts` in `files.shared`, or from a package. A file with no kind also works, if it calls no resource function at its top level. **This matters because the function loads the schema, but not the infra module.** In the function's bundle, the runtime build replaces `orderQueue` with an object that holds only the schema:
 
@@ -145,7 +145,7 @@ export const lambda = $lambda({
 
 The build imports the schema by its absolute path, from the file that infra imports it from. The `infra/orders` import is gone, and so is `batchSize`, which only infra reads.
 
-A schema that the infra module defines itself fails the build. So does a schema written as `schemas.Order` or `Order.extend({ ... })`: export the value from the shared module, and import it by name. A queue that a helper function makes fails the build too: declare it with a call to `queue()`. See [Resource arguments](../internals/compiler.md#resource-arguments).
+A schema that the infra module defines itself fails the build. So does a schema written as `schemas.Order` or `Order.extend({ ... })`: export the value from the shared module, and import it by name. A queue that a helper function makes fails the build too: declare it with a call to `queue()`.
 
 Nothing checks the messages that a sender writes. To send messages, use `@aws-sdk/client-sqs` in your own code.
 

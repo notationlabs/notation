@@ -50,7 +50,7 @@ const dispatcher = new ExecutionDispatcher(runtime, {
 dispatcher.start();
 ```
 
-The outer workflow supplies durable step execution, timers, shared stores, waiting, and scheduling. Checkpointed provider results are replayed from the heap after a crash, retryable provider conditions suspend on a durable timer, and conditional state writes use `@notation/durable` store identity and version. Provider operations and event consumers are bound by the crash-window contract stated in [the reconciler internals](../internals/reconciler.md#waiting-and-replay).
+The outer workflow supplies durable step execution, timers, shared stores, waiting, and scheduling. Checkpointed provider results are replayed from the heap after a crash, retryable provider conditions suspend on a durable timer, and conditional state writes use `@notation/durable` store identity and version. A provider call and its checkpoint are not atomic. After a crash between them, replay repeats the call, so update and delete operations must be idempotent, and event consumers must accept duplicate events. Before it repeats a create, the reconciler looks the resource up; see [Unknown create outcomes](../reference/resource.md#unknown-create-outcomes).
 
 Each live resource is one `@notation/durable` store. `@notation/durable`'s UUIDv7 store `instanceId` and version are authoritative for conditional update and delete; Notation exposes the version unchanged as the resource state's `version`.
 

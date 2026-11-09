@@ -66,38 +66,41 @@ export const deploy = {
       ],
     },
     {
-      label: "Cloud Providers",
-      slug: "providers",
+      label: "Reference",
+      slug: "reference",
       sections: [
-        {
-          heading: "AWS",
-          icon: "cloud",
-          links: [
-            { label: "Lambda", slug: "resources/lambda" },
-            { label: "API Gateway", slug: "resources/api-gateway" },
-            { label: "EventBridge", slug: "resources/event-bridge" },
-            { label: "SQS", slug: "resources/sqs" },
-          ],
-        },
         {
           heading: "Resource SDK",
           icon: "layers",
-          links: [{ label: "Resource", slug: "internals/resource" }],
+          links: [{ label: "Resource", slug: "reference/resource" }],
         },
       ],
     },
     {
-      label: "Internals",
-      slug: "internals",
+      label: "AWS",
+      slug: "aws",
+      divider: true,
       sections: [
         {
-          heading: "Architecture",
-          icon: "layers",
+          heading: "Resources",
+          icon: "cloud",
           links: [
-            { label: "Compiler", slug: "internals/compiler" },
-            { label: "Reconciler", slug: "internals/reconciler" },
-            { label: "State", slug: "internals/state" },
+            { label: "Lambda", slug: "providers/aws/lambda" },
+            { label: "API Gateway", slug: "providers/aws/api-gateway" },
+            { label: "EventBridge", slug: "providers/aws/event-bridge" },
+            { label: "SQS", slug: "providers/aws/sqs" },
           ],
+        },
+      ],
+    },
+    {
+      label: "Cloudflare",
+      slug: "cloudflare",
+      sections: [
+        {
+          heading: "Resources",
+          icon: "cloud",
+          links: [{ label: "Coming Soon", slug: "providers/cloudflare/overview" }],
         },
       ],
     },

@@ -29,7 +29,7 @@ type ApiConfig = {
 
 `id` keys the API in state, so changing it replaces the API. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. In AWS, the API is named `<app>--<stage>--<id>`, such as `my-app--prod--todo-api`.
 
-`name` replaces the `id` in the AWS name, so `api({ id: "todo-api", name: "todos" })` is named `my-app--prod--todos`. See [AWS names](../manual/project-config.md#aws-names).
+`name` replaces the `id` in the AWS name, so `api({ id: "todo-api", name: "todos" })` is named `my-app--prod--todos`. See [AWS names](../../manual/project-config.md#aws-names).
 
 The routes, integrations and permissions of an API take their state keys from the IDs that they connect. A route is keyed `api-route:<api id>:<METHOD> <path>`, such as `api-route:todo-api:POST /todos`, and an integration `api-integration:<api id>:<lambda id>`. So a change of `name` leaves them as they are.
 
@@ -204,7 +204,7 @@ The body schema only sees the parsed value, never the raw string. So the outcome
 
 Form bodies and binary bodies are not supported yet.
 
-An empty body is validated as `undefined`, so the schema decides whether a request may have no body. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
+An empty body is validated as `undefined`, so the schema decides whether a request may have no body. See [Validating bodies with `decode()`](../../manual/functions.md#validating-bodies-with-decode).
 
 ## JWT authorization
 

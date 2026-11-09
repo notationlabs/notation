@@ -4,7 +4,7 @@
 
 ## `$lambda(config)`
 
-A [runtime module](../manual/file-conventions.md#runtime-modules) calls `$lambda` to declare the function that it deploys as, and exports `handler`. Infra imports the declaration and wires it:
+A [runtime module](../../manual/file-conventions.md#runtime-modules) calls `$lambda` to declare the function that it deploys as, and exports `handler`. Infra imports the declaration and wires it:
 
 ::code-group
 
@@ -41,7 +41,7 @@ When infra has finished loading, the declaration adds a Lambda group with:
 - the **CloudWatch log group** `todos-log-group`, with 30-day retention,
 - the **zip package** `todos-zip` of the bundle.
 
-The declaration adds the function even when nothing wires it. The options are listed in [Lambda Declaration](../manual/function-config.md).
+The declaration adds the function even when nothing wires it. The options are listed in [Lambda Declaration](../../manual/function-config.md).
 
 ### Wiring a declaration
 
@@ -70,7 +70,7 @@ Every Lambda function has an ID. It keys the function and the resources that sup
 
 In a runtime module, the ID is the declaration's `id`. The ID doesn't come from the module's path, so you can move or rename the module and keep its function.
 
-In AWS, the function is named `<app>--<stage>--<id>` and its role `<app>--<stage>--<id>-role`. If a name is longer than 64 characters, Notation shortens it. See [AWS names](../manual/project-config.md#aws-names).
+In AWS, the function is named `<app>--<stage>--<id>` and its role `<app>--<stage>--<id>-role`. If a name is longer than 64 characters, Notation shortens it. See [AWS names](../../manual/project-config.md#aws-names).
 
 `name` replaces the `id` in the function's AWS name. For example, `$lambda({ id: "orders", name: "order-handler" })` is named `<app>--<stage>--order-handler`. The role and the other resources keep names from the `id`, and the `id` stays the state key. Changing `name` replaces the function, because Lambda can't rename a function.
 
@@ -145,7 +145,7 @@ The group creates the policy resource only when code first contributes to it. Th
 
 A function's `Environment.Variables` is collected: any code can contribute to it, and the contributions are merged key by key. Two contributions that set one key to different values fail the plan, and the error names both contributors.
 
-A declaration contributes the values that it binds in `env`. The function reads them with `lambda.env()`; see [Lambda Handlers](../manual/functions.md#reading-bound-values-with-env).
+A declaration contributes the values that it binds in `env`. The function reads them with `lambda.env()`; see [Lambda Handlers](../../manual/functions.md#reading-bound-values-with-env).
 
 ```ts [runtime/orders.ts]
 export const lambda = $lambda({
