@@ -8,6 +8,11 @@ export type StateNode = {
   version: number;
   id: string;
   type: string;
+  /**
+   * The package that provides the class of `type`. Absent on a record
+   * written before provider packages were recorded.
+   */
+  provider?: string;
   config: DurableObject;
   params: DurableObject;
   output: DurableObject;

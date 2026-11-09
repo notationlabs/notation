@@ -23,6 +23,9 @@ const resourceRecordSchema = v.objectWithRest(
   {
     id: v.string(),
     type: v.string(),
+    // Optional, because a record written before provider packages were
+    // recorded has none.
+    provider: v.optional(v.string()),
     // null for a resource that is in no group.
     group: v.nullable(v.object({ type: v.string(), id: v.string() })),
     config: durableRecord,
@@ -58,10 +61,13 @@ export const deploymentHoldStore = defineStore(
 );
 
 // The schema validates exactly the record operations persist; drift between
-// the two is a type error here. `dependsOn` is optional in the schema only,
-// because a record written before edges were recorded has none.
+// the two is a type error here. `dependsOn` and `provider` are optional in the
+// schema only, because records written before they were recorded lack them.
 ({}) as ResourceRecord &
-  Pick<PersistedResourceState, "dependsOn"> satisfies PersistedResourceState;
+  Pick<
+    PersistedResourceState,
+    "dependsOn" | "provider"
+  > satisfies PersistedResourceState;
 ({}) as PersistedResourceState satisfies ResourceRecord;
 
 export type DeploymentHoldState = v.InferOutput<

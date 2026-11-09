@@ -163,8 +163,12 @@ export async function* reconcileResource(
         yield* recoverOutputs(step, opts, session, shared);
         return;
       }
-      if (!opts.dryRun && !hasSameEdges(session.node, dependsOn)) {
-        yield* rewriteEdges(session, dependsOn);
+      if (
+        !opts.dryRun &&
+        (!hasSameEdges(session.node, dependsOn) ||
+          session.node.provider !== resource.provider)
+      ) {
+        yield* rewriteRecord(session, resource, dependsOn);
       }
       return;
   }
@@ -216,6 +220,7 @@ async function* recoverOutputs(
     yield* session.persist({
       ...record,
       group: (record.group ?? null) as ResourceGroupRef | null,
+      provider: resource.provider,
       output: resource.toState(resource.output),
       dependsOn: shared.dependsOn,
     });
@@ -224,18 +229,21 @@ async function* recoverOutputs(
 }
 
 /**
- * Writes new edges to the record of a resource that is otherwise unchanged.
- * The rest of the record is written as it was read, and the provider is not
- * called.
+ * Writes new edges and the provider package to the record of a resource that
+ * is otherwise unchanged, so that a record written before provider packages
+ * were recorded gets one. The rest of the record is written as it was read,
+ * and no resource operation runs.
  */
-async function* rewriteEdges(
+async function* rewriteRecord(
   session: Extract<ResourceStateSession, { node: StateNode }>,
+  resource: BaseResource,
   dependsOn: string[],
 ): AsyncGenerator<any, void, any> {
   const { version: _, ...record } = session.node;
   yield* session.persist({
     ...record,
     group: (record.group ?? null) as ResourceGroupRef | null,
+    provider: resource.provider,
     dependsOn,
   });
 }

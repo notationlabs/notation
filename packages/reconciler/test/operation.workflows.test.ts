@@ -74,7 +74,7 @@ describe("operation workflows", () => {
       CreateParams: {};
       UpdateParams: {};
       ReadResult: { remoteId: string; status: string };
-    }>({ type: "test/service/create" })
+    }>({ type: "test/service/create", provider: "test" })
       .defineSchema({
         remoteId: {
           propertyType: "computed",
@@ -113,6 +113,7 @@ describe("operation workflows", () => {
       id: "test-create",
       group: testResource.group,
       type: TestResource.type,
+      provider: "test",
       lastOperation: "create",
       lastOperationAt: expect.any(String),
       config: testResource.config,
@@ -152,7 +153,7 @@ describe("operation workflows", () => {
       CreateParams: {};
       UpdateParams: {};
       ReadResult: { status: string };
-    }>({ type: "test/service/read" })
+    }>({ type: "test/service/read", provider: "test" })
       .defineSchema({
         status: {
           propertyType: "computed",
@@ -207,7 +208,10 @@ describe("operation workflows", () => {
         retryAfterMs: 10,
       });
     });
-    const TestResource = resource({ type: "test/service/pending-limit" })
+    const TestResource = resource({
+      type: "test/service/pending-limit",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: (async () => ({})) as any,
@@ -232,7 +236,10 @@ describe("operation workflows", () => {
   it("does not infer that not-found after creation is retryable", async () => {
     const step = createStepRunnerDouble();
     const persist = vi.fn(async function* () {});
-    const TestResource = resource({ type: "test/service/eventually-visible" })
+    const TestResource = resource({
+      type: "test/service/eventually-visible",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: (async () => ({})) as any,
@@ -262,7 +269,10 @@ describe("operation workflows", () => {
     const events: OperationLifecycleEvent[] = [];
     const remove = vi.fn(async function* () {});
 
-    const TestResource = resource({ type: "test/service/delete" })
+    const TestResource = resource({
+      type: "test/service/delete",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: (async () => ({})) as any,
@@ -290,7 +300,10 @@ describe("operation workflows", () => {
     const events: OperationLifecycleEvent[] = [];
     const remove = vi.fn(async function* () {});
 
-    const TestResource = resource({ type: "test/service/delete-absent" })
+    const TestResource = resource({
+      type: "test/service/delete-absent",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: (async () => ({})) as any,
@@ -320,7 +333,10 @@ describe("operation workflows", () => {
     const step = createStepRunnerDouble();
     const remove = vi.fn(async function* () {});
 
-    const TestResource = resource({ type: "test/service/delete-miss" })
+    const TestResource = resource({
+      type: "test/service/delete-miss",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: (async () => ({})) as any,
@@ -354,7 +370,10 @@ describe("operation workflows", () => {
     const events: OperationLifecycleEvent[] = [];
     const persist = vi.fn(async function* () {});
 
-    const TestResource = resource({ type: "test/service/create-error" })
+    const TestResource = resource({
+      type: "test/service/create-error",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => {

@@ -54,8 +54,10 @@ export type PersistedResourceState = Pick<
 > & {
   // Not on StateNode itself, where it arrives through its index signature.
   group: ResourceGroupRef | null;
-  // Required here, though optional on StateNode: every write records edges.
+  // Required here, though optional on StateNode: every write records edges
+  // and the provider package.
   dependsOn: string[];
+  provider: string;
   [key: string]: DurableValue;
 };
 

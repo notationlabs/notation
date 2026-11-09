@@ -5,6 +5,8 @@
  * Step keys are persisted: a resumed execution matches its cached work by
  * key, so changing one re-executes the work behind it. The shapes in use are:
  *
+ *   notation:providers         @notation/core's read of the provider
+ *                              packages that state names
  *   notation:validate          deploy's check of known params, before
  *                              any change
  *   notation:deploy:<id>:*     per-resource reconciliation steps
