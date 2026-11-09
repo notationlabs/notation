@@ -184,7 +184,7 @@ Each route, from `router()` or from `defineRoute()`, produces a full resource su
 
 ### Request bodies
 
-`lambda.decode(event)` returns the request with `body` decoded. It decodes a base64 body, parses it as JSON, and validates it with the body schema, so `body` has the schema's output type. With no body schema, `body` is the parsed JSON as `unknown`, or `undefined` for a request with no body. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
+`lambda.decode(event)` returns the request with `body` decoded. It decodes a base64 body, parses it as JSON, and validates it with the body schema, so `body` has the schema's output type. An empty body is validated as `undefined`, so the schema decides whether a request may have no body. With no body schema, `decode()` doesn't parse the body: `body` is the string that API Gateway sent, decoded from base64, or `undefined` for a request with no body. A text or form body works this way. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
 
 ## JWT authorization
 
