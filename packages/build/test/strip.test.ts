@@ -10,7 +10,7 @@ import { packageFiles, packages, root, virtualMarks } from "./virtual";
 
 const handlerModule = `
 import "./sentry";
-import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, http, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import { SQSClient } from "@aws-sdk/client-sqs";
 import { ordersQueue, unused } from "../infra/orders";
 import { Order, type OrderType } from "./schema";
@@ -23,7 +23,7 @@ const config = await fetch("https://example.com");
 export const lambda = $lambda({
   id: "process-orders",
   memory,
-  event: () => sqs(Order, { infra: ordersQueue.arn }),
+  event: () => http({ body: Order }),
   policy: () => [ordersQueue.grant(["ReceiveMessage"])],
   env: () => ({ QUEUE_URL: ordersQueue.url, LOG_LEVEL: "info" }),
 });
@@ -70,7 +70,7 @@ describe("stripForInfra", () => {
       entry: "handler",
     });
     expect(code).toContain(
-      `import { $lambda, sqs } from "@notation/aws/lambda";`,
+      `import { $lambda, http } from "@notation/aws/lambda";`,
     );
     expect(code).toContain(`import { ordersQueue } from "../infra/orders";`);
     expect(code).toContain(`import { Order } from "./schema";`);
@@ -108,17 +108,29 @@ describe("stripForInfra", () => {
   });
 
   it.each([
-    ["a const in a block", "if (x) { const Order = 1; } return sqs(Order);"],
-    ["a function in a block", "{ function Order() {} } return sqs(Order);"],
-    ["a const in a for head", "for (const Order of []) {} return sqs(Order);"],
-    ["a catch parameter", "try {} catch (Order) {} return sqs(Order);"],
+    [
+      "a const in a block",
+      "if (x) { const Order = 1; } return http({ body: Order });",
+    ],
+    [
+      "a function in a block",
+      "{ function Order() {} } return http({ body: Order });",
+    ],
+    [
+      "a const in a for head",
+      "for (const Order of []) {} return http({ body: Order });",
+    ],
+    [
+      "a catch parameter",
+      "try {} catch (Order) {} return http({ body: Order });",
+    ],
     [
       "a case of a switch",
-      "switch (x) { case 1: { let Order; } } return sqs(Order);",
+      "switch (x) { case 1: { let Order; } } return http({ body: Order });",
     ],
   ])("keeps an import that %s doesn't shadow outside it", (_, body) => {
     const source = handlerModule.replace(
-      "event: () => sqs(Order, { infra: ordersQueue.arn })",
+      "event: () => http({ body: Order })",
       `event: () => { ${body} }`,
     );
     expect(infra(source).code).toContain(`import { Order } from "./schema";`);
@@ -126,8 +138,8 @@ describe("stripForInfra", () => {
 
   it("drops an import that a var in a block shadows in its function", () => {
     const source = handlerModule.replace(
-      "event: () => sqs(Order, { infra: ordersQueue.arn })",
-      "event: () => { if (x) { var Order = 1; } return sqs(Order); }",
+      "event: () => http({ body: Order })",
+      "event: () => { if (x) { var Order = 1; } return http({ body: Order }); }",
     );
     expect(infra(source).code).not.toContain("./schema");
   });
@@ -178,26 +190,33 @@ describe("stripForInfra", () => {
 });
 
 describe("stripForRuntime", () => {
-  const runtimeSource = handlerModule.replace(
-    ", { infra: ordersQueue.arn }",
-    ", ordersQueue.arn",
-  );
-
   it("reduces the declaration to its runtime options", () => {
-    const { analysis, analyses } = setup(runtimeSource);
+    const { analysis, analyses } = setup();
     const { code } = stripForRuntime(analysis, analyses)!;
     expect(code).toContain(
       `export const lambda = $lambda({
   id: "process-orders",
-  event: () => sqs(Order, undefined),
+  event: () => http({ body: Order }),
   env: () => ({ QUEUE_URL: undefined, LOG_LEVEL: undefined }),
 });`,
     );
     expect(code).toContain("export const handler");
   });
 
+  it("replaces an argument that the @runtime mark doesn't name with undefined, even one that reads infra", () => {
+    const { analysis, analyses } = setup(
+      handlerModule.replace(
+        "http({ body: Order })",
+        "sqs(ordersQueue, { batchSize: unused })",
+      ),
+    );
+    const { code } = stripForRuntime(analysis, analyses)!;
+    expect(code).toContain("event: () => sqs({}, undefined),");
+    expect(code).not.toContain("../infra/orders");
+  });
+
   it("removes an import whose uses it removed, and keeps the others", () => {
-    const { analysis, analyses } = setup(runtimeSource);
+    const { analysis, analyses } = setup();
     const { code } = stripForRuntime(analysis, analyses)!;
     expect(code).not.toContain("../infra/orders");
     expect(code).toContain(`import "./sentry";`);
@@ -207,7 +226,7 @@ describe("stripForRuntime", () => {
   });
 
   it("keeps an import that the function still uses", () => {
-    const source = runtimeSource.replace(
+    const source = handlerModule.replace(
       "await client.send(config);",
       "await client.send(config, unused);",
     );
@@ -256,19 +275,19 @@ describe("stripForRuntime", () => {
 
   it("fails when a kept option refers to an infra module", () => {
     const { analysis, analyses } = setup(
-      runtimeSource.replace(
-        "sqs(Order, ordersQueue.arn)",
-        "sqs(ordersQueue.schema)",
+      handlerModule.replace(
+        "http({ body: Order })",
+        "http({ body: ordersQueue.schema })",
       ),
     );
     expect(() => stripForRuntime(analysis, analyses)).toThrow(
-      'runtime/handler.ts:16:20: an option of $lambda that the function keeps refers to ordersQueue, from infra/orders.ts, an infra module (files.infra: "infra/**", the default).',
+      'runtime/handler.ts:16:29: an option of $lambda that the function keeps refers to ordersQueue, from infra/orders.ts, an infra module (files.infra: "infra/**", the default).',
     );
   });
 
   describe("a resource in a runtime argument", () => {
-    const source = runtimeSource.replace(
-      "sqs(Order, ordersQueue.arn)",
+    const source = handlerModule.replace(
+      "http({ body: Order })",
       "sqs(ordersQueue)",
     );
     const strip = (
@@ -402,12 +421,9 @@ describe("stripForRuntime", () => {
     it.each([
       [
         "a const",
-        "() => { const ordersQueue = { schema: undefined }; return sqs(ordersQueue); }",
+        "() => { const ordersQueue = undefined; return sqs(ordersQueue); }",
       ],
-      [
-        "a parameter",
-        "(ordersQueue = { schema: undefined }) => sqs(ordersQueue)",
-      ],
+      ["a parameter", "(ordersQueue = undefined) => sqs(ordersQueue)"],
     ])("leaves a name that %s shadows", (_, event) => {
       const handler = source.replace("() => sqs(ordersQueue)", event);
       const { code } = strip(
@@ -629,7 +645,7 @@ describe("stripForRuntime", () => {
   });
 
   it("fails for a keys option that isn't an object literal", () => {
-    const source = runtimeSource.replace(
+    const source = handlerModule.replace(
       `env: () => ({ QUEUE_URL: ordersQueue.url, LOG_LEVEL: "info" })`,
       `env: () => ({ ...base })`,
     );

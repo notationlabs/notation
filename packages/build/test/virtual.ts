@@ -51,8 +51,11 @@ export const awsLambda = `
 /** @declaration shared: id, event, env; keys: env; entry: handler */
 export function $lambda(config) { return config; }
 
-/** @runtime schema */
-export function sqs(schema, options) { return { kind: "sqs", schema, options }; }
+/** @runtime queue */
+export function sqs(queue, options) { return { kind: "sqs", schema: queue?.schema, options }; }
+
+/** @runtime options */
+export function http(options) { return { kind: "http", schema: options.body }; }
 `;
 
 export const awsSqs = `
