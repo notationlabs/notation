@@ -1,26 +1,4 @@
-/**
- * The ids of declared resources, and the names that override their AWS names,
- * are name-safe: 1 to 64 ASCII letters, digits, hyphens and underscores.
- *
- * An id is embedded in resource IDs (such as `<id>-role` and `<id>-queue`)
- * and in AWS names, so its characters have to be valid in all of them:
- *
- * - Lambda `FunctionName` (`<app>--<stage>--<id>`): `[a-zA-Z0-9-_]`.
- * - IAM `RoleName` (`<app>--<stage>--<id>-role`): `[\w+=,.@-]`.
- * - SQS `QueueName`: `[a-zA-Z0-9-_]`, and `.fifo` at the end of a FIFO queue.
- * - EventBridge rule `Name`, and the target `Id`, which is the function
- *   name: `[.\-_A-Za-z0-9]`.
- * - Lambda permission `StatementId`s embed the function name: `[0-9A-Za-z_-]`.
- * - API Gateway API and authorizer names allow any characters.
- *
- * The limit of 64 is the Lambda `FunctionName` limit. AWS names add the app
- * and stage, and are shortened with a hash when they are too long for the
- * service (see `src/naming.ts`).
- *
- * Upper case is allowed because Lambda allows it. IAM role names are unique
- * regardless of case, so two Lambda ids that differ only in case count as
- * duplicates.
- */
+// The longest id or name: the length limit of a Lambda FunctionName.
 export const ID_MAX_LENGTH = 64;
 
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
