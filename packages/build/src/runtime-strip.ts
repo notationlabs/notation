@@ -97,7 +97,12 @@ export function stripForRuntime(
       freeReferences(property.value).map((reference) => reference.node),
     );
     walk(property.value, (node) => {
+      // A node that was overwritten can't be edited again.
+      if (removed.has(node)) return false;
       if (node.type !== "CallExpression") return;
+      // A local binding, such as a parameter, can shadow the callee's name.
+      const root = calleeRoot(node.callee);
+      if (!root || !free.has(root)) return;
       const runtimeMark = markOfCallee(node.callee, analysis, analyses);
       if (runtimeMark?.kind !== "runtime") return;
       node.arguments.forEach((argument: Node, position: number) => {
@@ -145,7 +150,12 @@ export function stripForRuntime(
       });
     });
   }
-  if (added.length > 0) s.prepend(added.join(""));
+  if (added.length > 0) {
+    // The imports go after a hashbang line, which must stay first.
+    const hashbang = /^#!.*(\r?\n|$)/.exec(module.source);
+    if (hashbang) s.appendLeft(hashbang[0].length, added.join(""));
+    else s.prepend(added.join(""));
+  }
 
   for (const property of keptProperties) {
     for (const reference of freeReferences(property.value, removed)) {
@@ -223,7 +233,10 @@ function resourceStub(
   if (!path || !free.has(path.root)) return undefined;
   const { file, source } = analysis.table.module;
   const binding = analysis.table.imports.get(path.root.name);
-  if (!binding) return undefined;
+  if (!binding) {
+    checkAlias(path.root, argument, analysis, analyses);
+    return undefined;
+  }
   const resolved = analyses.marks.resolve(binding.source, file);
   if (!resolved || !analyses.describeInfra(resolved)) return undefined;
 
@@ -247,6 +260,11 @@ function resourceStub(
     );
   }
   if (!mark.runtime) return undefined;
+  if (found.value.mutable) {
+    throw new Error(
+      `${analyses.show(file)}:${location(source, argument.start)}: the function reads ${text} from ${analyses.show(resolved)}, where a let or var holds it. Declare it with const, so the build can tell that it holds the resource.`,
+    );
+  }
   const definitionFile = found.value.file;
   const first = call.arguments[0];
   const config = first ? unwrap(first) : undefined;
@@ -309,7 +327,41 @@ function resourceStub(
   return entries.length > 0 ? `{ ${entries.join(", ")} }` : "{}";
 }
 
-type Located = { file: string; node: Node };
+// Throws when a runtime argument names a top-level const of the module that
+// holds a resource from an infra module, such as `const local = ordersQueue`.
+// The const would keep the infra import in the function.
+function checkAlias(
+  root: Node,
+  argument: Node,
+  analysis: ModuleAnalysis,
+  analyses: ModuleAnalyses,
+) {
+  const { file, source } = analysis.table.module;
+  const seen = new Set<string>();
+  let value = localValue(file, root.name, analyses, seen);
+  while (value && value.file === file) {
+    const path = memberPath(unwrap(value.node));
+    if (!path) return;
+    const binding = analysis.table.imports.get(path.root.name);
+    if (binding) {
+      const resolved = analyses.marks.resolve(binding.source, file);
+      if (!resolved || !analyses.describeInfra(resolved)) return;
+      const held = source.slice(value.node.start, value.node.end);
+      throw new Error(
+        `${analyses.show(file)}:${location(source, argument.start)}: ${root.name} holds ${held}, from ${analyses.show(resolved)}. Pass ${held} to the call directly, so the build can replace it with the resource's runtime options.`,
+      );
+    }
+    value = localValue(file, path.root.name, analyses, seen);
+  }
+}
+
+type Located = {
+  file: string;
+  node: Node;
+  // Set when a `let` or `var` holds the value, as the module can assign
+  // another value to it.
+  mutable?: boolean;
+};
 
 // A name followed by static member keys, such as `queues.orders` or
 // `queues["orders"]`.
@@ -327,6 +379,15 @@ function memberPath(node: Node): { root: Node; keys: string[] } | undefined {
   return node.type === "Identifier" ? { root: node, keys } : undefined;
 }
 
+// The name that a callee starts from: `sqs` for `sqs.bind`, and `apiGateway`
+// for `apiGateway.bind(api).defineRoute`.
+function calleeRoot(callee: Node): Node | undefined {
+  let node = unwrap(callee);
+  while (node.type === "MemberExpression" || node.type === "CallExpression")
+    node = unwrap(node.type === "MemberExpression" ? node.object : node.callee);
+  return node.type === "Identifier" ? node : undefined;
+}
+
 function keyOf(property: Node): string | undefined {
   if (!property.computed) return property.key.name ?? property.key.value;
   return typeof property.key.value === "string"
@@ -342,6 +403,10 @@ function exportedValue(
   analyses: ModuleAnalyses,
   seen: Set<string>,
 ): Located | undefined {
+  // Export names and local names are kept apart, as they can be the same.
+  const key = `${file}#export:${name}`;
+  if (seen.has(key)) return undefined;
+  seen.add(key);
   const table = analyses.marks.table(file);
   if (!table) return undefined;
   const target = table.exports.get(name);
@@ -383,16 +448,23 @@ function localValue(
       : undefined;
   }
   for (let statement of table.module.body) {
+    // `export default <expression>`, which the module table names *default*.
+    if (statement.type === "ExportDefaultDeclaration" && name === "*default*")
+      return { file, node: statement.declaration };
     if (statement.type === "ExportNamedDeclaration" && statement.declaration)
       statement = statement.declaration;
     if (statement.type === "FunctionDeclaration" && statement.id?.name === name)
       return { file, node: statement };
-    if (statement.type !== "VariableDeclaration" || statement.kind !== "const")
-      continue;
+    if (statement.type !== "VariableDeclaration") continue;
     const declarator = statement.declarations.find(
       (d: Node) => d.id.type === "Identifier" && d.id.name === name,
     );
-    if (declarator?.init) return { file, node: declarator.init };
+    if (declarator?.init)
+      return {
+        file,
+        node: declarator.init,
+        mutable: statement.kind !== "const",
+      };
   }
   return undefined;
 }
@@ -406,15 +478,17 @@ function followKeys(
 ): { value: Located; rest: number } | undefined {
   let value: Located | undefined = start;
   let index = 0;
+  let mutable = false;
   const seen = new Set<string>();
   while (value) {
+    mutable ||= value.mutable === true;
     const node = unwrap(value.node);
     if (node.type === "Identifier") {
       value = localValue(value.file, node.name, analyses, seen);
       continue;
     }
     if (index === keys.length || node.type !== "ObjectExpression") {
-      return { value, rest: keys.length - index };
+      return { value: { ...value, mutable }, rest: keys.length - index };
     }
     const key = keys[index++];
     const property = node.properties.find(
@@ -547,6 +621,7 @@ function functionAt(
 ): Located | undefined {
   const seen = new Set<string>();
   while (value) {
+    if (value.mutable) return undefined;
     const node = unwrap(value.node);
     if (isFunction(node)) return { file: value.file, node };
     if (node.type !== "Identifier") return undefined;

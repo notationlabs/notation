@@ -600,6 +600,119 @@ describe("stripForRuntime", () => {
       expect(code).toContain("sqs.bind({ schema: __notation_schema_0 })");
     });
 
+    it("follows a barrel whose export * leads back to itself", () => {
+      const { code } = strip({
+        "infra/orders.ts": `export * from "./a";\nexport * from "./queues";`,
+        "infra/a.ts": `export * from "./orders";`,
+        "infra/queues.ts": queueModule(
+          `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+        ),
+      });
+      expect(code).toContain("sqs.bind({ schema: __notation_schema_0 })");
+    });
+
+    it("follows a default export", () => {
+      const { code } = strip(
+        {
+          "infra/orders.ts": queueModule(
+            `export default createQueue({ id: "orders", schema: Order });`,
+          ),
+        },
+        withArgument(
+          "ordersQueue",
+          `import ordersQueue from "../infra/orders";`,
+        ),
+      );
+      expect(code).toContain("sqs.bind({ schema: __notation_schema_0 })");
+      expect(code).not.toContain("../infra/orders");
+    });
+
+    it("fails when a let holds the resource", () => {
+      expect(() =>
+        strip({
+          "infra/orders.ts": queueModule(
+            `export let ordersQueue = createQueue({ id: "orders", schema: Order });`,
+          ),
+        }),
+      ).toThrow(
+        "runtime/handler.ts:16:25: the function reads ordersQueue from infra/orders.ts, where a let or var holds it. Declare it with const, so the build can tell that it holds the resource.",
+      );
+    });
+
+    it("fails when a const of the module holds the resource", () => {
+      const handler = withArgument("local").replace(
+        "export const lambda",
+        "const local = ordersQueue;\n\nexport const lambda",
+      );
+      expect(() =>
+        strip(
+          {
+            "infra/orders.ts": queueModule(
+              `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+            ),
+          },
+          handler,
+        ),
+      ).toThrow(
+        "runtime/handler.ts:18:25: local holds ordersQueue, from infra/orders.ts. Pass ordersQueue to the call directly, so the build can replace it with the resource's runtime options.",
+      );
+    });
+
+    it("adds its imports after a hashbang line", () => {
+      const { code } = strip(
+        {
+          "infra/orders.ts": queueModule(
+            `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+          ),
+        },
+        `#!/usr/bin/env node${source}`,
+      );
+      expect(code).toMatch(
+        /^#!\/usr\/bin\/env node\nimport \{ Order as __notation_schema_0 \}/,
+      );
+    });
+
+    it("leaves a runtime call in an argument that it replaces with undefined", () => {
+      const { code } = strip(
+        {
+          "infra/orders.ts": queueModule(
+            `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+          ),
+        },
+        withArgument("ordersQueue, sqs.bind(ordersQueue)"),
+      );
+      expect(code).toContain(
+        "event: () => sqs.bind({ schema: __notation_schema_0 }, undefined),",
+      );
+    });
+
+    it("leaves a runtime call in a keys option's value", () => {
+      const handler = source.replace(
+        "QUEUE_URL: ordersQueue.url",
+        "QUEUE_URL: sqs.bind(ordersQueue)",
+      );
+      const { code } = strip(
+        {
+          "infra/orders.ts": queueModule(
+            `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+          ),
+        },
+        handler,
+      );
+      expect(code).toContain(
+        "env: () => ({ QUEUE_URL: undefined, LOG_LEVEL: undefined }),",
+      );
+    });
+
+    it("leaves a call whose callee a parameter shadows", () => {
+      const event = "(sqs) => sqs.bind(Order, Order)";
+      const { code } = strip(
+        {},
+        source.replace("() => sqs.bind(ordersQueue)", event),
+      );
+      expect(code).toContain(`event: ${event},`);
+    });
+
     it("has no options when the resource has none", () => {
       const { code } = strip({
         "infra/orders.ts": [
