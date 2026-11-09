@@ -203,6 +203,11 @@ export type RuntimePluginOptions = {
  *    package, is still in the bundle, and names the import chain.
  * 5. Fails the build if a shared module in the bundle breaks its rules,
  *    unless another build has reported the error since the last change.
+ *
+ * The build's input options must set `optimization: { inlineConst: false }`.
+ * Otherwise the bundler copies a short constant, such as `"eu"`, from an
+ * infra module into the code that uses it. The infra module then renders
+ * nothing, and step 4 doesn't see the use.
  */
 export function runtimePlugin({
   analyses,

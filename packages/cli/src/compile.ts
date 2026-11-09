@@ -230,6 +230,10 @@ export async function compileRuntimeModules(
       resolve: {
         conditionNames: ["notation-runtime", "node", "import", "default"],
       },
+      // Inlining would copy a short constant from an infra module into the
+      // function, and the infra module would render nothing, so the bundle
+      // check wouldn't see the use.
+      optimization: { inlineConst: false },
       plugins: [runtimePlugin({ analyses, module })],
     } satisfies InputOptions,
     output: {

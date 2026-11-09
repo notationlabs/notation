@@ -752,6 +752,19 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
     );
   });
 
+  it.each([`"eu"`, "42", "true"])(
+    "fails when the function uses a short constant from an infra module: %s",
+    async (value) => {
+      writeProject(
+        withHandler(`import { REGION } from "../infra/config";`, "REGION"),
+      );
+      write("infra/config.ts", `export const REGION = ${value};`);
+      await expect(buildProject()).rejects.toThrow(
+        "The function in runtime/process-orders.ts uses infra/config.ts, an infra module",
+      );
+    },
+  );
+
   it("leaves out an infra module that a module in the bundle imports for its side effects", async () => {
     writeProject(
       withHandler(`import "../infra/setup";`, "globalThis.setupRan ?? null"),
