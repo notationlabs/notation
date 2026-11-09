@@ -344,16 +344,16 @@ describe("createPlan", () => {
       update: async () => undefined,
       delete: async () => undefined,
     };
-    const Bus = resource({ type: "test/planner/bus" })
+    const Bus = resource({ type: "test/planner/bus", provider: "test" })
       // Cast: see above.
       .defineSchema({ name } as any)
       .defineOperations(operations);
     // A bus whose name comes from a zone, so that it is unknown while the
     // zone is replaced.
-    const Zone = resource({ type: "test/planner/zone" })
+    const Zone = resource({ type: "test/planner/zone", provider: "test" })
       .defineSchema({ name } as any)
       .defineOperations(operations);
-    const ZoneBus = resource({ type: "test/planner/zone-bus" })
+    const ZoneBus = resource({ type: "test/planner/zone-bus", provider: "test" })
       .defineSchema({ name } as any)
       .defineOperations(operations)
       .requireDependencies<{ zone: BaseResource }>()
@@ -366,7 +366,7 @@ describe("createPlan", () => {
       type: `${string}/${string}/${string}`,
       blocksDeleteOf?: `${string}/${string}/${string}`[],
     ) =>
-      resource({ type, blocksDeleteOf })
+      resource({ type, provider: "test", blocksDeleteOf })
         .defineSchema({
           name,
           parent: {

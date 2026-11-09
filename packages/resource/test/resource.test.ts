@@ -28,6 +28,7 @@ describe("resource basics", () => {
   test("blocksDeleteOf", () => {
     const Child = resource({
       type: "provider/service/child",
+      provider: "test",
       blocksDeleteOf: ["provider/service/parent"],
     })
       .defineSchema({})

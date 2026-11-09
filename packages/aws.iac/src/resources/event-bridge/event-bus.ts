@@ -13,6 +13,7 @@ export type EventBusSchema = AwsSchema<{
 
 const eventBus = resource<EventBusSchema>({
   type: "aws/eventBridge/EventBus",
+  provider: "@notation/aws.iac",
 });
 
 const eventBusSchema = eventBus.defineSchema({
@@ -54,6 +55,7 @@ export type EventBusInstance = InstanceType<typeof EventBus>;
 
 const defaultEventBus = resource<EventBusSchema>({
   type: "aws/eventBridge/DefaultEventBus",
+  provider: "@notation/aws.iac",
 });
 
 const defaultEventBusSchema = defaultEventBus.defineSchema({

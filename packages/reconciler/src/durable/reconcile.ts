@@ -373,7 +373,7 @@ export async function* deleteResource(
         resource.type,
       );
     }
-    target = await recordedResource(Resource, session.node);
+    target = await instantiateRecord(Resource, session.node);
   }
   target.setOutput(session.node.output);
 

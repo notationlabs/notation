@@ -56,13 +56,15 @@ export class RuleGroup extends aws.AwsResourceGroup<RuleOptions> {
     );
 
     lambdaGroup.add(
-      new aws.eventBridge.LambdaEventBridgeRulePermission(
+      new aws.lambda.LambdaPermission(
         resourceId("eventbridge-pattern-permission", config.id),
         {
-          dependencies: {
-            lambda: lambdaResource,
-            eventBridgeRule: this.rule,
+          config: {
+            Action: "lambda:InvokeFunction",
+            Principal: "events.amazonaws.com",
+            SourceArn: this.rule.outputValue("Arn"),
           },
+          dependencies: { lambda: lambdaResource },
         },
       ),
     );

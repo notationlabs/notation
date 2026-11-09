@@ -2080,7 +2080,7 @@ describe("replacement with dependents", () => {
     };
     // Cast: a resource declared without API types constrains every schema
     // key to be a key of an `any` API schema, which no named key satisfies.
-    const Bus = resource({ type: "test/durable/world-bus" })
+    const Bus = resource({ type: "test/durable/world-bus", provider: "test" })
       .defineSchema({ name } as any)
       .defineOperations(operations(false) as any);
     // The parent can be updated, so a child is replaced only because deploy
@@ -2089,7 +2089,7 @@ describe("replacement with dependents", () => {
       type: `${string}/${string}/${string}`,
       blocksDeleteOf?: `${string}/${string}/${string}`[],
     ) =>
-      resource({ type, blocksDeleteOf })
+      resource({ type, provider: "test", blocksDeleteOf })
         .defineSchema({
           name,
           parent: {

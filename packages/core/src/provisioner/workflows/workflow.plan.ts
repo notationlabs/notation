@@ -7,6 +7,11 @@ import {
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
+import {
+  loadProviderRegistry,
+  mergeResourceRegistries,
+  stateProviderPackages,
+} from "../resource-registry";
 import { withRuntime, type NodeDurableRuntime } from "../durable-runtime";
 
 export type { Plan, PlanNode, PlanDecision } from "@notation/reconciler";
@@ -37,14 +42,20 @@ export async function planApp({
   });
   return withRuntime(
     { deployment, runtime: suppliedRuntime, databasePath },
-    (runtime) =>
-      createPlan({
+    async (runtime) => {
+      // Deploy loads the same packages, so plan finds the same blocking
+      // dependents as deploy.
+      const providerRegistry = await loadProviderRegistry(
+        stateProviderPackages(await runtime.state.values()),
+      );
+      return createPlan({
         resources: graph.resources,
         state: runtime.state,
         driftDetection,
         emit,
         maxOperationAttempts,
-        registry,
-      }),
+        registry: mergeResourceRegistries(providerRegistry, registry),
+      });
+    },
   );
 }
