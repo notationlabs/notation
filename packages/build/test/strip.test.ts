@@ -271,11 +271,14 @@ describe("stripForRuntime", () => {
       "sqs(Order, ordersQueue.arn)",
       "sqs(ordersQueue)",
     );
-    const strip = (infraFiles: Record<string, string>) => {
+    const strip = (
+      infraFiles: Record<string, string>,
+      handler: string = source,
+    ) => {
       const marks = virtualMarks(
         {
           ...files,
-          "runtime/handler.ts": source,
+          "runtime/handler.ts": handler,
           "shared/schema.ts": `export const Order = {};`,
           ...infraFiles,
         },
@@ -300,6 +303,104 @@ describe("stripForRuntime", () => {
         "event: () => sqs({ schema: __notation_schema_0 }),",
       );
       expect(code).not.toContain("../infra/orders");
+    });
+
+    const queueModule = (...lines: string[]) =>
+      [
+        `import { createQueue } from "@notation/aws/sqs";`,
+        `import { Order } from "../shared/schema";`,
+        ...lines,
+      ].join("\n");
+    const withArgument = (argument: string, importLine?: string) => {
+      let handler = source.replace("sqs(ordersQueue)", `sqs(${argument})`);
+      if (importLine)
+        handler = handler.replace(
+          `import { ordersQueue, unused } from "../infra/orders";`,
+          importLine,
+        );
+      return handler;
+    };
+
+    it.each([
+      [
+        "a member of an object literal",
+        "queues.orders",
+        `export const queues = { orders: createQueue({ id: "orders", schema: Order }) };`,
+      ],
+      [
+        "a computed member with a string key",
+        `queues["orders"]`,
+        `export const queues = { "orders": createQueue({ id: "orders", schema: Order }) };`,
+      ],
+      [
+        "a shorthand member that names a const",
+        "queues.orders",
+        `const orders = createQueue({ id: "orders", schema: Order });\nexport const queues = { orders };`,
+      ],
+      [
+        "a nested member",
+        "queues.sales.orders",
+        `export const queues = { sales: { orders: createQueue({ id: "orders", schema: Order }) } };`,
+      ],
+    ])("follows %s", (_, argument, line) => {
+      const { code } = strip(
+        { "infra/orders.ts": queueModule(line) },
+        withArgument(
+          argument,
+          `import { queues, unused } from "../infra/orders";`,
+        ),
+      );
+      expect(code).toContain("sqs({ schema: __notation_schema_0 })");
+      expect(code).not.toContain("../infra/orders");
+    });
+
+    it("follows a member of a namespace import", () => {
+      const { code } = strip(
+        {
+          "infra/orders.ts": queueModule(
+            `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+          ),
+        },
+        withArgument(
+          "infra.ordersQueue",
+          `import * as infra from "../infra/orders";`,
+        ),
+      );
+      expect(code).toContain("sqs({ schema: __notation_schema_0 })");
+    });
+
+    it("fails when a helper makes the object that holds the resource", () => {
+      expect(() =>
+        strip(
+          {
+            "infra/orders.ts": queueModule(
+              `const makeQueues = () => ({ orders: createQueue({ id: "orders", schema: Order }) });`,
+              `export const queues = makeQueues();`,
+            ),
+          },
+          withArgument(
+            "queues.orders",
+            `import { queues, unused } from "../infra/orders";`,
+          ),
+        ),
+      ).toThrow(
+        "runtime/handler.ts:16:20: the function reads queues.orders from infra/orders.ts",
+      );
+    });
+
+    it("gives the infra error for a member of a resource", () => {
+      expect(() =>
+        strip(
+          {
+            "infra/orders.ts": queueModule(
+              `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+            ),
+          },
+          withArgument("ordersQueue.schema"),
+        ),
+      ).toThrow(
+        "an option of $lambda that the function keeps refers to ordersQueue",
+      );
     });
 
     it("follows a re-export to the resource", () => {

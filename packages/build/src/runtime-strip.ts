@@ -155,10 +155,12 @@ function removeEmptiedImports(
 
 /**
  * The object that replaces a runtime argument which names a resource from an
- * infra module, or `undefined` for any other argument. Adds an import to
- * `added` for each runtime option of the resource. A value made by a call to
- * a function that isn't a resource function, such as a helper, fails, as the
- * build can't find the resource's options.
+ * infra module, or `undefined` for any other argument. The argument can be a
+ * name, or a member of an object literal or of a namespace import, such as
+ * `queues.orders`. Adds an import to `added` for each runtime option of the
+ * resource. A value made by a call to a function that isn't a resource
+ * function, such as a helper, fails, as the build can't find the resource's
+ * options.
  */
 function resourceStub(
   argument: Node,
@@ -166,45 +168,47 @@ function resourceStub(
   analyses: ModuleAnalyses,
   added: string[],
 ): string | undefined {
-  const node = unwrap(argument);
-  if (node.type !== "Identifier") return undefined;
+  const path = memberPath(unwrap(argument));
+  if (!path) return undefined;
   const { file, source } = analysis.table.module;
-  const binding = analysis.table.imports.get(node.name);
-  if (!binding || binding.imported === "*") return undefined;
+  const binding = analysis.table.imports.get(path.root.name);
+  if (!binding) return undefined;
   const resolved = analyses.marks.resolve(binding.source, file);
   if (!resolved || !analyses.describeInfra(resolved)) return undefined;
 
-  const at = `${analyses.show(file)}:${location(source, node.start)}`;
-  const definition = findDefinition(resolved, binding.imported, analyses);
-  const init = definition?.declarator.init;
-  const call = init ? unwrap(init) : undefined;
-  const owner = definition && analyses.fromFile(definition.file);
-  const mark =
-    owner && call?.type === "CallExpression"
-      ? markOfCallee(call.callee, owner, analyses.marks)
-      : undefined;
-  if (call?.type !== "CallExpression") return undefined;
-  if (!definition || !owner || mark?.kind !== "resource") {
+  const keys = [...path.keys];
+  const exportName = binding.imported === "*" ? keys.shift() : binding.imported;
+  if (exportName === undefined) return undefined;
+  const start = exportedValue(resolved, exportName, analyses, new Set());
+  const found = start && followKeys(start, keys, analyses);
+  if (!found) return undefined;
+  const call = unwrap(found.value.node);
+  if (call.type !== "CallExpression") return undefined;
+
+  const text = source.slice(argument.start, argument.end);
+  const owner = analyses.fromFile(found.value.file);
+  const mark = owner && markOfCallee(call.callee, owner, analyses.marks);
+  // A member of a resource, such as `orderQueue.schema`, is an infra value.
+  if (mark?.kind === "resource" && found.rest > 0) return undefined;
+  if (!owner || mark?.kind !== "resource") {
     throw new Error(
-      `${at}: the function reads ${node.name} from ${analyses.show(resolved)}, so the build has to find the options of ${node.name} that the function uses. It finds them only when ${node.name} is declared with a call to a resource function, such as \`export const ${node.name} = queue({ name: "orders", schema: Order })\`, and not through a helper or a loop.`,
+      `${analyses.show(file)}:${location(source, argument.start)}: the function reads ${text} from ${analyses.show(resolved)}, so the build has to find the options of ${text} that the function uses. It finds them only when ${text} is a call to a resource function, such as \`queue({ name: "orders", schema: Order })\`, written as a top-level const or in an object literal, and not made by a helper or a loop.`,
     );
   }
+  const definitionFile = found.value.file;
   const first = call.arguments[0];
   const config = first ? unwrap(first) : undefined;
   const where = (n: Node) =>
-    `${analyses.show(definition.file)}:${location(owner.table.module.source, n.start)}`;
+    `${analyses.show(definitionFile)}:${location(owner.table.module.source, n.start)}`;
   const entries: string[] = [];
   for (const option of mark.runtime) {
     if (config?.type !== "ObjectExpression") {
       throw new Error(
-        `${where(call)}: ${node.name} must be declared with an object literal, so the build can find its ${option}, which the function in ${analyses.show(file)} reads.`,
+        `${where(call)}: ${text} must be declared with an object literal, so the build can find its ${option}, which the function in ${analyses.show(file)} reads.`,
       );
     }
     const property = config.properties.find(
-      (p: Node) =>
-        p.type === "Property" &&
-        !p.computed &&
-        (p.key.name ?? p.key.value) === option,
+      (p: Node) => p.type === "Property" && keyOf(p) === option,
     );
     if (!property) continue;
     const value = unwrap(property.value);
@@ -214,7 +218,7 @@ function resourceStub(
         : undefined;
     const from =
       imported && imported.imported !== "*"
-        ? analyses.marks.resolve(imported.source, definition.file)
+        ? analyses.marks.resolve(imported.source, definitionFile)
         : undefined;
     const kind = from ? analyses.kindOf(from)?.kind : undefined;
     if (
@@ -224,7 +228,7 @@ function resourceStub(
       kind === "runtime"
     ) {
       throw new Error(
-        `${where(property)}: the ${option} of ${node.name} must be imported from a shared module (files.shared), because the function in ${analyses.show(file)} reads it.`,
+        `${where(property)}: the ${option} of ${text} must be imported from a shared module (files.shared), because the function in ${analyses.show(file)} reads it.`,
       );
     }
     const alias = `__notation_${option}_${added.length}`;
@@ -237,43 +241,117 @@ function resourceStub(
   return `{ ${entries.join(", ")} }`;
 }
 
-// The top-level declarator of an export, following re-exports and imports.
-function findDefinition(
+type Located = { file: string; node: Node };
+
+// A name followed by static member keys, such as `queues.orders` or
+// `queues["orders"]`.
+function memberPath(node: Node): { root: Node; keys: string[] } | undefined {
+  const keys: string[] = [];
+  while (node.type === "MemberExpression") {
+    const property = node.property;
+    if (!node.computed && property.type === "Identifier")
+      keys.unshift(property.name);
+    else if (node.computed && typeof property.value === "string")
+      keys.unshift(property.value);
+    else return undefined;
+    node = unwrap(node.object);
+  }
+  return node.type === "Identifier" ? { root: node, keys } : undefined;
+}
+
+function keyOf(property: Node): string | undefined {
+  if (!property.computed) return property.key.name ?? property.key.value;
+  return typeof property.key.value === "string"
+    ? property.key.value
+    : undefined;
+}
+
+// The expression that an export of a module holds, following re-exports and
+// imports.
+function exportedValue(
   file: string,
   name: string,
   analyses: ModuleAnalyses,
-  seen: Set<string> = new Set(),
-): { file: string; declarator: Node } | undefined {
+  seen: Set<string>,
+): Located | undefined {
+  const table = analyses.marks.table(file);
+  if (!table) return undefined;
+  const target = table.exports.get(name);
+  if (!target) {
+    for (const source of table.stars) {
+      const resolved = analyses.marks.resolve(source, file);
+      const found = resolved && exportedValue(resolved, name, analyses, seen);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if ("source" in target) {
+    const resolved = analyses.marks.resolve(target.source, file);
+    return resolved && target.imported !== "*"
+      ? exportedValue(resolved, target.imported, analyses, seen)
+      : undefined;
+  }
+  return localValue(file, target.local, analyses, seen);
+}
+
+// The expression that a top-level name of a module holds: the initializer of
+// its const, or the export that it imports.
+function localValue(
+  file: string,
+  name: string,
+  analyses: ModuleAnalyses,
+  seen: Set<string>,
+): Located | undefined {
   const key = `${file}#${name}`;
   if (seen.has(key)) return undefined;
   seen.add(key);
   const table = analyses.marks.table(file);
   if (!table) return undefined;
-  const follow = (source: string, imported: string) => {
-    const resolved = analyses.marks.resolve(source, file);
-    return resolved && imported !== "*"
-      ? findDefinition(resolved, imported, analyses, seen)
+  const binding = table.imports.get(name);
+  if (binding) {
+    const resolved = analyses.marks.resolve(binding.source, file);
+    return resolved && binding.imported !== "*"
+      ? exportedValue(resolved, binding.imported, analyses, seen)
       : undefined;
-  };
-  const target = table.exports.get(name);
-  if (!target) {
-    for (const source of table.stars) {
-      const found = follow(source, name);
-      if (found) return found;
-    }
-    return undefined;
   }
-  if ("source" in target) return follow(target.source, target.imported);
-  const binding = table.imports.get(target.local);
-  if (binding) return follow(binding.source, binding.imported);
   for (let statement of table.module.body) {
     if (statement.type === "ExportNamedDeclaration" && statement.declaration)
       statement = statement.declaration;
-    if (statement.type !== "VariableDeclaration") continue;
+    if (statement.type !== "VariableDeclaration" || statement.kind !== "const")
+      continue;
     const declarator = statement.declarations.find(
-      (d: Node) => d.id.type === "Identifier" && d.id.name === target.local,
+      (d: Node) => d.id.type === "Identifier" && d.id.name === name,
     );
-    if (declarator) return { file, declarator };
+    if (declarator?.init) return { file, node: declarator.init };
+  }
+  return undefined;
+}
+
+// Follows member keys through object literals and the names that hold them.
+// Stops at any other expression, such as a call, and counts the keys left.
+function followKeys(
+  start: Located,
+  keys: string[],
+  analyses: ModuleAnalyses,
+): { value: Located; rest: number } | undefined {
+  let value: Located | undefined = start;
+  let index = 0;
+  const seen = new Set<string>();
+  while (value) {
+    const node = unwrap(value.node);
+    if (node.type === "Identifier") {
+      value = localValue(value.file, node.name, analyses, seen);
+      continue;
+    }
+    if (index === keys.length || node.type !== "ObjectExpression") {
+      return { value, rest: keys.length - index };
+    }
+    const key = keys[index++];
+    const property = node.properties.find(
+      (p: Node) => p.type === "Property" && keyOf(p) === key,
+    );
+    if (!property) return undefined;
+    value = { file: value.file, node: property.value };
   }
   return undefined;
 }
