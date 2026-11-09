@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Plugin } from "rolldown";
-import { ignoredGlobs } from "./files";
+import { globCharacters, ignoredGlobs } from "./files";
 import type { ModuleAnalyses } from "./modules";
 
 /** The input to give an infra build that uses `infraEntryPlugin`. */
@@ -33,9 +33,8 @@ function analyse(analyses: ModuleAnalyses, file: string) {
 function globBases(root: string, globs: string[]): string[] {
   const bases = new Set<string>();
   for (const glob of globs) {
-    if (glob.startsWith("!")) continue;
     const segments = glob.split(/[\\/]/);
-    const first = segments.findIndex((segment) => /[*?[\]{}()!]/.test(segment));
+    const first = segments.findIndex((segment) => globCharacters.test(segment));
     let base = path.resolve(
       root,
       ...(first === -1 ? segments.slice(0, -1) : segments.slice(0, first)),
@@ -80,7 +79,10 @@ export function infraEntryPlugin(options: {
     load(id) {
       if (id !== resolvedInfraEntry) return null;
       if (this.meta.watchMode) {
-        for (const dir of globBases(files.root, files.globs.runtime)) {
+        for (const dir of globBases(
+          files.root,
+          files.includedPatterns("runtime"),
+        )) {
           this.addWatchFile(dir);
         }
       }

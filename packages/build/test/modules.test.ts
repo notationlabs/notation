@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -39,31 +39,50 @@ describe("FileKinds", () => {
     expect(kind({ shared: [] }, "shared/schema.ts")).toBeUndefined();
   });
 
-  it("accepts a leading ./", () => {
+  it("accepts a leading ./, and quotes the glob as the config writes it", () => {
     expect(kind({ runtime: ["./functions/*.ts"] }, "functions/a.ts")).toEqual({
       kind: "runtime",
-      glob: "functions/*.ts",
+      glob: "./functions/*.ts",
       isDefault: false,
     });
   });
 
-  it("reads a glob that names a folder as the files in that folder", () => {
+  it.each([["infra"], ["infra/"], ["./infra"]])(
+    "reads %j as the files in the folder",
+    (glob) => {
+      expect(kind({ infra: [glob] }, "infra/a/b.ts")).toEqual({
+        kind: "infra",
+        glob,
+        isDefault: false,
+      });
+    },
+  );
+
+  it("reads a glob with no glob characters as a file or a folder", () => {
+    const globs = { shared: ["lib/format.ts", "lib/schema"] };
+    expect(kind(globs, "lib/format.ts")?.kind).toBe("shared");
+    expect(kind(globs, "lib/schema/order.ts")?.kind).toBe("shared");
+    expect(kind(globs, "lib/schemas/order.ts")).toBeUndefined();
+    expect(kind(globs, "lib/other.ts")).toBeUndefined();
+  });
+
+  it.each([["packages/@acme/infra"], ["app/(infra)"], ["c++"]])(
+    "reads %j as a folder",
+    (glob) => {
+      expect(kind({ infra: [glob] }, `${glob}/a.ts`)?.kind).toBe("infra");
+    },
+  );
+
+  it("lists the files of a folder that is created after the globs are read", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "notation-kinds-"));
     try {
-      mkdirSync(path.join(dir, "infra"));
+      const files = new FileKinds({ runtime: ["jobs"] }, dir);
+      expect(files.list("runtime")).toEqual([]);
       mkdirSync(path.join(dir, "jobs"));
-      const files = new FileKinds(
-        { infra: ["infra"], runtime: ["./jobs/"], shared: ["lib"] },
-        dir,
-      );
-      expect(files.globs).toEqual({
-        infra: ["infra/**"],
-        runtime: ["jobs/**"],
-        shared: ["lib"],
-      });
-      expect(files.kindOf(path.join(files.root, "infra/a/b.ts"))?.kind).toBe(
-        "infra",
-      );
+      writeFileSync(path.join(dir, "jobs/a.ts"), "");
+      const file = path.join(files.root, "jobs/a.ts");
+      expect(files.kindOf(file)?.kind).toBe("runtime");
+      expect(files.list("runtime")).toEqual([file]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

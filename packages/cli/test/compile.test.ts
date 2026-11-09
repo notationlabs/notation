@@ -1072,7 +1072,7 @@ describe("files config", () => {
       );
       write("infra/labels.ts", `export const label = () => "orders";`);
       await expect(buildProject({ infra: [glob] })).rejects.toThrow(
-        'uses infra/labels.ts, an infra module (files.infra: "infra/**")',
+        `uses infra/labels.ts, an infra module (files.infra: ${JSON.stringify(glob)})`,
       );
     },
   );

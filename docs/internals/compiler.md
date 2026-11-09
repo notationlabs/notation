@@ -51,7 +51,7 @@ const defaultModuleGlobs = {
 };
 ```
 
-`kindOf(file)` matches the file's path, relative to the project root, against the globs with `path.matchesGlob`. The root is resolved to its real path, because Rolldown gives real paths. A glob that ends in `/`, or that has no glob characters and names a folder, is read as that folder's `**`, so `"infra"` matches the files in `infra/`. A glob that starts with `!` excludes the files that it matches from its kind. A file in `dist/`, `node_modules/` or a dot-directory has no kind, and so does a file outside the root. `kindOf` fails if two kinds match the file. The result depends only on the path, so `FileKinds` keeps it for the life of the watcher.
+`kindOf(file)` matches the file's path, relative to the project root, against the globs with `path.matchesGlob`. The root is resolved to its real path, because Rolldown gives real paths. A glob that ends in `/` is read as that folder's `**`. A glob with no `*`, `?`, `[` or `{`, such as `"infra"`, is matched both as written and as `infra/**`. Neither reads the file system, so a folder created in watch mode is matched. `KindMatch.glob` keeps the glob as the config writes it, for error messages. A glob that starts with `!` excludes the files that it matches from its kind. A file in `dist/`, `node_modules/` or a dot-directory has no kind, and so does a file outside the root. `kindOf` fails if two kinds match the file. The result depends only on the path, so `FileKinds` keeps it for the life of the watcher.
 
 **The infra entry checks every file for two kinds on each build.** Its `load` hook globs the files of all three kinds, and calls `kindOf` on each, so a conflict fails the build even for a file that nothing imports.
 

@@ -50,7 +50,9 @@ See [Module kinds](./file-conventions.md#module-kinds) for each kind.
 The globs follow these rules:
 
 - A leading `./` is allowed: `./runtime/**` is the same as `runtime/**`.
-- A glob that ends in `/`, or that has no glob characters and names a folder, matches the files in that folder: `infra` and `infra/` are the same as `infra/**`.
+- A glob that ends in `/` matches the files in that folder: `infra/` is the same as `infra/**`.
+- A glob with no `*`, `?`, `[` or `{` matches that path and the files under it: `infra` matches a file named `infra` and the files in `infra/`. The folder doesn't need to exist when the build starts, so a folder created in watch mode is matched.
+- Errors quote a glob as the config writes it.
 - A glob that starts with `!` excludes files. For example, `infra: ["infra/**", "!infra/**/*.test.ts"]` makes the test files in `infra/` have no kind.
 - The build reads only JS and TS files, so a glob such as `infra/**` matches the same modules as `infra/**/*.ts` when the folder holds only `.ts` files.
 - No file in `dist/`, `node_modules/` or a dot-directory such as `.notation/` has a kind, and no file outside the project root has one.

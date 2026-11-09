@@ -27,31 +27,29 @@ export const ignoredGlobs = [
 /** The kind of a file, and the glob of `files` that gives it that kind. */
 export type KindMatch = {
   kind: ModuleKind;
+  /** The glob as the config writes it. */
   glob: string;
   /** Whether the glob is a default, not set in the config. */
   isDefault: boolean;
 };
 
-const globCharacters = /[*?[\]{}()!+@]/;
+/** The characters that make a path a glob. */
+export const globCharacters = /[*?[{]/;
 
-// Removes a leading `./`. A glob that ends in `/`, or that has no glob
-// characters and names a folder, such as `infra`, matches the files in
-// that folder.
-function normalise(glob: string, root: string): string {
-  const negated = glob.startsWith("!");
-  let body = (negated ? glob.slice(1) : glob).replace(/^\.\//, "");
-  if (body.endsWith("/")) body = `${body}**`;
-  else if (!globCharacters.test(body) && isDirectory(path.join(root, body)))
-    body = `${body}/**`;
-  return negated ? `!${body}` : body;
-}
+// A glob of the config, and the patterns that it matches with.
+type Glob = { written: string; negated: boolean; patterns: string[] };
 
-function isDirectory(file: string): boolean {
-  try {
-    return fs.statSync(file).isDirectory();
-  } catch {
-    return false;
-  }
+// Removes a leading `!` and `./`. A glob that ends in `/` matches the files
+// in that folder. A glob with no glob characters, such as `infra`, matches
+// the file of that path and the files in a folder of that path. Neither
+// reads the file system, so a folder created in watch mode is matched.
+function parseGlob(written: string): Glob {
+  const negated = written.startsWith("!");
+  const body = (negated ? written.slice(1) : written).replace(/^\.\//, "");
+  let patterns = [body];
+  if (body.endsWith("/")) patterns = [`${body}**`];
+  else if (!globCharacters.test(body)) patterns = [body, `${body}/**`];
+  return { written, negated, patterns };
 }
 
 // The real path of the root, because the bundler gives real paths. A root
@@ -80,7 +78,7 @@ const articles: Record<ModuleKind, string> = {
  */
 export class FileKinds {
   #config: ModuleGlobs;
-  #globs?: Required<ModuleGlobs>;
+  #parsed?: Record<ModuleKind, Glob[]>;
   #defaults = new Set<ModuleKind>();
   #root?: string;
   #realRoot?: string;
@@ -101,16 +99,27 @@ export class FileKinds {
     return (this.#realRoot ??= realRoot(this.#root ?? projectRoot()));
   }
 
-  /** The globs of each kind, with the defaults for the kinds that the config doesn't set. */
-  get globs(): Required<ModuleGlobs> {
-    if (this.#globs) return this.#globs;
-    const globs = { ...defaultModuleGlobs };
-    for (const kind of moduleKinds) {
-      const set = this.#config[kind];
-      if (set) globs[kind] = set.map((glob) => normalise(glob, this.root));
-      else this.#defaults.add(kind);
+  #globsOf(kind: ModuleKind): Glob[] {
+    if (!this.#parsed) {
+      const parsed = {} as Record<ModuleKind, Glob[]>;
+      for (const kind of moduleKinds) {
+        const set = this.#config[kind];
+        if (!set) this.#defaults.add(kind);
+        parsed[kind] = (set ?? defaultModuleGlobs[kind]).map(parseGlob);
+      }
+      this.#parsed = parsed;
     }
-    return (this.#globs = globs);
+    return this.#parsed[kind];
+  }
+
+  /**
+   * The patterns that select the files of a kind, without `!` globs, with
+   * the defaults for a kind that the config doesn't set.
+   */
+  includedPatterns(kind: ModuleKind): string[] {
+    return this.#globsOf(kind).flatMap((glob) =>
+      glob.negated ? [] : glob.patterns,
+    );
   }
 
   /** The kind of a file, by its absolute path. */
@@ -139,22 +148,20 @@ export class FileKinds {
   }
 
   #match(kind: ModuleKind, relative: string): KindMatch | undefined {
-    const globs = this.globs[kind];
-    const excluded = globs.some(
-      (glob) =>
-        glob.startsWith("!") && path.posix.matchesGlob(relative, glob.slice(1)),
-    );
-    if (excluded) return undefined;
-    const glob = globs.find(
-      (glob) => !glob.startsWith("!") && path.posix.matchesGlob(relative, glob),
-    );
+    const globs = this.#globsOf(kind);
+    const matches = (glob: Glob) =>
+      glob.patterns.some((pattern) =>
+        path.posix.matchesGlob(relative, pattern),
+      );
+    if (globs.some((glob) => glob.negated && matches(glob))) return undefined;
+    const glob = globs.find((glob) => !glob.negated && matches(glob));
     if (!glob) return undefined;
-    return { kind, glob, isDefault: this.#defaults.has(kind) };
+    return { kind, glob: glob.written, isDefault: this.#defaults.has(kind) };
   }
 
   /** The script files of a kind, as absolute paths, sorted. */
   list(kind: ModuleKind): string[] {
-    return this.#scriptFiles(this.globs[kind]).filter(
+    return this.#scriptFiles(this.includedPatterns(kind)).filter(
       (file) => this.kindOf(file)?.kind === kind,
     );
   }
@@ -162,13 +169,12 @@ export class FileKinds {
   /** Fails if two kinds match a script file. */
   checkOverlaps() {
     for (const file of this.#scriptFiles(
-      moduleKinds.flatMap((kind) => this.globs[kind]),
+      moduleKinds.flatMap((kind) => this.includedPatterns(kind)),
     ))
       this.kindOf(file);
   }
 
-  #scriptFiles(globs: string[]): string[] {
-    const included = globs.filter((glob) => !glob.startsWith("!"));
+  #scriptFiles(included: string[]): string[] {
     if (included.length === 0) return [];
     return fs
       .globSync(included, {
