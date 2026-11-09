@@ -4,6 +4,11 @@ import { AwsSchema } from "src/utils/types";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/utils/aws-clients";
 import { LambdaFunctionInstance } from "../lambda";
+import {
+  EventBus,
+  type DefaultEventBusInstance,
+  type EventBusInstance,
+} from "./event-bus";
 
 export type EventBridgeRuleSchema = AwsSchema<{
   Key: sdk.DescribeRuleCommandInput;
@@ -20,6 +25,9 @@ export type EventBridgeRuleSchema = AwsSchema<{
 
 export type EventBridgeRuleDependencies = {
   lambda: LambdaFunctionInstance;
+  // The rule's bus, so that the bus is made before the rule and deleted
+  // after it. `EventBusName` holds the bus's name.
+  eventBus?: EventBusInstance | DefaultEventBusInstance;
 };
 
 type TargetsResult = {
@@ -57,6 +65,9 @@ function assertNoFailedTargets(
 
 const eventBridgeRule = resource<EventBridgeRuleSchema>({
   type: "aws/eventBridge/rule",
+  // AWS refuses to delete a bus that has rules. The default bus is never
+  // deleted, so it is not listed.
+  blocksDeleteOf: [EventBus.type],
 });
 
 const keyValue = v.object({ Key: v.string(), Value: v.string() });
@@ -204,6 +215,11 @@ const eventBridgeRuleSchema = eventBridgeRule.defineSchema({
     propertyType: "param",
     value: v.string(),
   },
+  State: {
+    presence: "optional",
+    propertyType: "param",
+    value: v.picklist(["ENABLED", "DISABLED"]),
+  },
   Targets: {
     presence: "required",
     propertyType: "param",
@@ -232,8 +248,14 @@ export const EventBridgeRule = eventBridgeRuleSchema
             eventBridgeClient().send(listRuleTargetsCommand),
           ]);
 
+        const { EventPattern } = ruleDescriptionResult;
         return {
           ...ruleDescriptionResult,
+          // The pattern is compared as a string, so it is read in the
+          // compact form that JSON.stringify writes.
+          EventPattern: EventPattern
+            ? JSON.stringify(JSON.parse(EventPattern))
+            : undefined,
           ...listRuleTargetsResult,
         };
       } catch (error) {

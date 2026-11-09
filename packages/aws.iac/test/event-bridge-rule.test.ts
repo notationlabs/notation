@@ -3,6 +3,7 @@ import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/utils/aws-clients";
 import { validateValues } from "@notation/resource";
 import { EventBridgeRule } from "src/resources/event-bridge/rule";
+import { EventBus } from "src/resources/event-bridge/event-bus";
 
 const send = vi.spyOn(eventBridgeClient(), "send");
 
@@ -32,6 +33,11 @@ function sentCommands() {
 
 beforeEach(() => {
   send.mockReset();
+});
+
+test("a rule blocks the delete of a custom bus, and of no other type", () => {
+  expect(EventBridgeRule.blocksDeleteOf).toEqual([EventBus.type]);
+  expect(EventBus.blocksDeleteOf).toEqual([]);
 });
 
 test("update removes targets that are no longer configured", async () => {
@@ -171,4 +177,44 @@ test("create succeeds when no targets failed", async () => {
   const params = { ...key, Targets: [{ Id: "fn", Arn: "arn:fn" }] };
 
   await expect(rule.create!(params, {} as any)).resolves.toBeUndefined();
+});
+
+test("read returns the event pattern in compact form", async () => {
+  send.mockImplementation(async (command: any) => {
+    if (command instanceof sdk.ListTargetsByRuleCommand) return { Targets: [] };
+    return {
+      Name: "orders",
+      Arn: "arn:rule",
+      State: "DISABLED",
+      EventPattern: '{\n  "source": ["shop"]\n}',
+    };
+  });
+
+  const result = await rule.read!(key);
+
+  expect(result).toMatchObject({
+    EventPattern: '{"source":["shop"]}',
+    State: "DISABLED",
+  });
+});
+
+test("update sends the rule's state and event pattern to PutRule", async () => {
+  mockExistingTargets(["fn"]);
+  const params = {
+    Name: "orders",
+    EventBusName: "orders-bus",
+    EventPattern: '{"source":["shop"]}',
+    State: "DISABLED" as const,
+    Targets: [{ Id: "fn", Arn: "arn:fn" }],
+  };
+  const busKey = { Name: "orders", EventBusName: "orders-bus" };
+
+  await rule.update!(busKey, params, params, {} as any);
+
+  expect(sentCommands()[0].input).toEqual({
+    Name: "orders",
+    EventBusName: "orders-bus",
+    EventPattern: '{"source":["shop"]}',
+    State: "DISABLED",
+  });
 });
