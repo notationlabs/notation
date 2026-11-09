@@ -20,7 +20,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
   if (event.routeKey === "GET /todos/count") return todos.length;
   if (event.routeKey === "POST /todos") {
     try {
-      const todo = await lambda.decode(event);
+      const { body: todo } = await lambda.decode(event);
       return { statusCode: 201, body: JSON.stringify(todo) };
     } catch (error) {
       if (!(error instanceof DecodeError)) throw error;

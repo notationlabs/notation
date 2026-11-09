@@ -70,7 +70,7 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
       const orders = [];
       for (const record of event.Records) {
         try {
-          orders.push(await lambda.decode(record));
+          orders.push((await lambda.decode(record)).body);
         } catch (error) {
           if (!(error instanceof DecodeError)) throw error;
         }
@@ -191,7 +191,8 @@ it("deploys a declaration module that makes its own route with apiGateway.bind(a
 
     export const handler: LambdaHandler<typeof lambda> = async (event) => {
       try {
-        return { statusCode: 201, body: JSON.stringify(await lambda.decode(event)) };
+        const { body: order, claims } = await lambda.decode(event);
+        return { statusCode: 201, body: JSON.stringify({ order, user: claims.sub }) };
       } catch (error) {
         if (!(error instanceof DecodeError)) throw error;
         return { statusCode: 400, body: error.message };
@@ -254,7 +255,7 @@ it("deploys a declaration module that makes its own route with apiGateway.bind(a
     },
   ]);
   expect(result.responses).toEqual([
-    { statusCode: 201, body: '{"id":"o1"}' },
+    { statusCode: 201, body: '{"order":{"id":"o1"},"user":"u1"}' },
     {
       statusCode: 400,
       body: "The request's JWT claims are not valid: sub must be a string",

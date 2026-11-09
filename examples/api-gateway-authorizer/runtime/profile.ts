@@ -12,16 +12,15 @@ export const lambda = $lambda({
   id: "profile",
   timeout: 5,
   memory: 64,
-  event: () => apiGateway.schema(undefined, { claims: JWTClaims }),
+  event: () => apiGateway.schema().authSchema(JWTClaims),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
   try {
-    await lambda.decode(event);
+    const { claims } = await lambda.decode(event);
+    return { sub: claims.sub, iss: claims.iss };
   } catch (error) {
     if (!(error instanceof DecodeError)) throw error;
     return { statusCode: 403, body: error.message };
   }
-  const { sub, iss } = event.requestContext.authorizer.jwt.claims;
-  return { sub, iss };
 };

@@ -11,7 +11,7 @@ export const lambda = $lambda({
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
   for (const record of event.Records) {
-    const refund = await lambda.decode(record);
+    const { body: refund } = await lambda.decode(record);
     console.log("refund for", refund.orderId, refund.reason);
   }
 };

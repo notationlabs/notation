@@ -17,7 +17,7 @@ export const lambda = $lambda({
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
   for (const record of event.Records) {
     try {
-      const order = await lambda.decode(record);
+      const { body: order } = await lambda.decode(record);
       console.log("order from", lambda.env().ORDER_QUEUE_URL, order.orderId);
     } catch (error) {
       if (!(error instanceof DecodeError)) throw error;
