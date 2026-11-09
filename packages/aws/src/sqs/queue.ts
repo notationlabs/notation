@@ -177,8 +177,9 @@ export class QueueGroup<
   }
 }
 
-// SQS rejects the FIFO attributes on a standard queue, and a dead-letter
-// queue of the other type, but only at deploy.
+// SQS rejects the FIFO attributes on a standard queue, a per-message-group
+// throughput limit without per-message-group deduplication, and a
+// dead-letter queue of the other type, but only at deploy.
 function assertFifoOptions(config: Omit<QueueConfig, "schema">): void {
   const fifo = config.fifo ?? false;
   if (!fifo) {
@@ -194,6 +195,14 @@ function assertFifoOptions(config: Omit<QueueConfig, "schema">): void {
         `queue() "${config.id}" sets ${set.join(", ")}, which only a FIFO queue has. Set fifo: true, or remove ${set.length > 1 ? "them" : "it"}.`,
       );
     }
+  }
+  if (
+    config.fifoThroughputLimit === "perMessageGroupId" &&
+    config.deduplicationScope !== "messageGroup"
+  ) {
+    throw new Error(
+      `queue() "${config.id}" sets fifoThroughputLimit: "perMessageGroupId", which SQS allows only with deduplicationScope: "messageGroup".`,
+    );
   }
   const dlq = config.deadLetterQueue?.queue;
   if (dlq && (dlq.config.fifo ?? false) !== fifo) {

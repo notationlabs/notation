@@ -78,7 +78,7 @@ The other settings can change in place. When you remove one, Notation sets it ba
 | `deduplicationScope`        | `DeduplicationScope`            | `"queue"`               |
 | `fifoThroughputLimit`       | `FifoThroughputLimit`           | `"perQueue"`            |
 
-The last three settings are for FIFO queues only. `queue()` throws when a standard queue sets one of them. For high throughput, set `deduplicationScope: "messageGroup"` and `fifoThroughputLimit: "perMessageGroupId"`. With `contentBasedDeduplication: true`, SQS deduplicates messages by a SHA-256 hash of the body, so a sender doesn't have to give a deduplication ID.
+The last three settings are for FIFO queues only. `queue()` throws when a standard queue sets one of them. For high throughput, set `deduplicationScope: "messageGroup"` and `fifoThroughputLimit: "perMessageGroupId"`. SQS allows `"perMessageGroupId"` only with `"messageGroup"`, so `queue()` throws when `fifoThroughputLimit` is `"perMessageGroupId"` and `deduplicationScope` is not `"messageGroup"`. With `contentBasedDeduplication: true`, SQS deduplicates messages by a SHA-256 hash of the body, so a sender doesn't have to give a deduplication ID.
 
 SQS encrypts a new queue with keys that SQS owns (SSE-SQS). Notation doesn't set the encryption attributes, so a queue keeps this default.
 

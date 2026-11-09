@@ -382,6 +382,21 @@ test("a standard queue with a FIFO option throws", async () => {
   );
 });
 
+test("a per-message-group throughput limit without per-message-group deduplication throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      queue({
+        id: "ledger",
+        fifo: true,
+        schema: Unknown,
+        fifoThroughputLimit: "perMessageGroupId",
+      });
+    }),
+  ).rejects.toThrow(
+    'queue() "ledger" sets fifoThroughputLimit: "perMessageGroupId", which SQS allows only with deduplicationScope: "messageGroup".',
+  );
+});
+
 test("a FIFO queue passes its FIFO options and message size to the queue", async () => {
   let ledger!: ReturnType<typeof queue>;
   await collectResourceGraph(() => {
