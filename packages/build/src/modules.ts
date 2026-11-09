@@ -127,8 +127,8 @@ export class ModuleAnalyses {
    * top level, says how to leave the call out of the function, for an error
    * message. A file that holds a declaration can't be infra, so the call has
    * to move. A file that a glob matches gets no advice. A package file can be
-   * left out by its package's `sideEffects`. Another file can be added to
-   * `files.infra`.
+   * left out by `sideEffects` in the nearest package.json. Another file can be
+   * added to `files.infra`.
    */
   resourceCallAdvice(file: string): string | undefined {
     const name = this.show(file);
@@ -140,7 +140,7 @@ export class ModuleAnalyses {
     }
     if (this.files.kindOf(file)) return undefined;
     if (this.files.isPackageFile(file)) {
-      return `${name} calls ${call.name} at its top level. If the function doesn't use a value from ${name}, add "sideEffects": false to the package.json of its package, so that the bundler can leave ${name} out. If it does, read infra values through the declaration's env(), and move a plain value that the function needs to a file that doesn't call a resource function.`;
+      return `${name} calls ${call.name} at its top level. If the function doesn't use a value from ${name}, add "sideEffects": false to the nearest package.json above it, so that the bundler can leave ${name} out. If it does, read infra values through the declaration's env(), and move a plain value that the function needs to a file that doesn't call a resource function.`;
     }
     return `${name} calls ${call.name} at its top level, but files.infra doesn't match it. Add ${name} to files.infra to leave it out of the function.`;
   }

@@ -38,7 +38,8 @@ export type ModuleAnalysis = {
   declaration?: Declaration;
   /**
    * The first call to a resource function at the top level of the module.
-   * Errors use it to say how to leave the call out of a function.
+   * The runtime build uses it to fail a kept option that refers to the
+   * module, and to give advice in the bundle check's error.
    */
   resourceCall?: MarkedReference;
 };

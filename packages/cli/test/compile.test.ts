@@ -924,7 +924,7 @@ describe("workspace packages outside the project root", () => {
     writeProject(withHandler(`import { fmt } from "acme-lib";`, "fmt()"));
     writePackage("acme-lib", acmeLib);
     await expect(buildProject()).rejects.toThrow(
-      "acme-lib/queues.ts calls queue at its top level. If the function doesn't use a value from acme-lib/queues.ts, add \"sideEffects\": false to the package.json of its package, so that the bundler can leave acme-lib/queues.ts out. If it does, read infra values through the declaration's env(), and move a plain value that the function needs to a file that doesn't call a resource function.",
+      "acme-lib/queues.ts calls queue at its top level. If the function doesn't use a value from acme-lib/queues.ts, add \"sideEffects\": false to the nearest package.json above it, so that the bundler can leave acme-lib/queues.ts out. If it does, read infra values through the declaration's env(), and move a plain value that the function needs to a file that doesn't call a resource function.",
     );
   });
 
@@ -1102,7 +1102,7 @@ describe("a monorepo with the config at its root", () => {
       `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
     );
     await expect(buildProject()).rejects.toThrow(
-      "packages/api/queues.ts calls queue at its top level. If the function doesn't use a value from packages/api/queues.ts, add \"sideEffects\": false to the package.json of its package, so that the bundler can leave packages/api/queues.ts out. If it does, read infra values through the declaration's env(), and move a plain value that the function needs to a file that doesn't call a resource function.",
+      "packages/api/queues.ts calls queue at its top level. If the function doesn't use a value from packages/api/queues.ts, add \"sideEffects\": false to the nearest package.json above it, so that the bundler can leave packages/api/queues.ts out. If it does, read infra values through the declaration's env(), and move a plain value that the function needs to a file that doesn't call a resource function.",
     );
   });
 
@@ -1123,6 +1123,49 @@ describe("a monorepo with the config at its root", () => {
     );
     expect(error?.message).toContain(
       "It imports @notation/aws/sqs.js through runtime/process-orders.ts → packages/api/runtime/q.ts → @notation/aws/sqs.js. Infra functions can't run in a runtime module.",
+    );
+    expect(error?.message).not.toContain("sideEffects");
+  });
+
+  it("treats a module of a package folder that files.infra matches as infra", async () => {
+    writeProject(
+      withHandler(
+        `import { label } from "../packages/api/infra/labels";`,
+        "label()",
+      ),
+    );
+    write("packages/api/package.json", JSON.stringify({ name: "@acme/api" }));
+    write(
+      "packages/api/infra/labels.ts",
+      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });\nexport const label = () => "orders";`,
+    );
+    const error = await buildProject({
+      infra: ["infra/**", "packages/*/infra/**"],
+    }).then(
+      () => undefined,
+      (error: Error) => error,
+    );
+    expect(error?.message).toContain(
+      'uses packages/api/infra/labels.ts, an infra module (files.infra: "packages/*/infra/**")',
+    );
+  });
+
+  it("says to move the call when a declaration module in a package folder calls a resource function at its top level", async () => {
+    writeApi();
+    write(
+      "packages/api/handler.ts",
+      readFileSync(path.join(root, "packages/api/handler.ts"), "utf8").replace(
+        `console.log("api module loaded");`,
+        `console.log("api module loaded");\n  import { queue } from "@notation/aws/sqs";\n  export const dlq = queue({ name: "dlq" });`,
+      ),
+    );
+    const { modules } = await compileInfra(path.join(root, "infra/api.ts"));
+    const error = await compileRuntimeModules(modules).then(
+      () => undefined,
+      (error: Error) => error,
+    );
+    expect(error?.message).toContain(
+      "packages/api/handler.ts calls queue at its top level, and it holds a declaration, so it can't be an infra module. Move the call to queue to an infra module.",
     );
     expect(error?.message).not.toContain("sideEffects");
   });
