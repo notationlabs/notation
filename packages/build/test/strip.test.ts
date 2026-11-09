@@ -563,7 +563,20 @@ describe("stripForRuntime", () => {
           ].join("\n"),
         }),
       ).toThrow(
-        "runtime/handler.ts:16:20: the function reads ordersQueue from infra/orders.ts, so the build has to find the options of ordersQueue that the function uses.",
+        "runtime/handler.ts:16:20: the function reads ordersQueue from infra/orders.ts, but ordersQueue isn't a call to a resource function, so the build can't find its options. If ordersQueue is a resource, declare it with a call such as `queue({ name: \"orders\", schema: Order })`, as a top-level const or in an object literal. If it is a plain value, such as a schema, move it to a shared module (files.shared).",
+      );
+    });
+
+    it("gives the same error for a plain value that a call makes", () => {
+      expect(() =>
+        strip({
+          "infra/orders.ts": [
+            `import { object } from "valibot";`,
+            `export const ordersQueue = object({});`,
+          ].join("\n"),
+        }),
+      ).toThrow(
+        "runtime/handler.ts:16:20: the function reads ordersQueue from infra/orders.ts, but ordersQueue isn't a call to a resource function",
       );
     });
   });

@@ -162,10 +162,11 @@ function removeEmptiedImports(
  * name, or a member of an object literal or of a namespace import, such as
  * `queues.orders`. Adds an import to `added` for each runtime option of the
  * resource: by absolute path for a project file, and by name for a package.
- * A value made by a call to a function that isn't a resource
- * function, such as a helper, fails, as the build can't find the resource's
- * options. A resource whose `@resource` mark lists no runtime options is
- * left as it is, so it gets the error for an infra value.
+ * A value made by a call to a function that isn't a resource function fails.
+ * The value can be a resource that a helper makes, or a plain value such as a
+ * schema, and the build can't tell which. A resource whose `@resource` mark
+ * lists no runtime options is left as it is, so it gets the error for an
+ * infra value.
  */
 function resourceStub(
   argument: Node,
@@ -200,7 +201,7 @@ function resourceStub(
   if (mark?.kind === "resource" && found.rest > 0) return undefined;
   if (!owner || mark?.kind !== "resource") {
     throw new Error(
-      `${analyses.show(file)}:${location(source, argument.start)}: the function reads ${text} from ${analyses.show(resolved)}, so the build has to find the options of ${text} that the function uses. It finds them only when ${text} is a call to a resource function, such as \`queue({ name: "orders", schema: Order })\`, written as a top-level const or in an object literal, and not made by a helper or a loop.`,
+      `${analyses.show(file)}:${location(source, argument.start)}: the function reads ${text} from ${analyses.show(resolved)}, but ${text} isn't a call to a resource function, so the build can't find its options. If ${text} is a resource, declare it with a call such as \`queue({ name: "orders", schema: Order })\`, as a top-level const or in an object literal. If it is a plain value, such as a schema, move it to a shared module (files.shared).`,
     );
   }
   if (mark.runtime.length === 0) return undefined;
