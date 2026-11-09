@@ -483,14 +483,46 @@ describe("stripForRuntime", () => {
       );
     });
 
-    it("fails when infra defines the schema", () => {
+    const notAName =
+      'must be a name that infra/orders.ts imports directly from a shared module (files.shared), such as `schema: Order` with `import { Order } from "../shared/schema"`, because the function in runtime/handler.ts reads it.';
+
+    it.each([
+      ["infra defines the schema", [`const Order = {};`], "Order"],
+      [
+        "the schema is a member of a namespace import",
+        [`import * as schemas from "../shared/schema";`],
+        "schemas.Order",
+      ],
+      [
+        "the schema is a call on an import",
+        [`import { Order } from "../shared/schema";`],
+        "Order.extend({})",
+      ],
+    ])("fails when %s", (_, lines, value) => {
+      const queue = `export const ordersQueue = createQueue({ id: "orders", schema: ${value} });`;
       expect(() =>
         strip({
           "infra/orders.ts": [
             `import { createQueue } from "@notation/aws/sqs";`,
-            `const Order = {};`,
+            ...lines,
+            queue,
+          ].join("\n"),
+        }),
+      ).toThrow(`infra/orders.ts:3:56: the schema of ordersQueue ${notAName}`);
+    });
+
+    it.each([
+      ["an infra module", "infra/schema.ts"],
+      ["a runtime module", "runtime/schema.ts"],
+    ])("fails when the schema is imported from %s", (_, schemaFile) => {
+      expect(() =>
+        strip({
+          "infra/orders.ts": [
+            `import { createQueue } from "@notation/aws/sqs";`,
+            `import { Order } from "../${schemaFile.replace(".ts", "")}";`,
             `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
           ].join("\n"),
+          "infra/schema.ts": `export const Order = {};`,
         }),
       ).toThrow(
         "infra/orders.ts:3:56: the schema of ordersQueue must be imported from a shared module (files.shared), because the function in runtime/handler.ts reads it.",

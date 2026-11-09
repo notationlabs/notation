@@ -224,12 +224,12 @@ function resourceStub(
         ? analyses.marks.resolve(imported.source, definitionFile)
         : undefined;
     const kind = from ? analyses.kindOf(from)?.kind : undefined;
-    if (
-      !imported ||
-      imported.imported === "*" ||
-      kind === "infra" ||
-      kind === "runtime"
-    ) {
+    if (!imported || imported.imported === "*") {
+      throw new Error(
+        `${where(property)}: the ${option} of ${text} must be a name that ${analyses.show(definitionFile)} imports directly from a shared module (files.shared), such as \`${option}: Order\` with \`import { Order } from "../shared/schema"\`, because the function in ${analyses.show(file)} reads it. The build copies only a named or default import. For a member of a namespace import, or a value such as \`Order.extend(...)\`, export the value from the shared module and import it by name.`,
+      );
+    }
+    if (kind === "infra" || kind === "runtime") {
       throw new Error(
         `${where(property)}: the ${option} of ${text} must be imported from a shared module (files.shared), because the function in ${analyses.show(file)} reads it.`,
       );

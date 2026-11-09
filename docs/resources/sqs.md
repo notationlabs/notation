@@ -117,7 +117,7 @@ export const lambda = $lambda({
 
 The build imports the schema by its absolute path, from the file that infra imports it from. The `infra/orders` import is gone, and so is `batchSize`, which only infra reads.
 
-A schema that the infra module defines itself fails the build, and so does a queue that a helper function makes. See [Resource arguments](../internals/compiler.md#resource-arguments).
+A schema that the infra module defines itself fails the build. So does a schema written as `schemas.Order` or `Order.extend({ ... })`: export the value from the shared module, and import it by name. A queue that a helper function makes fails the build too. See [Resource arguments](../internals/compiler.md#resource-arguments).
 
 Nothing checks the messages that a sender writes. To send messages, use `@aws-sdk/client-sqs` in your own code.
 
