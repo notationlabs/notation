@@ -2,7 +2,7 @@ import * as aws from "@notation/aws.iac";
 import type { ScheduleOptions } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import { assertId, assertName } from "src/id";
-import { awsName } from "src/naming";
+import { awsName, claimAwsName, describeDeclaration } from "src/naming";
 import { toAwsScheduleExpression } from "./aws-conversions";
 
 export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleOptions> {
@@ -16,14 +16,20 @@ export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleOptions> {
   ) {
     assertId(caller, config.id);
     assertName(caller, config.name);
+    const ruleName = awsName("eventBridgeRule", config.name ?? config.id);
     super("aws/eventBridge/schedule", config.id, config);
+    claimAwsName(
+      "EventBridge rules",
+      ruleName,
+      describeDeclaration(caller, config.id, config.name),
+    );
 
     const lambdaResource = lambdaGroup.fn;
 
     this.rule = this.add(
       new aws.eventBridge.EventBridgeRule(`${config.id}-eventbridge-rule`, {
         config: {
-          Name: awsName("eventBridgeRule", config.name ?? config.id),
+          Name: ruleName,
           ScheduleExpression: toAwsScheduleExpression(config.schedule),
           EventBusName: "default",
           Targets: [

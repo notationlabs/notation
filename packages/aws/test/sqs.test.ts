@@ -313,6 +313,26 @@ test("eventSourceMapping after evaluation has ended throws", async () => {
   );
 });
 
+test("a queue whose AWS name is another queue's throws, and names both declarations", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      queue({ id: "orders" });
+      queue({ id: "sales", name: "orders" });
+    }),
+  ).rejects.toThrow(
+    'queue({ id: "orders" }) and queue({ id: "sales", name: "orders" }) give two SQS queues the same AWS name, "orders".',
+  );
+});
+
+test("a FIFO queue and a standard queue can share a name", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      queue({ id: "orders" });
+      queue({ id: "sales", name: "orders", fifo: true });
+    }),
+  ).resolves.toBeDefined();
+});
+
 test("grant allows the actions on the queue", () => {
   const orders = queue({ id: "orders" });
   deploy(orders);

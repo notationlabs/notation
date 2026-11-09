@@ -64,7 +64,7 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
     assertUniqueLambdaId(caller, config.id);
     const functionName = awsName("lambdaFunction", config.name ?? config.id);
     claimAwsName(
-      "Lambda function",
+      "Lambda functions",
       functionName,
       describeDeclaration(caller, config.id, config.name, where),
     );

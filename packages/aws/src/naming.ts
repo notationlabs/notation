@@ -52,19 +52,18 @@ type Claim = { declaration: string };
 const claims = new WeakMap<object, Map<string, Claim>>();
 
 /**
- * Records that `declaration` gives a resource of `kind` the AWS name `name`.
- * Throws when another declaration in the deployment already gave a resource
- * of that kind the same name. Does nothing when no resource graph is being
+ * Records that `declaration` gives one of `kinds` the AWS name `name`.
+ * Throws when another declaration in the deployment already gave one of
+ * `kinds` the same name. Does nothing when no resource graph is being
  * collected.
- * @param kind The kind of resource, such as `Lambda function`.
- * @param scope Limits the check to names in one parent, such as an API for
- * its authorizers.
+ * @param kinds The kind of resource, in the plural, such as
+ * `Lambda functions`. A kind whose names are unique only within a parent
+ * names the parent, such as `JWT authorizers of the API "todos"`.
  */
 export function claimAwsName(
-  kind: string,
+  kinds: string,
   name: string,
   declaration: string,
-  scope = "",
 ): void {
   const collection = getActiveResourceCollection();
   if (!collection) return;
@@ -73,12 +72,12 @@ export function claimAwsName(
     claimed = new Map();
     claims.set(collection, claimed);
   }
-  // A newline can't appear in a kind or a scope.
-  const key = `${kind}\n${scope}\n${name}`;
+  // A newline can't appear in a kind.
+  const key = `${kinds}\n${name}`;
   const previous = claimed.get(key);
   if (previous) {
     throw new Error(
-      `${previous.declaration} and ${declaration} both give a ${kind} the AWS name "${name}". Give one of them another name.`,
+      `${previous.declaration} and ${declaration} give two ${kinds} the same AWS name, "${name}". Give one of them another name.`,
     );
   }
   claimed.set(key, { declaration });

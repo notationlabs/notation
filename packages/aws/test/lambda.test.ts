@@ -110,7 +110,7 @@ test("a name that is another Lambda's id throws, and names both declarations", a
       lambda({ id: "a", name: "b", code });
     }),
   ).rejects.toThrow(
-    'lambda({ id: "b" }) and lambda({ id: "a", name: "b" }) both give a Lambda function the AWS name "b". Give one of them another name.',
+    'lambda({ id: "b" }) and lambda({ id: "a", name: "b" }) give two Lambda functions the same AWS name, "b". Give one of them another name.',
   );
 });
 

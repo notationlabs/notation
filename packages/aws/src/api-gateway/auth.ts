@@ -2,6 +2,7 @@ import * as aws from "@notation/aws.iac";
 import type { StandardSchemaV1 } from "@notation/resource";
 import type { AuthorizerSource } from "src/lambda/declaration";
 import { assertId, assertName, type NameSafe } from "src/id";
+import { claimAwsName, describeDeclaration } from "src/naming";
 import type { ApiGroup } from "./api";
 
 export type JwtAuthorizerConfig<
@@ -60,14 +61,21 @@ export class JwtAuthorizerGroup<
     const { api, claims, ...rest } = config;
     assertId("jwtAuthorizer()", rest.id);
     assertName("jwtAuthorizer()", rest.name);
+    const name = rest.name ?? rest.id;
     super("API Gateway/JWT Authorizer", rest.id, { api, ...rest });
+    // Authorizer names are unique within their API.
+    claimAwsName(
+      `JWT authorizers of the API "${api.id}"`,
+      name,
+      describeDeclaration("jwtAuthorizer()", rest.id, rest.name),
+    );
     this.api = api;
     this.claims = claims as C;
     this.scopes = rest.scopes ?? [];
     this.auth = this.add(
       new aws.apiGateway.RouteAuth(`${rest.id}-authorizer`, {
         config: {
-          Name: rest.name ?? rest.id,
+          Name: name,
           AuthorizerType: "JWT",
           IdentitySource: ["$request.header.Authorization"],
           JwtConfiguration: {

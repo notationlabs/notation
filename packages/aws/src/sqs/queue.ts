@@ -2,7 +2,7 @@ import * as aws from "@notation/aws.iac";
 import type { LambdaGroup } from "src/lambda/lambda";
 import type { SqsOptions } from "src/lambda/declaration";
 import type { StandardSchemaV1 } from "@notation/resource";
-import { awsName } from "src/naming";
+import { awsName, claimAwsName, describeDeclaration } from "src/naming";
 import { assertId, assertName, type NameSafe } from "src/id";
 
 export type QueueConfig<
@@ -64,13 +64,19 @@ export class QueueGroup<
   constructor({ schema, ...config }: QueueConfig<S>) {
     assertId("queue()", config.id);
     assertName("queue()", config.name);
-    super("aws/sqs/queue", config.id, config);
-    this.schema = schema as S;
     const name = config.name ?? config.id;
+    const queueName = awsName("sqsQueue", config.fifo ? `${name}.fifo` : name);
+    super("aws/sqs/queue", config.id, config);
+    claimAwsName(
+      "SQS queues",
+      queueName,
+      describeDeclaration("queue()", config.id, config.name),
+    );
+    this.schema = schema as S;
     this.queue = this.add(
       new aws.sqs.Queue(`${config.id}-queue`, {
         config: {
-          QueueName: awsName("sqsQueue", config.fifo ? `${name}.fifo` : name),
+          QueueName: queueName,
           FifoQueue: config.fifo,
           VisibilityTimeout: config.visibilityTimeout,
           MessageRetentionPeriod: config.messageRetentionPeriod,

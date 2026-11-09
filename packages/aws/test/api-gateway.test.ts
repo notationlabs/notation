@@ -181,6 +181,34 @@ test("a second authorizer with the same id throws", async () => {
   ).rejects.toThrow('Duplicate API Gateway/JWT Authorizer id "auth"');
 });
 
+test("an authorizer whose AWS name is another's on the same api throws, and names both declarations", async () => {
+  await expect(
+    collect(() => {
+      const userApi = api({ id: "user-api" });
+      const config = { api: userApi, issuer: "https://i", audience: ["a"] };
+      jwtAuthorizer({ id: "users", ...config });
+      jwtAuthorizer({ id: "admins", name: "users", ...config });
+    }),
+  ).rejects.toThrow(
+    'jwtAuthorizer({ id: "users" }) and jwtAuthorizer({ id: "admins", name: "users" }) give two JWT authorizers of the API "user-api" the same AWS name, "users".',
+  );
+});
+
+test("authorizers on different apis can share an AWS name", async () => {
+  await expect(
+    collect(() => {
+      const config = { issuer: "https://i", audience: ["a"] };
+      jwtAuthorizer({ id: "users", api: api({ id: "a" }), ...config });
+      jwtAuthorizer({
+        id: "admins",
+        name: "users",
+        api: api({ id: "b" }),
+        ...config,
+      });
+    }),
+  ).resolves.toBeDefined();
+});
+
 test("changing an authorizer's issuer or audience keeps its id", async () => {
   const authorizerWith = (issuer: string, audience: string[]) =>
     collect(() => {
