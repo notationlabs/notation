@@ -47,7 +47,17 @@ describe("parseMark", () => {
   });
 
   it("reads a resource mark", () => {
-    expect(parseMark("* @resource ", [], "f")).toEqual({ kind: "resource" });
+    expect(parseMark("* @resource ", [], "f")).toEqual({
+      kind: "resource",
+      runtime: [],
+    });
+  });
+
+  it("reads the runtime options of a resource mark", () => {
+    expect(parseMark("* @resource runtime: schema ", [], "f")).toEqual({
+      kind: "resource",
+      runtime: ["schema"],
+    });
   });
 
   it("ignores JSDoc without a mark", () => {
@@ -83,6 +93,7 @@ describe("Marks", () => {
     });
     expect(marks.exportMark(at("dist/sqs.js"), "createQueue")).toEqual({
       kind: "resource",
+      runtime: [],
     });
     expect(marks.exportMark(at("dist/chunk.js"), "o")).toBeUndefined();
   });

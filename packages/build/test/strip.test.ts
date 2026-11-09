@@ -266,6 +266,94 @@ describe("stripForRuntime", () => {
     );
   });
 
+  describe("a resource in a runtime argument", () => {
+    const source = runtimeSource.replace(
+      "sqs(Order, ordersQueue.arn)",
+      "sqs(ordersQueue)",
+    );
+    const strip = (infraFiles: Record<string, string>) => {
+      const marks = virtualMarks(
+        {
+          ...files,
+          "runtime/handler.ts": source,
+          "shared/schema.ts": `export const Order = {};`,
+          ...infraFiles,
+        },
+        packages,
+      );
+      const analysis = analyzeModule(marks.table(file)!, marks);
+      return stripForRuntime(analysis, new ModuleAnalyses({ marks, root }))!;
+    };
+
+    it("becomes the resource's runtime options, imported from a shared module", () => {
+      const { code } = strip({
+        "infra/orders.ts": [
+          `import { createQueue } from "@notation/aws/sqs";`,
+          `import { Order } from "../shared/schema";`,
+          `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+        ].join("\n"),
+      });
+      expect(code).toContain(
+        `import { Order as __notation_schema_0 } from "/project/shared/schema.ts";`,
+      );
+      expect(code).toContain(
+        "event: () => sqs({ schema: __notation_schema_0 }),",
+      );
+      expect(code).not.toContain("../infra/orders");
+    });
+
+    it("follows a re-export to the resource", () => {
+      const { code } = strip({
+        "infra/orders.ts": `export { ordersQueue } from "./queues";`,
+        "infra/queues.ts": [
+          `import { createQueue } from "@notation/aws/sqs";`,
+          `import { Order } from "../shared/schema";`,
+          `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+        ].join("\n"),
+      });
+      expect(code).toContain("sqs({ schema: __notation_schema_0 })");
+    });
+
+    it("has no options when the resource has none", () => {
+      const { code } = strip({
+        "infra/orders.ts": [
+          `import { createQueue } from "@notation/aws/sqs";`,
+          `export const ordersQueue = createQueue({ id: "orders" });`,
+        ].join("\n"),
+      });
+      expect(code).toContain("sqs({  })");
+    });
+
+    it("fails when infra defines the schema", () => {
+      expect(() =>
+        strip({
+          "infra/orders.ts": [
+            `import { createQueue } from "@notation/aws/sqs";`,
+            `const Order = {};`,
+            `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+          ].join("\n"),
+        }),
+      ).toThrow(
+        "infra/orders.ts:3:56: the schema of ordersQueue must be imported from a shared module (files.shared), because the function in runtime/handler.ts reads it.",
+      );
+    });
+
+    it("fails when a helper makes the resource", () => {
+      expect(() =>
+        strip({
+          "infra/orders.ts": [
+            `import { createQueue } from "@notation/aws/sqs";`,
+            `import { Order } from "../shared/schema";`,
+            `const makeQueue = (id, schema) => createQueue({ id, schema });`,
+            `export const ordersQueue = makeQueue("orders", Order);`,
+          ].join("\n"),
+        }),
+      ).toThrow(
+        "runtime/handler.ts:16:20: the function reads ordersQueue from infra/orders.ts, so the build has to find the options of ordersQueue that the function uses.",
+      );
+    });
+  });
+
   it("fails for a keys option that isn't an object literal", () => {
     const source = runtimeSource.replace(
       `env: () => ({ QUEUE_URL: ordersQueue.url, LOG_LEVEL: "info" })`,

@@ -39,8 +39,14 @@ export type DeclarationMark = {
  */
 export type RuntimeMark = { kind: "runtime"; positions: number[] };
 
-/** Marks a function that declares a resource. Written `@resource`. */
-export type ResourceMark = { kind: "resource" };
+/**
+ * Marks a function that declares a resource. Written `@resource`, or
+ * `@resource runtime: schema` when a declaration's event reads options of the
+ * resource in the function. The first argument must then be an object
+ * literal, and each of those options an import from a module that the
+ * function can load.
+ */
+export type ResourceMark = { kind: "resource"; runtime: string[] };
 
 export type Mark = DeclarationMark | RuntimeMark | ResourceMark;
 
@@ -85,7 +91,15 @@ export function parseMark(
     const match = new RegExp(`(?:^|\\s)@${tag}\\b([^\\n@]*)`).exec(text);
     if (!match) continue;
     const body = match[1]!.trim();
-    if (tag === "resource") return { kind: "resource" };
+    if (tag === "resource") {
+      const runtime = /^runtime:(.*)$/.exec(body);
+      if (body && !runtime) {
+        throw new Error(
+          `${where}: unknown clause "${body}" in the @resource mark. Use runtime.`,
+        );
+      }
+      return { kind: "resource", runtime: list(runtime?.[1] ?? "") };
+    }
     if (tag === "runtime") {
       const names = list(body);
       const positions = names.map((name) => {

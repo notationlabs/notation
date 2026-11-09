@@ -20,7 +20,10 @@ import type { ModuleAnalyses } from "./modules";
  * 2. A `keys` option keeps the keys of the object that it returns, and each
  *    value becomes `undefined`.
  * 3. A call to a function marked `@runtime` keeps only its runtime
- *    arguments. The others become `undefined`.
+ *    arguments. The others become `undefined`. A runtime argument that names
+ *    a resource from an infra module becomes an object of the options that
+ *    the resource's mark lists as runtime, imported from where infra imports
+ *    them: `sqs(orderQueue)` becomes `sqs({ schema: Order })`.
  * 4. An import whose uses were all removed is removed too, so the bundle
  *    doesn't load the module it imports from. Without this, the module would
  *    still load when `verbatimModuleSyntax` keeps unused imports.
@@ -82,18 +85,26 @@ export function stripForRuntime(
   const keptProperties = properties
     .filter(([key]) => keptOptions.has(key))
     .map(([, p]) => p);
+  const added: string[] = [];
   for (const property of keptProperties) {
     walk(property.value, (node) => {
       if (node.type !== "CallExpression") return;
       const runtimeMark = markOfCallee(node.callee, analysis, marks);
       if (runtimeMark?.kind !== "runtime") return;
       node.arguments.forEach((argument: Node, position: number) => {
-        if (runtimeMark.positions.includes(position)) return;
+        if (runtimeMark.positions.includes(position)) {
+          const stub = resourceStub(argument, analysis, analyses, added);
+          if (stub === undefined) return;
+          removed.add(argument);
+          s.overwrite(argument.start, argument.end, stub);
+          return;
+        }
         removed.add(argument);
         s.overwrite(argument.start, argument.end, "undefined");
       });
     });
   }
+  if (added.length > 0) s.prepend(added.join(""));
 
   for (const property of keptProperties) {
     for (const reference of freeReferences(property.value, removed)) {
@@ -140,6 +151,128 @@ function removeEmptiedImports(
       s.remove(statement.start, statement.end);
     }
   }
+}
+
+/**
+ * The object that replaces a runtime argument which names a resource from an
+ * infra module, or `undefined` for any other argument. Adds an import to
+ * `added` for each runtime option of the resource.
+ */
+function resourceStub(
+  argument: Node,
+  analysis: ModuleAnalysis,
+  analyses: ModuleAnalyses,
+  added: string[],
+): string | undefined {
+  const node = unwrap(argument);
+  if (node.type !== "Identifier") return undefined;
+  const { file, source } = analysis.table.module;
+  const binding = analysis.table.imports.get(node.name);
+  if (!binding || binding.imported === "*") return undefined;
+  const resolved = analyses.marks.resolve(binding.source, file);
+  if (!resolved || !analyses.describeInfra(resolved)) return undefined;
+
+  const at = `${analyses.show(file)}:${location(source, node.start)}`;
+  const definition = findDefinition(resolved, binding.imported, analyses);
+  const init = definition?.declarator.init;
+  const call = init ? unwrap(init) : undefined;
+  const owner = definition && analyses.fromFile(definition.file);
+  const mark =
+    owner && call?.type === "CallExpression"
+      ? markOfCallee(call.callee, owner, analyses.marks)
+      : undefined;
+  if (!definition || !owner || !call || mark?.kind !== "resource") {
+    throw new Error(
+      `${at}: the function reads ${node.name} from ${analyses.show(resolved)}, so the build has to find the options of ${node.name} that the function uses. It finds them only when ${node.name} is declared with a call to a resource function, such as \`export const ${node.name} = queue({ name: "orders", schema: Order })\`, and not through a helper or a loop.`,
+    );
+  }
+  const first = call.arguments[0];
+  const config = first ? unwrap(first) : undefined;
+  const where = (n: Node) =>
+    `${analyses.show(definition.file)}:${location(owner.table.module.source, n.start)}`;
+  const entries: string[] = [];
+  for (const option of mark.runtime) {
+    if (config?.type !== "ObjectExpression") {
+      throw new Error(
+        `${where(call)}: ${node.name} must be declared with an object literal, so the build can find its ${option}, which the function in ${analyses.show(file)} reads.`,
+      );
+    }
+    const property = config.properties.find(
+      (p: Node) =>
+        p.type === "Property" &&
+        !p.computed &&
+        (p.key.name ?? p.key.value) === option,
+    );
+    if (!property) continue;
+    const value = unwrap(property.value);
+    const imported =
+      value.type === "Identifier"
+        ? owner.table.imports.get(value.name)
+        : undefined;
+    const from =
+      imported && imported.imported !== "*"
+        ? analyses.marks.resolve(imported.source, definition.file)
+        : undefined;
+    const kind = from ? analyses.kindOf(from)?.kind : undefined;
+    if (
+      !imported ||
+      imported.imported === "*" ||
+      kind === "infra" ||
+      kind === "runtime"
+    ) {
+      throw new Error(
+        `${where(property)}: the ${option} of ${node.name} must be imported from a shared module (files.shared), because the function in ${analyses.show(file)} reads it.`,
+      );
+    }
+    const alias = `__notation_${option}_${added.length}`;
+    const specifier = imported.source.startsWith(".") ? from! : imported.source;
+    added.push(
+      `import { ${imported.imported} as ${alias} } from ${JSON.stringify(specifier)};\n`,
+    );
+    entries.push(`${option}: ${alias}`);
+  }
+  return `{ ${entries.join(", ")} }`;
+}
+
+// The top-level declarator of an export, following re-exports and imports.
+function findDefinition(
+  file: string,
+  name: string,
+  analyses: ModuleAnalyses,
+  seen: Set<string> = new Set(),
+): { file: string; declarator: Node } | undefined {
+  const key = `${file}#${name}`;
+  if (seen.has(key)) return undefined;
+  seen.add(key);
+  const table = analyses.marks.table(file);
+  if (!table) return undefined;
+  const follow = (source: string, imported: string) => {
+    const resolved = analyses.marks.resolve(source, file);
+    return resolved && imported !== "*"
+      ? findDefinition(resolved, imported, analyses, seen)
+      : undefined;
+  };
+  const target = table.exports.get(name);
+  if (!target) {
+    for (const source of table.stars) {
+      const found = follow(source, name);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if ("source" in target) return follow(target.source, target.imported);
+  const binding = table.imports.get(target.local);
+  if (binding) return follow(binding.source, binding.imported);
+  for (let statement of table.module.body) {
+    if (statement.type === "ExportNamedDeclaration" && statement.declaration)
+      statement = statement.declaration;
+    if (statement.type !== "VariableDeclaration") continue;
+    const declarator = statement.declarations.find(
+      (d: Node) => d.id.type === "Identifier" && d.id.name === target.local,
+    );
+    if (declarator) return { file, declarator };
+  }
+  return undefined;
 }
 
 function mergeRanges(ranges: [number, number][]): [number, number][] {
