@@ -50,6 +50,25 @@ test("two routes on one api to one lambda share its integration and permission",
   expect(fn.resources).toHaveLength(7);
 });
 
+test("a route's permission lets the api invoke the lambda", async () => {
+  let fn!: LambdaGroup;
+  let todoApi!: ReturnType<typeof api>;
+  await collect(() => {
+    todoApi = api({ id: "todo-api" });
+    fn = declareLambda();
+    route(todoApi, "GET", "/todos", undefined, fn);
+  });
+  const permission = fn.resources.find(
+    (r) => r.id === "api-permission:todo-api:handler",
+  )!;
+
+  expect(permission.config).toMatchObject({
+    StatementId: "api-permission_todo-api_handler",
+    Principal: "apigateway.amazonaws.com",
+  });
+  expect(permission.getDependencies()).toEqual([fn.fn, todoApi.api]);
+});
+
 test("router provides methods for each HTTP verb", async () => {
   const methods = ["get", "post", "put", "delete", "patch"] as const;
   const graph = await collect(() => {

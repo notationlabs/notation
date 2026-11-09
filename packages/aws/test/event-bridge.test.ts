@@ -1,5 +1,5 @@
 import { test, expect } from "vitest";
-import { eventBridge as iac } from "@notation/aws.iac";
+import { lambda as iac } from "@notation/aws.iac";
 import {
   collectResourceGraph,
   type ResourceGraph,
@@ -33,13 +33,17 @@ test("each schedule on a lambda gets its own invoke permission", async () => {
     schedule({ id: "hourly", schedule: rate(1, "hour"), target: fn });
   });
 
-  const rules = fn.resources
-    .filter((r) => r instanceof iac.LambdaEventBridgeRulePermission)
-    .map((r) => r.dependencies.eventBridgeRule);
+  const permissions = fn.resources.filter(
+    (r) => r instanceof iac.LambdaPermission,
+  );
 
-  expect(rules).toEqual([
-    scheduleGroup(graph, "daily").rule,
-    scheduleGroup(graph, "hourly").rule,
+  expect(permissions.map((p) => p.config.StatementId)).toEqual([
+    "eventbridge-permission_daily",
+    "eventbridge-permission_hourly",
+  ]);
+  expect(permissions.map((p) => p.getDependencies())).toEqual([
+    [fn.fn, scheduleGroup(graph, "daily").rule],
+    [fn.fn, scheduleGroup(graph, "hourly").rule],
   ]);
 });
 
@@ -210,9 +214,9 @@ test("eventBridge.defineSchedule() in a declaration makes the rule and the permi
   expect(nightly.rule.dependencies.lambda).toBe(fn.fn);
   expect(
     fn.resources
-      .filter((r) => r instanceof iac.LambdaEventBridgeRulePermission)
-      .map((r) => r.dependencies.eventBridgeRule),
-  ).toEqual([nightly.rule]);
+      .filter((r) => r instanceof iac.LambdaPermission)
+      .map((r) => r.getDependencies()),
+  ).toEqual([[fn.fn, nightly.rule]]);
 });
 
 test("schedule() of a declaration that makes its own schedule throws", async () => {
