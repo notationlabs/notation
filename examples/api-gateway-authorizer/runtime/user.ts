@@ -12,14 +12,12 @@ export const lambda = $lambda({
   timeout: 5,
   memory: 64,
   event: () =>
-    apiGateway
-      .bind(userApi)
-      .defineRoute({
-        method: "GET",
-        path: "/user",
-        schema: null,
-        auth: userAuth,
-      }),
+    apiGateway.bind(userApi).defineRoute({
+      method: "GET",
+      path: "/user",
+      schema: null,
+      auth: userAuth,
+    }),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
@@ -28,6 +26,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
     return { message: claims.$username };
   } catch (error) {
     if (!(error instanceof DecodeError)) throw error;
-    return { statusCode: 403, body: error.message };
+    const statusCode = error.part === "claims" ? 403 : 400;
+    return { statusCode, body: error.message };
   }
 };

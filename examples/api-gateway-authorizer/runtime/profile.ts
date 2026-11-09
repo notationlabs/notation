@@ -21,6 +21,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
     return { sub: claims.sub, iss: claims.iss };
   } catch (error) {
     if (!(error instanceof DecodeError)) throw error;
-    return { statusCode: 403, body: error.message };
+    const statusCode = error.part === "claims" ? 403 : 400;
+    return { statusCode, body: error.message };
   }
 };
