@@ -38,7 +38,8 @@ const files = {
   "runtime/handler.ts": handlerModule,
   "runtime/schema.ts": `export const Order = {};\nexport const Claims = {};\nexport type OrderType = {};`,
   "runtime/sentry.ts": `console.log("init");`,
-  "infra/orders.ts": `import { createQueue } from "@notation/aws/sqs";\nexport const ordersQueue = createQueue({ id: "orders" });\nexport const unused = 1;`,
+  "shared/schema.ts": `export const Order = {};`,
+  "infra/orders.ts": `import { createQueue } from "@notation/aws/sqs";\nimport { Order } from "../shared/schema";\nexport const ordersQueue = createQueue({ id: "orders", schema: Order });\nexport const unused = 1;`,
 };
 
 const file = path.join(root, "runtime/handler.ts");
@@ -232,7 +233,9 @@ describe("stripForRuntime", () => {
       ),
     );
     const { code } = stripForRuntime(analysis, analyses)!;
-    expect(code).toContain("event: () => sqs.bind({}, undefined),");
+    expect(code).toContain(
+      "event: () => sqs.bind({ schema: __notation_schema_0 }, undefined),",
+    );
     expect(code).not.toContain("../infra/orders");
   });
 
@@ -713,7 +716,9 @@ describe("stripForRuntime", () => {
       expect(code).toContain(`event: ${event},`);
     });
 
-    it("has no options when the resource has none", () => {
+    // The real queue() requires a schema, but the strip handles any resource
+    // whose call leaves out a runtime option.
+    it("has no options when the call sets none of the resource's runtime options", () => {
       const { code } = strip({
         "infra/orders.ts": [
           `import { createQueue } from "@notation/aws/sqs";`,
@@ -807,7 +812,7 @@ describe("stripForRuntime", () => {
           "lib/schema.ts": [
             `import { createQueue } from "@notation/aws/sqs";`,
             `export const Order = {};`,
-            `export const dlq = createQueue({ id: "dlq" });`,
+            `export const dlq = createQueue({ id: "dlq", schema: Order });`,
           ].join("\n"),
         }),
       ).toThrow(
