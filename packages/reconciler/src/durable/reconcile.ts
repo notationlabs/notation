@@ -18,7 +18,9 @@ import { cascadeRegistry, createBlocksDelete } from "../delete-cascade";
 import type { OperationLifecycleEvent } from "../events";
 import {
   createResourceRegistryFromResources,
+  mergeResourceRegistries,
   resolveResourceClass,
+  type ResourceRegistry,
 } from "../resource-registry";
 import {
   applyDriftDetection,
@@ -378,8 +380,7 @@ export async function* sweepOrphans(
     opts.resources.map((resource) => [resource.id, resource]),
   );
   const persisted = yield* scope.run("list", () => opts.state.values());
-  const registry =
-    opts.registry ?? createResourceRegistryFromResources(opts.resources);
+  const registry = workflowRegistry(opts);
 
   const orphans = persisted.filter((node) => !resourceById.has(node.id));
   const edgesById = new Map(
@@ -424,6 +425,17 @@ export async function* sweepOrphans(
   }
 
   return kept;
+}
+
+/**
+ * The classes that deploy and destroy can delete a record through: those
+ * that the caller registers, and the classes of the resources in the graph.
+ */
+function workflowRegistry(opts: DurableWorkflowOptions): ResourceRegistry {
+  return mergeResourceRegistries(
+    opts.registry,
+    createResourceRegistryFromResources(opts.resources),
+  );
 }
 
 /**

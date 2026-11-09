@@ -33,6 +33,20 @@ export function createResourceRegistryFromResources(
   return registry;
 }
 
+/**
+ * Combines registries into one. Where two have a class for the same type,
+ * the later one's class is kept.
+ */
+export function mergeResourceRegistries(
+  ...registries: (ResourceRegistry | undefined)[]
+): ResourceRegistry {
+  const merged: ResourceRegistry = new Map();
+  for (const registry of registries) {
+    for (const [type, Resource] of registry ?? []) merged.set(type, Resource);
+  }
+  return merged;
+}
+
 export function resolveResourceClass(
   registry: ResourceRegistry,
   type: ResourceType,

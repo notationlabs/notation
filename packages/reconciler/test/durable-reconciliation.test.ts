@@ -951,6 +951,40 @@ describe("orphan deletion", () => {
     expect(await runtime.state.get("orphan")).toBeUndefined();
     runtime.close();
   });
+
+  it("deletes orphans through the registry and the classes of the graph together", async () => {
+    const deleted: string[] = [];
+    const define = (type: string) =>
+      resource({ type: type as ResourceType })
+        .defineSchema({})
+        .defineOperations({
+          create: async () => undefined,
+          delete: async () => void deleted.push(type),
+        });
+    const InGraph = define("test/durable/in-graph");
+    const Registered = define("test/durable/registered");
+    const resources: BaseResource[] = [
+      new InGraph("kept"),
+      new InGraph("in-graph-orphan"),
+      new Registered("registered-orphan"),
+    ];
+    const runtime = createRuntime(resources, "orphan-merged-registry", {
+      registry: createResourceRegistry([Registered]),
+    });
+    await runtime.run("deploy-1");
+
+    resources.splice(1);
+    await runtime.run("deploy-2");
+
+    expect(deleted.sort()).toEqual([
+      "test/durable/in-graph",
+      "test/durable/registered",
+    ]);
+    expect((await runtime.state.values()).map((node) => node.id)).toEqual([
+      "kept",
+    ]);
+    runtime.close();
+  });
 });
 
 // Rewrites a record as an earlier version wrote it, with no edges. Written
