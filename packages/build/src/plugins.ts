@@ -300,7 +300,7 @@ export function runtimePlugin({
             );
             const chain = importChain(this, id);
             const unmatched = chain
-              .map((file) => analyses.unmatchedInfra(file))
+              .map((file) => analyses.resourceCallAdvice(file))
               .find(Boolean);
             this.error(
               `The function in ${show(module.path)} uses ${name} from ${show(id)}, a function that declares infrastructure${listUses(uses)}. It imports ${show(id)} through ${chain.map(show).join(" → ")}. Infra functions can't run in a runtime module.${unmatched ? ` ${unmatched}` : ""}`,

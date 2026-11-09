@@ -1,5 +1,9 @@
 import type { ModuleGlobs } from "@notation/core";
-import { analyzeModule, type ModuleAnalysis } from "./analyze";
+import {
+  analyzeModule,
+  type MarkedReference,
+  type ModuleAnalysis,
+} from "./analyze";
 import { location, type Node } from "./ast";
 import {
   describeKind,
@@ -117,17 +121,31 @@ export class ModuleAnalyses {
   }
 
   /**
-   * If a project file that no glob matches calls a resource function at its
-   * top level, says to add it to `files.infra`, for an error message. The
-   * runtime build keeps such a file's top-level code.
+   * The first top-level call to a resource function in a project file that
+   * no glob matches. The runtime build keeps such a file's top-level code.
    */
-  unmatchedInfra(file: string): string | undefined {
+  unmatchedResourceCall(file: string): MarkedReference | undefined {
     if (!isProjectModule(file) || this.files.kindOf(file)) return undefined;
     if (this.files.isPackageFile(file)) return undefined;
-    const call = this.fromFile(file)?.resourceCall;
-    if (!call) return undefined;
+    return this.fromFile(file)?.resourceCall;
+  }
+
+  /**
+   * If a project file in the runtime bundle calls a resource function at its
+   * top level, says how to leave the call out of the function, for an error
+   * message. A file that holds a declaration can't be infra, so the call has
+   * to move. A file that no glob matches can be added to `files.infra`.
+   */
+  resourceCallAdvice(file: string): string | undefined {
+    if (!isProjectModule(file)) return undefined;
     const name = this.show(file);
-    return `${name} calls ${call.name} at its top level, but files.infra doesn't match it. Add ${name} to files.infra to leave it out of the function.`;
+    const analysis = this.fromFile(file);
+    const call = analysis?.resourceCall;
+    if (call && analysis.declaration) {
+      return `${name} calls ${call.name} at its top level, and it holds a declaration, so it can't be an infra module. Move the call to ${call.name} to an infra module.`;
+    }
+    if (!this.unmatchedResourceCall(file)) return undefined;
+    return `${name} calls ${call!.name} at its top level, but files.infra doesn't match it. Add ${name} to files.infra to leave it out of the function.`;
   }
 
   /**

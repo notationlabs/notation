@@ -793,7 +793,63 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
       `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
     );
     await expect(buildProject()).rejects.toThrow(
-      "runtime/process-orders.ts:12:22: an option of $lambda that the function keeps refers to dlq, from lib/queues.ts. lib/queues.ts calls queue at its top level, but files.infra doesn't match it. Add lib/queues.ts to files.infra to leave it out of the function. The runtime build removes infra. Read infra values in the function through the declaration's env().",
+      /Error: runtime\/process-orders\.ts:12:22: an option of \$lambda that the function keeps refers to dlq, from lib\/queues\.ts\. lib\/queues\.ts calls queue at its top level, so the function can't load it\. The runtime build removes infra\. Read infra values in the function through the declaration's env\(\)\. Move a plain value that a kept option uses to a shared module \(files\.shared\), or to a file that no glob matches\./,
+    );
+  });
+
+  it.each([
+    [
+      "no glob matches",
+      {},
+      "from lib/defs.ts. lib/defs.ts calls queue at its top level, so the function can't load it.",
+    ],
+    [
+      "files.infra matches",
+      { infra: ["infra/**", "lib/defs.ts"] },
+      'from lib/defs.ts, an infra module (files.infra: "lib/defs.ts").',
+    ],
+  ])(
+    "says to move a plain value that a kept option uses out of a file that calls a resource function, when %s",
+    async (_, files, from) => {
+      writeProject(
+        handlerModule.replace(
+          `import { Order } from "./schema";`,
+          `import { Order } from "../lib/defs";`,
+        ),
+      );
+      write(
+        "lib/defs.ts",
+        [
+          `import { queue } from "@notation/aws/sqs";`,
+          `export const Order = { name: "Order" };`,
+          `export const dlq = queue({ name: "dlq" });`,
+        ].join("\n"),
+      );
+      await expect(buildProject(files)).rejects.toThrow(
+        `runtime/process-orders.ts:11:22: an option of $lambda that the function keeps refers to Order, ${from} The runtime build removes infra. Read infra values in the function through the declaration's env(). Move a plain value that a kept option uses to a shared module (files.shared), or to a file that no glob matches.`,
+      );
+    },
+  );
+
+  it("says to move a resource call out of a declaration module, not to add the module to files.infra", async () => {
+    writeProject();
+    write(
+      "lib/fn.ts",
+      [
+        `import { $lambda } from "@notation/aws/lambda";`,
+        `import { queue } from "@notation/aws/sqs";`,
+        `const dlq = queue({ name: "dlq" });`,
+        `export const lambda = $lambda({ id: "fn", policy: () => [dlq.url] });`,
+        `export const handler = () => 1;`,
+      ].join("\n"),
+    );
+    write("infra/main.ts", `import "./orders";\nimport "../lib/fn";`);
+    const analyses = new ModuleAnalyses();
+    const { modules } = await compileInfra(path.join(root, "infra/main.ts"), {
+      analyses,
+    });
+    await expect(compileRuntimeModules(modules, { analyses })).rejects.toThrow(
+      "It imports @notation/aws/sqs.js through lib/fn.ts → @notation/aws/sqs.js. Infra functions can't run in a runtime module. lib/fn.ts calls queue at its top level, and it holds a declaration, so it can't be an infra module. Move the call to queue to an infra module.",
     );
   });
 
@@ -805,7 +861,7 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
       ),
     );
     await expect(buildProject()).rejects.toThrow(
-      'an option of $lambda that the function keeps refers to orders, from infra/orders.ts, an infra module (files.infra: "infra/**", the default).',
+      'runtime/process-orders.ts:11:22: an option of $lambda that the function keeps refers to orders, from infra/orders.ts, an infra module (files.infra: "infra/**", the default).',
     );
   });
 });

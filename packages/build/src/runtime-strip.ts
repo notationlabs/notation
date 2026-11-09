@@ -188,20 +188,23 @@ function checkReference(
   const { file, source } = table.module;
   const binding = table.imports.get(node.name);
   if (!binding) return;
-  const at = `${file}:${location(source, node.start)}`;
+  const at = `${analyses.show(file)}:${location(source, node.start)}`;
   const advice =
     "The runtime build removes infra. Read infra values in the function through the declaration's env().";
+  const plainValue =
+    "Move a plain value that a kept option uses to a shared module (files.shared), or to a file that no glob matches.";
   const resolved = marks.resolve(binding.source, file);
   const infra = resolved && analyses.describeInfra(resolved);
   if (infra) {
     throw new Error(
-      `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from ${infra}. ${advice}`,
+      `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from ${infra}. ${advice} ${plainValue}`,
     );
   }
-  const unmatched = resolved && analyses.unmatchedInfra(resolved);
-  if (unmatched) {
+  const call = resolved && analyses.unmatchedResourceCall(resolved);
+  if (call) {
+    const name = analyses.show(resolved);
     throw new Error(
-      `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from ${analyses.show(resolved)}. ${unmatched} ${advice}`,
+      `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from ${name}. ${name} calls ${call.name} at its top level, so the function can't load it. ${advice} ${plainValue}`,
     );
   }
   const mark =

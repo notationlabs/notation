@@ -221,6 +221,11 @@ The function in runtime/orders.ts uses queue from @notation/aws/sqs.js, a functi
 
 So a project that keeps its infra outside `infra/`, such as in `src/`, sets `files.infra` to that folder.
 
+Two cases need a different fix:
+
+- **The file holds a declaration**, such as `lib/fn.ts` with `const dlq = queue(...)` and a `$lambda`. A declaration can't be in an infra module, so the error says to move the call to `queue` to an infra module.
+- **A kept option uses a plain value from the file**, such as `event: () => sqs(Order)`, where `lib/defs.ts` exports `Order` and calls `queue()`. The option still refers to the file if `files.infra` matches it. The error says to move the value to a shared module, or to a file with no kind.
+
 ### Packages
 
 A package file has no kind. Package files are:
