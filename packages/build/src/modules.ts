@@ -131,32 +131,6 @@ export class ModuleAnalyses {
   }
 
   /**
-   * Fails if a module in the runtime bundle imports an infra module for its
-   * side effects, as in `import "../infra/setup"`. The runtime build leaves
-   * infra modules out, so the import does nothing in the function.
-   */
-  checkSideEffectImports(file: string, analysis: ModuleAnalysis) {
-    if (this.kindOf(file)?.kind === "shared") return;
-    const { module } = analysis.table;
-    for (const statement of module.body) {
-      if (
-        statement.type !== "ImportDeclaration" ||
-        statement.importKind === "type" ||
-        statement.specifiers.length > 0
-      )
-        continue;
-      const target = this.marks.resolve(statement.source.value, file);
-      if (!target) continue;
-      const match = this.kindOf(target);
-      if (match?.kind !== "infra") continue;
-      const name = this.show(file);
-      throw new Error(
-        `${name}:${location(module.source, statement.start)}: ${name} imports ${describeKind(this.show(target), match)}, for its side effects. The runtime build leaves infra modules out, so the import does nothing in the function. Move the code that the function needs to a shared module (files.shared), or remove the import.`,
-      );
-    }
-  }
-
-  /**
    * Fails if a module that `files.infra` or `files.shared` matches holds a
    * declaration. The runtime build can't bundle a function whose module is
    * infra, and neither build strips a shared module.

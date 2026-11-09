@@ -206,9 +206,7 @@ export type RuntimePluginOptions = {
  *    that call a resource function at their top level.
  * 4. Fails the build if an infra module, or an infra function from a
  *    package, is still in the bundle, and names the import chain.
- * 5. Fails the build if a module in the bundle imports an infra module for
- *    its side effects.
- * 6. Fails the build if a shared module in the bundle breaks its rules. The
+ * 5. Fails the build if a shared module in the bundle breaks its rules. The
  *    shared modules that the last infra build checked are skipped.
  */
 export function runtimePlugin({
@@ -236,7 +234,6 @@ export function runtimePlugin({
         }
         if (!mayHoldMarks(code)) return null;
         const analysis = analyses.fromSource(id, code);
-        analyses.checkSideEffectImports(id, analysis);
         const isInfra =
           !match &&
           analysis.resourceCall !== undefined &&

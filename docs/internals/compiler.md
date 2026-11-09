@@ -59,7 +59,7 @@ Each kind changes the builds in one place:
 
 | Kind      | Where                         | What                                                                                                                                                |
 | --------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `infra`   | `runtimePlugin`'s `transform` | Returns `moduleSideEffects: false`, and adds the module to the bundle check. Fails for a module in the bundle that imports it for its side effects. |
+| `infra`   | `runtimePlugin`'s `transform` | Returns `moduleSideEffects: false`, and adds the module to the bundle check.                                                                        |
 | `runtime` | `infraEntryPlugin`'s `load`   | Imports each file with a declaration after the entry.                                                                                               |
 | `shared`  | `buildEnd` of both plugins    | Calls `ModuleAnalyses.checkShared` for each shared module in the build. A runtime build skips the shared modules that the last infra build checked. |
 | any       | `infraPlugin`'s `transform`   | Fails for a declaration in an `infra` or `shared` module, through `checkDeclaration`.                                                               |
@@ -262,7 +262,7 @@ An import loads its module and runs the module's top-level code, even when nothi
 
 An infra module can also be reached through a module that the strip doesn't change, such as a helper with no kind that imports `orderQueue` and uses it in a function the handler never calls. For that case, the runtime plugin marks each infra module free of side effects, through the `moduleSideEffects` result of its `transform` hook. The bundler then drops the infra module if nothing in the bundle uses its bindings. Other modules keep their side effects, so a setup module that imports infra still runs its top-level code. An infra module is a file that `files.infra` matches, or a package file outside `node_modules/` that calls a resource function at its top level. A file with no kind that calls `queue()` at its top level, such as `lib/queues.ts`, is not marked, so the bundler keeps it if the function imports it, and the check below fails the build. The error then says to add the file to `files.infra`.
 
-A side-effect import, such as `import "../infra/setup"`, binds nothing, so the bundler always drops an infra module that is imported this way, and the function never runs its code. The plugin's `transform` fails for each module in the bundle with such an import of a module that `files.infra` matches. The check reads the import statements of the module, so it costs no analysis of effects.
+A side-effect import, such as `import "../infra/setup"`, binds nothing, so the bundler always drops an infra module that is imported this way, and the function never runs its code. The build doesn't fail for such an import. The import may still matter in the infra build, where it registers resources. Code that the function needs belongs in a shared module, or in a file with no kind.
 
 The provider packages declare `"sideEffects": false` in their `package.json`, so the bundler also drops a package module whose exports the function doesn't use.
 

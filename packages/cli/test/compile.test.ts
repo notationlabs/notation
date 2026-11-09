@@ -752,14 +752,14 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
     );
   });
 
-  it("fails when a module in the bundle imports an infra module for its side effects", async () => {
+  it("leaves out an infra module that a module in the bundle imports for its side effects", async () => {
     writeProject(
-      withHandler(`import "../infra/setup";`, "globalThis.setupRan"),
+      withHandler(`import "../infra/setup";`, "globalThis.setupRan ?? null"),
     );
-    write("infra/setup.ts", `globalThis.setupRan = "yes";`);
-    await expect(buildProject()).rejects.toThrow(
-      'runtime/process-orders.ts:6:3: runtime/process-orders.ts imports infra/setup.ts, an infra module (files.infra: "infra/**", the default), for its side effects. The runtime build leaves infra modules out, so the import does nothing in the function. Move the code that the function needs to a shared module (files.shared), or remove the import.',
-    );
+    write("infra/setup.ts", `globalThis.setupRan = "setup-module-ran";`);
+    const { bundle } = await buildProject();
+    expect(bundle).not.toContain("setup-module-ran");
+    expect(runHandler()).toBe(null);
   });
 
   it("keeps the top-level code of a module that no glob matches, so a resource call there fails the bundle", async () => {

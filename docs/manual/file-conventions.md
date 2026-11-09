@@ -162,11 +162,7 @@ The function in runtime/orders.ts uses infra/orders.ts, an infra module (files.i
 
 **An infra module never runs in the function, even if it calls no resource function.** A function that uses a plain constant from `infra/config.ts` fails the build. Put a value that the function needs in a shared module, or in a file that no glob matches.
 
-**A setup module under `infra/` doesn't run in the function either.** For example, `infra/setup.ts` sets a global. A module in the function's bundle that imports it for its side effects fails the build, because the import would do nothing:
-
-```text
-runtime/orders.ts:3:1: runtime/orders.ts imports infra/setup.ts, an infra module (files.infra: "infra/**", the default), for its side effects. The runtime build leaves infra modules out, so the import does nothing in the function. Move the code that the function needs to a shared module (files.shared), or remove the import.
-```
+**A setup module under `infra/` doesn't run in the function either.** For example, `infra/setup.ts` sets a global, and `runtime/orders.ts` imports it with `import "../infra/setup"`. The runtime build leaves `infra/setup.ts` out, and the build doesn't fail. The global isn't set in the function. Move code that the function needs to a shared module, or to a file that no glob matches.
 
 **A runtime module, or a file with no kind, may import a value from an infra module, as long as the function doesn't use that value.** For example, `runtime/format.ts` can import `orderQueue` for one export, and a function can use its other exports. The runtime build drops the infra module, and keeps the rest of `runtime/format.ts`, including its top-level code. A shared module may not import an infra module. Put code that infra and runtime share, such as a schema, in a shared module.
 
@@ -174,12 +170,12 @@ runtime/orders.ts:3:1: runtime/orders.ts imports infra/setup.ts, an infra module
 
 The globs of `files` in `notation.config.ts` give each file its kind. The kind comes from the file's path only, so an edit to a file never changes its kind. See [Files](./project-config.md#files) for the globs.
 
-| Kind      | Default folder | Infra build                       | Runtime build                                                                               |
-| --------- | -------------- | --------------------------------- | ------------------------------------------------------------------------------------------- |
-| `infra`   | `infra/`       | Runs it.                          | Leaves it out. The build fails if the function uses it, or imports it for its side effects. |
-| `runtime` | `runtime/`     | Runs only the declaration of it.  | Bundles it.                                                                                 |
-| `shared`  | `shared/`      | Runs it as written.               | Bundles it as written.                                                                      |
-| no kind   | any other file | Runs it, or only its declaration. | Bundles it as written.                                                                      |
+| Kind      | Default folder | Infra build                       | Runtime build                                           |
+| --------- | -------------- | --------------------------------- | ------------------------------------------------------- |
+| `infra`   | `infra/`       | Runs it.                          | Leaves it out. The build fails if the function uses it. |
+| `runtime` | `runtime/`     | Runs only the declaration of it.  | Bundles it.                                             |
+| `shared`  | `shared/`      | Runs it as written.               | Bundles it as written.                                  |
+| no kind   | any other file | Runs it, or only its declaration. | Bundles it as written.                                  |
 
 ### Shared modules
 
@@ -215,7 +211,7 @@ The check doesn't follow dynamic `import()`, and it doesn't enter packages.
 
 ### Files with no kind
 
-A file that no glob matches, such as `lib/format.ts`, has no kind. Both builds bundle it as written, and the build makes no check of it. A declaration in such a file is still found and stripped when infra imports it.
+A file that no glob matches, such as `lib/format.ts`, has no kind. Both builds bundle it as written. The checks of infra and shared modules don't apply to it. A declaration in such a file is still found and stripped when infra imports it.
 
 **A file with no kind that calls a resource function at its top level stays in the function's bundle.** For example, `lib/queues.ts` with `export const dlq = queue({ name: "dlq" })` fails the runtime build if a function imports anything from it. The error says to add the file to `files.infra`, which leaves it out:
 
