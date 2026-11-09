@@ -251,7 +251,7 @@ function resourceStub(
     );
     entries.push(`${option}: ${alias}`);
   }
-  return `{ ${entries.join(", ")} }`;
+  return entries.length > 0 ? `{ ${entries.join(", ")} }` : "{}";
 }
 
 type Located = { file: string; node: Node };

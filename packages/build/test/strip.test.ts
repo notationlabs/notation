@@ -467,7 +467,7 @@ describe("stripForRuntime", () => {
           `export const ordersQueue = createQueue({ id: "orders" });`,
         ].join("\n"),
       });
-      expect(code).toContain("sqs({  })");
+      expect(code).toContain("sqs({})");
     });
 
     it("gives the infra error for a resource whose mark lists no runtime options", () => {
