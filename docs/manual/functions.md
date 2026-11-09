@@ -127,7 +127,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 - With a body schema, a request with an empty body is validated as `undefined`, so the schema decides whether the body may be left out.
 - A request body is always JSON, and `decode()` throws a `DecodeError` for a body that is not. A route that takes text declares a string schema, such as `v.string()`, and the client sends the text as a JSON string, such as `"Buy milk"` with the quotes. Form bodies and binary bodies are not supported yet. See [Request bodies](../resources/api-gateway.md#request-bodies).
 - A request through a JWT authorizer, to a Lambda with `.authSchema()` or `defineRoute({ auth })`, also gets a top-level `claims` field. `decode()` validates the claims with the claims schema, if there is one, and throws a `DecodeError` for claims that the schema rejects. See [Claims in `decode()`](../resources/api-gateway.md#claims-in-decode).
-- When the body is not valid, `decode()` throws a `DecodeError`. Its `issues` hold the schema's issues.
+- When the body is not valid, `decode()` throws a `DecodeError`. Its `issues` hold the schema's issues. Its `part` is `"body"` for an error in the body and `"claims"` for an error in the claims, so a handler can return 400 for one and 403 for the other.
 - A message that fails validation fails again on every retry, so the handler logs it and skips it. If the handler threw instead, Lambda would retry the whole batch until the queue's retention period ends.
 - An `eventBridge` Lambda, or a Lambda with no `event`, has no `decode()`. Calling it is a type error.
 

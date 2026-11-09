@@ -292,6 +292,21 @@ For a request through a JWT authorizer, `lambda.decode(event)` reads `event.requ
 
 `decode()` throws a `DecodeError` when the claims are not valid, and when the request has no claims. It leaves `requestContext` as API Gateway sent it.
 
+A `DecodeError` has a `part` field, which is `"claims"` for an error in the claims and `"body"` for an error in the body. `decode()` checks the claims before the body. A handler can use `part` to choose the status code:
+
+```ts [runtime/user.ts]
+export const handler: LambdaHandler<typeof lambda> = async (event) => {
+  try {
+    const { claims } = await lambda.decode(event);
+    return { message: claims.sub };
+  } catch (error) {
+    if (!(error instanceof DecodeError)) throw error;
+    const statusCode = error.part === "claims" ? 403 : 400;
+    return { statusCode, body: error.message };
+  }
+};
+```
+
 **API Gateway passes each claim as a string.** An HTTP API's JWT authorizer turns every claim value into a string before it calls the function. A number such as `exp` arrives as `"1700000000"`, and an array such as `["admin", "staff"]` arrives as `"[admin staff]"`. So a claims schema reads strings, and converts the ones that it needs as other types:
 
 ```ts [shared/claims.ts]
