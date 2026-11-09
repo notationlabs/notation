@@ -121,6 +121,12 @@ describe("parseConfig", () => {
     }
   });
 
+  it("accepts a kind of files that is set to undefined", () => {
+    const config = { ...valid, files: { infra: undefined } };
+    expect(parseConfig(config)).toBe(config);
+    expect(resolveModuleGlobs(config)).toEqual({});
+  });
+
   it("names the given config file in errors", () => {
     expect(() => parseConfig({ app: "orders-app" }, "jobs.config.ts")).toThrow(
       "Invalid jobs.config.ts: entry must be a path to an entry file",

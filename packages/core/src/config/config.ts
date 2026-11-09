@@ -109,6 +109,7 @@ function parseFiles(files: unknown, fail: (message: string) => never) {
         `unknown key "${kind}" in files. Known keys: ${moduleKinds.join(", ")}`,
       );
     }
+    if (value === undefined) continue;
     const globs: unknown[] = [value].flat();
     if (
       !globs.every(
