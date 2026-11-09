@@ -91,7 +91,7 @@ export function schedule(config) {}
 
 export const awsApiGateway = `
 /** @resource runtime: */
-export function api(config) { return { id: config.name }; }
+export function api(config) { return { id: config.id }; }
 
 /** @resource runtime: claims */
 export function jwtAuthorizer(config) { return config; }

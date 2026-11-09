@@ -85,7 +85,7 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
     import { queue } from "@notation/aws/sqs";
     import { Order } from "../shared/schema";
 
-    export const ordersQueue = queue({ name: "orders", schema: Order });
+    export const ordersQueue = queue({ id: "orders", schema: Order });
     `,
   );
 
@@ -206,8 +206,9 @@ it("deploys a declaration module that makes its own route with apiGateway.bind(a
     import { api, jwtAuthorizer } from "@notation/aws/api-gateway";
     import { Claims } from "../shared/schema";
 
-    export const ordersApi = api({ name: "orders-api" });
+    export const ordersApi = api({ id: "orders-api" });
     export const userAuth = jwtAuthorizer({
+      id: "user-auth",
       api: ordersApi,
       issuer: "https://issuer.example/",
       audience: ["orders"],
@@ -251,7 +252,7 @@ it("deploys a declaration module that makes its own route with apiGateway.bind(a
     {
       key: "POST /orders",
       type: "JWT",
-      auth: expect.stringMatching(/^orders-api-jwt-authorizer-/),
+      auth: "user-auth-authorizer",
     },
   ]);
   expect(result.responses).toEqual([

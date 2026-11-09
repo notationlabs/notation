@@ -164,7 +164,7 @@ function writeAwsPackage() {
     [
       `import "./sdk.js";`,
       `/** @resource runtime: */`,
-      `export function api(config) { return { id: config.name, placeholder: "placeholder-api" }; }`,
+      `export function api(config) { return { id: config.id, placeholder: "placeholder-api" }; }`,
       `/** @resource runtime: claims */`,
       `export function jwtAuthorizer(config) { return { claims: config.claims, issuer: config.issuer }; }`,
     ].join("\n"),
@@ -173,7 +173,7 @@ function writeAwsPackage() {
     "node_modules/@notation/aws/helpers.js",
     [
       `import { queue } from "./sqs.js";`,
-      `export const ordersQueue = () => queue({ name: "orders" });`,
+      `export const ordersQueue = () => queue({ id: "orders" });`,
     ].join("\n"),
   );
   write(
@@ -212,7 +212,7 @@ function writeProject(handler = handlerModule) {
       `import { queue } from "@notation/aws/sqs";`,
       `import { Order } from "../shared/schema";`,
       `import { lambda } from "../runtime/process-orders";`,
-      `export const orders = queue({ name: "orders", schema: Order });`,
+      `export const orders = queue({ id: "orders", schema: Order });`,
       `eventSourceMapping({ source: orders, target: () => lambda });`,
     ].join("\n"),
   );
@@ -368,7 +368,7 @@ describe("declaration modules", () => {
         )
         .replace(
           "export const handler = async () =>",
-          "export const handler = async () => queue({ name: 'x' }) &&",
+          "export const handler = async () => queue({ id: 'x' }) &&",
         ),
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
@@ -386,7 +386,7 @@ describe("declaration modules", () => {
         )
         .replace(
           "export const handler = async () =>",
-          "export const handler = async () => topic({ name: 'x' }) && queue({ name: 'x' }) &&",
+          "export const handler = async () => topic({ name: 'x' }) && queue({ id: 'x' }) &&",
         ),
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
@@ -430,7 +430,7 @@ describe("declaration modules", () => {
       "infra/helpers.ts",
       [
         `import { queue } from "@notation/aws/sqs";`,
-        `export function makeQueue(name: string) { return queue({ name }); }`,
+        `export function makeQueue(name: string) { return queue({ id: name }); }`,
       ].join("\n"),
     );
     write(
@@ -521,7 +521,7 @@ describe("declaration modules", () => {
       "lib/labels.ts",
       [
         `import { queue } from "@notation/aws/sqs";`,
-        `export const dlq = queue({ name: "dlq" });`,
+        `export const dlq = queue({ id: "dlq" });`,
         `export const label = () => "orders";`,
       ].join("\n"),
     );
@@ -551,7 +551,7 @@ describe("declaration modules", () => {
       "infra/names.ts",
       [
         `import { queue } from "@notation/aws/sqs";`,
-        `export const audit = queue({ name: "audit" });`,
+        `export const audit = queue({ id: "audit" });`,
         `export function queueConfig(name: string) { return { name, retries: 3 }; }`,
       ].join("\n"),
     );
@@ -570,7 +570,7 @@ describe("declaration modules", () => {
         )
         .replace(
           "export const handler = async () => [",
-          `export const handler = async () => [queue({ name: "scratch" })] && [`,
+          `export const handler = async () => [queue({ id: "scratch" })] && [`,
         ),
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
@@ -656,7 +656,7 @@ describe("runtime modules that infra doesn't import", () => {
         `import { eventSourceMapping } from "@notation/aws/lambda";`,
         `import { queue } from "@notation/aws/sqs";`,
         `import { lambda } from "../runtime/process-orders";`,
-        `export const orders = queue({ name: "orders" });`,
+        `export const orders = queue({ id: "orders" });`,
         `eventSourceMapping({ source: orders, target: () => lambda });`,
         `(globalThis.ran ??= []).push("entry");`,
       ].join("\n"),
@@ -845,7 +845,7 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
       "lib/labels.ts",
       [
         `import { queue } from "@notation/aws/sqs";`,
-        `export const dlq = queue({ name: "dlq" });`,
+        `export const dlq = queue({ id: "dlq" });`,
         `export const label = () => "orders";`,
       ].join("\n"),
     );
@@ -865,7 +865,7 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
     );
     write(
       "lib/queues.ts",
-      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
+      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ id: "dlq" });`,
     );
     await expect(buildProject()).rejects.toThrow(
       /Error: runtime\/process-orders\.ts:11:27: an option of \$lambda that the function keeps refers to dlq, from lib\/queues\.ts\. lib\/queues\.ts calls queue at its top level, so the function can't load it\. The runtime build removes infra\. Read infra values in the function through the declaration's env\(\)\. Move a plain value that a kept option uses to a shared module \(files\.shared\), or to a file that no glob matches\./,
@@ -899,7 +899,7 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
         [
           `import { queue } from "@notation/aws/sqs";`,
           `export const Order = { name: "Order" };`,
-          `export const dlq = queue({ name: "dlq" });`,
+          `export const dlq = queue({ id: "dlq" });`,
         ].join("\n"),
       );
       await expect(buildProject(files)).rejects.toThrow(
@@ -915,7 +915,7 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
       [
         `import { $lambda } from "@notation/aws/lambda";`,
         `import { queue } from "@notation/aws/sqs";`,
-        `const dlq = queue({ name: "dlq" });`,
+        `const dlq = queue({ id: "dlq" });`,
         `export const lambda = $lambda({ id: "fn", policy: () => [dlq.url] });`,
         `export const handler = () => 1;`,
       ].join("\n"),
@@ -971,7 +971,7 @@ describe("workspace packages outside the project root", () => {
 
   const acmeLib = {
     "index.ts": `export * from "./queues";\nexport * from "./fmt";`,
-    "queues.ts": `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
+    "queues.ts": `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ id: "dlq" });`,
     "fmt.ts": `export const fmt = () => "formatted";`,
   };
 
@@ -1013,7 +1013,7 @@ describe("workspace packages outside the project root", () => {
       "node_modules/acme-installed/index.js",
       [
         `import { queue } from "@notation/aws/sqs";`,
-        `export const dlq = queue({ name: "dlq" });`,
+        `export const dlq = queue({ id: "dlq" });`,
         `export const fmt = () => "formatted";`,
       ].join("\n"),
     );
@@ -1138,7 +1138,7 @@ describe("a monorepo with the config at its root", () => {
     );
     write(
       "packages/api/queues.ts",
-      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
+      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ id: "dlq" });`,
     );
     const { bundle } = await buildProject();
     expect(bundle).not.toContain(`"dlq"`);
@@ -1156,7 +1156,7 @@ describe("a monorepo with the config at its root", () => {
     );
     write(
       "packages/api/queues.ts",
-      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
+      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ id: "dlq" });`,
     );
     await expect(buildProject()).rejects.toThrow(
       "packages/api/queues.ts calls queue at its top level. If the function doesn't use a value from packages/api/queues.ts, add \"sideEffects\": false to the nearest package.json above it, so that the bundler can leave packages/api/queues.ts out. If it does, read infra values through the declaration's env(), and move a plain value that the function needs to a file that doesn't call a resource function.",
@@ -1170,7 +1170,7 @@ describe("a monorepo with the config at its root", () => {
     write("packages/api/package.json", JSON.stringify({ name: "@acme/api" }));
     write(
       "packages/api/runtime/q.ts",
-      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
+      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ id: "dlq" });`,
     );
     const error = await buildProject({
       runtime: ["runtime/**", "packages/*/runtime/**"],
@@ -1194,7 +1194,7 @@ describe("a monorepo with the config at its root", () => {
     write("packages/api/package.json", JSON.stringify({ name: "@acme/api" }));
     write(
       "packages/api/infra/labels.ts",
-      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });\nexport const label = () => "orders";`,
+      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ id: "dlq" });\nexport const label = () => "orders";`,
     );
     const error = await buildProject({
       infra: ["infra/**", "packages/*/infra/**"],
@@ -1213,7 +1213,7 @@ describe("a monorepo with the config at its root", () => {
       "packages/api/handler.ts",
       readFileSync(path.join(root, "packages/api/handler.ts"), "utf8").replace(
         `console.log("api module loaded");`,
-        `console.log("api module loaded");\n  import { queue } from "@notation/aws/sqs";\n  export const dlq = queue({ name: "dlq" });`,
+        `console.log("api module loaded");\n  import { queue } from "@notation/aws/sqs";\n  export const dlq = queue({ id: "dlq" });`,
       ),
     );
     const { modules } = await compileInfra(path.join(root, "infra/api.ts"));
@@ -1242,7 +1242,7 @@ describe("a monorepo with the config at its root", () => {
     );
     write(
       "packages/api/queues.ts",
-      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
+      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ id: "dlq" });`,
     );
     await expect(buildProject()).rejects.toThrow(
       "runtime/process-orders.ts:11:27: an option of $lambda that the function keeps refers to dlq, from packages/api/queues.ts. packages/api/queues.ts calls queue at its top level, so the function can't load it.",
@@ -1353,7 +1353,7 @@ describe("shared modules", () => {
       [
         `import { queue } from "@notation/aws/sqs";`,
         `import { Order } from "../../shared/schema";`,
-        `export const orders = queue({ name: "orders", schema: Order });`,
+        `export const orders = queue({ id: "orders", schema: Order });`,
       ].join("\n"),
     );
     const { bundle } = await buildProject();
@@ -1386,8 +1386,8 @@ describe("shared modules", () => {
       [
         `import { api, jwtAuthorizer } from "@notation/aws/api-gateway";`,
         `import { Claims } from "../shared/claims";`,
-        `export const ordersApi = api({ name: "orders" });`,
-        `export const userAuth = jwtAuthorizer({ api: ordersApi, issuer: "https://issuer", audience: ["app"], claims: Claims });`,
+        `export const ordersApi = api({ id: "orders" });`,
+        `export const userAuth = jwtAuthorizer({ id: "user-auth", api: ordersApi, issuer: "https://issuer", audience: ["app"], claims: Claims });`,
       ].join("\n"),
     );
     write("shared/claims.ts", `export const Claims = { name: "Claims" };`);
@@ -1448,7 +1448,7 @@ describe("shared modules", () => {
     writeProject(withHandler(`import { make } from "../shared/make";`, "make"));
     write(
       "shared/make.ts",
-      `import { queue } from "@notation/aws/sqs";\nexport const make = () => queue({ name: "x" });`,
+      `import { queue } from "@notation/aws/sqs";\nexport const make = () => queue({ id: "x" });`,
     );
     await expect(buildProject()).rejects.toThrow(
       'shared/make.ts:1:10: shared/make.ts, a shared module (files.shared: "shared/**", the default), imports the resource function queue from @notation/aws/sqs.',

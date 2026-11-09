@@ -249,7 +249,7 @@ describe("stripForRuntime", () => {
         )
         .replace(
           "apiGateway.schema(Order)",
-          `eventBridge.defineSchedule({ name: "nightly", schedule: rate(1, "day") })`,
+          `eventBridge.defineSchedule({ id: "nightly", schedule: rate(1, "day") })`,
         ),
     );
     const { code } = stripForRuntime(analysis, analyses)!;
@@ -727,7 +727,7 @@ describe("stripForRuntime", () => {
           ].join("\n"),
         }),
       ).toThrow(
-        "runtime/handler.ts:16:25: the function reads ordersQueue from infra/orders.ts, but ordersQueue isn't a call to a resource function, so the build can't find its options. If ordersQueue is a resource, declare it with a call such as `queue({ name: \"orders\", schema: Order })`, as a top-level const or in an object literal. If it is a plain value, such as a schema, move it to a shared module (files.shared).",
+        "runtime/handler.ts:16:25: the function reads ordersQueue from infra/orders.ts, but ordersQueue isn't a call to a resource function, so the build can't find its options. If ordersQueue is a resource, declare it with a call such as `queue({ id: \"orders\", schema: Order })`, as a top-level const or in an object literal. If it is a plain value, such as a schema, move it to a shared module (files.shared).",
       );
     });
 
@@ -750,7 +750,7 @@ describe("stripForRuntime", () => {
       [
         `import { api, jwtAuthorizer } from "@notation/aws/api-gateway";`,
         `import { Claims } from "../shared/claims";`,
-        `export const ordersApi = api({ name: "orders" });`,
+        `export const ordersApi = api({ id: "orders" });`,
         ...lines,
       ].join("\n");
     const strip = (
@@ -782,7 +782,7 @@ describe("stripForRuntime", () => {
       return stripForRuntime(analysis, new ModuleAnalyses({ marks, root }))!
         .code;
     };
-    const userAuth = `export const userAuth = jwtAuthorizer({ api: ordersApi, issuer: "https://issuer", audience: ["app"], claims: Claims });`;
+    const userAuth = `export const userAuth = jwtAuthorizer({ id: "user-auth", api: ordersApi, issuer: "https://issuer", audience: ["app"], claims: Claims });`;
 
     it("replaces the API with {} and the authorizer with its claims", () => {
       const code = strip(
@@ -816,7 +816,7 @@ describe("stripForRuntime", () => {
       const code = strip(
         `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", auth: userAuth })`,
         [
-          `export const userAuth = jwtAuthorizer({ api: ordersApi, issuer: "https://issuer", audience: ["app"] });`,
+          `export const userAuth = jwtAuthorizer({ id: "user-auth", api: ordersApi, issuer: "https://issuer", audience: ["app"] });`,
         ],
       );
       expect(code).toContain(
