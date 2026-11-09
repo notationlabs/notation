@@ -145,7 +145,7 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
       "sqs:GetQueueAttributes",
       "sqs:SendMessage",
     ],
-    mappings: ["orders-process-orders-mapping"],
+    mappings: ["sqs-mapping:orders:process-orders"],
     zipSource: "dist/runtime/process-orders/index.mjs",
   });
   expect(JSON.parse(logged!)).toEqual({
@@ -252,7 +252,7 @@ it("deploys a declaration module that makes its own route with apiGateway.bind(a
     {
       key: "POST /orders",
       type: "JWT",
-      auth: "user-auth-authorizer",
+      auth: "api-authorizer:user-auth",
     },
   ]);
   expect(result.responses).toEqual([
