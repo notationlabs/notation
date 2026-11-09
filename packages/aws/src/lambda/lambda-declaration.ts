@@ -186,17 +186,21 @@ export type LambdaTarget<K extends LambdaEventKind = LambdaEventKind> =
   (() => { readonly "~lambda"?: { kind: K } }) | LambdaGroup;
 
 /**
- * Finds the Lambda group of a target. A declaration is passed as a function,
- * such as `() => lambda`, because it can be in a module that is still
- * loading. `kinds` are the events the caller sends; a declaration with
- * another event fails. `caller` names the infra API in errors.
+ * Finds the Lambda group of a target, and the event of its declaration. A
+ * declaration is passed as a function, such as `() => lambda`, because it can
+ * be in a module that is still loading. A declaration fails when its event
+ * has another kind than `kind`, or when it wires itself to a queue, a route
+ * or a schedule, which the caller would wire a second time.
+ * @param use The caller, such as `route()`, and what it does with a Lambda,
+ * such as `` (lambda) => `routes GET /todos to ${lambda}` ``, for errors.
  */
 export function resolveLambda(
   target: unknown,
-  caller: string,
-  kinds: LambdaEventKind[],
-): LambdaGroup {
-  if (isLambdaGroup(target)) return target;
+  use: { caller: string; action: (lambda: string) => string },
+  kind: Exclude<LambdaEventKind, "none">,
+): { group: LambdaGroup; event: LambdaEvent | undefined } {
+  const { caller, action } = use;
+  if (isLambdaGroup(target)) return { group: target, event: undefined };
   if (typeof target !== "function") {
     throw new Error(
       `${caller} expects a function that returns a Lambda declaration, such as \`() => lambda\`, or a Lambda group from lambda().`,
@@ -210,33 +214,56 @@ export function resolveLambda(
     );
   }
   const group = registered.build();
-  const event = registered.event()?.kind ?? "none";
-  if (!kinds.includes(event)) {
+  const event = registered.event();
+  const lambda = `the Lambda "${group.id}"`;
+  if (event && event.kind !== kind) {
     throw new Error(
-      `${caller} sends ${kinds
-        .filter((k) => k !== "none")
-        .map((k) => eventNames[k])
-        .join(
-          " or ",
-        )}, but the Lambda "${group.id}" is declared with ${event === "none" ? "no event" : `event: () => ${eventCall(registered.event()!)}`}.`,
+      `${caller} sends ${eventNames[kind]}, but ${lambda} is declared with event: () => ${eventCall(event)}.`,
     );
   }
-  return group;
+  const wired = event && wiredBy(event);
+  if (wired) {
+    throw new Error(
+      `${caller} ${action(lambda)}, but the Lambda makes its own ${wired.noun} in its declaration, with event: () => ${eventCall(event)}. Make the ${wired.noun} in one place: remove the ${caller} call, or declare the Lambda with event: () => ${wired.instead}.`,
+    );
+  }
+  return { group, event };
 }
 
-const eventNames: Record<LambdaEventKind, string> = {
+// What an event that wires its own Lambda makes, and the event to declare
+// in its place.
+function wiredBy(
+  event: LambdaEvent,
+): { noun: string; instead: string } | undefined {
+  switch (event.kind) {
+    case "sqs":
+      return event.queue
+        ? { noun: "queue mapping", instead: "sqs.schema(schema)" }
+        : undefined;
+    case "apiGateway":
+    case "apiGateway-jwt":
+      return event.route
+        ? { noun: "route", instead: "apiGateway.schema(body)" }
+        : undefined;
+    case "eventBridge":
+      return event.schedule
+        ? { noun: "schedule", instead: "eventBridge.schema(null)" }
+        : undefined;
+  }
+}
+
+const eventNames: Record<Exclude<LambdaEventKind, "none">, string> = {
   sqs: "sqs events",
   apiGateway: "apiGateway events",
   "apiGateway-jwt": "apiGateway events with a JWT authorizer",
   eventBridge: "eventBridge events",
-  none: "any events",
 };
 
 /** The call that declares an event, as errors show it. */
 export function eventCall(event: LambdaEvent): string {
   switch (event.kind) {
     case "sqs":
-      return "queue" in event ? "sqs.bind(queue)" : "sqs.schema(schema)";
+      return event.queue ? "sqs.bind(queue)" : "sqs.schema(schema)";
     case "apiGateway":
     case "apiGateway-jwt":
       if (event.route) return "apiGateway.bind(api).defineRoute(options)";
@@ -249,19 +276,6 @@ export function eventCall(event: LambdaEvent): string {
         ? "eventBridge.defineSchedule(options)"
         : "eventBridge.schema(null)";
   }
-}
-
-/**
- * The id and the event of a target's declaration, or undefined for a group
- * from `lambda()`.
- */
-export function declarationOf(
-  target: unknown,
-): { id: string; event: LambdaEvent | undefined } | undefined {
-  if (typeof target !== "function") return undefined;
-  const declaration = target();
-  const registered = registeredOf(declaration);
-  return registered && { id: declaration.id, event: registered.event() };
 }
 
 /**

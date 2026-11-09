@@ -1,7 +1,7 @@
 import type { StandardSchemaV1 } from "@notation/resource";
 import type { SqsEvent, SqsOptions, SqsSource } from "./declaration";
 import type { LambdaGroup } from "./lambda";
-import { declarationOf, resolveLambda, whenLoaded } from "./lambda-declaration";
+import { resolveLambda, whenLoaded } from "./lambda-declaration";
 
 export type EventSourceMappingConfig<
   S extends StandardSchemaV1 = StandardSchemaV1,
@@ -41,18 +41,15 @@ export function eventSourceMapping<S extends StandardSchemaV1>(
 ): void {
   const { source, target, ...options } = config;
   whenLoaded(() => {
-    const declaration = declarationOf(target);
-    const event = declaration?.event;
     const queueName = queueNameOf(source);
-    if (event?.kind === "sqs" && "queue" in event) {
-      throw new Error(
-        `eventSourceMapping() maps ${queueName} to the Lambda "${declaration!.id}", which maps ${event.queue === source ? "the same queue" : "a queue"} in its declaration, with event: () => sqs.bind(queue). Map the queue in one place: remove the eventSourceMapping() call, or declare the Lambda with event: () => sqs.schema(schema).`,
-      );
-    }
-    const group = resolveLambda(target, "eventSourceMapping()", [
+    const { group, event } = resolveLambda(
+      target,
+      {
+        caller: "eventSourceMapping()",
+        action: (lambda) => `maps ${queueName} to ${lambda}`,
+      },
       "sqs",
-      "none",
-    ]);
+    );
     if (event?.kind === "sqs" && source.schema !== event.schema) {
       throw new Error(
         `eventSourceMapping() maps ${queueName} to the Lambda "${group.id}", but the Lambda's event: () => sqs.schema(schema) has another schema than the queue. Give queue() and sqs.schema() the same schema, imported from a shared module.`,

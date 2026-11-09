@@ -1,6 +1,4 @@
 import {
-  declarationOf,
-  eventCall,
   resolveLambda,
   whenLoaded,
   type LambdaTarget,
@@ -33,17 +31,14 @@ export function schedule<const Id extends string>(
 ): void {
   const { target, ...options } = config;
   whenLoaded(() => {
-    const declaration = declarationOf(target);
-    const event = declaration?.event;
-    if (event?.kind === "eventBridge" && event.schedule) {
-      throw new Error(
-        `schedule() invokes the Lambda "${declaration!.id}" on the schedule "${options.id}", but the Lambda makes its own schedule in its declaration, with event: () => ${eventCall(event)}. Schedule the Lambda in one place: remove the schedule() call, or declare the Lambda with event: () => eventBridge.schema(null).`,
-      );
-    }
-    const lambdaGroup = resolveLambda(target, "schedule()", [
+    const { group: lambdaGroup } = resolveLambda(
+      target,
+      {
+        caller: "schedule()",
+        action: (lambda) => `invokes ${lambda} on the schedule "${options.id}"`,
+      },
       "eventBridge",
-      "none",
-    ]);
+    );
     new ScheduleGroup(options as ScheduleOptions, lambdaGroup);
   });
 }

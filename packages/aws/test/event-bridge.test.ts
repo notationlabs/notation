@@ -208,7 +208,7 @@ test("schedule() of a declaration that makes its own schedule throws", async () 
       schedule({ id: "daily", schedule: rate(1, "day"), target: () => fn });
     }),
   ).rejects.toThrow(
-    'schedule() invokes the Lambda "digest" on the schedule "daily", but the Lambda makes its own schedule in its declaration, with event: () => eventBridge.defineSchedule(options). Schedule the Lambda in one place: remove the schedule() call, or declare the Lambda with event: () => eventBridge.schema(null).',
+    'schedule() invokes the Lambda "digest" on the schedule "daily", but the Lambda makes its own schedule in its declaration, with event: () => eventBridge.defineSchedule(options). Make the schedule in one place: remove the schedule() call, or declare the Lambda with event: () => eventBridge.schema(null).',
   );
 });
 

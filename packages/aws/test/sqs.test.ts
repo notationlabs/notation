@@ -434,11 +434,15 @@ test("a declaration whose queue fails to map builds one group", () => {
   const fn = inModule(
     $lambda({ id: "process", event: () => sqs.bind(failing) }),
   );
-  const build = () => resolveLambda(() => fn, "test", ["sqs"]);
+  const build = () =>
+    resolveLambda(
+      () => fn,
+      { caller: "test", action: (lambda) => `uses ${lambda}` },
+      "sqs",
+    );
 
   expect(build).toThrow("mapping failed");
-  const group = build();
-  expect(build()).toBe(group);
+  expect(build).toThrow("makes its own queue mapping");
   expect(calls).toBe(1);
 });
 
@@ -511,7 +515,7 @@ test("eventSourceMapping of a declaration that maps a queue itself throws", asyn
       eventSourceMapping({ source: orders, target: () => fn });
     }),
   ).rejects.toThrow(
-    `eventSourceMapping() maps the queue "orders" to the Lambda "process", which maps the same queue in its declaration, with event: () => sqs.bind(queue). Map the queue in one place: remove the eventSourceMapping() call, or declare the Lambda with event: () => sqs.schema(schema).`,
+    `eventSourceMapping() maps the queue "orders" to the Lambda "process", but the Lambda makes its own queue mapping in its declaration, with event: () => sqs.bind(queue). Make the queue mapping in one place: remove the eventSourceMapping() call, or declare the Lambda with event: () => sqs.schema(schema).`,
   );
 });
 

@@ -1,11 +1,6 @@
 import * as aws from "@notation/aws.iac";
 import type { StandardSchemaV1 } from "@notation/resource";
-import {
-  declarationOf,
-  eventCall,
-  resolveLambda,
-  whenLoaded,
-} from "src/lambda/lambda-declaration";
+import { resolveLambda, whenLoaded } from "src/lambda/lambda-declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import type { ApiGroup } from "./api";
 import type { HttpMethod } from "src/lambda/declaration";
@@ -119,20 +114,14 @@ export function route<A extends JwtAuthorizerGroup<any> | undefined>(
 ): void {
   whenLoaded(() => {
     const routeName = `${method} ${path}`;
-    const declaration = declarationOf(target);
-    const event = declaration?.event;
-    if (
-      (event?.kind === "apiGateway" || event?.kind === "apiGateway-jwt") &&
-      "route" in event
-    ) {
-      throw new Error(
-        `route() routes ${routeName} to the Lambda "${declaration!.id}", which makes its own route in its declaration, with event: () => ${eventCall(event)}. Route the Lambda in one place: remove the route() call, or declare the Lambda with event: () => apiGateway.schema(body).`,
-      );
-    }
-    const lambdaGroup = resolveLambda(target, "route()", [
+    const { group: lambdaGroup, event } = resolveLambda(
+      target,
+      {
+        caller: "route()",
+        action: (lambda) => `routes ${routeName} to ${lambda}`,
+      },
       auth ? "apiGateway-jwt" : "apiGateway",
-      "none",
-    ]);
+    );
     // Either side may have no claims schema. Without one in the authorizer,
     // the function still validates the claims. Without one in the
     // declaration, the function doesn't validate them.

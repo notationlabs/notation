@@ -69,7 +69,7 @@ export const sqs = {
     queue: SqsSource<S>,
     options?: SqsOptions,
   ): SqsEvent<S> {
-    return { kind: "sqs", schema: queue?.schema, queue, options };
+    return { kind: "sqs", schema: queue.schema, queue, options };
   },
   /**
    * The function receives SQS messages, from queues that infra maps to it

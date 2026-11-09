@@ -776,7 +776,7 @@ test("route() of a declaration that makes its own route throws", async () => {
       router(todoApi).get("/todos/all", () => todos);
     }),
   ).rejects.toThrow(
-    'route() routes GET /todos/all to the Lambda "todos", which makes its own route in its declaration, with event: () => apiGateway.bind(api).defineRoute(options). Route the Lambda in one place: remove the route() call, or declare the Lambda with event: () => apiGateway.schema(body).',
+    'route() routes GET /todos/all to the Lambda "todos", but the Lambda makes its own route in its declaration, with event: () => apiGateway.bind(api).defineRoute(options). Make the route in one place: remove the route() call, or declare the Lambda with event: () => apiGateway.schema(body).',
   );
 });
 
