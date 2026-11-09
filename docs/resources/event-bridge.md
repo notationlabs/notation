@@ -2,10 +2,10 @@
 
 `@notation/aws/event-bridge` creates scheduled Lambda invocations with EventBridge. A Lambda function receives the events of a schedule in one of two ways:
 
-| Function-led                                                  | Infra-led                                                          |
-| ------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `event: () => eventBridge.defineSchedule({ name, schedule })` | `event: () => eventBridge.schedule()`                              |
-| The declaration makes the schedule.                           | Infra makes schedules with `schedule({ name, schedule, target })`. |
+| Function-led                                                | Infra-led                                                        |
+| ----------------------------------------------------------- | ---------------------------------------------------------------- |
+| `event: () => eventBridge.defineSchedule({ id, schedule })` | `event: () => eventBridge.schedule()`                            |
+| The declaration makes the schedule.                         | Infra makes schedules with `schedule({ id, schedule, target })`. |
 
 `eventBridge` comes from `@notation/aws/lambda`. `schedule()`, `rate()`, `cron()` and `once()` come from `@notation/aws/event-bridge`.
 
@@ -21,7 +21,7 @@ export const lambda = $lambda({
   id: "nightly-digest",
   event: () =>
     eventBridge.defineSchedule({
-      name: "nightly-digest",
+      id: "nightly-digest",
       schedule: rate(1, "day"),
     }),
 });
@@ -37,10 +37,13 @@ The function doesn't read the schedule, so the runtime build removes the options
 
 ```ts [@notation/aws/lambda]
 type ScheduleOptions = {
-  name: string;
+  id: string;
+  name?: string;
   schedule: Schedule;
 };
 ```
+
+`id` and `name` work as they do for [`schedule()`](#config).
 
 ## `schedule(config)`
 
@@ -53,7 +56,7 @@ import * as eventBridge from "@notation/aws/event-bridge";
 import { lambda as logEvent } from "runtime/log-event";
 
 eventBridge.schedule({
-  name: "log-every-minute",
+  id: "log-every-minute",
   schedule: eventBridge.rate(1, "minute"),
   target: () => logEvent,
 });
@@ -80,7 +83,8 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 ```ts [@notation/aws/event-bridge]
 type ScheduleConfig = {
-  name: string;
+  id: string;
+  name?: string;
   schedule: Schedule;
   target: LambdaTarget<"eventBridge" | "none">; // () => declaration, or a Lambda group
 };
@@ -90,7 +94,9 @@ type ScheduleConfig = {
 
 The rule sends the EventBridge event to the function as it is.
 
-`name` keys the schedule in state. In AWS, the EventBridge rule is named `<app>--<stage>--<name>`, such as `my-app--prod--log-every-minute`. See [AWS names](../manual/project-config.md#aws-names).
+`id` keys the schedule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. In AWS, the EventBridge rule is named `<app>--<stage>--<id>`, such as `my-app--prod--log-every-minute`.
+
+`name` replaces the `id` in the rule's AWS name, so `name: "every-minute"` names the rule `my-app--prod--every-minute`. Changing `name` also replaces the rule. See [AWS names](../manual/project-config.md#aws-names).
 
 ## Schedule types
 

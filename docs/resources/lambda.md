@@ -27,7 +27,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 import { api, router } from "@notation/aws/api-gateway";
 import { lambda as todos } from "runtime/todos";
 
-const todoRouter = router(api({ name: "todo-api" }));
+const todoRouter = router(api({ id: "todo-api" }));
 todoRouter.get("/todos", () => todos);
 todoRouter.post("/todos", () => todos);
 ```
@@ -72,6 +72,8 @@ In a runtime module, the ID is the declaration's `id`. The ID doesn't come from 
 
 In AWS, the function is named `<app>--<stage>--<id>` and its role `<app>--<stage>--<id>-role`. If a name is longer than 64 characters, Notation shortens it. See [AWS names](../manual/project-config.md#aws-names).
 
+`name` replaces the `id` in the function's AWS name. For example, `$lambda({ id: "orders", name: "order-handler" })` is named `<app>--<stage>--order-handler`. The role and the other resources keep names from the `id`, and the `id` stays the state key. Changing `name` replaces the function, because Lambda can't rename a function.
+
 IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. `$lambda` and `lambda()` only accept string literals that follow this rule, and throw at runtime if they get anything else. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, count as the same, because IAM role names ignore case.
 
 ## `lambda(config)`
@@ -90,6 +92,7 @@ export const external = lambda({
 ```ts [@notation/aws/lambda]
 type LambdaConfig = {
   id: string;
+  name?: string;
   handler?: string; // default "handler"
   code: { type: "file" | "zip"; path: string };
   runtime?: string; // default "nodejs22.x"

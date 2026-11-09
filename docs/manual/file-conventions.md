@@ -39,7 +39,7 @@ export default defineConfig({
 import { api, router } from "@notation/aws/api-gateway";
 import { lambda as todos } from "runtime/todos";
 
-const todoApi = api({ name: "todo-api" });
+const todoApi = api({ id: "todo-api" });
 const todoRouter = router(todoApi);
 todoRouter.get("/todos", () => todos);
 ```
@@ -215,7 +215,7 @@ The check doesn't follow dynamic `import()`, and it doesn't enter packages.
 
 A file that no glob matches, such as `lib/format.ts`, has no kind. Both builds bundle it as written. The checks of infra and shared modules don't apply to it. A declaration in such a file is still found and stripped when infra imports it.
 
-**A file with no kind that calls a resource function at its top level stays in the function's bundle.** For example, `lib/queues.ts` with `export const dlq = queue({ name: "dlq" })` fails the runtime build if a function imports anything from it. The error says to add the file to `files.infra`, which leaves it out:
+**A file with no kind that calls a resource function at its top level stays in the function's bundle.** For example, `lib/queues.ts` with `export const dlq = queue({ id: "dlq" })` fails the runtime build if a function imports anything from it. The error says to add the file to `files.infra`, which leaves it out:
 
 ```text
 The function in runtime/orders.ts uses queue from @notation/aws/sqs.js, a function that declares infrastructure: queue at lib/queues.ts:2:20. It imports @notation/aws/sqs.js through runtime/orders.ts → runtime/format.ts → lib/queues.ts → @notation/aws/sqs.js. Infra functions can't run in a runtime module. lib/queues.ts calls queue at its top level, but files.infra doesn't match it. Add lib/queues.ts to files.infra to leave it out of the function.

@@ -15,18 +15,23 @@
 ```ts [infra/api.ts]
 import { api } from "@notation/aws/api-gateway";
 
-export const todoApi = api({ name: "todo-api" });
+export const todoApi = api({ id: "todo-api" });
 ```
 
 ### Config
 
 ```ts [@notation/aws/api-gateway]
 type ApiConfig = {
-  name: string;
+  id: string;
+  name?: string;
 };
 ```
 
-`name` keys the API in state. In AWS, the API is named `<app>--<stage>--<name>`, such as `my-app--prod--todo-api`. See [AWS names](../manual/project-config.md#aws-names).
+`id` keys the API in state, so changing it replaces the API. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. In AWS, the API is named `<app>--<stage>--<id>`, such as `my-app--prod--todo-api`.
+
+`name` replaces the `id` in the AWS name, so `api({ id: "todo-api", name: "todos" })` is named `my-app--prod--todos`. See [AWS names](../manual/project-config.md#aws-names).
+
+The routes, integrations and permissions of an API take their state keys from the IDs that they connect. A route is keyed `<api id>-<METHOD>-<path>`, such as `todo-api-POST-/todos`. So a change of `name` leaves them as they are.
 
 `api()` also makes the `$default` stage, which deploys each change.
 
@@ -58,7 +63,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 ```ts [infra/api.ts]
 import { api } from "@notation/aws/api-gateway";
 
-export const todoApi = api({ name: "todo-api" });
+export const todoApi = api({ id: "todo-api" });
 ```
 
 ::
@@ -132,7 +137,7 @@ apiGateway.schema(body?: StandardSchemaV1).authSchema(claims?: StandardSchemaV1)
 import { api, router } from "@notation/aws/api-gateway";
 import { lambda as todos } from "runtime/todos";
 
-const todoApi = api({ name: "todo-api" });
+const todoApi = api({ id: "todo-api" });
 const todoRouter = router(todoApi);
 
 todoRouter.get("/todos", () => todos);
@@ -189,9 +194,10 @@ A JWT authorizer is a resource on an API. It holds the token's issuer and audien
 import { api, jwtAuthorizer } from "@notation/aws/api-gateway";
 import { Claims } from "shared/claims";
 
-export const userApi = api({ name: "user-api" });
+export const userApi = api({ id: "user-api" });
 
 export const userAuth = jwtAuthorizer({
+  id: "user-auth",
   api: userApi,
   issuer: "https://myaccount.auth0.com/",
   audience: ["https://my-api"],
@@ -267,6 +273,8 @@ The handler's event types `requestContext.authorizer.jwt.claims` as `JwtClaims`,
 
 ```ts [@notation/aws/api-gateway]
 type JwtAuthorizerConfig = {
+  id: string;
+  name?: string;
   api: ApiGroup;
   issuer: string;
   audience: string[];
@@ -275,7 +283,13 @@ type JwtAuthorizerConfig = {
 };
 ```
 
-The authorizer owns its API Gateway authorizer resource. An HTTP API allows 10 authorizers, and two authorizers on one API with the same `issuer` and `audience` fail with a duplicate id. Each route of the authorizer requires its `scopes`.
+`id` keys the authorizer in state. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Two authorizers in one deployment can't share an `id`.
+
+**The `issuer` and `audience` don't affect the state key.** Changing them updates the authorizer in place, and the routes keep pointing at it. Two authorizers on one API can have the same `issuer` and `audience` if their IDs differ. An HTTP API allows 10 authorizers.
+
+In AWS, the authorizer is named after its `id`, such as `user-auth`, or after `name` when you set it. The name has no `<app>--<stage>--` prefix, because an authorizer's name only needs to be unique inside its API, and the API's name has the prefix already.
+
+The authorizer owns its API Gateway authorizer resource. Each route of the authorizer requires its `scopes`.
 
 ## Integrations and authorizers after an unknown create
 
@@ -300,7 +314,7 @@ Infrastructure and runtime side-by-side:
 import { api, router } from "@notation/aws/api-gateway";
 import { lambda as todos } from "runtime/todos";
 
-const todoApi = api({ name: "todo-api" });
+const todoApi = api({ id: "todo-api" });
 const todoRouter = router(todoApi);
 
 todoRouter.get("/todos", () => todos);

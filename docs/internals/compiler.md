@@ -284,8 +284,8 @@ export const lambda = $lambda({
 import { queue } from "@notation/aws/sqs";
 import { Order } from "shared/schema";
 
-export const orderQueue = queue({ name: "orders", schema: Order });
-export const refundQueue = queue({ name: "refunds" });
+export const orderQueue = queue({ id: "orders", schema: Order });
+export const refundQueue = queue({ id: "refunds" });
 ```
 
 ::

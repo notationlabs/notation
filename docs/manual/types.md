@@ -12,7 +12,7 @@ A runtime module's declaration carries types to two places: to the infra code th
 import { api, router } from "@notation/aws/api-gateway";
 import { lambda as orders } from "runtime/orders";
 
-const myApi = api({ name: "order-api" });
+const myApi = api({ id: "order-api" });
 const myRouter = router(myApi);
 myRouter.get("/orders", () => orders); // type error: orders is an SQS Lambda
 ```
@@ -93,7 +93,7 @@ const { body: order } = await lambda.decode(record); // the output type of Order
 ```ts [infra/orders.ts]
 import { Order } from "shared/schema";
 
-export const orderQueue = queue({ name: "orders", schema: Order });
+export const orderQueue = queue({ id: "orders", schema: Order });
 ```
 
 ::
@@ -104,7 +104,7 @@ A declaration that infra maps queues to names the schema itself, with `sqs.schem
 import { lambda as orders } from "runtime/orders"; // event: () => sqs.schema(Order)
 import { lambda as refunds } from "runtime/refunds"; // event: () => sqs.schema(Refund)
 
-export const orderQueue = queue({ name: "orders", schema: Order });
+export const orderQueue = queue({ id: "orders", schema: Order });
 
 eventSourceMapping({ source: orderQueue, target: () => orders });
 eventSourceMapping({ source: orderQueue, target: () => refunds }); // type error: Refund is not Order
@@ -125,8 +125,9 @@ import { api, jwtAuthorizer, router } from "@notation/aws/api-gateway";
 import { lambda as profile } from "runtime/profile";
 import { Claims } from "shared/claims";
 
-export const userApi = api({ name: "user-api" });
+export const userApi = api({ id: "user-api" });
 export const userAuth = jwtAuthorizer({
+  id: "user-auth",
   api: userApi,
   issuer: "https://auth.example.com/",
   audience: ["https://api.example.com"],

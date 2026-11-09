@@ -127,15 +127,21 @@ For example, the starter app has a Lambda function with the ID `todos`:
 
 The parts are joined with `--`, because app and stage names can't contain `--`. With a single `-`, app `my-app` with stage `prod-eu` and app `my-app-prod` with stage `eu` would get the same names.
 
+Every resource that you declare has an `id`, such as `todos` or `orders`. The `id` keys the resource in state, and Notation builds the AWS name from it:
+
 | Resource               | AWS name                    | Longest name |
 | ---------------------- | --------------------------- | ------------ |
 | Lambda function        | `<app>--<stage>--<id>`      | 64           |
 | IAM role of a function | `<app>--<stage>--<id>-role` | 64           |
-| SQS queue              | `<app>--<stage>--<name>`    | 80           |
-| EventBridge rule       | `<app>--<stage>--<name>`    | 64           |
-| API Gateway API        | `<app>--<stage>--<name>`    | 128          |
+| SQS queue              | `<app>--<stage>--<id>`      | 80           |
+| SQS FIFO queue         | `<app>--<stage>--<id>.fifo` | 80           |
+| EventBridge rule       | `<app>--<stage>--<id>`      | 64           |
+| API Gateway API        | `<app>--<stage>--<id>`      | 128          |
+| JWT authorizer         | `<id>`, inside its API      | 128          |
 
-Names that only need to be unique inside another resource have no prefix. For example, a role's inline policy is `<id>-role-policy`. A function's log group is `/aws/lambda/<function name>`, so it contains the app and the stage already.
+Names that only need to be unique inside another resource have no prefix. For example, a role's inline policy is `<id>-role-policy`, and an authorizer's name only needs to be unique inside its API. A function's log group is `/aws/lambda/<function name>`, so it contains the app and the stage already.
+
+**`name` replaces the `id` in the AWS name, and keeps the prefix.** A Lambda function, a queue, an API, an authorizer and an EventBridge rule take an optional `name`. The other resources have no AWS name of their own, so they take no `name`. For example, a queue declared with `queue({ id: "orders", name: "order-events" })` is named `my-app--prod--order-events`, and its state key stays `orders`. The prefix stays because two stages in one account would otherwise try to create two queues with the same name. An `id` and a `name` each have 1 to 64 letters, digits, hyphens or underscores, and the `id` must be a string literal so that TypeScript can check it. Notation adds `.fifo` to a FIFO queue's name. A function's `name` sets the function's name only, so its role keeps `<app>--<stage>--<id>-role`.
 
 **Long names are shortened.** If a name is longer than the service allows, Notation cuts it and adds `-` and an 8-character hash of the full name. For example, `my-app--prod--warehouse-processIncomingOrderNotificationsFromSuppliers` has 70 characters, and Lambda allows 64:
 

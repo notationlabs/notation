@@ -119,7 +119,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 };
 ```
 
-- The infra module declares `orderQueue` with `queue({ name: "orders", schema: Order })`. `Order` is any [Standard Schema](https://standardschema.dev), such as a Zod or Valibot schema. `body` in the result of `decode()` has the schema's output type. The other fields of the record keep their types.
+- The infra module declares `orderQueue` with `queue({ id: "orders", schema: Order })`. `Order` is any [Standard Schema](https://standardschema.dev), such as a Zod or Valibot schema. `body` in the result of `decode()` has the schema's output type. The other fields of the record keep their types.
 - `Order` belongs in a shared module (`files.shared`), such as `shared/schema.ts`, because the function loads it. It can't be in an infra or runtime module. The runtime build replaces `orderQueue` with `{ schema: Order }`. See [Validating messages](../resources/sqs.md#validating-messages).
 - A function that infra maps queues to declares the schema itself, with `sqs.schema(Order)`. `eventSourceMapping()` checks that each queue it maps has the same schema, or none. See [`eventSourceMapping(config)`](../resources/sqs.md#eventsourcemappingconfig).
 - Without a schema, as in `sqs.bind(queue)` for a queue with no schema, or `apiGateway.schema()`, `body` is the parsed JSON as `unknown`. For a request with no body and no body schema, `body` is `undefined`.

@@ -412,7 +412,7 @@ A plain contribution cannot compute with an output value, because the output doe
 import { lambda } from "@notation/aws/lambda";
 import { queue } from "@notation/aws/sqs";
 
-const orderQueue = queue({ name: "orders" });
+const orderQueue = queue({ id: "orders" });
 const importer = lambda({
   id: "order-importer",
   code: { type: "file", path: "external/importer.mjs" },
@@ -482,15 +482,18 @@ A group's constructor takes `(type, id, config?)`:
 - `id` – identifies the group across deployments. It must be unique among groups of the same type: declaring two groups with the same type and ID in one graph throws.
 - `config` – the group's configuration, stored as `group.config`. Defaults to `{}`.
 
-Each group derives its ID from a value the user supplies, the same value its resource IDs are built from, so the group's identity changes exactly when its resources' identities do:
+Each declared resource takes an `id` from the user. The group's ID is that `id`, and its resource IDs are built from it, so the group's identity changes exactly when its resources' identities do. A group that links two others builds its ID from their IDs. No group ID depends on a setting or on an AWS name, so changing a setting such as an authorizer's issuer, or the `name` that overrides an AWS name, keeps every ID:
 
-| Group           | ID                         | Example               |
-| --------------- | -------------------------- | --------------------- |
-| `LambdaGroup`   | the lambda's `id`          | `todos`               |
-| `ApiGroup`      | the API's `name`           | `todo-api`            |
-| `RouteGroup`    | `<api id>-<method>-<path>` | `todo-api-GET-/todos` |
-| `ScheduleGroup` | the schedule's `name`      | `nightly`             |
-| `QueueGroup`    | the queue's `name`         | `orders`              |
+| Group                | ID                         | Example               |
+| -------------------- | -------------------------- | --------------------- |
+| `LambdaGroup`        | the lambda's `id`          | `todos`               |
+| `ApiGroup`           | the API's `id`             | `todo-api`            |
+| `JwtAuthorizerGroup` | the authorizer's `id`      | `user-auth`           |
+| `RouteGroup`         | `<api id>-<method>-<path>` | `todo-api-GET-/todos` |
+| `ScheduleGroup`      | the schedule's `id`        | `nightly`             |
+| `QueueGroup`         | the queue's `id`           | `orders`              |
+
+The mapping from a queue to a Lambda is a resource in the `QueueGroup`, with the ID `<queue id>-<lambda id>-mapping`. API integrations and permissions are resources in the `LambdaGroup`, with IDs such as `<api id>-<lambda id>-integration`.
 
 `add()` records the group on the resource as `resource.group`, a `{ type, id }` pair. A resource that is in no group has `group: null`. The reconciler persists the pair with each resource's state.
 

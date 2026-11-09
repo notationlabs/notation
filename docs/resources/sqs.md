@@ -16,14 +16,15 @@
 import { queue } from "@notation/aws/sqs";
 import { Order } from "shared/schema";
 
-export const orderQueue = queue({ name: "orders", schema: Order });
+export const orderQueue = queue({ id: "orders", schema: Order });
 ```
 
 ### Config
 
 ```ts [@notation/aws/sqs]
 type QueueConfig = {
-  name: string;
+  id: string;
+  name?: string;
   fifo?: boolean;
   schema?: StandardSchemaV1;
   visibilityTimeout?: number;
@@ -33,7 +34,11 @@ type QueueConfig = {
 };
 ```
 
-`name` keys the queue in state, so changing it replaces the queue. In AWS, the queue is named `<app>--<stage>--<name>`, such as `my-app--prod--orders`. See [AWS names](../manual/project-config.md#aws-names). A FIFO queue's name must end in `.fifo`, and `fifo` can't change after the queue is created.
+`id` keys the queue in state, so changing it replaces the queue. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. In AWS, the queue is named `<app>--<stage>--<id>`, such as `my-app--prod--orders`.
+
+`name` replaces the `id` in the AWS name, so `queue({ id: "orders", name: "order-events" })` is named `my-app--prod--order-events`. Changing `name` also replaces the queue. See [AWS names](../manual/project-config.md#aws-names).
+
+`fifo: true` makes a FIFO queue. Notation adds `.fifo` to its AWS name, as SQS requires, so `queue({ id: "ledger", fifo: true })` is named `my-app--prod--ledger.fifo`. `fifo` can't change after the queue is created.
 
 `schema` is a [Standard Schema](https://standardschema.dev) for the message bodies. AWS doesn't see it. A function that reads the queue with `sqs.bind(queue)` validates each message with it; see [Validating messages](#validating-messages). A function declared with `sqs.schema()` that infra maps the queue to must be given the same schema; see [`eventSourceMapping(config)`](#eventsourcemappingconfig).
 
@@ -81,7 +86,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 import { queue } from "@notation/aws/sqs";
 import { Order } from "shared/schema";
 
-export const orderQueue = queue({ name: "orders", schema: Order });
+export const orderQueue = queue({ id: "orders", schema: Order });
 ```
 
 ::
@@ -160,7 +165,7 @@ import { queue } from "@notation/aws/sqs";
 import { lambda as processOrders } from "runtime/orders";
 import { Order } from "shared/schema";
 
-export const orderQueue = queue({ name: "orders", schema: Order });
+export const orderQueue = queue({ id: "orders", schema: Order });
 
 eventSourceMapping({ source: orderQueue, target: () => processOrders });
 ```
@@ -203,8 +208,8 @@ import { queue } from "@notation/aws/sqs";
 import { lambda as processOrders } from "runtime/orders";
 import { Order } from "shared/schema";
 
-export const orderQueue = queue({ name: "orders", schema: Order });
-export const priorityQueue = queue({ name: "priority-orders", schema: Order });
+export const orderQueue = queue({ id: "orders", schema: Order });
+export const priorityQueue = queue({ id: "priority-orders", schema: Order });
 
 eventSourceMapping({ source: orderQueue, target: () => processOrders });
 eventSourceMapping({ source: priorityQueue, target: () => processOrders });
