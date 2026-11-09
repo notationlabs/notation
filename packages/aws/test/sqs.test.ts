@@ -258,7 +258,7 @@ test("eventSourceMapping of a declaration with an apiGateway event throws", asyn
   await expect(
     collectResourceGraph(() => {
       const fn = inModule(
-        $lambda({ id: "api", event: () => apiGateway.schema() }),
+        $lambda({ id: "api", event: () => apiGateway.schema(null) }),
       );
       eventSourceMapping({
         source: queue({ id: "orders" }),

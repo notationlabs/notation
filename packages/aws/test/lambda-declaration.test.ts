@@ -343,21 +343,21 @@ test("a declaration with claims types its handler's event as a request through a
 
   const any = $lambda({
     id: "any",
-    event: () => apiGateway.schema().authSchema(),
+    event: () => apiGateway.schema(null).authSchema(),
   });
   type AnyEvent = Parameters<LambdaHandler<typeof any>>[0];
   expectTypeOf<AnyEvent>().toEqualTypeOf<Event>();
   const decodeAny = (event: AnyEvent) => any.decode(event);
   type DecodedAny = Awaited<ReturnType<typeof decodeAny>>;
-  expectTypeOf<DecodedAny["body"]>().toEqualTypeOf<string | undefined>();
+  expectTypeOf<DecodedAny["body"]>().toEqualTypeOf<undefined>();
   expectTypeOf<DecodedAny["claims"]>().toEqualTypeOf<JwtClaims>();
 
-  const plain = $lambda({ id: "plain", event: () => apiGateway.schema() });
+  const plain = $lambda({ id: "plain", event: () => apiGateway.schema(null) });
   type PlainEvent = Parameters<LambdaHandler<typeof plain>>[0];
   expectTypeOf<PlainEvent>().toEqualTypeOf<APIGatewayProxyEventV2>();
   const decodePlain = (event: PlainEvent) => plain.decode(event);
   type DecodedPlain = Awaited<ReturnType<typeof decodePlain>>;
-  expectTypeOf<DecodedPlain["body"]>().toEqualTypeOf<string | undefined>();
+  expectTypeOf<DecodedPlain["body"]>().toEqualTypeOf<undefined>();
   expectTypeOf<DecodedPlain>().not.toHaveProperty("claims");
 
   const orders = $lambda({ id: "orders", event: () => sqs.schema(Order) });
@@ -373,8 +373,11 @@ test("a declaration with claims types its handler's event as a request through a
   const typeOnlyAny = () =>
     // @ts-expect-error decode() after authSchema() needs the request's claims
     any.decode({ body: "{}", isBase64Encoded: false });
+  // @ts-expect-error apiGateway.schema() needs a schema, or null for no body
+  const noBody = () => apiGateway.schema();
   void typeOnly;
   void typeOnlyAny;
+  void noBody;
 });
 
 test("decode() returns a request with its body and its JWT claims decoded", async () => {
@@ -403,7 +406,7 @@ test("decode() returns a request with its body and its JWT claims decoded", asyn
 test("decode() throws a DecodeError for a request with no JWT claims, when the declaration has claims", async () => {
   const fn = $lambda({
     id: "user",
-    event: () => apiGateway.schema().authSchema(Claims),
+    event: () => apiGateway.schema(null).authSchema(Claims),
   });
 
   await expect(
@@ -416,7 +419,7 @@ test("decode() throws a DecodeError for a request with no JWT claims, when the d
 test("decode() of a request with no body and no body schema returns an undefined body", async () => {
   const fn = $lambda({
     id: "user",
-    event: () => apiGateway.schema().authSchema(Claims),
+    event: () => apiGateway.schema(null).authSchema(Claims),
   });
 
   await expect(
@@ -427,21 +430,65 @@ test("decode() of a request with no body and no body schema returns an undefined
   );
 });
 
-test("decode() with no body schema returns the body as it came, decoded from base64", async () => {
-  const fn = $lambda({ id: "form", event: () => apiGateway.schema() });
+test("decode() with a body schema of null returns an undefined body, and rejects a body", async () => {
+  const fn = $lambda({ id: "ping", event: () => apiGateway.schema(null) });
 
-  await expect(
-    fn.decode({ body: "a=1&b=2", isBase64Encoded: false }),
-  ).resolves.toEqual({ body: "a=1&b=2", isBase64Encoded: false });
+  for (const body of [undefined, ""]) {
+    await expect(fn.decode({ body, isBase64Encoded: false })).resolves.toEqual({
+      body: undefined,
+      isBase64Encoded: false,
+    });
+  }
+  for (const request of [
+    { body: "{}", isBase64Encoded: false },
+    { body: Buffer.from("text").toString("base64"), isBase64Encoded: true },
+  ]) {
+    const error = await fn.decode(request).catch((e) => e);
+    expect(error).toBeInstanceOf(DecodeError);
+    expect(error.message).toBe(
+      "The request has a body, but the function's body schema is null, so its requests must have no body.",
+    );
+  }
+});
+
+test("decode() with a string schema returns a text body as it came, decoded from base64", async () => {
+  const Text: StandardSchemaV1<unknown, string> = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: (value) =>
+        typeof value === "string"
+          ? { value }
+          : { issues: [{ message: "expected a string" }] },
+    },
+  };
+  const fn = $lambda({ id: "text", event: () => apiGateway.schema(Text) });
+
+  for (const body of ["plain text", "a=1&b=2", "123", "true", '"quoted"']) {
+    await expect(fn.decode({ body, isBase64Encoded: false })).resolves.toEqual({
+      body: body === '"quoted"' ? "quoted" : body,
+      isBase64Encoded: false,
+    });
+  }
   await expect(
     fn.decode({
       body: Buffer.from("plain text").toString("base64"),
       isBase64Encoded: true,
     }),
   ).resolves.toEqual({ body: "plain text", isBase64Encoded: true });
+});
+
+test("decode() with an object schema throws for a body that is not JSON", async () => {
+  const fn = $lambda({ id: "orders", event: () => apiGateway.schema(Order) });
+
+  const error = await fn
+    .decode({ body: "not json", isBase64Encoded: false })
+    .catch((e) => e);
+  expect(error).toBeInstanceOf(DecodeError);
+  expect(error.message).toBe("The request body is not valid JSON.");
   await expect(
-    fn.decode({ body: undefined, isBase64Encoded: true }),
-  ).resolves.toEqual({ body: undefined, isBase64Encoded: true });
+    fn.decode({ body: '{"id":1}', isBase64Encoded: false }),
+  ).rejects.toThrow("The request body is not valid: id must be a string");
 });
 
 test("decode() with a body schema validates an empty body as undefined", async () => {
@@ -489,7 +536,7 @@ test("decode() of a request with no authorizer returns no claims", async () => {
 test("decode() after authSchema() with no claims schema returns the claims as the request holds them", async () => {
   const fn = $lambda({
     id: "user",
-    event: () => apiGateway.schema().authSchema(),
+    event: () => apiGateway.schema(null).authSchema(),
   });
 
   await expect(
@@ -535,7 +582,7 @@ test("the runtime variant validates claims as infra does", async () => {
 test("decode() of a declaration with an eventBridge event throws", async () => {
   const fn = $lambda({
     id: "nightly",
-    event: () => runtime.eventBridge.schedule(),
+    event: () => runtime.eventBridge.schema(null),
   });
 
   await expect((fn.decode as any)({})).rejects.toThrow(

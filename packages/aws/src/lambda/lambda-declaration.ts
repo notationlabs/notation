@@ -277,7 +277,7 @@ export function eventCall(event: LambdaEvent): string {
     case "eventBridge":
       return event.schedule
         ? "eventBridge.defineSchedule(options)"
-        : "eventBridge.schedule()";
+        : "eventBridge.schema(null)";
   }
 }
 

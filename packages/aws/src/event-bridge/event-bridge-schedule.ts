@@ -15,7 +15,7 @@ export type ScheduleConfig = ScheduleOptions & {
   /**
    * The Lambda to invoke on the schedule: a declaration from `$lambda`,
    * passed as `() => lambda`, or a Lambda group from `lambda()`. A
-   * declaration must be declared with `event: () => eventBridge.schedule()`,
+   * declaration must be declared with `event: () => eventBridge.schema(null)`,
    * or with no event.
    */
   target: LambdaTarget<"eventBridge" | "none">;
@@ -37,7 +37,7 @@ export function schedule<const Id extends string>(
     const event = declaration?.event;
     if (event?.kind === "eventBridge" && event.schedule) {
       throw new Error(
-        `schedule() invokes the Lambda "${declaration!.id}" on the schedule "${options.id}", but the Lambda makes its own schedule in its declaration, with event: () => ${eventCall(event)}. Schedule the Lambda in one place: remove the schedule() call, or declare the Lambda with event: () => eventBridge.schedule().`,
+        `schedule() invokes the Lambda "${declaration!.id}" on the schedule "${options.id}", but the Lambda makes its own schedule in its declaration, with event: () => ${eventCall(event)}. Schedule the Lambda in one place: remove the schedule() call, or declare the Lambda with event: () => eventBridge.schema(null).`,
       );
     }
     const lambdaGroup = resolveLambda(target, "schedule()", [

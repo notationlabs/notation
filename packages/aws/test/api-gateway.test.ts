@@ -311,7 +311,7 @@ test("a route to a lambda group from lambda() sets no environment", async () => 
 test("a route to a $lambda declaration integrates its function", async () => {
   const graph = await collect(() => {
     const todos = inModule(
-      $lambda({ id: "todos", event: () => apiGateway.schema() }),
+      $lambda({ id: "todos", event: () => apiGateway.schema(null) }),
     );
     const plain = inModule($lambda({ id: "plain" }), "runtime/plain.ts");
     const todoRouter = router(api({ id: "todo-api" }));
@@ -383,7 +383,7 @@ test("a route with an authorizer integrates a declaration with the authorizer's 
     const user = inModule(
       $lambda({
         id: "user",
-        event: () => apiGateway.schema().authSchema(Claims),
+        event: () => apiGateway.schema(null).authSchema(Claims),
       }),
     );
     const userApi = api({ id: "user-api" });
@@ -403,7 +403,7 @@ test("a route with an authorizer with no claims schema integrates a declaration 
     const user = inModule(
       $lambda({
         id: "user",
-        event: () => apiGateway.schema().authSchema(Claims),
+        event: () => apiGateway.schema(null).authSchema(Claims),
       }),
     );
     const userApi = api({ id: "user-api" });
@@ -422,7 +422,7 @@ test("a route with an authorizer whose claims schema is another object than the 
       const user = inModule(
         $lambda({
           id: "user",
-          event: () => apiGateway.schema().authSchema(Claims),
+          event: () => apiGateway.schema(null).authSchema(Claims),
         }),
       );
       const userApi = api({ id: "user-api" });
@@ -438,10 +438,16 @@ test("a route with an authorizer whose claims schema is another object than the 
 test("a route with an authorizer integrates a declaration with authSchema() and no claims schema", async () => {
   const graph = await collect(() => {
     const user = inModule(
-      $lambda({ id: "user", event: () => apiGateway.schema().authSchema() }),
+      $lambda({
+        id: "user",
+        event: () => apiGateway.schema(null).authSchema(),
+      }),
     );
     const plain = inModule(
-      $lambda({ id: "plain", event: () => apiGateway.schema().authSchema() }),
+      $lambda({
+        id: "plain",
+        event: () => apiGateway.schema(null).authSchema(),
+      }),
     );
     const userApi = api({ id: "user-api" });
     router(userApi)
@@ -461,7 +467,10 @@ test("a route without an authorizer to a declaration with authSchema() and no cl
   await expect(
     collect(() => {
       const user = inModule(
-        $lambda({ id: "user", event: () => apiGateway.schema().authSchema() }),
+        $lambda({
+          id: "user",
+          event: () => apiGateway.schema(null).authSchema(),
+        }),
       );
       // @ts-expect-error the declaration expects the claims
       router(api({ id: "user-api" })).get("/user", () => user);
@@ -474,11 +483,11 @@ test("a route without an authorizer to a declaration with authSchema() and no cl
 test("a route with an authorizer rejects a declaration whose claims schema type is not the authorizer's", () => {
   const user = $lambda({
     id: "user",
-    event: () => apiGateway.schema().authSchema(Claims),
+    event: () => apiGateway.schema(null).authSchema(Claims),
   });
   const other = $lambda({
     id: "other",
-    event: () => apiGateway.schema().authSchema(OtherClaims),
+    event: () => apiGateway.schema(null).authSchema(OtherClaims),
   });
   const userApi = api({ id: "user-api" });
   const authed = router(userApi).withAuthorizer(authorizerOn(userApi, Claims));
@@ -493,7 +502,7 @@ test("a route with an authorizer rejects a declaration whose claims schema type 
 
   const any = $lambda({
     id: "any",
-    event: () => apiGateway.schema().authSchema(),
+    event: () => apiGateway.schema(null).authSchema(),
   });
 
   // The calls are only type-checked.
@@ -514,7 +523,7 @@ test("a route without an authorizer to a declaration with claims throws", async 
       const user = inModule(
         $lambda({
           id: "user",
-          event: () => apiGateway.schema().authSchema(Claims),
+          event: () => apiGateway.schema(null).authSchema(Claims),
         }),
       );
       // @ts-expect-error the request has no claims
@@ -529,7 +538,7 @@ test("a route with an authorizer to a declaration with no claims throws", async 
   await expect(
     collect(() => {
       const todos = inModule(
-        $lambda({ id: "todos", event: () => apiGateway.schema() }),
+        $lambda({ id: "todos", event: () => apiGateway.schema(null) }),
       );
       const todoApi = api({ id: "todo-api" });
       router(todoApi)
@@ -577,7 +586,7 @@ test("apiGateway.bind(api).defineRoute() in a declaration makes the route", asyn
         event: () =>
           apiGateway
             .bind(todoApi)
-            .defineRoute({ method: "GET", path: "/todos" }),
+            .defineRoute({ method: "GET", path: "/todos", schema: null }),
       }),
     );
   });
@@ -602,7 +611,7 @@ test("apiGateway.bind(api).defineRoute({ auth }) makes the route with the author
       event: () =>
         apiGateway
           .bind(auth.api)
-          .defineRoute({ method: "POST", path: "/user", auth }),
+          .defineRoute({ method: "POST", path: "/user", schema: null, auth }),
     });
   const graph = await collect(() => {
     userAuth = authorizerOn(api({ id: "user-api" }), Claims);
@@ -613,12 +622,12 @@ test("apiGateway.bind(api).defineRoute({ auth }) makes the route with the author
   expect(userRoute.config.AuthorizationType).toBe("JWT");
   expect(userRoute.dependencies.auth).toBe(userAuth.auth);
   const request = (claims: unknown) => ({
-    body: "{}",
+    body: undefined,
     isBase64Encoded: false,
     requestContext: { authorizer: { jwt: { claims } } },
   });
   await expect(user.decode(request({ sub: "u1" }))).resolves.toMatchObject({
-    body: "{}",
+    body: undefined,
     claims: { sub: "u1" },
   });
   await expect(user.decode(request({}))).rejects.toThrow(
@@ -642,7 +651,9 @@ test("apiGateway.bind(api).defineRoute() types the event from its options", () =
   const plain = $lambda({
     id: "plain",
     event: () =>
-      apiGateway.bind(userApi).defineRoute({ method: "GET", path: "/plain" }),
+      apiGateway
+        .bind(userApi)
+        .defineRoute({ method: "GET", path: "/plain", schema: null }),
   });
 
   expectTypeOf<
@@ -672,9 +683,14 @@ test("apiGateway.bind(api).defineRoute() types the event from its options", () =
     apiGateway.bind(userApi).defineRoute({
       method: "GET",
       path: "/user",
+      schema: null,
       // @ts-expect-error a schema is not an authorizer
       auth: Claims,
     });
+    apiGateway
+      .bind(userApi)
+      // @ts-expect-error defineRoute() needs a schema, or null for no body
+      .defineRoute({ method: "GET", path: "/user" });
   };
   void typeOnly;
 });
@@ -688,6 +704,7 @@ test("decode() reads the claims schema from the object that the runtime build pa
       apiGateway.bind({} as any).defineRoute({
         method: "GET",
         path: "/user",
+        schema: null,
         auth: { claims: Claims },
       }),
   });
@@ -711,7 +728,7 @@ test("route() of a declaration that makes its own route throws", async () => {
           event: () =>
             apiGateway
               .bind(todoApi)
-              .defineRoute({ method: "GET", path: "/todos" }),
+              .defineRoute({ method: "GET", path: "/todos", schema: null }),
         }),
       );
       router(todoApi).get("/todos/all", () => todos);
@@ -730,9 +747,12 @@ test("apiGateway.bind(api).defineRoute({ auth }) with an authorizer on another a
         $lambda({
           id: "todos",
           event: () =>
-            apiGateway
-              .bind(todoApi)
-              .defineRoute({ method: "GET", path: "/todos", auth: userAuth }),
+            apiGateway.bind(todoApi).defineRoute({
+              method: "GET",
+              path: "/todos",
+              schema: null,
+              auth: userAuth,
+            }),
         }),
       );
     }),
@@ -750,7 +770,7 @@ test("apiGateway.bind() of a value that is not an API throws when the declaratio
           event: () =>
             apiGateway
               .bind({} as any)
-              .defineRoute({ method: "GET", path: "/todos" }),
+              .defineRoute({ method: "GET", path: "/todos", schema: null }),
         }),
       );
     }),

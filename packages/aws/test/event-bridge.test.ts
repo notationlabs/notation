@@ -99,16 +99,28 @@ test("the rule sends the bare event to the function", async () => {
   expect(fn.fn.config.Environment).toBeUndefined();
 });
 
-test("a schedule invokes a $lambda declaration", async () => {
+test("a schedule invokes a $lambda declaration with eventBridge.schema(null)", async () => {
   const graph = await collectResourceGraph(() => {
     const fn = inModule(
-      $lambda({ id: "digest", event: () => eventBridge.schedule() }),
+      $lambda({ id: "digest", event: () => eventBridge.schema(null) }),
     );
     schedule({ id: "daily", schedule: rate(1, "day"), target: () => fn });
   });
   const fn = lambdaGroup(graph, "digest");
 
   expect(scheduleGroup(graph, "daily").rule.dependencies.lambda).toBe(fn.fn);
+});
+
+test("eventBridge.schema() takes only null", () => {
+  // Only type-checked.
+  const typeOnly = () => {
+    // @ts-expect-error eventBridge.schema() needs null
+    eventBridge.schema();
+    // @ts-expect-error eventBridge.schema() doesn't take a schema yet
+    eventBridge.schema(Anything);
+  };
+  void typeOnly;
+  expect(eventBridge.schema(null)).toEqual({ kind: "eventBridge" });
 });
 
 test("a schedule of a declaration with an sqs event throws", async () => {
@@ -196,7 +208,7 @@ test("schedule() of a declaration that makes its own schedule throws", async () 
       schedule({ id: "daily", schedule: rate(1, "day"), target: () => fn });
     }),
   ).rejects.toThrow(
-    'schedule() invokes the Lambda "digest" on the schedule "daily", but the Lambda makes its own schedule in its declaration, with event: () => eventBridge.defineSchedule(options). Schedule the Lambda in one place: remove the schedule() call, or declare the Lambda with event: () => eventBridge.schedule().',
+    'schedule() invokes the Lambda "digest" on the schedule "daily", but the Lambda makes its own schedule in its declaration, with event: () => eventBridge.defineSchedule(options). Schedule the Lambda in one place: remove the schedule() call, or declare the Lambda with event: () => eventBridge.schema(null).',
   );
 });
 

@@ -96,12 +96,13 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 /**
  * The function receives API Gateway HTTP API requests. `decode()` validates
- * the JSON body with `schema`, and the JWT claims with `claims`. A request
- * through a route with a JWT authorizer has the kind `apiGateway-jwt`,
- * because its event also holds the token's claims.
+ * the body with `schema`, and the JWT claims with `claims`. A `schema` of
+ * `null` means that the requests have no body. A request through a route
+ * with a JWT authorizer has the kind `apiGateway-jwt`, because its event also
+ * holds the token's claims.
  */
 export type ApiGatewayEvent<
-  S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
+  S extends StandardSchemaV1 | null = StandardSchemaV1 | null,
   C extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
   K extends ApiGatewayKind = ApiGatewayKind,
 > = {
@@ -111,7 +112,7 @@ export type ApiGatewayEvent<
   /**
    * The route that the infra build makes, from
    * `apiGateway.bind(api).defineRoute()`. It is not set for
-   * `apiGateway.schema()`.
+   * `apiGateway.schema(body)`.
    */
   route?: ApiGatewayRoute;
 };
@@ -133,16 +134,17 @@ export type ApiSource = {
 };
 
 export type ApiGatewayRouteOptions<
-  S extends StandardSchemaV1 | undefined,
+  S extends StandardSchemaV1 | null,
   A extends AuthorizerSource | undefined,
 > = {
   method: HttpMethod;
   path: `/${string}`;
   /**
-   * Validates the JSON body of a request in `decode()`. Import it from a
-   * shared module, so the function can load it.
+   * Validates the body of a request in `decode()`, or `null` for a route
+   * whose requests have no body. Import a schema from a shared module, so
+   * the function can load it.
    */
-  schema?: S;
+  schema: S;
   /**
    * The route's authorizer, from `jwtAuthorizer()`. `decode()` validates the
    * JWT claims with its claims schema. In the runtime build, the authorizer
@@ -168,7 +170,7 @@ export type AuthorizerSource<
  * `authSchema()` returns the event for routes with a JWT authorizer.
  */
 export type ApiGatewaySchemaEvent<
-  S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
+  S extends StandardSchemaV1 | null = StandardSchemaV1 | null,
 > = ApiGatewayEvent<S, undefined, "apiGateway"> & {
   /**
    * The function receives requests only through routes with a JWT
@@ -187,6 +189,7 @@ export type ApiGatewaySchemaEvent<
  * declaration makes, with `apiGateway.bind(api).defineRoute(options)`, or
  * from routes that infra makes with `router()`, with
  * `apiGateway.schema(body)` or `apiGateway.schema(body).authSchema(claims)`.
+ * `body` is a schema, or `null` for requests with no body.
  */
 export const apiGateway = {
   /**
@@ -199,13 +202,14 @@ export const apiGateway = {
     return {
       /**
        * The function receives the requests of a route on the API, which the
-       * infra build makes. `decode()` validates the JSON body with `schema`,
-       * and the JWT claims with the claims schema of `auth`. With `auth`, the
-       * event has the kind `apiGateway-jwt`.
+       * infra build makes. `decode()` validates the body with `schema`, and
+       * the JWT claims with the claims schema of `auth`. With `schema: null`,
+       * `decode()` rejects a request with a body. With `auth`, the event has
+       * the kind `apiGateway-jwt`.
        * @runtime options.auth
        */
       defineRoute<
-        S extends StandardSchemaV1 | undefined = undefined,
+        S extends StandardSchemaV1 | null,
         A extends AuthorizerSource | undefined = undefined,
       >(
         options: ApiGatewayRouteOptions<S, A>,
@@ -217,7 +221,7 @@ export const apiGateway = {
         const { method, path, schema, auth } = options;
         return {
           kind: (auth ? "apiGateway-jwt" : "apiGateway") as any,
-          schema: schema as S,
+          schema,
           claims: auth?.claims as ClaimsOf<A>,
           route: { api, method, path, auth },
         };
@@ -226,19 +230,18 @@ export const apiGateway = {
   },
   /**
    * The function receives requests from routes that infra makes, with no
-   * authorizer. `decode()` validates the JSON body with `body`. Call
-   * `authSchema()` on the result for routes with a JWT authorizer.
+   * authorizer. `decode()` validates the body with `body`. With `null`,
+   * `decode()` rejects a request with a body. Call `authSchema()` on the
+   * result for routes with a JWT authorizer.
    */
-  schema<S extends StandardSchemaV1 | undefined = undefined>(
-    body?: S,
-  ): ApiGatewaySchemaEvent<S> {
-    const event = { kind: "apiGateway", schema: body as S, claims: undefined };
+  schema<S extends StandardSchemaV1 | null>(body: S): ApiGatewaySchemaEvent<S> {
+    const event = { kind: "apiGateway", schema: body, claims: undefined };
     // `authSchema` is not enumerable, so it is not part of the event's data,
     // which `decode()` and the infra checks read.
     return Object.defineProperty(event, "authSchema", {
       value: <C extends StandardSchemaV1 | undefined>(claims?: C) => ({
         kind: "apiGateway-jwt" as const,
-        schema: body as S,
+        schema: body,
         claims: claims as C,
       }),
     }) as ApiGatewaySchemaEvent<S>;
@@ -251,7 +254,7 @@ export type EventBridgeScheduleEvent = {
   /**
    * The schedule that the infra build makes, from
    * `eventBridge.defineSchedule()`. It is not set for
-   * `eventBridge.schedule()`, nor in the runtime build.
+   * `eventBridge.schema(null)`, nor in the runtime build.
    */
   schedule?: ScheduleOptions;
 };
@@ -277,7 +280,7 @@ export type ScheduleOptions = {
  * The function receives EventBridge scheduled events: from a schedule that
  * the declaration makes, with `eventBridge.defineSchedule(options)`, or from
  * schedules that infra makes with `schedule()`, with
- * `eventBridge.schedule()`.
+ * `eventBridge.schema(null)`.
  */
 export const eventBridge = {
   /**
@@ -291,8 +294,11 @@ export const eventBridge = {
   ): EventBridgeScheduleEvent {
     return { kind: "eventBridge", schedule: options };
   },
-  /** The function receives the events of schedules that infra makes. */
-  schedule(): EventBridgeScheduleEvent {
+  /**
+   * The function receives the events of schedules that infra makes. A
+   * scheduled event has no detail to validate, so `detail` must be `null`.
+   */
+  schema(detail: null): EventBridgeScheduleEvent {
     return { kind: "eventBridge" };
   },
 };
@@ -304,11 +310,10 @@ type Decoded<S> = S extends StandardSchemaV1
   : unknown;
 
 // The body of a request as `decode()` returns it: the output of the body
-// schema, or the body as API Gateway sends it, decoded from base64, when
-// there is no schema.
+// schema, or `undefined` for a body schema of `null`.
 type DecodedRequestBody<S> = S extends StandardSchemaV1
   ? StandardSchemaV1.InferOutput<S>
-  : string | undefined;
+  : undefined;
 
 // `T` with the fields of `U` in place of its own.
 type Replace<T, U> = Omit<T, keyof U> & U;
@@ -371,10 +376,13 @@ export interface Lambda<
    * Decodes one item that the function received, and returns the item with
    * its decoded parts in place of the raw ones. For SQS the item is a record,
    * and `body` is the JSON body, validated with the event's schema. For API
-   * Gateway the item is the request, and a base64 body is decoded first. With
-   * a body schema, `body` is the JSON body, validated with the schema. An
-   * empty body is validated as `undefined`. With no body schema, `body` is the
-   * body as a string, or `undefined`. A request through a JWT authorizer also
+   * Gateway the item is the request, and a base64 body is decoded first.
+   * `body` is the JSON body, validated with the body schema. When the body is
+   * not JSON, or the schema rejects the parsed value, the body is validated
+   * as a string, so a route takes text with a string schema. An empty body
+   * is validated as `undefined`. With a body schema of `null`, `body` is
+   * `undefined`, and a request with a body is not valid. A request through a
+   * JWT authorizer also
    * gets `claims`: the JWT claims, validated with the event's claims schema
    * if it has one. Throws a `DecodeError` when the item is not valid.
    */
@@ -467,14 +475,20 @@ export function createDecode(
       item?.isBase64Encoded && item.body !== undefined
         ? Buffer.from(item.body, "base64").toString("utf8")
         : item?.body;
-    // With no schema, the body can be text or a form, so it isn't parsed.
-    if (!event.schema) return { ...item, body: raw, ...claims };
+    // A body schema of `null` means the requests have no body.
+    if (!event.schema) {
+      if (raw) {
+        throw new DecodeError(
+          "The request has a body, but the function's body schema is null, so its requests must have no body.",
+        );
+      }
+      return { ...item, body: undefined, ...claims };
+    }
     // A request with no body, such as a GET, has nothing to parse, and the
     // schema decides whether that is valid.
-    const body =
-      raw === undefined || raw === ""
-        ? await validateBody(event.schema, undefined, "request")
-        : await decodeBody(event.schema, raw, "request");
+    const body = raw
+      ? await decodeRequestBody(event.schema, raw)
+      : await validateBody(event.schema, undefined, "request");
     return { ...item, body, ...claims };
   };
 }
@@ -482,7 +496,7 @@ export function createDecode(
 async function decodeBody(
   schema: StandardSchemaV1 | undefined,
   body: string,
-  name: "message" | "request",
+  name: "message",
 ): Promise<unknown> {
   let value: unknown;
   try {
@@ -492,6 +506,34 @@ async function decodeBody(
   }
   if (!schema) return value;
   return validateBody(schema, value, name);
+}
+
+// Validates the JSON body. When the body is not JSON, or the schema rejects
+// the parsed value, the body is validated as a string, so a string schema
+// accepts text such as `hello` or `123`. When both fail, the error is the one
+// for the JSON body.
+async function decodeRequestBody(
+  schema: StandardSchemaV1,
+  raw: string,
+): Promise<unknown> {
+  let parsed: { value: unknown } | undefined;
+  try {
+    parsed = { value: JSON.parse(raw) };
+  } catch {}
+  const text = () => schema["~standard"].validate(raw);
+  if (!parsed) {
+    const result = await text();
+    if (!result.issues) return result.value;
+    throw new DecodeError("The request body is not valid JSON.");
+  }
+  const result = await schema["~standard"].validate(parsed.value);
+  if (!result.issues) return result.value;
+  const asText = await text();
+  if (!asText.issues) return asText.value;
+  throw new DecodeError(
+    `The request body is not valid: ${details(result.issues)}`,
+    result.issues,
+  );
 }
 
 async function validateBody(
