@@ -5,13 +5,12 @@ import {
   type LambdaHandler,
 } from "@notation/aws/lambda";
 import { orderQueue } from "infra/orders";
-import { Order } from "./schema";
 
 export const lambda = $lambda({
   id: "orders",
   timeout: 5,
   memory: 64,
-  event: () => sqs(Order),
+  event: () => sqs(orderQueue, { batchSize: 5 }),
   env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
 });
 

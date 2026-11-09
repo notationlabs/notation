@@ -4,7 +4,8 @@
     "types": ["node"],
     "paths": {
       "runtime/*": ["./runtime/*"],
-      "infra/*": ["./infra/*"]
+      "infra/*": ["./infra/*"],
+      "shared/*": ["./shared/*"]
     }
   }
 }
