@@ -469,7 +469,9 @@ test("decode() returns a request with its body and its JWT claims decoded", asyn
   );
   expect(error.part).toBe("claims");
   expect(error.issues).toEqual([{ message: "sub must be a string" }]);
-  expectTypeOf<DecodeError["part"]>().toEqualTypeOf<"body" | "claims">();
+  expectTypeOf<DecodeError["part"]>().toEqualTypeOf<
+    "body" | "claims" | "detail"
+  >();
 });
 
 test("decode() throws a DecodeError for a request with no JWT claims, when the declaration has claims", async () => {
@@ -640,13 +642,13 @@ test("the runtime variant validates claims as infra does", async () => {
   ).rejects.toBeInstanceOf(DecodeError);
 });
 
-test("decode() of a declaration with an eventBridge event throws", async () => {
+test("decode() of a declaration with scheduled events throws", async () => {
   const fn = $lambda({
     id: "nightly",
     event: () => runtime.eventBridge.schema(null),
   });
 
   await expect((fn.decode as any)({})).rejects.toThrow(
-    "decode() needs a Lambda declared with event: () => sqs.bind(queue), sqs.schema(schema), apiGateway.bind(api).defineRoute(options) or apiGateway.schema(body).",
+    "decode() needs a Lambda declared with event: () => sqs.bind(queue), sqs.schema(schema), apiGateway.bind(api).defineRoute(options), apiGateway.schema(body), eventBridge.bind(bus).defineRule(options) or eventBridge.schema(schema). A scheduled event has no detail to decode.",
   );
 });

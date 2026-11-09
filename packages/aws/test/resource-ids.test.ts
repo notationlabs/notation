@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { collectResourceGraph, type ResourceGraph } from "@notation/resource";
 import { api } from "src/api-gateway";
 import { route } from "src/api-gateway/route";
-import { rate, schedule } from "src/event-bridge";
+import { eventBus, rate, rule, schedule } from "src/event-bridge";
 import { eventSourceMapping, lambda } from "src/lambda";
 import { queue } from "src/sqs";
 import { Unknown } from "./declare";
@@ -20,6 +20,14 @@ test("resources of declarations of different types with the same id have differe
     api({ id: "todos" });
     queue({ id: "todos", schema: Unknown });
     schedule({ id: "todos", schedule: rate(1, "day"), target: fn });
+    rule({
+      id: "todos",
+      name: "todo-events",
+      bus: eventBus({ id: "todos" }),
+      pattern: { source: ["todos"] },
+      schema: Unknown,
+      target: fn,
+    });
   });
 
   expect(duplicateIds(graph)).toEqual([]);

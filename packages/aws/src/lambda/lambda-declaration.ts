@@ -158,7 +158,8 @@ function buildGroup(
 
 // Makes the resources that the event declares: the queue mapping of
 // `sqs.bind(queue)`, the route of `apiGateway.bind(api).defineRoute()`, or
-// the rule of `eventBridge.defineSchedule()`.
+// the rule of `eventBridge.bind(bus).defineRule()` or
+// `eventBridge.defineSchedule()`.
 function wireEvent(group: LambdaGroup, event: LambdaEvent | undefined): void {
   switch (event?.kind) {
     case "sqs":
@@ -179,6 +180,9 @@ function wireEvent(group: LambdaGroup, event: LambdaEvent | undefined): void {
           "eventBridge.defineSchedule()",
         );
       }
+      if (event.rule) {
+        event.rule.bus["~rule"](group, event.rule.options);
+      }
       return;
   }
 }
@@ -195,8 +199,8 @@ export type LambdaTarget<K extends LambdaEventKind = LambdaEventKind> =
  * Finds the Lambda group of a target, and the event of its declaration. A
  * declaration is passed as a function, such as `() => lambda`, because it can
  * be in a module that is still loading. A declaration fails when its event
- * has another kind than `kind`, or when it wires itself to a queue, a route
- * or a schedule, which the caller would wire a second time. The checks run
+ * has another kind than `kind`, or when it wires itself to a queue, a route,
+ * a rule or a schedule, which the caller would wire a second time. The checks run
  * before the group is built, so a rejected declaration wires nothing.
  */
 export function resolveLambda(
@@ -250,8 +254,11 @@ function wiredBy(
         ? { noun: "route", instead: "apiGateway.schema(body)" }
         : undefined;
     case "eventBridge":
-      return event.schedule
-        ? { noun: "schedule", instead: "eventBridge.schema(null)" }
+      if (event.schedule) {
+        return { noun: "schedule", instead: "eventBridge.schema(null)" };
+      }
+      return event.rule
+        ? { noun: "rule", instead: "eventBridge.schema(schema)" }
         : undefined;
   }
 }
@@ -276,8 +283,10 @@ export function eventCall(event: LambdaEvent): string {
         ? "apiGateway.schema(body).authSchema(claims)"
         : "apiGateway.schema(body).authSchema()";
     case "eventBridge":
-      return event.schedule
-        ? "eventBridge.defineSchedule(options)"
+      if (event.schedule) return "eventBridge.defineSchedule(options)";
+      if (event.rule) return "eventBridge.bind(bus).defineRule(options)";
+      return event.schema
+        ? "eventBridge.schema(schema)"
         : "eventBridge.schema(null)";
   }
 }

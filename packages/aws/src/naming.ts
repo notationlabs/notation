@@ -17,6 +17,8 @@ const rules = {
   sqsQueue: { maxLength: 80, requiredEnding: ".fifo" },
   // [.\-_A-Za-z0-9], unique per event bus
   eventBridgeRule: { maxLength: 64 },
+  // [/.\-_A-Za-z0-9]
+  eventBridgeBus: { maxLength: 256 },
   // any characters, and not unique
   apiGatewayApi: { maxLength: 128 },
 } satisfies Record<string, PhysicalNameRule>;
