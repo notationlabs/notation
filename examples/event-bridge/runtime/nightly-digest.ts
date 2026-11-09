@@ -8,7 +8,7 @@ export const lambda = $lambda({
   memory: 64,
   event: () =>
     eventBridge.defineSchedule({
-      name: "nightly-digest",
+      id: "nightly-digest",
       schedule: rate(1, "day"),
     }),
 });
