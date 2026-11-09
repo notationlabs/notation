@@ -2,11 +2,11 @@
 
 `@notation/aws/sqs` creates SQS queues. A Lambda function reads a queue in one of two ways:
 
-| Function-led                                    | Infra-led                                                                             |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `event: () => sqs.bind(orderQueue)`             | `event: () => sqs.schema(Order)`                                                      |
-| The declaration maps the queue to the function. | Infra maps queues with `eventSourceMapping({ source, target })`.                      |
-| `decode()` validates with the queue's schema.   | `decode()` validates with `Order`. A mapped queue must have the same schema, or none. |
+| Function-led                                    | Infra-led                                                                       |
+| ----------------------------------------------- | ------------------------------------------------------------------------------- |
+| `event: () => sqs.bind(orderQueue)`             | `event: () => sqs.schema(Order)`                                                |
+| The declaration maps the queue to the function. | Infra maps queues with `eventSourceMapping({ source, target })`.                |
+| `decode()` validates with the queue's schema.   | `decode()` validates with `Order`. Each mapped queue must have the same schema. |
 
 `sqs` comes from `@notation/aws/lambda`. It is an object with the two methods `bind()` and `schema()`, and it can't be called itself.
 
@@ -26,7 +26,7 @@ type QueueConfig = {
   id: string;
   name?: string;
   fifo?: boolean;
-  schema?: StandardSchemaV1;
+  schema: StandardSchemaV1;
   visibilityTimeout?: number;
   messageRetentionPeriod?: number;
   delaySeconds?: number;
@@ -41,6 +41,23 @@ type QueueConfig = {
 `fifo: true` makes a FIFO queue. Notation adds `.fifo` to its AWS name, as SQS requires, so `queue({ id: "ledger", fifo: true })` is named `my-app--prod--ledger.fifo`. `fifo` can't change after the queue is created.
 
 `schema` is a [Standard Schema](https://standardschema.dev) for the message bodies. AWS doesn't see it. A function that reads the queue with `sqs.bind(queue)` validates each message with it; see [Validating messages](#validating-messages). A function declared with `sqs.schema()` that infra maps the queue to must be given the same schema; see [`eventSourceMapping(config)`](#eventsourcemappingconfig).
+
+**Every queue has a schema.** `queue({ id: "orders" })` is a type error, and it throws when infra runs. This matters because it means that no function reads a queue's messages without validating them. A queue that takes any JSON body declares a schema that accepts any value, such as valibot's `v.unknown()`:
+
+```ts [shared/schema.ts]
+import * as v from "valibot";
+
+export const AuditEvent = v.unknown();
+```
+
+```ts [infra/audit.ts]
+import { queue } from "@notation/aws/sqs";
+import { AuditEvent } from "shared/schema";
+
+export const auditQueue = queue({ id: "audit", schema: AuditEvent });
+```
+
+`decode()` still parses each message body as JSON before it validates it, so a body that isn't JSON throws a `DecodeError` even with `v.unknown()`. `AuditEvent` comes from a shared module for the same reason as `Order`: a function that reads the queue loads the schema. See [Validating messages](#validating-messages).
 
 The other settings can change in place. When you remove one, Notation sets it back to the value SQS gives a new queue, because SQS can't unset a queue attribute:
 
@@ -183,16 +200,14 @@ type EventSourceMappingConfig<S> = SqsOptions & {
 
 `target` is a declaration, passed as a function such as `() => processOrders`, or a Lambda group from [`lambda()`](lambda.md#lambdaconfig), passed as it is. See [Wiring a declaration](lambda.md#wiring-a-declaration). The target can be:
 
-| Target                                 | Queue with a schema                     | Queue with no schema |
-| -------------------------------------- | --------------------------------------- | -------------------- |
-| A declaration with `sqs.schema(Order)` | Mapped if the queue's schema is `Order` | Mapped               |
-| A declaration with no `event`          | Mapped                                  | Mapped               |
-| A Lambda group from `lambda()`         | Mapped                                  | Mapped               |
-| A declaration with `sqs.bind(queue)`   | Throws                                  | Throws               |
+| Target                                 | Result                                  |
+| -------------------------------------- | --------------------------------------- |
+| A declaration with `sqs.schema(Order)` | Mapped if the queue's schema is `Order` |
+| A declaration with no `event`          | Mapped                                  |
+| A Lambda group from `lambda()`         | Mapped                                  |
+| A declaration with `sqs.bind(queue)`   | Throws                                  |
 
 **The schema check compares objects, not types.** `eventSourceMapping()` throws when the queue's `schema` is another object than the one in `sqs.schema()`, even if the two schemas accept the same messages. TypeScript also checks the pairing: `SqsTarget<S>` only takes a declaration whose schema has the type of the queue's schema, so a declaration with `sqs.schema(Refund)` and a queue with `schema: Order` is a type error.
-
-A queue with no schema can be mapped to any declaration with `sqs.schema()`, because the function still validates each message.
 
 A declaration with `sqs.bind(queue)` already maps a queue, so `eventSourceMapping()` throws for it. Map the queue in one place: remove the `eventSourceMapping()` call, or declare the function with `sqs.schema()`.
 

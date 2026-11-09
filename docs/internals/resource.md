@@ -411,8 +411,9 @@ A plain contribution cannot compute with an output value, because the output doe
 ```ts [infra/orders.ts]
 import { lambda } from "@notation/aws/lambda";
 import { queue } from "@notation/aws/sqs";
+import { Order } from "shared/schema";
 
-const orderQueue = queue({ id: "orders" });
+const orderQueue = queue({ id: "orders", schema: Order });
 const importer = lambda({
   id: "order-importer",
   code: { type: "file", path: "external/importer.mjs" },

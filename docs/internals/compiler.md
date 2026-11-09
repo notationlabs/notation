@@ -282,10 +282,10 @@ export const lambda = $lambda({
 
 ```ts [infra/orders.ts]
 import { queue } from "@notation/aws/sqs";
-import { Order } from "shared/schema";
+import { Order, Refund } from "shared/schema";
 
 export const orderQueue = queue({ id: "orders", schema: Order });
-export const refundQueue = queue({ id: "refunds" });
+export const refundQueue = queue({ id: "refunds", schema: Refund });
 ```
 
 ::
