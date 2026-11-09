@@ -43,8 +43,8 @@ test("two routes on one api to one lambda share its integration and permission",
 
   expect(fn.resources.map((r) => r.id)).toEqual(
     expect.arrayContaining([
-      "api-handler-integration",
-      "handler-api-permission",
+      "api-integration:api:handler",
+      "api-permission:api:handler",
     ]),
   );
   expect(fn.resources).toHaveLength(7);
@@ -61,7 +61,7 @@ test("router provides methods for each HTTP verb", async () => {
   for (const method of methods) {
     const verb = method.toUpperCase();
     expect(
-      routeGroup(graph, `api-${verb}-/hello`).route.config.RouteKey,
+      routeGroup(graph, `api-route:api:${verb} /hello`).route.config.RouteKey,
     ).toEqual(`${verb} /hello`);
   }
 });
@@ -72,12 +72,12 @@ test("api and route groups are identified by the api name and route", async () =
     todoApi = api({ id: "todo-api" });
     route(todoApi, "GET", "/todos", undefined, declareLambda());
   });
-  const todoRoute = routeGroup(graph, "todo-api-GET-/todos");
+  const todoRoute = routeGroup(graph, "api-route:todo-api:GET /todos");
 
   expect(todoApi.id).toBe("todo-api");
   expect(todoRoute.route.group).toEqual({
     type: "API Gateway/Route",
-    id: "todo-api-GET-/todos",
+    id: "api-route:todo-api:GET /todos",
   });
 });
 
@@ -89,7 +89,9 @@ test("declaring the same route twice in one deployment throws", async () => {
       route(todoApi, "GET", "/todos", undefined, handler);
       route(todoApi, "GET", "/todos", undefined, handler);
     }),
-  ).rejects.toThrow('Duplicate API Gateway/Route id "todo-api-GET-/todos"');
+  ).rejects.toThrow(
+    'Duplicate API Gateway/Route id "api-route:todo-api:GET /todos"',
+  );
 });
 
 test("a lambda routed from two apis gets an integration per api", async () => {
@@ -99,13 +101,13 @@ test("a lambda routed from two apis gets an integration per api", async () => {
     route(api({ id: "b" }), "GET", "/x", undefined, handler);
   });
 
-  const integrationA = routeGroup(graph, "a-GET-/x").route.dependencies
-    .lambdaIntegration;
-  const integrationB = routeGroup(graph, "b-GET-/x").route.dependencies
-    .lambdaIntegration;
+  const integrationA = routeGroup(graph, "api-route:a:GET /x").route
+    .dependencies.lambdaIntegration;
+  const integrationB = routeGroup(graph, "api-route:b:GET /x").route
+    .dependencies.lambdaIntegration;
 
-  expect(integrationA.dependencies.api.id).toBe("a");
-  expect(integrationB.dependencies.api.id).toBe("b");
+  expect(integrationA.dependencies.api.id).toBe("api:a");
+  expect(integrationB.dependencies.api.id).toBe("api:b");
 });
 
 test("routes of one authorizer share its RouteAuth, which the authorizer owns", async () => {
@@ -130,21 +132,25 @@ test("routes of one authorizer share its RouteAuth, which the authorizer owns", 
     route(userApi, "GET", "/c", otherAuth, handler);
   });
   const routeOf = (id: string) => routeGroup(graph, id).route;
-  const authA = routeOf("user-api-GET-/a").dependencies.auth;
+  const authA = routeOf("api-route:user-api:GET /a").dependencies.auth;
 
-  expect(routeOf("user-api-POST-/b").dependencies.auth).toBe(authA);
-  expect(routeOf("user-api-GET-/c").dependencies.auth).not.toBe(authA);
+  expect(routeOf("api-route:user-api:POST /b").dependencies.auth).toBe(authA);
+  expect(routeOf("api-route:user-api:GET /c").dependencies.auth).not.toBe(
+    authA,
+  );
   expect(authA?.group).toEqual({
     type: "API Gateway/JWT Authorizer",
     id: "user-auth",
   });
-  expect(authA?.id).toBe("user-auth-authorizer");
+  expect(authA?.id).toBe("api-authorizer:user-auth");
   expect(authA?.config.Name).toBe("user-auth");
-  expect(routeOf("user-api-GET-/a").config).toMatchObject({
+  expect(routeOf("api-route:user-api:GET /a").config).toMatchObject({
     AuthorizationType: "JWT",
     AuthorizationScopes: ["write"],
   });
-  expect(routeOf("user-api-GET-/c").config.AuthorizationScopes).toEqual([]);
+  expect(
+    routeOf("api-route:user-api:GET /c").config.AuthorizationScopes,
+  ).toEqual([]);
 });
 
 test("two authorizers with the same issuer and audience on one api are allowed when their ids differ", async () => {
@@ -158,7 +164,10 @@ test("two authorizers with the same issuer and audience on one api are allowed w
     .filter((r) => r.group?.type === "API Gateway/JWT Authorizer")
     .map((r) => r.id);
 
-  expect(ids).toEqual(["first-auth-authorizer", "second-auth-authorizer"]);
+  expect(ids).toEqual([
+    "api-authorizer:first-auth",
+    "api-authorizer:second-auth",
+  ]);
 });
 
 test("a second authorizer with the same id throws", async () => {
@@ -247,7 +256,7 @@ test("an authorizer's name overrides its AWS name", async () => {
     (r) => r.group?.type === "API Gateway/JWT Authorizer",
   )!;
 
-  expect(auth.id).toBe("user-auth-authorizer");
+  expect(auth.id).toBe("api-authorizer:user-auth");
   expect(auth.config.Name).toBe("users");
 });
 
@@ -310,11 +319,11 @@ test("a route to a $lambda declaration integrates its function", async () => {
     todoRouter.get("/plain", () => plain);
   });
 
-  const integration = routeGroup(graph, "todo-api-GET-/todos").route
+  const integration = routeGroup(graph, "api-route:todo-api:GET /todos").route
     .dependencies.lambdaIntegration;
   expect(integration.dependencies.lambda).toBe(lambdaGroup(graph, "todos").fn);
   expect(
-    routeGroup(graph, "todo-api-GET-/plain").route.dependencies
+    routeGroup(graph, "api-route:todo-api:GET /plain").route.dependencies
       .lambdaIntegration.dependencies.lambda,
   ).toBe(lambdaGroup(graph, "plain").fn);
 });
@@ -384,8 +393,8 @@ test("a route with an authorizer integrates a declaration with the authorizer's 
   });
 
   expect(
-    routeGroup(graph, "user-api-GET-/user").route.dependencies.lambdaIntegration
-      .dependencies.lambda,
+    routeGroup(graph, "api-route:user-api:GET /user").route.dependencies
+      .lambdaIntegration.dependencies.lambda,
   ).toBe(lambdaGroup(graph, "user").fn);
 });
 
@@ -403,7 +412,7 @@ test("a route with an authorizer with no claims schema integrates a declaration 
       .get("/user", () => user);
   });
 
-  expect(routeGroup(graph, "user-api-GET-/user")).toBeDefined();
+  expect(routeGroup(graph, "api-route:user-api:GET /user")).toBeDefined();
 });
 
 test("a route with an authorizer whose claims schema is another object than the declaration's throws", async () => {
@@ -444,8 +453,8 @@ test("a route with an authorizer integrates a declaration with authSchema() and 
       .get("/plain", () => plain);
   });
 
-  expect(routeGroup(graph, "user-api-GET-/user")).toBeDefined();
-  expect(routeGroup(graph, "plain-api-GET-/plain")).toBeDefined();
+  expect(routeGroup(graph, "api-route:user-api:GET /user")).toBeDefined();
+  expect(routeGroup(graph, "api-route:plain-api:GET /plain")).toBeDefined();
 });
 
 test("a route without an authorizer to a declaration with authSchema() and no claims schema throws", async () => {
@@ -572,7 +581,7 @@ test("apiGateway.bind(api).defineRoute() in a declaration makes the route", asyn
       }),
     );
   });
-  const todos = routeGroup(graph, "todo-api-GET-/todos").route;
+  const todos = routeGroup(graph, "api-route:todo-api:GET /todos").route;
 
   expect(todos.config).toMatchObject({
     RouteKey: "GET /todos",
@@ -599,7 +608,7 @@ test("apiGateway.bind(api).defineRoute({ auth }) makes the route with the author
     userAuth = authorizerOn(api({ id: "user-api" }), Claims);
     user = inModule(declareUser(userAuth));
   });
-  const userRoute = routeGroup(graph, "user-api-POST-/user").route;
+  const userRoute = routeGroup(graph, "api-route:user-api:POST /user").route;
 
   expect(userRoute.config.AuthorizationType).toBe("JWT");
   expect(userRoute.dependencies.auth).toBe(userAuth.auth);

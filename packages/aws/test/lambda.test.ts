@@ -8,11 +8,11 @@ test("resource ids and names embed the id", () => {
   const group = lambda({ id: "get-todos", code });
   expect(group.resources.map((r) => r.id).sort()).toEqual(
     [
-      "get-todos",
-      "get-todos-log-group",
-      "get-todos-policy",
-      "get-todos-role",
-      "get-todos-zip",
+      "lambda:get-todos",
+      "lambda:get-todos:log-group",
+      "lambda:get-todos:policy-attachment",
+      "lambda:get-todos:role",
+      "lambda:get-todos:zip",
     ].sort(),
   );
   expect(group.fn.config.FunctionName).toBe("get-todos");
@@ -58,7 +58,7 @@ test("the id does not depend on the code path", () => {
 
 test("mixed-case ids are accepted", () => {
   const group = lambda({ id: "todos-getTodos", code });
-  expect(group.fn.id).toBe("todos-getTodos");
+  expect(group.fn.id).toBe("lambda:todos-getTodos");
 });
 
 test("a missing id throws", () => {

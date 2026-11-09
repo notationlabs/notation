@@ -1,7 +1,7 @@
 import * as aws from "@notation/aws.iac";
 import type { StandardSchemaV1 } from "@notation/resource";
 import type { AuthorizerSource } from "src/lambda/declaration";
-import { assertId, assertName, type NameSafe } from "src/id";
+import { assertId, assertName, resourceId, type NameSafe } from "src/id";
 import { claimAwsName, describeDeclaration } from "src/naming";
 import type { ApiGroup } from "./api";
 
@@ -73,7 +73,7 @@ export class JwtAuthorizerGroup<
     this.claims = claims as C;
     this.scopes = rest.scopes ?? [];
     this.auth = this.add(
-      new aws.apiGateway.RouteAuth(`${rest.id}-authorizer`, {
+      new aws.apiGateway.RouteAuth(resourceId("api-authorizer", rest.id), {
         config: {
           Name: name,
           AuthorizerType: "JWT",

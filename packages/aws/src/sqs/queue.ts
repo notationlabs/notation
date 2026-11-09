@@ -3,7 +3,7 @@ import type { LambdaGroup } from "src/lambda/lambda";
 import type { SqsOptions } from "src/lambda/declaration";
 import type { StandardSchemaV1 } from "@notation/resource";
 import { awsName, claimAwsName, describeDeclaration } from "src/naming";
-import { assertId, assertName, type NameSafe } from "src/id";
+import { assertId, assertName, resourceId, type NameSafe } from "src/id";
 
 export type QueueConfig<
   S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
@@ -74,7 +74,7 @@ export class QueueGroup<
     );
     this.schema = schema as S;
     this.queue = this.add(
-      new aws.sqs.Queue(`${config.id}-queue`, {
+      new aws.sqs.Queue(resourceId("sqs-queue", config.id), {
         config: {
           QueueName: queueName,
           FifoQueue: config.fifo,
@@ -103,9 +103,9 @@ export class QueueGroup<
    * `eventSourceMapping()`.
    */
   "~subscribe"(lambdaGroup: LambdaGroup, options: SqsOptions = {}): void {
-    const id = `${this.id}-${lambdaGroup.fn.id}-mapping`;
+    const id = resourceId("sqs-mapping", this.id, lambdaGroup.id);
     if (this.resources.some((resource) => resource.id === id)) {
-      throw new Error(`Queue ${this.id} already feeds ${lambdaGroup.fn.id}`);
+      throw new Error(`Queue ${this.id} already feeds ${lambdaGroup.id}`);
     }
 
     lambdaGroup.policy.contribute({

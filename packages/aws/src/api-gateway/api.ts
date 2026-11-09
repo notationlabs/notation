@@ -1,7 +1,7 @@
 import * as aws from "@notation/aws.iac";
 import type { ApiGatewayRoute, ApiSource } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
-import { assertId, assertName, type NameSafe } from "src/id";
+import { assertId, assertName, resourceId, type NameSafe } from "src/id";
 import { awsName } from "src/naming";
 import { isJwtAuthorizerGroup } from "./auth";
 import { RouteGroup } from "./route";
@@ -32,7 +32,7 @@ export class ApiGroup
     super("API Gateway", config.id, config);
 
     this.api = this.add(
-      new aws.apiGateway.Api(config.id, {
+      new aws.apiGateway.Api(resourceId("api", config.id), {
         config: {
           Name: awsName("apiGatewayApi", config.name ?? config.id),
           ProtocolType: "HTTP",
@@ -41,7 +41,7 @@ export class ApiGroup
     );
 
     this.add(
-      new aws.apiGateway.Stage(`${config.id}-stage`, {
+      new aws.apiGateway.Stage(resourceId("api", config.id, "stage"), {
         config: { StageName: "$default", AutoDeploy: true },
         dependencies: { api: this.api },
       }),

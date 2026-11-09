@@ -10,6 +10,7 @@ import type { LambdaGroup } from "src/lambda/lambda";
 import type { ApiGroup } from "./api";
 import type { HttpMethod } from "src/lambda/declaration";
 import type { JwtAuthorizerGroup } from "./auth";
+import { resourceId } from "src/id";
 
 type RouteGroupConfig = {
   apiGroup: ApiGroup;
@@ -24,8 +25,9 @@ export class RouteGroup extends aws.AwsResourceGroup {
 
   constructor({ apiGroup, method, path, auth, lambdaGroup }: RouteGroupConfig) {
     const apiResource = apiGroup.api;
-    const routeId = `${apiResource.id}-${method}-${path}`;
     const routeKey = `${method} ${path}`;
+    // The route key is last, as a path may hold `:`.
+    const routeId = resourceId("api-route", apiGroup.id, routeKey);
     super("API Gateway/Route", routeId);
 
     const lambdaResource = lambdaGroup.fn;
@@ -34,7 +36,7 @@ export class RouteGroup extends aws.AwsResourceGroup {
     // routes it serves
     const integration = lambdaGroup.addOnce(
       aws.apiGateway.LambdaIntegration,
-      `${apiResource.id}-${lambdaResource.id}-integration`,
+      resourceId("api-integration", apiGroup.id, lambdaGroup.id),
       {
         dependencies: {
           api: apiResource,
@@ -45,7 +47,7 @@ export class RouteGroup extends aws.AwsResourceGroup {
 
     lambdaGroup.addOnce(
       aws.lambda.LambdaApiGatewayV2Permission,
-      `${lambdaResource.id}-${apiResource.id}-permission`,
+      resourceId("api-permission", apiGroup.id, lambdaGroup.id),
       {
         dependencies: {
           api: apiResource,

@@ -3,7 +3,7 @@ import * as std from "@notation/std.iac";
 import { getActiveResourceCollection } from "@notation/resource";
 import path from "path";
 import { awsName, claimAwsName, describeDeclaration } from "src/naming";
-import { assertId, assertName, type NameSafe } from "src/id";
+import { assertId, assertName, resourceId, type NameSafe } from "src/id";
 
 export type LambdaConfig = {
   /**
@@ -82,13 +82,17 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
    * only when code first reads `policy` to contribute to it.
    */
   get policy(): aws.lambda.LambdaRolePolicyInstance {
-    return this.addOnce(aws.lambda.LambdaRolePolicy, `${this.id}-role-policy`, {
-      config: {
-        RoleName: this.role.config.RoleName,
-        PolicyName: `${this.id}-role-policy`,
+    return this.addOnce(
+      aws.lambda.LambdaRolePolicy,
+      resourceId("lambda", this.id, "role-policy"),
+      {
+        config: {
+          RoleName: this.role.config.RoleName,
+          PolicyName: `${this.id}-role-policy`,
+        },
+        dependencies: { role: this.role },
       },
-      dependencies: { role: this.role },
-    });
+    );
   }
 }
 
@@ -138,20 +142,20 @@ const build = (
 
   if (config.code.type === "file") {
     zipFile = functionGroup.add(
-      new std.fs.Zip(`${lambdaId}-zip`, {
+      new std.fs.Zip(resourceId("lambda", lambdaId, "zip"), {
         config: { sourceFilePath: filePath },
       }),
     );
   } else {
     zipFile = functionGroup.add(
-      new std.fs.File(`${lambdaId}-zip`, {
+      new std.fs.File(resourceId("lambda", lambdaId, "zip"), {
         config: { filePath },
       }),
     );
   }
 
   const role = functionGroup.add(
-    new aws.lambda.LambdaIamRole(`${lambdaId}-role`, {
+    new aws.lambda.LambdaIamRole(resourceId("lambda", lambdaId, "role"), {
       config: {
         RoleName: awsName("iamRole", `${lambdaId}-role`),
       },
@@ -159,16 +163,19 @@ const build = (
   );
 
   functionGroup.add(
-    new aws.lambda.LambdaRolePolicyAttachment(`${lambdaId}-policy`, {
-      dependencies: { role },
-    }),
+    new aws.lambda.LambdaRolePolicyAttachment(
+      resourceId("lambda", lambdaId, "policy-attachment"),
+      {
+        dependencies: { role },
+      },
+    ),
   );
 
   const fileName = path.parse(filePath).name;
   const runtime = config.runtime || "nodejs22.x";
 
   const lambdaResource = functionGroup.add(
-    new aws.lambda.LambdaFunction(lambdaId, {
+    new aws.lambda.LambdaFunction(resourceId("lambda", lambdaId), {
       config: {
         FunctionName: functionName,
         Handler: `${fileName}.${config.handler ?? "handler"}`,
@@ -186,7 +193,7 @@ const build = (
   );
 
   functionGroup.add(
-    new aws.lambda.LambdaLogGroup(`${lambdaId}-log-group`, {
+    new aws.lambda.LambdaLogGroup(resourceId("lambda", lambdaId, "log-group"), {
       config: { retentionInDays: 30 },
       dependencies: { lambda: lambdaResource },
     }),

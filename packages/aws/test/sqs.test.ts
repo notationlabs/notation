@@ -93,7 +93,7 @@ test("eventSourceMapping grants the function access to the queue and maps the qu
     FunctionName: "process",
     BatchSize: 5,
   });
-  expect(mapping.id).toBe("orders-process-mapping");
+  expect(mapping.id).toBe("sqs-mapping:orders:process");
   expect(mapping.group).toEqual({ type: "aws/sqs/queue", id: "orders" });
   expect(mapping.getDependencies()).toEqual(
     expect.arrayContaining([fn.policy, fn.fn, orders.queue]),
@@ -156,7 +156,7 @@ test("eventSourceMapping with a lambda group from lambda() sets no environment",
     fileSha256: "sha",
   } as any);
 
-  expect(mappingOf(orders).id).toBe("orders-process-mapping");
+  expect(mappingOf(orders).id).toBe("sqs-mapping:orders:process");
   expect((await fn.fn.getParams()).Environment).toBeUndefined();
 });
 
@@ -172,7 +172,7 @@ test("eventSourceMapping maps a queue to a declaration with sqs.schema(), whose 
   });
   const fn = lambdaGroup(graph, "process");
 
-  expect(mappingOf(orders).id).toBe("orders-process-mapping");
+  expect(mappingOf(orders).id).toBe("sqs-mapping:orders:process");
   expect(mappingOf(orders).getDependencies()).toContain(fn.policy);
   const { body: decoded } = await declaration.decode({
     body: '{"orderId":"a"}',
@@ -194,7 +194,7 @@ test("eventSourceMapping maps a queue with no schema to a declaration with sqs.s
     eventSourceMapping({ source: orders, target: () => fn });
   });
 
-  expect(mappingOf(orders).id).toBe("orders-process-mapping");
+  expect(mappingOf(orders).id).toBe("sqs-mapping:orders:process");
 });
 
 test("eventSourceMapping of a queue whose schema is another object than the declaration's throws", async () => {
@@ -239,7 +239,7 @@ test("eventSourceMapping takes a declaration with no event", async () => {
     eventSourceMapping({ source: orders, target: () => fn });
   });
 
-  expect(mappingOf(orders).id).toBe("orders-process-mapping");
+  expect(mappingOf(orders).id).toBe("sqs-mapping:orders:process");
 });
 
 test("eventSourceMapping of a declaration that a later module declares waits for evaluation to end", async () => {
@@ -251,7 +251,7 @@ test("eventSourceMapping of a declaration that a later module declares waits for
     fn = inModule($lambda({ id: "process", event: () => sqs.schema(Order) }));
   });
 
-  expect(mappingOf(orders).id).toBe("orders-process-mapping");
+  expect(mappingOf(orders).id).toBe("sqs-mapping:orders:process");
 });
 
 test("eventSourceMapping of a declaration with an apiGateway event throws", async () => {
@@ -363,9 +363,9 @@ test("a plan creates the queue and the policy before the mapping", async () => {
   await rm(directory, { recursive: true, force: true });
 
   const order = plan.nodes.map((node) => node.id);
-  const mapping = order.indexOf("orders-process-mapping");
-  expect(order.indexOf("orders-queue")).toBeLessThan(mapping);
-  expect(order.indexOf("process-role-policy")).toBeLessThan(mapping);
+  const mapping = order.indexOf("sqs-mapping:orders:process");
+  expect(order.indexOf("sqs-queue:orders")).toBeLessThan(mapping);
+  expect(order.indexOf("lambda:process:role-policy")).toBeLessThan(mapping);
   expect(order.indexOf("process")).toBeLessThan(mapping);
   expect(plan.nodes.every((node) => node.decision === "create")).toBe(true);
 });
@@ -403,7 +403,7 @@ test("sqs.bind(queue) in a declaration maps the queue to the function", async ()
   fn.role.setOutput({ RoleName: "process-role" } as any);
   fn.fn.setOutput({ FunctionName: "process" } as any);
 
-  expect(mappingOf(orders).id).toBe("orders-process-mapping");
+  expect(mappingOf(orders).id).toBe("sqs-mapping:orders:process");
   expect(await mappingOf(orders).getParams()).toMatchObject({
     EventSourceArn: queueArn("orders"),
     BatchSize: 5,
@@ -440,7 +440,7 @@ test("sqs.bind(queue) can name a queue that a later module declares", async () =
     orders = queue({ id: "orders" });
   });
 
-  expect(mappingOf(orders).id).toBe("orders-process-mapping");
+  expect(mappingOf(orders).id).toBe("sqs-mapping:orders:process");
 });
 
 test("decode() validates a message with the queue's schema", async () => {
@@ -501,7 +501,7 @@ test("eventSourceMapping of a queue with a schema to a declaration with no event
     eventSourceMapping({ source: orders, target: () => fn });
   });
 
-  expect(mappingOf(orders).id).toBe("orders-process-mapping");
+  expect(mappingOf(orders).id).toBe("sqs-mapping:orders:process");
 });
 
 test("eventSourceMapping of a queue with a schema to a lambda group from lambda() maps the queue", async () => {
@@ -512,5 +512,5 @@ test("eventSourceMapping of a queue with a schema to a lambda group from lambda(
     eventSourceMapping({ source: orders, target: fn });
   });
 
-  expect(mappingOf(orders).id).toBe("orders-process-mapping");
+  expect(mappingOf(orders).id).toBe("sqs-mapping:orders:process");
 });

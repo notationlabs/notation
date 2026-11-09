@@ -78,7 +78,7 @@ test("name overrides the function's AWS name, and the id stays its state key", a
   });
   const group = lambdaGroup(graph, "orders");
 
-  expect(group.fn.id).toBe("orders");
+  expect(group.fn.id).toBe("lambda:orders");
   expect(group.fn.config.FunctionName).toBe("order-handler");
 });
 

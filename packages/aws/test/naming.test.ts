@@ -130,13 +130,13 @@ test("the id keys each resource in state and is the base of its AWS name", async
   )!;
 
   expect(fn.id).toBe("get-orders");
-  expect(fn.fn.id).toBe("get-orders");
+  expect(fn.fn.id).toBe("lambda:get-orders");
   expect(ordersApi.id).toBe("orders-api");
-  expect(ordersApi.api.id).toBe("orders-api");
+  expect(ordersApi.api.id).toBe("api:orders-api");
   expect(ordersQueue.id).toBe("orders");
-  expect(ordersQueue.queue.id).toBe("orders-queue");
+  expect(ordersQueue.queue.id).toBe("sqs-queue:orders");
   expect(nightly.id).toBe("nightly");
-  expect(nightly.rule.id).toBe("nightly-eventbridge-rule");
+  expect(nightly.rule.id).toBe("eventbridge-rule:nightly");
 });
 
 test("name overrides the AWS name, with the app and stage, and the id stays the state key", async () => {
@@ -163,19 +163,19 @@ test("name overrides the AWS name, with the app and stage, and the id stays the 
     (g): g is ScheduleGroup => g instanceof ScheduleGroup,
   )!;
 
-  expect(fn.fn.id).toBe("get-orders");
+  expect(fn.fn.id).toBe("lambda:get-orders");
   expect(fn.fn.config.FunctionName).toBe("orders-app--prod--fetch-orders");
   expect(fn.role.config.RoleName).toBe("orders-app--prod--get-orders-role");
-  expect(ordersApi.api.id).toBe("orders-api");
+  expect(ordersApi.api.id).toBe("api:orders-api");
   expect(ordersApi.api.config.Name).toBe("orders-app--prod--shop-api");
-  expect(ordersQueue.queue.id).toBe("orders-queue");
+  expect(ordersQueue.queue.id).toBe("sqs-queue:orders");
   expect(ordersQueue.queue.config.QueueName).toBe(
     "orders-app--prod--order-events",
   );
   expect(fifoQueue.queue.config.QueueName).toBe(
     "orders-app--prod--ledger-events.fifo",
   );
-  expect(nightly.rule.id).toBe("nightly-eventbridge-rule");
+  expect(nightly.rule.id).toBe("eventbridge-rule:nightly");
   expect(nightly.rule.config.Name).toBe("orders-app--prod--nightly-report");
 });
 

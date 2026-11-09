@@ -95,3 +95,13 @@ export function assertName(caller: string, name: unknown): void {
     );
   }
 }
+
+/**
+ * Makes the id of a resource from a type prefix and the ids of the
+ * declarations that it belongs to, such as `lambda:orders:role`. Ids can't
+ * hold `:`, so two different lists never make the same resource id. Only the
+ * last part, such as the path of a route, may hold `:`.
+ */
+export function resourceId(type: string, ...ids: string[]): string {
+  return [type, ...ids].join(":");
+}
