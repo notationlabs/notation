@@ -32,7 +32,37 @@ export type KindMatch = {
   isDefault: boolean;
 };
 
-const normalise = (glob: string) => glob.replace(/^(!?)\.\//, "$1");
+const globCharacters = /[*?[\]{}()!+@]/;
+
+// Removes a leading `./`. A glob that ends in `/`, or that has no glob
+// characters and names a folder, such as `infra`, matches the files in
+// that folder.
+function normalise(glob: string, root: string): string {
+  const negated = glob.startsWith("!");
+  let body = (negated ? glob.slice(1) : glob).replace(/^\.\//, "");
+  if (body.endsWith("/")) body = `${body}**`;
+  else if (!globCharacters.test(body) && isDirectory(path.join(root, body)))
+    body = `${body}/**`;
+  return negated ? `!${body}` : body;
+}
+
+function isDirectory(file: string): boolean {
+  try {
+    return fs.statSync(file).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// The real path of the root, because the bundler gives real paths. A root
+// that doesn't exist is kept as it is.
+function realRoot(root: string): string {
+  try {
+    return fs.realpathSync(root);
+  } catch {
+    return root;
+  }
+}
 
 const articles: Record<ModuleKind, string> = {
   infra: "an infra",
@@ -49,11 +79,13 @@ const articles: Record<ModuleKind, string> = {
  * error.
  */
 export class FileKinds {
-  readonly globs: Required<ModuleGlobs>;
-  #defaults: Set<ModuleKind>;
+  #config: ModuleGlobs;
+  #globs?: Required<ModuleGlobs>;
+  #defaults = new Set<ModuleKind>();
   #root?: string;
+  #realRoot?: string;
   #kinds = new Map<string, KindMatch | undefined>();
-  #packageDirs = new Map<string, boolean>();
+  #packageNames = new Map<string, string | undefined>();
 
   /**
    * @param globs The globs that the config sets, by kind.
@@ -61,18 +93,24 @@ export class FileKinds {
    * the directory of the config.
    */
   constructor(globs: ModuleGlobs = {}, root?: string) {
-    this.globs = { ...defaultModuleGlobs };
-    this.#defaults = new Set();
-    for (const kind of moduleKinds) {
-      const set = globs[kind];
-      if (set) this.globs[kind] = set.map(normalise);
-      else this.#defaults.add(kind);
-    }
+    this.#config = globs;
     this.#root = root;
   }
 
   get root(): string {
-    return (this.#root ??= projectRoot());
+    return (this.#realRoot ??= realRoot(this.#root ?? projectRoot()));
+  }
+
+  /** The globs of each kind, with the defaults for the kinds that the config doesn't set. */
+  get globs(): Required<ModuleGlobs> {
+    if (this.#globs) return this.#globs;
+    const globs = { ...defaultModuleGlobs };
+    for (const kind of moduleKinds) {
+      const set = this.#config[kind];
+      if (set) globs[kind] = set.map((glob) => normalise(glob, this.root));
+      else this.#defaults.add(kind);
+    }
+    return (this.#globs = globs);
   }
 
   /** The kind of a file, by its absolute path. */
@@ -153,33 +191,48 @@ export class FileKinds {
     if (nodeModules.test(file)) return true;
     const relative = path.relative(this.root, file);
     if (relative.startsWith("..") || path.isAbsolute(relative)) return true;
+    const root = this.root;
     for (
       let dir = path.dirname(file);
-      dir !== this.root && dir !== path.dirname(dir);
+      dir !== root && dir !== path.dirname(dir);
       dir = path.dirname(dir)
     ) {
-      if (this.#isPackageDir(dir)) return true;
+      if (this.packageName(dir) !== undefined) return true;
     }
     return false;
   }
 
-  #isPackageDir(dir: string): boolean {
-    let found = this.#packageDirs.get(dir);
-    if (found === undefined) {
-      const manifest = path.join(dir, "package.json");
-      found = false;
-      if (fs.existsSync(manifest)) {
-        try {
-          found =
-            typeof JSON.parse(fs.readFileSync(manifest, "utf8")).name ===
-            "string";
-        } catch {
-          found = false;
-        }
-      }
-      this.#packageDirs.set(dir, found);
+  /** The `name` in the `package.json` of a folder, if it has one. */
+  packageName(dir: string): string | undefined {
+    if (this.#packageNames.has(dir)) return this.#packageNames.get(dir);
+    let name: string | undefined;
+    const manifest = path.join(dir, "package.json");
+    if (fs.existsSync(manifest)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(manifest, "utf8")).name;
+        if (typeof parsed === "string") name = parsed;
+      } catch {}
     }
-    return found;
+    this.#packageNames.set(dir, name);
+    return name;
+  }
+
+  /**
+   * A file for an error message. A package file is named by its package,
+   * such as `@notation/aws/dist/sqs/index.js`. A workspace package resolves
+   * to its real path, so a path relative to the project root would read as
+   * `../../aws/dist/sqs/index.js`.
+   */
+  show(file: string): string {
+    const relative = path.relative(this.root, file).split(path.sep).join("/");
+    if (!nodeModules.test(file) && !relative.startsWith("..")) return relative;
+    for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
+      const name = this.packageName(dir);
+      if (name !== undefined) {
+        return [name, ...path.relative(dir, file).split(path.sep)].join("/");
+      }
+      if (dir === path.dirname(dir)) return relative;
+    }
   }
 }
 

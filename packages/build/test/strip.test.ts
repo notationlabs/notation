@@ -2,7 +2,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   analyzeModule,
-  FileKinds,
   ModuleAnalyses,
   stripForInfra,
   stripForRuntime,
@@ -50,12 +49,8 @@ function setup(source = handlerModule) {
     packages,
   );
   const analysis = analyzeModule(marks.table(file)!, marks);
-  const analyses = new ModuleAnalyses({
-    marks,
-    files: new FileKinds({}, root),
-  });
-  const describeInfra = (f: string) => analyses.describeInfra(f);
-  return { marks, analysis, describeInfra };
+  const analyses = new ModuleAnalyses({ marks, root });
+  return { analysis, analyses };
 }
 
 function infra(source?: string, extra: Record<string, string> = {}) {
@@ -189,8 +184,8 @@ describe("stripForRuntime", () => {
   );
 
   it("reduces the declaration to its runtime options", () => {
-    const { analysis, marks, describeInfra } = setup(runtimeSource);
-    const { code } = stripForRuntime(analysis, marks, describeInfra)!;
+    const { analysis, analyses } = setup(runtimeSource);
+    const { code } = stripForRuntime(analysis, analyses)!;
     expect(code).toContain(
       `export const lambda = $lambda({
   id: "process-orders",
@@ -202,8 +197,8 @@ describe("stripForRuntime", () => {
   });
 
   it("removes an import whose uses it removed, and keeps the others", () => {
-    const { analysis, marks, describeInfra } = setup(runtimeSource);
-    const { code } = stripForRuntime(analysis, marks, describeInfra)!;
+    const { analysis, analyses } = setup(runtimeSource);
+    const { code } = stripForRuntime(analysis, analyses)!;
     expect(code).not.toContain("../infra/orders");
     expect(code).toContain(`import "./sentry";`);
     expect(code).toContain(`from "@aws-sdk/client-sqs"`);
@@ -216,8 +211,8 @@ describe("stripForRuntime", () => {
       "await client.send(config);",
       "await client.send(config, unused);",
     );
-    const { analysis, marks, describeInfra } = setup(source);
-    const { code } = stripForRuntime(analysis, marks, describeInfra)!;
+    const { analysis, analyses } = setup(source);
+    const { code } = stripForRuntime(analysis, analyses)!;
     expect(code).toContain(
       `import { ordersQueue, unused } from "../infra/orders";`,
     );
@@ -229,20 +224,20 @@ describe("stripForRuntime", () => {
       export const lambda = $lambda({ event: () => null, memory: 1, id: "a", timeout: 2 });
       export const handler = 1;
     `;
-    const { analysis, marks, describeInfra } = setup(source);
-    expect(stripForRuntime(analysis, marks, describeInfra)!.code).toContain(
+    const { analysis, analyses } = setup(source);
+    expect(stripForRuntime(analysis, analyses)!.code).toContain(
       '$lambda({ event: () => null, id: "a" });',
     );
   });
 
   it("fails when a kept option refers to an infra module", () => {
-    const { analysis, marks, describeInfra } = setup(
+    const { analysis, analyses } = setup(
       runtimeSource.replace(
         "sqs(Order, ordersQueue.arn)",
         "sqs(ordersQueue.schema)",
       ),
     );
-    expect(() => stripForRuntime(analysis, marks, describeInfra)).toThrow(
+    expect(() => stripForRuntime(analysis, analyses)).toThrow(
       'runtime/handler.ts:16:20: an option of $lambda that the function keeps refers to ordersQueue, from infra/orders.ts, an infra module (files.infra: "infra/**", the default).',
     );
   });
@@ -252,8 +247,8 @@ describe("stripForRuntime", () => {
       `env: () => ({ QUEUE_URL: ordersQueue.url, LOG_LEVEL: "info" })`,
       `env: () => ({ ...base })`,
     );
-    const { analysis, marks, describeInfra } = setup(source);
-    expect(() => stripForRuntime(analysis, marks, describeInfra)).toThrow(
+    const { analysis, analyses } = setup(source);
+    expect(() => stripForRuntime(analysis, analyses)).toThrow(
       "the env option of $lambda must be a function that returns an object literal",
     );
   });

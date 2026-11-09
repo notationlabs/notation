@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Plugin, PluginContext } from "rolldown";
+import type { Plugin } from "rolldown";
 import type { ModuleAnalysis } from "./analyze";
 import { location } from "./ast";
 import { nodeModules, scriptFile } from "./files";
@@ -117,7 +117,13 @@ export function infraPlugin({
       analyses.invalidate(id);
     },
     buildEnd(error) {
-      if (!error) checkSharedModules(this, analyses);
+      if (error) return;
+      const shared = analyses.infraShared;
+      shared.clear();
+      for (const id of this.getModuleIds()) {
+        if (analyses.kindOf(id)?.kind === "shared") shared.add(id);
+      }
+      for (const id of shared) analyses.checkShared(id);
     },
     generateBundle() {
       if (!onDeclarationModules) return;
@@ -200,14 +206,16 @@ export type RuntimePluginOptions = {
  *    that call a resource function at their top level.
  * 4. Fails the build if an infra module, or an infra function from a
  *    package, is still in the bundle, and names the import chain.
- * 5. Fails the build if a shared module in the bundle breaks its rules.
+ * 5. Fails the build if a module in the bundle imports an infra module for
+ *    its side effects.
+ * 6. Fails the build if a shared module in the bundle breaks its rules. The
+ *    shared modules that the last infra build checked are skipped.
  */
 export function runtimePlugin({
   analyses,
   module,
 }: RuntimePluginOptions): Plugin {
   const infraModules = new Set<string>();
-  const describeInfra = (file: string) => analyses.describeInfra(file);
   return {
     name: "notation-runtime",
     resolveId(source) {
@@ -228,16 +236,13 @@ export function runtimePlugin({
         }
         if (!mayHoldMarks(code)) return null;
         const analysis = analyses.fromSource(id, code);
+        analyses.checkSideEffectImports(id, analysis);
         const isInfra =
           !match &&
           analysis.resourceCall !== undefined &&
           analyses.files.isPackageFile(id);
         if (isInfra) infraModules.add(id);
-        const stripped = stripForRuntime(
-          analysis,
-          analyses.marks,
-          describeInfra,
-        );
+        const stripped = stripForRuntime(analysis, analyses);
         if (!stripped && !isInfra) return null;
         return {
           code: stripped?.code ?? code,
@@ -250,7 +255,10 @@ export function runtimePlugin({
       analyses.invalidate(id);
     },
     buildEnd(error) {
-      if (!error) checkSharedModules(this, analyses);
+      if (error) return;
+      for (const id of this.getModuleIds()) {
+        if (!analyses.infraShared.has(id)) analyses.checkShared(id);
+      }
     },
     generateBundle(_, bundle) {
       const show = (file: string) => analyses.show(file);
@@ -266,8 +274,12 @@ export function runtimePlugin({
               analyses.marks.resolve(binding.source, file) === id,
           );
           const chain = importChain(this, id).map(show);
+          const advice =
+            analyses.kindOf(id)?.kind === "infra"
+              ? " Read infra values through the declaration's env(). Move a plain value that the function needs, such as a constant, to a shared module (files.shared)."
+              : "";
           this.error(
-            `The function in ${show(module.path)} uses ${describeInfra(id)}${listUses(uses)}. It imports ${show(id)} through ${chain.join(" → ")}. The runtime build leaves infra out, so runtime code can't use it.`,
+            `The function in ${show(module.path)} uses ${analyses.describeInfra(id)}${listUses(uses)}. It imports ${show(id)} through ${chain.join(" → ")}. The runtime build leaves infra out, so runtime code can't use it.${advice}`,
           );
         }
         // Infra functions from packages, such as queue() from
@@ -289,22 +301,18 @@ export function runtimePlugin({
               analyses,
               (_binding, _file, importMark) => importMark === mark,
             );
-            const chain = importChain(this, id).map(show);
+            const chain = importChain(this, id);
+            const unmatched = chain
+              .map((file) => analyses.unmatchedInfra(file))
+              .find(Boolean);
             this.error(
-              `The function in ${show(module.path)} uses ${name} from ${show(id)}, a function that declares infrastructure${listUses(uses)}. It imports ${show(id)} through ${chain.join(" → ")}. Infra functions can't run in a runtime module.`,
+              `The function in ${show(module.path)} uses ${name} from ${show(id)}, a function that declares infrastructure${listUses(uses)}. It imports ${show(id)} through ${chain.map(show).join(" → ")}. Infra functions can't run in a runtime module.${unmatched ? ` ${unmatched}` : ""}`,
             );
           }
         }
       }
     },
   };
-}
-
-// Checks each shared module in the build. A shared module's check reads
-// the modules that it imports, so it runs after the build has loaded them,
-// and again on each rebuild in watch mode.
-function checkSharedModules(context: PluginContext, analyses: ModuleAnalyses) {
-  for (const id of context.getModuleIds()) analyses.checkShared(id);
 }
 
 type ImportUse = { at: string; name: string };

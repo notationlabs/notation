@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import type { ModuleGlobs } from "@notation/core";
 import { analyzeModule, type ModuleAnalysis } from "./analyze";
 import { location, type Node } from "./ast";
@@ -18,31 +16,12 @@ import { Marks } from "./marks";
 export const isProjectModule = (id: string) =>
   !id.startsWith("\0") && scriptFile.test(id) && !nodeModules.test(id);
 
-/**
- * A file for an error message. A package file is named by its package, such
- * as `@notation/aws/dist/sqs/index.js`. A workspace package resolves to its
- * real path, so a path relative to the project root would read as
- * `../../aws/dist/sqs/index.js`.
- */
-export function displayPath(file: string, root: string): string {
-  const relative = path.relative(root, file).split(path.sep).join("/");
-  if (!nodeModules.test(file) && !relative.startsWith("..")) return relative;
-  for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
-    const manifest = path.join(dir, "package.json");
-    if (fs.existsSync(manifest)) {
-      const { name } = JSON.parse(fs.readFileSync(manifest, "utf8"));
-      if (typeof name === "string") {
-        return [name, ...path.relative(dir, file).split(path.sep)].join("/");
-      }
-    }
-    if (dir === path.dirname(dir)) return relative;
-  }
-}
-
 export type ModuleAnalysesOptions = {
   marks?: Marks;
-  /** The kinds of the project's files, or the globs of `files` to read them from. */
-  files?: FileKinds | ModuleGlobs;
+  /** The globs of `files` in the config. */
+  files?: ModuleGlobs;
+  /** The directory that the globs are relative to. Defaults to the directory of the config. */
+  root?: string;
 };
 
 // An import that the walk of `checkShared` follows, and the import before
@@ -57,13 +36,18 @@ export class ModuleAnalyses {
   readonly marks: Marks;
   readonly files: FileKinds;
   #analyses = new Map<string, ModuleAnalysis>();
+  // The shared modules that passed `checkShared` since the last change.
+  #sharedPassed = new Set<string>();
+
+  /**
+   * The shared modules in the last infra build, which that build checks. A
+   * runtime build skips them, so that watch mode reports each error once.
+   */
+  readonly infraShared = new Set<string>();
 
   constructor(options: ModuleAnalysesOptions = {}) {
     this.marks = options.marks ?? new Marks();
-    this.files =
-      options.files instanceof FileKinds
-        ? options.files
-        : new FileKinds(options.files);
+    this.files = new FileKinds(options.files, options.root);
   }
 
   /**
@@ -98,11 +82,12 @@ export class ModuleAnalyses {
   invalidate(file: string) {
     this.#analyses.delete(file);
     this.marks.invalidate(file);
+    this.#sharedPassed.clear();
   }
 
   /** A file for an error message, relative to the project root. */
   show(file: string): string {
-    return displayPath(file, this.files.root);
+    return this.files.show(file);
   }
 
   /** The kind of a JS or TS file of the project. */
@@ -132,6 +117,46 @@ export class ModuleAnalyses {
   }
 
   /**
+   * If a project file that no glob matches calls a resource function at its
+   * top level, says to add it to `files.infra`, for an error message. The
+   * runtime build keeps such a file's top-level code.
+   */
+  unmatchedInfra(file: string): string | undefined {
+    if (!isProjectModule(file) || this.files.kindOf(file)) return undefined;
+    if (this.files.isPackageFile(file)) return undefined;
+    const call = this.fromFile(file)?.resourceCall;
+    if (!call) return undefined;
+    const name = this.show(file);
+    return `${name} calls ${call.name} at its top level, but files.infra doesn't match it. Add ${name} to files.infra to leave it out of the function.`;
+  }
+
+  /**
+   * Fails if a module in the runtime bundle imports an infra module for its
+   * side effects, as in `import "../infra/setup"`. The runtime build leaves
+   * infra modules out, so the import does nothing in the function.
+   */
+  checkSideEffectImports(file: string, analysis: ModuleAnalysis) {
+    if (this.kindOf(file)?.kind === "shared") return;
+    const { module } = analysis.table;
+    for (const statement of module.body) {
+      if (
+        statement.type !== "ImportDeclaration" ||
+        statement.importKind === "type" ||
+        statement.specifiers.length > 0
+      )
+        continue;
+      const target = this.marks.resolve(statement.source.value, file);
+      if (!target) continue;
+      const match = this.kindOf(target);
+      if (match?.kind !== "infra") continue;
+      const name = this.show(file);
+      throw new Error(
+        `${name}:${location(module.source, statement.start)}: ${name} imports ${describeKind(this.show(target), match)}, for its side effects. The runtime build leaves infra modules out, so the import does nothing in the function. Move the code that the function needs to a shared module (files.shared), or remove the import.`,
+      );
+    }
+  }
+
+  /**
    * Fails if a module that `files.infra` or `files.shared` matches holds a
    * declaration. The runtime build can't bundle a function whose module is
    * infra, and neither build strips a shared module.
@@ -157,6 +182,7 @@ export class ModuleAnalyses {
    * imports, up to an infra or runtime module or a package file.
    */
   checkShared(file: string) {
+    if (this.#sharedPassed.has(file)) return;
     const match = this.kindOf(file);
     if (match?.kind !== "shared") return;
     const analysis = this.fromFile(file);
@@ -175,17 +201,24 @@ export class ModuleAnalyses {
     }
 
     const found = this.#forbiddenImport(file, analysis);
-    if (!found) return;
+    if (!found) {
+      this.#sharedPassed.add(file);
+      return;
+    }
     const steps: Step[] = [];
     for (let step: Step | undefined = found.step; step; step = step.previous)
       steps.unshift(step);
-    const chain = [...steps.map(at), this.show(found.target)].join(" → ");
+    const target = this.show(found.target);
+    const chain = [...steps.map(at), target].join(" → ");
+    const through = steps[1]
+      ? `, or stop importing it through ${this.show(steps[1].file)}`
+      : "";
     const advice =
       found.match.kind === "infra"
-        ? "Read infra values in a function through its declaration's env(), and move code that both builds need to a shared module."
+        ? `Move the code that needs ${target} out of the shared module${through}.`
         : "Move the code that the shared module needs from the runtime module to a shared module.";
     throw new Error(
-      `${at(steps[0]!)}: ${shared}, imports ${describeKind(this.show(found.target), found.match)}, through ${chain}. Neither build strips a shared module, so it can't import an infra or runtime module, directly or through other modules. ${advice}`,
+      `${shared}, imports ${describeKind(target, found.match)}, through ${chain}. Neither build strips a shared module, so it can't import an infra or runtime module, directly or through other modules. ${advice}`,
     );
   }
 
@@ -219,6 +252,16 @@ export class ModuleAnalyses {
   }
 }
 
+// The names that a module uses as values: its references, including JSX
+// tags, and the local names that it exports.
+function usedNames(analysis: ModuleAnalysis): Set<string> {
+  const used = new Set(analysis.references.map(({ node }) => node.name));
+  for (const target of analysis.table.exports.values()) {
+    if ("local" in target) used.add(target.local);
+  }
+  return used;
+}
+
 // The imports and re-exports that load a module at runtime, with the
 // position of each statement. An import counts if it has no specifiers, or
 // if the module uses one of its names as a value. TypeScript removes an
@@ -226,11 +269,8 @@ export class ModuleAnalyses {
 function valueImports(
   analysis: ModuleAnalysis,
 ): { source: string; start: number }[] {
-  const { table, references } = analysis;
-  const used = new Set(references.map(({ node }) => node.name));
-  for (const target of table.exports.values()) {
-    if ("local" in target) used.add(target.local);
-  }
+  const { table } = analysis;
+  const used = usedNames(analysis);
   const found: { source: string; start: number }[] = [];
   for (const statement of table.module.body) {
     const { type } = statement;
@@ -271,12 +311,9 @@ function resourceImport(
   analysis: ModuleAnalysis,
   marks: Marks,
 ): ResourceImport | undefined {
-  const { table, references, marked } = analysis;
+  const { table, marked } = analysis;
   const file = table.module.file;
-  const used = new Set(references.map(({ node }) => node.name));
-  for (const target of table.exports.values()) {
-    if ("local" in target) used.add(target.local);
-  }
+  const used = usedNames(analysis);
   for (const [local, binding] of table.imports) {
     if (binding.imported === "*" || !used.has(local)) continue;
     if (marks.importMark(file, binding)?.kind === "resource") {

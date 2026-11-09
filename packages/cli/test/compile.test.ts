@@ -691,7 +691,7 @@ const withHandler = (imports: string, body: string) =>
       `export const handler = async () => ${body};`,
     );
 
-describe("modules that the runtime bundle keeps as on main", () => {
+describe("modules that the runtime bundle keeps or leaves out", () => {
   it("runs the top-level code of a setup module that imports infra for a function the bundle doesn't use", async () => {
     writeProject(withHandler(`import "../lib/setup";`, "globalThis.setupRan"));
     write(
@@ -748,7 +748,17 @@ describe("modules that the runtime bundle keeps as on main", () => {
       `console.log("labels loaded");\nexport const label = () => "orders";`,
     );
     await expect(buildProject()).rejects.toThrow(
-      'The function in runtime/process-orders.ts uses infra/labels.ts, an infra module (files.infra: "infra/**", the default): label at runtime/process-orders.ts:17:38. It imports infra/labels.ts through runtime/process-orders.ts → infra/labels.ts.',
+      "The function in runtime/process-orders.ts uses infra/labels.ts, an infra module (files.infra: \"infra/**\", the default): label at runtime/process-orders.ts:17:38. It imports infra/labels.ts through runtime/process-orders.ts → infra/labels.ts. The runtime build leaves infra out, so runtime code can't use it. Read infra values through the declaration's env(). Move a plain value that the function needs, such as a constant, to a shared module (files.shared).",
+    );
+  });
+
+  it("fails when a module in the bundle imports an infra module for its side effects", async () => {
+    writeProject(
+      withHandler(`import "../infra/setup";`, "globalThis.setupRan"),
+    );
+    write("infra/setup.ts", `globalThis.setupRan = "yes";`);
+    await expect(buildProject()).rejects.toThrow(
+      'runtime/process-orders.ts:6:3: runtime/process-orders.ts imports infra/setup.ts, an infra module (files.infra: "infra/**", the default), for its side effects. The runtime build leaves infra modules out, so the import does nothing in the function. Move the code that the function needs to a shared module (files.shared), or remove the import.',
     );
   });
 
@@ -765,7 +775,25 @@ describe("modules that the runtime bundle keeps as on main", () => {
       ].join("\n"),
     );
     await expect(buildProject()).rejects.toThrow(
-      "uses queue from @notation/aws/sqs.js, a function that declares infrastructure: queue at lib/labels.ts:2:20. It imports @notation/aws/sqs.js through runtime/process-orders.ts → lib/labels.ts → @notation/aws/sqs.js",
+      "uses queue from @notation/aws/sqs.js, a function that declares infrastructure: queue at lib/labels.ts:2:20. It imports @notation/aws/sqs.js through runtime/process-orders.ts → lib/labels.ts → @notation/aws/sqs.js. Infra functions can't run in a runtime module. lib/labels.ts calls queue at its top level, but files.infra doesn't match it. Add lib/labels.ts to files.infra to leave it out of the function.",
+    );
+  });
+
+  it("names the line of a kept option that refers to a file that no glob matches and that calls a resource function", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { Order } from "./schema";`,
+          `import { Order } from "./schema";\n  import { dlq } from "../lib/queues";`,
+        )
+        .replace("event: () => sqs(Order)", "event: () => sqs(dlq)"),
+    );
+    write(
+      "lib/queues.ts",
+      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
+    );
+    await expect(buildProject()).rejects.toThrow(
+      "runtime/process-orders.ts:12:22: an option of $lambda that the function keeps refers to dlq, from lib/queues.ts. lib/queues.ts calls queue at its top level, but files.infra doesn't match it. Add lib/queues.ts to files.infra to leave it out of the function. The runtime build removes infra. Read infra values in the function through the declaration's env().",
     );
   });
 
@@ -980,6 +1008,33 @@ describe("files config", () => {
     );
   });
 
+  it.each([["infra"], ["infra/"]])(
+    "reads %j in files.infra as the files in the folder",
+    async (glob) => {
+      writeProject(
+        withHandler(`import { label } from "../infra/labels";`, "label()"),
+      );
+      write("infra/labels.ts", `export const label = () => "orders";`);
+      await expect(buildProject({ infra: [glob] })).rejects.toThrow(
+        'uses infra/labels.ts, an infra module (files.infra: "infra/**")',
+      );
+    },
+  );
+
+  it("leaves out of the runtime scan the files that a glob with ! in files.runtime matches", async () => {
+    writeProject();
+    write(
+      "runtime/draft.ts",
+      handlerModule.replace(`id: "process-orders"`, `id: "draft"`),
+    );
+    const { modules } = await buildProject({
+      runtime: ["runtime/**", "!runtime/draft.ts"],
+    });
+    expect(modules.map((module) => toRoot(module.path))).toEqual([
+      "runtime/process-orders.ts",
+    ]);
+  });
+
   it("deploys a declaration module that no glob matches when infra imports it", async () => {
     writeProject();
     write(
@@ -1035,7 +1090,7 @@ describe("shared modules", () => {
     await expect(
       compileInfra(path.join(root, "infra/main.ts")),
     ).rejects.toThrow(
-      'shared/schema.ts:1:1: shared/schema.ts, a shared module (files.shared: "shared/**", the default), imports infra/orders.ts, an infra module (files.infra: "infra/**", the default), through shared/schema.ts:1:1 → lib/url.ts:1:1 → infra/orders.ts.',
+      'shared/schema.ts, a shared module (files.shared: "shared/**", the default), imports infra/orders.ts, an infra module (files.infra: "infra/**", the default), through shared/schema.ts:1:1 → lib/url.ts:1:1 → infra/orders.ts.',
     );
   });
 
@@ -1052,7 +1107,7 @@ describe("shared modules", () => {
       analyses,
     });
     await expect(compileRuntimeModules(modules, { analyses })).rejects.toThrow(
-      'shared/labels.ts:1:1: shared/labels.ts, a shared module (files.shared: "shared/**", the default), imports runtime/process-orders.ts, a runtime module (files.runtime: "runtime/**", the default), through shared/labels.ts:1:1 → runtime/process-orders.ts.',
+      'shared/labels.ts, a shared module (files.shared: "shared/**", the default), imports runtime/process-orders.ts, a runtime module (files.runtime: "runtime/**", the default), through shared/labels.ts:1:1 → runtime/process-orders.ts.',
     );
   });
 

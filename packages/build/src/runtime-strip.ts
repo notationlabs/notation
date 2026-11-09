@@ -9,12 +9,7 @@ import {
 } from "./ast";
 import type { Declaration, ModuleAnalysis } from "./analyze";
 import type { Marks } from "./marks";
-
-/**
- * If a module is an infra module, by its absolute path, says why, such as
- * `infra/orders.ts, an infra module (files.infra: "infra/**", the default)`.
- */
-export type DescribeInfra = (file: string) => string | undefined;
+import type { ModuleAnalyses } from "./modules";
 
 /**
  * Reduces the declaration of a module to its runtime options, for the runtime
@@ -31,16 +26,17 @@ export type DescribeInfra = (file: string) => string | undefined;
  *    still load when `verbatimModuleSyntax` keeps unused imports.
  *
  * The binding and its export stay, so that modules which import it still
- * link. Throws when a kept option refers to an infra module, or calls a
- * resource function.
+ * link. Throws when a kept option refers to an infra module, or to a file
+ * that no glob matches and that calls a resource function at its top level,
+ * or when a kept option calls a resource function.
  */
 export function stripForRuntime(
   analysis: ModuleAnalysis,
-  marks: Marks,
-  describeInfra: DescribeInfra,
+  analyses: ModuleAnalyses,
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | undefined {
   const declaration = analysis.declaration;
   if (!declaration) return undefined;
+  const { marks } = analyses;
   const { module } = analysis.table;
   const { mark } = declaration;
   const s = new MagicString(module.source);
@@ -101,13 +97,7 @@ export function stripForRuntime(
 
   for (const property of keptProperties) {
     for (const reference of freeReferences(property.value, removed)) {
-      checkReference(
-        reference.node,
-        declaration,
-        analysis,
-        marks,
-        describeInfra,
-      );
+      checkReference(reference.node, declaration, analysis, analyses);
     }
   }
 
@@ -191,9 +181,9 @@ function checkReference(
   node: Node,
   declaration: Declaration,
   analysis: ModuleAnalysis,
-  marks: Marks,
-  describeInfra: DescribeInfra,
+  analyses: ModuleAnalyses,
 ) {
+  const { marks } = analyses;
   const { table } = analysis;
   const { file, source } = table.module;
   const binding = table.imports.get(node.name);
@@ -202,10 +192,16 @@ function checkReference(
   const advice =
     "The runtime build removes infra. Read infra values in the function through the declaration's env().";
   const resolved = marks.resolve(binding.source, file);
-  const infra = resolved && describeInfra(resolved);
+  const infra = resolved && analyses.describeInfra(resolved);
   if (infra) {
     throw new Error(
       `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from ${infra}. ${advice}`,
+    );
+  }
+  const unmatched = resolved && analyses.unmatchedInfra(resolved);
+  if (unmatched) {
+    throw new Error(
+      `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from ${analyses.show(resolved)}. ${unmatched} ${advice}`,
     );
   }
   const mark =
