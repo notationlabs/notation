@@ -41,8 +41,8 @@ export class ModuleAnalyses {
   readonly marks: Marks;
   readonly files: FileKinds;
   #analyses = new Map<string, ModuleAnalysis>();
-  // The shared modules that `checkShared` has checked since the last change.
-  #sharedChecked = new Set<string>();
+  // The shared modules that have passed `checkShared` since the last change.
+  #sharedPassed = new Set<string>();
 
   constructor(options: ModuleAnalysesOptions = {}) {
     this.marks = options.marks ?? new Marks();
@@ -58,7 +58,7 @@ export class ModuleAnalyses {
     const cached = this.#analyses.get(file);
     if (cached?.table.module.source === source) return cached;
     // A build can read a changed file before its watcher reports the change.
-    if (cached) this.#sharedChecked.clear();
+    if (cached) this.#sharedPassed.clear();
     const analysis = analyzeModule(
       this.marks.setSource(file, source),
       this.marks,
@@ -82,13 +82,13 @@ export class ModuleAnalyses {
 
   // Each watcher calls this for a change, and the file system can report a
   // change twice. A file whose source is the same as its analysis is kept,
-  // so that a shared module isn't checked, and its error reported, again.
+  // so that a shared module that passed isn't checked again.
   invalidate(file: string) {
     const cached = this.#analyses.get(file);
     if (cached && cached.table.module.source === readSource(file)) return;
     this.#analyses.delete(file);
     this.marks.invalidate(file);
-    this.#sharedChecked.clear();
+    this.#sharedPassed.clear();
   }
 
   /** A file for an error message, relative to the project root. */
@@ -175,14 +175,13 @@ export class ModuleAnalyses {
    * last is checked through the value imports of the modules that it
    * imports, up to an infra or runtime module or a package file.
    *
-   * Each module is checked once until a file changes, and only the first
-   * check of a module that fails throws. So in watch mode, an error in a
-   * shared module that infra and several functions import is reported once.
+   * A module that passes isn't checked again until a file changes. A module
+   * that fails is checked again, and fails, in each build that includes it.
    */
   checkShared(file: string) {
-    if (this.#sharedChecked.has(file)) return;
-    this.#sharedChecked.add(file);
+    if (this.#sharedPassed.has(file)) return;
     this.#checkShared(file);
+    this.#sharedPassed.add(file);
   }
 
   #checkShared(file: string) {

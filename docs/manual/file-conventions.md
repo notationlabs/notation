@@ -201,6 +201,8 @@ shared/schema.ts, a shared module (files.shared: "shared/**", the default), impo
 
 A shared module that nothing imports isn't checked.
 
+In watch mode, each build that includes a broken shared module fails and writes no bundle, so `notation watch` doesn't deploy it. The CLI prints the error for the infra build and for each function that imports the module, so the same message can appear several times.
+
 The check follows the imports that load a module at runtime:
 
 - `import { x } from`, when the module uses `x` as a value, including as a JSX tag such as `<X />`. TypeScript removes an import that is used only in types, so `import { type Order }` and `import type` don't count.

@@ -232,7 +232,7 @@ describe("checkShared", () => {
     ).toThrow("through shared/schema.ts:1:1 → infra/orders.ts.");
   });
 
-  it("throws once for a module that fails, until a file changes", () => {
+  it("throws each time it checks a module that fails", () => {
     const analyses = new ModuleAnalyses({
       marks: virtualMarks(
         {
@@ -246,8 +246,6 @@ describe("checkShared", () => {
     });
     const schema = abs("shared/schema.ts");
     expect(() => analyses.checkShared(schema)).toThrow("infra/orders.ts");
-    analyses.checkShared(schema);
-    analyses.invalidate(abs("infra/orders.ts"));
     expect(() => analyses.checkShared(schema)).toThrow("infra/orders.ts");
   });
 

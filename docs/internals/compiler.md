@@ -57,12 +57,12 @@ const defaultModuleGlobs = {
 
 Each kind changes the builds in one place:
 
-| Kind      | Where                         | What                                                                                                                                        |
-| --------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `infra`   | `runtimePlugin`'s `transform` | Returns `moduleSideEffects: false`, and adds the module to the bundle check.                                                                |
-| `runtime` | `infraEntryPlugin`'s `load`   | Imports each file with a declaration after the entry.                                                                                       |
-| `shared`  | `buildEnd` of both plugins    | Calls `ModuleAnalyses.checkShared` for each shared module in the build. A module that a build has checked since the last change is skipped. |
-| any       | `infraPlugin`'s `transform`   | Fails for a declaration in an `infra` or `shared` module, through `checkDeclaration`.                                                       |
+| Kind      | Where                         | What                                                                                                                                         |
+| --------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `infra`   | `runtimePlugin`'s `transform` | Returns `moduleSideEffects: false`, and adds the module to the bundle check.                                                                 |
+| `runtime` | `infraEntryPlugin`'s `load`   | Imports each file with a declaration after the entry.                                                                                        |
+| `shared`  | `buildEnd` of both plugins    | Calls `ModuleAnalyses.checkShared` for each shared module in the build. A module that has passed the check since the last change is skipped. |
+| any       | `infraPlugin`'s `transform`   | Fails for a declaration in an `infra` or `shared` module, through `checkDeclaration`.                                                        |
 
 A declaration is found and stripped in any project module outside `node_modules`, whatever its kind. So a `$lambda` module that infra imports is deployed even if no glob matches it.
 
@@ -84,7 +84,7 @@ For step 3, the check walks the imports breadth first, so the error names the sh
 
 The check runs in `buildEnd`, not in `transform`. It reads the modules that the shared module imports, and in watch mode an edit to one of them doesn't run the shared module's `transform` again. `buildEnd` runs on every rebuild, so the check sees the edit.
 
-`ModuleAnalyses` remembers each shared module that it has checked, until any file changes. Each watcher reports a change, and the file system can report one change twice, so `invalidate` ignores a file whose source is the same as its analysis. A later build skips a module that it remembers, and only the first check of a module that fails throws. So in watch mode an error in a shared module that infra and N functions import is reported once, not N + 1 times. The other builds that include the module don't fail for it. A build never skips a module that no build has checked since the last change. A shared module that neither build includes isn't checked.
+`ModuleAnalyses` remembers each shared module that has passed the check, until any file changes. A later build skips a module that it remembers. It doesn't remember a module that fails, so each build that includes the module checks it again and fails. In watch mode, an error in a shared module that infra and N functions import fails N + 1 builds. None of them writes its bundle, so `notation watch` doesn't deploy a function that includes the module. The CLI prints the error for each failed build. The messages differ only in the plugin name, and the CLI doesn't merge them. Each watcher reports a change, and the file system can report one change twice, so `invalidate` ignores a file whose source is the same as its analysis. This keeps a module that passed from being checked again for the same change. A shared module that neither build includes isn't checked.
 
 ## Marks
 

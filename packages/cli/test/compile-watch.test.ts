@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -274,22 +275,25 @@ it("checks a shared module again when a module that it imports changes", async (
   );
 });
 
-it("reports an error in a shared module that infra and a function import once", async () => {
+it("fails each build that includes a broken shared module, and writes no bundle", async () => {
   write("watch-j/infra/orders.ts", `export const orders = { url: "u" };\n`);
   write("watch-j/lib/util.ts", `export const util = () => "util";\n`);
   write(
     "watch-j/shared/schema.ts",
     `import { util } from "../lib/util";\nexport const Order = { util };\n`,
   );
-  write(
-    "watch-j/todos.ts",
-    `import { Order } from "./shared/schema";\n${runtimeModule("todos").replace(`() => "todos"`, "() => Order")}`,
-  );
+  for (const id of ["todos", "jobs"]) {
+    write(
+      `watch-j/${id}.ts`,
+      `import { Order } from "./shared/schema";\n${runtimeModule(id).replace(`() => "${id}"`, "() => Order")}`,
+    );
+  }
   write(
     "watch-j/main.ts",
-    `import { fn } from "./todos";\nimport { Order } from "./shared/schema";\nconsole.log(fn, Order);\n`,
+    `import { fn } from "./todos";\nimport { fn as job } from "./jobs";\nimport { Order } from "./shared/schema";\nconsole.log(fn, job, Order);\n`,
   );
-  const bundle = path.join(root, "dist/watch-j/todos/index.mjs");
+  const bundle = (id: string) =>
+    path.join(root, `dist/watch-j/${id}/index.mjs`);
   const errors: unknown[] = [];
   onTestFinished(
     await compile(
@@ -307,8 +311,15 @@ it("reports an error in a shared module that infra and a function import once", 
       },
     ),
   );
-  await waitFor(() => expect(existsSync(bundle)).toBe(true));
+  await waitFor(() => {
+    expect(existsSync(bundle("todos"))).toBe(true);
+    expect(existsSync(bundle("jobs"))).toBe(true);
+  });
   expect(errors).toEqual([]);
+  const before = {
+    todos: readFileSync(bundle("todos"), "utf8"),
+    jobs: readFileSync(bundle("jobs"), "utf8"),
+  };
 
   write(
     "watch-j/lib/util.ts",
@@ -318,9 +329,11 @@ it("reports an error in a shared module that infra and a function import once", 
     errors.filter((error) =>
       String(error).includes("watch-j/shared/schema.ts, a shared module"),
     );
-  await waitFor(() => expect(reports()).toHaveLength(1));
+  // The infra build and both runtime builds fail.
+  await waitFor(() => expect(reports().length).toBeGreaterThanOrEqual(3));
   await new Promise((resolve) => setTimeout(resolve, 1000));
-  expect(reports()).toHaveLength(1);
+  expect(readFileSync(bundle("todos"), "utf8")).toBe(before.todos);
+  expect(readFileSync(bundle("jobs"), "utf8")).toBe(before.jobs);
 }, 15000);
 
 // Last, because the default globs read runtime/ at the root, which the

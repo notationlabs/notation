@@ -201,8 +201,7 @@ export type RuntimePluginOptions = {
  *    that call a resource function at their top level.
  * 4. Fails the build if an infra module, or an infra function from a
  *    package, is still in the bundle, and names the import chain.
- * 5. Fails the build if a shared module in the bundle breaks its rules,
- *    unless another build has reported the error since the last change.
+ * 5. Fails the build if a shared module in the bundle breaks its rules.
  *
  * The build's input options must set `optimization: { inlineConst: false }`.
  * Otherwise the bundler copies a short constant, such as `"eu"`, from an
