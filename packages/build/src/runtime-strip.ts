@@ -10,7 +10,7 @@ import {
   type Reference,
 } from "./ast";
 import type { Declaration, ModuleAnalysis } from "./analyze";
-import { paramNames, parseMark, type Mark } from "./marks";
+import { paramNames, parseMark, type ImportBinding, type Mark } from "./marks";
 import type { ModuleAnalyses } from "./modules";
 
 /**
@@ -214,11 +214,7 @@ function resourceStub(
   const resolved = analyses.marks.resolve(binding.source, file);
   if (!resolved || !analyses.describeInfra(resolved)) return undefined;
 
-  const keys = [...path.keys];
-  const exportName = binding.imported === "*" ? keys.shift() : binding.imported;
-  if (exportName === undefined) return undefined;
-  const start = exportedValue(resolved, exportName, analyses, new Set());
-  const found = start && followKeys(start, keys, analyses);
+  const found = importedValue(resolved, binding, path.keys, analyses);
   if (!found) return undefined;
   const call = unwrap(found.value.node);
   if (call.type !== "CallExpression") return undefined;
@@ -365,6 +361,21 @@ function keyOf(property: Node): string | undefined {
   return typeof property.key.value === "string"
     ? property.key.value
     : undefined;
+}
+
+// The value that an import and member keys name, such as `queues.orders`.
+// For a namespace import, the first key is the export's name.
+function importedValue(
+  file: string,
+  binding: Pick<ImportBinding, "imported">,
+  keys: string[],
+  analyses: ModuleAnalyses,
+): { value: Located; rest: number } | undefined {
+  const [exportName, ...rest] =
+    binding.imported === "*" ? keys : [binding.imported, ...keys];
+  if (exportName === undefined) return undefined;
+  const start = exportedValue(file, exportName, analyses, new Set());
+  return start && followKeys(start, rest, analyses);
 }
 
 // The expression that an export of a module holds, following re-exports and
@@ -526,14 +537,12 @@ function calleeMember(
   if (!path) return undefined;
   const binding = table.imports.get(path.root.name);
   if (!binding) return undefined;
-  const keys = [...path.keys];
   const resolved = marks.resolve(binding.source, file);
-  const exportName = binding.imported === "*" ? keys.shift() : binding.imported;
-  if (!resolved || exportName === undefined) return undefined;
-  const name = keys.pop();
-  const start = exportedValue(resolved, exportName, analyses, new Set());
-  const found = start && followKeys(start, keys, analyses);
-  if (!found || found.rest > 0 || name === undefined) return undefined;
+  const name = path.keys.at(-1);
+  if (!resolved || name === undefined) return undefined;
+  const keys = path.keys.slice(0, -1);
+  const found = importedValue(resolved, binding, keys, analyses);
+  if (!found || found.rest > 0) return undefined;
   return { object: found.value, name };
 }
 
