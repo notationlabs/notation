@@ -217,16 +217,24 @@ function resourceStub(
   const config = first ? unwrap(first) : undefined;
   const where = (n: Node) =>
     `${analyses.show(definitionFile)}:${location(owner.table.module.source, n.start)}`;
+  if (mark.runtime.length > 0 && config?.type !== "ObjectExpression") {
+    throw new Error(
+      `${where(call)}: ${text} must be declared with an object literal, so the build can find its ${mark.runtime.join(", ")}, which the function in ${analyses.show(file)} reads.`,
+    );
+  }
+  const properties: Node[] = config?.properties ?? [];
+  // A spread can hold an option, and the build can't read it there.
+  const spread = properties.find((p) => p.type === "SpreadElement");
   const entries: string[] = [];
   for (const option of mark.runtime) {
-    if (config?.type !== "ObjectExpression") {
+    const property = properties.find(
+      (p) => p.type === "Property" && keyOf(p) === option,
+    );
+    if (!property && spread) {
       throw new Error(
-        `${where(call)}: ${text} must be declared with an object literal, so the build can find its ${option}, which the function in ${analyses.show(file)} reads.`,
+        `${where(spread)}: ${text} has a spread, so the build can't tell whether it sets the ${option} that the function in ${analyses.show(file)} reads. Write ${option} in the object literal of ${text}.`,
       );
     }
-    const property = config.properties.find(
-      (p: Node) => p.type === "Property" && keyOf(p) === option,
-    );
     if (!property) continue;
     const value = unwrap(property.value);
     const imported =

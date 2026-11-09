@@ -665,6 +665,21 @@ describe("stripForRuntime", () => {
       expect(code).toContain("sqs.bind({})");
     });
 
+    it("fails when a spread can hold a runtime option", () => {
+      expect(() =>
+        strip({
+          "infra/orders.ts": [
+            `import { createQueue } from "@notation/aws/sqs";`,
+            `import { Order } from "../shared/schema";`,
+            `const base = { schema: Order };`,
+            `export const ordersQueue = createQueue({ ...base, id: "orders" });`,
+          ].join("\n"),
+        }),
+      ).toThrow(
+        "infra/orders.ts:4:42: ordersQueue has a spread, so the build can't tell whether it sets the schema that the function in runtime/handler.ts reads. Write schema in the object literal of ordersQueue.",
+      );
+    });
+
     it("gives the infra error for a resource whose mark lists no runtime options", () => {
       expect(() =>
         strip({
