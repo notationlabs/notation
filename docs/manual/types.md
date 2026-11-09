@@ -19,10 +19,11 @@ myRouter.get("/orders", () => orders); // type error: orders is an SQS Lambda
 
 ```ts [runtime/orders.ts]
 import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { Order } from "shared/schema";
 
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs(),
+  event: () => sqs.schema(Order),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
@@ -32,12 +33,12 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 ::
 
-| Infra API                                          | Accepts a declaration with            |
-| -------------------------------------------------- | ------------------------------------- |
-| `eventSourceMapping({ source, target })`           | `sqs()` or no `event`                 |
-| `router.get(path, target)`                         | `http()` or no `event`                |
-| `router.withJWTAuthorizer(auth).get(path, target)` | `http({ auth: jwt() })` or no `event` |
-| `schedule({ target })`                             | `scheduled()` or no `event`           |
+| Infra API                                          | Accepts a declaration with                               |
+| -------------------------------------------------- | -------------------------------------------------------- |
+| `eventSourceMapping({ source, target })`           | `sqs.schema()` of the queue's schema type, or no `event` |
+| `router.get(path, target)`                         | `http()` or no `event`                                   |
+| `router.withJWTAuthorizer(auth).get(path, target)` | `http({ auth: jwt() })` or no `event`                    |
+| `schedule({ target })`                             | `scheduled()` or no `event`                              |
 
 The infra APIs also check the event when infra runs, so a mismatch that TypeScript misses, such as one behind an `any`, fails with an error that names the Lambda and its event.
 
@@ -49,7 +50,7 @@ A Lambda group from `lambda()` has no event, so every infra API accepts it.
 
 ```ts [runtime/orders.ts]
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
-  // event is an SQSEvent, because the declaration has event: () => sqs()
+  // event is an SQSEvent, because the declaration has event: () => sqs.schema(Order)
 };
 ```
 
@@ -62,7 +63,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 ```ts [runtime/orders.ts]
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs(),
+  event: () => sqs.bind(orderQueue),
   env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
 });
 
@@ -74,7 +75,7 @@ lambda.env().ORDERS_URL; // type error: the declaration doesn't bind ORDERS_URL
 
 ## Bodies are typed by the schema
 
-`queue({ schema })` and `http({ body: schema })` take a [Standard Schema](https://standardschema.dev). A declaration with `sqs(queue)` gets the queue's schema, and `lambda.decode()` returns the schema's output type:
+`queue({ schema })` and `http({ body: schema })` take a [Standard Schema](https://standardschema.dev). A declaration with `sqs.bind(queue)` gets the queue's schema, and `lambda.decode()` returns the schema's output type:
 
 ::code-group
 
@@ -83,7 +84,7 @@ import { orderQueue } from "infra/orders";
 
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs(orderQueue),
+  event: () => sqs.bind(orderQueue),
 });
 
 const order = await lambda.decode(record); // the output type of Order
@@ -96,6 +97,20 @@ export const orderQueue = queue({ name: "orders", schema: Order });
 ```
 
 ::
+
+A declaration that infra maps queues to names the schema itself, with `sqs.schema(Order)`, and `decode()` returns the output type of `Order`. `eventSourceMapping()` takes the declaration only if its schema has the type of the queue's schema:
+
+```ts [infra/orders.ts]
+import { lambda as orders } from "runtime/orders"; // event: () => sqs.schema(Order)
+import { lambda as refunds } from "runtime/refunds"; // event: () => sqs.schema(Refund)
+
+export const orderQueue = queue({ name: "orders", schema: Order });
+
+eventSourceMapping({ source: orderQueue, target: () => orders });
+eventSourceMapping({ source: orderQueue, target: () => refunds }); // type error: Refund is not Order
+```
+
+TypeScript compares the types of the schemas, so two schemas with the same type pass. When infra runs, `eventSourceMapping()` also checks that the queue's schema and the declaration's schema are the same object.
 
 Nothing checks the other end. A producer that sends to the queue isn't checked against `Order`. Message codecs, which would let Notation check senders and keep types such as `Date` across the queue, aren't built.
 

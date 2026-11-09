@@ -101,10 +101,15 @@ export function $lambda(config) {
 ```
 
 ```ts [packages/aws/src/lambda/declaration.ts]
-/** @runtime queue */
-export function sqs(queue, options) {
-  /* ... */
-}
+export const sqs = {
+  /** @runtime queue */
+  bind(queue, options) {
+    /* ... */
+  },
+  schema(schema) {
+    /* ... */
+  },
+};
 ```
 
 ```ts [packages/aws/src/sqs/queue.ts]
@@ -118,11 +123,13 @@ export function queue(config) {
 | -------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `@declaration` | A function that declares a function resource           | `shared:` options that both builds keep. `runtime:` options that only run in the function. `keys:` kept options whose value returns an object literal, of which the runtime build keeps only the keys. `entry:` the export that the platform calls. |
 | `@runtime`     | A function that builds part of a declaration's options | The names of the parameters that the runtime build keeps.                                                                                                                                                                                           |
-| `@resource`    | A function that declares a resource                    | `runtime:` options of the resource that a function reads when a declaration passes the resource to a `@runtime` argument, such as `schema` in `sqs(orderQueue)`. See [The runtime strip](#the-runtime-strip).                                       |
+| `@resource`    | A function that declares a resource                    | `runtime:` options of the resource that a function reads when a declaration passes the resource to a `@runtime` argument, such as `schema` in `sqs.bind(orderQueue)`. See [The runtime strip](#the-runtime-strip).                                  |
 
 The tags are in JSDoc because Rolldown and tsdown keep JSDoc comments in a package's `dist`, and drop other block comments.
 
-`Marks` in `packages/build/src/marks.ts` resolves the marks of a module's imports. For each import, it resolves the specifier with Rolldown's resolver, the `node`, `import` and `default` conditions, and the nearest tsconfig's `paths`. Then it reads the target module and follows `export { x } from`, `export * from` and `export { x }` of an import, to the module whose function has the mark. A function that is declared under one name and exported under another, as tsdown emits it in a shared chunk, keeps its mark. Each module is parsed once, with Rolldown's `parseSync`, until it changes.
+`Marks` in `packages/build/src/marks.ts` resolves the marks of a module's imports. For each import, it resolves the specifier with Rolldown's resolver, the `node`, `import` and `default` conditions, and the nearest tsconfig's `paths`. Then it reads the target module and follows `export { x } from`, `export * from` and `export { x }` of an import, to the module whose function has the mark. A function that is declared under one name and exported under another, as tsdown emits it in a shared chunk, keeps its mark.
+
+A mark can also be on a member of an exported object literal, such as `bind` in `sqs`. The runtime strip finds it for a call such as `sqs.bind(orderQueue)`: it follows the import of `sqs` to the `const` that holds the object literal, as it follows a resource argument (see [Resource arguments](#resource-arguments)), and reads the JSDoc of the `bind` member. A member that names a marked function, such as `{ bind: bindQueue }`, gets the mark of that function. tsdown keeps the object literal and the JSDoc of its methods in `dist`. Each module is parsed once, with Rolldown's `parseSync`, until it changes.
 
 ## Module analysis
 
@@ -157,7 +164,7 @@ Sentry.init({ dsn: "..." });
 
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs(),
+  event: () => sqs.bind(orderQueue),
   env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
 });
 
@@ -173,7 +180,7 @@ import { orderQueue } from "infra/orders";
 export const lambda = __notation_declaredIn(
   $lambda({
     id: "orders",
-    event: () => sqs(),
+    event: () => sqs.bind(orderQueue),
     env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
   }),
   "runtime/orders.ts",
@@ -234,7 +241,7 @@ import { orderQueue, refundQueue } from "infra/orders";
 
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs(orderQueue, { batchSize: 5 }),
+  event: () => sqs.bind(orderQueue, { batchSize: 5 }),
   policy: () => [refundQueue.grant(["SendMessage"])],
   env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
 });
@@ -245,7 +252,7 @@ import { Order as __notation_schema_0 } from "/path/to/my-app/shared/schema.ts";
 
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs({ schema: __notation_schema_0 }, undefined),
+  event: () => sqs.bind({ schema: __notation_schema_0 }, undefined),
   env: () => ({ ORDER_QUEUE_URL: undefined }),
 });
 ```
@@ -262,16 +269,18 @@ export const refundQueue = queue({ name: "refunds" });
 
 1. Options that the mark lists under neither `shared:` nor `runtime:` are removed. For `$lambda`, `policy`, `runtime`, `timeout` and `memory` go. `id` stays, so the function can read `lambda.id`.
 2. Each `keys:` option keeps the keys of the object that it returns, and each value becomes `undefined`. The option must be `() => ({ ... })`, or a function whose body is one `return { ... }`, with no spread or computed keys.
-3. A call to a function marked `@runtime`, such as `sqs(orderQueue, { batchSize: 5 })`, keeps its runtime arguments. The others become `undefined`.
+3. A call to a function marked `@runtime`, such as `sqs.bind(orderQueue, { batchSize: 5 })`, keeps its runtime arguments. The others become `undefined`.
 4. A runtime argument that names a resource from an infra module is replaced with the resource's runtime options. See [Resource arguments](#resource-arguments).
 5. An import whose uses the strip removed is removed too. For example, the import of `orderQueue` and `refundQueue` goes once their uses in `event`, `policy` and `env` are gone. An import that had no uses to begin with stays, because it may be there for its side effects, such as a polyfill.
 6. The binding and its export stay, so an infra module that imports `lambda` still links.
 
-The strip then checks the kept options. A reference to an import from an infra module, or a call to a resource function, fails the build with its file and line. So does a reference to an import from a file with no kind outside `node_modules/` that calls a resource function at its top level, such as `dlq` in `event: () => sqs(dlq)`. This includes a file of a workspace package or a package folder. The function can't load that file, and adding it to `files.infra` gives the error for an infra module. So both errors say to move a plain value that a kept option uses to a shared module, or to a file with no kind.
+The strip then checks the kept options. A reference to an import from an infra module, or a call to a resource function, fails the build with its file and line. So does a reference to an import from a file with no kind outside `node_modules/` that calls a resource function at its top level, such as `dlq` in `event: () => sqs.bind(dlq)`. This includes a file of a workspace package or a package folder. The function can't load that file, and adding it to `files.infra` gives the error for an infra module. So both errors say to move a plain value that a kept option uses to a shared module, or to a file with no kind.
 
 ### Resource arguments
 
-`sqs(orderQueue)` names a queue, but the function needs only the queue's schema, and the function can't load `infra/orders.ts`. So step 4 of the strip replaces the argument with an object of the queue's runtime options: `sqs({ schema: __notation_schema_0 })`.
+`sqs.bind(orderQueue)` names a queue, but the function needs only the queue's schema, and the function can't load `infra/orders.ts`. So step 4 of the strip replaces the argument with an object of the queue's runtime options: `sqs.bind({ schema: __notation_schema_0 })`.
+
+`sqs.schema(Order)` has no `@runtime` mark, so the strip leaves it as it is. `Order` comes from a shared module, which the function loads.
 
 The strip finds the options in four steps:
 
@@ -313,7 +322,7 @@ The plugin also checks infra functions from packages. `sideEffects: false` only 
 A runtime module imports infra for its options, and infra imports the runtime module to wire it, so the two modules often import each other. Two rules keep the cycle safe:
 
 1. Options that refer to infra are functions, such as `env: () => ({ ... })`, and infra passes declarations as functions, such as `() => lambda`.
-2. `$lambda` and the wiring calls, `eventSourceMapping()`, `route()` and `schedule()`, register callbacks with `onEvaluationEnd` from `@notation/resource`. The callbacks run when infra has finished loading. The declaration's resources are built once, by the first callback that needs them. A declaration with `sqs(queue)` maps the queue when its resources are built.
+2. `$lambda` and the wiring calls, `eventSourceMapping()`, `route()` and `schedule()`, register callbacks with `onEvaluationEnd` from `@notation/resource`. The callbacks run when infra has finished loading. The declaration's resources are built once, by the first callback that needs them. A declaration with `sqs.bind(queue)` maps the queue when its resources are built.
 
 So no module reads a binding of the other module while the cycle is still loading. Rolldown keeps `const` in the bundle, so a binding that is read too early throws a `ReferenceError`. esbuild turned `const` into `var`, so the same mistake gave `undefined` with no error.
 

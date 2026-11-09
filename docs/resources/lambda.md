@@ -49,14 +49,14 @@ Infra APIs take the declaration as a function that returns it, such as `() => to
 
 | Infra API                                                      | Accepts                                                  |
 | -------------------------------------------------------------- | -------------------------------------------------------- |
-| [`eventSourceMapping`](sqs.md#eventsourcemappingconfig)        | A declaration with `sqs()` or no `event`                 |
+| [`eventSourceMapping`](sqs.md#eventsourcemappingconfig)        | A declaration with `sqs.schema()` or no `event`          |
 | [`router.get`](api-gateway.md#routerapi), `.post`, ...         | A declaration with `http()` or no `event`                |
 | [`withJWTAuthorizer`](api-gateway.md#jwt-authorization) routes | A declaration with `http({ auth: jwt() })` or no `event` |
 | [`schedule`](event-bridge.md#scheduleconfig)                   | A declaration with `scheduled()` or no `event`           |
 
 Each API also takes a Lambda group from [`lambda()`](#lambdaconfig), as it is, with no function around it.
 
-A declaration whose event doesn't match is a type error. If TypeScript doesn't catch it, the infra API throws when infra runs, for example `route() sends http events, but the Lambda "orders" is declared with event: () => sqs().`
+A declaration whose event doesn't match is a type error. If TypeScript doesn't catch it, the infra API throws when infra runs, for example `route() sends http events, but the Lambda "orders" is declared with event: () => sqs.schema(schema).`
 
 ### One handler for each function
 
@@ -115,7 +115,7 @@ A declaration adds statements with its `policy` option. For example, to let the 
 ```ts [runtime/orders.ts]
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs(),
+  event: () => sqs.bind(orderQueue),
   policy: () => [refundQueue.grant(["SendMessage"])],
 });
 ```
@@ -132,7 +132,7 @@ external.policy.contribute({
 });
 ```
 
-A queue that is mapped to the function, with [`sqs(queue)`](sqs.md#sqsqueue-options) or [`eventSourceMapping()`](sqs.md#eventsourcemappingconfig), adds its read permission to the same policy.
+A queue that is mapped to the function, with [`sqs.bind(queue)`](sqs.md#sqsbindqueue-options) or [`eventSourceMapping()`](sqs.md#eventsourcemappingconfig), adds its read permission to the same policy.
 
 The group creates the policy resource only when code first contributes to it. This matters because IAM rejects a policy with no statements, so a function that nothing contributes to must have no inline policy. A role's inline policies share a limit of 10,240 characters.
 
@@ -145,7 +145,7 @@ A declaration contributes the values that it binds in `env`. The function reads 
 ```ts [runtime/orders.ts]
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs(),
+  event: () => sqs.bind(orderQueue),
   env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
 });
 ```

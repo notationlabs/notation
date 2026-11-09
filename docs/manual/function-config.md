@@ -16,15 +16,15 @@ type LambdaDeclarationConfig = {
 };
 ```
 
-| Option    | Meaning                                                                                                    |
-| --------- | ---------------------------------------------------------------------------------------------------------- |
-| `id`      | Names the function and its role, zip, policy and log group, and keys them in state. See [`id`](#id).       |
-| `event`   | The events that the function receives: `sqs(queue?, options?)`, `http({ body?, auth? })` or `scheduled()`. |
-| `env`     | Values that the function reads, by name. Deploy sets each one as an environment variable of the function.  |
-| `policy`  | Statements to add to the function role's inline policy.                                                    |
-| `runtime` | The Lambda runtime.                                                                                        |
-| `timeout` | Seconds that the function may run for each event.                                                          |
-| `memory`  | Megabytes of memory for the function.                                                                      |
+| Option    | Meaning                                                                                                                              |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`      | Names the function and its role, zip, policy and log group, and keys them in state. See [`id`](#id).                                 |
+| `event`   | The events that the function receives: `sqs.bind(queue, options?)`, `sqs.schema(schema)`, `http({ body?, auth? })` or `scheduled()`. |
+| `env`     | Values that the function reads, by name. Deploy sets each one as an environment variable of the function.                            |
+| `policy`  | Statements to add to the function role's inline policy.                                                                              |
+| `runtime` | The Lambda runtime.                                                                                                                  |
+| `timeout` | Seconds that the function may run for each event.                                                                                    |
+| `memory`  | Megabytes of memory for the function.                                                                                                |
 
 ## Usage
 
@@ -36,7 +36,7 @@ export const lambda = $lambda({
   id: "orders",
   timeout: 30,
   memory: 256,
-  event: () => sqs(orderQueue, { batchSize: 5 }),
+  event: () => sqs.bind(orderQueue, { batchSize: 5 }),
   env: () => ({ REFUND_QUEUE_URL: refundQueue.url }),
   policy: () => [refundQueue.grant(["SendMessage"])],
 });
@@ -48,7 +48,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 The module deploys as one Lambda function with the ID `orders`, 256 MB of memory and a 30-second timeout. The function receives the messages of `orderQueue`, up to 5 in each invocation, and `lambda.decode()` validates each body with the queue's schema. The function's role may send messages to `refundQueue`, and the function reads the queue's URL with `lambda.env().REFUND_QUEUE_URL`.
 
-`sqs(orderQueue)` maps the queue to the function when infra has finished loading, and gives the function's role permission to read the queue. The infra module declares `orderQueue` with `queue({ name: "orders", schema: Order })`, and imports `Order` from a shared module. See [SQS](../resources/sqs.md#sqsqueue-options).
+`sqs.bind(orderQueue)` maps the queue to the function when infra has finished loading, and gives the function's role permission to read the queue. The infra module declares `orderQueue` with `queue({ name: "orders", schema: Order })`, and imports `Order` from a shared module. See [SQS](../resources/sqs.md#sqsbindqueue-options). For a function that infra maps queues to with `eventSourceMapping()`, use `sqs.schema(Order)` in place of `sqs.bind()`.
 
 ## Options that refer to infra are functions
 
