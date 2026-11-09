@@ -101,14 +101,14 @@ export function $lambda(config) {
 ```
 
 ```ts [packages/aws/src/lambda/declaration.ts]
-/** @runtime schema */
-export function sqs(schema) {
+/** @runtime queue */
+export function sqs(queue, options) {
   /* ... */
 }
 ```
 
 ```ts [packages/aws/src/sqs/queue.ts]
-/** @resource */
+/** @resource runtime: schema */
 export function queue(config) {
   /* ... */
 }
@@ -118,7 +118,7 @@ export function queue(config) {
 | -------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `@declaration` | A function that declares a function resource           | `shared:` options that both builds keep. `runtime:` options that only run in the function. `keys:` kept options whose value returns an object literal, of which the runtime build keeps only the keys. `entry:` the export that the platform calls. |
 | `@runtime`     | A function that builds part of a declaration's options | The names of the parameters that the runtime build keeps.                                                                                                                                                                                           |
-| `@resource`    | A function that declares a resource                    | None.                                                                                                                                                                                                                                               |
+| `@resource`    | A function that declares a resource                    | `runtime:` options of the resource that a function reads when a declaration passes the resource to a `@runtime` argument, such as `schema` in `sqs(orderQueue)`. See [The runtime strip](#the-runtime-strip).                                       |
 
 The tags are in JSDoc because Rolldown and tsdown keep JSDoc comments in a package's `dist`, and drop other block comments.
 
@@ -230,35 +230,63 @@ The declaration is not an export of the entry, so the bundler can drop it when t
 ::code-group
 
 ```ts [runtime/orders.ts]
+import { orderQueue, refundQueue } from "infra/orders";
+
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs(Order),
+  event: () => sqs(orderQueue, { batchSize: 5 }),
   policy: () => [refundQueue.grant(["SendMessage"])],
   env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
 });
 ```
 
 ```ts [runtime build]
+import { Order as __notation_schema_0 } from "/path/to/my-app/shared/schema.ts";
+
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs(Order),
+  event: () => sqs({ schema: __notation_schema_0 }, undefined),
   env: () => ({ ORDER_QUEUE_URL: undefined }),
 });
+```
+
+```ts [infra/orders.ts]
+import { queue } from "@notation/aws/sqs";
+import { Order } from "shared/schema";
+
+export const orderQueue = queue({ name: "orders", schema: Order });
+export const refundQueue = queue({ name: "refunds" });
 ```
 
 ::
 
 1. Options that the mark lists under neither `shared:` nor `runtime:` are removed. For `$lambda`, `policy`, `runtime`, `timeout` and `memory` go. `id` stays, so the function can read `lambda.id`.
 2. Each `keys:` option keeps the keys of the object that it returns, and each value becomes `undefined`. The option must be `() => ({ ... })`, or a function whose body is one `return { ... }`, with no spread or computed keys.
-3. A call to a function marked `@runtime`, such as `sqs(Order)`, keeps its runtime arguments. The others become `undefined`.
-4. An import whose uses the strip removed is removed too. For example, the import of `orderQueue` goes once its use in `env` is gone. An import that had no uses to begin with stays, because it may be there for its side effects, such as a polyfill.
-5. The binding and its export stay, so an infra module that imports `lambda` still links.
+3. A call to a function marked `@runtime`, such as `sqs(orderQueue, { batchSize: 5 })`, keeps its runtime arguments. The others become `undefined`.
+4. A runtime argument that names a resource from an infra module is replaced with the resource's runtime options. See [Resource arguments](#resource-arguments).
+5. An import whose uses the strip removed is removed too. For example, the import of `orderQueue` and `refundQueue` goes once their uses in `event`, `policy` and `env` are gone. An import that had no uses to begin with stays, because it may be there for its side effects, such as a polyfill.
+6. The binding and its export stay, so an infra module that imports `lambda` still links.
 
 The strip then checks the kept options. A reference to an import from an infra module, or a call to a resource function, fails the build with its file and line. So does a reference to an import from a file with no kind outside `node_modules/` that calls a resource function at its top level, such as `dlq` in `event: () => sqs(dlq)`. This includes a file of a workspace package or a package folder. The function can't load that file, and adding it to `files.infra` gives the error for an infra module. So both errors say to move a plain value that a kept option uses to a shared module, or to a file with no kind.
 
+### Resource arguments
+
+`sqs(orderQueue)` names a queue, but the function needs only the queue's schema, and the function can't load `infra/orders.ts`. So step 4 of the strip replaces the argument with an object of the queue's runtime options: `sqs({ schema: __notation_schema_0 })`.
+
+The strip finds the options in four steps:
+
+1. **The argument names an import from an infra module.** The argument can be a name, such as `orderQueue`, or a member of an object literal or of a namespace import, such as `queues.orders` or `infra.orderQueue`. Any other argument is left as it is.
+2. **The strip follows the import to the resource.** It follows re-exports and imports to the `const` that the infra module exports, and member keys through object literals. The value must be a call to a function marked `@resource`, such as `queue({ ... })`. A value that a helper or a loop makes fails the build, because the strip can't read its options.
+3. **The strip reads each option that the mark lists after `runtime:`.** `queue` is marked `@resource runtime: schema`, so the strip reads the `schema` property of the call's object literal. The property's value must be a name that the infra module imports from a shared module or a package. A schema that the infra module defines, or imports from an infra or runtime module, fails the build, because the function can't load it there.
+4. **The strip adds an import of each option to the function's module**, under the name `__notation_<option>_<n>`.
+
+A member of a resource, such as `orderQueue.schema`, is not replaced. It is a reference to an infra module, and fails the build like any other.
+
+**The added import uses the absolute path of the file that infra imports the option from, and not infra's specifier.** This matters because the import moves from `infra/orders.ts` to `runtime/orders.ts`. A relative path, such as `../shared/schema`, would resolve from the wrong folder. A tsconfig alias, such as `shared/schema`, resolves through the `paths` of the nearest tsconfig, and the function's module can have a different nearest tsconfig from the infra module. A package keeps its name, such as `@acme/schemas`, so that the runtime build resolves it with the `notation-runtime` condition. If the infra module's import doesn't resolve, the build fails.
+
 ### Leaving infra out
 
-An import loads its module and runs the module's top-level code, even when nothing uses the import's bindings. So step 4 of the strip is what keeps `infra/orders.ts` out of the bundle of `runtime/orders.ts`. The TypeScript transform removes an unused import by default, but with `verbatimModuleSyntax` it keeps every import that isn't `import type`, so the strip doesn't rely on it.
+An import loads its module and runs the module's top-level code, even when nothing uses the import's bindings. So step 5 of the strip is what keeps `infra/orders.ts` out of the bundle of `runtime/orders.ts`. The TypeScript transform removes an unused import by default, but with `verbatimModuleSyntax` it keeps every import that isn't `import type`, so the strip doesn't rely on it.
 
 An infra module can also be reached through a module that the strip doesn't change, such as a helper with no kind that imports `orderQueue` and uses it in a function the handler never calls. For that case, the runtime plugin marks each infra module free of side effects, through the `moduleSideEffects` result of its `transform` hook. The bundler then drops the infra module if nothing in the bundle uses its bindings. Other modules keep their side effects, so a setup module that imports infra still runs its top-level code. An infra module is a file that `files.infra` matches. A file with no kind that calls `queue()` at its top level, such as `lib/queues.ts`, is not marked, so the bundler keeps it if the function imports it, and the check below fails the build. The error then says to add the file to `files.infra`. For a package file, it says to set `"sideEffects": false` in the nearest `package.json` if the function uses no value from the file, and otherwise to read infra values through `env()`. If the file holds a declaration, it can't be an infra module, so the error says to move the call to an infra module instead.
 
@@ -285,7 +313,7 @@ The plugin also checks infra functions from packages. `sideEffects: false` only 
 A runtime module imports infra for its options, and infra imports the runtime module to wire it, so the two modules often import each other. Two rules keep the cycle safe:
 
 1. Options that refer to infra are functions, such as `env: () => ({ ... })`, and infra passes declarations as functions, such as `() => lambda`.
-2. `$lambda` and the wiring calls, `queue.consume()`, `route()` and `schedule()`, register callbacks with `onEvaluationEnd` from `@notation/resource`. The callbacks run when infra has finished loading. The declaration's resources are built once, by the first callback that needs them.
+2. `$lambda` and the wiring calls, `eventSourceMapping()`, `route()` and `schedule()`, register callbacks with `onEvaluationEnd` from `@notation/resource`. The callbacks run when infra has finished loading. The declaration's resources are built once, by the first callback that needs them. A declaration with `sqs(queue)` maps the queue when its resources are built.
 
 So no module reads a binding of the other module while the cycle is still loading. Rolldown keeps `const` in the bundle, so a binding that is read too early throws a `ReferenceError`. esbuild turned `const` into `var`, so the same mistake gave `undefined` with no error.
 

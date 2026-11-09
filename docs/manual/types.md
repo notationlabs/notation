@@ -34,7 +34,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 | Infra API                                          | Accepts a declaration with            |
 | -------------------------------------------------- | ------------------------------------- |
-| `queue.consume(target)`                            | `sqs()` or no `event`                 |
+| `eventSourceMapping({ source, target })`           | `sqs()` or no `event`                 |
 | `router.get(path, target)`                         | `http()` or no `event`                |
 | `router.withJWTAuthorizer(auth).get(path, target)` | `http({ auth: jwt() })` or no `event` |
 | `schedule({ target })`                             | `scheduled()` or no `event`           |
@@ -74,18 +74,30 @@ lambda.env().ORDERS_URL; // type error: the declaration doesn't bind ORDERS_URL
 
 ## Bodies are typed by the schema
 
-`sqs(schema)` and `http({ body: schema })` take a [Standard Schema](https://standardschema.dev). `lambda.decode()` returns the schema's output type:
+`queue({ schema })` and `http({ body: schema })` take a [Standard Schema](https://standardschema.dev). A declaration with `sqs(queue)` gets the queue's schema, and `lambda.decode()` returns the schema's output type:
+
+::code-group
 
 ```ts [runtime/orders.ts]
+import { orderQueue } from "infra/orders";
+
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs(Order),
+  event: () => sqs(orderQueue),
 });
 
 const order = await lambda.decode(record); // the output type of Order
 ```
 
-Nothing checks the other end. A producer that sends to the queue isn't checked against `Order`, and the queue doesn't carry the schema. Message codecs, which would let Notation check senders and keep types such as `Date` across the queue, aren't built.
+```ts [infra/orders.ts]
+import { Order } from "shared/schema";
+
+export const orderQueue = queue({ name: "orders", schema: Order });
+```
+
+::
+
+Nothing checks the other end. A producer that sends to the queue isn't checked against `Order`. Message codecs, which would let Notation check senders and keep types such as `Date` across the queue, aren't built.
 
 ## JWT claims
 

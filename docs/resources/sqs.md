@@ -1,13 +1,14 @@
 # SQS
 
-`@notation/aws/sqs` creates SQS queues and connects them to Lambda functions.
+`@notation/aws/sqs` creates SQS queues. A Lambda function reads a queue in one of two ways: its declaration names the queue with `sqs(queue)`, or infra maps the queue to the function with `eventSourceMapping()`.
 
 ## `queue(config)`
 
 ```ts [infra/orders.ts]
 import { queue } from "@notation/aws/sqs";
+import { Order } from "shared/schema";
 
-export const orderQueue = queue({ name: "orders" });
+export const orderQueue = queue({ name: "orders", schema: Order });
 ```
 
 ### Config
@@ -16,6 +17,7 @@ export const orderQueue = queue({ name: "orders" });
 type QueueConfig = {
   name: string;
   fifo?: boolean;
+  schema?: StandardSchemaV1;
   visibilityTimeout?: number;
   messageRetentionPeriod?: number;
   delaySeconds?: number;
@@ -24,6 +26,8 @@ type QueueConfig = {
 ```
 
 `name` keys the queue in state, so changing it replaces the queue. In AWS, the queue is named `<app>--<stage>--<name>`, such as `my-app--prod--orders`. See [AWS names](../manual/project-config.md#aws-names). A FIFO queue's name must end in `.fifo`, and `fifo` can't change after the queue is created.
+
+`schema` is a [Standard Schema](https://standardschema.dev) for the message bodies. AWS doesn't see it. A function that reads the queue with `sqs(queue)` validates each message with it; see [Validating messages](#validating-messages).
 
 The other settings can change in place. When you remove one, Notation sets it back to the value SQS gives a new queue, because SQS can't unset a queue attribute:
 
@@ -42,50 +46,53 @@ SQS doesn't let you reuse a deleted queue's name for 60 seconds, so a replacemen
 
 An output value can only be placed whole. Turning it into a string, for example in a template string, throws. To build a value from the queue's ARN, contribute a function that receives `orderQueue.queue` as a dep; see [Function contributions](../internals/resource.md#function-contributions).
 
-## `queue.consume(target)`
+## `sqs(queue, options)`
 
-`consume` invokes a function with the queue's messages:
+A declaration names the queue that its function reads in `event`:
 
 ::code-group
 
-```ts [infra/orders.ts]
-import { queue } from "@notation/aws/sqs";
-import { lambda as processOrders } from "runtime/orders";
-
-export const orderQueue = queue({ name: "orders" });
-orderQueue.consume(() => processOrders, { batchSize: 5 });
-```
-
 ```ts [runtime/orders.ts]
 import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { orderQueue } from "infra/orders";
 
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs(),
+  event: () => sqs(orderQueue, { batchSize: 5 }),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
-  for (const record of event.Records) console.log(record.body);
+  for (const record of event.Records) {
+    const order = await lambda.decode(record);
+    console.log(order.orderId);
+  }
 };
+```
+
+```ts [infra/orders.ts]
+import { queue } from "@notation/aws/sqs";
+import { Order } from "shared/schema";
+
+export const orderQueue = queue({ name: "orders", schema: Order });
 ```
 
 ::
 
-`processOrders` is the declaration from the runtime module `runtime/orders.ts`. `consume` takes it as a function, `() => processOrders`, and calls the function when infra has finished loading. The declaration must have `event: () => sqs()`, or no `event`. See [Wiring a declaration](lambda.md#wiring-a-declaration). `consume` also takes a Lambda group from [`lambda()`](lambda.md#lambdaconfig), as it is.
+The infra module only declares the queue. When infra has finished loading, the declaration maps `orderQueue` to the `orders` function, and changes two things:
 
-`consume` changes two things, and the function's declaration doesn't mention the queue:
-
-1. **The role's inline policy.** `consume` contributes a statement that allows `sqs:ReceiveMessage`, `sqs:DeleteMessage` and `sqs:GetQueueAttributes` on the queue to the function's [inline policy](lambda.md#inline-policy).
-2. **An event source mapping**, `orders-orders-mapping`, which connects the queue to the function.
+1. **The role's inline policy.** The declaration contributes a statement that allows `sqs:ReceiveMessage`, `sqs:DeleteMessage` and `sqs:GetQueueAttributes` on the queue to the function's [inline policy](lambda.md#inline-policy).
+2. **An event source mapping**, `orders-orders-mapping`, which connects the queue to the function. The mapping belongs to the queue's group.
 
 The mapping depends on the policy, even though it reads nothing from it. This matters because AWS checks the role's permissions when it creates the mapping, so the policy has to exist first. Notation retries the create while the new permissions propagate through IAM.
 
 The mapping doesn't turn on `ReportBatchItemFailures`. So if the handler returns `{ batchItemFailures }`, Lambda ignores it, and a batch either succeeds or fails as a whole.
 
+`sqs()` with no queue declares a function that receives SQS messages from a mapping that infra makes with [`eventSourceMapping()`](#eventsourcemappingconfig).
+
 ### Options
 
-```ts [@notation/aws/sqs]
-type ConsumeOptions = {
+```ts [@notation/aws/lambda]
+type SqsOptions = {
   batchSize?: number;
   maxBatchingWindow?: number;
 };
@@ -95,24 +102,62 @@ When you remove `batchSize` or `maxBatchingWindow`, Notation sets the mapping ba
 
 ### Validating messages
 
-`sqs(schema)` gives the declaration a [Standard Schema](https://standardschema.dev) for the message bodies. The handler validates each record with `lambda.decode(record)`, which parses the body as JSON and returns the schema's output type. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
+`lambda.decode(record)` parses the record's body as JSON, and validates it with the queue's `schema`. It returns the schema's output type. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
 
-The queue doesn't carry the schema, and nothing checks the messages that a sender writes. To send messages, use `@aws-sdk/client-sqs` in your own code.
+The schema must be imported from a shared module, such as `shared/schema.ts` in `files.shared`. **This matters because the function loads the schema, but not the infra module.** In the function's bundle, the runtime build replaces `orderQueue` with an object that holds only the schema:
+
+```ts [runtime/orders.ts, as the runtime build strips it]
+import { Order as __notation_schema_0 } from "/path/to/my-app/shared/schema.ts"; // <- added by the build
+
+export const lambda = $lambda({
+  id: "orders",
+  event: () => sqs({ schema: __notation_schema_0 }, undefined),
+});
+```
+
+The build imports the schema by its absolute path, from the file that infra imports it from. The `infra/orders` import is gone, and so is `batchSize`, which only infra reads.
+
+A schema that the infra module defines itself fails the build, and so does a queue that a helper function makes. See [Resource arguments](../internals/compiler.md#resource-arguments).
+
+Nothing checks the messages that a sender writes. To send messages, use `@aws-sdk/client-sqs` in your own code.
+
+## `eventSourceMapping(config)`
+
+`eventSourceMapping()` from `@notation/aws/lambda` maps a queue to a function from infra. It changes the same two things as `sqs(queue)`: the role's inline policy and an event source mapping.
+
+```ts [@notation/aws/lambda]
+type EventSourceMappingConfig = SqsOptions & {
+  source: QueueGroup;
+  target: LambdaTarget<"sqs" | "none">;
+};
+```
+
+`target` is a declaration, passed as a function such as `() => processOrders`, or a Lambda group from [`lambda()`](lambda.md#lambdaconfig), passed as it is. The declaration must have `event: () => sqs()`, or no `event`. See [Wiring a declaration](lambda.md#wiring-a-declaration).
+
+`eventSourceMapping()` throws for a declaration in two cases:
+
+- **The declaration names a queue itself**, with `sqs(queue)`. Map the queue in one place.
+- **The queue has a `schema`.** The declaration's `decode()` would not validate messages with the queue's schema. Declare the function with `event: () => sqs(queue)` instead.
+
+A Lambda group from `lambda()` can read a queue with a schema, because the group has no `decode()`.
 
 ### Several queues
 
-Each queue contributes its own statement and its own mapping, so two queues can feed one function:
+A declaration's `event` names at most one queue. To feed one function from two queues, declare it with `sqs()`, and map each queue with `eventSourceMapping()`:
+
+::code-group
 
 ```ts [infra/orders.ts]
+import { eventSourceMapping } from "@notation/aws/lambda";
+import { queue } from "@notation/aws/sqs";
 import { lambda as processOrders } from "runtime/orders";
 
-orderQueue.consume(() => processOrders);
-refundQueue.consume(() => processOrders);
+export const orderQueue = queue({ name: "orders" });
+export const refundQueue = queue({ name: "refunds" });
+
+eventSourceMapping({ source: orderQueue, target: () => processOrders });
+eventSourceMapping({ source: refundQueue, target: () => processOrders });
 ```
-
-The function's policy then has two statements. When you delete the `refundQueue.consume` line, its statement and mapping go with it, and the next deploy updates the policy and deletes the mapping.
-
-The function's one `handler` receives the messages of both queues. Each record's `eventSourceARN` names its queue. To compare it with a queue in the handler, bind the queue's ARN in `env`:
 
 ```ts [runtime/orders.ts]
 import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
@@ -135,7 +180,13 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 };
 ```
 
-A queue can feed a given function once. A second `consume` with the same function throws.
+::
+
+Each queue contributes its own statement and its own mapping, so the function's policy has two statements. When you delete the second `eventSourceMapping()` call, its statement and mapping go with it, and the next deploy updates the policy and deletes the mapping.
+
+The function's one `handler` receives the messages of both queues. Each record's `eventSourceARN` names its queue, so the handler compares it with the ARN of `refundQueue`, bound in `env`. The queues have no schema, because `eventSourceMapping()` throws for a declaration and a queue with a schema.
+
+A queue can feed a given function once. A second mapping of the same queue and function throws.
 
 ## `queue.grant(actions)`
 

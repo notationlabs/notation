@@ -361,7 +361,7 @@ The token has two effects:
 
 ## Contributions
 
-Some params take values from several places. For example, a Lambda role's inline policy gets one statement from each queue that the function consumes. Each `queue.consume` call adds its statement to the policy, and none of them owns the whole document.
+Some params take values from several places. For example, a Lambda role's inline policy gets one statement from each queue that the function reads. Each queue that is mapped to the function, with `sqs(queue)` or `eventSourceMapping()`, adds its statement to the policy, and none of them owns the whole document.
 
 A param is collected when its schema item has `collect`. `collect` receives the values and combines them into the param. The inline policy joins the statements:
 
@@ -377,11 +377,10 @@ PolicyDocument: {
 },
 ```
 
-While infra is being evaluated, any code can add to a collected param with `contribute`. `queue.consume` does this:
+While infra is being evaluated, any code can add to a collected param with `contribute`. The queue's `~subscribe` method, which maps the queue to a Lambda group, does this:
 
 ```ts [packages/aws/src/sqs/queue.ts]
-consume(handler: LambdaTarget<SqsHandler | SqsBatchHandler>, options: ConsumeOptions = {}) {
-  const lambdaGroup = resolveLambdaTarget(handler, "queue.consume()").group;
+"~subscribe"(lambdaGroup: LambdaGroup, options: SqsOptions = {}): void {
   const id = `${this.id}-${lambdaGroup.fn.id}-mapping`;
 
   lambdaGroup.policy.contribute(
@@ -447,7 +446,7 @@ As an aside, a provider that stores a collected map as one string should still k
 
 Contributions close when evaluation ends, and `contribute` and `dependOn` throw from then on. This keeps the params that plan and deploy read the same as the params that the infra code built. A resource made outside `collectResourceGraph` closes once code reads its params or dependencies.
 
-`onEvaluationEnd(callback)` registers a callback that runs after evaluation and before the close, for code whose values do not exist while modules are still being evaluated. It throws when no resource graph is being collected. In `@notation/aws`, `$lambda` uses it to build a Lambda's resources, and `queue.consume()`, `route()` and `schedule()` use it to wire a declaration. A runtime module and the infra module that wires it often import each other, so a declaration can be read safely only after every module has loaded. It is an engine mechanism, not user-facing API.
+`onEvaluationEnd(callback)` registers a callback that runs after evaluation and before the close, for code whose values do not exist while modules are still being evaluated. It throws when no resource graph is being collected. In `@notation/aws`, `$lambda` uses it to build a Lambda's resources and map the queue of `sqs(queue)`, and `eventSourceMapping()`, `route()` and `schedule()` use it to wire a declaration. A runtime module and the infra module that wires it often import each other, so a declaration can be read safely only after every module has loaded. It is an engine mechanism, not user-facing API.
 
 ### Declared modules
 

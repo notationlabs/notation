@@ -49,7 +49,7 @@ Infra APIs take the declaration as a function that returns it, such as `() => to
 
 | Infra API                                                      | Accepts                                                  |
 | -------------------------------------------------------------- | -------------------------------------------------------- |
-| [`queue.consume`](sqs.md#queueconsumetarget)                   | A declaration with `sqs()` or no `event`                 |
+| [`eventSourceMapping`](sqs.md#eventsourcemappingconfig)        | A declaration with `sqs()` or no `event`                 |
 | [`router.get`](api-gateway.md#routerapi), `.post`, ...         | A declaration with `http()` or no `event`                |
 | [`withJWTAuthorizer`](api-gateway.md#jwt-authorization) routes | A declaration with `http({ auth: jwt() })` or no `event` |
 | [`schedule`](event-bridge.md#scheduleconfig)                   | A declaration with `scheduled()` or no `event`           |
@@ -132,7 +132,7 @@ external.policy.contribute({
 });
 ```
 
-[`queue.consume`](sqs.md#queueconsumetarget) adds its read permission to the same policy.
+A queue that is mapped to the function, with [`sqs(queue)`](sqs.md#sqsqueue-options) or [`eventSourceMapping()`](sqs.md#eventsourcemappingconfig), adds its read permission to the same policy.
 
 The group creates the policy resource only when code first contributes to it. This matters because IAM rejects a policy with no statements, so a function that nothing contributes to must have no inline policy. A role's inline policies share a limit of 10,240 characters.
 

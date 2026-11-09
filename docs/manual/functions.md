@@ -89,7 +89,7 @@ Deploy sets `ORDER_QUEUE_URL` as an environment variable of the function. In the
 
 ## Validating bodies with `decode()`
 
-`lambda.decode()` parses the JSON body of one item, and validates it with the schema in `event`. For an SQS Lambda the item is one record. For an HTTP Lambda the item is the request, and a base64 body is decoded first. The schema goes in `sqs(schema)` or `http({ body: schema })`:
+`lambda.decode()` parses the JSON body of one item, and validates it with the schema of `event`. For an SQS Lambda the item is one record, and the schema is the `schema` of the queue in `sqs(queue)`. For an HTTP Lambda the item is the request, the schema goes in `http({ body: schema })`, and a base64 body is decoded first:
 
 ```ts [runtime/orders.ts]
 import {
@@ -98,11 +98,11 @@ import {
   sqs,
   type LambdaHandler,
 } from "@notation/aws/lambda";
-import { Order } from "./schema";
+import { orderQueue } from "infra/orders";
 
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs(Order),
+  event: () => sqs(orderQueue),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
@@ -118,8 +118,9 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 };
 ```
 
-- `Order` is any [Standard Schema](https://standardschema.dev), such as a Zod or Valibot schema. `decode()` returns the schema's output type.
-- Without a schema, as in `sqs()` or `http()`, `decode()` returns the parsed JSON as `unknown`.
+- The infra module declares `orderQueue` with `queue({ name: "orders", schema: Order })`. `Order` is any [Standard Schema](https://standardschema.dev), such as a Zod or Valibot schema. `decode()` returns the schema's output type.
+- `Order` must be in a shared module (`files.shared`), such as `shared/schema.ts`, because the function loads it. The runtime build replaces `orderQueue` with `{ schema: Order }`. See [Validating messages](../resources/sqs.md#validating-messages).
+- Without a schema, as in `sqs()`, `sqs(queue)` for a queue with no schema, or `http()`, `decode()` returns the parsed JSON as `unknown`.
 - When the body is not JSON, or the schema rejects it, `decode()` throws a `DecodeError`. Its `issues` hold the schema's issues.
 - A message that fails validation fails again on every retry, so the handler logs it and skips it. If the handler threw instead, Lambda would retry the whole batch until the queue's retention period ends.
 - A scheduled Lambda, or a Lambda with no `event`, has no `decode()`. Calling it is a type error.
