@@ -119,11 +119,34 @@ export function queue(config) {
 }
 ```
 
-| Mark           | Marks                                                  | Clauses                                                                                                                                                                                                                                             |
-| -------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@declaration` | A function that declares a function resource           | `shared:` options that both builds keep. `runtime:` options that only run in the function. `keys:` kept options whose value returns an object literal, of which the runtime build keeps only the keys. `entry:` the export that the platform calls. |
-| `@runtime`     | A function that builds part of a declaration's options | The names of the parameters that the runtime build keeps.                                                                                                                                                                                           |
-| `@resource`    | A function that declares a resource                    | `runtime:` options of the resource that a function reads when a declaration passes the resource to a `@runtime` argument, such as `schema` in `sqs.bind(orderQueue)`. See [The runtime strip](#the-runtime-strip).                                  |
+A `@runtime` mark can also sit on a method of the object that a marked function returns, and name an option of a parameter:
+
+```ts [packages/aws/src/lambda/declaration.ts]
+export const apiGateway = {
+  /** @runtime api */
+  bind(api) {
+    return {
+      /** @runtime options.auth */
+      defineRoute(options) {
+        /* ... */
+      },
+    };
+  },
+};
+```
+
+```ts [packages/aws/src/api-gateway/api.ts]
+/** @resource runtime: */
+export function api(config) {
+  /* ... */
+}
+```
+
+| Mark           | Marks                                                  | Clauses                                                                                                                                                                                                                                                                                                                                         |
+| -------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@declaration` | A function that declares a function resource           | `shared:` options that both builds keep. `runtime:` options that only run in the function. `keys:` kept options whose value returns an object literal, of which the runtime build keeps only the keys. `entry:` the export that the platform calls.                                                                                             |
+| `@runtime`     | A function that builds part of a declaration's options | The names of the parameters that the runtime build keeps. `options.auth` keeps `options`, and treats its `auth` option as a resource argument. With no names, every argument becomes `undefined`, as for `eventBridge.defineSchedule()`.                                                                                                        |
+| `@resource`    | A function that declares a resource                    | `runtime:` options of the resource that a function reads when a declaration passes the resource to a `@runtime` argument, such as `schema` in `sqs.bind(orderQueue)`. `runtime:` with no options means the resource becomes `{}`, as `api()` does. A bare `@resource` can't be read in a function. See [The runtime strip](#the-runtime-strip). |
 
 The tags are in JSDoc because Rolldown and tsdown keep JSDoc comments in a package's `dist`, and drop other block comments.
 
@@ -269,7 +292,7 @@ export const refundQueue = queue({ name: "refunds" });
 
 1. Options that the mark lists under neither `shared:` nor `runtime:` are removed. For `$lambda`, `policy`, `runtime`, `timeout` and `memory` go. `id` stays, so the function can read `lambda.id`.
 2. Each `keys:` option keeps the keys of the object that it returns, and each value becomes `undefined`. The option must be `() => ({ ... })`, or a function whose body is one `return { ... }`, with no spread or computed keys.
-3. A call to a function marked `@runtime`, such as `sqs.bind(orderQueue, { batchSize: 5 })`, keeps its runtime arguments. The others become `undefined`.
+3. A call to a function marked `@runtime`, such as `sqs.bind(orderQueue, { batchSize: 5 })`, keeps its runtime arguments. The others become `undefined`. The call can be a method of the object that a marked call returns, such as `defineRoute` in `apiGateway.bind(todoApi).defineRoute({ ... })`. The strip finds the method's mark in the object literal that `bind` returns.
 4. A runtime argument that names a resource from an infra module is replaced with the resource's runtime options. See [Resource arguments](#resource-arguments).
 5. An import whose uses the strip removed is removed too. For example, the import of `orderQueue` and `refundQueue` goes once their uses in `event`, `policy` and `env` are gone. An import that had no uses to begin with stays, because it may be there for its side effects, such as a polyfill.
 6. The binding and its export stay, so an infra module that imports `lambda` still links.
@@ -282,10 +305,12 @@ The strip then checks the kept options. A reference to an import from an infra m
 
 `sqs.schema(Order)` has no `@runtime` mark, so the strip leaves it as it is. `Order` comes from a shared module, which the function loads.
 
+A mark that names an option, such as `@runtime options.auth` on `defineRoute`, applies the same replacement to that option of an object literal argument. `apiGateway.bind(userApi).defineRoute({ method: "GET", path: "/user", auth: userAuth })` becomes `apiGateway.bind({}).defineRoute({ method: "GET", path: "/user", auth: { claims: __notation_claims_0 } })`. `userApi` becomes `{}` because `api()` is marked `@resource runtime:` with no options, and `userAuth` becomes its claims because `jwtAuthorizer()` is marked `@resource runtime: claims`. The other options stay as they are, so a `schema` option must come from a shared module.
+
 The strip finds the options in four steps:
 
 1. **The argument names an import from an infra module.** The argument can be a name, such as `orderQueue`, or a member of an object literal or of a namespace import, such as `queues.orders` or `infra.orderQueue`. Any other argument is left as it is.
-2. **The strip follows the import to the resource.** It follows re-exports and imports to the `const` that the infra module exports, and member keys through object literals. The value must be a call to a function marked `@resource`, such as `queue({ ... })`. Any other value fails the build, because the strip can't read its options. The strip can't tell a resource that a helper or a loop makes from a plain value, such as a schema made by `v.object(...)`. So the error says to declare a resource with a call to its resource function, and to move a plain value to a shared module. A resource whose mark lists no runtime options, a bare `@resource`, is left as it is, and fails the build like any other reference to an infra module.
+2. **The strip follows the import to the resource.** It follows re-exports and imports to the `const` that the infra module exports, and member keys through object literals. The value must be a call to a function marked `@resource`, such as `queue({ ... })`. Any other value fails the build, because the strip can't read its options. The strip can't tell a resource that a helper or a loop makes from a plain value, such as a schema made by `v.object(...)`. So the error says to declare a resource with a call to its resource function, and to move a plain value to a shared module. A resource with a bare `@resource` mark is left as it is, and fails the build like any other reference to an infra module. A resource marked `@resource runtime:` with no options becomes `{}`.
 3. **The strip reads each option that the mark lists after `runtime:`.** `queue` is marked `@resource runtime: schema`, so the strip reads the `schema` property of the call's object literal. The property's value must be a name that the infra module imports by name, or as a default import, from a shared module, a package, or a file with no kind. These are the files that the runtime build bundles as they are. A schema that the infra module defines, a member of a namespace import such as `schemas.Order`, and an expression such as `Order.extend({ ... })` fail the build, because the strip can only copy an import. A schema imported from an infra or runtime module fails the build too, because the function can't load it there. So does a schema imported from a file with no kind that calls a resource function at its top level, as for any other value from such a file.
 4. **The strip adds an import of each option to the function's module**, under the name `__notation_<option>_<n>`.
 

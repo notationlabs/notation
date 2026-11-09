@@ -1,8 +1,52 @@
 # EventBridge
 
-`@notation/aws/event-bridge` creates scheduled Lambda invocations with EventBridge.
+`@notation/aws/event-bridge` creates scheduled Lambda invocations with EventBridge. A Lambda function receives the events of a schedule in one of two ways:
+
+| Function-led                                                  | Infra-led                                                          |
+| ------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `event: () => eventBridge.defineSchedule({ name, schedule })` | `event: () => eventBridge.schedule()`                              |
+| The declaration makes the schedule.                           | Infra makes schedules with `schedule({ name, schedule, target })`. |
+
+`eventBridge` comes from `@notation/aws/lambda`. `schedule()`, `rate()`, `cron()` and `once()` come from `@notation/aws/event-bridge`.
+
+## `eventBridge.defineSchedule(options)`
+
+A declaration names its schedule in `event`:
+
+```ts [runtime/nightly-digest.ts]
+import { $lambda, eventBridge, type LambdaHandler } from "@notation/aws/lambda";
+import { rate } from "@notation/aws/event-bridge";
+
+export const lambda = $lambda({
+  id: "nightly-digest",
+  event: () =>
+    eventBridge.defineSchedule({
+      name: "nightly-digest",
+      schedule: rate(1, "day"),
+    }),
+});
+
+export const handler: LambdaHandler<typeof lambda> = async (event) => {
+  console.log("digest for", event.time);
+};
+```
+
+When infra has finished loading, the declaration makes an EventBridge rule that targets the function, and the permission that lets the rule invoke it. Infra declares nothing for it.
+
+The function doesn't read the schedule, so the runtime build removes the options: the call becomes `eventBridge.defineSchedule(undefined)`, and the `rate` import goes with it.
+
+```ts [@notation/aws/lambda]
+type ScheduleOptions = {
+  name: string;
+  schedule: Schedule;
+};
+```
 
 ## `schedule(config)`
+
+Infra makes a schedule for a declaration with `eventBridge.schedule()`:
+
+::code-group
 
 ```ts [infra/schedule.ts]
 import * as eventBridge from "@notation/aws/event-bridge";
@@ -15,17 +59,34 @@ eventBridge.schedule({
 });
 ```
 
-`logEvent` is the declaration from the runtime module `runtime/log-event.ts`. `schedule` takes it as a function, `() => logEvent`, and calls the function when infra has finished loading. The declaration must have `event: () => scheduled()`, or no `event`. See [Wiring a declaration](lambda.md#wiring-a-declaration). `target` can also be a Lambda group from [`lambda()`](lambda.md#lambdaconfig), as it is. `schedule` creates an EventBridge rule that targets the function, and the permission that lets the rule invoke it. It returns nothing.
+```ts [runtime/log-event.ts]
+import { $lambda, eventBridge, type LambdaHandler } from "@notation/aws/lambda";
+
+export const lambda = $lambda({
+  id: "log-event",
+  event: () => eventBridge.schedule(),
+});
+
+export const handler: LambdaHandler<typeof lambda> = async (event) => {
+  console.log("Scheduled event fired:", event);
+};
+```
+
+::
+
+`logEvent` is the declaration from the runtime module `runtime/log-event.ts`. `schedule` takes it as a function, `() => logEvent`, and calls the function when infra has finished loading. See [Wiring a declaration](lambda.md#wiring-a-declaration). `schedule` creates the same rule and permission as `defineSchedule()`. It returns nothing.
 
 ### Config
 
-```ts [@notation/aws/event-bridge.ts]
+```ts [@notation/aws/event-bridge]
 type ScheduleConfig = {
   name: string;
   schedule: Schedule;
-  target: LambdaTarget<"scheduled" | "none">; // () => declaration, or a Lambda group
+  target: LambdaTarget<"eventBridge" | "none">; // () => declaration, or a Lambda group
 };
 ```
+
+`target` can be a declaration with `eventBridge.schedule()`, a declaration with no `event`, or a Lambda group from [`lambda()`](lambda.md#lambdaconfig). A declaration with `eventBridge.defineSchedule()` already makes its schedule, so `schedule()` throws for it. Schedule the function in one place: remove the `schedule()` call, or declare the function with `eventBridge.schedule()`.
 
 The rule sends the EventBridge event to the function as it is.
 
@@ -43,7 +104,7 @@ eventBridge.rate(12, "hours");
 eventBridge.rate(1, "day");
 ```
 
-```ts [@notation/aws/event-bridge.ts]
+```ts [@notation/aws/event-bridge]
 type RateUnit = "minute" | "minutes" | "hour" | "hours" | "day" | "days";
 ```
 
@@ -62,17 +123,4 @@ eventBridge.once(new Date("2027-12-31T23:59:00Z"));
 
 ## Handler
 
-```ts [runtime/log-event.ts]
-import { $lambda, scheduled, type LambdaHandler } from "@notation/aws/lambda";
-
-export const lambda = $lambda({
-  id: "log-event",
-  event: () => scheduled(),
-});
-
-export const handler: LambdaHandler<typeof lambda> = async (event) => {
-  console.log("Scheduled event fired:", event);
-};
-```
-
-`event` is typed as an `EventBridgeEvent<"Scheduled Event", unknown>`.
+`LambdaHandler<typeof lambda>` types `event` as an `EventBridgeEvent<"Scheduled Event", unknown>`, for both forms.

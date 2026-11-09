@@ -7,7 +7,7 @@ A runtime module declares the Lambda function that it deploys as with `$lambda` 
 ```ts [@notation/aws/lambda]
 type LambdaDeclarationConfig = {
   id: string; // name-safe string literal
-  event?: () => SqsEvent | HttpEvent | ScheduledEvent;
+  event?: () => SqsEvent | ApiGatewayEvent | EventBridgeScheduleEvent;
   env?: () => Record<string, string>;
   policy?: () => PolicyStatement[];
   runtime?: string; // such as "nodejs22.x"
@@ -16,15 +16,15 @@ type LambdaDeclarationConfig = {
 };
 ```
 
-| Option    | Meaning                                                                                                                              |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`      | Names the function and its role, zip, policy and log group, and keys them in state. See [`id`](#id).                                 |
-| `event`   | The events that the function receives: `sqs.bind(queue, options?)`, `sqs.schema(schema)`, `http({ body?, auth? })` or `scheduled()`. |
-| `env`     | Values that the function reads, by name. Deploy sets each one as an environment variable of the function.                            |
-| `policy`  | Statements to add to the function role's inline policy.                                                                              |
-| `runtime` | The Lambda runtime.                                                                                                                  |
-| `timeout` | Seconds that the function may run for each event.                                                                                    |
-| `memory`  | Megabytes of memory for the function.                                                                                                |
+| Option    | Meaning                                                                                                                                                                                                                                            |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`      | Names the function and its role, zip, policy and log group, and keys them in state. See [`id`](#id).                                                                                                                                               |
+| `event`   | The events that the function receives: `sqs.bind(queue, options?)`, `sqs.schema(schema)`, `apiGateway.bind(api).defineRoute(options)`, `apiGateway.schema(body?, { claims? })`, `eventBridge.defineSchedule(options)` or `eventBridge.schedule()`. |
+| `env`     | Values that the function reads, by name. Deploy sets each one as an environment variable of the function.                                                                                                                                          |
+| `policy`  | Statements to add to the function role's inline policy.                                                                                                                                                                                            |
+| `runtime` | The Lambda runtime.                                                                                                                                                                                                                                |
+| `timeout` | Seconds that the function may run for each event.                                                                                                                                                                                                  |
+| `memory`  | Megabytes of memory for the function.                                                                                                                                                                                                              |
 
 ## Usage
 

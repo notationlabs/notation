@@ -57,14 +57,14 @@ todoRouter.get("/todos", () => todos);
 ```
 
 ```ts [runtime/todos.ts]
-import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 
 export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,
-  event: () => http(),
+  event: () => apiGateway.schema(),
 });
 
 const todos = await api.get<any[]>("/todos");

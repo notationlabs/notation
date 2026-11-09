@@ -9,12 +9,12 @@ A [runtime module](../manual/file-conventions.md#runtime-modules) calls `$lambda
 ::code-group
 
 ```ts [runtime/todos.ts]
-import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
 
 export const lambda = $lambda({
   id: "todos",
   timeout: 5,
-  event: () => http(),
+  event: () => apiGateway.schema(),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
@@ -47,16 +47,18 @@ The declaration adds the function even when nothing wires it. The options are li
 
 Infra APIs take the declaration as a function that returns it, such as `() => todos`. They call the function when infra has finished loading, so the runtime module and the infra module can import each other.
 
-| Infra API                                                      | Accepts                                                  |
-| -------------------------------------------------------------- | -------------------------------------------------------- |
-| [`eventSourceMapping`](sqs.md#eventsourcemappingconfig)        | A declaration with `sqs.schema()` or no `event`          |
-| [`router.get`](api-gateway.md#routerapi), `.post`, ...         | A declaration with `http()` or no `event`                |
-| [`withJWTAuthorizer`](api-gateway.md#jwt-authorization) routes | A declaration with `http({ auth: jwt() })` or no `event` |
-| [`schedule`](event-bridge.md#scheduleconfig)                   | A declaration with `scheduled()` or no `event`           |
+| Infra API                                                   | Accepts                                                                |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [`eventSourceMapping`](sqs.md#eventsourcemappingconfig)     | A declaration with `sqs.schema()` or no `event`                        |
+| [`router.get`](api-gateway.md#routerapi), `.post`, ...      | A declaration with `apiGateway.schema(body)` or no `event`             |
+| [`withAuthorizer`](api-gateway.md#jwt-authorization) routes | A declaration with `apiGateway.schema(body, { claims })` or no `event` |
+| [`schedule`](event-bridge.md#scheduleconfig)                | A declaration with `eventBridge.schedule()` or no `event`              |
 
 Each API also takes a Lambda group from [`lambda()`](#lambdaconfig), as it is, with no function around it.
 
-A declaration whose event doesn't match is a type error. If TypeScript doesn't catch it, the infra API throws when infra runs, for example `route() sends http events, but the Lambda "orders" is declared with event: () => sqs.schema(schema).`
+A declaration whose event doesn't match is a type error. If TypeScript doesn't catch it, the infra API throws when infra runs, for example `route() sends apiGateway events, but the Lambda "orders" is declared with event: () => sqs.schema(schema).`
+
+A declaration can also make its own resources, with `sqs.bind(queue)`, `apiGateway.bind(api).defineRoute(options)` or `eventBridge.defineSchedule(options)`. The infra APIs throw for such a declaration, so that a queue, route or schedule is wired in one place.
 
 ### One handler for each function
 

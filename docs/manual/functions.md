@@ -22,21 +22,21 @@ The `$` marks a function that the build handles specially. `$lambda` must be cal
 
 `LambdaHandler<typeof lambda>` reads the event from the declaration. Here the event is `sqs.schema(Order)`, so `event` is typed as an `SQSEvent`.
 
-**The build doesn't yet check `handler` against the declaration.** Without the `LambdaHandler<typeof lambda>` annotation, nothing stops you from writing an SQS handler in a module that declares an HTTP event. The RFC plans a build-time check for this, but it isn't built. Until then, annotate each handler.
+**The build doesn't yet check `handler` against the declaration.** Without the `LambdaHandler<typeof lambda>` annotation, nothing stops you from writing an SQS handler in a module that declares an API Gateway event. The RFC plans a build-time check for this, but it isn't built. Until then, annotate each handler.
 
 ## Handler types
 
 `event` in the declaration chooses the type of the handler:
 
-| `event`                                               | `LambdaHandler<typeof lambda>`                                                                    |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `() => sqs.bind(queue)` or `() => sqs.schema(schema)` | `(event: SQSEvent, context: Context) => SQSBatchResponse \| void` (or a promise)                  |
-| `() => http()`                                        | `(event: APIGatewayProxyEventV2, context: Context) => ApiGatewayResult` (or a promise)            |
-| `() => http({ auth: jwt<Claims>() })`                 | `(event: APIGatewayJWTProxyEventV2<Claims>, context: Context) => ApiGatewayResult` (or a promise) |
-| `() => scheduled()`                                   | `(event: EventBridgeEvent<"Scheduled Event", unknown>, context: Context) => void` (or a promise)  |
-| no `event`                                            | `(event: unknown, context: Context) => unknown`                                                   |
+| `event`                                                                       | `LambdaHandler<typeof lambda>`                                                                       |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `() => sqs.bind(queue)` or `() => sqs.schema(schema)`                         | `(event: SQSEvent, context: Context) => SQSBatchResponse \| void` (or a promise)                     |
+| `() => apiGateway.schema(body)`, or `defineRoute()` with no `auth`            | `(event: APIGatewayProxyEventV2, context: Context) => ApiGatewayResult` (or a promise)               |
+| `() => apiGateway.schema(body, { claims })`, or `defineRoute()` with `auth`   | `(event: APIGatewayJWTProxyEventV2<JwtClaims>, context: Context) => ApiGatewayResult` (or a promise) |
+| `() => eventBridge.schedule()` or `() => eventBridge.defineSchedule(options)` | `(event: EventBridgeEvent<"Scheduled Event", unknown>, context: Context) => void` (or a promise)     |
+| no `event`                                                                    | `(event: unknown, context: Context) => unknown`                                                      |
 
-`event` also decides where infra can wire the function: an SQS Lambda to a queue, an HTTP Lambda to a route, and a scheduled Lambda to a schedule. A Lambda with `http({ auth: jwt() })` can only be wired to a route with a JWT authorizer. A Lambda with no `event` can be wired to any of them. See [End-to-End Types](./types.md).
+`event` also decides where infra can wire the function: an `sqs` Lambda to a queue, an `apiGateway` Lambda to a route, and an `eventBridge` Lambda to a schedule. A Lambda with a claims schema can only be wired to a route with a JWT authorizer, and a Lambda without one only to a route without an authorizer. A Lambda with no `event` can be wired to any of them. See [End-to-End Types](./types.md).
 
 Notation has no event kind for DynamoDB streams. A function for another event source has no `event`, and its handler types the event itself.
 
@@ -45,14 +45,14 @@ Notation has no event kind for DynamoDB streams. A function for another event so
 A Lambda function has one entry point, so a module has one `handler`. A function that serves several routes reads the route from the event. For example, the `todos` function serves `GET /todos` and `GET /todos/count`, and branches on `event.routeKey`:
 
 ```ts [runtime/todos.ts]
-import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 
 export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,
-  event: () => http(),
+  event: () => apiGateway.schema(),
 });
 
 const todos = await api.get<any[]>("/todos");
@@ -90,7 +90,7 @@ Deploy sets `ORDER_QUEUE_URL` as an environment variable of the function. In the
 
 ## Validating bodies with `decode()`
 
-`lambda.decode()` parses the JSON body of one item, and validates it with the schema of `event`. For an SQS Lambda the item is one record, and the schema is the `schema` of the queue in `sqs.bind(queue)`, or the schema in `sqs.schema(schema)`. For an HTTP Lambda the item is the request, the schema goes in `http({ body: schema })`, and a base64 body is decoded first:
+`lambda.decode()` parses the JSON body of one item, and validates it with the schema of `event`. For an SQS Lambda the item is one record, and the schema is the `schema` of the queue in `sqs.bind(queue)`, or the schema in `sqs.schema(schema)`. For an API Gateway Lambda the item is the request, the schema goes in `apiGateway.schema(body)` or in the `schema` option of `defineRoute()`, and a base64 body is decoded first:
 
 ```ts [runtime/orders.ts]
 import {
@@ -122,10 +122,11 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 - The infra module declares `orderQueue` with `queue({ name: "orders", schema: Order })`. `Order` is any [Standard Schema](https://standardschema.dev), such as a Zod or Valibot schema. `decode()` returns the schema's output type.
 - `Order` belongs in a shared module (`files.shared`), such as `shared/schema.ts`, because the function loads it. It can't be in an infra or runtime module. The runtime build replaces `orderQueue` with `{ schema: Order }`. See [Validating messages](../resources/sqs.md#validating-messages).
 - A function that infra maps queues to declares the schema itself, with `sqs.schema(Order)`. `eventSourceMapping()` checks that each queue it maps has the same schema, or none. See [`eventSourceMapping(config)`](../resources/sqs.md#eventsourcemappingconfig).
-- Without a schema, as in `sqs.bind(queue)` for a queue with no schema, or `http()`, `decode()` returns the parsed JSON as `unknown`.
+- Without a schema, as in `sqs.bind(queue)` for a queue with no schema, or `apiGateway.schema()`, `decode()` returns the parsed JSON as `unknown`. A request with no body and no body schema returns `undefined`.
+- A request to a Lambda with a claims schema, from `apiGateway.schema(body, { claims })` or from the authorizer in `defineRoute({ auth })`, also has its JWT claims validated. `decode()` throws a `DecodeError` for claims that the schema rejects, and returns only the body. See [Claims in `decode()`](../resources/api-gateway.md#claims-in-decode).
 - When the body is not JSON, or the schema rejects it, `decode()` throws a `DecodeError`. Its `issues` hold the schema's issues.
 - A message that fails validation fails again on every retry, so the handler logs it and skips it. If the handler threw instead, Lambda would retry the whole batch until the queue's retention period ends.
-- A scheduled Lambda, or a Lambda with no `event`, has no `decode()`. Calling it is a type error.
+- An `eventBridge` Lambda, or a Lambda with no `event`, has no `decode()`. Calling it is a type error.
 
 `decode()` only checks what the function receives. Nothing checks that a sender writes a body that matches the schema, and a value such as a `Date` doesn't survive `JSON.stringify` and `JSON.parse` as a `Date`.
 

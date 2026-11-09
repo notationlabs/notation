@@ -1,13 +1,21 @@
 # API Gateway
 
-`@notation/aws/api-gateway` builds HTTP APIs backed by Lambda functions.
+`@notation/aws/api-gateway` builds HTTP APIs backed by Lambda functions. A Lambda function receives the requests of a route in one of two ways:
+
+| Function-led                                                                | Infra-led                                                              |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `event: () => apiGateway.bind(todoApi).defineRoute({ method, path })`       | `event: () => apiGateway.schema(NewTodo)`                              |
+| The declaration makes one route on an API that infra declares.              | Infra makes routes with `router(todoApi).post("/todos", () => todos)`. |
+| `decode()` validates with the route's `schema` and the authorizer's claims. | `decode()` validates with `NewTodo` and the declaration's claims.      |
+
+`apiGateway` comes from `@notation/aws/lambda`. `api()`, `jwtAuthorizer()` and `router()` come from `@notation/aws/api-gateway`, and only run in infra.
 
 ## `api(config)`
 
 ```ts [infra/api.ts]
 import { api } from "@notation/aws/api-gateway";
 
-const myApi = api({ name: "my-api" });
+export const todoApi = api({ name: "todo-api" });
 ```
 
 ### Config
@@ -18,24 +26,117 @@ type ApiConfig = {
 };
 ```
 
-`name` keys the API in state. In AWS, the API is named `<app>--<stage>--<name>`, such as `my-app--prod--my-api`. See [AWS names](../manual/project-config.md#aws-names).
+`name` keys the API in state. In AWS, the API is named `<app>--<stage>--<name>`, such as `my-app--prod--todo-api`. See [AWS names](../manual/project-config.md#aws-names).
+
+`api()` also makes the `$default` stage, which deploys each change.
+
+## `apiGateway.bind(api).defineRoute(options)`
+
+A declaration names the API and the route that its function serves in `event`:
+
+::code-group
+
+```ts [runtime/create-todo.ts]
+import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
+import { todoApi } from "infra/api";
+import { NewTodo } from "shared/schema";
+
+export const lambda = $lambda({
+  id: "create-todo",
+  event: () =>
+    apiGateway
+      .bind(todoApi)
+      .defineRoute({ method: "POST", path: "/todos", schema: NewTodo }),
+});
+
+export const handler: LambdaHandler<typeof lambda> = async (event) => {
+  const todo = await lambda.decode(event);
+  return { statusCode: 201, body: JSON.stringify(todo) };
+};
+```
+
+```ts [infra/api.ts]
+import { api } from "@notation/aws/api-gateway";
+
+export const todoApi = api({ name: "todo-api" });
+```
+
+::
+
+The infra module only declares the API. When infra has finished loading, the declaration makes the route `POST /todos` on `todoApi` to the `create-todo` function. See [What each route generates](#what-each-route-generates).
+
+### Options
+
+```ts [@notation/aws/lambda]
+type ApiGatewayRouteOptions = {
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: `/${string}`;
+  schema?: StandardSchemaV1;
+  auth?: JwtAuthorizerGroup; // from jwtAuthorizer()
+};
+```
+
+`schema` validates the JSON body of a request in `lambda.decode(event)`. `auth` puts the route behind a JWT authorizer; see [JWT authorization](#jwt-authorization).
+
+### In the runtime build
+
+**The function doesn't load `infra/api.ts`.** The runtime build replaces `todoApi` with `{}`, because `api()` is marked `@resource runtime:` with no options, and the function reads nothing from the API:
+
+```ts [runtime/create-todo.ts, as the runtime build strips it]
+export const lambda = $lambda({
+  id: "create-todo",
+  event: () =>
+    apiGateway
+      .bind({}) // <- todoApi
+      .defineRoute({ method: "POST", path: "/todos", schema: NewTodo }),
+});
+```
+
+`NewTodo` stays as it is, so it must come from a shared module or a package. An authorizer in `auth` becomes an object of its claims schema; see [JWT authorization](#jwt-authorization).
+
+`defineRoute()` makes one route. To serve several routes from one function, declare it with `apiGateway.schema()` and route it from infra with `router()`.
+
+## `apiGateway.schema(body, options)`
+
+A declaration that infra routes to names the schemas of its requests, and no API:
+
+```ts [runtime/todos.ts]
+import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
+import { NewTodo } from "shared/schema";
+
+export const lambda = $lambda({
+  id: "todos",
+  event: () => apiGateway.schema(NewTodo),
+});
+```
+
+Both arguments are optional. A function that only serves `GET` routes has no body to validate, so it calls `apiGateway.schema()`, or `apiGateway.schema(undefined, { claims: Claims })` for routes behind an authorizer.
+
+```ts [@notation/aws/lambda]
+apiGateway.schema(body?: StandardSchemaV1, options?: { claims?: StandardSchemaV1 });
+```
+
+`options.claims` decides which routes can invoke the function:
+
+- With `claims`, the event has the kind `apiGateway-jwt`, and only routes with an authorizer can invoke the function.
+- Without `claims`, the event has the kind `apiGateway`, and only routes with no authorizer can invoke the function.
 
 ## `router(api)`
 
 ```ts [infra/api.ts]
 import { api, router } from "@notation/aws/api-gateway";
-import { lambda as users } from "runtime/users";
+import { lambda as todos } from "runtime/todos";
 
-const myApi = api({ name: "user-api" });
-const myRouter = router(myApi);
+const todoApi = api({ name: "todo-api" });
+const todoRouter = router(todoApi);
 
-myRouter.get("/users", () => users);
-myRouter.post("/users", () => users);
+todoRouter.get("/todos", () => todos);
+todoRouter.post("/todos", () => todos);
 ```
 
-`users` is the declaration from the runtime module `runtime/users.ts`. The router methods take it as a function, `() => users`, and call the function when infra has finished loading. The declaration must have `event: () => http()`, or no `event`. See [Wiring a declaration](lambda.md#wiring-a-declaration). The methods also take a Lambda group from [`lambda()`](lambda.md#lambdaconfig), as it is.
+`todos` is the declaration from the runtime module `runtime/todos.ts`. The router methods take it as a function, `() => todos`, and call the function when infra has finished loading. See [Wiring a declaration](lambda.md#wiring-a-declaration). The methods also take a Lambda group from [`lambda()`](lambda.md#lambdaconfig), as it is.
 
-Both routes call the one `users` function. Its handler reads `event.routeKey`, such as `GET /users` or `POST /users`, to tell them apart.
+Both routes call the one `todos` function. Its handler reads `event.routeKey`, such as `GET /todos` or `POST /todos`, to tell them apart.
 
 ### Available methods
 
@@ -44,12 +145,27 @@ Both routes call the one `users` function. Its handler reads `event.routeKey`, s
 - `.put(path, target)`
 - `.patch(path, target)`
 - `.delete(path, target)`
+- `.withAuthorizer(authorizer)`, which returns the same five methods for routes behind the authorizer
 
-The methods return nothing.
+The route methods return nothing.
+
+### Targets
+
+| Target                                                     | Route with no authorizer | Route with an authorizer                                         |
+| ---------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------- |
+| A declaration with `apiGateway.schema(body)`               | Routed                   | Throws                                                           |
+| A declaration with `apiGateway.schema(body, { claims })`   | Throws                   | Routed if the authorizer's `claims` is the same schema, or unset |
+| A declaration with no `event`                              | Routed                   | Routed                                                           |
+| A Lambda group from `lambda()`                             | Routed                   | Routed                                                           |
+| A declaration with `apiGateway.bind(api).defineRoute(...)` | Throws                   | Throws                                                           |
+
+A declaration with `defineRoute()` already makes its route, so `router()` throws for it. Route the function in one place: remove the router call, or declare the function with `apiGateway.schema()`.
+
+TypeScript checks the same pairings, except for the last row.
 
 ### What each route generates
 
-Each route call produces a full resource subgraph:
+Each route, from `router()` or from `defineRoute()`, produces a full resource subgraph:
 
 - **API Gateway route** – the HTTP method + path binding
 - **Lambda integration** – connects the API to the Lambda function. Routes on one API that call one function share it
@@ -57,56 +173,88 @@ Each route call produces a full resource subgraph:
 
 ### Request bodies
 
-`http({ body: schema })` gives the declaration a [Standard Schema](https://standardschema.dev) for request bodies. The handler validates a request with `lambda.decode(event)`, which decodes a base64 body, parses it as JSON and returns the schema's output type. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
+`lambda.decode(event)` decodes a base64 body, parses it as JSON, validates it with the body schema and returns the schema's output type. With no body schema, it returns the parsed JSON as `unknown`, or `undefined` for a request with no body. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
 
-## JWT Authorization
+## JWT authorization
+
+A JWT authorizer is a resource on an API. It holds the token's issuer and audience, and a schema for the token's claims:
 
 ```ts [infra/api.ts]
-import { api, router } from "@notation/aws/api-gateway";
-import { lambda as user } from "runtime/user";
+import { api, jwtAuthorizer } from "@notation/aws/api-gateway";
+import { Claims } from "shared/claims";
 
-const myApi = api({ name: "user-api" });
+export const userApi = api({ name: "user-api" });
 
-const authedRouter = router(myApi).withJWTAuthorizer({
-  type: "jwt",
+export const userAuth = jwtAuthorizer({
+  api: userApi,
   issuer: "https://myaccount.auth0.com/",
   audience: ["https://my-api"],
-  scopes: [],
+  claims: Claims,
 });
-
-authedRouter.get("/user", () => user);
 ```
 
-The authorizer adds the token's claims to the request. The declaration says that its routes have a JWT authorizer with `http({ auth: jwt<JWTClaims>() })`, and `LambdaHandler<typeof lambda>` types the claims:
+A declaration puts its route behind the authorizer with `auth`:
 
 ```ts [runtime/user.ts]
-import { $lambda, http, jwt, type LambdaHandler } from "@notation/aws/lambda";
-import type { JWTClaims } from "shared/jwt";
+import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
+import { userApi, userAuth } from "infra/api";
 
 export const lambda = $lambda({
   id: "user",
-  event: () => http({ auth: jwt<JWTClaims>() }),
+  event: () =>
+    apiGateway
+      .bind(userApi)
+      .defineRoute({ method: "GET", path: "/user", auth: userAuth }),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
-  return { message: event.requestContext.authorizer.jwt.claims.$username };
+  await lambda.decode(event); // <- throws a DecodeError for claims that Claims rejects
+  return { message: event.requestContext.authorizer.jwt.claims.sub };
 };
 ```
 
-The routes of `withJWTAuthorizer()` accept only a declaration with `http({ auth: jwt() })`, or one with no `event`. A plain router's routes reject it. TypeScript doesn't check `JWTClaims` against the tokens that the issuer sends.
+In the runtime build, `userAuth` becomes `{ claims: Claims }`, with `Claims` imported from where `infra/api.ts` imports it. `jwtAuthorizer()` is marked `@resource runtime: claims`, so the claims schema must come from a shared module, as a queue's schema does for `sqs.bind()`.
 
-Routes on one API with the same `issuer` and `audience` share one authorizer. Routes with different `scopes` still share it, because API Gateway checks scopes on the route. An HTTP API allows 10 authorizers, so one API can have 10 distinct issuer and audience pairs.
+Infra routes to a declaration with `withAuthorizer()`:
 
-### JWTAuthorizerConfig
+::code-group
 
-```ts [@notation/aws/api-gateway.ts]
-type JWTAuthorizerConfig = {
-  type: "jwt";
+```ts [infra/api.ts]
+router(userApi)
+  .withAuthorizer(userAuth)
+  .get("/profile", () => profile);
+```
+
+```ts [runtime/profile.ts]
+export const lambda = $lambda({
+  id: "profile",
+  event: () => apiGateway.schema(undefined, { claims: Claims }),
+});
+```
+
+::
+
+**The claims check compares objects, not types.** `withAuthorizer()` routes throw when the authorizer's `claims` is another object than the one in `apiGateway.schema()`. TypeScript also checks the pairing: a declaration whose claims schema has another type than the authorizer's is a type error. An authorizer with no `claims` can route to a declaration with any claims schema, because the function still validates the claims. `withAuthorizer()` also throws for an authorizer on another API.
+
+### Claims in `decode()`
+
+`lambda.decode(event)` validates `event.requestContext.authorizer.jwt.claims` with the claims schema before it reads the body. It throws a `DecodeError` when the claims are not valid, and when the request has no claims. It returns only the body.
+
+The handler's event types the claims as `JwtClaims`, the loose type from `aws-lambda`, because API Gateway passes them as the token holds them. The claims schema's output type is not used in the event.
+
+### JwtAuthorizerConfig
+
+```ts [@notation/aws/api-gateway]
+type JwtAuthorizerConfig = {
+  api: ApiGroup;
   issuer: string;
   audience: string[];
-  scopes: string[];
+  scopes?: string[];
+  claims?: StandardSchemaV1;
 };
 ```
+
+The authorizer owns its API Gateway authorizer resource. An HTTP API allows 10 authorizers, and two authorizers on one API with the same `issuer` and `audience` fail with a duplicate id. Each route of the authorizer requires its `scopes`.
 
 ## Integrations and authorizers after an unknown create
 
@@ -139,14 +287,14 @@ todoRouter.get("/todos/count", () => todos);
 ```
 
 ```ts [runtime/todos.ts]
-import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 
 export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,
-  event: () => http(),
+  event: () => apiGateway.schema(),
 });
 
 const todos = await api.get<any[]>("/todos");

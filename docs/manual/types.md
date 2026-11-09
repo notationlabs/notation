@@ -33,12 +33,12 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 ::
 
-| Infra API                                          | Accepts a declaration with                               |
-| -------------------------------------------------- | -------------------------------------------------------- |
-| `eventSourceMapping({ source, target })`           | `sqs.schema()` of the queue's schema type, or no `event` |
-| `router.get(path, target)`                         | `http()` or no `event`                                   |
-| `router.withJWTAuthorizer(auth).get(path, target)` | `http({ auth: jwt() })` or no `event`                    |
-| `schedule({ target })`                             | `scheduled()` or no `event`                              |
+| Infra API                                       | Accepts a declaration with                                                           |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `eventSourceMapping({ source, target })`        | `sqs.schema()` of the queue's schema type, or no `event`                             |
+| `router.get(path, target)`                      | `apiGateway.schema(body)` with no claims, or no `event`                              |
+| `router.withAuthorizer(auth).get(path, target)` | `apiGateway.schema(body, { claims })` of the authorizer's claims type, or no `event` |
+| `schedule({ target })`                          | `eventBridge.schedule()` or no `event`                                               |
 
 The infra APIs also check the event when infra runs, so a mismatch that TypeScript misses, such as one behind an `any`, fails with an error that names the Lambda and its event.
 
@@ -75,7 +75,7 @@ lambda.env().ORDERS_URL; // type error: the declaration doesn't bind ORDERS_URL
 
 ## Bodies are typed by the schema
 
-`queue({ schema })` and `http({ body: schema })` take a [Standard Schema](https://standardschema.dev). A declaration with `sqs.bind(queue)` gets the queue's schema, and `lambda.decode()` returns the schema's output type:
+`queue({ schema })`, `apiGateway.schema(body)` and the `schema` option of `defineRoute()` take a [Standard Schema](https://standardschema.dev). A declaration with `sqs.bind(queue)` gets the queue's schema, and `lambda.decode()` returns the schema's output type:
 
 ::code-group
 
@@ -116,43 +116,47 @@ Nothing checks the other end. A producer that sends to the queue isn't checked a
 
 ## JWT claims
 
-A request through a route with a JWT authorizer holds the token's claims, so it is a different event from a plain HTTP request. The declaration says so with `http({ auth: jwt<Claims>() })`, and `LambdaHandler<typeof lambda>` types the claims as `Claims`:
+A request through a route with a JWT authorizer holds the token's claims, so it is a different event from a request through a route with no authorizer. The authorizer holds a schema for the claims, and the declaration takes it from the authorizer, or names the same schema:
 
 ::code-group
 
 ```ts [infra/api.ts]
-import { api, router } from "@notation/aws/api-gateway";
-import { lambda as user } from "runtime/user";
+import { api, jwtAuthorizer, router } from "@notation/aws/api-gateway";
+import { lambda as profile } from "runtime/profile";
+import { Claims } from "shared/claims";
 
-const myApi = api({ name: "user-api" });
-const authedRouter = router(myApi).withJWTAuthorizer({
-  type: "jwt",
+export const userApi = api({ name: "user-api" });
+export const userAuth = jwtAuthorizer({
+  api: userApi,
   issuer: "https://auth.example.com/",
   audience: ["https://api.example.com"],
-  scopes: [],
+  claims: Claims,
 });
 
-authedRouter.get("/user", () => user);
+router(userApi)
+  .withAuthorizer(userAuth)
+  .get("/profile", () => profile);
 ```
 
-```ts [runtime/user.ts]
-import { $lambda, http, jwt, type LambdaHandler } from "@notation/aws/lambda";
-
-type JWTClaims = { sub: string; email: string };
+```ts [runtime/profile.ts]
+import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
+import { Claims } from "shared/claims";
 
 export const lambda = $lambda({
-  id: "user",
-  event: () => http({ auth: jwt<JWTClaims>() }),
+  id: "profile",
+  event: () => apiGateway.schema(undefined, { claims: Claims }),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
-  const { sub, email } = event.requestContext.authorizer.jwt.claims;
-  return { sub, email };
+  await lambda.decode(event); // throws a DecodeError for claims that Claims rejects
+  const { sub } = event.requestContext.authorizer.jwt.claims;
+  return { sub };
 };
 ```
 
 ::
 
-- The routes of `withJWTAuthorizer()` accept only a declaration with `http({ auth: jwt() })`, or one with no `event`. A plain router's routes reject it, because the request would have no claims.
-- TypeScript doesn't check `JWTClaims` against the tokens that the issuer sends.
-- `jwt()` doesn't hold the issuer or the audience. Those stay in infra, in `withJWTAuthorizer()`.
+- The routes of `withAuthorizer()` accept only a declaration with a claims schema of the authorizer's claims type, or one with no `event`. A plain router's routes reject a declaration with claims, because the request would have no claims.
+- When infra runs, the routes also check that the two claims schemas are the same object.
+- `decode()` validates the claims, but the handler's event types them as the loose `JwtClaims` from `aws-lambda`, because the event holds them as the token does.
+- A declaration that makes its own route with `apiGateway.bind(userApi).defineRoute({ ..., auth: userAuth })` takes the claims schema from `userAuth`, so there is nothing to compare.
