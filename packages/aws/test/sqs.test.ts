@@ -451,6 +451,8 @@ test.each([
   "arn:aws:sns:eu-west-2:123456789012:orders-dlq",
   "arn:aws:sqs:eu-west-2:orders-dlq",
   "https://sqs.eu-west-2.amazonaws.com/123456789012/orders-dlq",
+  `arn:aws:sqs:eu-west-2:123456789012:${"a".repeat(81)}`,
+  `arn:aws:sqs:eu-west-2:123456789012:${"a".repeat(76)}.fifo`,
 ])(
   "a dead-letter queue string that is not an SQS ARN throws: %s",
   async (arn) => {

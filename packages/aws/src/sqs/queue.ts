@@ -227,8 +227,9 @@ function assertFifoOptions(config: Omit<QueueConfig, "schema">): void {
   }
 }
 
+// A queue name has at most 80 characters, including the .fifo suffix.
 const SQS_ARN =
-  /^arn:[a-z-]+:sqs:[a-z0-9-]+:\d{12}:[A-Za-z0-9_-]{1,80}(\.fifo)?$/;
+  /^arn:[a-z-]+:sqs:[a-z0-9-]+:\d{12}:(?:[A-Za-z0-9_-]{1,80}|[A-Za-z0-9_-]{1,75}\.fifo)$/;
 
 function assertQueueArn(id: string, arn: string): void {
   if (!SQS_ARN.test(arn)) {

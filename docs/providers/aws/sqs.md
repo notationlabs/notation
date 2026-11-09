@@ -125,7 +125,7 @@ export const orderQueue = queue({
 });
 ```
 
-`queue()` throws when the string doesn't have the form of an SQS ARN, `arn:<partition>:sqs:<region>:<account>:<name>`. Notation doesn't check that the queue exists.
+`queue()` throws when the string doesn't have the form of an SQS ARN, `arn:<partition>:sqs:<region>:<account>:<name>`. Notation doesn't check that the queue exists. SQS requires the dead-letter queue to be in the same account and region as the queue.
 
 The queue's `RedrivePolicy` holds the ARN of the dead-letter queue. When the dead-letter queue comes from `queue()`, the queue depends on the dead-letter queue, which deploys first. When you remove `deadLetterQueue`, Notation removes the policy from the queue, and leaves the dead-letter queue and its messages.
 

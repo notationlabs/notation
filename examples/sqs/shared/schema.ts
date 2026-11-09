@@ -10,6 +10,6 @@ export const Refund = v.object({
   reason: v.string(),
 });
 
-// The order queue moves messages that fail to decode to its dead-letter
-// queue, so the dead-letter queue accepts any JSON value.
+// SQS moves an order that fails to decode to the dead-letter queue, so the
+// dead-letter queue's schema accepts any JSON value.
 export const DeadLetter = v.unknown();
