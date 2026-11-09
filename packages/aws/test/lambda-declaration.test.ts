@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, expect, expectTypeOf, test, vi } from "vitest";
-import type {
-  APIGatewayProxyEventV2,
-  SQSEvent,
-  SQSRecord,
-} from "aws-lambda";
+import type { APIGatewayProxyEventV2, SQSEvent, SQSRecord } from "aws-lambda";
 import { setConfigFile } from "@notation/core";
 import {
   collectResourceGraph,
@@ -287,7 +283,9 @@ test("decode() reads the body of a request to a JWT declaration", async () => {
     id: "user",
     event: () => http({ body: Order, auth: jwt() }),
   });
-  await expect(fn.decode({ body: '{"id":"o1"}', isBase64Encoded: false })).resolves.toEqual({
+  await expect(
+    fn.decode({ body: '{"id":"o1"}', isBase64Encoded: false }),
+  ).resolves.toEqual({
     id: "o1",
   });
 });
