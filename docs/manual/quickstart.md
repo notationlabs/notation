@@ -7,9 +7,9 @@ Notation requires Node.js 22 or later.
 ## 1. Create a project
 
 ```sh
-npm create notation@alpha my-app
+@pm.dlx("create-notation@alpha my-app")
 cd my-app
-npm install
+@pm.install()
 ```
 
 ```sh
@@ -83,7 +83,7 @@ Infrastructure and runtime live in the same codebase. `runtime/todos.ts` is a ru
 ## 3. Visualize the graph
 
 ```sh
-npm run viz
+@pm.run("viz")
 ```
 
 ```sh
@@ -96,7 +96,7 @@ Opens a Mermaid chart of the resource graph. This is what Notation will deploy.
 ## 4. Deploy
 
 ```sh
-npm run deploy
+@pm.run("deploy")
 ```
 
 ```sh
@@ -139,7 +139,7 @@ export const handler: LambdaHandler<typeof lambda> = async () => {
 Then start watch mode:
 
 ```sh
-npm run watch
+@pm.run("watch")
 ```
 
 ```sh
@@ -156,7 +156,7 @@ Notation recompiles the graph and redeploys only the resources that changed.
 ## 6. Tear down
 
 ```sh
-npm run destroy
+@pm.run("destroy")
 ```
 
 ```sh

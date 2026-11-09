@@ -3,14 +3,14 @@
 ## Create a new project
 
 ```sh
-npm create notation@alpha my-app
+@pm.dlx("create-notation@alpha my-app")
 ```
 
 ## Install dependencies
 
 ```sh
 cd my-app
-npm install
+@pm.install()
 ```
 
 ## Prerequisites
@@ -37,7 +37,7 @@ aws_secret_access_key = ...
 To use a named profile instead:
 
 ```sh
-AWS_PROFILE=my-profile npm run deploy
+AWS_PROFILE=my-profile @pm.run("deploy")
 ```
 
 ### AWS permissions
