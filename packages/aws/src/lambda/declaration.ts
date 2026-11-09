@@ -22,6 +22,24 @@ export type SqsEvent<
 > = {
   kind: "sqs";
   schema: S;
+  /** The queue that the infra build maps to the function. */
+  queue?: SqsSource<S>;
+  options?: SqsOptions;
+};
+
+/**
+ * A queue that `sqs()` reads, such as one from `queue()`. In the function it
+ * holds only the queue's schema.
+ */
+export type SqsSource<
+  S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
+> = { readonly schema: S };
+
+export type SqsOptions = {
+  /** The most messages the function receives in one invocation. */
+  batchSize?: number;
+  /** Seconds to wait to fill a batch before the function is invoked. */
+  maxBatchingWindow?: number;
 };
 
 /**
@@ -75,14 +93,32 @@ export type LambdaEvent = SqsEvent | HttpEvent | ScheduledEvent;
 export type LambdaEventKind = LambdaEvent["kind"] | "none";
 
 /**
- * The function receives SQS messages.
+ * The function receives the messages of `queue`. The infra build maps the
+ * queue to the function, and `decode()` validates each message's JSON body
+ * with the queue's schema.
+ */
+export function sqs<S extends StandardSchemaV1 | undefined>(
+  queue: SqsSource<S>,
+  options?: SqsOptions,
+): SqsEvent<S>;
+/**
+ * The function receives SQS messages, from a queue that infra maps to it.
  * @param schema Validates the JSON body of each message in `decode()`.
- * @runtime schema
  */
 export function sqs<S extends StandardSchemaV1 | undefined = undefined>(
   schema?: S,
-): SqsEvent<S> {
-  return { kind: "sqs", schema: schema as S };
+): SqsEvent<S>;
+/**
+ * In the runtime build, a queue from an infra module is replaced with its
+ * schema, as `{ schema }`.
+ * @runtime source
+ */
+export function sqs(source?: unknown, options?: SqsOptions): SqsEvent {
+  if (typeof source === "object" && source !== null && "~standard" in source) {
+    return { kind: "sqs", schema: source as StandardSchemaV1 };
+  }
+  const queue = source as SqsSource | undefined;
+  return { kind: "sqs", schema: queue?.schema, queue, options };
 }
 
 /**
@@ -162,22 +198,21 @@ type HttpHandler<Event> = (
   context: Context,
 ) => ApiGatewayResult | Promise<ApiGatewayResult>;
 
-type HandlerFor<E> =
-  E extends SqsEvent
-    ? (
-        event: SQSEvent,
-        context: Context,
-      ) => SQSBatchResponse | void | Promise<SQSBatchResponse | void>
-    : E extends HttpEvent<any, JwtAuth<infer Claims>>
-      ? HttpHandler<APIGatewayJWTProxyEventV2<Claims>>
-      : E extends HttpEvent
-        ? HttpHandler<APIGatewayProxyEventV2>
-        : E extends ScheduledEvent
-          ? (
-              event: EventBridgeEvent<"Scheduled Event", unknown>,
-              context: Context,
-            ) => void | Promise<void>
-          : (event: unknown, context: Context) => unknown;
+type HandlerFor<E> = E extends SqsEvent
+  ? (
+      event: SQSEvent,
+      context: Context,
+    ) => SQSBatchResponse | void | Promise<SQSBatchResponse | void>
+  : E extends HttpEvent<any, JwtAuth<infer Claims>>
+    ? HttpHandler<APIGatewayJWTProxyEventV2<Claims>>
+    : E extends HttpEvent
+      ? HttpHandler<APIGatewayProxyEventV2>
+      : E extends ScheduledEvent
+        ? (
+            event: EventBridgeEvent<"Scheduled Event", unknown>,
+            context: Context,
+          ) => void | Promise<void>
+        : (event: unknown, context: Context) => unknown;
 
 /**
  * The type of the `handler` export of a Lambda's module, from the

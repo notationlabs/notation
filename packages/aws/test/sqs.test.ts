@@ -1,11 +1,14 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { expect, test } from "vitest";
+import { expect, expectTypeOf, test } from "vitest";
 import { lambda as awsLambda } from "@notation/aws.iac";
 import { createPlan } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
-import { collectResourceGraph } from "@notation/resource";
+import {
+  collectResourceGraph,
+  type StandardSchemaV1,
+} from "@notation/resource";
 import {
   $lambda,
   http,
@@ -267,4 +270,71 @@ test("consume accepts a declaration from another copy of the package", async () 
     queue({ name: "orders" }).consume(() => fn);
   });
   expect(lambdaGroup(graph, "process").id).toBe("process");
+});
+
+const Order: StandardSchemaV1<unknown, { orderId: string }> = {
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate: (value) =>
+      typeof (value as any)?.orderId === "string"
+        ? { value: value as { orderId: string } }
+        : { issues: [{ message: "orderId must be a string" }] },
+  },
+};
+
+test("sqs(queue) in a declaration maps the queue to the function", async () => {
+  let orders!: ReturnType<typeof queue<typeof Order>>;
+  const graph = await collectResourceGraph(() => {
+    orders = queue({ name: "orders", schema: Order });
+    inModule(
+      $lambda({
+        id: "process",
+        event: () => sqs(orders, { batchSize: 5 }),
+      }),
+    );
+  });
+  const fn = lambdaGroup(graph, "process");
+  deploy(orders);
+  fn.role.setOutput({ RoleName: "process-role" } as any);
+  fn.fn.setOutput({ FunctionName: "process" } as any);
+
+  expect(mappingOf(orders).id).toBe("orders-process-mapping");
+  expect(await mappingOf(orders).getParams()).toMatchObject({
+    EventSourceArn: queueArn("orders"),
+    BatchSize: 5,
+  });
+  expect((await fn.policy.getParams()).PolicyDocument.Statement).toEqual([
+    readStatement("orders"),
+  ]);
+});
+
+test("sqs(queue) can name a queue that a later module declares", async () => {
+  let orders!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    inModule($lambda({ id: "process", event: () => sqs(orders) }));
+    orders = queue({ name: "orders" });
+  });
+
+  expect(mappingOf(orders).id).toBe("orders-process-mapping");
+});
+
+test("decode() validates a message with the queue's schema", async () => {
+  const orders = queue({ name: "orders", schema: Order });
+  const fn = $lambda({ id: "process", event: () => sqs(orders) });
+  const decoded = await fn.decode({ body: '{"orderId":"a"}' } as any);
+
+  expectTypeOf(decoded).toEqualTypeOf<{ orderId: string }>();
+  expect(decoded).toEqual({ orderId: "a" });
+  await expect(fn.decode({ body: "{}" } as any)).rejects.toThrow(
+    "orderId must be a string",
+  );
+});
+
+test("decode() reads the schema from the object that the runtime build passes", async () => {
+  const fn = $lambda({ id: "process", event: () => sqs({ schema: Order }) });
+
+  await expect(fn.decode({ body: "{}" } as any)).rejects.toThrow(
+    "orderId must be a string",
+  );
 });

@@ -4,9 +4,14 @@ import {
   whenLoaded,
   type LambdaTarget,
 } from "src/lambda/lambda-declaration";
+import type { LambdaGroup } from "src/lambda/lambda";
+import type { SqsOptions } from "src/lambda/declaration";
+import type { StandardSchemaV1 } from "@notation/resource";
 import { awsName } from "src/naming";
 
-export type QueueConfig = {
+export type QueueConfig<
+  S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
+> = {
   /**
    * Names the queue, and keys it in state. The queue is named
    * `<app>--<stage>--<name>` in AWS. Changing the name replaces the queue.
@@ -14,6 +19,12 @@ export type QueueConfig = {
    */
   name: string;
   fifo?: boolean;
+  /**
+   * Validates the JSON body of each message, in `decode()` of a Lambda
+   * declared with `sqs(queue)`. Import it from a shared module, so the
+   * function can load it.
+   */
+  schema?: S;
   /** Seconds a received message stays hidden from other consumers. */
   visibilityTimeout?: number;
   /** Seconds the queue keeps a message. */
@@ -33,22 +44,21 @@ export type SqsAction =
   | "GetQueueUrl"
   | "PurgeQueue";
 
-export type ConsumeOptions = {
-  /** The most messages the function receives in one invocation. */
-  batchSize?: number;
-  /** Seconds to wait to fill a batch before the function is invoked. */
-  maxBatchingWindow?: number;
-};
+export type ConsumeOptions = SqsOptions;
 
-export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
+export class QueueGroup<
+  S extends StandardSchemaV1 | undefined = undefined,
+> extends aws.AwsResourceGroup<QueueConfig> {
   readonly queue: aws.sqs.QueueInstance;
+  readonly schema: S;
   /** The queue's ARN. It is an output value, filled in at deploy. */
   readonly arn: string;
   /** The queue's URL. It is an output value, filled in at deploy. */
   readonly url: string;
 
-  constructor(config: QueueConfig) {
+  constructor({ schema, ...config }: QueueConfig<S>) {
     super("aws/sqs/queue", config.name, config);
+    this.schema = schema as S;
     this.queue = this.add(
       new aws.sqs.Queue(`${config.name}-queue`, {
         config: {
@@ -93,6 +103,14 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
       "sqs",
       "none",
     ]);
+    this["~subscribe"](lambdaGroup, options);
+  }
+
+  /**
+   * Maps the queue to a Lambda, for `sqs(queue)` in a declaration and for
+   * `consume()`.
+   */
+  "~subscribe"(lambdaGroup: LambdaGroup, options: SqsOptions = {}): void {
     const id = `${this.id}-${lambdaGroup.fn.id}-mapping`;
     if (this.resources.some((resource) => resource.id === id)) {
       throw new Error(`Queue ${this.id} already feeds ${lambdaGroup.fn.id}`);
@@ -105,7 +123,7 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
         ],
       },
     });
-    return this.add(
+    this.add(
       new aws.lambda.LambdaEventSourceMapping(id, {
         config: {
           EventSourceArn: this.arn,
@@ -121,8 +139,10 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
 
 /**
  * Declares an SQS queue.
- * @resource
+ * @resource runtime: schema
  */
-export function queue(config: QueueConfig): QueueGroup {
+export function queue<S extends StandardSchemaV1 | undefined = undefined>(
+  config: QueueConfig<S>,
+): QueueGroup<S> {
   return new QueueGroup(config);
 }

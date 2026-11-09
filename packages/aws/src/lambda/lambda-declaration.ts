@@ -43,6 +43,10 @@ export type LambdaDeclarationConfig<
   memory?: number;
 };
 
+type Subscribable = {
+  "~subscribe"(group: LambdaGroup, options?: unknown): unknown;
+};
+
 type Registered = { build: () => LambdaGroup; kind: () => LambdaEventKind };
 
 // Holds a declaration's registration, on the declaration. Two installed
@@ -121,6 +125,16 @@ function buildGroup(
   const statements = config.policy?.() ?? [];
   if (statements.length > 0) {
     group.policy.contribute({ PolicyDocument: { Statement: statements } });
+  }
+  const event = config.event?.();
+  if (event?.kind === "sqs" && event.queue) {
+    const queue = event.queue as Partial<Subscribable>;
+    if (typeof queue["~subscribe"] !== "function") {
+      throw new Error(
+        `The Lambda "${config.id}" is declared with sqs(queue), but the value passed to sqs() is not a queue from queue().`,
+      );
+    }
+    queue["~subscribe"](group, event.options);
   }
   return group;
 }
