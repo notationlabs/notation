@@ -61,7 +61,7 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
     export const lambda = $lambda({
       id: "process-orders",
       timeout: 5,
-      event: () => sqs(ordersQueue, { batchSize: 5 }),
+      event: () => sqs.bind(ordersQueue, { batchSize: 5 }),
       policy: () => [ordersQueue.grant(["SendMessage"])],
       env: () => ({ QUEUE_URL: ordersQueue.url, LOG_LEVEL: "info" }),
     });

@@ -104,8 +104,11 @@ function writeAwsPackage() {
     [
       `/** @declaration shared: id, event, env; keys: env; entry: handler */`,
       `export function $lambda(config) { globalThis.declared = config; (globalThis.ran ??= []).push(config.id); return { infra: true }; }`,
-      `/** @runtime queue */`,
-      `export function sqs(queue, options) { return { kind: "sqs", schema: queue?.schema }; }`,
+      `export const sqs = {`,
+      `  /** @runtime queue */`,
+      `  bind(queue, options) { return { kind: "sqs", schema: queue?.schema }; },`,
+      `  schema(schema) { return { kind: "sqs", schema }; },`,
+      `};`,
       `/** @runtime options */`,
       `export function http(options) { return { kind: "http", schema: options.body }; }`,
       `/** @resource */`,
@@ -118,7 +121,10 @@ function writeAwsPackage() {
       `export function $lambda(config) {`,
       `  return { options: Object.keys(config), env: () => config.env(), event: () => config.event() };`,
       `}`,
-      `export function sqs(queue, options) { return { kind: "sqs", schema: queue?.schema }; }`,
+      `export const sqs = {`,
+      `  bind(queue, options) { return { kind: "sqs", schema: queue?.schema }; },`,
+      `  schema(schema) { return { kind: "sqs", schema }; },`,
+      `};`,
       `export function http(options) { return { kind: "http", schema: options.body }; }`,
       `export function eventSourceMapping() { throw new Error("infra only"); }`,
     ].join("\n"),
@@ -157,7 +163,7 @@ const handlerModule = `
 
   export const lambda = $lambda({
     id: "process-orders",
-    event: () => sqs(orders),
+    event: () => sqs.bind(orders),
     policy: () => [orders.url],
     env: () => ({ QUEUE_URL: orders.url }),
   });
@@ -377,7 +383,16 @@ describe("declaration modules", () => {
 
   // The infra module calls queue() through a function of its own, so the
   // build doesn't see that it is infra. The build can't find the options of a
-  // queue that a helper makes, so the tests declare the function with sqs().
+  // queue that a helper makes, so the tests declare the function with
+  // sqs.schema(Order).
+  const withSchemaEvent = (handler: string) =>
+    handler
+      .replace("sqs.bind(orders)", "sqs.schema(Order)")
+      .replace(
+        `import { orders } from "../infra/orders";`,
+        `import { orders } from "../infra/orders";\n  import { Order } from "../shared/schema";`,
+      );
+
   function writeFactoryInfra() {
     write(
       "infra/helpers.ts",
@@ -401,7 +416,7 @@ describe("declaration modules", () => {
   it.each([false, true])(
     "leaves out an infra module that calls a factory, with verbatimModuleSyntax %s",
     async (verbatimModuleSyntax) => {
-      writeProject(handlerModule.replace("sqs(orders)", "sqs()"));
+      writeProject(withSchemaEvent(handlerModule));
       writeFactoryInfra();
       write(
         "tsconfig.json",
@@ -432,7 +447,11 @@ describe("declaration modules", () => {
           "export const handler = async () =>",
           "export const handler = async () => label() &&",
         )
-        .replace("sqs(orders)", "sqs()"),
+        .replace("sqs.bind(orders)", "sqs.schema(Order)")
+        .replace(
+          `import { orders } from "../infra/orders";`,
+          `import { orders } from "../infra/orders";\n  import { Order } from "../shared/schema";`,
+        ),
     );
     writeFactoryInfra();
     write(
@@ -810,14 +829,14 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
           `import { orders } from "../infra/orders";`,
           `import { orders } from "../infra/orders";\n  import { dlq } from "../lib/queues";`,
         )
-        .replace("event: () => sqs(orders)", "event: () => sqs(dlq)"),
+        .replace("event: () => sqs.bind(orders)", "event: () => sqs.bind(dlq)"),
     );
     write(
       "lib/queues.ts",
       `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
     );
     await expect(buildProject()).rejects.toThrow(
-      /Error: runtime\/process-orders\.ts:11:22: an option of \$lambda that the function keeps refers to dlq, from lib\/queues\.ts\. lib\/queues\.ts calls queue at its top level, so the function can't load it\. The runtime build removes infra\. Read infra values in the function through the declaration's env\(\)\. Move a plain value that a kept option uses to a shared module \(files\.shared\), or to a file that no glob matches\./,
+      /Error: runtime\/process-orders\.ts:11:27: an option of \$lambda that the function keeps refers to dlq, from lib\/queues\.ts\. lib\/queues\.ts calls queue at its top level, so the function can't load it\. The runtime build removes infra\. Read infra values in the function through the declaration's env\(\)\. Move a plain value that a kept option uses to a shared module \(files\.shared\), or to a file that no glob matches\./,
     );
   });
 
@@ -841,7 +860,7 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
             `import { $lambda, sqs } from "@notation/aws/lambda";`,
             `import { $lambda, http } from "@notation/aws/lambda";\n  import { Order } from "../lib/defs";`,
           )
-          .replace("sqs(orders)", "http({ body: Order })"),
+          .replace("sqs.bind(orders)", "http({ body: Order })"),
       );
       write(
         "lib/defs.ts",
@@ -883,7 +902,7 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
     writeProject(
       handlerModule
         .replace("{ $lambda, sqs }", "{ $lambda, http }")
-        .replace("sqs(orders)", "http({ body: orders.schema })"),
+        .replace("sqs.bind(orders)", "http({ body: orders.schema })"),
     );
     await expect(buildProject()).rejects.toThrow(
       'runtime/process-orders.ts:10:31: an option of $lambda that the function keeps refers to orders, from infra/orders.ts, an infra module (files.infra: "infra/**", the default).',
@@ -1183,7 +1202,7 @@ describe("a monorepo with the config at its root", () => {
           `import { orders } from "../infra/orders";`,
           `import { orders } from "../infra/orders";\n  import { dlq } from "../packages/api/queues";`,
         )
-        .replace("event: () => sqs(orders)", "event: () => sqs(dlq)"),
+        .replace("event: () => sqs.bind(orders)", "event: () => sqs.bind(dlq)"),
     );
     write(
       "packages/api/package.json",
@@ -1194,7 +1213,7 @@ describe("a monorepo with the config at its root", () => {
       `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
     );
     await expect(buildProject()).rejects.toThrow(
-      "runtime/process-orders.ts:11:22: an option of $lambda that the function keeps refers to dlq, from packages/api/queues.ts. packages/api/queues.ts calls queue at its top level, so the function can't load it.",
+      "runtime/process-orders.ts:11:27: an option of $lambda that the function keeps refers to dlq, from packages/api/queues.ts. packages/api/queues.ts calls queue at its top level, so the function can't load it.",
     );
   });
 });
@@ -1290,7 +1309,7 @@ describe("shared modules", () => {
   // The infra module that declares the queue is one folder deeper than the
   // function's module, so its relative import of the schema would not resolve
   // from the function's module.
-  it("bundles the schema of a queue that the function reads with sqs(queue), and leaves out the infra module", async () => {
+  it("bundles the schema of a queue that the function reads with sqs.bind(queue), and leaves out the infra module", async () => {
     writeProject();
     write(
       "shared/schema.ts",
@@ -1308,7 +1327,7 @@ describe("shared modules", () => {
     const { bundle } = await buildProject();
 
     expect(bundle).toContain("// shared/schema.ts");
-    expect(bundle).toContain("event: () => sqs({ schema: Order })");
+    expect(bundle).toContain("event: () => sqs.bind({ schema: Order })");
     expect(bundle).not.toContain("infra/");
     expect(bundle).not.toContain("placeholder-url");
     expect(bundle).not.toContain("sdk loaded");
