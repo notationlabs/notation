@@ -10,7 +10,7 @@ export const lambda = $lambda({
   id: "orders",
   timeout: 5,
   memory: 64,
-  event: () => sqs(orderQueue, { batchSize: 5 }),
+  event: () => sqs.bind(orderQueue, { batchSize: 5 }),
   env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
 });
 
