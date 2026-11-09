@@ -29,13 +29,13 @@ export type ScheduleConfig = ScheduleOptions & {
 export function schedule<const Id extends string>(
   config: Omit<ScheduleConfig, "id"> & { id: NameSafe<Id> },
 ): void {
-  const { target, ...options } = config;
+  const { target, id, ...options } = config;
   whenLoaded(() => {
     const { group: lambdaGroup } = resolveLambda(
       target,
       "schedule()",
       "eventBridge",
     );
-    new ScheduleGroup(options as ScheduleOptions, lambdaGroup);
+    new ScheduleGroup({ id, ...options }, lambdaGroup);
   });
 }

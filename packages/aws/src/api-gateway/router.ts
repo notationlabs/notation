@@ -14,8 +14,9 @@ function routes<A extends JwtAuthorizerGroup<any> | undefined>(
   apiGroup: ApiGroup,
   auth: A,
 ): Routes<A> {
-  const add = (method: HttpMethod) => (path: `/${string}`, target: any) =>
-    route(apiGroup, method, path, auth, target);
+  const add =
+    (method: HttpMethod) => (path: `/${string}`, target: ApiGatewayTarget<A>) =>
+      route(apiGroup, method, path, auth, target);
   return {
     get: add("GET"),
     post: add("POST"),
