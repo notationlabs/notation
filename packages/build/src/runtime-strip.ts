@@ -1,6 +1,8 @@
 import MagicString from "magic-string";
 import {
   freeReferences,
+  isFunction,
+  leadingJsDoc,
   location,
   unwrap,
   walk,
@@ -8,7 +10,7 @@ import {
   type Reference,
 } from "./ast";
 import type { Declaration, ModuleAnalysis } from "./analyze";
-import type { Marks } from "./marks";
+import { paramNames, parseMark, type Mark } from "./marks";
 import type { ModuleAnalyses } from "./modules";
 
 /**
@@ -23,7 +25,7 @@ import type { ModuleAnalyses } from "./modules";
  *    arguments. The others become `undefined`. A runtime argument that names
  *    a resource from an infra module becomes an object of the options that
  *    the resource's mark lists as runtime, imported from where infra imports
- *    them: `sqs(orderQueue)` becomes `sqs({ schema: Order })`.
+ *    them: `sqs.bind(orderQueue)` becomes `sqs.bind({ schema: Order })`.
  * 4. An import whose uses were all removed is removed too, so the bundle
  *    doesn't load the module it imports from. Without this, the module would
  *    still load when `verbatimModuleSyntax` keeps unused imports.
@@ -92,7 +94,7 @@ export function stripForRuntime(
     );
     walk(property.value, (node) => {
       if (node.type !== "CallExpression") return;
-      const runtimeMark = markOfCallee(node.callee, analysis, marks);
+      const runtimeMark = markOfCallee(node.callee, analysis, analyses);
       if (runtimeMark?.kind !== "runtime") return;
       node.arguments.forEach((argument: Node, position: number) => {
         if (runtimeMark.positions.includes(position)) {
@@ -199,7 +201,7 @@ function resourceStub(
 
   const text = source.slice(argument.start, argument.end);
   const owner = analyses.fromFile(found.value.file);
-  const mark = owner && markOfCallee(call.callee, owner, analyses.marks);
+  const mark = owner && markOfCallee(call.callee, owner, analyses);
   // A member of a resource, such as `orderQueue.schema`, is an infra value.
   if (mark?.kind === "resource" && found.rest > 0) return undefined;
   if (!owner || mark?.kind !== "resource") {
@@ -395,7 +397,15 @@ function mergeRanges(ranges: [number, number][]): [number, number][] {
   return merged;
 }
 
-function markOfCallee(callee: Node, analysis: ModuleAnalysis, marks: Marks) {
+// The mark of the function that a call calls. The callee can be a marked
+// function that the module declares or imports, a member of a namespace
+// import, or a member of an imported object literal, such as `sqs.bind`.
+function markOfCallee(
+  callee: Node,
+  analysis: ModuleAnalysis,
+  analyses: ModuleAnalyses,
+): Mark | undefined {
+  const { marks } = analyses;
   const { table } = analysis;
   const file = table.module.file;
   callee = unwrap(callee);
@@ -407,17 +417,44 @@ function markOfCallee(callee: Node, analysis: ModuleAnalysis, marks: Marks) {
       ? marks.importMark(file, binding)
       : undefined;
   }
-  if (
-    callee.type === "MemberExpression" &&
-    !callee.computed &&
-    callee.object.type === "Identifier"
-  ) {
-    const binding = table.imports.get(callee.object.name);
-    if (binding?.imported === "*") {
-      return marks.importMark(file, binding, undefined, callee.property.name);
-    }
+  const path = memberPath(callee);
+  if (!path) return undefined;
+  const binding = table.imports.get(path.root.name);
+  if (!binding) return undefined;
+  const keys = [...path.keys];
+  if (binding.imported === "*" && keys.length === 1) {
+    return marks.importMark(file, binding, undefined, keys[0]);
   }
-  return undefined;
+  const resolved = marks.resolve(binding.source, file);
+  const exportName = binding.imported === "*" ? keys.shift() : binding.imported;
+  if (!resolved || exportName === undefined) return undefined;
+  const name = keys.pop();
+  const start = exportedValue(resolved, exportName, analyses, new Set());
+  const found = start && followKeys(start, keys, analyses);
+  if (!found || found.rest > 0 || name === undefined) return undefined;
+  return memberMark(found.value, name, analyses);
+}
+
+// The mark of the function that a member of an object literal holds. The
+// mark is on the member, as for a method, or on the function that the member
+// names.
+function memberMark(
+  object: Located,
+  name: string,
+  analyses: ModuleAnalyses,
+): Mark | undefined {
+  const node = unwrap(object.node);
+  if (node.type !== "ObjectExpression") return undefined;
+  const property = node.properties.find(
+    (p: Node) => p.type === "Property" && keyOf(p) === name,
+  );
+  const table = property && analyses.marks.table(object.file);
+  if (!table) return undefined;
+  const value = unwrap(property.value);
+  if (value.type === "Identifier") return table.marks.get(value.name);
+  if (!isFunction(value)) return undefined;
+  const jsDoc = leadingJsDoc(table.module, property.start);
+  return jsDoc ? parseMark(jsDoc, paramNames(value), object.file) : undefined;
 }
 
 function checkReference(

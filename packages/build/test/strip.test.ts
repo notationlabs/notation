@@ -207,11 +207,11 @@ describe("stripForRuntime", () => {
     const { analysis, analyses } = setup(
       handlerModule.replace(
         "http({ body: Order })",
-        "sqs(ordersQueue, { batchSize: unused })",
+        "sqs.bind(ordersQueue, { batchSize: unused })",
       ),
     );
     const { code } = stripForRuntime(analysis, analyses)!;
-    expect(code).toContain("event: () => sqs({}, undefined),");
+    expect(code).toContain("event: () => sqs.bind({}, undefined),");
     expect(code).not.toContain("../infra/orders");
   });
 
@@ -288,7 +288,7 @@ describe("stripForRuntime", () => {
   describe("a resource in a runtime argument", () => {
     const source = handlerModule.replace(
       "http({ body: Order })",
-      "sqs(ordersQueue)",
+      "sqs.bind(ordersQueue)",
     );
     const strip = (
       infraFiles: Record<string, string>,
@@ -323,9 +323,65 @@ describe("stripForRuntime", () => {
         `import { Order as __notation_schema_0 } from "/project/shared/schema.ts";`,
       );
       expect(code).toContain(
-        "event: () => sqs({ schema: __notation_schema_0 }),",
+        "event: () => sqs.bind({ schema: __notation_schema_0 }),",
       );
       expect(code).not.toContain("../infra/orders");
+    });
+
+    it("leaves sqs.schema() with a schema from a shared module", () => {
+      const handler = source
+        .replace("sqs.bind(ordersQueue)", "sqs.schema(Order)")
+        .replace(`from "./schema"`, `from "../shared/schema"`);
+      const { code } = strip({}, handler);
+      expect(code).toContain("event: () => sqs.schema(Order),");
+      expect(code).toContain(
+        `import { Order, type OrderType } from "../shared/schema";`,
+      );
+      expect(code).not.toContain("__notation_");
+    });
+
+    it.each([
+      [
+        "a mark on a function that a member names",
+        [
+          `/** @declaration shared: id, event, env; keys: env; entry: handler */`,
+          `export function $lambda(config) { return config; }`,
+          `/** @runtime queue */`,
+          `function bindQueue(queue) { return { kind: "sqs", schema: queue?.schema }; }`,
+          `export const sqs = { bind: bindQueue };`,
+        ].join("\n"),
+        {},
+      ],
+      [
+        "a mark on a member of an object that a compiled chunk exports",
+        `export { u as sqs, $lambda, http } from "./chunk.js";`,
+        {
+          "node_modules/@notation/aws/chunk.js": [
+            `/** @declaration shared: id, event, env; keys: env; entry: handler */`,
+            `function $lambda(config) { return config; }`,
+            `/** @runtime options */`,
+            `function http(options) { return options; }`,
+            `const sqs = {`,
+            `  /** @runtime queue */`,
+            `  bind(queue, options) { return { kind: "sqs", schema: queue?.schema }; },`,
+            `};`,
+            `export { sqs as u, $lambda, http };`,
+          ].join("\n"),
+        },
+      ],
+    ])("finds %s", (_, lambdaModule, extra) => {
+      const { code } = strip({
+        "node_modules/@notation/aws/lambda.js": lambdaModule,
+        ...extra,
+        "infra/orders.ts": [
+          `import { createQueue } from "@notation/aws/sqs";`,
+          `import { Order } from "../shared/schema";`,
+          `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+        ].join("\n"),
+      });
+      expect(code).toContain(
+        "event: () => sqs.bind({ schema: __notation_schema_0 }),",
+      );
     });
 
     it("imports a schema from a tsconfig alias by its absolute path", () => {
@@ -376,7 +432,10 @@ describe("stripForRuntime", () => {
         ...lines,
       ].join("\n");
     const withArgument = (argument: string, importLine?: string) => {
-      let handler = source.replace("sqs(ordersQueue)", `sqs(${argument})`);
+      let handler = source.replace(
+        "sqs.bind(ordersQueue)",
+        `sqs.bind(${argument})`,
+      );
       if (importLine)
         handler = handler.replace(
           `import { ordersQueue, unused } from "../infra/orders";`,
@@ -414,18 +473,18 @@ describe("stripForRuntime", () => {
           `import { queues, unused } from "../infra/orders";`,
         ),
       );
-      expect(code).toContain("sqs({ schema: __notation_schema_0 })");
+      expect(code).toContain("sqs.bind({ schema: __notation_schema_0 })");
       expect(code).not.toContain("../infra/orders");
     });
 
     it.each([
       [
         "a const",
-        "() => { const ordersQueue = undefined; return sqs(ordersQueue); }",
+        "() => { const ordersQueue = undefined; return sqs.bind(ordersQueue); }",
       ],
-      ["a parameter", "(ordersQueue = undefined) => sqs(ordersQueue)"],
+      ["a parameter", "(ordersQueue = undefined) => sqs.bind(ordersQueue)"],
     ])("leaves a name that %s shadows", (_, event) => {
-      const handler = source.replace("() => sqs(ordersQueue)", event);
+      const handler = source.replace("() => sqs.bind(ordersQueue)", event);
       const { code } = strip(
         {
           "infra/orders.ts": queueModule(
@@ -450,7 +509,7 @@ describe("stripForRuntime", () => {
           `import * as infra from "../infra/orders";`,
         ),
       );
-      expect(code).toContain("sqs({ schema: __notation_schema_0 })");
+      expect(code).toContain("sqs.bind({ schema: __notation_schema_0 })");
     });
 
     it("fails when a helper makes the object that holds the resource", () => {
@@ -468,7 +527,7 @@ describe("stripForRuntime", () => {
           ),
         ),
       ).toThrow(
-        "runtime/handler.ts:16:20: the function reads queues.orders from infra/orders.ts",
+        "runtime/handler.ts:16:25: the function reads queues.orders from infra/orders.ts",
       );
     });
 
@@ -496,7 +555,7 @@ describe("stripForRuntime", () => {
           `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
         ].join("\n"),
       });
-      expect(code).toContain("sqs({ schema: __notation_schema_0 })");
+      expect(code).toContain("sqs.bind({ schema: __notation_schema_0 })");
     });
 
     it("has no options when the resource has none", () => {
@@ -506,7 +565,7 @@ describe("stripForRuntime", () => {
           `export const ordersQueue = createQueue({ id: "orders" });`,
         ].join("\n"),
       });
-      expect(code).toContain("sqs({})");
+      expect(code).toContain("sqs.bind({})");
     });
 
     it("gives the infra error for a resource whose mark lists no runtime options", () => {
@@ -626,7 +685,7 @@ describe("stripForRuntime", () => {
           ].join("\n"),
         }),
       ).toThrow(
-        "runtime/handler.ts:16:20: the function reads ordersQueue from infra/orders.ts, but ordersQueue isn't a call to a resource function, so the build can't find its options. If ordersQueue is a resource, declare it with a call such as `queue({ name: \"orders\", schema: Order })`, as a top-level const or in an object literal. If it is a plain value, such as a schema, move it to a shared module (files.shared).",
+        "runtime/handler.ts:16:25: the function reads ordersQueue from infra/orders.ts, but ordersQueue isn't a call to a resource function, so the build can't find its options. If ordersQueue is a resource, declare it with a call such as `queue({ name: \"orders\", schema: Order })`, as a top-level const or in an object literal. If it is a plain value, such as a schema, move it to a shared module (files.shared).",
       );
     });
 
@@ -639,7 +698,7 @@ describe("stripForRuntime", () => {
           ].join("\n"),
         }),
       ).toThrow(
-        "runtime/handler.ts:16:20: the function reads ordersQueue from infra/orders.ts, but ordersQueue isn't a call to a resource function",
+        "runtime/handler.ts:16:25: the function reads ordersQueue from infra/orders.ts, but ordersQueue isn't a call to a resource function",
       );
     });
   });

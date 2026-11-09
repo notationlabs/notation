@@ -34,7 +34,7 @@ export type DeclarationMark = {
 
 /**
  * Marks a function that builds part of a declaration's options, such as
- * `sqs(queue)`. Written `@runtime queue`, with the names of the parameters
+ * `sqs.bind(queue)`. Written `@runtime queue`, with the names of the parameters
  * that the runtime build keeps.
  */
 export type RuntimeMark = { kind: "runtime"; positions: number[] };
@@ -148,7 +148,7 @@ const list = (text: string) =>
 const nameOf = (node: Node): string =>
   node.type === "Identifier" ? node.name : String(node.value);
 
-function paramNames(fn: Node): string[] {
+export function paramNames(fn: Node): string[] {
   return fn.params.map((param: Node) => {
     const target = param.type === "AssignmentPattern" ? param.left : param;
     return target.type === "Identifier" ? target.name : "";
