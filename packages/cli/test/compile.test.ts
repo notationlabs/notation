@@ -882,12 +882,16 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
 describe("workspace packages outside the project root", () => {
   // A package outside the root, linked into the project's node_modules as a
   // workspace package is. It resolves @notation/aws from the project.
-  const writePackage = (name: string, files: Record<string, string>) => {
+  const writePackage = (
+    name: string,
+    files: Record<string, string>,
+    manifest: Record<string, unknown> = {},
+  ) => {
     const dir = realpathSync(mkdtempSync(path.join(tmpDir, `${name}-`)));
     outside.push(dir);
     writeFileSync(
       path.join(dir, "package.json"),
-      JSON.stringify({ name, type: "module", main: "./index.ts" }),
+      JSON.stringify({ name, type: "module", main: "./index.ts", ...manifest }),
     );
     for (const [file, contents] of Object.entries(files)) {
       writeFileSync(path.join(dir, file), contents);
@@ -908,19 +912,27 @@ describe("workspace packages outside the project root", () => {
     "fmt.ts": `export const fmt = () => "formatted";`,
   };
 
-  it("leaves out a package module that calls a resource function at its top level", async () => {
+  it("leaves out a package module that calls a resource function at its top level, when the package has no side effects", async () => {
     writeProject(withHandler(`import { fmt } from "acme-lib";`, "fmt()"));
-    writePackage("acme-lib", acmeLib);
+    writePackage("acme-lib", acmeLib, { sideEffects: false });
     const { bundle } = await buildProject();
     expect(bundle).not.toContain(`"dlq"`);
     expect(runHandler()).toBe("formatted");
   });
 
-  it("fails when the function uses a package module that calls a resource function, and says why it is infra", async () => {
-    writeProject(withHandler(`import { dlq } from "acme-lib";`, "dlq"));
+  it("fails when a package with side effects calls a resource function at its top level, and says to set sideEffects", async () => {
+    writeProject(withHandler(`import { fmt } from "acme-lib";`, "fmt()"));
     writePackage("acme-lib", acmeLib);
     await expect(buildProject()).rejects.toThrow(
-      "uses acme-lib/queues.ts, an infra module (it calls queue at its top level).",
+      'acme-lib/queues.ts calls queue at its top level. If the function doesn\'t use a value from acme-lib/queues.ts, add "sideEffects": false to the package.json of its package',
+    );
+  });
+
+  it("fails when the function uses a package module that calls a resource function", async () => {
+    writeProject(withHandler(`import { dlq } from "acme-lib";`, "dlq"));
+    writePackage("acme-lib", acmeLib, { sideEffects: false });
+    await expect(buildProject()).rejects.toThrow(
+      "a function that declares infrastructure: queue at acme-lib/queues.ts:2:",
     );
   });
 
@@ -957,7 +969,7 @@ describe("workspace packages outside the project root", () => {
     writeProject(
       withHandler(`import { label } from "../shared/labels";`, "label()"),
     );
-    writePackage("acme-lib", acmeLib);
+    writePackage("acme-lib", acmeLib, { sideEffects: false });
     write(
       "shared/labels.ts",
       `import { fmt } from "acme-lib";\nexport const label = () => fmt();`,
@@ -1026,11 +1038,14 @@ describe("a monorepo with the config at its root", () => {
     ]);
   });
 
-  it("leaves out a module of a package folder that calls a resource function at its top level", async () => {
+  it("leaves out a module of a package folder without side effects that calls a resource function at its top level", async () => {
     writeProject(
       withHandler(`import { label } from "../packages/api";`, "label()"),
     );
-    write("packages/api/package.json", JSON.stringify({ name: "@acme/api" }));
+    write(
+      "packages/api/package.json",
+      JSON.stringify({ name: "@acme/api", sideEffects: false }),
+    );
     write(
       "packages/api/index.ts",
       `export * from "./queues";\nexport const label = () => "orders";`,

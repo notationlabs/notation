@@ -38,7 +38,7 @@ export type ModuleAnalysis = {
   declaration?: Declaration;
   /**
    * The first call to a resource function at the top level of the module.
-   * The runtime build marks a package file with such a call as infra.
+   * Errors use it to say how to leave the call out of a function.
    */
   resourceCall?: MarkedReference;
 };

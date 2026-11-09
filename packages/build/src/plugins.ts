@@ -195,10 +195,8 @@ export type RuntimePluginOptions = {
  *
  * 1. Serves the generated entry.
  * 2. Reduces each declaration to its runtime options.
- * 3. Marks infra modules free of side effects, so the bundler drops each one
- *    whose bindings are no longer used. These are the modules that
- *    `files.infra` matches, and the package files outside `node_modules`
- *    that call a resource function at their top level.
+ * 3. Marks the modules that `files.infra` matches free of side effects, so
+ *    the bundler drops each one whose bindings are no longer used.
  * 4. Fails the build if an infra module, or an infra function from a
  *    package, is still in the bundle, and names the import chain.
  * 5. Fails the build if a shared module in the bundle breaks its rules.
@@ -225,26 +223,12 @@ export function runtimePlugin({
       filter: { id: { include: scriptFile, exclude: nodeModules } },
       handler(code, id) {
         if (!isProjectModule(id)) return null;
-        infraModules.delete(id);
-        const match = analyses.files.kindOf(id);
-        if (match?.kind === "infra") {
+        if (analyses.files.kindOf(id)?.kind === "infra") {
           infraModules.add(id);
           return { code, moduleSideEffects: false };
         }
         if (!mayHoldMarks(code)) return null;
-        const analysis = analyses.fromSource(id, code);
-        const isInfra =
-          !match &&
-          analysis.resourceCall !== undefined &&
-          analyses.files.isPackageFile(id);
-        if (isInfra) infraModules.add(id);
-        const stripped = stripForRuntime(analysis, analyses);
-        if (!stripped && !isInfra) return null;
-        return {
-          code: stripped?.code ?? code,
-          map: stripped?.map,
-          moduleSideEffects: isInfra ? false : undefined,
-        };
+        return stripForRuntime(analyses.fromSource(id, code), analyses) ?? null;
       },
     },
     watchChange(id) {
@@ -268,12 +252,8 @@ export function runtimePlugin({
               analyses.marks.resolve(binding.source, file) === id,
           );
           const chain = importChain(this, id).map(show);
-          const advice =
-            analyses.kindOf(id)?.kind === "infra"
-              ? " Read infra values through the declaration's env(). Move a plain value that the function needs, such as a constant, to a shared module (files.shared)."
-              : "";
           this.error(
-            `The function in ${show(module.path)} uses ${analyses.describeInfra(id)}${listUses(uses)}. It imports ${show(id)} through ${chain.join(" → ")}. The runtime build leaves infra out, so runtime code can't use it.${advice}`,
+            `The function in ${show(module.path)} uses ${analyses.describeInfra(id)}${listUses(uses)}. It imports ${show(id)} through ${chain.join(" → ")}. The runtime build leaves infra out, so runtime code can't use it. Read infra values through the declaration's env(). Move a plain value that the function needs, such as a constant, to a shared module (files.shared).`,
           );
         }
         // Infra functions from packages, such as queue() from

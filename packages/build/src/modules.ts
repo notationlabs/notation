@@ -100,22 +100,13 @@ export class ModuleAnalyses {
   }
 
   /**
-   * If a file is an infra module, says why, for an error message. A project
-   * file is infra if `files.infra` matches it. A package file outside
-   * `node_modules` has no kind, so it is infra if it calls a resource
-   * function at its top level.
+   * If `files.infra` matches a file, says so, with the glob, for an error
+   * message.
    */
   describeInfra(file: string): string | undefined {
     const match = this.kindOf(file);
-    if (match) {
-      return match.kind === "infra"
-        ? describeKind(this.show(file), match)
-        : undefined;
-    }
-    if (!this.files.isPackageFile(file)) return undefined;
-    const call = this.fromFile(file)?.resourceCall;
-    return call
-      ? `${this.show(file)}, an infra module (it calls ${call.name} at its top level)`
+    return match?.kind === "infra"
+      ? describeKind(this.show(file), match)
       : undefined;
   }
 
@@ -133,7 +124,8 @@ export class ModuleAnalyses {
    * If a project file in the runtime bundle calls a resource function at its
    * top level, says how to leave the call out of the function, for an error
    * message. A file that holds a declaration can't be infra, so the call has
-   * to move. A file that no glob matches can be added to `files.infra`.
+   * to move. A file that no glob matches can be added to `files.infra`. A
+   * package file can be left out by the package's `sideEffects`.
    */
   resourceCallAdvice(file: string): string | undefined {
     const name = this.show(file);
@@ -141,6 +133,9 @@ export class ModuleAnalyses {
     const call = analysis?.resourceCall;
     if (call && analysis.declaration) {
       return `${name} calls ${call.name} at its top level, and it holds a declaration, so it can't be an infra module. Move the call to ${call.name} to an infra module.`;
+    }
+    if (call && this.files.isPackageFile(file)) {
+      return `${name} calls ${call.name} at its top level. If the function doesn't use a value from ${name}, add "sideEffects": false to the package.json of its package, so that the bundler can leave it out.`;
     }
     if (!this.unmatchedResourceCall(file)) return undefined;
     return `${name} calls ${call!.name} at its top level, but files.infra doesn't match it. Add ${name} to files.infra to leave it out of the function.`;

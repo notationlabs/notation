@@ -189,8 +189,7 @@ export class FileKinds {
    * Whether a file is in a package: in `node_modules`, outside the project
    * root, or under a directory below the root with a `package.json` that has
    * a name. A workspace package resolves to its real path, outside
-   * `node_modules`. Such a file has no kind, and the build infers whether it
-   * is infra from its own code.
+   * `node_modules`. Such a file has no kind.
    */
   isPackageFile(file: string): boolean {
     if (nodeModules.test(file)) return true;
