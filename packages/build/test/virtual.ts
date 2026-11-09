@@ -58,6 +58,9 @@ export function sqs(schema, options) { return { kind: "sqs", schema, options }; 
 export const awsSqs = `
 /** @resource runtime: schema */
 export function createQueue(config) { return { url: "\${url}", grant: () => ({}) }; }
+
+/** @resource */
+export function createTopic(config) { return { arn: "\${arn}" }; }
 `;
 
 export const packages = {

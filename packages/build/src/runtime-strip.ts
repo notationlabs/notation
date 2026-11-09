@@ -161,7 +161,8 @@ function removeEmptiedImports(
  * resource: by absolute path for a project file, and by name for a package.
  * A value made by a call to a function that isn't a resource
  * function, such as a helper, fails, as the build can't find the resource's
- * options.
+ * options. A resource whose `@resource` mark lists no runtime options is
+ * left as it is, so it gets the error for an infra value.
  */
 function resourceStub(
   argument: Node,
@@ -196,6 +197,7 @@ function resourceStub(
       `${analyses.show(file)}:${location(source, argument.start)}: the function reads ${text} from ${analyses.show(resolved)}, so the build has to find the options of ${text} that the function uses. It finds them only when ${text} is a call to a resource function, such as \`queue({ name: "orders", schema: Order })\`, written as a top-level const or in an object literal, and not made by a helper or a loop.`,
     );
   }
+  if (mark.runtime.length === 0) return undefined;
   const definitionFile = found.value.file;
   const first = call.arguments[0];
   const config = first ? unwrap(first) : undefined;

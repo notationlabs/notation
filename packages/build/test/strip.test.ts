@@ -470,6 +470,19 @@ describe("stripForRuntime", () => {
       expect(code).toContain("sqs({  })");
     });
 
+    it("gives the infra error for a resource whose mark lists no runtime options", () => {
+      expect(() =>
+        strip({
+          "infra/orders.ts": [
+            `import { createTopic } from "@notation/aws/sqs";`,
+            `export const ordersQueue = createTopic({ id: "orders" });`,
+          ].join("\n"),
+        }),
+      ).toThrow(
+        "an option of $lambda that the function keeps refers to ordersQueue",
+      );
+    });
+
     it("fails when infra defines the schema", () => {
       expect(() =>
         strip({
