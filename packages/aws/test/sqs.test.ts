@@ -434,12 +434,7 @@ test("a declaration whose queue fails to map builds one group", () => {
   const fn = inModule(
     $lambda({ id: "process", event: () => sqs.bind(failing) }),
   );
-  const build = () =>
-    resolveLambda(
-      () => fn,
-      { caller: "test", action: (lambda) => `uses ${lambda}` },
-      "sqs",
-    );
+  const build = () => resolveLambda(() => fn, "test", "sqs");
 
   expect(build).toThrow("mapping failed");
   expect(build).toThrow("makes its own queue mapping");
@@ -484,15 +479,6 @@ test("decode() with a schema that takes any value returns the parsed JSON", asyn
   );
 });
 
-test("a queue with no schema is a type error, and throws", () => {
-  expect(() =>
-    // @ts-expect-error a queue must have a schema
-    queue({ id: "orders" }),
-  ).toThrow(
-    'queue({ id: "orders" }) has no schema. Give it a Standard Schema, such as v.unknown() for a queue that takes any JSON body.',
-  );
-});
-
 test("decode() reads the schema from the object that the runtime build passes", async () => {
   const fn = $lambda({
     id: "process",
@@ -515,7 +501,7 @@ test("eventSourceMapping of a declaration that maps a queue itself throws", asyn
       eventSourceMapping({ source: orders, target: () => fn });
     }),
   ).rejects.toThrow(
-    `eventSourceMapping() maps the queue "orders" to the Lambda "process", but the Lambda makes its own queue mapping in its declaration, with event: () => sqs.bind(queue). Make the queue mapping in one place: remove the eventSourceMapping() call, or declare the Lambda with event: () => sqs.schema(schema).`,
+    `eventSourceMapping() can't wire the Lambda "process", because the Lambda makes its own queue mapping in its declaration, with event: () => sqs.bind(queue). Make the queue mapping in one place: remove the eventSourceMapping() call, or declare the Lambda with event: () => sqs.schema(schema).`,
   );
 });
 

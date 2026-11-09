@@ -44,10 +44,7 @@ export function eventSourceMapping<S extends StandardSchemaV1>(
     const queueName = queueNameOf(source);
     const { group, event } = resolveLambda(
       target,
-      {
-        caller: "eventSourceMapping()",
-        action: (lambda) => `maps ${queueName} to ${lambda}`,
-      },
+      "eventSourceMapping()",
       "sqs",
     );
     if (event?.kind === "sqs" && source.schema !== event.schema) {

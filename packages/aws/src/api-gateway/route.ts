@@ -116,10 +116,7 @@ export function route<A extends JwtAuthorizerGroup<any> | undefined>(
     const routeName = `${method} ${path}`;
     const { group: lambdaGroup, event } = resolveLambda(
       target,
-      {
-        caller: "route()",
-        action: (lambda) => `routes ${routeName} to ${lambda}`,
-      },
+      "route()",
       auth ? "apiGateway-jwt" : "apiGateway",
     );
     // Either side may have no claims schema. Without one in the authorizer,

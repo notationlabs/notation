@@ -33,10 +33,7 @@ export function schedule<const Id extends string>(
   whenLoaded(() => {
     const { group: lambdaGroup } = resolveLambda(
       target,
-      {
-        caller: "schedule()",
-        action: (lambda) => `invokes ${lambda} on the schedule "${options.id}"`,
-      },
+      "schedule()",
       "eventBridge",
     );
     new ScheduleGroup(options as ScheduleOptions, lambdaGroup);

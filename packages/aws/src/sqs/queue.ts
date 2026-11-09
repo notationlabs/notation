@@ -63,11 +63,6 @@ export class QueueGroup<
   constructor({ schema, ...config }: QueueConfig<S>) {
     assertId("queue()", config.id);
     assertName("queue()", config.name);
-    if (typeof schema?.["~standard"]?.validate !== "function") {
-      throw new Error(
-        `queue({ id: "${config.id}" }) has no schema. Give it a Standard Schema, such as v.unknown() for a queue that takes any JSON body.`,
-      );
-    }
     const name = config.name ?? config.id;
     const queueName = awsName("sqsQueue", config.fifo ? `${name}.fifo` : name);
     super("aws/sqs/queue", config.id, config);

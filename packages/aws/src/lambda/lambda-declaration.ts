@@ -84,16 +84,15 @@ export function $lambda<
   Env extends EnvVars = {},
 >(config: LambdaDeclarationConfig<Id, E, Env>): Lambda<E, Env> {
   assertId("$lambda", config.id);
-  const declaration = {
-    id: config.id,
-    env: () => (config.env?.() ?? {}) as Env,
-    decode: createDecode(config),
-  } as unknown as Lambda<E, Env>;
-
   // The event is evaluated once, on first use, as infra modules that it
   // refers to may still be loading when $lambda is called.
   let event: { value: LambdaEvent | undefined } | undefined;
   const getEvent = () => (event ??= { value: config.event?.() }).value;
+  const declaration = {
+    id: config.id,
+    env: () => (config.env?.() ?? {}) as Env,
+    decode: createDecode({ event: getEvent }),
+  } as unknown as Lambda<E, Env>;
   let group: LambdaGroup | undefined;
   // The group is assigned before the event's resources are made, so one
   // that throws doesn't build a second group on the next call.
@@ -191,15 +190,13 @@ export type LambdaTarget<K extends LambdaEventKind = LambdaEventKind> =
  * be in a module that is still loading. A declaration fails when its event
  * has another kind than `kind`, or when it wires itself to a queue, a route
  * or a schedule, which the caller would wire a second time.
- * @param use The caller, such as `route()`, and what it does with a Lambda,
- * such as `` (lambda) => `routes GET /todos to ${lambda}` ``, for errors.
  */
 export function resolveLambda(
   target: unknown,
-  use: { caller: string; action: (lambda: string) => string },
+  // The function that wires the Lambda, such as `route()`, for errors.
+  caller: string,
   kind: Exclude<LambdaEventKind, "none">,
 ): { group: LambdaGroup; event: LambdaEvent | undefined } {
-  const { caller, action } = use;
   if (isLambdaGroup(target)) return { group: target, event: undefined };
   if (typeof target !== "function") {
     throw new Error(
@@ -224,7 +221,7 @@ export function resolveLambda(
   const wired = event && wiredBy(event);
   if (wired) {
     throw new Error(
-      `${caller} ${action(lambda)}, but the Lambda makes its own ${wired.noun} in its declaration, with event: () => ${eventCall(event)}. Make the ${wired.noun} in one place: remove the ${caller} call, or declare the Lambda with event: () => ${wired.instead}.`,
+      `${caller} can't wire ${lambda}, because the Lambda makes its own ${wired.noun} in its declaration, with event: () => ${eventCall(event)}. Make the ${wired.noun} in one place: remove the ${caller} call, or declare the Lambda with event: () => ${wired.instead}.`,
     );
   }
   return { group, event };
