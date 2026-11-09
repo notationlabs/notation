@@ -16,8 +16,9 @@ export type QueueConfig<
   fifo?: boolean;
   /**
    * Validates the JSON body of each message, in `decode()` of a Lambda
-   * declared with `sqs(queue)`. Import it from a shared module, so the
-   * function can load it.
+   * declared with `sqs.bind(queue)`, or with `sqs.schema(schema)` and mapped
+   * with `eventSourceMapping()`. `sqs.schema()` must be given this schema.
+   * Import it from a shared module, so the function can load it.
    */
   schema?: S;
   /** Seconds a received message stays hidden from other consumers. */
@@ -78,7 +79,7 @@ export class QueueGroup<
   }
 
   /**
-   * Maps the queue to a Lambda, for `sqs(queue)` in a declaration and for
+   * Maps the queue to a Lambda, for `sqs.bind(queue)` in a declaration and for
    * `eventSourceMapping()`.
    */
   "~subscribe"(lambdaGroup: LambdaGroup, options: SqsOptions = {}): void {

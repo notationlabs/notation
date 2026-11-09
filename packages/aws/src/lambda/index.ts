@@ -7,6 +7,7 @@ export * from "./declaration";
 export {
   eventSourceMapping,
   type EventSourceMappingConfig,
+  type SqsTarget,
 } from "./event-source-mapping";
 export {
   isLambdaGroup,

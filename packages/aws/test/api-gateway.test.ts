@@ -3,14 +3,8 @@ import { collectResourceGraph, type ResourceGraph } from "@notation/resource";
 import { NO_AUTH, api, router } from "src/api-gateway";
 import { route, RouteGroup } from "src/api-gateway/route";
 import type { JWTAuthorizerConfig } from "src/api-gateway/auth";
-import {
-  $lambda,
-  http,
-  jwt,
-  lambda,
-  sqs,
-  type LambdaGroup,
-} from "src/lambda";
+import { $lambda, http, jwt, lambda, sqs, type LambdaGroup } from "src/lambda";
+import { queue } from "src/sqs";
 import { inModule, lambdaGroup } from "./declare";
 
 const declareLambda = () =>
@@ -169,12 +163,15 @@ test("a route to a $lambda declaration integrates its function", async () => {
 test("a route to a declaration with an sqs event throws", async () => {
   await expect(
     collectResourceGraph(() => {
-      const fn = inModule($lambda({ id: "process", event: () => sqs() }));
+      const orders = queue({ name: "orders" });
+      const fn = inModule(
+        $lambda({ id: "process", event: () => sqs.bind(orders) }),
+      );
       // @ts-expect-error a route can't serve a function of SQS messages
       router(api({ name: "todo-api" })).get("/todos", () => fn);
     }),
   ).rejects.toThrow(
-    'route() sends http events, but the Lambda "process" is declared with event: () => sqs().',
+    'route() sends http events, but the Lambda "process" is declared with event: () => sqs.bind(queue).',
   );
 });
 
@@ -196,8 +193,8 @@ test("a route with a JWT authorizer integrates a JWT declaration", async () => {
   });
 
   expect(
-    routeGroup(graph, "user-api-GET-/user").route.dependencies
-      .lambdaIntegration.dependencies.lambda,
+    routeGroup(graph, "user-api-GET-/user").route.dependencies.lambdaIntegration
+      .dependencies.lambda,
   ).toBe(lambdaGroup(graph, "user").fn);
 });
 
@@ -241,7 +238,10 @@ test("route rejects a value that is not a declaration or a lambda group", () => 
 test("routes behind a jwt authorizer take only functions of HTTP requests", async () => {
   await expect(
     collectResourceGraph(() => {
-      const fn = inModule($lambda({ id: "process", event: () => sqs() }));
+      const orders = queue({ name: "orders" });
+      const fn = inModule(
+        $lambda({ id: "process", event: () => sqs.bind(orders) }),
+      );
       const authed = router(api({ name: "todo-api" })).withJWTAuthorizer({
         type: "jwt",
         issuer: "https://issuer",
@@ -251,5 +251,7 @@ test("routes behind a jwt authorizer take only functions of HTTP requests", asyn
       // @ts-expect-error a route can't serve a function of SQS messages
       authed.get("/process", () => fn);
     }),
-  ).rejects.toThrow('the Lambda "process" is declared with event: () => sqs()');
+  ).rejects.toThrow(
+    'the Lambda "process" is declared with event: () => sqs.bind(queue)',
+  );
 });

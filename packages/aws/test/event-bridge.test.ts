@@ -1,9 +1,17 @@
 import { test, expect } from "vitest";
 import { eventBridge } from "@notation/aws.iac";
-import { collectResourceGraph, type ResourceGraph } from "@notation/resource";
+import {
+  collectResourceGraph,
+  type ResourceGraph,
+  type StandardSchemaV1,
+} from "@notation/resource";
 import { rate, schedule, ScheduleGroup } from "src/event-bridge";
 import { $lambda, lambda, LambdaGroup, scheduled, sqs } from "src/lambda";
 import { inModule, lambdaGroup } from "./declare";
+
+const Anything: StandardSchemaV1 = {
+  "~standard": { version: 1, vendor: "test", validate: (value) => ({ value }) },
+};
 
 const declareLambda = () =>
   lambda({
@@ -86,7 +94,9 @@ test("a schedule invokes a $lambda declaration", async () => {
 test("a schedule of a declaration with an sqs event throws", async () => {
   await expect(
     collectResourceGraph(() => {
-      const fn = inModule($lambda({ id: "process", event: () => sqs() }));
+      const fn = inModule(
+        $lambda({ id: "process", event: () => sqs.schema(Anything) }),
+      );
       schedule({
         name: "daily",
         schedule: rate(1, "day"),
@@ -95,7 +105,7 @@ test("a schedule of a declaration with an sqs event throws", async () => {
       });
     }),
   ).rejects.toThrow(
-    'schedule() sends scheduled events, but the Lambda "process" is declared with event: () => sqs().',
+    'schedule() sends scheduled events, but the Lambda "process" is declared with event: () => sqs.schema(schema).',
   );
 });
 

@@ -151,13 +151,13 @@ test("env() in infra returns the evaluated env", () => {
 });
 
 test("decode() validates the body of an SQS record", async () => {
-  const fn = $lambda({ id: "orders", event: () => sqs(orders) });
+  const fn = $lambda({ id: "orders", event: () => sqs.bind(orders) });
 
   await expect(fn.decode(record('{"id":"1"}'))).resolves.toEqual({ id: "1" });
 });
 
 test("decode() throws a DecodeError for a body that is not valid", async () => {
-  const fn = $lambda({ id: "orders", event: () => sqs(orders) });
+  const fn = $lambda({ id: "orders", event: () => sqs.bind(orders) });
 
   const error = await fn.decode(record('{"id":1}')).catch((e) => e);
   expect(error).toBeInstanceOf(DecodeError);
@@ -168,19 +168,18 @@ test("decode() throws a DecodeError for a body that is not valid", async () => {
 });
 
 test("decode() throws a DecodeError for a body that is not JSON", async () => {
-  const fn = $lambda({ id: "orders", event: () => sqs(orders) });
+  const fn = $lambda({ id: "orders", event: () => sqs.bind(orders) });
 
   const error = await fn.decode(record("not json")).catch((e) => e);
   expect(error).toBeInstanceOf(DecodeError);
   expect(error.message).toBe("The message body is not valid JSON.");
 });
 
-test("decode() without a schema returns the parsed body", async () => {
-  const fn = $lambda({ id: "orders", event: () => sqs() });
+test("decode() validates the body of an SQS record with the schema of sqs.schema()", async () => {
+  const fn = $lambda({ id: "orders", event: () => sqs.schema(Order) });
 
-  await expect(fn.decode(record('{"any":true}'))).resolves.toEqual({
-    any: true,
-  });
+  await expect(fn.decode(record('{"id":"1"}'))).resolves.toEqual({ id: "1" });
+  await expect(fn.decode(record("{}"))).rejects.toBeInstanceOf(DecodeError);
 });
 
 test("decode() for http reads a base64 body", async () => {
@@ -213,8 +212,11 @@ test("the runtime variant throws when a bound variable is not set", () => {
   expect(() => fn.env()).toThrow("The environment variable TABLE is not set.");
 });
 
-test("the runtime variant decodes as infra does", async () => {
-  const fn = runtime.$lambda({ id: "orders", event: () => sqs(orders) });
+test.each([
+  ["sqs.bind()", () => runtime.sqs.bind(orders)],
+  ["sqs.schema()", () => runtime.sqs.schema(Order)],
+])("the runtime variant decodes %s as infra does", async (_, event) => {
+  const fn = runtime.$lambda({ id: "orders", event });
 
   await expect(fn.decode(record('{"id":"1"}'))).resolves.toEqual({ id: "1" });
   await expect(fn.decode(record("{}"))).rejects.toBeInstanceOf(DecodeError);
@@ -233,7 +235,7 @@ test("the runtime variant's infra APIs throw", () => {
 test("a declaration types its handler, env() and decode()", () => {
   const sqsLambda = $lambda({
     id: "orders",
-    event: () => sqs(orders),
+    event: () => sqs.bind(orders),
     env: () => ({ TABLE: "orders", STAGE: "dev" }),
   });
 
@@ -271,7 +273,7 @@ test("a JWT declaration types the claims in its handler's event", () => {
     Parameters<LambdaHandler<typeof plain>>[0]
   >().toEqualTypeOf<APIGatewayProxyEventV2>();
 
-  const orders = $lambda({ id: "orders", event: () => sqs() });
+  const orders = $lambda({ id: "orders", event: () => sqs.schema(Order) });
   const ordersHandler: LambdaHandler<typeof orders> = async () => {};
   // @ts-expect-error an SQS handler can't serve a JWT Lambda
   const wrong: LambdaHandler<typeof user> = ordersHandler;

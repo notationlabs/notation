@@ -26,7 +26,10 @@ export type LambdaDeclarationConfig<
    * in state. Changing the id replaces the function, so keep it stable.
    */
   id: NameSafe<Id>;
-  /** The events that the function receives, such as `() => sqs(orderQueue)`. */
+  /**
+   * The events that the function receives, such as
+   * `() => sqs.bind(orderQueue)`.
+   */
   event?: () => E;
   /**
    * The values that the function's code reads, by name, such as
@@ -138,7 +141,7 @@ function buildGroup(
   return group;
 }
 
-// Maps the queue of `event: () => sqs(queue)` to the group.
+// Maps the queue of `event: () => sqs.bind(queue)` to the group.
 function subscribeQueue(
   group: LambdaGroup,
   config: Omit<
@@ -147,15 +150,14 @@ function subscribeQueue(
   > & { id: string },
 ): void {
   const event = config.event?.();
-  if (event?.kind === "sqs" && event.queue) {
-    const queue = event.queue as Partial<SqsSource>;
-    if (typeof queue["~subscribe"] !== "function") {
-      throw new Error(
-        `The Lambda "${config.id}" is declared with sqs(queue), but the value passed to sqs() is not a queue from queue().`,
-      );
-    }
-    queue["~subscribe"](group, event.options);
+  if (event?.kind !== "sqs" || !("queue" in event)) return;
+  const queue = event.queue as Partial<SqsSource> | undefined;
+  if (typeof queue?.["~subscribe"] !== "function") {
+    throw new Error(
+      `The Lambda "${config.id}" is declared with sqs.bind(queue), but the value passed to sqs.bind() is not a queue from queue().`,
+    );
   }
+  queue["~subscribe"](group, event.options);
 }
 
 /**
@@ -193,13 +195,17 @@ export function resolveLambda(
   const group = registered.build();
   const event = registered.kind();
   if (!kinds.includes(event)) {
+    const call =
+      event === "sqs" && "queue" in registered.event()!
+        ? "sqs.bind(queue)"
+        : eventCalls[event];
     throw new Error(
       `${caller} sends ${kinds
         .filter((k) => k !== "none")
         .map((k) => eventNames[k])
         .join(
           " or ",
-        )}, but the Lambda "${group.id}" is declared with ${event === "none" ? "no event" : `event: () => ${eventCalls[event]}`}.`,
+        )}, but the Lambda "${group.id}" is declared with ${event === "none" ? "no event" : `event: () => ${call}`}.`,
     );
   }
   return group;
@@ -214,7 +220,7 @@ const eventNames: Record<LambdaEventKind, string> = {
 };
 
 const eventCalls: Record<LambdaEventKind, string> = {
-  sqs: "sqs()",
+  sqs: "sqs.schema(schema)",
   http: "http()",
   "http-jwt": "http({ auth: jwt() })",
   scheduled: "scheduled()",
@@ -222,22 +228,16 @@ const eventCalls: Record<LambdaEventKind, string> = {
 };
 
 /**
- * The event kind of a target's declaration, or undefined for a group from
- * `lambda()`.
+ * The id and the event of a target's declaration, or undefined for a group
+ * from `lambda()`.
  */
-export function declaredKindOf(target: unknown): LambdaEventKind | undefined {
+export function declarationOf(
+  target: unknown,
+): { id: string; event: LambdaEvent | undefined } | undefined {
   if (typeof target !== "function" || isLambdaGroup(target)) return undefined;
-  return registeredOf(target())?.kind();
-}
-
-/**
- * The queue that a target's declaration maps itself, with
- * `event: () => sqs(queue)`.
- */
-export function declaredQueueOf(target: unknown): unknown {
-  if (typeof target !== "function" || isLambdaGroup(target)) return undefined;
-  const event = registeredOf(target())?.event();
-  return event?.kind === "sqs" ? event.queue : undefined;
+  const declaration = target();
+  const registered = registeredOf(declaration);
+  return registered && { id: declaration.id, event: registered.event() };
 }
 
 /**

@@ -23,13 +23,16 @@ export type SqsEvent<
 > = {
   kind: "sqs";
   schema: S;
-  /** The queue that the infra build maps to the function. */
+  /**
+   * The queue that the infra build maps to the function, from `sqs.bind()`.
+   * It is not set for `sqs.schema()`.
+   */
   queue?: SqsSource<S>;
   options?: SqsOptions;
 };
 
 /**
- * A queue that `sqs()` reads, from `queue()`. In the function it holds only
+ * A queue that `sqs.bind()` reads, from `queue()`. In the function it holds only
  * the queue's schema, as the runtime build replaces the queue with it.
  */
 export type SqsSource<
@@ -97,28 +100,34 @@ export type LambdaEvent = SqsEvent | HttpEvent | ScheduledEvent;
 export type LambdaEventKind = LambdaEvent["kind"] | "none";
 
 /**
- * The function receives the messages of `queue`. The infra build maps the
- * queue to the function, and `decode()` validates each message's JSON body
- * with the queue's schema.
+ * The function receives SQS messages: from a queue that the declaration maps,
+ * with `sqs.bind(queue)`, or from queues that infra maps to it, with
+ * `sqs.schema(schema)`.
  */
-export function sqs<S extends StandardSchemaV1 | undefined>(
-  queue: SqsSource<S>,
-  options?: SqsOptions,
-): SqsEvent<S>;
-/**
- * The function receives SQS messages, from a queue that infra maps to it with
- * `eventSourceMapping()`. `decode()` parses each message's JSON body without
- * validating it.
- */
-export function sqs(): SqsEvent<undefined>;
-/**
- * In the runtime build, a queue from an infra module is replaced with its
- * runtime options, as `{ schema }`.
- * @runtime queue
- */
-export function sqs(queue?: SqsSource, options?: SqsOptions): SqsEvent {
-  return { kind: "sqs", schema: queue?.schema, queue, options };
-}
+export const sqs = {
+  /**
+   * The function receives the messages of `queue`. The infra build maps the
+   * queue to the function, and `decode()` validates each message's JSON body
+   * with the queue's schema. In the runtime build, a queue from an infra
+   * module is replaced with its runtime options, as `{ schema }`.
+   * @runtime queue
+   */
+  bind<S extends StandardSchemaV1 | undefined>(
+    queue: SqsSource<S>,
+    options?: SqsOptions,
+  ): SqsEvent<S> {
+    return { kind: "sqs", schema: queue?.schema, queue, options };
+  },
+  /**
+   * The function receives SQS messages, from queues that infra maps to it
+   * with `eventSourceMapping()`. `decode()` validates each message's JSON
+   * body with `schema`. A queue that infra maps to the function must have no
+   * schema, or this schema.
+   */
+  schema<S extends StandardSchemaV1>(schema: S): SqsEvent<S> {
+    return { kind: "sqs", schema };
+  },
+};
 
 /**
  * The function receives HTTP API requests, from routes on an API.
@@ -259,7 +268,7 @@ export function createDecode(
     event ??= options.event?.();
     if (!event || event.kind === "scheduled") {
       throw new Error(
-        `decode() needs a Lambda declared with event: () => sqs(queue) or event: () => http({ body: schema }).`,
+        `decode() needs a Lambda declared with event: () => sqs.bind(queue), event: () => sqs.schema(schema) or event: () => http({ body: schema }).`,
       );
     }
     const body =
