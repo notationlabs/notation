@@ -422,6 +422,25 @@ test("sqs.bind(queue) in a declaration maps the queue to the function", async ()
   ]);
 });
 
+test("a declaration whose queue fails to map throws the same error on each build", () => {
+  let calls = 0;
+  const failing = {
+    schema: Unknown,
+    "~subscribe"() {
+      calls++;
+      throw new Error("mapping failed");
+    },
+  };
+  const fn = inModule(
+    $lambda({ id: "process", event: () => sqs.bind(failing) }),
+  );
+  const { build } = (fn as any)[Symbol.for("@notation/aws/LambdaDeclaration")];
+
+  expect(build).toThrow("mapping failed");
+  expect(build).toThrow("mapping failed");
+  expect(calls).toBe(1);
+});
+
 test("resolveLambda doesn't wire a declaration that makes its own queue mapping", () => {
   let calls = 0;
   const subscribing = {

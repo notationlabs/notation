@@ -47,8 +47,11 @@ export function describeDeclaration(
 }
 
 // The declarations that gave each AWS name in a collection, keyed by kind and
-// name.
-const claims = new WeakMap<object, Map<string, string>>();
+// name. Two installed copies of this package share the map, through
+// `Symbol.for`, as they share the declaration registry.
+const claims: WeakMap<object, Map<string, string>> = ((globalThis as any)[
+  Symbol.for("@notation/aws/awsNameClaims")
+] ??= new WeakMap());
 
 /**
  * Records that `declaration` gives one of `kinds` the AWS name `name`.

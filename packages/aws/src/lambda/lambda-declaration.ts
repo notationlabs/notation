@@ -93,14 +93,21 @@ export function $lambda<
     env: () => (config.env?.() ?? {}) as Env,
     decode: createDecode({ event: getEvent }),
   } as unknown as Lambda<E, Env>;
-  let group: LambdaGroup | undefined;
-  // The group is assigned before the event's resources are made, so one
-  // that throws doesn't build a second group on the next call.
+  let built: { group: LambdaGroup } | { error: unknown } | undefined;
+  // A build that throws throws the same error on each later call, so the
+  // group isn't made twice, or returned without its event's resources.
   const build = () => {
-    if (group) return group;
-    group = buildGroup(declaration, config);
-    wireEvent(group, getEvent());
-    return group;
+    if (!built) {
+      try {
+        const group = buildGroup(declaration, config);
+        wireEvent(group, getEvent());
+        built = { group };
+      } catch (error) {
+        built = { error };
+      }
+    }
+    if ("error" in built) throw built.error;
+    return built.group;
   };
   Object.defineProperty(declaration, registration, {
     value: { build, event: getEvent } satisfies Registered,
