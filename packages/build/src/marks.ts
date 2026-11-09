@@ -35,18 +35,28 @@ export type DeclarationMark = {
 /**
  * Marks a function that builds part of a declaration's options, such as
  * `sqs.bind(queue)`. Written `@runtime queue`, with the names of the parameters
- * that the runtime build keeps.
+ * that the runtime build keeps. A name with an option, such as
+ * `@runtime options.auth`, keeps the parameter, and the runtime build
+ * replaces a resource in that option of an object literal argument.
  */
-export type RuntimeMark = { kind: "runtime"; positions: number[] };
+export type RuntimeMark = {
+  kind: "runtime";
+  /** The positions of the parameters that the runtime build keeps. */
+  positions: number[];
+  /** Options of kept parameters, whose resource the runtime build replaces. */
+  options: { position: number; name: string }[];
+};
 
 /**
  * Marks a function that declares a resource. Written `@resource`, or
  * `@resource runtime: schema` when a declaration's event reads options of the
  * resource in the function. The first argument must then be an object
  * literal, and each of those options an import from a module that the
- * function can load.
+ * function can load. `@resource runtime:` with no options means that the
+ * resource becomes `{}` in the function. A bare `@resource` has no
+ * `runtime`, and the resource can't be read in the function.
  */
-export type ResourceMark = { kind: "resource"; runtime: string[] };
+export type ResourceMark = { kind: "resource"; runtime?: string[] };
 
 export type Mark = DeclarationMark | RuntimeMark | ResourceMark;
 
@@ -98,20 +108,24 @@ export function parseMark(
           `${where}: unknown clause "${body}" in the @resource mark. Use runtime.`,
         );
       }
-      return { kind: "resource", runtime: list(runtime?.[1] ?? "") };
+      return runtime
+        ? { kind: "resource", runtime: list(runtime[1]!) }
+        : { kind: "resource" };
     }
     if (tag === "runtime") {
-      const names = list(body);
-      const positions = names.map((name) => {
-        const position = params.indexOf(name);
+      const mark: RuntimeMark = { kind: "runtime", positions: [], options: [] };
+      for (const entry of list(body)) {
+        const [name, option] = entry.split(".");
+        const position = params.indexOf(name!);
         if (position === -1) {
           throw new Error(
             `${where}: the @runtime mark names the parameter "${name}", which the function does not have`,
           );
         }
-        return position;
-      });
-      return { kind: "runtime", positions };
+        if (!mark.positions.includes(position)) mark.positions.push(position);
+        if (option) mark.options.push({ position, name: option });
+      }
+      return mark;
     }
     const mark: DeclarationMark = {
       kind: "declaration",

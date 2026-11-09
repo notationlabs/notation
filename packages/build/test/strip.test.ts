@@ -10,7 +10,7 @@ import { packageFiles, packages, root, virtualMarks } from "./virtual";
 
 const handlerModule = `
 import "./sentry";
-import { $lambda, http, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, apiGateway, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import { SQSClient } from "@aws-sdk/client-sqs";
 import { ordersQueue, unused } from "../infra/orders";
 import { Order, type OrderType } from "./schema";
@@ -23,7 +23,7 @@ const config = await fetch("https://example.com");
 export const lambda = $lambda({
   id: "process-orders",
   memory,
-  event: () => http({ body: Order }),
+  event: () => apiGateway.schema(Order),
   policy: () => [ordersQueue.grant(["ReceiveMessage"])],
   env: () => ({ QUEUE_URL: ordersQueue.url, LOG_LEVEL: "info" }),
 });
@@ -70,7 +70,7 @@ describe("stripForInfra", () => {
       entry: "handler",
     });
     expect(code).toContain(
-      `import { $lambda, http } from "@notation/aws/lambda";`,
+      `import { $lambda, apiGateway } from "@notation/aws/lambda";`,
     );
     expect(code).toContain(`import { ordersQueue } from "../infra/orders";`);
     expect(code).toContain(`import { Order } from "./schema";`);
@@ -110,27 +110,27 @@ describe("stripForInfra", () => {
   it.each([
     [
       "a const in a block",
-      "if (x) { const Order = 1; } return http({ body: Order });",
+      "if (x) { const Order = 1; } return apiGateway.schema(Order);",
     ],
     [
       "a function in a block",
-      "{ function Order() {} } return http({ body: Order });",
+      "{ function Order() {} } return apiGateway.schema(Order);",
     ],
     [
       "a const in a for head",
-      "for (const Order of []) {} return http({ body: Order });",
+      "for (const Order of []) {} return apiGateway.schema(Order);",
     ],
     [
       "a catch parameter",
-      "try {} catch (Order) {} return http({ body: Order });",
+      "try {} catch (Order) {} return apiGateway.schema(Order);",
     ],
     [
       "a case of a switch",
-      "switch (x) { case 1: { let Order; } } return http({ body: Order });",
+      "switch (x) { case 1: { let Order; } } return apiGateway.schema(Order);",
     ],
   ])("keeps an import that %s doesn't shadow outside it", (_, body) => {
     const source = handlerModule.replace(
-      "event: () => http({ body: Order })",
+      "event: () => apiGateway.schema(Order)",
       `event: () => { ${body} }`,
     );
     expect(infra(source).code).toContain(`import { Order } from "./schema";`);
@@ -138,8 +138,8 @@ describe("stripForInfra", () => {
 
   it("drops an import that a var in a block shadows in its function", () => {
     const source = handlerModule.replace(
-      "event: () => http({ body: Order })",
-      "event: () => { if (x) { var Order = 1; } return http({ body: Order }); }",
+      "event: () => apiGateway.schema(Order)",
+      "event: () => { if (x) { var Order = 1; } return apiGateway.schema(Order); }",
     );
     expect(infra(source).code).not.toContain("./schema");
   });
@@ -196,7 +196,7 @@ describe("stripForRuntime", () => {
     expect(code).toContain(
       `export const lambda = $lambda({
   id: "process-orders",
-  event: () => http({ body: Order }),
+  event: () => apiGateway.schema(Order),
   env: () => ({ QUEUE_URL: undefined, LOG_LEVEL: undefined }),
 });`,
     );
@@ -206,7 +206,7 @@ describe("stripForRuntime", () => {
   it("replaces an argument that the @runtime mark doesn't name with undefined, even one that reads infra", () => {
     const { analysis, analyses } = setup(
       handlerModule.replace(
-        "http({ body: Order })",
+        "apiGateway.schema(Order)",
         "sqs.bind(ordersQueue, { batchSize: unused })",
       ),
     );
@@ -276,18 +276,18 @@ describe("stripForRuntime", () => {
   it("fails when a kept option refers to an infra module", () => {
     const { analysis, analyses } = setup(
       handlerModule.replace(
-        "http({ body: Order })",
-        "http({ body: ordersQueue.schema })",
+        "apiGateway.schema(Order)",
+        "apiGateway.schema(ordersQueue.schema)",
       ),
     );
     expect(() => stripForRuntime(analysis, analyses)).toThrow(
-      'runtime/handler.ts:16:29: an option of $lambda that the function keeps refers to ordersQueue, from infra/orders.ts, an infra module (files.infra: "infra/**", the default).',
+      'runtime/handler.ts:16:34: an option of $lambda that the function keeps refers to ordersQueue, from infra/orders.ts, an infra module (files.infra: "infra/**", the default).',
     );
   });
 
   describe("a resource in a runtime argument", () => {
     const source = handlerModule.replace(
-      "http({ body: Order })",
+      "apiGateway.schema(Order)",
       "sqs.bind(ordersQueue)",
     );
     const strip = (
@@ -354,18 +354,16 @@ describe("stripForRuntime", () => {
       ],
       [
         "a mark on a member of an object that a compiled chunk exports",
-        `export { u as sqs, $lambda, http } from "./chunk.js";`,
+        `export { u as sqs, $lambda } from "./chunk.js";`,
         {
           "node_modules/@notation/aws/chunk.js": [
             `/** @declaration shared: id, event, env; keys: env; entry: handler */`,
             `function $lambda(config) { return config; }`,
-            `/** @runtime options */`,
-            `function http(options) { return options; }`,
             `const sqs = {`,
             `  /** @runtime queue */`,
             `  bind(queue, options) { return { kind: "sqs", schema: queue?.schema }; },`,
             `};`,
-            `export { sqs as u, $lambda, http };`,
+            `export { sqs as u, $lambda };`,
           ].join("\n"),
         },
       ],
@@ -699,6 +697,136 @@ describe("stripForRuntime", () => {
         }),
       ).toThrow(
         "runtime/handler.ts:16:25: the function reads ordersQueue from infra/orders.ts, but ordersQueue isn't a call to a resource function",
+      );
+    });
+  });
+
+  describe("a route that a declaration binds to an API", () => {
+    const apiModule = (...lines: string[]) =>
+      [
+        `import { api, jwtAuthorizer } from "@notation/aws/api-gateway";`,
+        `import { Claims } from "../shared/claims";`,
+        `export const ordersApi = api({ name: "orders" });`,
+        ...lines,
+      ].join("\n");
+    const strip = (
+      event: string,
+      infraLines: string[],
+      importLine = `import { ordersApi, userAuth } from "../infra/api";`,
+      extra: Record<string, string> = {},
+    ) => {
+      const handler = handlerModule
+        .replace(
+          `event: () => apiGateway.schema(Order),`,
+          `event: () => ${event},`,
+        )
+        .replace(
+          `import { ordersQueue, unused } from "../infra/orders";`,
+          importLine,
+        );
+      const marks = virtualMarks(
+        {
+          ...files,
+          "runtime/handler.ts": handler,
+          "shared/claims.ts": `export const Claims = {};`,
+          "infra/api.ts": apiModule(...infraLines),
+          ...extra,
+        },
+        packages,
+      );
+      const analysis = analyzeModule(marks.table(file)!, marks);
+      return stripForRuntime(analysis, new ModuleAnalyses({ marks, root }))!
+        .code;
+    };
+    const userAuth = `export const userAuth = jwtAuthorizer({ api: ordersApi, issuer: "https://issuer", audience: ["app"], claims: Claims });`;
+
+    it("replaces the API with {} and the authorizer with its claims", () => {
+      const code = strip(
+        `apiGateway.bind(ordersApi).defineRoute({ method: "POST", path: "/orders", schema: Order, auth: userAuth })`,
+        [userAuth],
+      );
+      expect(code).toContain(
+        `event: () => apiGateway.bind({}).defineRoute({ method: "POST", path: "/orders", schema: Order, auth: { claims: __notation_claims_0 } }),`,
+      );
+      expect(code).toContain(
+        `import { Claims as __notation_claims_0 } from "/project/shared/claims.ts";`,
+      );
+      expect(code).toContain(
+        `import { Order, type OrderType } from "./schema";`,
+      );
+      expect(code).not.toContain("../infra/api");
+    });
+
+    it("replaces a shorthand auth option", () => {
+      const code = strip(
+        `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", auth })`,
+        [userAuth.replace("userAuth", "auth")],
+        `import { ordersApi, auth } from "../infra/api";`,
+      );
+      expect(code).toContain(
+        `defineRoute({ method: "GET", path: "/orders", auth: { claims: __notation_claims_0 } })`,
+      );
+    });
+
+    it("replaces an authorizer with no claims with {}", () => {
+      const code = strip(
+        `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", auth: userAuth })`,
+        [
+          `export const userAuth = jwtAuthorizer({ api: ordersApi, issuer: "https://issuer", audience: ["app"] });`,
+        ],
+      );
+      expect(code).toContain(
+        `apiGateway.bind({}).defineRoute({ method: "GET", path: "/orders", auth: {} })`,
+      );
+      expect(code).not.toContain("__notation_");
+    });
+
+    it("leaves a route with no auth option", () => {
+      const code = strip(
+        `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders" })`,
+        [],
+        `import { ordersApi } from "../infra/api";`,
+      );
+      expect(code).toContain(
+        `apiGateway.bind({}).defineRoute({ method: "GET", path: "/orders" })`,
+      );
+      expect(code).not.toContain("../infra/api");
+    });
+
+    it("finds the mark of a method that a named function returns", () => {
+      const code = strip(
+        `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", auth: userAuth })`,
+        [userAuth],
+        undefined,
+        {
+          "node_modules/@notation/aws/lambda.js": [
+            `/** @declaration shared: id, event, env; keys: env; entry: handler */`,
+            `export function $lambda(config) { return config; }`,
+            `/** @runtime api */`,
+            `function bindApi(api) {`,
+            `  const kind = "apiGateway";`,
+            `  return {`,
+            `    /** @runtime options.auth */`,
+            `    defineRoute(options) { return { kind, claims: options.auth?.claims }; },`,
+            `  };`,
+            `}`,
+            `export const apiGateway = { bind: bindApi };`,
+          ].join("\n"),
+        },
+      );
+      expect(code).toContain(
+        `apiGateway.bind({}).defineRoute({ method: "GET", path: "/orders", auth: { claims: __notation_claims_0 } })`,
+      );
+    });
+
+    it("fails when the auth option refers to an infra value that isn't a resource with runtime options", () => {
+      expect(() =>
+        strip(
+          `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", auth: userAuth.claims })`,
+          [userAuth],
+        ),
+      ).toThrow(
+        "an option of $lambda that the function keeps refers to userAuth",
       );
     });
   });

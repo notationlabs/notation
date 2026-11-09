@@ -25,7 +25,11 @@ import type { ModuleAnalyses } from "./modules";
  *    arguments. The others become `undefined`. A runtime argument that names
  *    a resource from an infra module becomes an object of the options that
  *    the resource's mark lists as runtime, imported from where infra imports
- *    them: `sqs.bind(orderQueue)` becomes `sqs.bind({ schema: Order })`.
+ *    them: `sqs.bind(orderQueue)` becomes `sqs.bind({ schema: Order })`. A
+ *    mark such as `@runtime options.auth` does the same for the `auth`
+ *    option of an object literal argument. The call can be a method of the
+ *    object that a call returns, such as
+ *    `apiGateway.bind(api).defineRoute({ auth })`.
  * 4. An import whose uses were all removed is removed too, so the bundle
  *    doesn't load the module it imports from. Without this, the module would
  *    still load when `verbatimModuleSyntax` keeps unused imports.
@@ -97,15 +101,47 @@ export function stripForRuntime(
       const runtimeMark = markOfCallee(node.callee, analysis, analyses);
       if (runtimeMark?.kind !== "runtime") return;
       node.arguments.forEach((argument: Node, position: number) => {
-        if (runtimeMark.positions.includes(position)) {
+        if (!runtimeMark.positions.includes(position)) {
+          removed.add(argument);
+          s.overwrite(argument.start, argument.end, "undefined");
+          return;
+        }
+        const options = runtimeMark.options.filter(
+          (option) => option.position === position,
+        );
+        if (options.length === 0) {
           const stub = resourceStub(argument, free, analysis, analyses, added);
           if (stub === undefined) return;
           removed.add(argument);
           s.overwrite(argument.start, argument.end, stub);
           return;
         }
-        removed.add(argument);
-        s.overwrite(argument.start, argument.end, "undefined");
+        // An argument that isn't an object literal is kept, and an infra
+        // value in it fails as for any other kept value.
+        const object = unwrap(argument);
+        if (object.type !== "ObjectExpression") return;
+        for (const option of options) {
+          const property = object.properties.find(
+            (p: Node) => p.type === "Property" && keyOf(p) === option.name,
+          );
+          if (!property) continue;
+          const stub = resourceStub(
+            property.value,
+            free,
+            analysis,
+            analyses,
+            added,
+          );
+          if (stub === undefined) continue;
+          removed.add(property.value);
+          if (property.shorthand)
+            s.overwrite(
+              property.start,
+              property.end,
+              `${option.name}: ${stub}`,
+            );
+          else s.overwrite(property.value.start, property.value.end, stub);
+        }
       });
     });
   }
@@ -171,7 +207,8 @@ function removeEmptiedImports(
  * The value can be a resource that a helper makes, or a plain value such as a
  * schema, and the build can't tell which. A resource whose `@resource` mark
  * lists no runtime options is left as it is, so it gets the error for an
- * infra value.
+ * infra value. A resource marked `@resource runtime:`, with no options,
+ * becomes `{}`.
  */
 function resourceStub(
   argument: Node,
@@ -209,7 +246,7 @@ function resourceStub(
       `${analyses.show(file)}:${location(source, argument.start)}: the function reads ${text} from ${analyses.show(resolved)}, but ${text} isn't a call to a resource function, so the build can't find its options. If ${text} is a resource, declare it with a call such as \`queue({ name: "orders", schema: Order })\`, as a top-level const or in an object literal. If it is a plain value, such as a schema, move it to a shared module (files.shared).`,
     );
   }
-  if (mark.runtime.length === 0) return undefined;
+  if (!mark.runtime) return undefined;
   const definitionFile = found.value.file;
   const first = call.arguments[0];
   const config = first ? unwrap(first) : undefined;
@@ -326,7 +363,7 @@ function exportedValue(
 }
 
 // The expression that a top-level name of a module holds: the initializer of
-// its const, or the export that it imports.
+// its const, its function declaration, or the export that it imports.
 function localValue(
   file: string,
   name: string,
@@ -348,6 +385,8 @@ function localValue(
   for (let statement of table.module.body) {
     if (statement.type === "ExportNamedDeclaration" && statement.declaration)
       statement = statement.declaration;
+    if (statement.type === "FunctionDeclaration" && statement.id?.name === name)
+      return { file, node: statement };
     if (statement.type !== "VariableDeclaration" || statement.kind !== "const")
       continue;
     const declarator = statement.declarations.find(
@@ -399,7 +438,9 @@ function mergeRanges(ranges: [number, number][]): [number, number][] {
 
 // The mark of the function that a call calls. The callee can be a marked
 // function that the module declares or imports, a member of a namespace
-// import, or a member of an imported object literal, such as `sqs.bind`.
+// import, a member of an imported object literal, such as `sqs.bind`, or a
+// member of the object literal that a call returns, such as
+// `apiGateway.bind(api).defineRoute`.
 function markOfCallee(
   callee: Node,
   analysis: ModuleAnalysis,
@@ -418,13 +459,41 @@ function markOfCallee(
       : undefined;
   }
   const path = memberPath(callee);
+  const binding = path && table.imports.get(path.root.name);
+  if (binding?.imported === "*" && path!.keys.length === 1) {
+    return marks.importMark(file, binding, undefined, path!.keys[0]);
+  }
+  const member = calleeMember(callee, analysis, analyses);
+  return member && memberMark(member.object, member.name, analyses);
+}
+
+// The object literal that holds the function a callee names, and the
+// function's key in it. For `sqs.bind` it is the object of `sqs`. For
+// `apiGateway.bind(api).defineRoute` it is the object that `bind` returns.
+function calleeMember(
+  callee: Node,
+  analysis: ModuleAnalysis,
+  analyses: ModuleAnalyses,
+): { object: Located; name: string } | undefined {
+  const { marks } = analyses;
+  const { table } = analysis;
+  const file = table.module.file;
+  callee = unwrap(callee);
+  if (callee.type !== "MemberExpression") return undefined;
+  const object = unwrap(callee.object);
+  if (object.type === "CallExpression") {
+    const name = memberKey(callee);
+    const fn = calleeFunction(object.callee, analysis, analyses);
+    const returned = fn && returnedObjectLiteral(fn);
+    return returned && name !== undefined
+      ? { object: returned, name }
+      : undefined;
+  }
+  const path = memberPath(callee);
   if (!path) return undefined;
   const binding = table.imports.get(path.root.name);
   if (!binding) return undefined;
   const keys = [...path.keys];
-  if (binding.imported === "*" && keys.length === 1) {
-    return marks.importMark(file, binding, undefined, keys[0]);
-  }
   const resolved = marks.resolve(binding.source, file);
   const exportName = binding.imported === "*" ? keys.shift() : binding.imported;
   if (!resolved || exportName === undefined) return undefined;
@@ -432,7 +501,85 @@ function markOfCallee(
   const start = exportedValue(resolved, exportName, analyses, new Set());
   const found = start && followKeys(start, keys, analyses);
   if (!found || found.rest > 0 || name === undefined) return undefined;
-  return memberMark(found.value, name, analyses);
+  return { object: found.value, name };
+}
+
+// The function that a callee names, as a node in the module that declares it.
+function calleeFunction(
+  callee: Node,
+  analysis: ModuleAnalysis,
+  analyses: ModuleAnalyses,
+): Located | undefined {
+  const { marks } = analyses;
+  const { table } = analysis;
+  const file = table.module.file;
+  callee = unwrap(callee);
+  if (callee.type === "Identifier") {
+    return functionAt(
+      localValue(file, callee.name, analyses, new Set()),
+      analyses,
+    );
+  }
+  const path = memberPath(callee);
+  const binding = path && table.imports.get(path.root.name);
+  if (binding?.imported === "*" && path!.keys.length === 1) {
+    const resolved = marks.resolve(binding.source, file);
+    if (!resolved) return undefined;
+    return functionAt(
+      exportedValue(resolved, path!.keys[0]!, analyses, new Set()),
+      analyses,
+    );
+  }
+  const member = calleeMember(callee, analysis, analyses);
+  const node = member && unwrap(member.object.node);
+  const property = node?.properties.find(
+    (p: Node) => p.type === "Property" && keyOf(p) === member!.name,
+  );
+  return property
+    ? functionAt({ file: member!.object.file, node: property.value }, analyses)
+    : undefined;
+}
+
+// Follows names to a function.
+function functionAt(
+  value: Located | undefined,
+  analyses: ModuleAnalyses,
+): Located | undefined {
+  const seen = new Set<string>();
+  while (value) {
+    const node = unwrap(value.node);
+    if (isFunction(node)) return { file: value.file, node };
+    if (node.type !== "Identifier") return undefined;
+    value = localValue(value.file, node.name, analyses, seen);
+  }
+  return undefined;
+}
+
+// The object literal that a function returns: the body of an arrow function,
+// or the argument of a return statement at the top of its body.
+function returnedObjectLiteral(fn: Located): Located | undefined {
+  const body = fn.node.body;
+  if (!body) return undefined;
+  if (body.type !== "BlockStatement") {
+    const node = unwrap(body);
+    return node.type === "ObjectExpression"
+      ? { file: fn.file, node }
+      : undefined;
+  }
+  for (const statement of body.body) {
+    if (statement.type !== "ReturnStatement" || !statement.argument) continue;
+    const node = unwrap(statement.argument);
+    if (node.type === "ObjectExpression") return { file: fn.file, node };
+  }
+  return undefined;
+}
+
+function memberKey(member: Node): string | undefined {
+  const property = member.property;
+  if (!member.computed && property.type === "Identifier") return property.name;
+  if (member.computed && typeof property.value === "string")
+    return property.value;
+  return undefined;
 }
 
 // The mark of the function that a member of an object literal holds. The

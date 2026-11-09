@@ -57,8 +57,26 @@ export const sqs = {
   schema(schema) { return { kind: "sqs", schema }; },
 };
 
-/** @runtime options */
-export function http(options) { return { kind: "http", schema: options.body }; }
+export const apiGateway = {
+  /** @runtime api */
+  bind(api) {
+    return {
+      /** @runtime options.auth */
+      defineRoute(options) {
+        return { kind: options.auth ? "apiGateway-jwt" : "apiGateway", schema: options.schema, claims: options.auth?.claims };
+      },
+    };
+  },
+  schema(body, options) { return { kind: options?.claims ? "apiGateway-jwt" : "apiGateway", schema: body, claims: options?.claims }; },
+};
+`;
+
+export const awsApiGateway = `
+/** @resource runtime: */
+export function api(config) { return { id: config.name }; }
+
+/** @resource runtime: claims */
+export function jwtAuthorizer(config) { return config; }
 `;
 
 export const awsSqs = `
@@ -72,9 +90,11 @@ export function createTopic(config) { return { arn: "\${arn}" }; }
 export const packages = {
   "@notation/aws/lambda": "node_modules/@notation/aws/lambda.js",
   "@notation/aws/sqs": "node_modules/@notation/aws/sqs.js",
+  "@notation/aws/api-gateway": "node_modules/@notation/aws/api-gateway.js",
 };
 
 export const packageFiles = {
   "node_modules/@notation/aws/lambda.js": awsLambda,
   "node_modules/@notation/aws/sqs.js": awsSqs,
+  "node_modules/@notation/aws/api-gateway.js": awsApiGateway,
 };

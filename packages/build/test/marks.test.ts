@@ -36,8 +36,22 @@ describe("parseMark", () => {
       {
         kind: "runtime",
         positions: [1],
+        options: [],
       },
     );
+  });
+
+  it("reads an option of a runtime mark's argument", () => {
+    expect(
+      parseMark("* @runtime options.auth, options.api ", ["options"], "f"),
+    ).toEqual({
+      kind: "runtime",
+      positions: [0],
+      options: [
+        { position: 0, name: "auth" },
+        { position: 0, name: "api" },
+      ],
+    });
   });
 
   it("fails for a runtime mark that names a missing parameter", () => {
@@ -47,7 +61,11 @@ describe("parseMark", () => {
   });
 
   it("reads a resource mark", () => {
-    expect(parseMark("* @resource ", [], "f")).toEqual({
+    expect(parseMark("* @resource ", [], "f")).toEqual({ kind: "resource" });
+  });
+
+  it("reads a resource mark with an empty runtime list", () => {
+    expect(parseMark("* @resource runtime: ", [], "f")).toEqual({
       kind: "resource",
       runtime: [],
     });
@@ -93,7 +111,6 @@ describe("Marks", () => {
     });
     expect(marks.exportMark(at("dist/sqs.js"), "createQueue")).toEqual({
       kind: "resource",
-      runtime: [],
     });
     expect(marks.exportMark(at("dist/chunk.js"), "o")).toBeUndefined();
   });
