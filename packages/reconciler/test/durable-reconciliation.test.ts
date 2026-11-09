@@ -45,7 +45,10 @@ const PAST_RETRY_MS = RETRY_AFTER_MS + 25;
 describe("durable execution and replay", () => {
   it("waits durably for a retryable provider and persists after success", async () => {
     let attempts = 0;
-    const PendingResource = resource({ type: "test/durable/pending" })
+    const PendingResource = resource({
+      type: "test/durable/pending",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async (_params, context) => {
@@ -86,7 +89,10 @@ describe("durable execution and replay", () => {
 
   it("resumes after a crash following the create checkpoint", async () => {
     const create = vi.fn(async () => undefined);
-    const TestResource = resource({ type: "test/durable/resume" })
+    const TestResource = resource({
+      type: "test/durable/resume",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({ create, delete: async () => undefined });
     const runtime = createRuntime(
@@ -110,7 +116,10 @@ describe("durable execution and replay", () => {
   it("reads a create interrupted before its outcome was recorded instead of creating again", async () => {
     const create = vi.fn(async () => undefined);
     const read = vi.fn(async () => ({ name: "app" }));
-    const TestResource = resource({ type: "test/durable/effect-read" })
+    const TestResource = resource({
+      type: "test/durable/effect-read",
+      provider: "test",
+    })
       // Cast: a resource declared without API types constrains every schema
       // key to be a key of an `any` API schema, which no named key satisfies.
       .defineSchema({
@@ -147,7 +156,10 @@ describe("durable execution and replay", () => {
 
   it("creates again after an interrupted create when the resource cannot be looked up", async () => {
     const create = vi.fn(async () => undefined);
-    const TestResource = resource({ type: "test/durable/effect-no-read" })
+    const TestResource = resource({
+      type: "test/durable/effect-no-read",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({ create, delete: async () => undefined });
     const runtime = createRuntime(
@@ -174,7 +186,10 @@ describe("durable execution and replay", () => {
     const find = vi.fn(async (_params: unknown, token: string) => ({
       remoteId: `remote-for-${token}`,
     }));
-    const TestResource = resource({ type: "test/durable/effect-find" })
+    const TestResource = resource({
+      type: "test/durable/effect-find",
+      provider: "test",
+    })
       .defineSchema({
         remoteId: {
           value: v.string(),
@@ -214,7 +229,10 @@ describe("durable execution and replay", () => {
     const create = vi.fn(async () => {
       throw new ResourceCreationUnknownError("socket timed out");
     });
-    const TestResource = resource({ type: "test/durable/effect-unfindable" })
+    const TestResource = resource({
+      type: "test/durable/effect-unfindable",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create,
@@ -239,7 +257,10 @@ describe("durable execution and replay", () => {
     const find = vi.fn(async () => {
       throw new Error("access denied");
     });
-    const TestResource = resource({ type: "test/durable/effect-unknown" })
+    const TestResource = resource({
+      type: "test/durable/effect-unknown",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create,
@@ -272,7 +293,10 @@ describe("durable execution and replay", () => {
     const find = vi.fn(async () => {
       throw new Error("access denied");
     });
-    const TestResource = resource({ type: "test/durable/effect-capped" })
+    const TestResource = resource({
+      type: "test/durable/effect-capped",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create,
@@ -296,7 +320,10 @@ describe("durable execution and replay", () => {
 
   it("resumes after a crash following the delete checkpoint", async () => {
     const remove = vi.fn(async () => undefined);
-    const TestResource = resource({ type: "test/durable/destroy-resume" })
+    const TestResource = resource({
+      type: "test/durable/destroy-resume",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({ create: async () => undefined, delete: remove });
     const runtime = createRuntime(
@@ -320,7 +347,10 @@ describe("durable execution and replay", () => {
 
   it("waits durably for a retryable delete before removing state", async () => {
     let attempts = 0;
-    const PendingDelete = resource({ type: "test/durable/pending-delete" })
+    const PendingDelete = resource({
+      type: "test/durable/pending-delete",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
@@ -355,6 +385,7 @@ describe("durable execution and replay", () => {
     let reads = 0;
     const EventuallyReadable = resource({
       type: "test/durable/eventually-readable",
+      provider: "test",
     })
       .defineSchema({})
       .defineOperations({
@@ -393,6 +424,7 @@ describe("durable execution and replay", () => {
   it("does not infer that not-found after a write is pending", async () => {
     const MissingAfterCreate = resource({
       type: "test/durable/missing-after-create",
+      provider: "test",
     })
       .defineSchema({})
       .defineOperations({
@@ -422,7 +454,7 @@ describe("durable values", () => {
       CreateParams: {};
       UpdateParams: {};
       ReadResult: { CreatedDate: Date };
-    }>({ type: "test/durable/dated" })
+    }>({ type: "test/durable/dated", provider: "test" })
       .defineSchema({
         CreatedDate: {
           propertyType: "computed",
@@ -454,7 +486,7 @@ describe("durable values", () => {
       CreateParams: {};
       UpdateParams: {};
       ReadResult: { Payload: string };
-    }>({ type: "test/durable/bytes" })
+    }>({ type: "test/durable/bytes", provider: "test" })
       .defineSchema({
         Payload: {
           propertyType: "computed",
@@ -481,7 +513,10 @@ describe("durable values", () => {
 
   it("passes a date in a callback context to the next attempt", async () => {
     const contexts: unknown[] = [];
-    const PendingResource = resource({ type: "test/durable/dated-context" })
+    const PendingResource = resource({
+      type: "test/durable/dated-context",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async (_params, context) => {
@@ -526,13 +561,19 @@ describe("durable values", () => {
 describe("dependency ordering", () => {
   it("destroys dependents before their dependencies", async () => {
     const order: string[] = [];
-    const Dependency = resource({ type: "test/durable/dependency" })
+    const Dependency = resource({
+      type: "test/durable/dependency",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
         delete: async () => void order.push("dependency"),
       });
-    const Dependent = resource({ type: "test/durable/dependent" })
+    const Dependent = resource({
+      type: "test/durable/dependent",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
@@ -554,7 +595,10 @@ describe("dependency ordering", () => {
 
 describe("conditional state persistence", () => {
   it("rejects a state write whose snapshot another writer has moved past", async () => {
-    const RaceResource = resource({ type: "test/durable/write-race" })
+    const RaceResource = resource({
+      type: "test/durable/write-race",
+      provider: "test",
+    })
       // Cast: a resource declared without API types constrains every schema
       // key to be a key of an `any` API schema, which no named key satisfies.
       .defineSchema({
@@ -599,7 +643,10 @@ describe("conditional state persistence", () => {
   });
 
   it("rejects a state removal whose snapshot another writer has moved past", async () => {
-    const RaceResource = resource({ type: "test/durable/delete-race" })
+    const RaceResource = resource({
+      type: "test/durable/delete-race",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
@@ -635,7 +682,10 @@ describe("conditional state persistence", () => {
   // ID tells the two records apart.
   it("rejects a state write whose record was deleted and created again", async () => {
     let recreatedInstanceId: string | undefined;
-    const RaceResource = resource({ type: "test/durable/write-recreate-race" })
+    const RaceResource = resource({
+      type: "test/durable/write-recreate-race",
+      provider: "test",
+    })
       // Cast: see "rejects a state write whose snapshot another writer has
       // moved past".
       .defineSchema({
@@ -683,7 +733,10 @@ describe("conditional state persistence", () => {
 
   it("rejects a state removal whose record was deleted and created again", async () => {
     let recreatedInstanceId: string | undefined;
-    const RaceResource = resource({ type: "test/durable/delete-recreate-race" })
+    const RaceResource = resource({
+      type: "test/durable/delete-recreate-race",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
@@ -732,7 +785,10 @@ describe("deployment hold", () => {
       started();
       await blocked;
     });
-    const TestResource = resource({ type: "test/durable/concurrent" })
+    const TestResource = resource({
+      type: "test/durable/concurrent",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({ create, delete: async () => undefined });
     const runtime = createRuntime([new TestResource("shared")], "concurrent");
@@ -757,7 +813,10 @@ describe("deployment hold", () => {
     const create = vi.fn(async () => {
       if (failCreate) throw new Error("create rejected");
     });
-    const Resource = resource({ type: "test/durable/hold-release" })
+    const Resource = resource({
+      type: "test/durable/hold-release",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({ create, delete: async () => undefined });
     const runtime = createRuntime([new Resource("held")], "hold-release");
@@ -780,7 +839,10 @@ describe("deployment hold", () => {
 
   it("keeps the deployment hold when a delivery ends with an infrastructure error", async () => {
     const holders: Array<string | null> = [];
-    const Resource = resource({ type: "test/durable/hold-replay" })
+    const Resource = resource({
+      type: "test/durable/hold-replay",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => {
@@ -816,7 +878,10 @@ describe("deployment hold", () => {
     const createStarted = new Promise<void>((resolve) => {
       started = resolve;
     });
-    const TestResource = resource({ type: "test/durable/hold" })
+    const TestResource = resource({
+      type: "test/durable/hold",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => {
@@ -852,7 +917,10 @@ describe("deployment hold", () => {
 describe("deployment hold clearing", () => {
   it("clears a hold its named holder still has, and unblocks the deployment", async () => {
     const create = vi.fn(async () => undefined);
-    const Resource = resource({ type: "test/durable/takeover" })
+    const Resource = resource({
+      type: "test/durable/takeover",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({ create, delete: async () => undefined });
     const runtime = createRuntime([new Resource("held")], "takeover");
@@ -933,7 +1001,10 @@ describe("deployment scoping", () => {
 describe("orphan deletion", () => {
   it("deletes orphaned resources through the registry on a later deployment", async () => {
     const deleteSpy = vi.fn(async () => undefined);
-    const OrphanResource = resource({ type: "test/durable/orphan" })
+    const OrphanResource = resource({
+      type: "test/durable/orphan",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({ create: async () => undefined, delete: deleteSpy });
     const resources: BaseResource[] = [new OrphanResource("orphan")];
@@ -956,7 +1027,7 @@ describe("orphan deletion", () => {
   it("deletes orphans through the registry and the classes of the graph together", async () => {
     const deleted: string[] = [];
     const define = (type: string) =>
-      resource({ type: type as ResourceType })
+      resource({ type: type as ResourceType, provider: "test" })
         .defineSchema({})
         .defineOperations({
           create: async () => undefined,
@@ -1011,7 +1082,7 @@ function removeEdges(runtime: ReturnType<typeof createRuntime>, id: string) {
 
 describe("a resource whose state record has another type", () => {
   function defineTyped(type: string, calls: string[]) {
-    return resource({ type: type as ResourceType })
+    return resource({ type: type as ResourceType, provider: "test" })
       .defineSchema({})
       .defineOperations({
         create: async () => void calls.push(`create ${type}`),
@@ -1084,7 +1155,7 @@ describe("a resource whose state record has another type", () => {
 
 describe("dependency edges in state", () => {
   function defineRecorded(type: string, deleted: string[]) {
-    return resource({ type: type as ResourceType })
+    return resource({ type: type as ResourceType, provider: "test" })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
@@ -1110,7 +1181,10 @@ describe("dependency edges in state", () => {
 
   it("rewrites only the edges of a resource whose edges changed", async () => {
     const updateSpy = vi.fn(async () => undefined);
-    const Recorded = resource({ type: "test/durable/rewired" })
+    const Recorded = resource({
+      type: "test/durable/rewired",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
@@ -1468,7 +1542,10 @@ describe("dependency edges in state", () => {
 });
 
 describe("state from before groups had stable IDs", () => {
-  const LegacyResource = resource({ type: "test/durable/legacy-group" })
+  const LegacyResource = resource({
+    type: "test/durable/legacy-group",
+    provider: "test",
+  })
     // Cast: a resource declared without API types constrains every schema
     // key to be a key of an `any` API schema, which no named key satisfies.
     .defineSchema({
@@ -1559,7 +1636,10 @@ describe("drift detection and repair", () => {
     const updateSpy = vi.fn(async () => {
       remote = { name: "expected" };
     });
-    const DriftResource = resource({ type: "test/durable/drift" })
+    const DriftResource = resource({
+      type: "test/durable/drift",
+      provider: "test",
+    })
       // Cast: a resource declared without API types constrains every schema
       // key to be a key of an `any` API schema, which no named key satisfies.
       .defineSchema({
@@ -1601,7 +1681,10 @@ describe("drift detection and repair", () => {
   });
 
   it("trusts a noop for a resource with no read instead of reading during drift detection", async () => {
-    const ReadlessResource = resource({ type: "test/durable/readless" })
+    const ReadlessResource = resource({
+      type: "test/durable/readless",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
@@ -1637,7 +1720,10 @@ describe("drift detection and repair", () => {
   it("reads the remote during a dry run rather than reporting false drift", async () => {
     const remote = { name: "expected" };
     const read = vi.fn(async () => remote);
-    const DryRunDriftResource = resource({ type: "test/durable/dry-run-drift" })
+    const DryRunDriftResource = resource({
+      type: "test/durable/dry-run-drift",
+      provider: "test",
+    })
       .defineSchema({
         name: {
           presence: "required",
@@ -1693,7 +1779,7 @@ describe("replacement", () => {
     opts: { update?: boolean; read?: () => Promise<object> } = {},
   ) {
     return (
-      resource({ type })
+      resource({ type, provider: "test" })
         // Cast: a resource declared without API types constrains every schema
         // key to be a key of an `any` API schema, which no named key satisfies.
         .defineSchema({
@@ -1831,7 +1917,10 @@ describe("replacement", () => {
   it("plans a create after a replacement whose create failed", async () => {
     const calls: string[] = [];
     let failCreate = false;
-    const Role = resource({ type: "test/durable/replace-failed" })
+    const Role = resource({
+      type: "test/durable/replace-failed",
+      provider: "test",
+    })
       .defineSchema({
         path: {
           presence: "required",
@@ -2600,7 +2689,7 @@ describe("replacement with dependents", () => {
 describe("contributions and output values", () => {
   it("deploys a contributor first and fills in its output values", async () => {
     const created: Record<string, unknown>[] = [];
-    const Queue = resource({ type: "test/durable/queue" })
+    const Queue = resource({ type: "test/durable/queue", provider: "test" })
       .defineSchema({
         name: {
           presence: "required",
@@ -2621,7 +2710,7 @@ describe("contributions and output values", () => {
         },
         delete: async () => undefined,
       });
-    const Fn = resource({ type: "test/durable/function" })
+    const Fn = resource({ type: "test/durable/function", provider: "test" })
       .defineSchema({
         name: {
           presence: "required",
@@ -2662,7 +2751,7 @@ describe("contributions and output values", () => {
 
   it("deploys the deps of a function contribution first and runs it with their outputs", async () => {
     const created: Record<string, unknown>[] = [];
-    const Queue = resource({ type: "test/durable/queue" })
+    const Queue = resource({ type: "test/durable/queue", provider: "test" })
       .defineSchema({
         name: {
           presence: "required",
@@ -2683,7 +2772,7 @@ describe("contributions and output values", () => {
         },
         delete: async () => undefined,
       });
-    const Fn = resource({ type: "test/durable/function" })
+    const Fn = resource({ type: "test/durable/function", provider: "test" })
       .defineSchema({
         name: {
           presence: "required",
@@ -2747,7 +2836,10 @@ describe("value validation at deploy", () => {
       update?: () => Promise<void>;
     } = {},
   ) {
-    return resource<RoleApi>({ type: "test/durable/validated-role" })
+    return resource<RoleApi>({
+      type: "test/durable/validated-role",
+      provider: "test",
+    })
       .defineSchema({
         name: {
           propertyType: "param",
@@ -2781,7 +2873,10 @@ describe("value validation at deploy", () => {
     memory: () => number,
     roleValue: v.GenericSchema<string> = v.string(),
   ) {
-    return resource<FnApi>({ type: "test/durable/validated-fn" })
+    return resource<FnApi>({
+      type: "test/durable/validated-fn",
+      provider: "test",
+    })
       .defineSchema({
         name: {
           propertyType: "param",
@@ -2838,7 +2933,10 @@ describe("value validation at deploy", () => {
     let strict = false;
     const createRole = vi.fn(async () => ({ arn: "arn:role" }));
     const Role = defineRole({ create: createRole });
-    const Fn = resource<FnApi>({ type: "test/durable/validated-fn" })
+    const Fn = resource<FnApi>({
+      type: "test/durable/validated-fn",
+      provider: "test",
+    })
       .defineSchema({
         name: {
           propertyType: "param",
@@ -3012,7 +3110,7 @@ describe("value validation at deploy", () => {
       CreateParams: { name: string; memory: number };
       UpdateParams: { memory: number };
       ReadResult: { arn: string };
-    }>({ type: "test/durable/validated-updated" })
+    }>({ type: "test/durable/validated-updated", provider: "test" })
       .defineSchema({
         name: {
           propertyType: "param",
@@ -3119,7 +3217,7 @@ describe("value validation at deploy", () => {
       CreateParams: { name: string };
       UpdateParams: {};
       ReadResult: {};
-    }>({ type: "test/durable/validated-queue" })
+    }>({ type: "test/durable/validated-queue", provider: "test" })
       .defineSchema({
         id: {
           propertyType: "computed",
@@ -3224,7 +3322,7 @@ describe("value validation at deploy", () => {
       CreateParams: { name: string };
       UpdateParams: {};
       ReadResult: {};
-    }>({ type: "test/durable/validated-orphan" })
+    }>({ type: "test/durable/validated-orphan", provider: "test" })
       .defineSchema({
         name: {
           propertyType: "param",

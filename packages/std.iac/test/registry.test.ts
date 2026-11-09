@@ -11,3 +11,9 @@ it("resourceClasses holds every resource class the package exports", () => {
   );
   expect(new Set(std.resourceClasses)).toEqual(new Set(exported));
 });
+
+it("each class names this package as its provider", () => {
+  for (const Resource of std.resourceClasses) {
+    expect(Resource.provider).toBe("@notation/std.iac");
+  }
+});

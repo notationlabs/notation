@@ -12,6 +12,7 @@ export type FileSchema = {
 
 const fileResource = resource<FileSchema>({
   type: "std/fs/File",
+  provider: "@notation/std.iac",
 });
 
 export const fileSchema = fileResource.defineSchema({

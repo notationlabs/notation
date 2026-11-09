@@ -62,6 +62,7 @@ export type LambdaEventSourceMappingDependencies = {
 
 const lambdaEventSourceMapping = resource<LambdaEventSourceMappingSchema>({
   type: "aws/lambda/LambdaEventSourceMapping",
+  provider: "@notation/aws.iac",
 });
 
 const lambdaEventSourceMappingSchema = lambdaEventSourceMapping.defineSchema({

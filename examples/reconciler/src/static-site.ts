@@ -11,7 +11,10 @@ type StaticSiteApi = {
   ReadResult: { html: string };
 };
 
-const staticSite = resource<StaticSiteApi>({ type: "local/site/static" });
+const staticSite = resource<StaticSiteApi>({
+  type: "local/site/static",
+  provider: "reconciler-example",
+});
 
 export const StaticSite = staticSite
   .defineSchema({

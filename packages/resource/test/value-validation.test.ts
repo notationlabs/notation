@@ -27,7 +27,10 @@ const operations = {
   delete: async () => undefined,
 };
 
-const Role = resource<RoleApi>({ type: "test/validation/role" })
+const Role = resource<RoleApi>({
+  type: "test/validation/role",
+  provider: "test",
+})
   .defineSchema({
     RoleName: {
       propertyType: "param",
@@ -47,7 +50,10 @@ const Role = resource<RoleApi>({ type: "test/validation/role" })
 
 describe("schema item types", () => {
   it("rejects a validator whose output is not the API's type", () => {
-    resource<RoleApi>({ type: "test/validation/wrong" }).defineSchema({
+    resource<RoleApi>({
+      type: "test/validation/wrong",
+      provider: "test",
+    }).defineSchema({
       RoleName: {
         propertyType: "param",
         presence: "required",
@@ -73,7 +79,10 @@ describe("schema item types", () => {
         validate: (value) => ({ value: Number(value) }),
       },
     };
-    resource<RoleApi>({ type: "test/validation/transform" }).defineSchema({
+    resource<RoleApi>({
+      type: "test/validation/transform",
+      provider: "test",
+    }).defineSchema({
       RoleName: {
         propertyType: "param",
         presence: "required",
@@ -92,7 +101,10 @@ describe("schema item types", () => {
   });
 
   it("requires a validator on every item", () => {
-    resource<RoleApi>({ type: "test/validation/missing" }).defineSchema({
+    resource<RoleApi>({
+      type: "test/validation/missing",
+      provider: "test",
+    }).defineSchema({
       RoleName: {
         propertyType: "param",
         presence: "required",
@@ -107,7 +119,10 @@ describe("schema item types", () => {
   });
 
   it("types a field by a narrower validator's output", () => {
-    const Narrow = resource<RoleApi>({ type: "test/validation/narrow" })
+    const Narrow = resource<RoleApi>({
+      type: "test/validation/narrow",
+      provider: "test",
+    })
       .defineSchema({
         RoleName: {
           propertyType: "param",
@@ -137,7 +152,10 @@ describe("schema item types", () => {
   });
 });
 
-const AsyncRole = resource<RoleApi>({ type: "test/validation/async" })
+const AsyncRole = resource<RoleApi>({
+  type: "test/validation/async",
+  provider: "test",
+})
   .defineSchema({
     RoleName: {
       propertyType: "param",
@@ -301,7 +319,7 @@ const PolicyHolder = resource<{
   CreateParams: { Name: string; Policy?: Policy };
   UpdateParams: { Policy?: Policy };
   ReadResult: {};
-}>({ type: "test/validation/policy-holder" })
+}>({ type: "test/validation/policy-holder", provider: "test" })
   .defineSchema({
     Name: {
       propertyType: "param",
@@ -377,7 +395,7 @@ describe("values that hold unknowns", () => {
       CreateParams: { RoleName: string };
       UpdateParams: {};
       ReadResult: {};
-    }>({ type: "test/validation/throwing" })
+    }>({ type: "test/validation/throwing", provider: "test" })
       .defineSchema({
         RoleName: {
           propertyType: "param",

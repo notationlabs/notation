@@ -68,6 +68,7 @@ const eventBridgeRule = resource<EventBridgeRuleSchema>({
   // AWS refuses to delete a bus that has rules. The default bus is never
   // deleted, so it is not listed.
   blocksDeleteOf: [EventBus.type],
+  provider: "@notation/aws.iac",
 });
 
 const keyValue = v.object({ Key: v.string(), Value: v.string() });

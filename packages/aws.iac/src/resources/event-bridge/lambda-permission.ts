@@ -20,6 +20,7 @@ export type LambdaEventBridgeRulePermissionDependencies = {
 const lambdaEventBridgeRulePermission =
   resource<LambdaEventBridgeRulePermissionSchema>({
     type: "aws/eventBridge/LambdaEventBridgeRulePermission",
+    provider: "@notation/aws.iac",
   });
 
 const LambdaEventBridgeRulePermissionSchema =

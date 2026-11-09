@@ -11,3 +11,9 @@ it("resourceClasses holds every resource class the package exports", () => {
   );
   expect(new Set(aws.resourceClasses)).toEqual(new Set(exported));
 });
+
+it("each class names this package as its provider", () => {
+  for (const Resource of aws.resourceClasses) {
+    expect(Resource.provider).toBe("@notation/aws.iac");
+  }
+});

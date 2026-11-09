@@ -112,6 +112,8 @@ export type ResourceGroupRef = { type: string; id: string };
 
 export interface BaseResource {
   readonly type: ResourceType;
+  /** The name of the package that provides the resource's class. */
+  readonly provider: string;
   readonly schema: Schema;
   readonly config: any;
   id: string;
@@ -200,6 +202,7 @@ export abstract class Resource<
   // would be missing from what was read, so `contribute` throws.
   #sealed = false;
   abstract type: ResourceType;
+  abstract provider: string;
   abstract schema: Schema;
   abstract create: (
     params: T["params"],
@@ -628,6 +631,12 @@ export type DefineResourceMeta = {
    * deploy updates it when its params change.
    */
   blocksDeleteOf?: ResourceType[];
+  /**
+   * The name of the package that exports the class in its `resourceClasses`,
+   * such as `@notation/aws.iac`. State records it, so that deploy and destroy
+   * can load the class of a record whose type has left the graph.
+   */
+  provider: string;
 };
 
 export type ResourceOperationsOptions<
@@ -703,6 +712,7 @@ export type ResourceClass<
   readonly type: ResourceType;
   /** See `DefineResourceMeta.blocksDeleteOf`. */
   readonly blocksDeleteOf: readonly ResourceType[];
+  readonly provider: string;
   requireDependencies: <
     Dependencies extends Record<string, BaseResource | void>,
   >() => ResourceDependenciesBuilder<T, IntrinsicParams, Dependencies>;
@@ -768,8 +778,10 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             >,
           > extends Resource<T, NoInfer<D>, NoInfer<C>> {
             static type = meta.type;
+            static provider = meta.provider;
             type = meta.type;
             static blocksDeleteOf = meta.blocksDeleteOf ?? [];
+            provider = meta.provider;
             schema = schema;
             create = opts.create;
             find = opts.find;

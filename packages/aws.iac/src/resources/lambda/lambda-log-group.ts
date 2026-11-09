@@ -14,6 +14,7 @@ export type LambdaLogGroupDependencies = { lambda: LambdaFunctionInstance };
 
 const lambdaLogGroup = resource<LambdaLogGroupSchema>({
   type: "aws/lambda/LambdaLogGroup",
+  provider: "@notation/aws.iac",
 });
 
 const lambdaLogGroupSchema = lambdaLogGroup.defineSchema({

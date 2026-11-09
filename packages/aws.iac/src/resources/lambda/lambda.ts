@@ -69,6 +69,7 @@ export type LambdaDependencies = {
 
 const lambdaFunction = resource<LambdaFunctionSchema>({
   type: "aws/lambda/LambdaFunction",
+  provider: "@notation/aws.iac",
 });
 
 const lambdaFunctionSchema = lambdaFunction.defineSchema({

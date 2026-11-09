@@ -23,6 +23,7 @@ export type ZipSchema = {
 
 const zipResource = resource<ZipSchema>({
   type: "std/fs/Zip",
+  provider: "@notation/std.iac",
 });
 
 export const zipSchema = zipResource.defineSchema({

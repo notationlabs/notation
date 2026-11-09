@@ -23,6 +23,7 @@ type RouteDependencies = {
 
 const route = resource<RouteSdkSchema>({
   type: "aws/apiGateway/Route",
+  provider: "@notation/aws.iac",
 });
 
 export const routeSchema = route.defineSchema({

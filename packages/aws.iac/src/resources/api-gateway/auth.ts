@@ -18,6 +18,7 @@ type AuthorizerDependencies = {
 
 const authorizer = resource<AuthorizerSdkSchema>({
   type: "aws/apiGateway/Authorizer",
+  provider: "@notation/aws.iac",
 });
 
 const jwtConfiguration = v.object({

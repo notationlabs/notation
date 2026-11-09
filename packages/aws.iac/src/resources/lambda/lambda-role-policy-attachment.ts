@@ -16,6 +16,7 @@ export type LambdaRolePolicyAttachmentDependencies = {
 
 const lambdaRolePolicyAttachment = resource<LambdaRolePolicyAttachmentSchema>({
   type: "aws/lambda/LambdaRolePolicyAttachment",
+  provider: "@notation/aws.iac",
 });
 
 const lambdaRolePolicyAttachmentSchema =

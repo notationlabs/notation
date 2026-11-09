@@ -44,6 +44,7 @@ export type LambdaPermissionDependencies = {
 
 const lambdaPermission = resource<LambdaPermissionSchema>({
   type: "aws/lambda/LambdaPermission",
+  provider: "@notation/aws.iac",
 });
 
 const lambdaPermissionSchema = lambdaPermission.defineSchema({
