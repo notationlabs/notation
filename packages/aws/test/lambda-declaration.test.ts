@@ -203,6 +203,7 @@ test("decode() throws a DecodeError for a body that is not valid", async () => {
   expect(error.message).toBe(
     "The message body is not valid: id must be a string",
   );
+  expect(error.part).toBe("body");
   expect(error.issues).toEqual([{ message: "id must be a string" }]);
 });
 
@@ -212,6 +213,7 @@ test("decode() throws a DecodeError for a body that is not JSON", async () => {
   const error = await fn.decode(record("not json")).catch((e) => e);
   expect(error).toBeInstanceOf(DecodeError);
   expect(error.message).toBe("The message body is not valid JSON.");
+  expect(error.part).toBe("body");
 });
 
 test("decode() validates the body of an SQS record with the schema of sqs.schema()", async () => {
@@ -400,7 +402,9 @@ test("decode() returns a request with its body and its JWT claims decoded", asyn
   expect(error.message).toBe(
     "The request's JWT claims are not valid: sub must be a string",
   );
+  expect(error.part).toBe("claims");
   expect(error.issues).toEqual([{ message: "sub must be a string" }]);
+  expectTypeOf<DecodeError["part"]>().toEqualTypeOf<"body" | "claims">();
 });
 
 test("decode() throws a DecodeError for a request with no JWT claims, when the declaration has claims", async () => {
@@ -409,11 +413,14 @@ test("decode() throws a DecodeError for a request with no JWT claims, when the d
     event: () => apiGateway.schema(null).authSchema(Claims),
   });
 
-  await expect(
-    fn.decode({ body: "{}", isBase64Encoded: false } as any),
-  ).rejects.toThrow(
+  const error = await fn
+    .decode({ body: "{}", isBase64Encoded: false } as any)
+    .catch((e) => e);
+  expect(error).toBeInstanceOf(DecodeError);
+  expect(error.message).toBe(
     "The request has no JWT claims. Route it through a route with a JWT authorizer.",
   );
+  expect(error.part).toBe("claims");
 });
 
 test("decode() of a request with no body and no body schema returns an undefined body", async () => {
@@ -448,6 +455,7 @@ test("decode() with a body schema of null returns an undefined body, and rejects
     expect(error.message).toBe(
       "The request has a body, but the function's body schema is null, so its requests must have no body.",
     );
+    expect(error.part).toBe("body");
   }
 });
 
@@ -489,6 +497,7 @@ test("decode() with an object schema throws for a body that is not JSON", async 
     .catch((e) => e);
   expect(error).toBeInstanceOf(DecodeError);
   expect(error.message).toBe("The request body is not valid JSON.");
+  expect(error.part).toBe("body");
   await expect(
     fn.decode({ body: '{"id":1}', isBase64Encoded: false }),
   ).rejects.toThrow("The request body is not valid: id must be a string");

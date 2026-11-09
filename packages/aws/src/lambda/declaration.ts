@@ -415,14 +415,21 @@ export type LambdaEnv<L extends { readonly "~lambda"?: { env: EnvVars } }> =
 
 /** Thrown by `decode()` when an item is not valid. */
 export class DecodeError extends Error {
+  /**
+   * The part of the item that is not valid: the body of a message or a
+   * request, or the JWT claims of a request.
+   */
+  readonly part: "body" | "claims";
   readonly issues: ReadonlyArray<StandardSchemaV1.Issue>;
 
   constructor(
     message: string,
+    part: "body" | "claims",
     issues: ReadonlyArray<StandardSchemaV1.Issue> = [],
   ) {
     super(message);
     this.name = "DecodeError";
+    this.part = part;
     this.issues = issues;
   }
 }
@@ -469,6 +476,7 @@ export function createDecode(
       if (raw) {
         throw new DecodeError(
           "The request has a body, but the function's body schema is null, so its requests must have no body.",
+          "body",
         );
       }
       return { ...item, body: undefined, ...claims };
@@ -491,7 +499,7 @@ async function decodeBody(
   try {
     value = JSON.parse(body);
   } catch {
-    throw new DecodeError(`The ${name} body is not valid JSON.`);
+    throw new DecodeError(`The ${name} body is not valid JSON.`, "body");
   }
   return validateBody(schema, value, name);
 }
@@ -505,6 +513,7 @@ async function validateBody(
   if (result.issues) {
     throw new DecodeError(
       `The ${name} body is not valid: ${details(result.issues)}`,
+      "body",
       result.issues,
     );
   }
@@ -520,6 +529,7 @@ async function decodeClaims(
   if (claims === undefined) {
     throw new DecodeError(
       "The request has no JWT claims. Route it through a route with a JWT authorizer.",
+      "claims",
     );
   }
   if (!schema) return claims;
@@ -527,6 +537,7 @@ async function decodeClaims(
   if (result.issues) {
     throw new DecodeError(
       `The request's JWT claims are not valid: ${details(result.issues)}`,
+      "claims",
       result.issues,
     );
   }
