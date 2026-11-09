@@ -52,12 +52,12 @@ Infra makes a schedule for a declaration with `eventBridge.schema(null)`:
 ::code-group
 
 ```ts [infra/schedule.ts]
-import * as eventBridge from "@notation/aws/event-bridge";
+import { schedule, rate } from "@notation/aws/event-bridge";
 import { lambda as logEvent } from "runtime/log-event";
 
-eventBridge.schedule({
+schedule({
   id: "log-every-minute",
-  schedule: eventBridge.rate(1, "minute"),
+  schedule: rate(1, "minute"),
   target: () => logEvent,
 });
 ```
@@ -105,11 +105,13 @@ The rule sends the EventBridge event to the function as it is.
 ### `rate(value, unit)`
 
 ```ts [infra/schedule.ts]
-eventBridge.rate(1, "minute");
-eventBridge.rate(5, "minutes");
-eventBridge.rate(1, "hour");
-eventBridge.rate(12, "hours");
-eventBridge.rate(1, "day");
+import { rate } from "@notation/aws/event-bridge";
+
+rate(1, "minute");
+rate(5, "minutes");
+rate(1, "hour");
+rate(12, "hours");
+rate(1, "day");
 ```
 
 ```ts [@notation/aws/event-bridge]
@@ -119,14 +121,18 @@ type RateUnit = "minute" | "minutes" | "hour" | "hours" | "day" | "days";
 ### `cron(expression)`
 
 ```ts [infra/schedule.ts]
-eventBridge.cron("0 12 * * ? *");
-eventBridge.cron("0/15 * * * ? *");
+import { cron } from "@notation/aws/event-bridge";
+
+cron("0 12 * * ? *");
+cron("0/15 * * * ? *");
 ```
 
 ### `once(date)`
 
 ```ts [infra/schedule.ts]
-eventBridge.once(new Date("2027-12-31T23:59:00Z"));
+import { once } from "@notation/aws/event-bridge";
+
+once(new Date("2027-12-31T23:59:00Z"));
 ```
 
 ## Handler
