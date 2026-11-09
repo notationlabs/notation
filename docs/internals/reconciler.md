@@ -16,6 +16,7 @@ The reconciler expresses deployment and destruction as `@notation/durable` async
 | In state, provider state differs from stored state                                       | **drift-update**   |
 | In state, provider state differs in an immutable or key param                            | **drift-replace**  |
 | In state, not in graph                                                                   | **delete-orphan**  |
+| In state with another type                                                               | plan fails         |
 
 The change decision comes from the resource schema, through `diffParams` in `@notation/resource`. It compares comparable params (`param` items that are not `volatile` or `hidden`) field by field. A changed field forces replacement when its schema item is `immutable`, `primaryKey` or `secondaryKey`, or when the resource has no `update` operation. A change anywhere inside such a field replaces the whole resource.
 
@@ -26,6 +27,8 @@ Replacement deletes the resource and then creates it again, because a resource u
 The dependents of a replaced resource stay in place. When deploy reaches each of them, it decides again with the outputs of the new resource. A dependent whose params change is updated, or replaced if a changed param forces replacement. For example, replacing a Lambda role updates the function's `Role`, and does not delete the function or its log group. A dependent whose type blocks the delete of the replaced resource is deleted first instead. See [Dependents of a replaced resource](#dependents-of-a-replaced-resource).
 
 An unknown immutable or key param plans **replace** with the field marked "unknown, may force replacement". The planner treats a replaced resource's output as unknown, so its dependents plan against unknown params, and can show **replace** in turn. Deploy decides again for each resource once its dependencies have converged, with real params, so it replaces only what really changed. [Unknown values](#unknown-values) explains when plan marks a param unknown.
+
+A resource can't change type under the same ID, as its class would read, update or delete the resource of another class. When a state record's type differs from the type of the resource with its ID, plan and deploy throw `ResourceTypeChangedError` before any change. A provider that changes the type of a resource gives it a new ID instead. The new resource is then created in the dependency walk, and the old record is deleted in the orphan sweep after the walk, so the new resource exists before the old one is deleted. The old type's class must stay registered for the sweep to delete it. Destroy deletes a record of another type through the class registered for the record's type, and throws `ResourceTypeChangedError` when no class is registered.
 
 ### Dependents of a replaced resource
 
@@ -128,6 +131,8 @@ Each state record stores the IDs of the resources it depends on in `dependsOn`, 
 The sweep deletes orphans in reverse order of these edges, as deploy and destroy do for resources in the graph. A replacement deletes the dependents that block its delete in the same order; see [Dependents of a replaced resource](#dependents-of-a-replaced-resource). An edge to a resource that is not an orphan is ignored, including an edge to a resource that is no longer in state. A record written before edges were recorded has no `dependsOn`, and keeps its storage order among the orphans it has no edges to. The next deploy that reaches the resource writes its edges.
 
 Orphans that form a cycle cannot be ordered. They, and the orphans that depend on them, are deleted first, in storage order, so a provider that refuses one of the deletes fails the deploy. An orphan in this group with no registered class does not keep the orphans it depends on in the group, as the sweep can delete them before it reaches the orphan.
+
+The sweep looks up an orphan's class by its type in the caller's `registry`, merged with the classes of the resources in the graph. `deployApp` and `destroyApp` in `@notation/core` pass the `resourceClasses` exported by each provider package that the project has installed, `@notation/aws.iac` and `@notation/std.iac`. They import each package from the project's `node_modules`, as the infra bundle does. Without these, a record whose type no longer appears in the graph could not be deleted.
 
 When an orphan's type has no registered class, the sweep keeps the orphan and every orphan it depends on, directly or through another orphan. In destroy, it also keeps every resource in the desired set that the orphan depends on, directly or through another kept resource, and destroy does not delete those resources. The `reconciler.orphan-deletion.skipped` warning names the kept resources in `keptDependencies`. Each orphan with no registered class emits its own warning, including an orphan that another skipped orphan already keeps.
 

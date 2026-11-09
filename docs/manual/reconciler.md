@@ -68,6 +68,8 @@ An execution that crashed keeps the hold. If a `reconciler.hold.waiting` event n
 
 Every value the runtime records must be a `@notation/durable` 0.9.0 durable value, including provider operation results and resource output. A `Date`, `Map`, `Set` or `bigint` is recorded as it is. A provider that returns a `Buffer` or another class instance fails the step with a `WorkflowValueError` whose code is `INVALID_STEP_VALUE`.
 
-Pass the complete desired set on every deployment. Persisted resources absent from that set are deleted through the supplied resource registry, in reverse order of the dependencies recorded in their state. Destroy removes any persisted orphans whose resource type is registered, and then removes current resources in reverse dependency order. A current resource that an unregistered orphan depends on is left in place.
+Pass the complete desired set on every deployment. Persisted resources absent from that set are deleted through the class registered for their type, in reverse order of the dependencies recorded in their state. Destroy removes any persisted orphans whose resource type is registered, and then removes current resources in reverse dependency order. A current resource that an unregistered orphan depends on is left in place. The classes of the resources in the desired set are registered, together with those of the `registry` you pass. `deployApp` and `destroyApp` in `@notation/core` also pass the `resourceClasses` of each provider package that the project has installed.
+
+A resource can't change type under the same ID. When a state record has the ID of a resource of another type, plan and deploy fail before any change, and the error names the ID and both types. Give the new resource a new ID: its record is then created, and the old record is deleted as an orphan after it. Destroy deletes such a record through the class registered for the record's type.
 
 The runnable Node SQLite composition is in `examples/reconciler`.
