@@ -83,7 +83,14 @@ export function $lambda<
   } as unknown as Lambda<E, Env>;
 
   let group: LambdaGroup | undefined;
-  const build = () => (group ??= buildGroup(declaration, config));
+  // The group is assigned before the queue is mapped, so a mapping that
+  // throws doesn't build a second group on the next call.
+  const build = () => {
+    if (group) return group;
+    group = buildGroup(declaration, config);
+    subscribeQueue(group, config);
+    return group;
+  };
   Object.defineProperty(declaration, registration, {
     value: {
       build,
@@ -128,6 +135,17 @@ function buildGroup(
   if (statements.length > 0) {
     group.policy.contribute({ PolicyDocument: { Statement: statements } });
   }
+  return group;
+}
+
+// Maps the queue of `event: () => sqs(queue)` to the group.
+function subscribeQueue(
+  group: LambdaGroup,
+  config: Omit<
+    LambdaDeclarationConfig<string, LambdaEvent | undefined, EnvVars>,
+    "id"
+  > & { id: string },
+): void {
   const event = config.event?.();
   if (event?.kind === "sqs" && event.queue) {
     const queue = event.queue as Partial<SqsSource>;
@@ -138,7 +156,6 @@ function buildGroup(
     }
     queue["~subscribe"](group, event.options);
   }
-  return group;
 }
 
 /**

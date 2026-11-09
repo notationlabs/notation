@@ -19,6 +19,7 @@ import {
   type LambdaGroup,
   type SqsEvent,
 } from "src/lambda";
+import { resolveLambda } from "src/lambda/lambda-declaration";
 import { queue } from "src/sqs";
 import { inModule, lambdaGroup } from "./declare";
 
@@ -319,6 +320,24 @@ test("sqs(queue) in a declaration maps the queue to the function", async () => {
   expect((await fn.policy.getParams()).PolicyDocument.Statement).toEqual([
     readStatement("orders"),
   ]);
+});
+
+test("a declaration whose queue fails to map builds one group", () => {
+  let calls = 0;
+  const failing = {
+    schema: undefined,
+    "~subscribe"() {
+      calls++;
+      throw new Error("mapping failed");
+    },
+  };
+  const fn = inModule($lambda({ id: "process", event: () => sqs(failing) }));
+  const build = () => resolveLambda(() => fn, "test", ["sqs"]);
+
+  expect(build).toThrow("mapping failed");
+  const group = build();
+  expect(build()).toBe(group);
+  expect(calls).toBe(1);
 });
 
 test("sqs(queue) can name a queue that a later module declares", async () => {
