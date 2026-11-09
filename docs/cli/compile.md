@@ -22,7 +22,7 @@ export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,
-  event: () => apiGateway.schema(),
+  event: () => apiGateway.schema(null),
 });
 
 const todos = await api.get<any[]>("/todos");
@@ -38,7 +38,7 @@ export const lambda = __notation_declaredIn(
     id: "todos",
     timeout: 5,
     memory: 64,
-    event: () => apiGateway.schema(),
+    event: () => apiGateway.schema(null),
   }),
   "runtime/todos.ts",
   "lambda",

@@ -2,11 +2,11 @@
 
 `@notation/aws/api-gateway` builds HTTP APIs backed by Lambda functions. A Lambda function receives the requests of a route in one of two ways:
 
-| Function-led                                                                | Infra-led                                                                                 |
-| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `event: () => apiGateway.bind(todoApi).defineRoute({ method, path })`       | `event: () => apiGateway.schema(NewTodo)`                                                 |
-| The declaration makes one route on an API that infra declares.              | Infra makes routes with `router(todoApi).post("/todos", () => todos)`.                    |
-| `decode()` validates with the route's `schema` and the authorizer's claims. | `decode()` validates with `NewTodo`, and with the claims schema of `.authSchema(Claims)`. |
+| Function-led                                                                  | Infra-led                                                                                 |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `event: () => apiGateway.bind(todoApi).defineRoute({ method, path, schema })` | `event: () => apiGateway.schema(NewTodo)`                                                 |
+| The declaration makes one route on an API that infra declares.                | Infra makes routes with `router(todoApi).post("/todos", () => todos)`.                    |
+| `decode()` validates with the route's `schema` and the authorizer's claims.   | `decode()` validates with `NewTodo`, and with the claims schema of `.authSchema(Claims)`. |
 
 `apiGateway` comes from `@notation/aws/lambda`. `api()`, `jwtAuthorizer()` and `router()` come from `@notation/aws/api-gateway`, and only run in infra.
 
@@ -76,12 +76,12 @@ The infra module only declares the API. When infra has finished loading, the dec
 type ApiGatewayRouteOptions = {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: `/${string}`;
-  schema?: StandardSchemaV1;
+  schema: StandardSchemaV1 | null;
   auth?: JwtAuthorizerGroup; // from jwtAuthorizer()
 };
 ```
 
-`schema` validates the JSON body of a request in `lambda.decode(event)`. `auth` puts the route behind a JWT authorizer; see [JWT authorization](#jwt-authorization).
+`schema` validates the body of a request in `lambda.decode(event)`. **`schema` is required.** A route whose requests have no body, such as `GET /todos`, passes `schema: null`, and then `decode()` rejects a request with a body. See [Request bodies](#request-bodies). `auth` puts the route behind a JWT authorizer; see [JWT authorization](#jwt-authorization).
 
 ### In the runtime build
 
@@ -99,7 +99,7 @@ export const lambda = $lambda({
 
 `NewTodo` stays as it is, so it must come from a shared module or a package. An authorizer in `auth` becomes an object of its claims schema; see [JWT authorization](#jwt-authorization).
 
-`defineRoute()` makes one route. To serve several routes from one function, declare it with `apiGateway.schema()` and route it from infra with `router()`.
+`defineRoute()` makes one route. To serve several routes from one function, declare it with `apiGateway.schema(body)` and route it from infra with `router()`.
 
 ## `apiGateway.schema(body)`
 
@@ -115,9 +115,9 @@ export const lambda = $lambda({
 });
 ```
 
-`body` is optional. A function that only serves `GET` routes has no body to validate, so it calls `apiGateway.schema()`.
+`body` is required. A function that only serves `GET` routes takes no body, so it calls `apiGateway.schema(null)`.
 
-The event of `apiGateway.schema()` has the kind `apiGateway`, so only routes with no authorizer can invoke the function. For routes behind a JWT authorizer, call `.authSchema()` on the event:
+The event of `apiGateway.schema(body)` has the kind `apiGateway`, so only routes with no authorizer can invoke the function. For routes behind a JWT authorizer, call `.authSchema()` on the event:
 
 | Call                                            | Kind             | Routes that can invoke the function                             |
 | ----------------------------------------------- | ---------------- | --------------------------------------------------------------- |
@@ -126,7 +126,7 @@ The event of `apiGateway.schema()` has the kind `apiGateway`, so only routes wit
 | `apiGateway.schema(NewTodo).authSchema()`       | `apiGateway-jwt` | Routes with any JWT authorizer                                  |
 
 ```ts [@notation/aws/lambda]
-apiGateway.schema(body?: StandardSchemaV1).authSchema(claims?: StandardSchemaV1);
+apiGateway.schema(body: StandardSchemaV1 | null).authSchema(claims?: StandardSchemaV1);
 ```
 
 `authSchema` is a non-enumerable property of the event, so it is not part of the event's data that `decode()` and the infra checks read.
@@ -170,7 +170,7 @@ The route methods return nothing.
 | A Lambda group from `lambda()`                             | Routed                   | Routed                                                           |
 | A declaration with `apiGateway.bind(api).defineRoute(...)` | Throws                   | Throws                                                           |
 
-A declaration with `defineRoute()` already makes its route, so `router()` throws for it. Route the function in one place: remove the router call, or declare the function with `apiGateway.schema()`.
+A declaration with `defineRoute()` already makes its route, so `router()` throws for it. Route the function in one place: remove the router call, or declare the function with `apiGateway.schema(body)`.
 
 TypeScript checks the same pairings, except for the last row.
 
@@ -184,7 +184,19 @@ Each route, from `router()` or from `defineRoute()`, produces a full resource su
 
 ### Request bodies
 
-`lambda.decode(event)` returns the request with `body` decoded. It decodes a base64 body, parses it as JSON, and validates it with the body schema, so `body` has the schema's output type. An empty body is validated as `undefined`, so the schema decides whether a request may have no body. With no body schema, `decode()` doesn't parse the body: `body` is the string that API Gateway sent, decoded from base64, or `undefined` for a request with no body. A text or form body works this way. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
+`lambda.decode(event)` returns the request with `body` decoded. It decodes a base64 body first. What happens next depends on the body schema:
+
+| Body schema  | Request body                  | `body` in the result            |
+| ------------ | ----------------------------- | ------------------------------- |
+| `NewTodo`    | `{"title":"Buy milk"}`        | The parsed JSON, validated      |
+| `NewTodo`    | Empty, or none                | `undefined`, validated          |
+| `v.string()` | `Buy milk`, which is not JSON | `"Buy milk"`, validated as text |
+| `null`       | Empty, or none                | `undefined`                     |
+| `null`       | Any other body                | Throws a `DecodeError`          |
+
+`decode()` validates the parsed JSON first. When the body is not JSON, or the schema rejects the parsed value, `decode()` validates the body as a string. So a route that takes text declares a string schema, such as `v.string()`, and a text body such as `123` stays the string `"123"`. A JSON body that the schema rejects throws a `DecodeError` with the issues for the parsed value.
+
+An empty body is validated as `undefined`, so the schema decides whether a request may have no body. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
 
 ## JWT authorization
 
@@ -214,9 +226,12 @@ import { userApi, userAuth } from "infra/api";
 export const lambda = $lambda({
   id: "user",
   event: () =>
-    apiGateway
-      .bind(userApi)
-      .defineRoute({ method: "GET", path: "/user", auth: userAuth }),
+    apiGateway.bind(userApi).defineRoute({
+      method: "GET",
+      path: "/user",
+      schema: null,
+      auth: userAuth,
+    }),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
@@ -240,7 +255,7 @@ router(userApi)
 ```ts [runtime/profile.ts]
 export const lambda = $lambda({
   id: "profile",
-  event: () => apiGateway.schema().authSchema(Claims),
+  event: () => apiGateway.schema(null).authSchema(Claims),
 });
 ```
 
@@ -348,7 +363,7 @@ export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,
-  event: () => apiGateway.schema(),
+  event: () => apiGateway.schema(null),
 });
 
 const todos = await api.get<any[]>("/todos");

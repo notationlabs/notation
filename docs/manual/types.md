@@ -38,7 +38,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 | `eventSourceMapping({ source, target })`        | `sqs.schema()` of the queue's schema type, or no `event`                                                                           |
 | `router.get(path, target)`                      | `apiGateway.schema(body)`, or no `event`                                                                                           |
 | `router.withAuthorizer(auth).get(path, target)` | `apiGateway.schema(body).authSchema(claims)` of the authorizer's claims type, `.authSchema()` with no claims schema, or no `event` |
-| `schedule({ target })`                          | `eventBridge.schedule()` or no `event`                                                                                             |
+| `schedule({ target })`                          | `eventBridge.schema(null)` or no `event`                                                                                           |
 
 The infra APIs also check the event when infra runs, so a mismatch that TypeScript misses, such as one behind an `any`, fails with an error that names the Lambda and its event.
 
@@ -75,7 +75,7 @@ lambda.env().ORDERS_URL; // type error: the declaration doesn't bind ORDERS_URL
 
 ## Bodies are typed by the schema
 
-`queue({ schema })`, `apiGateway.schema(body)` and the `schema` option of `defineRoute()` take a [Standard Schema](https://standardschema.dev). A declaration with `sqs.bind(queue)` gets the queue's schema, and `body` in the result of `lambda.decode()` has the schema's output type:
+`queue({ schema })`, `apiGateway.schema(body)` and the `schema` option of `defineRoute()` take a [Standard Schema](https://standardschema.dev). `apiGateway.schema(null)` and `schema: null` mean the requests have no body, and `body` in the result of `lambda.decode()` has the type `undefined`. A declaration with `sqs.bind(queue)` gets the queue's schema, and `body` in the result of `lambda.decode()` has the schema's output type:
 
 ::code-group
 
@@ -145,7 +145,7 @@ import { Claims } from "shared/claims";
 
 export const lambda = $lambda({
   id: "profile",
-  event: () => apiGateway.schema().authSchema(Claims),
+  event: () => apiGateway.schema(null).authSchema(Claims),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {

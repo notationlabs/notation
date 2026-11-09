@@ -14,7 +14,7 @@ import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
 export const lambda = $lambda({
   id: "todos",
   timeout: 5,
-  event: () => apiGateway.schema(),
+  event: () => apiGateway.schema(null),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
@@ -52,7 +52,7 @@ Infra APIs take the declaration as a function that returns it, such as `() => to
 | [`eventSourceMapping`](sqs.md#eventsourcemappingconfig)     | A declaration with `sqs.schema()` or no `event`                                |
 | [`router.get`](api-gateway.md#routerapi), `.post`, ...      | A declaration with `apiGateway.schema(body)` or no `event`                     |
 | [`withAuthorizer`](api-gateway.md#jwt-authorization) routes | A declaration with `apiGateway.schema(body).authSchema(claims?)` or no `event` |
-| [`schedule`](event-bridge.md#scheduleconfig)                | A declaration with `eventBridge.schedule()` or no `event`                      |
+| [`schedule`](event-bridge.md#scheduleconfig)                | A declaration with `eventBridge.schema(null)` or no `event`                    |
 
 Each API also takes a Lambda group from [`lambda()`](#lambdaconfig), as it is, with no function around it.
 

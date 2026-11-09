@@ -4,7 +4,7 @@
 
 | Function-led                                                | Infra-led                                                        |
 | ----------------------------------------------------------- | ---------------------------------------------------------------- |
-| `event: () => eventBridge.defineSchedule({ id, schedule })` | `event: () => eventBridge.schedule()`                            |
+| `event: () => eventBridge.defineSchedule({ id, schedule })` | `event: () => eventBridge.schema(null)`                          |
 | The declaration makes the schedule.                         | Infra makes schedules with `schedule({ id, schedule, target })`. |
 
 `eventBridge` comes from `@notation/aws/lambda`. `schedule()`, `rate()`, `cron()` and `once()` come from `@notation/aws/event-bridge`.
@@ -47,7 +47,7 @@ type ScheduleOptions = {
 
 ## `schedule(config)`
 
-Infra makes a schedule for a declaration with `eventBridge.schedule()`:
+Infra makes a schedule for a declaration with `eventBridge.schema(null)`:
 
 ::code-group
 
@@ -67,7 +67,7 @@ import { $lambda, eventBridge, type LambdaHandler } from "@notation/aws/lambda";
 
 export const lambda = $lambda({
   id: "log-event",
-  event: () => eventBridge.schedule(),
+  event: () => eventBridge.schema(null),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
@@ -76,6 +76,8 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 ```
 
 ::
+
+`eventBridge.schema()` takes the schema of the event's detail. A scheduled event has no detail, so the only value it takes is `null`, and `eventBridge.schema()` with no argument is a type error.
 
 `logEvent` is the declaration from the runtime module `runtime/log-event.ts`. `schedule` takes it as a function, `() => logEvent`, and calls the function when infra has finished loading. See [Wiring a declaration](lambda.md#wiring-a-declaration). `schedule` creates the same rule and permission as `defineSchedule()`. It returns nothing.
 
@@ -90,7 +92,7 @@ type ScheduleConfig = {
 };
 ```
 
-`target` can be a declaration with `eventBridge.schedule()`, a declaration with no `event`, or a Lambda group from [`lambda()`](lambda.md#lambdaconfig). A declaration with `eventBridge.defineSchedule()` already makes its schedule, so `schedule()` throws for it. Schedule the function in one place: remove the `schedule()` call, or declare the function with `eventBridge.schedule()`.
+`target` can be a declaration with `eventBridge.schema(null)`, a declaration with no `event`, or a Lambda group from [`lambda()`](lambda.md#lambdaconfig). A declaration with `eventBridge.defineSchedule()` already makes its schedule, so `schedule()` throws for it. Schedule the function in one place: remove the `schedule()` call, or declare the function with `eventBridge.schema(null)`.
 
 The rule sends the EventBridge event to the function as it is.
 

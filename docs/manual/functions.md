@@ -33,7 +33,7 @@ The `$` marks a function that the build handles specially. `$lambda` must be cal
 | `() => sqs.bind(queue)` or `() => sqs.schema(schema)`                               | `(event: SQSEvent, context: Context) => SQSBatchResponse \| void` (or a promise)                     |
 | `() => apiGateway.schema(body)`, or `defineRoute()` with no `auth`                  | `(event: APIGatewayProxyEventV2, context: Context) => ApiGatewayResult` (or a promise)               |
 | `() => apiGateway.schema(body).authSchema(claims?)`, or `defineRoute()` with `auth` | `(event: APIGatewayJWTProxyEventV2<JwtClaims>, context: Context) => ApiGatewayResult` (or a promise) |
-| `() => eventBridge.schedule()` or `() => eventBridge.defineSchedule(options)`       | `(event: EventBridgeEvent<"Scheduled Event", unknown>, context: Context) => void` (or a promise)     |
+| `() => eventBridge.schema(null)` or `() => eventBridge.defineSchedule(options)`     | `(event: EventBridgeEvent<"Scheduled Event", unknown>, context: Context) => void` (or a promise)     |
 | no `event`                                                                          | `(event: unknown, context: Context) => unknown`                                                      |
 
 `event` also decides where infra can wire the function: an `sqs` Lambda to a queue, an `apiGateway` Lambda to a route, and an `eventBridge` Lambda to a schedule. A Lambda with `.authSchema()` or `auth` can only be wired to a route with a JWT authorizer, and a Lambda without either only to a route without an authorizer. A Lambda with no `event` can be wired to any of them. See [End-to-End Types](./types.md).
@@ -52,7 +52,7 @@ export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,
-  event: () => apiGateway.schema(),
+  event: () => apiGateway.schema(null),
 });
 
 const todos = await api.get<any[]>("/todos");
@@ -123,10 +123,11 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 - `Order` belongs in a shared module (`files.shared`), such as `shared/schema.ts`, because the function loads it. It can't be in an infra or runtime module. The runtime build replaces `orderQueue` with `{ schema: Order }`. See [Validating messages](../resources/sqs.md#validating-messages).
 - A function that infra maps queues to declares the schema itself, with `sqs.schema(Order)`. `eventSourceMapping()` checks that each queue it maps has the same schema, or none. See [`eventSourceMapping(config)`](../resources/sqs.md#eventsourcemappingconfig).
 - Without a schema, as in `sqs.bind(queue)` for a queue with no schema, `body` is the parsed JSON as `unknown`.
-- A request with no body schema, as in `apiGateway.schema()`, keeps its body as API Gateway sent it, decoded from base64. `body` is a `string`, or `undefined` for a request with no body. `decode()` doesn't parse it, so a text or form body works.
+- An API Gateway Lambda always names its body schema. A body schema of `null`, as in `apiGateway.schema(null)` or `defineRoute({ ..., schema: null })`, means the requests have no body. `body` is `undefined`, and `decode()` throws a `DecodeError` for a request with a body.
 - With a body schema, a request with an empty body is validated as `undefined`, so the schema decides whether the body may be left out.
+- A request body that is not JSON, or whose parsed value the schema rejects, is validated as a string. So a route that takes text, such as a form body, declares a string schema, such as `v.string()`. See [Request bodies](../resources/api-gateway.md#request-bodies).
 - A request through a JWT authorizer, to a Lambda with `.authSchema()` or `defineRoute({ auth })`, also gets a top-level `claims` field. `decode()` validates the claims with the claims schema, if there is one, and throws a `DecodeError` for claims that the schema rejects. See [Claims in `decode()`](../resources/api-gateway.md#claims-in-decode).
-- When the body is not JSON, or the schema rejects it, `decode()` throws a `DecodeError`. Its `issues` hold the schema's issues.
+- When the body is not valid, `decode()` throws a `DecodeError`. Its `issues` hold the schema's issues.
 - A message that fails validation fails again on every retry, so the handler logs it and skips it. If the handler threw instead, Lambda would retry the whole batch until the queue's retention period ends.
 - An `eventBridge` Lambda, or a Lambda with no `event`, has no `decode()`. Calling it is a type error.
 

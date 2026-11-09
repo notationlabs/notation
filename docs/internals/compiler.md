@@ -305,7 +305,7 @@ The strip then checks the kept options. A reference to an import from an infra m
 
 `sqs.schema(Order)` has no `@runtime` mark, so the strip leaves it as it is. `Order` comes from a shared module, which the function loads.
 
-A mark that names an option, such as `@runtime options.auth` on `defineRoute`, applies the same replacement to that option of an object literal argument. `apiGateway.bind(userApi).defineRoute({ method: "GET", path: "/user", auth: userAuth })` becomes `apiGateway.bind({}).defineRoute({ method: "GET", path: "/user", auth: { claims: __notation_claims_0 } })`. `userApi` becomes `{}` because `api()` is marked `@resource runtime:` with no options, and `userAuth` becomes its claims because `jwtAuthorizer()` is marked `@resource runtime: claims`. The other options stay as they are, so a `schema` option must come from a shared module.
+A mark that names an option, such as `@runtime options.auth` on `defineRoute`, applies the same replacement to that option of an object literal argument. `apiGateway.bind(userApi).defineRoute({ method: "GET", path: "/user", schema: null, auth: userAuth })` becomes `apiGateway.bind({}).defineRoute({ method: "GET", path: "/user", schema: null, auth: { claims: __notation_claims_0 } })`. `userApi` becomes `{}` because `api()` is marked `@resource runtime:` with no options, and `userAuth` becomes its claims because `jwtAuthorizer()` is marked `@resource runtime: claims`. The other options stay as they are, so a `schema` option other than `null` must come from a shared module.
 
 The strip finds the options in four steps:
 
