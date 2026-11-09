@@ -137,9 +137,9 @@ type EventSourceMappingConfig = SqsOptions & {
 `eventSourceMapping()` throws for a declaration in two cases:
 
 - **The declaration names a queue itself**, with `sqs(queue)`. Map the queue in one place.
-- **The queue has a `schema`.** The declaration's `decode()` would not validate messages with the queue's schema. Declare the function with `event: () => sqs(queue)` instead.
+- **The queue has a `schema`, and the declaration has `event: () => sqs()`.** The declaration's `decode()` would not validate messages with the queue's schema. Declare the function with `event: () => sqs(queue)` instead.
 
-A Lambda group from `lambda()` can read a queue with a schema, because the group has no `decode()`.
+A declaration with no `event`, and a Lambda group from `lambda()`, can read a queue with a schema, because neither calls `decode()`.
 
 ### Several queues
 
@@ -184,7 +184,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 Each queue contributes its own statement and its own mapping, so the function's policy has two statements. When you delete the second `eventSourceMapping()` call, its statement and mapping go with it, and the next deploy updates the policy and deletes the mapping.
 
-The function's one `handler` receives the messages of both queues. Each record's `eventSourceARN` names its queue, so the handler compares it with the ARN of `refundQueue`, bound in `env`. The queues have no schema, because `eventSourceMapping()` throws for a declaration and a queue with a schema.
+The function's one `handler` receives the messages of both queues. Each record's `eventSourceARN` names its queue, so the handler compares it with the ARN of `refundQueue`, bound in `env`. The queues have no schema, because `eventSourceMapping()` throws for a declaration with `sqs()` and a queue with a schema.
 
 A queue can feed a given function once. A second mapping of the same queue and function throws.
 

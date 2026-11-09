@@ -1,6 +1,6 @@
 import type { SqsOptions, SqsSource } from "./declaration";
-import { isLambdaGroup } from "./lambda";
 import {
+  declaredKindOf,
   declaredQueueOf,
   resolveLambda,
   whenLoaded,
@@ -14,8 +14,8 @@ export type EventSourceMappingConfig = SqsOptions & {
    * The function that Lambda invokes with the queue's messages: a declaration
    * from `$lambda`, passed as `() => lambda`, or a group from `lambda()`. A
    * declaration must be declared with `event: () => sqs()`, or with no event.
-   * A declaration can't read a queue that has a schema, as its `decode()`
-   * would not validate the queue's messages.
+   * A declaration with `sqs()` can't read a queue that has a schema, as its
+   * `decode()` would not validate the queue's messages.
    */
   target: LambdaTarget<"sqs" | "none">;
 };
@@ -40,8 +40,9 @@ export function eventSourceMapping(config: EventSourceMappingConfig): void {
       "sqs",
       "none",
     ]);
-    // A group from lambda() has no decode(), so it never reads the schema.
-    if (source.schema !== undefined && !isLambdaGroup(target)) {
+    // A group from lambda() has no decode(), and a declaration with no event
+    // can't call decode(), so neither would skip the queue's schema.
+    if (source.schema !== undefined && declaredKindOf(target) === "sqs") {
       throw new Error(
         `eventSourceMapping() maps a queue that has a schema to the Lambda "${group.id}", but the function would not validate messages with the queue's schema. Declare the Lambda with event: () => sqs(queue) in place of eventSourceMapping().`,
       );

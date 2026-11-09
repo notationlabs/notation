@@ -372,7 +372,7 @@ test("sqs() rejects a schema in place of a queue", () => {
   sqs(Order);
 });
 
-test("eventSourceMapping of a queue with a schema to a declaration throws", async () => {
+test("eventSourceMapping of a queue with a schema to a declaration with sqs() throws", async () => {
   await expect(
     collectResourceGraph(() => {
       const orders = queue({ name: "orders", schema: Order });
@@ -384,14 +384,15 @@ test("eventSourceMapping of a queue with a schema to a declaration throws", asyn
   );
 });
 
-test("eventSourceMapping of a queue with a schema to a declaration with no event throws", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      const orders = queue({ name: "orders", schema: Order });
-      const fn = inModule($lambda({ id: "process" }));
-      eventSourceMapping({ source: orders, target: () => fn });
-    }),
-  ).rejects.toThrow("the queue's schema");
+test("eventSourceMapping of a queue with a schema to a declaration with no event maps the queue", async () => {
+  let orders!: ReturnType<typeof queue<typeof Order>>;
+  await collectResourceGraph(() => {
+    orders = queue({ name: "orders", schema: Order });
+    const fn = inModule($lambda({ id: "process" }));
+    eventSourceMapping({ source: orders, target: () => fn });
+  });
+
+  expect(mappingOf(orders).id).toBe("orders-process-mapping");
 });
 
 test("eventSourceMapping of a queue with a schema to a lambda group from lambda() maps the queue", async () => {

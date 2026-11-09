@@ -205,6 +205,15 @@ const eventCalls: Record<LambdaEventKind, string> = {
 };
 
 /**
+ * The event kind of a target's declaration, or undefined for a group from
+ * `lambda()`.
+ */
+export function declaredKindOf(target: unknown): LambdaEventKind | undefined {
+  if (typeof target !== "function" || isLambdaGroup(target)) return undefined;
+  return registeredOf(target())?.kind();
+}
+
+/**
  * The queue that a target's declaration maps itself, with
  * `event: () => sqs(queue)`.
  */
