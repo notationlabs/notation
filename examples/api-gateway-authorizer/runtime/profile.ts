@@ -12,7 +12,7 @@ export const lambda = $lambda({
   id: "profile",
   timeout: 5,
   memory: 64,
-  event: () => apiGateway.schema().authSchema(JWTClaims),
+  event: () => apiGateway.schema(null).authSchema(JWTClaims),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {

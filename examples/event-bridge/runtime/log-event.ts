@@ -4,7 +4,7 @@ export const lambda = $lambda({
   id: "log-event",
   timeout: 5,
   memory: 64,
-  event: () => eventBridge.schedule(),
+  event: () => eventBridge.schema(null),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {

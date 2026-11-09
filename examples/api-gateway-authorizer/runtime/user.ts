@@ -14,7 +14,12 @@ export const lambda = $lambda({
   event: () =>
     apiGateway
       .bind(userApi)
-      .defineRoute({ method: "GET", path: "/user", auth: userAuth }),
+      .defineRoute({
+        method: "GET",
+        path: "/user",
+        schema: null,
+        auth: userAuth,
+      }),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
