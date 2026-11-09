@@ -924,16 +924,45 @@ describe("workspace packages outside the project root", () => {
     writeProject(withHandler(`import { fmt } from "acme-lib";`, "fmt()"));
     writePackage("acme-lib", acmeLib);
     await expect(buildProject()).rejects.toThrow(
-      'acme-lib/queues.ts calls queue at its top level. If the function doesn\'t use a value from acme-lib/queues.ts, add "sideEffects": false to the package.json of its package',
+      'acme-lib/queues.ts calls queue at its top level. If the function doesn\'t use a value from acme-lib/queues.ts, add "sideEffects": false to acme-lib/package.json, so that the bundler can leave it out.',
     );
   });
 
-  it("fails when the function uses a package module that calls a resource function", async () => {
+  it("fails when the function uses a package module that calls a resource function, and says to read infra values through env()", async () => {
     writeProject(withHandler(`import { dlq } from "acme-lib";`, "dlq"));
     writePackage("acme-lib", acmeLib, { sideEffects: false });
     await expect(buildProject()).rejects.toThrow(
-      "a function that declares infrastructure: queue at acme-lib/queues.ts:2:",
+      "Infra functions can't run in a runtime module. The function uses a value from acme-lib/queues.ts, which calls queue at its top level. The function must read infra values through the declaration's env() instead.",
     );
+  });
+
+  it("fails without sideEffects advice when an installed package calls a resource function at its top level", async () => {
+    writeProject(withHandler(`import { fmt } from "acme-installed";`, "fmt()"));
+    write(
+      "node_modules/acme-installed/package.json",
+      JSON.stringify({
+        name: "acme-installed",
+        type: "module",
+        main: "./index.js",
+      }),
+    );
+    write(
+      "node_modules/acme-installed/index.js",
+      [
+        `import { queue } from "@notation/aws/sqs";`,
+        `export const dlq = queue({ name: "dlq" });`,
+        `export const fmt = () => "formatted";`,
+      ].join("\n"),
+    );
+    const error = await buildProject().then(
+      () => undefined,
+      (error: Error) => error,
+    );
+    expect(error?.message).toContain(
+      "It imports @notation/aws/sqs.js through runtime/process-orders.ts → acme-installed/index.js → @notation/aws/sqs.js. Infra functions can't run in a runtime module.",
+    );
+    expect(error?.message).not.toContain("sideEffects");
+    expect(error?.message).not.toContain("files.infra");
   });
 
   it("finds and strips a declaration module in a package that infra imports by path", async () => {
@@ -1057,6 +1086,46 @@ describe("a monorepo with the config at its root", () => {
     const { bundle } = await buildProject();
     expect(bundle).not.toContain(`"dlq"`);
     expect(runHandler()).toBe("orders");
+  });
+
+  it("fails when a module of a package folder with side effects calls a resource function at its top level, and names its package.json", async () => {
+    writeProject(
+      withHandler(`import { label } from "../packages/api";`, "label()"),
+    );
+    write("packages/api/package.json", JSON.stringify({ name: "@acme/api" }));
+    write(
+      "packages/api/index.ts",
+      `export * from "./queues";\nexport const label = () => "orders";`,
+    );
+    write(
+      "packages/api/queues.ts",
+      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
+    );
+    await expect(buildProject()).rejects.toThrow(
+      'packages/api/queues.ts calls queue at its top level. If the function doesn\'t use a value from packages/api/queues.ts, add "sideEffects": false to packages/api/package.json, so that the bundler can leave it out.',
+    );
+  });
+
+  it("names the line of a kept option that refers to a value from a package folder that calls a resource function", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { Order } from "./schema";`,
+          `import { Order } from "./schema";\n  import { dlq } from "../packages/api/queues";`,
+        )
+        .replace("event: () => sqs(Order)", "event: () => sqs(dlq)"),
+    );
+    write(
+      "packages/api/package.json",
+      JSON.stringify({ name: "@acme/api", sideEffects: false }),
+    );
+    write(
+      "packages/api/queues.ts",
+      `import { queue } from "@notation/aws/sqs";\nexport const dlq = queue({ name: "dlq" });`,
+    );
+    await expect(buildProject()).rejects.toThrow(
+      "runtime/process-orders.ts:12:22: an option of $lambda that the function keeps refers to dlq, from packages/api/queues.ts. packages/api/queues.ts calls queue at its top level, so the function can't load it.",
+    );
   });
 });
 

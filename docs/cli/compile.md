@@ -65,6 +65,6 @@ The build fails with the file and line when:
 - `$lambda` is not called as `const name = $lambda({ ... })` at the top level, with an object literal,
 - `event` refers to an infra module,
 - a shared module breaks its rules. See [Shared modules](../manual/file-conventions.md#shared-modules), or
-- the function uses an infra module, or a resource function from a package. The error names each use and the chain of imports. The check reads the code before minify, so an unused call to an infra helper or to `queue()` also fails the build. If a file that `files.infra` doesn't match calls the resource function at its top level, the error says to add the file to `files.infra`. If that file holds a declaration, the error says to move the call to an infra module instead.
+- the function uses an infra module, or a resource function from a package. The error names each use and the chain of imports. The check reads the code before minify, so an unused call to an infra helper or to `queue()` also fails the build. If a file that `files.infra` doesn't match calls the resource function at its top level, the error says to add the file to `files.infra`. If that file holds a declaration, the error says to move the call to an infra module instead. If the file is in a workspace package or a package folder, the error says to add `"sideEffects": false` to the package's `package.json`. If the package already sets it, the error says to read infra values through the declaration's `env()`.
 
 See [Compiler](../internals/compiler.md) for how each pass works.

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import type { ModuleGlobs } from "@notation/core";
 import {
   analyzeModule,
@@ -112,11 +113,13 @@ export class ModuleAnalyses {
 
   /**
    * The first top-level call to a resource function in a project file that
-   * no glob matches. The runtime build keeps such a file's top-level code.
+   * no glob matches, including a file of a workspace package or of a package
+   * folder below the root. The runtime build keeps such a file's top-level
+   * code, unless the file is in a package that sets `"sideEffects": false`
+   * and the function uses no value from it.
    */
   unmatchedResourceCall(file: string): MarkedReference | undefined {
     if (!isProjectModule(file) || this.files.kindOf(file)) return undefined;
-    if (this.files.isPackageFile(file)) return undefined;
     return this.fromFile(file)?.resourceCall;
   }
 
@@ -124,21 +127,30 @@ export class ModuleAnalyses {
    * If a project file in the runtime bundle calls a resource function at its
    * top level, says how to leave the call out of the function, for an error
    * message. A file that holds a declaration can't be infra, so the call has
-   * to move. A file that no glob matches can be added to `files.infra`. A
-   * package file can be left out by the package's `sideEffects`.
+   * to move. A package file can be left out by the package's `sideEffects`,
+   * unless the function uses a value from it. Another file that no glob
+   * matches can be added to `files.infra`.
    */
   resourceCallAdvice(file: string): string | undefined {
     const name = this.show(file);
     const analysis = this.fromFile(file);
     const call = analysis?.resourceCall;
-    if (call && analysis.declaration) {
+    if (!call) return undefined;
+    if (analysis.declaration) {
       return `${name} calls ${call.name} at its top level, and it holds a declaration, so it can't be an infra module. Move the call to ${call.name} to an infra module.`;
     }
-    if (call && this.files.isPackageFile(file)) {
-      return `${name} calls ${call.name} at its top level. If the function doesn't use a value from ${name}, add "sideEffects": false to the package.json of its package, so that the bundler can leave it out.`;
+    if (this.files.isPackageFile(file)) {
+      const dir = this.files.packageDir(file);
+      if (dir && this.files.hasNoSideEffects(dir)) {
+        return `The function uses a value from ${name}, which calls ${call.name} at its top level. The function must read infra values through the declaration's env() instead.`;
+      }
+      const manifest = dir
+        ? this.show(path.join(dir, "package.json"))
+        : "the package.json of its package";
+      return `${name} calls ${call.name} at its top level. If the function doesn't use a value from ${name}, add "sideEffects": false to ${manifest}, so that the bundler can leave it out.`;
     }
     if (!this.unmatchedResourceCall(file)) return undefined;
-    return `${name} calls ${call!.name} at its top level, but files.infra doesn't match it. Add ${name} to files.infra to leave it out of the function.`;
+    return `${name} calls ${call.name} at its top level, but files.infra doesn't match it. Add ${name} to files.infra to leave it out of the function.`;
   }
 
   /**
