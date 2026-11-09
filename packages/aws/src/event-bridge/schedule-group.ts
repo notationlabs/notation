@@ -48,16 +48,16 @@ export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleOptions> {
       ),
     );
 
+    const permissionId = resourceId("eventbridge-permission", config.id);
     lambdaGroup.add(
-      new aws.eventBridge.LambdaEventBridgeRulePermission(
-        resourceId("eventbridge-permission", config.id),
-        {
-          dependencies: {
-            lambda: lambdaResource,
-            eventBridgeRule: this.rule,
-          },
+      new aws.lambda.LambdaPermission(permissionId, {
+        config: {
+          StatementId: aws.lambda.statementId(permissionId),
+          Principal: "events.amazonaws.com",
+          SourceArn: this.rule.outputValue("Arn"),
         },
-      ),
+        dependencies: { lambda: lambdaResource },
+      }),
     );
   }
 }

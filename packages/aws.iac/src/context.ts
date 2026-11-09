@@ -1,9 +1,17 @@
 import { GetCallerIdentityCommand } from "@aws-sdk/client-sts";
 import { stsClient } from "src/utils/aws-clients";
 
-const command = new GetCallerIdentityCommand({});
+let accountId: Promise<string> | undefined;
 
-export const getAwsAccountId = async () => {
-  const response = await stsClient().send(command);
-  return response.Account;
+// The account is fixed for the process, and `read` of every API asks for it,
+// so it is fetched once. A failed fetch is not kept.
+export const getAwsAccountId = (): Promise<string> => {
+  accountId ??= stsClient()
+    .send(new GetCallerIdentityCommand({}))
+    .then((response) => response.Account!)
+    .catch((error) => {
+      accountId = undefined;
+      throw error;
+    });
+  return accountId;
 };

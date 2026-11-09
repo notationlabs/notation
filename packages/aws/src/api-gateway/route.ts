@@ -40,16 +40,19 @@ export class RouteGroup extends aws.AwsResourceGroup {
       },
     );
 
-    lambdaGroup.addOnce(
-      aws.lambda.LambdaApiGatewayV2Permission,
-      resourceId("api-permission", apiGroup.id, lambdaGroup.id),
-      {
-        dependencies: {
-          api: apiResource,
-          lambda: lambdaResource,
-        },
-      },
+    const permissionId = resourceId(
+      "api-permission",
+      apiGroup.id,
+      lambdaGroup.id,
     );
+    lambdaGroup.addOnce(aws.lambda.LambdaPermission, permissionId, {
+      config: {
+        StatementId: aws.lambda.statementId(permissionId),
+        Principal: "apigateway.amazonaws.com",
+        SourceArn: apiResource.outputValue("ExecuteApiSourceArn"),
+      },
+      dependencies: { lambda: lambdaResource },
+    });
 
     this.route = this.add(
       new aws.apiGateway.Route(routeId, {
