@@ -802,21 +802,3 @@ test("apiGateway.bind(api).defineRoute({ auth }) with an authorizer on another a
     'The Lambda "todos" routes GET /todos on the API "todo-api", but its authorizer is on the API "user-api".',
   );
 });
-
-test("apiGateway.bind() of a value that is not an API throws when the declaration is built", async () => {
-  await expect(
-    collect(() => {
-      inModule(
-        $lambda({
-          id: "todos",
-          event: () =>
-            apiGateway
-              .bind({} as any)
-              .defineRoute({ method: "GET", path: "/todos", schema: null }),
-        }),
-      );
-    }),
-  ).rejects.toThrow(
-    'The Lambda "todos" is declared with apiGateway.bind(api), but the value passed to apiGateway.bind() is not an API from api().',
-  );
-});

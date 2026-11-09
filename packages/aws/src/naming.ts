@@ -46,10 +46,9 @@ export function describeDeclaration(
   return where ? `${call} in ${where}` : call;
 }
 
-type Claim = { declaration: string };
-
-// The AWS names that each collection's declarations have given, by kind.
-const claims = new WeakMap<object, Map<string, Claim>>();
+// The declarations that gave each AWS name in a collection, keyed by kind and
+// name.
+const claims = new WeakMap<object, Map<string, string>>();
 
 /**
  * Records that `declaration` gives one of `kinds` the AWS name `name`.
@@ -77,8 +76,8 @@ export function claimAwsName(
   const previous = claimed.get(key);
   if (previous) {
     throw new Error(
-      `${previous.declaration} and ${declaration} give two ${kinds} the same AWS name, "${name}". Give one of them another name.`,
+      `${previous} and ${declaration} give two ${kinds} the same AWS name, "${name}". Give one of them another name.`,
     );
   }
-  claimed.set(key, { declaration });
+  claimed.set(key, declaration);
 }

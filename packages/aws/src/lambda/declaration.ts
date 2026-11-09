@@ -231,16 +231,16 @@ export const apiGateway = {
    * result for routes with a JWT authorizer.
    */
   schema<S extends StandardSchemaV1 | null>(body: S): ApiGatewaySchemaEvent<S> {
-    const event = { kind: "apiGateway", schema: body, claims: undefined };
-    // `authSchema` is not enumerable, so it is not part of the event's data,
-    // which `decode()` and the infra checks read.
-    return Object.defineProperty(event, "authSchema", {
-      value: <C extends StandardSchemaV1 | undefined>(claims?: C) => ({
+    return {
+      kind: "apiGateway",
+      schema: body,
+      claims: undefined,
+      authSchema: <C extends StandardSchemaV1 | undefined>(claims?: C) => ({
         kind: "apiGateway-jwt" as const,
         schema: body,
         claims: claims as C,
       }),
-    }) as ApiGatewaySchemaEvent<S>;
+    };
   },
 };
 

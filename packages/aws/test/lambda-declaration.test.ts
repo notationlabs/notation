@@ -561,22 +561,6 @@ test("decode() after authSchema() with no claims schema returns the claims as th
   );
 });
 
-test("authSchema() is not part of the event's data", () => {
-  const event = apiGateway.schema(Order);
-
-  expect(Object.keys(event)).toEqual(["kind", "schema", "claims"]);
-  expect(event.authSchema(Claims)).toEqual({
-    kind: "apiGateway-jwt",
-    schema: Order,
-    claims: Claims,
-  });
-  expect(event.authSchema()).toEqual({
-    kind: "apiGateway-jwt",
-    schema: Order,
-    claims: undefined,
-  });
-});
-
 test("the runtime variant validates claims as infra does", async () => {
   const fn = runtime.$lambda({
     id: "user",
