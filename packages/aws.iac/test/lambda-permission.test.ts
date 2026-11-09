@@ -21,9 +21,8 @@ const fn = { output: { FunctionName: "app--prod--orders" } } as any;
 const key = { FunctionName: "app--prod--orders", StatementId: "events-daily" };
 
 const permission = (config: Record<string, unknown> = {}) =>
-  new LambdaPermission("p", {
+  new LambdaPermission("eventbridge-invoke-permission:daily", {
     config: {
-      StatementId: "events-daily",
       Principal: "events.amazonaws.com",
       SourceArn: "arn:aws:events:us-west-2:123456789012:rule/daily",
       ...config,
@@ -46,14 +45,29 @@ describe("LambdaPermission", () => {
     expect(await permission().getParams()).toEqual({
       FunctionName: "app--prod--orders",
       Action: "lambda:InvokeFunction",
-      StatementId: "events-daily",
+      StatementId: "eventbridge-invoke-permission_daily",
       Principal: "events.amazonaws.com",
       SourceArn: "arn:aws:events:us-west-2:123456789012:rule/daily",
     });
   });
 
-  it("rejects a StatementId with characters that Lambda doesn't allow", () => {
-    expect(() => permission({ StatementId: "events:daily" })).toThrow(
+  it("takes an Action from config in place of lambda:InvokeFunction", async () => {
+    expect(
+      (await permission({ Action: "lambda:InvokeFunctionUrl" }).getParams())
+        .Action,
+    ).toBe("lambda:InvokeFunctionUrl");
+  });
+
+  it("can be declared without a SourceArn", async () => {
+    const params = await new LambdaPermission("p", {
+      config: { Principal: "123456789012" },
+      dependencies: { lambda: fn },
+    }).getParams();
+    expect(params).not.toHaveProperty("SourceArn");
+  });
+
+  it("rejects a SourceAccount that is not an account ID", () => {
+    expect(() => permission({ SourceAccount: "me" })).toThrow(
       ValueValidationError,
     );
   });
@@ -65,7 +79,6 @@ describe("LambdaPermission", () => {
       api = new Api("api", { config: { Name: "app", ProtocolType: "HTTP" } });
       held = new LambdaPermission("p", {
         config: {
-          StatementId: "api-permission_api_orders",
           Principal: "apigateway.amazonaws.com",
           SourceArn: api.outputValue("ExecuteApiSourceArn"),
         },
@@ -180,7 +193,6 @@ it("a permission on an API whose state lacks ExecuteApiSourceArn plans its Sourc
       api,
       new LambdaPermission("p", {
         config: {
-          StatementId: "api-permission_api_orders",
           Principal: "apigateway.amazonaws.com",
           SourceArn: api.outputValue("ExecuteApiSourceArn"),
         },
@@ -212,67 +224,4 @@ it("a permission on an API whose state lacks ExecuteApiSourceArn plans its Sourc
   });
   const node = (await plan).nodes.find((node) => node.id === "p")!;
   expect(node.params.SourceArn).toEqual({ $unknown: "after-apply" });
-});
-
-// The groups keep the resource IDs of the permissions they replace, so the
-// old record is read as the new resource's state, not swept as an orphan.
-it("a permission that takes over an old permission's record replaces its statement", async () => {
-  const sourceArn = "arn:aws:events:us-west-2:123456789012:rule/daily";
-  const old = {
-    FunctionName: "app--prod--orders",
-    StatementId: "events-app--prod--daily",
-    Action: "lambda:InvokeFunction",
-    Principal: "events.amazonaws.com",
-    SourceArn: sourceArn,
-  };
-  let resources!: InstanceType<typeof LambdaPermission>[];
-  await collectResourceGraph(() => {
-    resources = [
-      new LambdaPermission("eventbridge-permission:daily", {
-        config: {
-          StatementId: "eventbridge-permission_daily",
-          Principal: "events.amazonaws.com",
-          SourceArn: sourceArn,
-        },
-        dependencies: { lambda: fn },
-      }),
-    ];
-  });
-  mockSend(() => ({
-    Policy: JSON.stringify({
-      Statement: [
-        {
-          Sid: old.StatementId,
-          Action: old.Action,
-          Principal: { Service: old.Principal },
-          Condition: { ArnLike: { "AWS:SourceArn": sourceArn } },
-        },
-      ],
-    }),
-  }));
-
-  const plan = await createPlan({
-    resources,
-    state: new MemoryStateBackend({
-      "eventbridge-permission:daily": {
-        version: 1,
-        id: "eventbridge-permission:daily",
-        type: "aws/eventBridge/LambdaEventBridgeRulePermission",
-        config: {},
-        params: old,
-        output: old,
-        lastOperation: "create",
-        lastOperationAt: "2026-07-22T00:00:00.000Z",
-      },
-    }),
-  });
-
-  expect(plan.nodes).toMatchObject([
-    {
-      id: "eventbridge-permission:daily",
-      type: "aws/lambda/LambdaPermission",
-      decision: "replace",
-      replaceFields: [{ name: "StatementId", known: true }],
-    },
-  ]);
 });

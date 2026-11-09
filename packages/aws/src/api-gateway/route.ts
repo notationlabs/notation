@@ -40,14 +40,16 @@ export class RouteGroup extends aws.AwsResourceGroup {
       },
     );
 
+    // Not `api-permission`, the ID of the deprecated
+    // LambdaApiGatewayV2Permission: a state record cannot change type. Deploy
+    // creates this statement, then deletes the old one as an orphan.
     const permissionId = resourceId(
-      "api-permission",
+      "api-invoke-permission",
       apiGroup.id,
       lambdaGroup.id,
     );
     lambdaGroup.addOnce(aws.lambda.LambdaPermission, permissionId, {
       config: {
-        StatementId: aws.lambda.statementId(permissionId),
         Principal: "apigateway.amazonaws.com",
         SourceArn: apiResource.outputValue("ExecuteApiSourceArn"),
       },

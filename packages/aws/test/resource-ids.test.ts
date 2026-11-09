@@ -51,8 +51,8 @@ test("ids that join to the same text with a hyphen give different resource ids",
       "sqs-mapping:a-b:c",
       "api-integration:a:b-c",
       "api-integration:a-b:c",
-      "api-permission:a:b-c",
-      "api-permission:a-b:c",
+      "api-invoke-permission:a:b-c",
+      "api-invoke-permission:a-b:c",
     ]),
   );
 });

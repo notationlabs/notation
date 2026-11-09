@@ -48,11 +48,13 @@ export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleOptions> {
       ),
     );
 
-    const permissionId = resourceId("eventbridge-permission", config.id);
+    // Not `eventbridge-permission`, the ID of the deprecated
+    // LambdaEventBridgeRulePermission: a state record cannot change type.
+    // Deploy creates this statement, then deletes the old one as an orphan.
+    const permissionId = resourceId("eventbridge-invoke-permission", config.id);
     lambdaGroup.add(
       new aws.lambda.LambdaPermission(permissionId, {
         config: {
-          StatementId: aws.lambda.statementId(permissionId),
           Principal: "events.amazonaws.com",
           SourceArn: this.rule.outputValue("Arn"),
         },

@@ -44,7 +44,7 @@ test("two routes on one api to one lambda share its integration and permission",
   expect(fn.resources.map((r) => r.id)).toEqual(
     expect.arrayContaining([
       "api-integration:api:handler",
-      "api-permission:api:handler",
+      "api-invoke-permission:api:handler",
     ]),
   );
   expect(fn.resources).toHaveLength(7);
@@ -59,12 +59,17 @@ test("a route's permission lets the api invoke the lambda", async () => {
     route(todoApi, "GET", "/todos", undefined, fn);
   });
   const permission = fn.resources.find(
-    (r) => r.id === "api-permission:todo-api:handler",
+    (r) => r.id === "api-invoke-permission:todo-api:handler",
   )!;
+  fn.fn.setOutput({ FunctionName: "orders" } as any);
+  todoApi.api.setOutput({ ExecuteApiSourceArn: "arn:api/*/*" } as any);
 
-  expect(permission.config).toMatchObject({
-    StatementId: "api-permission_todo-api_handler",
+  expect(await permission.getParams()).toEqual({
+    FunctionName: "orders",
+    StatementId: "api-invoke-permission_todo-api_handler",
+    Action: "lambda:InvokeFunction",
     Principal: "apigateway.amazonaws.com",
+    SourceArn: "arn:api/*/*",
   });
   expect(permission.getDependencies()).toEqual([fn.fn, todoApi.api]);
 });

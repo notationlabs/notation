@@ -37,9 +37,23 @@ test("each schedule on a lambda gets its own invoke permission", async () => {
     (r) => r instanceof iac.LambdaPermission,
   );
 
-  expect(permissions.map((p) => p.config.StatementId)).toEqual([
-    "eventbridge-permission_daily",
-    "eventbridge-permission_hourly",
+  fn.fn.setOutput({ FunctionName: "orders" } as any);
+  scheduleGroup(graph, "daily").rule.setOutput({ Arn: "arn:daily" } as any);
+  scheduleGroup(graph, "hourly").rule.setOutput({ Arn: "arn:hourly" } as any);
+
+  expect(
+    await Promise.all(permissions.map((p) => p.getParams())),
+  ).toMatchObject([
+    {
+      StatementId: "eventbridge-invoke-permission_daily",
+      Principal: "events.amazonaws.com",
+      SourceArn: "arn:daily",
+    },
+    {
+      StatementId: "eventbridge-invoke-permission_hourly",
+      Principal: "events.amazonaws.com",
+      SourceArn: "arn:hourly",
+    },
   ]);
   expect(permissions.map((p) => p.getDependencies())).toEqual([
     [fn.fn, scheduleGroup(graph, "daily").rule],

@@ -4,7 +4,10 @@ import * as sdk from "@aws-sdk/client-lambda";
 import { lambdaClient } from "src/utils/aws-clients";
 import { awsCreate } from "src/utils/errors";
 import { AwsSchema } from "src/utils/types";
+import { statementId } from "src/utils/statement-id";
 import type { LambdaFunctionInstance } from "./lambda";
+
+const DEFAULT_ACTION = "lambda:InvokeFunction";
 
 type LambdaPermissionKey = {
   FunctionName: string;
@@ -13,13 +16,22 @@ type LambdaPermissionKey = {
 };
 
 type LambdaPermissionParams = LambdaPermissionKey & {
-  Action: string;
-  /** The service that may invoke the function, such as `events.amazonaws.com`. */
+  /** The action the principal may take. Defaults to `lambda:InvokeFunction`. */
+  Action?: string;
+  /**
+   * The service or account that may invoke the function, such as
+   * `events.amazonaws.com`.
+   */
   Principal: string;
-  /** The ARN of the resource that may invoke the function. */
-  SourceArn: string;
+  /**
+   * The ARN of the resource that may invoke the function. Without it, a
+   * service principal may invoke the function on behalf of any account.
+   */
+  SourceArn?: string;
   /** The account that owns the source. S3 needs it, as a bucket ARN has no account. */
   SourceAccount?: string;
+  /** The auth type of the function URL, for a permission to call one. */
+  FunctionUrlAuthType?: sdk.FunctionUrlAuthType;
 };
 
 export type LambdaPermissionSchema = AwsSchema<{
@@ -57,7 +69,7 @@ const lambdaPermissionSchema = lambdaPermission.defineSchema({
   },
   Action: {
     propertyType: "param",
-    presence: "required",
+    presence: "optional",
     value: v.string(),
   },
   Principal: {
@@ -65,11 +77,9 @@ const lambdaPermissionSchema = lambdaPermission.defineSchema({
     presence: "required",
     value: v.string(),
   },
-  // Required, as a service principal without a source lets the service
-  // invoke the function on behalf of any account.
   SourceArn: {
     propertyType: "param",
-    presence: "required",
+    presence: "optional",
     value: v.string(),
   },
   SourceAccount: {
@@ -77,19 +87,30 @@ const lambdaPermissionSchema = lambdaPermission.defineSchema({
     presence: "optional",
     value: v.pipe(v.string(), v.regex(/^\d{12}$/)),
   },
+  FunctionUrlAuthType: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.enum(sdk.FunctionUrlAuthType),
+  },
 } as const);
 
 /**
  * A statement in a Lambda function's resource policy, which lets a service
- * such as API Gateway or EventBridge invoke the function. The caller chooses
- * `StatementId`, which must be unique among the function's statements.
+ * or account invoke the function. Its params follow Lambda's AddPermission.
+ * The `StatementId` is made from the resource ID, so it is unique among the
+ * function's statements while resource IDs are unique.
  */
 export const LambdaPermission = lambdaPermissionSchema
   .defineOperations({
     // AddPermission fails when the StatementId exists, so a create whose
     // outcome is unknown is found by `read`, whose key is made of params.
     create: awsCreate(async (params) => {
-      await lambdaClient().send(new sdk.AddPermissionCommand(params));
+      await lambdaClient().send(
+        new sdk.AddPermissionCommand({
+          ...params,
+          Action: params.Action ?? DEFAULT_ACTION,
+        }),
+      );
     }),
     read: async (key) => {
       const statement = await findStatement(key);
@@ -103,9 +124,14 @@ export const LambdaPermission = lambdaPermissionSchema
         StatementId: key.StatementId,
         Qualifier: key.Qualifier,
         Action: statement.Action,
-        Principal: statement.Principal?.Service ?? statement.Principal?.AWS,
+        Principal:
+          typeof statement.Principal === "string"
+            ? statement.Principal
+            : (statement.Principal?.Service ?? statement.Principal?.AWS),
         SourceArn: statement.Condition?.ArnLike?.["AWS:SourceArn"],
         SourceAccount: statement.Condition?.StringEquals?.["AWS:SourceAccount"],
+        FunctionUrlAuthType:
+          statement.Condition?.StringEquals?.["lambda:FunctionUrlAuthType"],
       } as LambdaPermissionSchema["ReadResult"];
     },
     delete: async (key) => {
@@ -117,17 +143,23 @@ export const LambdaPermission = lambdaPermissionSchema
     },
   })
   .requireDependencies<LambdaPermissionDependencies>()
-  .deriveParams(({ deps }) => ({
-    FunctionName: deps.lambda.output.FunctionName,
-    Action: "lambda:InvokeFunction",
-  }));
+  .deriveParams(({ id, config, deps }) => {
+    const params = {
+      FunctionName: deps.lambda.output.FunctionName,
+      StatementId: statementId(id),
+    };
+    // Set outside the returned type: a key in that type is taken out of
+    // config, and config must still be able to set Action.
+    Object.assign(params, { Action: config.Action ?? DEFAULT_ACTION });
+    return params;
+  });
 
 export type LambdaPermissionInstance = InstanceType<typeof LambdaPermission>;
 
 type PolicyStatement = {
   Sid: string;
   Action: string;
-  Principal?: { Service?: string; AWS?: string };
+  Principal?: string | { Service?: string; AWS?: string };
   Condition?: {
     ArnLike?: Record<string, string>;
     StringEquals?: Record<string, string>;
