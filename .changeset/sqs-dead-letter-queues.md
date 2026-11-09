@@ -6,7 +6,10 @@
 `queue()` takes a dead-letter queue, a message size and the FIFO settings, and SQS mappings can report failed messages and limit concurrency.
 
 ```ts
-export const orderDeadLetterQueue = queue({ id: "orders-dlq", schema: Order });
+export const orderDeadLetterQueue = queue({
+  id: "orders-dlq",
+  schema: DeadLetter,
+});
 
 export const orderQueue = queue({
   id: "orders",

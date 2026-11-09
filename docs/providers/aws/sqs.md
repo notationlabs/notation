@@ -88,11 +88,20 @@ SQS doesn't let you reuse a deleted queue's name for 60 seconds, so a replacemen
 
 `deadLetterQueue` names a second queue. SQS moves a message to it after the message has been received `maxReceiveCount` times without being deleted. A message is received again when the handler throws, when the function times out, or when the handler reports the message as failed with `reportBatchItemFailures`. See [Failed messages](#failed-messages).
 
+```ts [shared/schema.ts]
+import * as v from "valibot";
+
+export const DeadLetter = v.unknown();
+```
+
 ```ts [infra/orders.ts]
 import { queue } from "@notation/aws/sqs";
-import { Order } from "shared/schema";
+import { DeadLetter, Order } from "shared/schema";
 
-export const orderDeadLetterQueue = queue({ id: "orders-dlq", schema: Order });
+export const orderDeadLetterQueue = queue({
+  id: "orders-dlq",
+  schema: DeadLetter,
+});
 
 export const orderQueue = queue({
   id: "orders",
@@ -101,7 +110,7 @@ export const orderQueue = queue({
 });
 ```
 
-`maxReceiveCount` is from 1 to 1,000. The dead-letter queue is a queue like any other, so it has a schema. SQS moves the messages unchanged, so give it a schema that accepts the messages of each queue that uses it. Notation doesn't compare the two schemas.
+`maxReceiveCount` is from 1 to 1,000. The dead-letter queue is a queue like any other, so it has a schema. SQS moves the messages unchanged, so give it a schema that accepts the messages of each queue that uses it. Notation doesn't compare the schemas. A message often reaches the dead-letter queue because it failed validation, so `DeadLetter` above accepts any value.
 
 The queue's `RedrivePolicy` holds the ARN of the dead-letter queue, so the queue depends on the dead-letter queue, which deploys first. When you remove `deadLetterQueue`, Notation removes the policy from the queue, and leaves the dead-letter queue and its messages.
 

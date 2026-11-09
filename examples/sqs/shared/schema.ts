@@ -9,3 +9,7 @@ export const Refund = v.object({
   orderId: v.string(),
   reason: v.string(),
 });
+
+// The order queue moves messages that fail to decode to its dead-letter
+// queue, so the dead-letter queue accepts any JSON value.
+export const DeadLetter = v.unknown();
