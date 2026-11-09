@@ -6,6 +6,7 @@ import { AwsSchema } from "src/utils/types";
 import { ApiInstance } from "src/resources/api-gateway/api";
 import { generateApiGatewaySourceArn } from "src/templates/arn";
 import { LambdaFunctionInstance } from "./lambda";
+import { statementId } from "src/utils/statement-id";
 
 export type LambdaApiGatewayV2PermissionSchema = AwsSchema<{
   Key: sdk.RemovePermissionRequest;
@@ -104,7 +105,8 @@ export const LambdaApiGatewayV2Permission = lambdaApiGatewayV2PermissionSchema
   .requireDependencies<LambdaApiGatewayV2PermissionDependencies>()
   .deriveParams(async ({ deps }) => ({
     FunctionName: deps.lambda.output.FunctionName,
-    StatementId: "lambda-api-gateway-v2-permission",
+    // One statement per API, as a function can be routed from several.
+    StatementId: statementId("apigateway", deps.api.output.ApiId!),
     Action: "lambda:InvokeFunction",
     Principal: "apigateway.amazonaws.com",
     SourceArn: await generateApiGatewaySourceArn(deps.api.output.ApiId!),
