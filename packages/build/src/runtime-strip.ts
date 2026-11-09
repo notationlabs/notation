@@ -249,10 +249,10 @@ function resourceStub(
         `${where(property)}: the build can't resolve "${imported.source}", where the ${option} of ${text} is imported from. The function in ${analyses.show(file)} reads it.`,
       );
     }
-    const call = analyses.unmatchedResourceCall(from);
-    if (call) {
+    const fromCall = analyses.unmatchedResourceCall(from);
+    if (fromCall) {
       throw new Error(
-        `${where(property)}: the ${option} of ${text} is imported from ${analyses.show(from)}, which calls ${call.name} at its top level, so the function in ${analyses.show(file)} can't load it. Move the ${option} to a shared module (files.shared).`,
+        `${where(property)}: the ${option} of ${text} is imported from ${analyses.show(from)}, which calls ${fromCall.name} at its top level, so the function in ${analyses.show(file)} can't load it. Move the ${option} to a shared module (files.shared).`,
       );
     }
     // The import is written in the function's module, so a relative path or
