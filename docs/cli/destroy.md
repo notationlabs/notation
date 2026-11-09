@@ -9,7 +9,7 @@ notation destroy [--config <path>] [--stage <stage>]
 | `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
 | `--stage <stage>` | The stage. Default: `defaultStage`.                         |
 
-Compiles the entry file and destroys the resources of the stage. The command removes the resources in reverse dependency order, and then removes the orphans in state whose resource type is registered. A type is registered when a resource in the graph has it, or when an installed provider package, `@notation/aws.iac` or `@notation/std.iac`, defines it.
+Compiles the entry file and destroys the resources of the stage. The command removes the resources in reverse dependency order, and then removes the orphans in state whose resource type is registered. A type is registered when a resource in the graph has it, or when the provider package named in its state record is installed and exports its class. A record written before provider packages were recorded names none, and its class is looked up in `@notation/aws.iac` and `@notation/std.iac`.
 
 ```sh
 notation destroy --stage prod
