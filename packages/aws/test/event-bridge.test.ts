@@ -7,6 +7,7 @@ import {
 } from "@notation/resource";
 import { rate, schedule, ScheduleGroup } from "src/event-bridge";
 import { $lambda, eventBridge, lambda, LambdaGroup, sqs } from "src/lambda";
+import * as runtime from "src/lambda/runtime";
 import { inModule, lambdaGroup } from "./declare";
 
 const Anything: StandardSchemaV1 = {
@@ -135,4 +136,65 @@ test("schedule takes a lambda group from another copy of the package", () => {
   expect(() =>
     schedule({ name: "daily", schedule: rate(1, "day"), target: fn }),
   ).not.toThrow();
+});
+
+test("eventBridge.defineSchedule() in a declaration makes the rule and the permission", async () => {
+  const graph = await collectResourceGraph(() => {
+    inModule(
+      $lambda({
+        id: "digest",
+        event: () =>
+          eventBridge.defineSchedule({
+            name: "nightly",
+            schedule: rate(1, "day"),
+          }),
+      }),
+    );
+  });
+  const fn = lambdaGroup(graph, "digest");
+  const nightly = scheduleGroup(graph, "nightly");
+
+  expect(nightly.rule.config.ScheduleExpression).toBe("rate(1 day)");
+  expect(nightly.rule.dependencies.lambda).toBe(fn.fn);
+  expect(
+    fn.resources
+      .filter((r) => r instanceof iac.LambdaEventBridgeRulePermission)
+      .map((r) => r.dependencies.eventBridgeRule),
+  ).toEqual([nightly.rule]);
+});
+
+test("schedule() of a declaration that makes its own schedule throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const fn = inModule(
+        $lambda({
+          id: "digest",
+          event: () =>
+            eventBridge.defineSchedule({
+              name: "nightly",
+              schedule: rate(1, "day"),
+            }),
+        }),
+      );
+      schedule({ name: "daily", schedule: rate(1, "day"), target: () => fn });
+    }),
+  ).rejects.toThrow(
+    'schedule() invokes the Lambda "digest" on the schedule "daily", but the Lambda makes its own schedule in its declaration, with event: () => eventBridge.defineSchedule(options). Schedule the Lambda in one place: remove the schedule() call, or declare the Lambda with event: () => eventBridge.schedule().',
+  );
+});
+
+test("eventBridge.defineSchedule() takes undefined, as the runtime build passes", () => {
+  expect(runtime.eventBridge.defineSchedule(undefined as any)).toEqual({
+    kind: "eventBridge",
+    schedule: undefined,
+  });
+});
+
+test("eventBridge.defineSchedule() needs a name and a schedule", () => {
+  // Only type-checked.
+  const typeOnly = () => {
+    // @ts-expect-error the schedule is missing
+    eventBridge.defineSchedule({ name: "nightly" });
+  };
+  void typeOnly;
 });

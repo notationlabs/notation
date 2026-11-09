@@ -14,6 +14,7 @@ import {
   type ApiSource,
   type SqsSource,
 } from "./declaration";
+import { ScheduleGroup } from "src/event-bridge/schedule-group";
 import { isLambdaGroup, LambdaGroup, type LambdaConfig } from "./lambda";
 import { assertLambdaId, type NameSafe } from "./lambda-id";
 
@@ -94,6 +95,7 @@ export function $lambda<
     group = buildGroup(declaration, config);
     subscribeQueue(group, config);
     addRoute(group, config);
+    addSchedule(group, config);
     return group;
   };
   Object.defineProperty(declaration, registration, {
@@ -182,6 +184,19 @@ function addRoute(
   api["~route"](group, route);
 }
 
+// Makes the rule of `event: () => eventBridge.defineSchedule(options)`.
+function addSchedule(
+  group: LambdaGroup,
+  config: Omit<
+    LambdaDeclarationConfig<string, LambdaEvent | undefined, EnvVars>,
+    "id"
+  > & { id: string },
+): void {
+  const event = config.event?.();
+  if (event?.kind !== "eventBridge" || !event.schedule) return;
+  new ScheduleGroup(event.schedule, group);
+}
+
 /**
  * A Lambda that infra can wire: a declaration, or a group from `lambda()`.
  * The return type has only optional properties, so TypeScript rejects a
@@ -249,7 +264,9 @@ export function eventCall(event: LambdaEvent): string {
         ? "apiGateway.schema(body)"
         : "apiGateway.schema(body, { claims })";
     case "eventBridge":
-      return "eventBridge.schedule()";
+      return event.schedule
+        ? "eventBridge.defineSchedule(options)"
+        : "eventBridge.schedule()";
   }
 }
 

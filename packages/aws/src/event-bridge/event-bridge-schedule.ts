@@ -1,76 +1,45 @@
 import {
+  declarationOf,
+  eventCall,
   resolveLambda,
   whenLoaded,
   type LambdaTarget,
 } from "src/lambda/lambda-declaration";
-import type { LambdaGroup } from "src/lambda/lambda";
-import { Schedule } from "./schedule";
-import * as aws from "@notation/aws.iac";
-import { toAwsScheduleExpression } from "./aws-conversions";
-import { awsName } from "src/naming";
+import type { ScheduleOptions } from "src/lambda/declaration";
+import { ScheduleGroup } from "./schedule-group";
 
-type ScheduleConfig = {
-  name: string;
-  schedule: Schedule;
+export { ScheduleGroup };
+
+export type ScheduleConfig = ScheduleOptions & {
   /**
    * The Lambda to invoke on the schedule: a declaration from `$lambda`,
-   * passed as `() => lambda`, or a Lambda group from `lambda()`.
+   * passed as `() => lambda`, or a Lambda group from `lambda()`. A
+   * declaration must be declared with `event: () => eventBridge.schedule()`,
+   * or with no event.
    */
   target: LambdaTarget<"eventBridge" | "none">;
 };
 
-export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
-  readonly rule: aws.eventBridge.EventBridgeRuleInstance;
-
-  constructor(config: ScheduleConfig, lambdaGroup: LambdaGroup) {
-    super("aws/eventBridge/schedule", config.name, config);
-
-    const lambdaResource = lambdaGroup.fn;
-
-    this.rule = this.add(
-      new aws.eventBridge.EventBridgeRule(`${config.name}-eventbridge-rule`, {
-        config: {
-          Name: awsName("eventBridgeRule", config.name),
-          ScheduleExpression: toAwsScheduleExpression(config.schedule),
-          EventBusName: "default",
-          Targets: [
-            {
-              Id: lambdaResource.outputValue("FunctionName"),
-              Arn: lambdaResource.outputValue("FunctionArn"),
-            },
-          ],
-        },
-        dependencies: {
-          lambda: lambdaResource,
-        },
-      }),
-    );
-
-    lambdaGroup.add(
-      new aws.eventBridge.LambdaEventBridgeRulePermission(
-        `${config.name}-eventbridge-permission`,
-        {
-          dependencies: {
-            lambda: lambdaResource,
-            eventBridgeRule: this.rule,
-          },
-        },
-      ),
-    );
-  }
-}
-
 /**
  * Invokes a Lambda on a schedule. The schedule's resources are made when
- * infra has finished loading.
+ * infra has finished loading. A declaration can make its own schedule, with
+ * `event: () => eventBridge.defineSchedule(options)`.
  * @resource
  */
 export function schedule(config: ScheduleConfig): void {
+  const { target, ...options } = config;
   whenLoaded(() => {
-    const lambdaGroup = resolveLambda(config.target, "schedule()", [
+    const declaration = declarationOf(target);
+    const event = declaration?.event;
+    if (event?.kind === "eventBridge" && event.schedule) {
+      throw new Error(
+        `schedule() invokes the Lambda "${declaration!.id}" on the schedule "${options.name}", but the Lambda makes its own schedule in its declaration, with event: () => ${eventCall(event)}. Schedule the Lambda in one place: remove the schedule() call, or declare the Lambda with event: () => eventBridge.schedule().`,
+      );
+    }
+    const lambdaGroup = resolveLambda(target, "schedule()", [
       "eventBridge",
       "none",
     ]);
-    new ScheduleGroup(config, lambdaGroup);
+    new ScheduleGroup(options, lambdaGroup);
   });
 }

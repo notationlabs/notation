@@ -8,6 +8,7 @@ import type {
   SQSEvent,
   SQSRecord,
 } from "aws-lambda";
+import type { Schedule } from "src/event-bridge/schedule";
 import type { LambdaGroup } from "./lambda";
 import type {
   APIGatewayJWTProxyEventV2,
@@ -242,10 +243,42 @@ export const apiGateway = {
 };
 
 /** The function receives EventBridge scheduled events. */
-export type EventBridgeScheduleEvent = { kind: "eventBridge" };
+export type EventBridgeScheduleEvent = {
+  kind: "eventBridge";
+  /**
+   * The schedule that the infra build makes, from
+   * `eventBridge.defineSchedule()`. It is not set for
+   * `eventBridge.schedule()`, nor in the runtime build.
+   */
+  schedule?: ScheduleOptions;
+};
 
-/** The function receives EventBridge scheduled events. */
+export type ScheduleOptions = {
+  /**
+   * Names the rule, and keys it in state. Changing the name replaces the
+   * rule.
+   */
+  name: string;
+  /** When the rule invokes the function, such as `rate(1, "day")`. */
+  schedule: Schedule;
+};
+
+/**
+ * The function receives EventBridge scheduled events: from a schedule that
+ * the declaration makes, with `eventBridge.defineSchedule(options)`, or from
+ * schedules that infra makes with `schedule()`, with
+ * `eventBridge.schedule()`.
+ */
 export const eventBridge = {
+  /**
+   * The function receives the events of a schedule, whose rule the infra
+   * build makes. The function doesn't read the options, so the runtime build
+   * removes them.
+   * @runtime
+   */
+  defineSchedule(options: ScheduleOptions): EventBridgeScheduleEvent {
+    return { kind: "eventBridge", schedule: options };
+  },
   /** The function receives the events of schedules that infra makes. */
   schedule(): EventBridgeScheduleEvent {
     return { kind: "eventBridge" };
