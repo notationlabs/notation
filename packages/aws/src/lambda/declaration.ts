@@ -44,7 +44,7 @@ export type SqsOptions = {
   /** The most messages the function receives in one invocation. */
   batchSize?: number;
   /** Seconds to wait to fill a batch before the function is invoked. */
-  maxBatchingWindow?: number;
+  maximumBatchingWindow?: number;
   /**
    * Lets the handler return `{ batchItemFailures }`, the messages that
    * failed, so that Lambda deletes the others and only the failed messages

@@ -161,7 +161,7 @@ The mapping depends on the policy, even though it reads nothing from it. This ma
 ```ts [@notation/aws/lambda]
 type SqsOptions = {
   batchSize?: number;
-  maxBatchingWindow?: number;
+  maximumBatchingWindow?: number;
   reportBatchItemFailures?: boolean;
   maximumConcurrency?: number;
   enabled?: boolean;
@@ -171,7 +171,7 @@ type SqsOptions = {
 | Option                    | Mapping field                    | Default when removed |
 | ------------------------- | -------------------------------- | -------------------- |
 | `batchSize`               | `BatchSize`                      | 10                   |
-| `maxBatchingWindow`       | `MaximumBatchingWindowInSeconds` | 0 seconds            |
+| `maximumBatchingWindow`   | `MaximumBatchingWindowInSeconds` | 0 seconds            |
 | `reportBatchItemFailures` | `FunctionResponseTypes`          | Off                  |
 | `maximumConcurrency`      | `ScalingConfig`                  | No limit             |
 | `enabled`                 | `Enabled`                        | `true`               |

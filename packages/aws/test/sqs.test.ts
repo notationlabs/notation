@@ -77,7 +77,12 @@ test("eventSourceMapping grants the function access to the queue and maps the qu
   await collectResourceGraph(() => {
     fn = lambda({ id: "process", code });
     orders = queue({ id: "orders", schema: Unknown });
-    eventSourceMapping({ source: orders, target: fn, batchSize: 5 });
+    eventSourceMapping({
+      source: orders,
+      target: fn,
+      batchSize: 5,
+      maximumBatchingWindow: 2,
+    });
   });
   mapping = mappingOf(orders);
   deploy(orders);
@@ -92,6 +97,7 @@ test("eventSourceMapping grants the function access to the queue and maps the qu
     EventSourceArn: queueArn("orders"),
     FunctionName: "process",
     BatchSize: 5,
+    MaximumBatchingWindowInSeconds: 2,
   });
   expect(mapping.id).toBe("sqs-mapping:orders:process");
   expect(mapping.group).toEqual({ type: "aws/sqs/queue", id: "orders" });

@@ -161,7 +161,7 @@ export class QueueGroup<
           EventSourceArn: this.arn,
           FunctionName: lambdaGroup.fn.outputValue("FunctionName"),
           BatchSize: options.batchSize,
-          MaximumBatchingWindowInSeconds: options.maxBatchingWindow,
+          MaximumBatchingWindowInSeconds: options.maximumBatchingWindow,
           FunctionResponseTypes: options.reportBatchItemFailures
             ? ["ReportBatchItemFailures"]
             : undefined,
