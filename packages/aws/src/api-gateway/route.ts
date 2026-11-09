@@ -76,9 +76,10 @@ export class RouteGroup extends aws.AwsResourceGroup {
  * `() => lambda`, or a Lambda group from `lambda()`. A route with no
  * authorizer takes a declaration with `apiGateway.schema(body)`. A route with
  * an authorizer takes a declaration with
- * `apiGateway.schema(body, { claims })`, whose claims schema has the type of
- * the authorizer's. An authorizer with no claims schema takes any claims
- * schema. Both take a declaration with no event.
+ * `apiGateway.schema(body).authSchema(claims)`, whose claims schema has the
+ * type of the authorizer's, or with `authSchema()` and no claims schema. An
+ * authorizer with no claims schema takes any claims schema. Both take a
+ * declaration with no event.
  */
 export type ApiGatewayTarget<
   A extends JwtAuthorizerGroup<any> | undefined = undefined,
@@ -90,7 +91,9 @@ export type ApiGatewayTarget<
             ? {
                 kind: "apiGateway-jwt";
                 event: {
-                  claims: [C] extends [undefined] ? any : C & StandardSchemaV1;
+                  claims: [C] extends [undefined]
+                    ? any
+                    : (C & StandardSchemaV1) | undefined;
                 };
               }
             : { kind: "apiGateway" });
@@ -99,8 +102,9 @@ export type ApiGatewayTarget<
 
 /**
  * Routes requests for `method` and `path` on the API to a Lambda. A route
- * with an authorizer takes a declaration whose claims schema is the
- * authorizer's, and a route without one takes a declaration with no claims.
+ * with an authorizer takes a declaration with `authSchema()`, whose claims
+ * schema is the authorizer's or unset, and a route without one takes a
+ * declaration with no authorizer.
  * The route is made when infra has finished loading.
  * @resource
  */
@@ -127,15 +131,17 @@ export function route<A extends JwtAuthorizerGroup<any> | undefined>(
       auth ? "apiGateway-jwt" : "apiGateway",
       "none",
     ]);
-    // An authorizer with no claims schema is allowed, as the function still
-    // validates the claims.
+    // Either side may have no claims schema. Without one in the authorizer,
+    // the function still validates the claims. Without one in the
+    // declaration, the function doesn't validate them.
     if (
       auth?.claims !== undefined &&
       event?.kind === "apiGateway-jwt" &&
+      event.claims !== undefined &&
       auth.claims !== event.claims
     ) {
       throw new Error(
-        `route() routes ${routeName} to the Lambda "${lambdaGroup.id}", but the authorizer's claims schema is not the claims schema of the Lambda's event: () => apiGateway.schema(body, { claims }), so the function would validate the claims with another schema. Give jwtAuthorizer() and apiGateway.schema() the same claims schema, imported from a shared module.`,
+        `route() routes ${routeName} to the Lambda "${lambdaGroup.id}", but the authorizer's claims schema is not the claims schema of the Lambda's event: () => apiGateway.schema(body).authSchema(claims), so the function would validate the claims with another schema. Give jwtAuthorizer() and authSchema() the same claims schema, imported from a shared module.`,
       );
     }
     new RouteGroup({ apiGroup, method, path, auth, lambdaGroup });

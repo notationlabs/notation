@@ -18,7 +18,8 @@ export type JwtAuthorizerConfig<
   /**
    * Validates the token's claims, in `decode()` of a Lambda that a route of
    * the authorizer invokes. A Lambda declared with
-   * `apiGateway.schema(body, { claims })` must be given this schema. Import
+   * `apiGateway.schema(body).authSchema(claims)` must be given this schema,
+   * or no schema. Import
    * it from a shared module, so the function can load it.
    */
   claims?: C;

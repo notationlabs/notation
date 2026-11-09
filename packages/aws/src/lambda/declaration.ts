@@ -162,24 +162,30 @@ export type AuthorizerSource<
   readonly claims: C;
 };
 
-export type ApiGatewaySchemaOptions<C extends StandardSchemaV1 | undefined> = {
+/**
+ * The event of `apiGateway.schema(body)`, for routes with no authorizer.
+ * `authSchema()` returns the event for routes with a JWT authorizer.
+ */
+export type ApiGatewaySchemaEvent<
+  S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
+> = ApiGatewayEvent<S, undefined, "apiGateway"> & {
   /**
-   * Validates the JWT claims of a request in `decode()`. A declaration with
-   * claims receives requests only through routes with a JWT authorizer, whose
-   * claims schema must be this schema.
+   * The function receives requests only through routes with a JWT
+   * authorizer, and `decode()` returns the request's JWT claims. With
+   * `claims`, `decode()` validates the claims with it, and the authorizer
+   * must have the same claims schema, or none. Without `claims`, any
+   * authorizer is accepted.
    */
-  claims?: C;
+  authSchema<C extends StandardSchemaV1 | undefined = undefined>(
+    claims?: C,
+  ): ApiGatewayEvent<S, C, "apiGateway-jwt">;
 };
-
-type ApiGatewayKindOf<C> = [C] extends [StandardSchemaV1]
-  ? "apiGateway-jwt"
-  : "apiGateway";
 
 /**
  * The function receives API Gateway HTTP API requests: from a route that the
  * declaration makes, with `apiGateway.bind(api).defineRoute(options)`, or
  * from routes that infra makes with `router()`, with
- * `apiGateway.schema(body)`.
+ * `apiGateway.schema(body)` or `apiGateway.schema(body).authSchema(claims)`.
  */
 export const apiGateway = {
   /**
@@ -218,27 +224,23 @@ export const apiGateway = {
     };
   },
   /**
-   * The function receives requests from routes that infra makes. `decode()`
-   * validates the JSON body with `body`, and the JWT claims with
-   * `options.claims`. With claims, the function receives requests only
-   * through routes with a JWT authorizer whose claims schema is the same
-   * schema. Without claims, it receives requests only through routes with no
-   * authorizer.
+   * The function receives requests from routes that infra makes, with no
+   * authorizer. `decode()` validates the JSON body with `body`. Call
+   * `authSchema()` on the result for routes with a JWT authorizer.
    */
-  schema<
-    S extends StandardSchemaV1 | undefined = undefined,
-    C extends StandardSchemaV1 | undefined = undefined,
-  >(
+  schema<S extends StandardSchemaV1 | undefined = undefined>(
     body?: S,
-    options?: ApiGatewaySchemaOptions<C>,
-  ): ApiGatewayEvent<S, C, ApiGatewayKindOf<C>> {
-    return {
-      kind: (options?.claims
-        ? "apiGateway-jwt"
-        : "apiGateway") as ApiGatewayKindOf<C>,
-      schema: body as S,
-      claims: options?.claims as C,
-    };
+  ): ApiGatewaySchemaEvent<S> {
+    const event = { kind: "apiGateway", schema: body as S, claims: undefined };
+    // `authSchema` is not enumerable, so it is not part of the event's data,
+    // which `decode()` and the infra checks read.
+    return Object.defineProperty(event, "authSchema", {
+      value: <C extends StandardSchemaV1 | undefined>(claims?: C) => ({
+        kind: "apiGateway-jwt" as const,
+        schema: body as S,
+        claims: claims as C,
+      }),
+    }) as ApiGatewaySchemaEvent<S>;
   },
 };
 
@@ -291,20 +293,40 @@ type Decoded<S> = S extends StandardSchemaV1
   ? StandardSchemaV1.InferOutput<S>
   : unknown;
 
-// A request to a function with a claims schema must hold the JWT claims.
-type ApiGatewayRequest<C> = Pick<
+// `T` with the fields of `U` in place of its own.
+type Replace<T, U> = Omit<T, keyof U> & U;
+
+type JwtRequest = {
+  requestContext: { authorizer: { jwt: { claims: unknown } } };
+};
+
+// A request through a route with a JWT authorizer must hold the JWT claims.
+type ApiGatewayRequest<K> = Pick<
   APIGatewayProxyEventV2,
   "body" | "isBase64Encoded"
 > &
-  ([C] extends [StandardSchemaV1]
-    ? { requestContext: { authorizer: { jwt: { claims: unknown } } } }
-    : {});
+  ([K] extends ["apiGateway-jwt"] ? JwtRequest : {});
+
+// The claims of a request through a JWT authorizer, as `decode()` returns
+// them: the output of the claims schema, or the claims as API Gateway sends
+// them when there is no schema. A request with no authorizer has no claims.
+type DecodedClaims<C, K> = [K] extends ["apiGateway-jwt"]
+  ? {
+      claims: C extends StandardSchemaV1
+        ? StandardSchemaV1.InferOutput<C>
+        : JwtClaims;
+    }
+  : {};
 
 type DecodeFor<E> =
   E extends SqsEvent<infer S>
-    ? (record: SQSRecord) => Promise<Decoded<S>>
-    : E extends ApiGatewayEvent<infer S, infer C, any>
-      ? (event: ApiGatewayRequest<C>) => Promise<Decoded<S>>
+    ? <R extends SQSRecord>(
+        record: R,
+      ) => Promise<Replace<R, { body: Decoded<S> }>>
+    : E extends ApiGatewayEvent<infer S, infer C, infer K>
+      ? <R extends ApiGatewayRequest<K>>(
+          event: R,
+        ) => Promise<Replace<R, { body: Decoded<S> } & DecodedClaims<C, K>>>
       : never;
 
 /**
@@ -327,11 +349,13 @@ export interface Lambda<
    */
   env(): Readonly<Env>;
   /**
-   * Parses one item that the function received as JSON, and validates it
-   * with the event's schema. For SQS the item is a record, and for API
-   * Gateway it is the request. For a request, `decode()` also validates the
-   * JWT claims with the event's claims schema, if it has one, but returns
-   * only the body. Throws a `DecodeError` when the item is not valid.
+   * Decodes one item that the function received, and returns the item with
+   * its decoded parts in place of the raw ones. For SQS the item is a record,
+   * and `body` is the JSON body, validated with the event's schema. For API
+   * Gateway the item is the request, and `body` is the JSON body, validated
+   * with the event's body schema. A request through a JWT authorizer also
+   * gets `claims`: the JWT claims, validated with the event's claims schema
+   * if it has one. Throws a `DecodeError` when the item is not valid.
    */
   decode: DecodeFor<E>;
 }
@@ -408,47 +432,62 @@ export function createDecode(
         `decode() needs a Lambda declared with event: () => sqs.bind(queue), sqs.schema(schema), apiGateway.bind(api).defineRoute(options) or apiGateway.schema(body).`,
       );
     }
-    const isSqs = event.kind === "sqs";
-    const name = isSqs ? "message" : "request";
-    if (event.kind !== "sqs" && event.claims) {
-      await validateClaims(event.claims, item);
+    if (event.kind === "sqs") {
+      return {
+        ...item,
+        body: await decodeBody(event.schema, item?.body, "message"),
+      };
     }
-    const body =
-      !isSqs && item?.isBase64Encoded
-        ? Buffer.from(item.body ?? "", "base64").toString("utf8")
-        : item?.body;
+    const claims =
+      event.kind === "apiGateway-jwt"
+        ? { claims: await decodeClaims(event.claims, item) }
+        : {};
+    const raw = item?.isBase64Encoded
+      ? Buffer.from(item.body ?? "", "base64").toString("utf8")
+      : item?.body;
     // A request with no body, such as a GET, has nothing to parse.
-    if (!isSqs && !event.schema && (body === undefined || body === "")) {
-      return undefined;
-    }
-    let value: unknown;
-    try {
-      value = JSON.parse(body);
-    } catch {
-      throw new DecodeError(`The ${name} body is not valid JSON.`);
-    }
-    if (!event.schema) return value;
-    const result = await event.schema["~standard"].validate(value);
-    if (result.issues) {
-      throw new DecodeError(
-        `The ${name} body is not valid: ${details(result.issues)}`,
-        result.issues,
-      );
-    }
-    return result.value;
+    const body =
+      !event.schema && (raw === undefined || raw === "")
+        ? undefined
+        : await decodeBody(event.schema, raw, "request");
+    return { ...item, body, ...claims };
   };
 }
 
-async function validateClaims(
-  schema: StandardSchemaV1,
+async function decodeBody(
+  schema: StandardSchemaV1 | undefined,
+  body: string,
+  name: "message" | "request",
+): Promise<unknown> {
+  let value: unknown;
+  try {
+    value = JSON.parse(body);
+  } catch {
+    throw new DecodeError(`The ${name} body is not valid JSON.`);
+  }
+  if (!schema) return value;
+  const result = await schema["~standard"].validate(value);
+  if (result.issues) {
+    throw new DecodeError(
+      `The ${name} body is not valid: ${details(result.issues)}`,
+      result.issues,
+    );
+  }
+  return result.value;
+}
+
+// Returns the claims as the request holds them when there is no schema.
+async function decodeClaims(
+  schema: StandardSchemaV1 | undefined,
   request: any,
-): Promise<void> {
+): Promise<unknown> {
   const claims = request?.requestContext?.authorizer?.jwt?.claims;
   if (claims === undefined) {
     throw new DecodeError(
       "The request has no JWT claims. Route it through a route with a JWT authorizer.",
     );
   }
+  if (!schema) return claims;
   const result = await schema["~standard"].validate(claims);
   if (result.issues) {
     throw new DecodeError(
@@ -456,6 +495,7 @@ async function validateClaims(
       result.issues,
     );
   }
+  return result.value;
 }
 
 const details = (issues: ReadonlyArray<StandardSchemaV1.Issue>) =>

@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, expectTypeOf, test } from "vitest";
+import type { SQSRecord } from "aws-lambda";
 import { lambda as awsLambda } from "@notation/aws.iac";
 import { createPlan } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
@@ -173,7 +174,9 @@ test("eventSourceMapping maps a queue to a declaration with sqs.schema(), whose 
 
   expect(mappingOf(orders).id).toBe("orders-process-mapping");
   expect(mappingOf(orders).getDependencies()).toContain(fn.policy);
-  const decoded = await declaration.decode({ body: '{"orderId":"a"}' } as any);
+  const { body: decoded } = await declaration.decode({
+    body: '{"orderId":"a"}',
+  } as SQSRecord);
   expectTypeOf(decoded).toEqualTypeOf<{ orderId: string }>();
   expect(decoded).toEqual({ orderId: "a" });
   await expect(declaration.decode({ body: "{}" } as any)).rejects.toThrow(
@@ -423,7 +426,9 @@ test("sqs.bind(queue) can name a queue that a later module declares", async () =
 test("decode() validates a message with the queue's schema", async () => {
   const orders = queue({ name: "orders", schema: Order });
   const fn = $lambda({ id: "process", event: () => sqs.bind(orders) });
-  const decoded = await fn.decode({ body: '{"orderId":"a"}' } as any);
+  const { body: decoded } = await fn.decode({
+    body: '{"orderId":"a"}',
+  } as SQSRecord);
 
   expectTypeOf(decoded).toEqualTypeOf<{ orderId: string }>();
   expect(decoded).toEqual({ orderId: "a" });

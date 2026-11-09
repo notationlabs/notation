@@ -264,7 +264,7 @@ test("a route with an authorizer integrates a declaration with the authorizer's 
     const user = inModule(
       $lambda({
         id: "user",
-        event: () => apiGateway.schema(undefined, { claims: Claims }),
+        event: () => apiGateway.schema().authSchema(Claims),
       }),
     );
     const userApi = api({ name: "user-api" });
@@ -284,7 +284,7 @@ test("a route with an authorizer with no claims schema integrates a declaration 
     const user = inModule(
       $lambda({
         id: "user",
-        event: () => apiGateway.schema(undefined, { claims: Claims }),
+        event: () => apiGateway.schema().authSchema(Claims),
       }),
     );
     const userApi = api({ name: "user-api" });
@@ -303,7 +303,7 @@ test("a route with an authorizer whose claims schema is another object than the 
       const user = inModule(
         $lambda({
           id: "user",
-          event: () => apiGateway.schema(undefined, { claims: Claims }),
+          event: () => apiGateway.schema().authSchema(Claims),
         }),
       );
       const userApi = api({ name: "user-api" });
@@ -312,18 +312,54 @@ test("a route with an authorizer whose claims schema is another object than the 
         .get("/user", () => user);
     }),
   ).rejects.toThrow(
-    `route() routes GET /user to the Lambda "user", but the authorizer's claims schema is not the claims schema of the Lambda's event: () => apiGateway.schema(body, { claims }), so the function would validate the claims with another schema. Give jwtAuthorizer() and apiGateway.schema() the same claims schema, imported from a shared module.`,
+    `route() routes GET /user to the Lambda "user", but the authorizer's claims schema is not the claims schema of the Lambda's event: () => apiGateway.schema(body).authSchema(claims), so the function would validate the claims with another schema. Give jwtAuthorizer() and authSchema() the same claims schema, imported from a shared module.`,
+  );
+});
+
+test("a route with an authorizer integrates a declaration with authSchema() and no claims schema", async () => {
+  const graph = await collect(() => {
+    const user = inModule(
+      $lambda({ id: "user", event: () => apiGateway.schema().authSchema() }),
+    );
+    const plain = inModule(
+      $lambda({ id: "plain", event: () => apiGateway.schema().authSchema() }),
+    );
+    const userApi = api({ name: "user-api" });
+    router(userApi)
+      .withAuthorizer(authorizerOn(userApi, Claims))
+      .get("/user", () => user);
+    const plainApi = api({ name: "plain-api" });
+    router(plainApi)
+      .withAuthorizer(authorizerOn(plainApi))
+      .get("/plain", () => plain);
+  });
+
+  expect(routeGroup(graph, "user-api-GET-/user")).toBeDefined();
+  expect(routeGroup(graph, "plain-api-GET-/plain")).toBeDefined();
+});
+
+test("a route without an authorizer to a declaration with authSchema() and no claims schema throws", async () => {
+  await expect(
+    collect(() => {
+      const user = inModule(
+        $lambda({ id: "user", event: () => apiGateway.schema().authSchema() }),
+      );
+      // @ts-expect-error the declaration expects the claims
+      router(api({ name: "user-api" })).get("/user", () => user);
+    }),
+  ).rejects.toThrow(
+    'route() sends apiGateway events, but the Lambda "user" is declared with event: () => apiGateway.schema(body).authSchema().',
   );
 });
 
 test("a route with an authorizer rejects a declaration whose claims schema type is not the authorizer's", () => {
   const user = $lambda({
     id: "user",
-    event: () => apiGateway.schema(undefined, { claims: Claims }),
+    event: () => apiGateway.schema().authSchema(Claims),
   });
   const other = $lambda({
     id: "other",
-    event: () => apiGateway.schema(undefined, { claims: OtherClaims }),
+    event: () => apiGateway.schema().authSchema(OtherClaims),
   });
   const userApi = api({ name: "user-api" });
   const authed = router(userApi).withAuthorizer(authorizerOn(userApi, Claims));
@@ -331,10 +367,17 @@ test("a route with an authorizer rejects a declaration whose claims schema type 
     jwtAuthorizer({ api: userApi, issuer: "https://other", audience: ["a"] }),
   );
 
+  const any = $lambda({
+    id: "any",
+    event: () => apiGateway.schema().authSchema(),
+  });
+
   // The calls are only type-checked.
   const typeOnly = () => {
     authed.get("/user", () => user);
+    authed.get("/any", () => any);
     loose.get("/other", () => other);
+    loose.get("/any", () => any);
     // @ts-expect-error the declaration validates other claims than the authorizer's
     authed.get("/other", () => other);
   };
@@ -347,14 +390,14 @@ test("a route without an authorizer to a declaration with claims throws", async 
       const user = inModule(
         $lambda({
           id: "user",
-          event: () => apiGateway.schema(undefined, { claims: Claims }),
+          event: () => apiGateway.schema().authSchema(Claims),
         }),
       );
       // @ts-expect-error the request has no claims
       router(api({ name: "user-api" })).get("/user", () => user);
     }),
   ).rejects.toThrow(
-    'route() sends apiGateway events, but the Lambda "user" is declared with event: () => apiGateway.schema(body, { claims }).',
+    'route() sends apiGateway events, but the Lambda "user" is declared with event: () => apiGateway.schema(body).authSchema(claims).',
   );
 });
 
@@ -450,7 +493,10 @@ test("apiGateway.bind(api).defineRoute({ auth }) makes the route with the author
     isBase64Encoded: false,
     requestContext: { authorizer: { jwt: { claims } } },
   });
-  await expect(user.decode(request({ sub: "u1" }))).resolves.toEqual({});
+  await expect(user.decode(request({ sub: "u1" }))).resolves.toMatchObject({
+    body: {},
+    claims: { sub: "u1" },
+  });
   await expect(user.decode(request({}))).rejects.toThrow(
     "sub must be a string",
   );
@@ -481,7 +527,11 @@ test("apiGateway.bind(api).defineRoute() types the event from its options", () =
   expectTypeOf<
     NonNullable<(typeof user)["~lambda"]>["event"]["claims"]
   >().toEqualTypeOf<typeof Claims>();
-  expectTypeOf(user.decode).returns.resolves.toEqualTypeOf<OtherClaimsType>();
+  type UserEvent = Parameters<LambdaHandler<typeof user>>[0];
+  const decodeUser = (event: UserEvent) => user.decode(event);
+  type Decoded = Awaited<ReturnType<typeof decodeUser>>;
+  expectTypeOf<Decoded["body"]>().toEqualTypeOf<OtherClaimsType>();
+  expectTypeOf<Decoded["claims"]>().toEqualTypeOf<ClaimsType>();
   expectTypeOf<
     Parameters<
       LambdaHandler<typeof user>

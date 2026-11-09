@@ -260,9 +260,10 @@ export function eventCall(event: LambdaEvent): string {
     case "apiGateway":
     case "apiGateway-jwt":
       if (event.route) return "apiGateway.bind(api).defineRoute(options)";
-      return event.kind === "apiGateway"
-        ? "apiGateway.schema(body)"
-        : "apiGateway.schema(body, { claims })";
+      if (event.kind === "apiGateway") return "apiGateway.schema(body)";
+      return event.claims
+        ? "apiGateway.schema(body).authSchema(claims)"
+        : "apiGateway.schema(body).authSchema()";
     case "eventBridge":
       return event.schedule
         ? "eventBridge.defineSchedule(options)"
