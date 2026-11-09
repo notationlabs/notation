@@ -248,7 +248,7 @@ export type EventBridgeScheduleEvent = {
   /**
    * The schedule that the infra build makes, from
    * `eventBridge.defineSchedule()`. It is not set for
-   * `eventBridge.schema(null)`, nor in the runtime build.
+   * `eventBridge.schema(null)`.
    */
   schedule?: ScheduleOptions;
 };
