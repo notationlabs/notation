@@ -34,7 +34,7 @@ export type DeclarationMark = {
 
 /**
  * Marks a function that builds part of a declaration's options, such as
- * `sqs(schema)`. Written `@runtime schema`, with the names of the parameters
+ * `sqs(queue)`. Written `@runtime queue`, with the names of the parameters
  * that the runtime build keeps.
  */
 export type RuntimeMark = { kind: "runtime"; positions: number[] };
