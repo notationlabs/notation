@@ -8,7 +8,6 @@ describe("parseMark", () => {
     expect(
       parseMark(
         "* @declaration shared: event, env; keys: env; entry: handler ",
-        [],
         "f",
       ),
     ).toEqual({
@@ -23,7 +22,7 @@ describe("parseMark", () => {
   it("reads a declaration mark among other JSDoc", () => {
     const jsDoc =
       "*\n * Declares a namespace.\n * @declaration runtime: class\n * @param config the options\n ";
-    expect(parseMark(jsDoc, [], "f")).toEqual({
+    expect(parseMark(jsDoc, "f")).toEqual({
       kind: "declaration",
       shared: [],
       runtime: ["class"],
@@ -31,41 +30,26 @@ describe("parseMark", () => {
     });
   });
 
-  it("reads the positions of a runtime mark's arguments", () => {
-    expect(parseMark("* @runtime schema ", ["options", "schema"], "f")).toEqual(
-      {
-        kind: "runtime",
-        positions: [1],
-      },
-    );
-  });
-
-  it("fails for a runtime mark that names a missing parameter", () => {
-    expect(() => parseMark("* @runtime schema ", ["s"], "f.js")).toThrow(
-      'f.js: the @runtime mark names the parameter "schema", which the function does not have',
-    );
-  });
-
   it("reads a resource mark", () => {
-    expect(parseMark("* @resource ", [], "f")).toEqual({ kind: "resource" });
+    expect(parseMark("* @resource ", "f")).toEqual({ kind: "resource" });
   });
 
   it("reads a resource mark with an empty runtime list", () => {
-    expect(parseMark("* @resource runtime: ", [], "f")).toEqual({
+    expect(parseMark("* @resource runtime: ", "f")).toEqual({
       kind: "resource",
       runtime: [],
     });
   });
 
   it("reads the runtime options of a resource mark", () => {
-    expect(parseMark("* @resource runtime: schema ", [], "f")).toEqual({
+    expect(parseMark("* @resource runtime: schema ", "f")).toEqual({
       kind: "resource",
       runtime: ["schema"],
     });
   });
 
   it("ignores JSDoc without a mark", () => {
-    expect(parseMark("* Declares a queue. ", [], "f")).toBeUndefined();
+    expect(parseMark("* Declares a queue. ", "f")).toBeUndefined();
   });
 });
 

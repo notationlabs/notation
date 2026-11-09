@@ -1,8 +1,6 @@
 import MagicString from "magic-string";
 import {
   freeReferences,
-  isFunction,
-  leadingJsDoc,
   location,
   unwrap,
   walk,
@@ -10,7 +8,7 @@ import {
   type Reference,
 } from "./ast";
 import type { Declaration, ModuleAnalysis } from "./analyze";
-import { paramNames, parseMark, type ImportBinding, type Mark } from "./marks";
+import type { ImportBinding, Mark } from "./marks";
 import type { ModuleAnalyses } from "./modules";
 
 /**
@@ -21,14 +19,12 @@ import type { ModuleAnalyses } from "./modules";
  *    removed.
  * 2. A `keys` option keeps the keys of the object that it returns, and each
  *    value becomes `undefined`.
- * 3. A call to a function marked `@runtime` keeps only its runtime
- *    arguments. The others become `undefined`.
- * 4. In a kept option, a resource from an infra module becomes an object of
+ * 3. In a kept option, a resource from an infra module becomes an object of
  *    the options that the resource's mark lists as runtime, imported from
  *    where infra imports them: `sqs.bind(orderQueue)` becomes
  *    `sqs.bind({ schema: Order })`. A resource whose mark lists no runtime
  *    options is left, and fails as any other infra value does.
- * 5. An import whose uses were all removed is removed too, so the bundle
+ * 4. An import whose uses were all removed is removed too, so the bundle
  *    doesn't load the module it imports from. Without this, the module would
  *    still load when `verbatimModuleSyntax` keeps unused imports.
  *
@@ -94,22 +90,8 @@ export function stripForRuntime(
     const free = new Set(
       freeReferences(property.value).map((reference) => reference.node),
     );
-    walk(property.value, (node) => {
-      // A node that was overwritten can't be edited again.
-      if (removed.has(node)) return false;
-      if (node.type !== "CallExpression") return;
-      // A local binding, such as a parameter, can shadow the callee's name.
-      const root = calleeRoot(node.callee);
-      if (!root || !free.has(root)) return;
-      const runtimeMark = markOfCallee(node.callee, analysis, analyses);
-      if (runtimeMark?.kind !== "runtime") return;
-      node.arguments.forEach((argument: Node, position: number) => {
-        if (runtimeMark.positions.includes(position)) return;
-        removed.add(argument);
-        s.overwrite(argument.start, argument.end, "undefined");
-      });
-    });
     walk(property.value, (node, parent) => {
+      // A node that was overwritten can't be edited again.
       if (removed.has(node)) return false;
       // A member path, such as `queues.orders`, is replaced as a whole, and
       // the names in it aren't replaced on their own.
@@ -230,11 +212,6 @@ function resourceStub(
     );
   }
   if (!mark.runtime) return undefined;
-  if (found.value.mutable) {
-    throw new Error(
-      `${analyses.show(file)}:${location(source, expression.start)}: the function reads ${text} from ${analyses.show(resolved)}, where a let or var holds it. Declare it with const, so the build can tell that it holds the resource.`,
-    );
-  }
   const definitionFile = found.value.file;
   const first = call.arguments[0];
   const config = first ? unwrap(first) : undefined;
@@ -325,13 +302,7 @@ function checkAlias(
   }
 }
 
-type Located = {
-  file: string;
-  node: Node;
-  // Set when a `let` or `var` holds the value, as the module can assign
-  // another value to it.
-  mutable?: boolean;
-};
+type Located = { file: string; node: Node };
 
 // A name followed by static member keys, such as `queues.orders` or
 // `queues["orders"]`.
@@ -347,13 +318,6 @@ function memberPath(node: Node): { root: Node; keys: string[] } | undefined {
     node = unwrap(node.object);
   }
   return node.type === "Identifier" ? { root: node, keys } : undefined;
-}
-
-// The name that a callee starts from, such as `sqs` for `sqs.bind`.
-function calleeRoot(callee: Node): Node | undefined {
-  let node = unwrap(callee);
-  while (node.type === "MemberExpression") node = unwrap(node.object);
-  return node.type === "Identifier" ? node : undefined;
 }
 
 function keyOf(property: Node): string | undefined {
@@ -411,7 +375,8 @@ function exportedValue(
 }
 
 // The expression that a top-level name of a module holds: the initializer of
-// its const, its function declaration, or the export that it imports.
+// its const, its function declaration, or the export that it imports. A let
+// or var is undefined, as the module can assign another value to it.
 function localValue(
   file: string,
   name: string,
@@ -442,12 +407,8 @@ function localValue(
     const declarator = statement.declarations.find(
       (d: Node) => d.id.type === "Identifier" && d.id.name === name,
     );
-    if (declarator?.init)
-      return {
-        file,
-        node: declarator.init,
-        mutable: statement.kind !== "const",
-      };
+    if (declarator?.init && statement.kind === "const")
+      return { file, node: declarator.init };
   }
   return undefined;
 }
@@ -461,17 +422,15 @@ function followKeys(
 ): { value: Located; rest: number } | undefined {
   let value: Located | undefined = start;
   let index = 0;
-  let mutable = false;
   const seen = new Set<string>();
   while (value) {
-    mutable ||= value.mutable === true;
     const node = unwrap(value.node);
     if (node.type === "Identifier") {
       value = localValue(value.file, node.name, analyses, seen);
       continue;
     }
     if (index === keys.length || node.type !== "ObjectExpression") {
-      return { value: { ...value, mutable }, rest: keys.length - index };
+      return { value, rest: keys.length - index };
     }
     const key = keys[index++];
     const property = node.properties.find(
@@ -494,8 +453,8 @@ function mergeRanges(ranges: [number, number][]): [number, number][] {
 }
 
 // The mark of the function that a call calls. The callee can be a marked
-// function that the module declares or imports, a member of a namespace
-// import, or a member of an imported object literal, such as `sqs.bind`.
+// function that the module declares or imports, or a member of a namespace
+// import.
 function markOfCallee(
   callee: Node,
   analysis: ModuleAnalysis,
@@ -515,57 +474,9 @@ function markOfCallee(
   }
   const path = memberPath(callee);
   const binding = path && table.imports.get(path.root.name);
-  if (binding?.imported === "*" && path!.keys.length === 1) {
-    return marks.importMark(file, binding, undefined, path!.keys[0]);
-  }
-  const member = calleeMember(callee, analysis, analyses);
-  return member && memberMark(member.object, member.name, analyses);
-}
-
-// The object literal that holds the function a callee names, and the
-// function's key in it. For `sqs.bind` it is the object of `sqs`.
-function calleeMember(
-  callee: Node,
-  analysis: ModuleAnalysis,
-  analyses: ModuleAnalyses,
-): { object: Located; name: string } | undefined {
-  const { marks } = analyses;
-  const { table } = analysis;
-  const file = table.module.file;
-  callee = unwrap(callee);
-  const path = memberPath(callee);
-  if (!path) return undefined;
-  const binding = table.imports.get(path.root.name);
-  if (!binding) return undefined;
-  const resolved = marks.resolve(binding.source, file);
-  const name = path.keys.at(-1);
-  if (!resolved || name === undefined) return undefined;
-  const keys = path.keys.slice(0, -1);
-  const found = importedValue(resolved, binding, keys, analyses);
-  if (!found || found.rest > 0) return undefined;
-  return { object: found.value, name };
-}
-
-// The mark of the function that a member of an object literal holds. The
-// mark is on the member, as for a method, or on the function that the member
-// names.
-function memberMark(
-  object: Located,
-  name: string,
-  analyses: ModuleAnalyses,
-): Mark | undefined {
-  const node = unwrap(object.node);
-  if (node.type !== "ObjectExpression") return undefined;
-  const property = node.properties.find(
-    (p: Node) => p.type === "Property" && keyOf(p) === name,
-  );
-  const table = property && analyses.marks.table(object.file);
-  if (!table) return undefined;
-  const value = unwrap(property.value);
-  if (value.type === "Identifier") return table.marks.get(value.name);
-  if (!isFunction(value)) return undefined;
-  const jsDoc = leadingJsDoc(table.module, property.start);
-  return jsDoc ? parseMark(jsDoc, paramNames(value), object.file) : undefined;
+  return binding?.imported === "*" && path!.keys.length === 1
+    ? marks.importMark(file, binding, undefined, path!.keys[0])
+    : undefined;
 }
 
 function checkReference(

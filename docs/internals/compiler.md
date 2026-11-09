@@ -100,18 +100,6 @@ export function $lambda(config) {
 }
 ```
 
-```ts [packages/aws/src/lambda/declaration.ts]
-export const sqs = {
-  /** @runtime queue */
-  bind(queue, options) {
-    /* ... */
-  },
-  schema(schema) {
-    /* ... */
-  },
-};
-```
-
 ```ts [packages/aws/src/sqs/queue.ts]
 /** @resource runtime: schema */
 export function queue(config) {
@@ -126,17 +114,14 @@ export function api(config) {
 }
 ```
 
-| Mark           | Marks                                                  | Clauses                                                                                                                                                                                                                                                                                                                                |
-| -------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@declaration` | A function that declares a function resource           | `shared:` options that both builds keep. `runtime:` options that only run in the function. `keys:` kept options whose value returns an object literal, of which the runtime build keeps only the keys. `entry:` the export that the platform calls.                                                                                    |
-| `@runtime`     | A function that builds part of a declaration's options | The names of the parameters that the runtime build keeps. With no names, every argument becomes `undefined`, as for `eventBridge.defineSchedule()`.                                                                                                                                                                                    |
-| `@resource`    | A function that declares a resource                    | `runtime:` options of the resource that a function reads when a kept option of a declaration names the resource, such as `schema` in `sqs.bind(orderQueue)`. `runtime:` with no options means the resource becomes `{}`, as `api()` does. A bare `@resource` can't be read in a function. See [The runtime strip](#the-runtime-strip). |
+| Mark           | Marks                                        | Clauses                                                                                                                                                                                                                                                                                                                                |
+| -------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@declaration` | A function that declares a function resource | `shared:` options that both builds keep. `runtime:` options that only run in the function. `keys:` kept options whose value returns an object literal, of which the runtime build keeps only the keys. `entry:` the export that the platform calls.                                                                                    |
+| `@resource`    | A function that declares a resource          | `runtime:` options of the resource that a function reads when a kept option of a declaration names the resource, such as `schema` in `sqs.bind(orderQueue)`. `runtime:` with no options means the resource becomes `{}`, as `api()` does. A bare `@resource` can't be read in a function. See [The runtime strip](#the-runtime-strip). |
 
 The tags are in JSDoc because Rolldown and tsdown keep JSDoc comments in a package's `dist`, and drop other block comments.
 
-`Marks` in `packages/build/src/marks.ts` resolves the marks of a module's imports. For each import, it resolves the specifier with Rolldown's resolver, the `node`, `import` and `default` conditions, and the nearest tsconfig's `paths`. Then it reads the target module and follows `export { x } from`, `export * from` and `export { x }` of an import, to the module whose function has the mark. A function that is declared under one name and exported under another, as tsdown emits it in a shared chunk, keeps its mark.
-
-A mark can also be on a member of an exported object literal, such as `bind` in `sqs`. The runtime strip finds it for a call such as `sqs.bind(orderQueue)`: it follows the import of `sqs` to the `const` that holds the object literal, as it follows a resource argument (see [Resource arguments](#resource-arguments)), and reads the JSDoc of the `bind` member. A member that names a marked function, such as `{ bind: bindQueue }`, gets the mark of that function. tsdown keeps the object literal and the JSDoc of its methods in `dist`. Each module is parsed once, with Rolldown's `parseSync`, until it changes.
+`Marks` in `packages/build/src/marks.ts` resolves the marks of a module's imports. For each import, it resolves the specifier with Rolldown's resolver, the `node`, `import` and `default` conditions, and the nearest tsconfig's `paths`. Then it reads the target module and follows `export { x } from`, `export * from` and `export { x }` of an import, to the module whose function has the mark. A function that is declared under one name and exported under another, as tsdown emits it in a shared chunk, keeps its mark. Each module is parsed once, with Rolldown's `parseSync`, until it changes.
 
 ## Module analysis
 
@@ -276,16 +261,15 @@ export const refundQueue = queue({ id: "refunds", schema: Refund });
 
 1. Options that the mark lists under neither `shared:` nor `runtime:` are removed. For `$lambda`, `policy`, `runtime`, `timeout` and `memory` go. `id` stays, so the function can read `lambda.id`.
 2. Each `keys:` option keeps the keys of the object that it returns, and each value becomes `undefined`. The option must be `() => ({ ... })`, or a function whose body is one `return { ... }`, with no spread or computed keys.
-3. A call to a function marked `@runtime`, such as `sqs.bind(orderQueue, { batchSize: 5 })`, keeps its runtime arguments. The others become `undefined`.
-4. In a kept option, a resource from an infra module is replaced with the resource's runtime options, wherever it appears. See [Resource arguments](#resource-arguments).
-5. An import whose uses the strip removed is removed too. For example, the import of `orderQueue` and `refundQueue` goes once their uses in `event`, `policy` and `env` are gone. An import that had no uses to begin with stays, because it may be there for its side effects, such as a polyfill.
-6. The binding and its export stay, so an infra module that imports `lambda` still links.
+3. In a kept option, a resource from an infra module is replaced with the resource's runtime options, wherever it appears. See [Resource arguments](#resource-arguments).
+4. An import whose uses the strip removed is removed too. For example, the import of `orderQueue` and `refundQueue` goes once their uses in `event`, `policy` and `env` are gone. An import that had no uses to begin with stays, because it may be there for its side effects, such as a polyfill.
+5. The binding and its export stay, so an infra module that imports `lambda` still links.
 
 The strip then checks the kept options. A reference to an import from an infra module, or a call to a resource function, fails the build with its file and line. So does a reference to an import from a file with no kind outside `node_modules/` that calls a resource function at its top level, such as `dlq` in `event: () => sqs.bind(dlq)`. This includes a file of a workspace package or a package folder. The function can't load that file, and adding it to `files.infra` gives the error for an infra module. So both errors say to move a plain value that a kept option uses to a shared module, or to a file with no kind.
 
 ### Resource arguments
 
-`sqs.bind(orderQueue)` names a queue, but the function needs only the queue's schema, and the function can't load `infra/orders.ts`. So step 4 of the strip replaces the argument with an object of the queue's runtime options: `sqs.bind({ schema: __notation_schema_0 })`.
+`sqs.bind(orderQueue)` names a queue, but the function needs only the queue's schema, and the function can't load `infra/orders.ts`. So step 3 of the strip replaces the argument with an object of the queue's runtime options: `sqs.bind({ schema: __notation_schema_0 })`.
 
 `sqs.schema(Order)` names no resource, so the strip leaves it as it is. `Order` comes from a shared module, which the function loads.
 
@@ -294,7 +278,7 @@ The replacement doesn't depend on where the resource appears in the option. `api
 The strip finds the options in four steps:
 
 1. **An expression in a kept option names an import from an infra module.** The expression can be a name, such as `orderQueue`, or a member of an object literal or of a namespace import, such as `queues.orders` or `infra.orderQueue`. The strip replaces the whole member path, and doesn't replace the names in it on their own. Any other expression is left as it is.
-2. **The strip follows the import to the resource.** It follows re-exports and imports to the `const` that the infra module exports, and member keys through object literals. The value must be a call to a function marked `@resource`, such as `queue({ ... })`. Any other value fails the build, because the strip can't read its options. The strip can't tell a resource that a helper or a loop makes from a plain value, such as a schema made by `v.object(...)`. So the error says to declare a resource with a call to its resource function, and to move a plain value to a shared module. A resource with a bare `@resource` mark is left as it is, and fails the build like any other reference to an infra module. A resource marked `@resource runtime:` with no options becomes `{}`.
+2. **The strip follows the import to the resource.** It follows re-exports and imports to the `const` that the infra module exports, and member keys through object literals. A `let` or `var` is left as it is, because the module can assign another value to it, and it fails the build like any other reference to an infra module. The value must be a call to a function marked `@resource`, such as `queue({ ... })`. Any other value fails the build, because the strip can't read its options. The strip can't tell a resource that a helper or a loop makes from a plain value, such as a schema made by `v.object(...)`. So the error says to declare a resource with a call to its resource function, and to move a plain value to a shared module. A resource with a bare `@resource` mark is left as it is, and fails the build like any other reference to an infra module. A resource marked `@resource runtime:` with no options becomes `{}`.
 3. **The strip reads each option that the mark lists after `runtime:`.** `queue` is marked `@resource runtime: schema`, so the strip reads the `schema` property of the call's object literal. The property's value must be a name that the infra module imports by name, or as a default import, from a shared module, a package, or a file with no kind. These are the files that the runtime build bundles as they are. A schema that the infra module defines, a member of a namespace import such as `schemas.Order`, and an expression such as `Order.extend({ ... })` fail the build, because the strip can only copy an import. A schema imported from an infra or runtime module fails the build too, because the function can't load it there. So does a schema imported from a file with no kind that calls a resource function at its top level, as for any other value from such a file.
 4. **The strip adds an import of each option to the function's module**, under the name `__notation_<option>_<n>`.
 
@@ -304,7 +288,7 @@ A member of a resource, such as `orderQueue.schema`, is not replaced. It is a re
 
 ### Leaving infra out
 
-An import loads its module and runs the module's top-level code, even when nothing uses the import's bindings. So step 5 of the strip is what keeps `infra/orders.ts` out of the bundle of `runtime/orders.ts`. The TypeScript transform removes an unused import by default, but with `verbatimModuleSyntax` it keeps every import that isn't `import type`, so the strip doesn't rely on it.
+An import loads its module and runs the module's top-level code, even when nothing uses the import's bindings. So step 4 of the strip is what keeps `infra/orders.ts` out of the bundle of `runtime/orders.ts`. The TypeScript transform removes an unused import by default, but with `verbatimModuleSyntax` it keeps every import that isn't `import type`, so the strip doesn't rely on it.
 
 An infra module can also be reached through a module that the strip doesn't change, such as a helper with no kind that imports `orderQueue` and uses it in a function the handler never calls. For that case, the runtime plugin marks each infra module free of side effects, through the `moduleSideEffects` result of its `transform` hook. The bundler then drops the infra module if nothing in the bundle uses its bindings. Other modules keep their side effects, so a setup module that imports infra still runs its top-level code. An infra module is a file that `files.infra` matches. A file with no kind that calls `queue()` at its top level, such as `lib/queues.ts`, is not marked, so the bundler keeps it if the function imports it, and the check below fails the build. The error then says to add the file to `files.infra`. For a package file, it says to set `"sideEffects": false` in the nearest `package.json` if the function uses no value from the file, and otherwise to read infra values through `env()`. If the file holds a declaration, it can't be an infra module, so the error says to move the call to an infra module instead.
 

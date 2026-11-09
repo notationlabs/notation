@@ -63,7 +63,6 @@ export const sqs = {
    * queue to the function, and `decode()` validates each message's JSON body
    * with the queue's schema. In the runtime build, a queue from an infra
    * module is replaced with its runtime options, as `{ schema }`.
-   * @runtime queue
    */
   bind<S extends StandardSchemaV1>(
     queue: SqsSource<S>,
@@ -282,7 +281,6 @@ export const eventBridge = {
    * The function receives the events of a schedule, whose rule the infra
    * build makes. The function doesn't read the options, so the runtime build
    * removes them. `id` must be a name-safe string literal; see `NameSafe`.
-   * @runtime
    */
   defineSchedule<const Id extends string>(
     options: Omit<ScheduleOptions, "id"> & { id: NameSafe<Id> },

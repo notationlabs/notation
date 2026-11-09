@@ -225,21 +225,21 @@ describe("stripForRuntime", () => {
     );
   });
 
-  it("replaces an argument that the @runtime mark doesn't name with undefined, even one that reads infra", () => {
+  it("keeps the other arguments of a call that a resource is passed to", () => {
     const { analysis, analyses } = setup(
       handlerModule.replace(
         "apiGateway.schema(Order)",
-        "sqs.bind(ordersQueue, { batchSize: unused })",
+        "sqs.bind(ordersQueue, { batchSize: 5 })",
       ),
     );
     const { code } = stripForRuntime(analysis, analyses)!;
     expect(code).toContain(
-      "event: () => sqs.bind({ schema: __notation_schema_0 }, undefined),",
+      "event: () => sqs.bind({ schema: __notation_schema_0 }, { batchSize: 5 }),",
     );
     expect(code).not.toContain("../infra/orders");
   });
 
-  it("replaces each argument of a @runtime mark with no names with undefined", () => {
+  it("keeps an import from a package that isn't infra", () => {
     const { analysis, analyses } = setup(
       handlerModule
         .replace(
@@ -257,9 +257,11 @@ describe("stripForRuntime", () => {
     );
     const { code } = stripForRuntime(analysis, analyses)!;
     expect(code).toContain(
-      "event: () => eventBridge.defineSchedule(undefined),",
+      `event: () => eventBridge.defineSchedule({ id: "nightly", schedule: rate(1, "day") }),`,
     );
-    expect(code).not.toContain("@notation/aws/event-bridge");
+    expect(code).toContain(
+      `import { rate } from "@notation/aws/event-bridge";`,
+    );
   });
 
   it("removes an import whose uses it removed, and keeps the others", () => {
@@ -385,48 +387,6 @@ describe("stripForRuntime", () => {
         `import { Order, type OrderType } from "../shared/schema";`,
       );
       expect(code).not.toContain("__notation_");
-    });
-
-    it.each([
-      [
-        "a mark on a function that a member names",
-        [
-          `/** @declaration shared: id, event, env; keys: env; entry: handler */`,
-          `export function $lambda(config) { return config; }`,
-          `/** @runtime queue */`,
-          `function bindQueue(queue) { return { kind: "sqs", schema: queue?.schema }; }`,
-          `export const sqs = { bind: bindQueue };`,
-        ].join("\n"),
-        {},
-      ],
-      [
-        "a mark on a member of an object that a compiled chunk exports",
-        `export { u as sqs, $lambda } from "./chunk.js";`,
-        {
-          "node_modules/@notation/aws/chunk.js": [
-            `/** @declaration shared: id, event, env; keys: env; entry: handler */`,
-            `function $lambda(config) { return config; }`,
-            `const sqs = {`,
-            `  /** @runtime queue */`,
-            `  bind(queue, options) { return { kind: "sqs", schema: queue?.schema }; },`,
-            `};`,
-            `export { sqs as u, $lambda };`,
-          ].join("\n"),
-        },
-      ],
-    ])("finds %s", (_, lambdaModule, extra) => {
-      const { code } = strip({
-        "node_modules/@notation/aws/lambda.js": lambdaModule,
-        ...extra,
-        "infra/orders.ts": [
-          `import { createQueue } from "@notation/aws/sqs";`,
-          `import { Order } from "../shared/schema";`,
-          `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
-        ].join("\n"),
-      });
-      expect(code).toContain(
-        "event: () => sqs.bind({ schema: __notation_schema_0 }),",
-      );
     });
 
     it("imports a schema from a tsconfig alias by its absolute path", () => {
@@ -630,7 +590,7 @@ describe("stripForRuntime", () => {
       expect(code).not.toContain("../infra/orders");
     });
 
-    it("fails when a let holds the resource", () => {
+    it("gives the infra error when a let holds the resource", () => {
       expect(() =>
         strip({
           "infra/orders.ts": queueModule(
@@ -638,7 +598,7 @@ describe("stripForRuntime", () => {
           ),
         }),
       ).toThrow(
-        "runtime/handler.ts:16:25: the function reads ordersQueue from infra/orders.ts, where a let or var holds it. Declare it with const, so the build can tell that it holds the resource.",
+        "runtime/handler.ts:16:25: an option of $lambda that the function keeps refers to ordersQueue, from infra/orders.ts, an infra module",
       );
     });
 
@@ -675,21 +635,7 @@ describe("stripForRuntime", () => {
       );
     });
 
-    it("leaves a runtime call in an argument that it replaces with undefined", () => {
-      const { code } = strip(
-        {
-          "infra/orders.ts": queueModule(
-            `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
-          ),
-        },
-        withArgument("ordersQueue, sqs.bind(ordersQueue)"),
-      );
-      expect(code).toContain(
-        "event: () => sqs.bind({ schema: __notation_schema_0 }, undefined),",
-      );
-    });
-
-    it("leaves a runtime call in a keys option's value", () => {
+    it("leaves a resource in a keys option's value", () => {
       const handler = source.replace(
         "QUEUE_URL: ordersQueue.url",
         "QUEUE_URL: sqs.bind(ordersQueue)",
@@ -705,15 +651,6 @@ describe("stripForRuntime", () => {
       expect(code).toContain(
         "env: () => ({ QUEUE_URL: undefined, LOG_LEVEL: undefined }),",
       );
-    });
-
-    it("leaves a call whose callee a parameter shadows", () => {
-      const event = "(sqs) => sqs.bind(Order, Order)";
-      const { code } = strip(
-        {},
-        source.replace("() => sqs.bind(ordersQueue)", event),
-      );
-      expect(code).toContain(`event: ${event},`);
     });
 
     // The real queue() requires a schema, but the strip handles any resource

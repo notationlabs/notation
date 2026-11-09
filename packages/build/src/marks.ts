@@ -33,17 +33,6 @@ export type DeclarationMark = {
 };
 
 /**
- * Marks a function that builds part of a declaration's options, such as
- * `sqs.bind(queue)`. Written `@runtime queue`, with the names of the parameters
- * that the runtime build keeps.
- */
-export type RuntimeMark = {
-  kind: "runtime";
-  /** The positions of the parameters that the runtime build keeps. */
-  positions: number[];
-};
-
-/**
  * Marks a function that declares a resource. Written `@resource`, or
  * `@resource runtime: schema` when a declaration's kept options read options
  * of the resource in the function. The first argument must then be an object
@@ -54,7 +43,7 @@ export type RuntimeMark = {
  */
 export type ResourceMark = { kind: "resource"; runtime?: string[] };
 
-export type Mark = DeclarationMark | RuntimeMark | ResourceMark;
+export type Mark = DeclarationMark | ResourceMark;
 
 type ExportTarget = { local: string } | { source: string; imported: string };
 
@@ -78,17 +67,10 @@ export type ModuleTable = {
   stars: string[];
 };
 
-const tags = ["declaration", "runtime", "resource"] as const;
+const tags = ["declaration", "resource"] as const;
 
-/**
- * Reads the mark in a JSDoc comment, if it has one.
- * @param params The parameter names of the marked function.
- */
-export function parseMark(
-  jsDoc: string,
-  params: string[],
-  where: string,
-): Mark | undefined {
+/** Reads the mark in a JSDoc comment, if it has one. */
+export function parseMark(jsDoc: string, where: string): Mark | undefined {
   const text = jsDoc
     .split("\n")
     .map((line) => line.replace(/^\s*\*?\s?/, ""))
@@ -107,19 +89,6 @@ export function parseMark(
       return runtime
         ? { kind: "resource", runtime: list(runtime[1]!) }
         : { kind: "resource" };
-    }
-    if (tag === "runtime") {
-      const mark: RuntimeMark = { kind: "runtime", positions: [] };
-      for (const name of list(body)) {
-        const position = params.indexOf(name);
-        if (position === -1) {
-          throw new Error(
-            `${where}: the @runtime mark names the parameter "${name}", which the function does not have`,
-          );
-        }
-        if (!mark.positions.includes(position)) mark.positions.push(position);
-      }
-      return mark;
     }
     const mark: DeclarationMark = {
       kind: "declaration",
@@ -156,13 +125,6 @@ const list = (text: string) =>
 const nameOf = (node: Node): string =>
   node.type === "Identifier" ? node.name : String(node.value);
 
-export function paramNames(fn: Node): string[] {
-  return fn.params.map((param: Node) => {
-    const target = param.type === "AssignmentPattern" ? param.left : param;
-    return target.type === "Identifier" ? target.name : "";
-  });
-}
-
 function markOfDeclaration(
   module: ParsedModule,
   node: Node,
@@ -172,7 +134,7 @@ function markOfDeclaration(
   const where = `${module.file}`;
   if (node.type === "FunctionDeclaration" && node.id) {
     const jsDoc = leadingJsDoc(module, commentStart);
-    const mark = jsDoc && parseMark(jsDoc, paramNames(node), where);
+    const mark = jsDoc && parseMark(jsDoc, where);
     if (mark) marks.set(node.id.name, mark);
   }
   if (node.type === "VariableDeclaration" && node.declarations.length === 1) {
@@ -181,7 +143,7 @@ function markOfDeclaration(
     if (declarator.id.type !== "Identifier" || !init || !isFunction(init))
       return;
     const jsDoc = leadingJsDoc(module, commentStart);
-    const mark = jsDoc && parseMark(jsDoc, paramNames(init), where);
+    const mark = jsDoc && parseMark(jsDoc, where);
     if (mark) marks.set(declarator.id.name, mark);
   }
 }

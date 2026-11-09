@@ -52,7 +52,6 @@ export const awsLambda = `
 export function $lambda(config) { return config; }
 
 export const sqs = {
-  /** @runtime queue */
   bind(queue, options) { return { kind: "sqs", schema: queue?.schema, queue, options }; },
   schema(schema) { return { kind: "sqs", schema }; },
 };
@@ -74,7 +73,6 @@ export const apiGateway = {
 };
 
 export const eventBridge = {
-  /** @runtime */
   defineSchedule(options) { return { kind: "eventBridge", schedule: options }; },
   schema(detail) { return { kind: "eventBridge" }; },
 };
