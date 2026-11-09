@@ -618,7 +618,7 @@ test("apiGateway.bind(api).defineRoute({ auth }) makes the route with the author
     requestContext: { authorizer: { jwt: { claims } } },
   });
   await expect(user.decode(request({ sub: "u1" }))).resolves.toMatchObject({
-    body: {},
+    body: "{}",
     claims: { sub: "u1" },
   });
   await expect(user.decode(request({}))).rejects.toThrow(

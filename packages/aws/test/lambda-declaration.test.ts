@@ -349,7 +349,7 @@ test("a declaration with claims types its handler's event as a request through a
   expectTypeOf<AnyEvent>().toEqualTypeOf<Event>();
   const decodeAny = (event: AnyEvent) => any.decode(event);
   type DecodedAny = Awaited<ReturnType<typeof decodeAny>>;
-  expectTypeOf<DecodedAny["body"]>().toEqualTypeOf<unknown>();
+  expectTypeOf<DecodedAny["body"]>().toEqualTypeOf<string | undefined>();
   expectTypeOf<DecodedAny["claims"]>().toEqualTypeOf<JwtClaims>();
 
   const plain = $lambda({ id: "plain", event: () => apiGateway.schema() });
@@ -357,7 +357,7 @@ test("a declaration with claims types its handler's event as a request through a
   expectTypeOf<PlainEvent>().toEqualTypeOf<APIGatewayProxyEventV2>();
   const decodePlain = (event: PlainEvent) => plain.decode(event);
   type DecodedPlain = Awaited<ReturnType<typeof decodePlain>>;
-  expectTypeOf<DecodedPlain["body"]>().toEqualTypeOf<unknown>();
+  expectTypeOf<DecodedPlain["body"]>().toEqualTypeOf<string | undefined>();
   expectTypeOf<DecodedPlain>().not.toHaveProperty("claims");
 
   const orders = $lambda({ id: "orders", event: () => sqs.schema(Order) });
@@ -425,6 +425,57 @@ test("decode() of a request with no body and no body schema returns an undefined
   await expect(fn.decode(request(undefined, {}))).rejects.toThrow(
     "sub must be a string",
   );
+});
+
+test("decode() with no body schema returns the body as it came, decoded from base64", async () => {
+  const fn = $lambda({ id: "form", event: () => apiGateway.schema() });
+
+  await expect(
+    fn.decode({ body: "a=1&b=2", isBase64Encoded: false }),
+  ).resolves.toEqual({ body: "a=1&b=2", isBase64Encoded: false });
+  await expect(
+    fn.decode({
+      body: Buffer.from("plain text").toString("base64"),
+      isBase64Encoded: true,
+    }),
+  ).resolves.toEqual({ body: "plain text", isBase64Encoded: true });
+  await expect(
+    fn.decode({ body: undefined, isBase64Encoded: true }),
+  ).resolves.toEqual({ body: undefined, isBase64Encoded: true });
+});
+
+test("decode() with a body schema validates an empty body as undefined", async () => {
+  const Optional: StandardSchemaV1<unknown, Order | undefined> = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: (value) =>
+        value === undefined
+          ? { value: undefined }
+          : Order["~standard"].validate(value),
+    },
+  };
+  const optional = $lambda({
+    id: "optional",
+    event: () => apiGateway.schema(Optional),
+  });
+  const required = $lambda({
+    id: "required",
+    event: () => apiGateway.schema(Order),
+  });
+
+  for (const body of [undefined, ""]) {
+    await expect(
+      optional.decode({ body, isBase64Encoded: false }),
+    ).resolves.toEqual({ body: undefined, isBase64Encoded: false });
+    const error = await required
+      .decode({ body, isBase64Encoded: false })
+      .catch((e) => e);
+    expect(error).toBeInstanceOf(DecodeError);
+    expect(error.message).toBe(
+      "The request body is not valid: id must be a string",
+    );
+  }
 });
 
 test("decode() of a request with no authorizer returns no claims", async () => {

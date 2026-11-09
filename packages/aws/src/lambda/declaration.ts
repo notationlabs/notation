@@ -303,6 +303,13 @@ type Decoded<S> = S extends StandardSchemaV1
   ? StandardSchemaV1.InferOutput<S>
   : unknown;
 
+// The body of a request as `decode()` returns it: the output of the body
+// schema, or the body as API Gateway sends it, decoded from base64, when
+// there is no schema.
+type DecodedRequestBody<S> = S extends StandardSchemaV1
+  ? StandardSchemaV1.InferOutput<S>
+  : string | undefined;
+
 // `T` with the fields of `U` in place of its own.
 type Replace<T, U> = Omit<T, keyof U> & U;
 
@@ -336,7 +343,9 @@ type DecodeFor<E> =
     : E extends ApiGatewayEvent<infer S, infer C, infer K>
       ? <R extends ApiGatewayRequest<K>>(
           event: R,
-        ) => Promise<Replace<R, { body: Decoded<S> } & DecodedClaims<C, K>>>
+        ) => Promise<
+          Replace<R, { body: DecodedRequestBody<S> } & DecodedClaims<C, K>>
+        >
       : never;
 
 /**
@@ -362,8 +371,10 @@ export interface Lambda<
    * Decodes one item that the function received, and returns the item with
    * its decoded parts in place of the raw ones. For SQS the item is a record,
    * and `body` is the JSON body, validated with the event's schema. For API
-   * Gateway the item is the request, and `body` is the JSON body, validated
-   * with the event's body schema. A request through a JWT authorizer also
+   * Gateway the item is the request, and a base64 body is decoded first. With
+   * a body schema, `body` is the JSON body, validated with the schema. An
+   * empty body is validated as `undefined`. With no body schema, `body` is the
+   * body as a string, or `undefined`. A request through a JWT authorizer also
    * gets `claims`: the JWT claims, validated with the event's claims schema
    * if it has one. Throws a `DecodeError` when the item is not valid.
    */
@@ -452,13 +463,17 @@ export function createDecode(
       event.kind === "apiGateway-jwt"
         ? { claims: await decodeClaims(event.claims, item) }
         : {};
-    const raw = item?.isBase64Encoded
-      ? Buffer.from(item.body ?? "", "base64").toString("utf8")
-      : item?.body;
-    // A request with no body, such as a GET, has nothing to parse.
+    const raw: string | undefined =
+      item?.isBase64Encoded && item.body !== undefined
+        ? Buffer.from(item.body, "base64").toString("utf8")
+        : item?.body;
+    // With no schema, the body can be text or a form, so it isn't parsed.
+    if (!event.schema) return { ...item, body: raw, ...claims };
+    // A request with no body, such as a GET, has nothing to parse, and the
+    // schema decides whether that is valid.
     const body =
-      !event.schema && (raw === undefined || raw === "")
-        ? undefined
+      raw === undefined || raw === ""
+        ? await validateBody(event.schema, undefined, "request")
         : await decodeBody(event.schema, raw, "request");
     return { ...item, body, ...claims };
   };
@@ -476,6 +491,14 @@ async function decodeBody(
     throw new DecodeError(`The ${name} body is not valid JSON.`);
   }
   if (!schema) return value;
+  return validateBody(schema, value, name);
+}
+
+async function validateBody(
+  schema: StandardSchemaV1,
+  value: unknown,
+  name: "message" | "request",
+): Promise<unknown> {
   const result = await schema["~standard"].validate(value);
   if (result.issues) {
     throw new DecodeError(
