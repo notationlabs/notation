@@ -1,8 +1,8 @@
 # Durable reconciler
 
-This example deploys two static sites from an ordinary Node.js program using Yieldstar for durable execution, state, retries, waiting, and the deployment hold.
+This example deploys two static sites from an ordinary Node.js program using `@notation/durable` for durable execution, state, retries, waiting, and the deployment hold.
 
-[`src/index.ts`](./src/index.ts) owns the outer workflow and Node SQLite runtime. It passes Yieldstar's `step` context to `deploy`, while [`src/static-site.ts`](./src/static-site.ts) contains only the desired resources and provider lifecycle operations.
+[`src/index.ts`](./src/index.ts) owns the outer workflow and Node SQLite runtime. It passes `@notation/durable`'s `step` context to `deploy`, while [`src/static-site.ts`](./src/static-site.ts) contains only the desired resources and provider lifecycle operations.
 
 Run it from the repository root:
 

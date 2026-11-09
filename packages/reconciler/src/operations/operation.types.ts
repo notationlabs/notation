@@ -6,8 +6,8 @@ import type {
 import type { StateNode } from "@notation/state";
 import type {
   DurableStepFn,
-  StepRunner as YieldstarStepRunner,
-} from "yieldstar";
+  StepRunner as DurableStepRunner,
+} from "@notation/durable";
 import type {
   EmitStep,
   OperationLifecycleEvent,
@@ -27,12 +27,12 @@ export type {
  * sites in a single execution. `createStepRunner` ignores both.
  */
 export type StepRunner = {
-  /** The keyed overload of yieldstar's `step.run`. */
+  /** The keyed overload of @notation/durable's `step.run`. */
   run<F extends () => unknown>(
     key: string,
     fn: F & DurableStepFn<F>,
   ): AsyncGenerator<unknown, Awaited<ReturnType<F>>, unknown>;
-  effect: YieldstarStepRunner["effect"];
+  effect: DurableStepRunner["effect"];
   delay(key: string, ms: number): AsyncGenerator<unknown, void, unknown>;
   scope(prefix: string): StepRunner;
 };

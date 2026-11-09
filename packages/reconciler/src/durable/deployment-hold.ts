@@ -11,7 +11,7 @@ import {
   type DurableStep,
   type StoreClient,
   type WorkflowStore,
-} from "./yieldstar";
+} from "./sdk";
 
 type DeploymentHoldOptions = {
   /** Deployment identity comes from the state backend. */

@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import * as durable from "@notation/reconciler/durable";
 import { ResourceOperationPendingError, resource } from "@notation/resource";
-import { WorkflowRunner } from "@yieldstar/core";
-import { SqliteRuntime, createSqliteDb } from "@yieldstar/sqlite-runtime/node";
+import { WorkflowRunner } from "@notation/durable/runtime";
+import { SqliteRuntime, createSqliteDb } from "@notation/durable/sqlite/node";
 import pino from "pino";
-import { createWorkflowRouter, workflow } from "yieldstar";
+import { createWorkflowRouter, workflow } from "@notation/durable";
 import { describe, expect, it, vi } from "vitest";
 import {
   NodeDurableRuntime,

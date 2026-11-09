@@ -202,7 +202,7 @@ An issue in a statement that holds an unknown is still dropped, because the stat
 | `delete`       | yes      | `(key, state, context?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone.                                                        |
 | `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                                                                         |
 
-The reconciler records params, results and state, so each must be a durable value as yieldstar 0.8.2 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
+The reconciler records params, results and state, so each must be a durable value as `@notation/durable` 0.9.0 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
 
 ### Operation errors
 

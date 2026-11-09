@@ -2,14 +2,14 @@ import type { DurableValue } from "@notation/resource";
 import type { StateNode } from "@notation/state";
 import * as v from "valibot";
 import type { PersistedResourceState } from "../operations";
-import { defineStore, type StoreSnapshot } from "./yieldstar";
+import { defineStore, type StoreSnapshot } from "./sdk";
 
 // Store names are persisted identifiers, like the step keys mapped in
 // index.ts: renaming one orphans every record stored under the old name.
 // Notation-owned store names carry the "notation/" prefix, because an
 // application may share a store client with these workflows.
 
-// Yieldstar checks every value it records when it encodes the value, so this
+// @notation/durable checks every value it records when it encodes the value, so this
 // only gives the schema a durable output type.
 const durableValue = v.custom<DurableValue>(() => true);
 const durableRecord = v.record(v.string(), durableValue);

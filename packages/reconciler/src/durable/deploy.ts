@@ -7,7 +7,7 @@ import { withDeploymentHold } from "./deployment-hold";
 import { reconcileResource, sweepOrphans } from "./reconcile";
 import { scopeStep } from "./step";
 import type { DurableDeployOptions } from "./types";
-import type { DurableStep } from "./yieldstar";
+import type { DurableStep } from "./sdk";
 
 export async function* deploy(
   step: DurableStep,

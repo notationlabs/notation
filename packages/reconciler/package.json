@@ -23,14 +23,12 @@
     "dev": "tsdown --watch"
   },
   "dependencies": {
+    "@notation/durable": "0.9.0",
     "@notation/resource": "workspace:*",
     "@notation/state": "workspace:*",
-    "@yieldstar/core": "0.9.0",
-    "valibot": "^1.4.2",
-    "yieldstar": "0.9.0"
+    "valibot": "^1.4.2"
   },
   "devDependencies": {
-    "@yieldstar/sqlite-runtime": "0.9.0",
     "pino": "^9.9.0"
   }
 }

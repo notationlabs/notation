@@ -5,9 +5,9 @@ import {
   ValueValidationError,
 } from "@notation/resource";
 import { VersionConflict } from "@notation/state";
-import { registerErrorClass } from "./yieldstar";
+import { registerErrorClass } from "./sdk";
 
-// Yieldstar rebuilds a recorded error from the class registered under its
+// @notation/durable rebuilds a recorded error from the class registered under its
 // name, so `instanceof` only holds for registered classes.
 registerErrorClass("VersionConflict", VersionConflict);
 registerErrorClass(

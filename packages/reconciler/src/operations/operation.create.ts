@@ -11,7 +11,7 @@ import {
   type DurableObject,
   type ResourceOperationContext,
 } from "@notation/resource";
-import type { EffectLookup } from "yieldstar";
+import type { EffectLookup } from "@notation/durable";
 import {
   type CreateResourceParams,
   type StepRunner,
@@ -25,7 +25,7 @@ import {
 import { readResourceOperation } from "./operation.read";
 import { firstDeferredError } from "./deferred-checks";
 
-/** How long yieldstar waits before it looks up a create with an unknown outcome again. */
+/** How long @notation/durable waits before it looks up a create with an unknown outcome again. */
 const CREATE_LOOKUP_RETRY_MS = 1_000;
 
 /**
@@ -196,7 +196,7 @@ function getLookupFunction(
   return undefined;
 }
 
-/** Wraps `lookup` in yieldstar's lookup shape, reporting not-found on `ResourceNotFoundError`. */
+/** Wraps `lookup` in @notation/durable's lookup shape, reporting not-found on `ResourceNotFoundError`. */
 function settledUnlessNotFound(
   lookup: (token: string) => Promise<DurableObject | undefined>,
 ) {

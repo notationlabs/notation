@@ -1,4 +1,4 @@
-import type { EffectDescriptor } from "yieldstar";
+import type { EffectDescriptor } from "@notation/durable";
 import type { StepRunner } from "./operations";
 
 export async function runOperation<T>(

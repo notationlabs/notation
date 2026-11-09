@@ -6,8 +6,8 @@ import {
   type HeapClient,
   type Runtime,
   type StoreClient,
-} from "@yieldstar/core";
-import { SqliteRuntime, createSqliteDb } from "@yieldstar/sqlite-runtime/node";
+} from "@notation/durable/runtime";
+import { SqliteRuntime, createSqliteDb } from "@notation/durable/sqlite/node";
 import {
   resource,
   ResourceCreationUnknownError,
@@ -21,7 +21,7 @@ import {
 } from "@notation/resource";
 import { setTimeout as sleep } from "node:timers/promises";
 import pino from "pino";
-import { createWorkflowRouter, workflow } from "yieldstar";
+import { createWorkflowRouter, workflow } from "@notation/durable";
 import { describe, expect, it, vi } from "vitest";
 import * as durable from "../src/durable";
 import type { ReconcilerEvent } from "../src/events";

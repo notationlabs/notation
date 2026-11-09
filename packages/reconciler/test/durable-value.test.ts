@@ -2,15 +2,18 @@ import type {
   Durable as ResourceDurable,
   DurableValue,
 } from "@notation/resource";
-import type { Durable, DurableValue as YieldstarDurableValue } from "yieldstar";
+import type {
+  Durable,
+  DurableValue as SdkDurableValue,
+} from "@notation/durable";
 import { expectTypeOf, it } from "vitest";
 
-it("accepts the durable values of @notation/resource as yieldstar durable values", () => {
+it("accepts the durable values of @notation/resource as @notation/durable durable values", () => {
   expectTypeOf<DurableValue>().toExtend<Durable<DurableValue>>();
-  expectTypeOf<YieldstarDurableValue>().toExtend<DurableValue>();
+  expectTypeOf<SdkDurableValue>().toExtend<DurableValue>();
 });
 
-it("keeps dates, maps, sets and bigints as yieldstar does", () => {
+it("keeps dates, maps, sets and bigints as @notation/durable does", () => {
   type Value = {
     date: Date;
     dates: Date[];
@@ -29,7 +32,7 @@ it("keeps dates, maps, sets and bigints as yieldstar does", () => {
   expectTypeOf<ResourceDurable<Value>>().toExtend<Durable<Value>>();
 });
 
-it("maps the same types to never as yieldstar", () => {
+it("maps the same types to never as @notation/durable", () => {
   type Value = { bytes: Uint8Array; fn: () => void };
   expectTypeOf<Buffer>().not.toExtend<ResourceDurable<Uint8Array>>();
   expectTypeOf<Buffer>().not.toExtend<Durable<Uint8Array>>();
@@ -37,8 +40,8 @@ it("maps the same types to never as yieldstar", () => {
   expectTypeOf<Durable<Value>["fn"]>().toBeNever();
 });
 
-it("matches yieldstar's durable values and keeps array shapes as yieldstar does", () => {
-  expectTypeOf<DurableValue>().toEqualTypeOf<YieldstarDurableValue>();
+it("matches @notation/durable's durable values and keeps array shapes as @notation/durable does", () => {
+  expectTypeOf<DurableValue>().toEqualTypeOf<SdkDurableValue>();
   type Value = {
     mutable: string[];
     readonly: readonly string[];

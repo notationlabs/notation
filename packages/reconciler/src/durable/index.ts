@@ -1,6 +1,6 @@
 /**
  * The durable reconciler driver: `deploy` and `destroy` as generators that a
- * Yieldstar workflow composes, and the store-backed state they run against.
+ * @notation/durable workflow composes, and the store-backed state they run against.
  *
  * Step keys are persisted: a resumed execution matches its cached work by
  * key, so changing one re-executes the work behind it. The shapes in use are:
@@ -56,4 +56,4 @@ export {
   type DurableDeployOptions,
   type DurableWorkflowOptions,
 } from "./types";
-export type { DurableStep } from "./yieldstar";
+export type { DurableStep } from "./sdk";

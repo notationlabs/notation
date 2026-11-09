@@ -3,7 +3,7 @@ import { withDeploymentHold } from "./deployment-hold";
 import { deleteResource, sweepOrphans } from "./reconcile";
 import { scopeStep } from "./step";
 import type { DurableWorkflowOptions } from "./types";
-import type { DurableStep } from "./yieldstar";
+import type { DurableStep } from "./sdk";
 
 /** Durably destroys persisted resources in reverse dependency order. */
 export async function* destroy(

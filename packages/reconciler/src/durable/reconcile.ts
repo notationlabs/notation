@@ -36,7 +36,7 @@ import {
   type ResourceSnapshot,
 } from "./stores";
 import type { DurableDeployOptions, DurableWorkflowOptions } from "./types";
-import type { DurableStep } from "./yieldstar";
+import type { DurableStep } from "./sdk";
 
 /**
  * A read of a resource's persisted record, together with the writes that are

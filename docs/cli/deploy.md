@@ -52,7 +52,7 @@ Retryable provider conditions and consistency reads suspend on durable SQLite ti
 
 3. **Order dependencies** – dependency levels run in topological order.
 
-4. **Reconcile** – Notation compares desired resources with Yieldstar stores, then creates, updates, recreates, or leaves each resource unchanged.
+4. **Reconcile** – Notation compares desired resources with `@notation/durable` stores, then creates, updates, recreates, or leaves each resource unchanged.
 
 5. **Detect drift** – unchanged resources are read from the provider and repaired when their remote state differs.
 

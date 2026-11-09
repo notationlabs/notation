@@ -1,7 +1,7 @@
 /**
  * A value the reconciler can record: step results, params and stored state.
- * It matches yieldstar's `DurableValue`, so this package does not depend on
- * yieldstar.
+ * It matches @notation/durable's `DurableValue`, so this package does not depend on
+ * @notation/durable.
  */
 export type DurableValue =
   | null

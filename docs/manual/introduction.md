@@ -13,7 +13,7 @@ todoRouter.get("/todos", () => todos);
 
 Notation is a compiler, reconciler, and deployment engine.
 
-The reconciler is also available as an embedded library. A Node.js host can construct resources and compose durable reconciliation inside its own Yieldstar workflow without the CLI.
+The reconciler is also available as an embedded library. A Node.js host can construct resources and compose durable reconciliation inside its own `@notation/durable` workflow without the CLI.
 
 The compiler runs two passes over your codebase:
 

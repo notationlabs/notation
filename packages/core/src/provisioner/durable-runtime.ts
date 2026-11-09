@@ -8,8 +8,8 @@ import {
   type ExecutionRecord,
   type WorkflowInvoker,
   type WorkflowRouter,
-} from "@yieldstar/core";
-import { SqliteRuntime, createSqliteDb } from "@yieldstar/sqlite-runtime/node";
+} from "@notation/durable/runtime";
+import { SqliteRuntime, createSqliteDb } from "@notation/durable/sqlite/node";
 import {
   DurableStateBackend,
   type DurableStep,
@@ -25,7 +25,7 @@ import {
   ExecutionAdmissionError,
   createWorkflowRouter,
   workflow,
-} from "yieldstar";
+} from "@notation/durable";
 
 function resolveDatabasePath(): string {
   return process.env.NOTATION_DATABASE_PATH ?? filePaths.database();

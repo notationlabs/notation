@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NodeDurableRuntime } from "@notation/core";
 import { createResourceRegistry } from "@notation/reconciler";
 import * as durable from "@notation/reconciler/durable";
-import { createWorkflowRouter, workflow } from "yieldstar";
+import { createWorkflowRouter, workflow } from "@notation/durable";
 import { StaticSite } from "./static-site";
 
 const runtime = new NodeDurableRuntime({

@@ -4,7 +4,7 @@ import {
   toStateNode,
   type ResourceSnapshot,
 } from "./stores";
-import type { StoreClient } from "./yieldstar";
+import type { StoreClient } from "./sdk";
 
 /**
  * Reads deployment state from outside a workflow, for the planner and for

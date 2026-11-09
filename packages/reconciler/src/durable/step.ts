@@ -4,11 +4,11 @@ import type {
   ReconcilerEventEmitter,
 } from "../events";
 import type { StepRunner } from "../operations";
-import type { DurableStep } from "./yieldstar";
+import type { DurableStep } from "./sdk";
 
 /**
  * The operation seam (`StepRunner`) plus the store handle, which only the
- * durable driver uses. `DurableStep` is yieldstar's raw step primitive;
+ * durable driver uses. `DurableStep` is @notation/durable's raw step primitive;
  * `scopeStep` wraps one of those into one of these.
  */
 export interface DurableStepRunner extends StepRunner {

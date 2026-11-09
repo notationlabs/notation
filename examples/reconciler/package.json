@@ -9,11 +9,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@notation/durable": "0.9.0",
     "@notation/core": "workspace:*",
     "@notation/reconciler": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/utils": "workspace:*",
-    "yieldstar": "0.9.0",
     "valibot": "^1.4.2"
   },
   "devDependencies": {
