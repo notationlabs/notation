@@ -156,7 +156,9 @@ function removeEmptiedImports(
 /**
  * The object that replaces a runtime argument which names a resource from an
  * infra module, or `undefined` for any other argument. Adds an import to
- * `added` for each runtime option of the resource.
+ * `added` for each runtime option of the resource. A value made by a call to
+ * a function that isn't a resource function, such as a helper, fails, as the
+ * build can't find the resource's options.
  */
 function resourceStub(
   argument: Node,
@@ -181,7 +183,8 @@ function resourceStub(
     owner && call?.type === "CallExpression"
       ? markOfCallee(call.callee, owner, analyses.marks)
       : undefined;
-  if (!definition || !owner || !call || mark?.kind !== "resource") {
+  if (call?.type !== "CallExpression") return undefined;
+  if (!definition || !owner || mark?.kind !== "resource") {
     throw new Error(
       `${at}: the function reads ${node.name} from ${analyses.show(resolved)}, so the build has to find the options of ${node.name} that the function uses. It finds them only when ${node.name} is declared with a call to a resource function, such as \`export const ${node.name} = queue({ name: "orders", schema: Order })\`, and not through a helper or a loop.`,
     );

@@ -870,7 +870,7 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
     writeProject(
       handlerModule.replace(
         "event: () => sqs(Order)",
-        "event: () => sqs(orders)",
+        "event: () => sqs(orders.schema)",
       ),
     );
     await expect(buildProject()).rejects.toThrow(
