@@ -175,7 +175,6 @@ export class FileKinds {
   }
 
   #scriptFiles(included: string[]): string[] {
-    if (included.length === 0) return [];
     return fs
       .globSync(included, {
         cwd: this.root,
@@ -215,8 +214,7 @@ export class FileKinds {
     const manifest = path.join(dir, "package.json");
     if (fs.existsSync(manifest)) {
       try {
-        const parsed = JSON.parse(fs.readFileSync(manifest, "utf8")).name;
-        if (typeof parsed === "string") name = parsed;
+        name = JSON.parse(fs.readFileSync(manifest, "utf8")).name;
       } catch {}
     }
     this.#packageNames.set(dir, name);

@@ -72,9 +72,7 @@ export class ModuleAnalyses {
     if (!isProjectModule(file)) return undefined;
     let analysis = this.#analyses.get(file);
     if (!analysis) {
-      const table = this.marks.table(file);
-      if (!table) return undefined;
-      analysis = analyzeModule(table, this.marks);
+      analysis = analyzeModule(this.marks.table(file)!, this.marks);
       this.#analyses.set(file, analysis);
     }
     return analysis;
@@ -108,8 +106,7 @@ export class ModuleAnalyses {
    * function at its top level.
    */
   describeInfra(file: string): string | undefined {
-    if (!isProjectModule(file)) return undefined;
-    const match = this.files.kindOf(file);
+    const match = this.kindOf(file);
     if (match) {
       return match.kind === "infra"
         ? describeKind(this.show(file), match)
@@ -139,7 +136,6 @@ export class ModuleAnalyses {
    * to move. A file that no glob matches can be added to `files.infra`.
    */
   resourceCallAdvice(file: string): string | undefined {
-    if (!isProjectModule(file)) return undefined;
     const name = this.show(file);
     const analysis = this.fromFile(file);
     const call = analysis?.resourceCall;
@@ -187,8 +183,7 @@ export class ModuleAnalyses {
   #checkShared(file: string) {
     const match = this.kindOf(file);
     if (match?.kind !== "shared") return;
-    const analysis = this.fromFile(file);
-    if (!analysis) return;
+    const analysis = this.fromFile(file)!;
     this.checkDeclaration(file, analysis);
     const name = this.show(file);
     const at = (step: Step) =>

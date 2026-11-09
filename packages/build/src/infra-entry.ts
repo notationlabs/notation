@@ -44,14 +44,8 @@ function globBases(root: string, globs: string[]): string[] {
       root,
       ...(first === -1 ? segments.slice(0, -1) : segments.slice(0, first)),
     );
-    while (
-      !fs.existsSync(base) &&
-      base !== root &&
-      base !== path.dirname(base)
-    ) {
-      base = path.dirname(base);
-    }
-    if (fs.existsSync(base)) bases.add(base);
+    while (!fs.existsSync(base) && base !== root) base = path.dirname(base);
+    bases.add(base);
   }
   return [...bases];
 }
