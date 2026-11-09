@@ -116,3 +116,47 @@ export function buildDepthLevels<T>(
     unordered: items.filter((item) => !visited.has(idOf(item))),
   };
 }
+
+/**
+ * The IDs that depend on `id`, directly or through each other, by the edges
+ * in `edgesById`. They are in delete order: each comes before the IDs it
+ * depends on. IDs that form a cycle, and the IDs that depend on them, cannot
+ * be ordered, and come first.
+ */
+export function collectDependents(
+  id: string,
+  edgesById: Map<string, string[]>,
+  /**
+   * Whether the edge from `dependentId` to `dependencyId` is followed. By
+   * default every edge is.
+   */
+  follows: (dependentId: string, dependencyId: string) => boolean = () => true,
+): string[] {
+  const dependentsById = new Map<string, string[]>();
+  for (const [dependentId, edges] of edgesById) {
+    for (const edge of edges) {
+      const dependents = dependentsById.get(edge) ?? [];
+      dependents.push(dependentId);
+      dependentsById.set(edge, dependents);
+    }
+  }
+
+  const found = new Set<string>();
+  const pending = [id];
+  while (pending.length > 0) {
+    const dependencyId = pending.pop()!;
+    for (const dependentId of dependentsById.get(dependencyId) ?? []) {
+      if (found.has(dependentId) || dependentId === id) continue;
+      if (!follows(dependentId, dependencyId)) continue;
+      found.add(dependentId);
+      pending.push(dependentId);
+    }
+  }
+
+  const { levels, unordered } = buildDepthLevels(
+    [...edgesById.keys()].filter((dependentId) => found.has(dependentId)),
+    (dependentId) => dependentId,
+    (dependentId) => edgesById.get(dependentId) ?? [],
+  );
+  return [...unordered, ...levels.reverse().flat()];
+}

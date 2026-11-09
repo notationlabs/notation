@@ -4,6 +4,7 @@ import {
   assertDependenciesPresent,
   buildDepthLevels,
   buildResourceDepthLevels,
+  collectDependents,
 } from "../src/dependency-graph";
 
 type Item = { id: string; dependsOn: string[] };
@@ -137,5 +138,64 @@ describe("assertDependenciesPresent", () => {
     const policy = new Node("policy", { dependencies: { bucket } });
 
     expect(() => assertDependenciesPresent([bucket, policy])).not.toThrow();
+  });
+});
+
+describe("collectDependents", () => {
+  const edges = (entries: Record<string, string[]>) =>
+    new Map(Object.entries(entries));
+
+  it("returns direct and transitive dependents, each before what it depends on", () => {
+    expect(
+      collectDependents(
+        "bus",
+        edges({
+          permission: ["rule", "fn"],
+          bus: [],
+          rule: ["bus", "fn"],
+          fn: [],
+          target: ["permission"],
+        }),
+      ),
+    ).toEqual(["target", "permission", "rule"]);
+  });
+
+  it("returns a dependent shared by several paths once", () => {
+    expect(
+      collectDependents(
+        "bus",
+        edges({ bus: [], a: ["bus"], b: ["bus"], shared: ["a", "b"] }),
+      ),
+    ).toEqual(["shared", "a", "b"]);
+  });
+
+  it("puts dependents that form a cycle first, and leaves out the resource", () => {
+    expect(
+      collectDependents(
+        "bus",
+        edges({ bus: ["x"], rule: ["bus"], x: ["y"], y: ["x", "bus"] }),
+      ),
+    ).toEqual(["x", "y", "rule"]);
+  });
+
+  it("follows only the edges that the predicate accepts", () => {
+    expect(
+      collectDependents(
+        "bus",
+        edges({
+          bus: [],
+          rule: ["bus"],
+          fn: ["bus"],
+          target: ["rule"],
+          permission: ["rule"],
+          "fn-target": ["fn"],
+        }),
+        (dependentId) => dependentId !== "fn" && dependentId !== "permission",
+      ),
+    ).toEqual(["target", "rule"]);
+  });
+
+  it("returns nothing for a resource with no dependents", () => {
+    expect(collectDependents("bus", edges({ bus: [], rule: [] }))).toEqual([]);
   });
 });

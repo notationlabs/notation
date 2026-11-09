@@ -4,14 +4,22 @@ import {
   assertDependenciesPresent,
   buildResourceDepthLevels,
 } from "./dependency-graph";
+import {
+  collectBlockingDependents,
+  createDeleteBlocks,
+  type DeleteBlocks,
+} from "./delete-cascade";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
 import {
   decideAction,
   getDependencyIds,
+  recordedEdges,
+  type DependencyChange,
   type Plan,
   type PlanNode,
 } from "./plan";
+import type { ResourceRegistry } from "./resource-registry";
 import { createStepRunner, runOperation } from "./step-runner";
 
 export type CreatePlanOptions = {
@@ -20,6 +28,8 @@ export type CreatePlanOptions = {
   driftDetection?: boolean;
   emit?: ReconcilerEventEmitter;
   maxOperationAttempts?: number;
+  /** As for deploy: the classes of the types that only orphans have. */
+  registry?: ResourceRegistry;
 };
 
 export async function createPlan({
@@ -28,6 +38,7 @@ export async function createPlan({
   driftDetection,
   emit,
   maxOperationAttempts,
+  registry,
 }: CreatePlanOptions): Promise<Plan> {
   const resourceById = new Map(
     resources.map((resource) => [resource.id, resource]),
@@ -35,6 +46,29 @@ export async function createPlan({
   const emitStep = toEmitStep(emit);
   const nodes: PlanNode[] = [];
   assertDependenciesPresent(resources);
+
+  const stateNodes = await state.values();
+  // The edges in state as deploy finds them when it replaces a resource.
+  // Deploy writes the edges in code for each resource it reaches, so a
+  // resource takes those once it is planned.
+  const edgesById = new Map(
+    stateNodes.map((node) => [node.id, recordedEdges(node, resourceById)]),
+  );
+  const deleteBlocks = createDeleteBlocks({
+    records: stateNodes,
+    resources,
+    registry,
+  });
+  // The resources that deploy deletes before a replaced resource they block
+  // the delete of, with the edges they had then.
+  const cascaded = new Map<string, { edges: string[]; known: boolean }>();
+  // The resources in code that are replaced.
+  const replaced = new Map<string, boolean>();
+
+  const changeOf = (id: string): DependencyChange | undefined => {
+    const known = replaced.get(id) ?? cascaded.get(id)?.known;
+    return known === undefined ? undefined : { id, known };
+  };
 
   for (const level of buildResourceDepthLevels(resources)) {
     for (const resource of level) {
@@ -55,26 +89,70 @@ export async function createPlan({
         }),
       );
 
-      // A replacement's output is unknown until it has been created again,
-      // so its dependents plan against unknown params, as they would for a
-      // resource with no state.
-      if ("replaceFields" in action) resource.setOutput(null as any);
+      const dependsOn = getDependencyIds(resource);
+      const replaceFields =
+        "replaceFields" in action ? action.replaceFields : undefined;
+      const cascade = cascaded.get(resource.id);
+
+      // A resource in a cascade has had the dependents that block its
+      // delete collected with it.
+      if (replaceFields && !cascade) {
+        const known = replaceFields.some((field) => field.known);
+        const collected = collectBlockingDependents(
+          resource.id,
+          edgesById,
+          known ? deleteBlocks : assumeNotBlocking(deleteBlocks),
+        );
+        for (const id of collected) {
+          cascaded.set(id, { edges: edgesById.get(id)!, known });
+          edgesById.delete(id);
+        }
+      }
+
+      const replacedDependencies: DependencyChange[] = [];
+      const deletedDependencies: DependencyChange[] = [];
+      if (cascade) {
+        for (const id of new Set([...cascade.edges, ...dependsOn])) {
+          const change = changeOf(id);
+          if (!change || !deleteBlocks.blocks(resource.id, id)) continue;
+          if (resourceById.has(id)) replacedDependencies.push(change);
+          else deletedDependencies.push(change);
+        }
+      }
+
+      if (replaceFields || cascade) {
+        replaced.set(
+          resource.id,
+          Boolean(
+            replaceFields?.some((field) => field.known) || cascade?.known,
+          ),
+        );
+        // A replacement's output is unknown until it has been created again,
+        // so its dependents plan against unknown params, as they would for a
+        // resource with no state.
+        resource.setOutput(null as any);
+      }
+      edgesById.set(resource.id, dependsOn);
 
       nodes.push({
         id: resource.id,
         type: resource.type,
-        decision: action.decision,
+        decision: cascade && !replaceFields ? "replace" : action.decision,
         ...("diff" in action ? { diff: action.diff } : {}),
-        ...("replaceFields" in action
-          ? { replaceFields: action.replaceFields }
+        ...(replaceFields ? { replaceFields } : {}),
+        ...(replacedDependencies.length > 0
+          ? { replacedDependencies: sortById(replacedDependencies) }
+          : {}),
+        ...(deletedDependencies.length > 0
+          ? { deletedDependencies: sortById(deletedDependencies) }
           : {}),
         params,
-        dependsOn: getDependencyIds(resource),
+        dependsOn,
       });
     }
   }
 
-  for (const stateNode of await state.values()) {
+  for (const stateNode of stateNodes) {
     if (resourceById.has(stateNode.id)) continue;
     nodes.push({
       id: stateNode.id,
@@ -86,6 +164,23 @@ export async function createPlan({
   }
 
   return { createdAt: new Date().toISOString(), nodes };
+}
+
+/**
+ * For a replacement that depends on a field unknown at plan: a dependent with
+ * no class does not fail the plan, because deploy may not replace the
+ * resource.
+ */
+function assumeNotBlocking(deleteBlocks: DeleteBlocks): DeleteBlocks {
+  return {
+    ...deleteBlocks,
+    blocks: (dependentId, dependencyId) =>
+      deleteBlocks.blocks(dependentId, dependencyId) ?? false,
+  };
+}
+
+function sortById(changes: DependencyChange[]): DependencyChange[] {
+  return changes.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 /**

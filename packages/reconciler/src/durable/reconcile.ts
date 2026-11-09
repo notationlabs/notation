@@ -15,6 +15,11 @@ import {
 import { VersionConflict, type StateNode } from "@notation/state";
 import { buildDepthLevels } from "../dependency-graph";
 import {
+  collectBlockingDependents,
+  createDeleteBlocks,
+} from "../delete-cascade";
+import type { OperationLifecycleEvent } from "../events";
+import {
   createResourceRegistryFromResources,
   resolveResourceClass,
 } from "../resource-registry";
@@ -28,7 +33,12 @@ import {
   type PersistState,
   type RemoveState,
 } from "../operations";
-import { decideAction, getDependencyIds, hasSameEdges } from "../plan";
+import {
+  decideAction,
+  getDependencyIds,
+  hasSameEdges,
+  recordedEdges,
+} from "../plan";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
@@ -230,9 +240,11 @@ async function* rewriteEdges(
 }
 
 /**
- * Deletes the resource and then creates it again, each half in its own scope.
+ * Deletes the resource and then creates it again, each part in its own scope.
  * Deleting first is deliberate: a resource usually takes its physical name
  * from its params, so a new one created beside the old would collide with it.
+ * The dependents that block the delete are deleted first, and deploy creates
+ * them again when it reaches them.
  * The new record is a new store instance, so observers can tell the
  * replacement from the resource it replaced.
  */
@@ -242,6 +254,12 @@ async function* replaceResource(
   session: Extract<ResourceStateSession, { node: StateNode }>,
   shared: Omit<CreateResourceParams, "persist">,
 ): AsyncGenerator<any, void, any> {
+  yield* deleteBlockingDependents(
+    step.scope("replace:dependents"),
+    opts,
+    shared.resource,
+  );
+
   const deleteStep = step.scope("replace:delete");
   yield* deleteResourceOperation(deleteStep, {
     resource: shared.resource,
@@ -262,6 +280,66 @@ async function* replaceResource(
 }
 
 /**
+ * Deletes the resources that block the delete of `resource`: each depends on
+ * it in state, or on another of them, and its type lists the type of what it
+ * depends on in `blocksDeleteOf`. They are deleted in reverse order of the
+ * edges in state. Each of them that is still declared has no record
+ * afterwards, so deploy creates it again when it reaches it, after
+ * `resource` has been created again. Each orphan among them is gone before
+ * the sweep reaches it. Every other dependent stays in place.
+ *
+ * Records are listed when the replacement starts. Deploy has written the
+ * edges in code for every resource it has reached by then, and a resource it
+ * has not reached still holds the edges of the resource that exists.
+ */
+async function* deleteBlockingDependents(
+  step: DurableStepRunner,
+  opts: DurableDeployOptions,
+  resource: BaseResource,
+): AsyncGenerator<any, void, any> {
+  const removed = removedInDryRun.get(opts);
+  const records = (yield* step.run("list", () => opts.state.values())).filter(
+    (node) => !removed?.has(node.id),
+  );
+  const resourceById = new Map(
+    opts.resources.map((desired) => [desired.id, desired]),
+  );
+  const recordById = new Map(records.map((node) => [node.id, node]));
+  const edgesById = new Map(
+    records.map((node) => [node.id, recordedEdges(node, resourceById)]),
+  );
+  const deleteBlocks = createDeleteBlocks({
+    records,
+    resources: opts.resources,
+    registry: opts.registry,
+  });
+
+  // Every dependent is checked before the first delete, so that a dependent
+  // with no class that may block the delete fails the replacement before it
+  // changes anything.
+  const dependents = collectBlockingDependents(
+    resource.id,
+    edgesById,
+    deleteBlocks,
+  ).map((id) => ({
+    node: recordById.get(id)!,
+    Resource: deleteBlocks.classOf(id)!,
+  }));
+
+  for (const { node, Resource } of dependents) {
+    yield* deleteResource(
+      step.scope(encodeURIComponent(node.id)),
+      await instantiateRecord(Resource, node),
+      opts,
+      { reason: "dependency-replaced", replacedDependency: resource.id },
+    );
+    // A dry run keeps the record. The rest of the run treats the resource as
+    // deleted, as a deploy would, so that it decides create for it.
+    removed?.add(node.id);
+  }
+}
+
+/**
  * Deletes one resource. A resource with no persisted record was never created
  * — or has already been deleted — and is skipped, which is also what makes
  * the sweep of a partly-deleted deployment idempotent. `step` must already be
@@ -271,15 +349,18 @@ export async function* deleteResource(
   step: DurableStepRunner,
   resource: BaseResource,
   opts: DurableWorkflowOptions,
+  /** Added to the delete's lifecycle events. */
+  cause: Pick<OperationLifecycleEvent, "reason" | "replacedDependency"> = {},
 ): AsyncGenerator<any, void, any> {
   const session = yield* openStateSession(step, opts, resource);
   if (!session.node) return;
   resource.setOutput(session.node.output);
 
+  const emit = durableEmitter(step, opts.emit);
   yield* deleteResourceOperation(step, {
     resource,
     dryRun: opts.dryRun,
-    emit: durableEmitter(step, opts.emit),
+    emit: (event) => emit({ ...event, ...cause }),
     maxOperationAttempts: opts.maxOperationAttempts,
     remove: session.remove,
   });
@@ -348,20 +429,32 @@ export async function* sweepOrphans(
     }
     if (kept.has(node.id)) continue;
 
-    // The recorded config was checked when it was declared, and may not pass
-    // a validator that has changed since.
-    let resource!: BaseResource;
-    await collectResourceGraph(
-      () => {
-        resource = new Resource(node.id, { config: node.config });
-      },
-      { declarationChecks: false },
-    );
-    resource.setOutput(node.output);
+    const resource = await instantiateRecord(Resource, node);
     yield* deleteResource(nodeScope, resource, opts);
   }
 
   return kept;
+}
+
+/**
+ * Makes a resource from its state record, so that it can be deleted with no
+ * declaration in code.
+ */
+async function instantiateRecord(
+  Resource: NonNullable<ReturnType<typeof resolveResourceClass>>,
+  node: StateNode,
+): Promise<BaseResource> {
+  // The recorded config was checked when it was declared, and may not pass
+  // a validator that has changed since.
+  let resource!: BaseResource;
+  await collectResourceGraph(
+    () => {
+      resource = new Resource(node.id, { config: node.config });
+    },
+    { declarationChecks: false },
+  );
+  resource.setOutput(node.output);
+  return resource;
 }
 
 /**
@@ -403,6 +496,26 @@ function collectDependencies(
 }
 
 /**
+ * The IDs of the resources that a dry run of deploy has deleted so far, for
+ * each run. A dry run does not remove their records, so its reads skip them.
+ */
+const removedInDryRun = new WeakMap<DurableWorkflowOptions, Set<string>>();
+
+/**
+ * Starts tracking the resources that a dry run deletes. Returns the options
+ * that the run must pass on: the tracking is keyed by the object, so that
+ * each run tracks its own.
+ */
+export function trackDryRunDeletes<T extends DurableWorkflowOptions>(
+  opts: T,
+): T {
+  if (!opts.dryRun) return opts;
+  const runOpts = { ...opts };
+  removedInDryRun.set(runOpts, new Set());
+  return runOpts;
+}
+
+/**
  * Reads the persisted record once and binds the writes conditional on it.
  *
  * The snapshot is the precondition: it names the exact store instance and
@@ -419,7 +532,9 @@ async function* openStateSession(
   );
   const persist = persistResourceState(step, opts, resource, snapshot);
   const node = toStateNode(snapshot);
-  if (!node) return { node: undefined, persist };
+  if (!node || removedInDryRun.get(opts)?.has(resource.id)) {
+    return { node: undefined, persist };
+  }
 
   return {
     node,

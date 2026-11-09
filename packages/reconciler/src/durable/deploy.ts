@@ -4,15 +4,20 @@ import {
 } from "../dependency-graph";
 import { planKnownParams } from "../planner";
 import { withDeploymentHold } from "./deployment-hold";
-import { reconcileResource, sweepOrphans } from "./reconcile";
+import {
+  reconcileResource,
+  sweepOrphans,
+  trackDryRunDeletes,
+} from "./reconcile";
 import { scopeStep } from "./step";
 import type { DurableDeployOptions } from "./types";
 import type { DurableStep } from "./sdk";
 
 export async function* deploy(
   step: DurableStep,
-  opts: DurableDeployOptions,
+  deployOpts: DurableDeployOptions,
 ): AsyncGenerator<any, void, any> {
+  const opts = trackDryRunDeletes(deployOpts);
   assertDependenciesPresent(opts.resources);
   // A step, so that a resumed execution does not run every resource's
   // deriveParams again.

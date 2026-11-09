@@ -1837,6 +1837,615 @@ describe("replacement", () => {
   });
 });
 
+describe("replacement with dependents", () => {
+  /**
+   * Resources named by a key, as AWS names a bus and its rules. A resource
+   * cannot be deleted while a resource of a type that blocks its delete names
+   * it as its parent, as AWS refuses to delete a bus that has rules. A
+   * permission, or a function with the bus name in its env, does not block
+   * the delete of its parent.
+   */
+  function defineWorld() {
+    const calls: string[] = [];
+    const live = new Map<string, { parent?: string; blocks: boolean }>();
+    const failCreate = new Set<string>();
+    const operations = (blocks: boolean) => ({
+      create: async (params: any) => {
+        if (failCreate.has(params.name)) {
+          throw new Error(`create ${params.name} rejected`);
+        }
+        if (params.parent && !live.has(params.parent)) {
+          throw new Error(`${params.parent} does not exist`);
+        }
+        calls.push(`create:${params.name}`);
+        live.set(params.name, { parent: params.parent, blocks });
+      },
+      update: async (_key: any, _patch: any, params: any) => {
+        calls.push(`update:${params.name}`);
+        live.set(params.name, { parent: params.parent, blocks });
+      },
+      delete: async (_key: any, state: any) => {
+        const blockers = [...live].filter(
+          ([, user]) => user.blocks && user.parent === state.name,
+        );
+        if (blockers.length > 0) {
+          throw new Error(`${state.name} can't be deleted since it is in use`);
+        }
+        calls.push(`delete:${state.name}`);
+        live.delete(state.name);
+      },
+    });
+    const name = {
+      presence: "required",
+      propertyType: "param",
+      primaryKey: true,
+      value: v.string(),
+    };
+    // Cast: a resource declared without API types constrains every schema
+    // key to be a key of an `any` API schema, which no named key satisfies.
+    const Bus = resource({ type: "test/durable/world-bus" })
+      .defineSchema({ name } as any)
+      .defineOperations(operations(false) as any);
+    // The parent can be updated, so a child is replaced only because deploy
+    // deletes it before its parent.
+    const defineChild = (
+      type: `${string}/${string}/${string}`,
+      blocksDeleteOf?: () => { type: any }[],
+    ) =>
+      resource({ type, blocksDeleteOf })
+        .defineSchema({
+          name,
+          parent: {
+            presence: "required",
+            propertyType: "param",
+            value: v.string(),
+          },
+        } as any)
+        .defineOperations(operations(Boolean(blocksDeleteOf)) as any)
+        .requireDependencies<{ parent: BaseResource }>()
+        .deriveParams(({ deps }) => ({
+          parent: (deps.parent.output as any).name,
+        }));
+    const Rule = defineChild("test/durable/world-rule", () => [Bus]);
+    const Target = defineChild("test/durable/world-target", () => [Rule]);
+    const Permission = defineChild("test/durable/world-permission");
+    // A rule of a type that only an orphan has, so that deploy has no class
+    // for it.
+    const Stray = defineChild("test/durable/world-stray", () => [Bus]);
+    // A mapping on a function, which does not block the delete of the
+    // function.
+    const Mapping = defineChild("test/durable/world-mapping");
+    return {
+      calls,
+      live,
+      failCreate,
+      Bus,
+      Rule,
+      Target,
+      Permission,
+      Stray,
+      Mapping,
+    };
+  }
+
+  /** A bus, a rule on it, a permission on the rule, and a function with the bus name in its env. */
+  function declare(
+    world: ReturnType<typeof defineWorld>,
+    busName: string,
+    extra: (bus: BaseResource, rule: BaseResource) => BaseResource[] = () => [],
+    ruleName = "rule",
+  ) {
+    const bus = new world.Bus("bus", { config: { name: busName } as any });
+    const rule = new world.Rule("rule", {
+      config: { name: ruleName } as any,
+      dependencies: { parent: bus },
+    });
+    const permission = new world.Permission("permission", {
+      config: { name: "permission" } as any,
+      dependencies: { parent: rule },
+    });
+    const fn = new world.Permission("fn", {
+      config: { name: "fn" } as any,
+      dependencies: { parent: bus },
+    });
+    return [bus, rule, permission, fn, ...extra(bus, rule)];
+  }
+
+  const decisions = (events: ReconcilerEvent[]) =>
+    Object.fromEntries(
+      events
+        .filter((event) => event.event === "reconciler.deploy.decision")
+        .map((event: any) => [event.resourceId, event.decision]),
+    );
+
+  it("deletes the dependents that block the delete first, and creates them again after the replacement", async () => {
+    const world = defineWorld();
+    const resources = declare(world, "orders");
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "replace-dependents", {
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declare(world, "shop"));
+    world.calls.length = 0;
+    events.length = 0;
+    await runtime.run("deploy-2");
+
+    // The rule has the same name, so the permission is unchanged. The
+    // function is updated in place.
+    expect(world.calls).toEqual([
+      "delete:rule",
+      "delete:orders",
+      "create:shop",
+      "create:rule",
+      "update:fn",
+    ]);
+    expect(decisions(events)).toEqual({
+      bus: "replace",
+      rule: "create",
+      permission: "noop",
+      fn: "update",
+    });
+    expect(await runtime.state.get("rule")).toMatchObject({
+      params: { name: "rule", parent: "shop" },
+      dependsOn: ["bus"],
+    });
+    expect(
+      events.filter(
+        (event) =>
+          event.event === "reconciler.operation.lifecycle" &&
+          event.operation === "delete" &&
+          event.status === "success",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        resourceId: "rule",
+        reason: "dependency-replaced",
+        replacedDependency: "bus",
+      }),
+      expect.not.objectContaining({ reason: expect.anything() }),
+    ]);
+    runtime.close();
+  });
+
+  it("deletes the dependents that block the delete of a dependent it deletes", async () => {
+    const world = defineWorld();
+    const withTarget = (_bus: BaseResource, rule: BaseResource) => [
+      new world.Target("target", {
+        config: { name: "target" } as any,
+        dependencies: { parent: rule },
+      }),
+    ];
+    const resources = declare(world, "orders", withTarget);
+    const runtime = createRuntime(resources, "replace-dependents-transitive");
+
+    await runtime.run("deploy-1");
+    resources.splice(
+      0,
+      resources.length,
+      ...declare(world, "shop", withTarget),
+    );
+    world.calls.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(world.calls).toEqual([
+      "delete:target",
+      "delete:rule",
+      "delete:orders",
+      "create:shop",
+      "create:rule",
+      "update:fn",
+      "create:target",
+    ]);
+    runtime.close();
+  });
+
+  it("deletes a dependent that is replaced itself once", async () => {
+    const world = defineWorld();
+    const resources = declare(world, "orders");
+    const runtime = createRuntime(resources, "replace-dependent-replaced");
+
+    await runtime.run("deploy-1");
+    resources.splice(
+      0,
+      resources.length,
+      ...declare(world, "shop", undefined, "rule-2"),
+    );
+    world.calls.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(world.calls).toEqual([
+      "delete:rule",
+      "delete:orders",
+      "create:shop",
+      "create:rule-2",
+      "update:fn",
+      "update:permission",
+    ]);
+    runtime.close();
+  });
+
+  it("deletes a dependent of several replaced resources once", async () => {
+    const world = defineWorld();
+    const declareTwo = (suffix: string) => {
+      const [bus, rule, permission, fn] = declare(world, `orders${suffix}`);
+      const other = new world.Bus("other", {
+        config: { name: `other${suffix}` } as any,
+      });
+      rule!.dependOn(other);
+      return [bus!, other, rule!, permission!, fn!];
+    };
+    const resources = declareTwo("");
+    const runtime = createRuntime(resources, "replace-shared-dependent");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareTwo("-2"));
+    world.calls.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(world.calls).toEqual([
+      "delete:rule",
+      "delete:orders",
+      "create:orders-2",
+      "delete:other",
+      "create:other-2",
+      "create:rule",
+      "update:fn",
+    ]);
+    runtime.close();
+  });
+
+  it("deletes an orphan that blocks the delete of the replaced resource before it", async () => {
+    const world = defineWorld();
+    const withOld = (bus: BaseResource) => [
+      new world.Rule("old-rule", {
+        config: { name: "old-rule" } as any,
+        dependencies: { parent: bus },
+      }),
+    ];
+    const resources = declare(world, "orders", withOld);
+    const runtime = createRuntime(resources, "replace-orphan-dependent", {
+      registry: createResourceRegistry([
+        world.Bus,
+        world.Rule,
+        world.Permission,
+      ]),
+    });
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declare(world, "shop"));
+    world.calls.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(world.calls.slice(0, 2).sort()).toEqual([
+      "delete:old-rule",
+      "delete:rule",
+    ]);
+    expect(world.calls.slice(2)).toEqual([
+      "delete:orders",
+      "create:shop",
+      "create:rule",
+      "update:fn",
+    ]);
+    expect(await runtime.state.get("old-rule")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("deletes nothing when a dependent has no registered class and a known class lists the type it depends on", async () => {
+    const world = defineWorld();
+    const withStray = (bus: BaseResource) => [
+      new world.Stray("stray", {
+        config: { name: "stray" } as any,
+        dependencies: { parent: bus },
+      }),
+    ];
+    const resources = declare(world, "orders", withStray);
+    const runtime = createRuntime(resources, "replace-unregistered-dependent");
+
+    await runtime.run("deploy-1");
+    // The rule in code lists the bus type, so the stray may block the delete
+    // of the bus.
+    resources.splice(0, resources.length, ...declare(world, "shop"));
+    world.calls.length = 0;
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "Cannot replace bus: stray depends on it in state, and no registered class has its type test/durable/world-stray, so deploy cannot tell whether stray must be deleted first. " +
+        "This happens when the last resource of a type is removed in the same deploy that replaces a resource it depends on. " +
+        "Declare a resource of type test/durable/world-stray again, or deploy the change that replaces bus before you remove the last resource of that type.",
+    );
+
+    expect(world.calls).toEqual([]);
+    for (const id of ["bus", "rule", "permission", "stray"]) {
+      expect(await runtime.state.get(id)).toBeDefined();
+    }
+    runtime.close();
+  });
+
+  it("replaces a resource whose type no known class lists when a dependent has no registered class, and warns about the dependent in the sweep", async () => {
+    const world = defineWorld();
+    const declareFn = (fnName: string, withMapping: boolean) => {
+      const bus = new world.Bus("bus", { config: { name: "orders" } as any });
+      const fn = new world.Permission("fn", {
+        config: { name: fnName } as any,
+        dependencies: { parent: bus },
+      });
+      const mapping = new world.Mapping("mapping", {
+        config: { name: "mapping" } as any,
+        dependencies: { parent: fn },
+      });
+      return withMapping ? [bus, fn, mapping] : [bus, fn];
+    };
+    const resources = declareFn("fn", true);
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "replace-unlisted-type", {
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareFn("fn-2", false));
+    world.calls.length = 0;
+    events.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(world.calls).toEqual(["delete:fn", "create:fn-2"]);
+    expect(decisions(events)).toEqual({ bus: "noop", fn: "replace" });
+    expect(
+      events.filter(
+        (event) => event.event === "reconciler.orphan-deletion.skipped",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        resourceId: "mapping",
+        resourceType: world.Mapping.type,
+      }),
+    ]);
+    expect(await runtime.state.get("mapping")).toBeDefined();
+    runtime.close();
+  });
+
+  it("fails at the provider and keeps state when no known class lists the type of a replaced bus with an orphan rule", async () => {
+    const world = defineWorld();
+    const resources = declare(world, "orders");
+    const runtime = createRuntime(resources, "replace-unlisted-bus");
+    const busAndFn = () => {
+      const [bus, , , fn] = declare(world, "shop");
+      return [bus!, fn!];
+    };
+
+    await runtime.run("deploy-1");
+    // No resource in code is a rule, so no known class lists the bus type,
+    // and deploy deletes the bus without deleting the rule first.
+    resources.splice(0, resources.length, ...busAndFn());
+    world.calls.length = 0;
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "orders can't be deleted since it is in use",
+    );
+    expect(world.calls).toEqual([]);
+    expect(await runtime.state.get("bus")).toMatchObject({
+      params: { name: "orders" },
+    });
+    for (const id of ["rule", "permission", "fn"]) {
+      expect(await runtime.state.get(id)).toBeDefined();
+    }
+
+    // A re-run fails in the same way.
+    await durable.clearDeploymentHold({
+      storeClient: runtime.storeClient,
+      deploymentId: "replace-unlisted-bus",
+      fromExecutionId: "deploy-2",
+    });
+    await expect(runtime.run("deploy-3")).rejects.toThrow(
+      "orders can't be deleted since it is in use",
+    );
+    expect(world.calls).toEqual([]);
+
+    // With the rule declared again, the rename deletes the rule first.
+    await durable.clearDeploymentHold({
+      storeClient: runtime.storeClient,
+      deploymentId: "replace-unlisted-bus",
+      fromExecutionId: "deploy-3",
+    });
+    resources.splice(0, resources.length, ...declare(world, "shop"));
+    await runtime.run("deploy-4");
+    expect(world.calls).toEqual([
+      "delete:rule",
+      "delete:orders",
+      "create:shop",
+      "create:rule",
+      "update:fn",
+    ]);
+    runtime.close();
+  });
+
+  it("creates the dependents on the next deploy when one fails to be created again", async () => {
+    const world = defineWorld();
+    const resources = declare(world, "orders");
+    const runtime = createRuntime(resources, "replace-dependents-failed");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declare(world, "shop"));
+    world.failCreate.add("rule");
+    world.calls.length = 0;
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "create rule rejected",
+    );
+    expect(await runtime.state.get("bus")).toMatchObject({
+      params: { name: "shop" },
+    });
+    expect(await runtime.state.get("rule")).toBeUndefined();
+
+    await durable.clearDeploymentHold({
+      storeClient: runtime.storeClient,
+      deploymentId: "replace-dependents-failed",
+      fromExecutionId: "deploy-2",
+    });
+    world.failCreate.clear();
+    await runtime.run("deploy-3");
+
+    expect(world.calls).toEqual([
+      "delete:rule",
+      "delete:orders",
+      "create:shop",
+      "create:rule",
+      "update:fn",
+    ]);
+    expect(Object.fromEntries(world.live)).toEqual({
+      shop: { parent: undefined, blocks: false },
+      rule: { parent: "shop", blocks: true },
+      permission: { parent: "rule", blocks: false },
+      fn: { parent: "shop", blocks: false },
+    });
+    runtime.close();
+  });
+
+  it("resumes after a crash between the deletes of the dependents", async () => {
+    const world = defineWorld();
+    const withTarget = (_bus: BaseResource, rule: BaseResource) => [
+      new world.Target("target", {
+        config: { name: "target" } as any,
+        dependencies: { parent: rule },
+      }),
+    ];
+    const resources = declare(world, "orders", withTarget);
+    const runtime = createRuntime(resources, "replace-dependents-resume", {
+      crashAfterStep:
+        "notation:deploy:bus:replace:dependents:target:delete:remote:attempt:0",
+    });
+
+    await runtime.run("deploy-1");
+    resources.splice(
+      0,
+      resources.length,
+      ...declare(world, "shop", withTarget),
+    );
+    world.calls.length = 0;
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "simulated process crash",
+    );
+    expect(world.calls).toEqual(["delete:target"]);
+
+    await runtime.run("deploy-2");
+    expect(world.calls).toEqual([
+      "delete:target",
+      "delete:rule",
+      "delete:orders",
+      "create:shop",
+      "create:rule",
+      "update:fn",
+      "create:target",
+    ]);
+    runtime.close();
+  });
+
+  it("leaves in place the dependents that do not block the delete", async () => {
+    const world = defineWorld();
+    const declareBus = (busName: string) => {
+      const bus = new world.Bus("bus", { config: { name: busName } as any });
+      const fn = new world.Permission("fn", {
+        config: { name: "fn" } as any,
+        dependencies: { parent: bus },
+      });
+      return [bus, fn];
+    };
+    const resources = declareBus("orders");
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "replace-keeps-dependents", {
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus("shop"));
+    world.calls.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(world.calls).toEqual(["delete:orders", "create:shop", "update:fn"]);
+    expect(await runtime.state.get("fn")).toMatchObject({
+      params: { name: "fn", parent: "shop" },
+    });
+    expect(
+      events.filter(
+        (event) =>
+          event.event === "reconciler.operation.lifecycle" &&
+          "reason" in event &&
+          event.reason === "dependency-replaced",
+      ),
+    ).toEqual([]);
+    runtime.close();
+  });
+
+  it("in a dry run, deletes nothing, and decides create for the dependents it would delete", async () => {
+    const world = defineWorld();
+    const withOld = (bus: BaseResource) => [
+      new world.Rule("old-rule", {
+        config: { name: "old-rule" } as any,
+        dependencies: { parent: bus },
+      }),
+    ];
+    const resources = declare(world, "orders", withOld);
+    const options = {
+      dryRun: false,
+      registry: createResourceRegistry([
+        world.Bus,
+        world.Rule,
+        world.Permission,
+      ]),
+      emit: (event: ReconcilerEvent) => void events.push(event),
+    };
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(
+      resources,
+      "replace-dependents-dry-run",
+      options,
+    );
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declare(world, "shop"));
+    options.dryRun = true;
+    world.calls.length = 0;
+    events.length = 0;
+    await runtime.run("dry-run");
+
+    expect(world.calls).toEqual([]);
+    // A dry run does not create the new bus, so the function reads the old
+    // bus's name.
+    expect(decisions(events)).toEqual({
+      bus: "replace",
+      rule: "create",
+      permission: "noop",
+      fn: "noop",
+    });
+    // Each dependent is deleted once: the sweep does not delete the orphan
+    // again.
+    expect(
+      events
+        .filter(
+          (event) =>
+            event.event === "reconciler.operation.lifecycle" &&
+            event.operation === "delete" &&
+            event.status === "dry-run",
+        )
+        .map((event: any) => event.resourceId)
+        .sort(),
+    ).toEqual(["bus", "old-rule", "rule"]);
+    expect(
+      events.filter(
+        (event) =>
+          event.event === "reconciler.operation.lifecycle" &&
+          event.operation === "create" &&
+          event.status === "dry-run",
+      ),
+    ).toEqual([
+      expect.objectContaining({ resourceId: "bus" }),
+      expect.objectContaining({ resourceId: "rule" }),
+    ]);
+    expect(await runtime.state.get("rule")).toMatchObject({
+      params: { name: "rule", parent: "orders" },
+    });
+    expect(await runtime.state.get("old-rule")).toBeDefined();
+    runtime.close();
+  });
+});
+
 describe("contributions and output values", () => {
   it("deploys a contributor first and fills in its output values", async () => {
     const created: Record<string, unknown>[] = [];
