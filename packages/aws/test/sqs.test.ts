@@ -515,6 +515,22 @@ test("eventSourceMapping of a declaration that maps a queue itself throws", asyn
   );
 });
 
+test("queue() takes the schema type explicitly", () => {
+  const orders = queue<typeof Order>({ id: "orders", schema: Order });
+  expectTypeOf(orders.schema).toEqualTypeOf<typeof Order>();
+
+  // An explicit schema type leaves the id to the runtime check.
+  expect(() => queue<typeof Order>({ id: "bad.id", schema: Order })).toThrow(
+    'Invalid queue() id "bad.id"',
+  );
+
+  // @ts-expect-error dots are not name-safe
+  expect(() => queue({ id: "bad.id", schema: Order })).toThrow();
+  const id: string = "orders";
+  // @ts-expect-error a plain string can't be checked
+  queue({ id, schema: Order });
+});
+
 test("sqs.bind() rejects a schema in place of a queue", () => {
   // @ts-expect-error a schema is not a queue
   sqs.bind(Order);

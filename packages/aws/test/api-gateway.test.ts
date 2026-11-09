@@ -273,6 +273,26 @@ test("jwtAuthorizer() rejects an id that is not name-safe", () => {
   ).toThrow('Invalid jwtAuthorizer() id "bad.id"');
 });
 
+test("jwtAuthorizer() takes the claims type explicitly", () => {
+  const userApi = api({ id: "user-api" });
+  const config = { api: userApi, issuer: "https://i", audience: ["a"] };
+  const userAuth = jwtAuthorizer<typeof Claims>({
+    id: "users",
+    claims: Claims,
+    ...config,
+  });
+  expectTypeOf(userAuth.claims).toEqualTypeOf<typeof Claims>();
+
+  // An explicit claims type leaves the id to the runtime check.
+  expect(() =>
+    jwtAuthorizer<typeof Claims>({ id: "bad.id", claims: Claims, ...config }),
+  ).toThrow('Invalid jwtAuthorizer() id "bad.id"');
+
+  const id: string = "admins";
+  // @ts-expect-error a plain string can't be checked
+  jwtAuthorizer({ id, claims: Claims, ...config });
+});
+
 test("withAuthorizer() of an authorizer on another api throws", () => {
   const userAuth = jwtAuthorizer({
     id: "user-auth",

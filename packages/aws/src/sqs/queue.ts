@@ -3,7 +3,7 @@ import type { LambdaGroup } from "src/lambda/lambda";
 import type { SqsOptions } from "src/lambda/declaration";
 import type { StandardSchemaV1 } from "@notation/resource";
 import { awsName, claimAwsName, describeDeclaration } from "src/naming";
-import { assertId, assertName, resourceId, type NameSafe } from "src/id";
+import { assertId, assertName, resourceId, type IdOption } from "src/id";
 
 export type QueueConfig<S extends StandardSchemaV1 = StandardSchemaV1> = {
   /**
@@ -140,7 +140,7 @@ export class QueueGroup<
  */
 export function queue<
   S extends StandardSchemaV1,
-  const Id extends string = string,
->(config: Omit<QueueConfig<S>, "id"> & { id: NameSafe<Id> }): QueueGroup<S> {
+  const Id extends string = never,
+>(config: Omit<QueueConfig<S>, "id"> & { id: IdOption<Id> }): QueueGroup<S> {
   return new QueueGroup(config);
 }

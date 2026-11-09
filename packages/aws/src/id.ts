@@ -62,6 +62,16 @@ export type NameSafe<S extends string> = string extends S
     ? S
     : `Error: "${S}" is not name-safe; use ${typeof RULE}`;
 
+/**
+ * The type of an `id` option. A function with a type parameter before `Id`,
+ * such as the schema of `queue()`, defaults `Id` to `never`. A call that
+ * passes that type explicitly can't infer `Id`, so the id is then typed as
+ * `string` and only checked at runtime.
+ */
+export type IdOption<Id extends string> = [Id] extends [never]
+  ? string
+  : NameSafe<Id>;
+
 export function isNameSafe(id: unknown): id is string {
   return (
     typeof id === "string" && id.length <= ID_MAX_LENGTH && ID_PATTERN.test(id)

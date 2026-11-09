@@ -1,7 +1,7 @@
 import * as aws from "@notation/aws.iac";
 import type { StandardSchemaV1 } from "@notation/resource";
 import type { AuthorizerSource } from "src/lambda/declaration";
-import { assertId, assertName, resourceId, type NameSafe } from "src/id";
+import { assertId, assertName, resourceId, type IdOption } from "src/id";
 import { claimAwsName, describeDeclaration } from "src/naming";
 import type { ApiGroup } from "./api";
 
@@ -105,9 +105,9 @@ export function isJwtAuthorizerGroup(
  */
 export function jwtAuthorizer<
   C extends StandardSchemaV1 | undefined = undefined,
-  const Id extends string = string,
+  const Id extends string = never,
 >(
-  config: Omit<JwtAuthorizerConfig<C>, "id"> & { id: NameSafe<Id> },
+  config: Omit<JwtAuthorizerConfig<C>, "id"> & { id: IdOption<Id> },
 ): JwtAuthorizerGroup<C> {
   return new JwtAuthorizerGroup(config);
 }
