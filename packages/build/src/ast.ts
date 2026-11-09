@@ -266,6 +266,30 @@ function isReference(
   }
 }
 
+// Whether a JSX name refers to a binding: a tag such as `<Comp />`, or the
+// object of `<ui.Comp />`. A tag that starts with a lowercase letter, such
+// as `<div>`, names an element, not a binding. A closing tag repeats the
+// opening tag, so it isn't counted again.
+function isJsxReference(
+  node: Node,
+  ancestors: Node[],
+  key: string | undefined,
+): boolean {
+  if (node.name === "this") return false;
+  let index = ancestors.length - 1;
+  const parent = ancestors[index];
+  if (parent?.type === "JSXMemberExpression") {
+    if (key !== "object") return false;
+    while (ancestors[index]?.type === "JSXMemberExpression") index--;
+    return ancestors[index]?.type === "JSXOpeningElement";
+  }
+  return (
+    parent?.type === "JSXOpeningElement" &&
+    key === "name" &&
+    !/^[a-z]/.test(node.name)
+  );
+}
+
 /** An identifier in a reference position, with the nodes above it. */
 export type Reference = { node: Node; ancestors: Node[] };
 
@@ -292,6 +316,15 @@ export function freeReferences(
     if (current.type === "Identifier") {
       if (
         isReference(current, ancestors.at(-1), key) &&
+        !shadowed.has(current.name)
+      ) {
+        found.push({ node: current, ancestors });
+      }
+      return;
+    }
+    if (current.type === "JSXIdentifier") {
+      if (
+        isJsxReference(current, ancestors, key) &&
         !shadowed.has(current.name)
       ) {
         found.push({ node: current, ancestors });

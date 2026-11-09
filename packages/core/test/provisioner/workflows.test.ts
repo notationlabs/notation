@@ -13,7 +13,7 @@ const deployment = {
   app: "orders-app",
   stage: "prod",
   entryPoint: "/project/infra/orders.ts",
-  runtimeModules: ["**/*.fn.ts"],
+  files: {},
 };
 
 beforeEach(() => {

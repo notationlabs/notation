@@ -4,14 +4,15 @@ import {
   getResourceGraph,
   type Build,
 } from "@notation/core";
+import { ModuleAnalyses } from "@notation/build";
 import { compileInfra } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
 
 export async function visualise(
-  { entryPoint, runtimeModules }: Build,
+  { entryPoint, files }: Build,
   logger: Logger = defaultLogger,
 ) {
-  await compileInfra(entryPoint, { runtimeModules });
+  await compileInfra(entryPoint, { analyses: new ModuleAnalyses({ files }) });
   await generateGraph(entryPoint, logger);
 }
 

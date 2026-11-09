@@ -9,12 +9,7 @@ import {
 } from "./ast";
 import type { Declaration, ModuleAnalysis } from "./analyze";
 import type { Marks } from "./marks";
-
-/**
- * Whether a module is an infra module, by its absolute path. Modules that
- * can't be read, such as packages, are not.
- */
-export type IsInfraModule = (file: string) => boolean;
+import type { ModuleAnalyses } from "./modules";
 
 /**
  * Reduces the declaration of a module to its runtime options, for the runtime
@@ -31,16 +26,17 @@ export type IsInfraModule = (file: string) => boolean;
  *    still load when `verbatimModuleSyntax` keeps unused imports.
  *
  * The binding and its export stay, so that modules which import it still
- * link. Throws when a kept option refers to an infra module, or calls a
- * resource function.
+ * link. Throws when a kept option refers to an infra module, or to a file
+ * that no glob matches and that calls a resource function at its top level,
+ * or when a kept option calls a resource function.
  */
 export function stripForRuntime(
   analysis: ModuleAnalysis,
-  marks: Marks,
-  isInfraModule: IsInfraModule,
+  analyses: ModuleAnalyses,
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | undefined {
   const declaration = analysis.declaration;
   if (!declaration) return undefined;
+  const { marks } = analyses;
   const { module } = analysis.table;
   const { mark } = declaration;
   const s = new MagicString(module.source);
@@ -101,13 +97,7 @@ export function stripForRuntime(
 
   for (const property of keptProperties) {
     for (const reference of freeReferences(property.value, removed)) {
-      checkReference(
-        reference.node,
-        declaration,
-        analysis,
-        marks,
-        isInfraModule,
-      );
+      checkReference(reference.node, declaration, analysis, analyses);
     }
   }
 
@@ -191,20 +181,30 @@ function checkReference(
   node: Node,
   declaration: Declaration,
   analysis: ModuleAnalysis,
-  marks: Marks,
-  isInfraModule: IsInfraModule,
+  analyses: ModuleAnalyses,
 ) {
+  const { marks } = analyses;
   const { table } = analysis;
   const { file, source } = table.module;
   const binding = table.imports.get(node.name);
   if (!binding) return;
-  const at = `${file}:${location(source, node.start)}`;
+  const at = `${analyses.show(file)}:${location(source, node.start)}`;
   const advice =
     "The runtime build removes infra. Read infra values in the function through the declaration's env().";
+  const plainValue =
+    "Move a plain value that a kept option uses to a shared module (files.shared), or to a file that no glob matches.";
   const resolved = marks.resolve(binding.source, file);
-  if (resolved && isInfraModule(resolved)) {
+  const infra = resolved && analyses.describeInfra(resolved);
+  if (infra) {
     throw new Error(
-      `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from the infra module ${binding.source}. ${advice}`,
+      `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from ${infra}. ${advice} ${plainValue}`,
+    );
+  }
+  const call = resolved && analyses.unmatchedResourceCall(resolved);
+  if (call) {
+    const name = analyses.show(resolved);
+    throw new Error(
+      `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from ${name}. ${name} calls ${call.name} at its top level, so the function can't load it. ${advice} ${plainValue}`,
     );
   }
   const mark =

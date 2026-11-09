@@ -12,11 +12,11 @@ const run = (source: string, extra: Record<string, string> = {}) =>
 
 describe("analyzeModule", () => {
   it("finds the declaration and its options", () => {
-    const { declaration, isInfra } = run(`
+    const { declaration, resourceCall } = run(`
       import { $lambda, sqs } from "@notation/aws/lambda";
       export const lambda = $lambda({ id: "fn", event: () => sqs(null), "env": () => ({}) });
     `);
-    expect(isInfra).toBe(false);
+    expect(resourceCall).toBeUndefined();
     expect(declaration?.binding).toBe("lambda");
     expect(declaration?.name).toBe("$lambda");
     expect([...declaration!.properties.keys()]).toEqual(["id", "event", "env"]);
@@ -91,17 +91,17 @@ describe("analyzeModule", () => {
     expect(() => run(`\n${source}`)).toThrow(message);
   });
 
-  it("marks a module that calls a resource function at the top level as infra", () => {
+  it("finds a call to a resource function at the top level", () => {
     expect(
       run(
         `import { createQueue } from "@notation/aws/sqs";\nexport const q = createQueue({});`,
-      ).isInfra,
-    ).toBe(true);
+      ).resourceCall?.name,
+    ).toBe("createQueue");
     expect(
       run(
         `import { createQueue } from "@notation/aws/sqs";\nexport const q = () => createQueue({});`,
-      ).isInfra,
-    ).toBe(false);
+      ).resourceCall,
+    ).toBeUndefined();
   });
 
   it("ignores a name that shadows the import", () => {
@@ -114,7 +114,9 @@ describe("analyzeModule", () => {
 
 describe("ModuleAnalyses", () => {
   it("reuses the analysis of a source that hasn't changed", () => {
-    const analyses = new ModuleAnalyses(virtualMarks(packageFiles, packages));
+    const analyses = new ModuleAnalyses({
+      marks: virtualMarks(packageFiles, packages),
+    });
     const file = path.join(root, "runtime/fn.ts");
     const source = `export const a = 1;`;
     const first = analyses.fromSource(file, source);

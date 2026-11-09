@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -9,6 +10,7 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it, onTestFinished, vi } from "vitest";
+import { ModuleAnalyses } from "@notation/build";
 import { setConfigFile } from "@notation/core";
 import { compile, compileInfra, type DeclarationModule } from "../src/compile";
 import type { Logger } from "../src/logger";
@@ -32,9 +34,9 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-const build = (entry: string) => ({
+const build = (entry: string, runtime: string[] = []) => ({
   entryPoint: path.join(root, entry),
-  runtimeModules: [],
+  files: { runtime },
 });
 
 const write = (file: string, contents: string) => {
@@ -154,13 +156,10 @@ it("bundles a runtime file that is created during watch", async () => {
     path.join(root, `dist/watch-e/runtime/${name}/index.mjs`);
 
   onTestFinished(
-    await compile(
-      {
-        ...build("watch-e/main.ts"),
-        runtimeModules: ["watch-e/runtime/**/*.ts"],
-      },
-      { watch: true, logger },
-    ),
+    await compile(build("watch-e/main.ts", ["watch-e/runtime/**/*.ts"]), {
+      watch: true,
+      logger,
+    }),
   );
   await waitFor(() => expect(existsSync(bundle("todos"))).toBe(true));
 
@@ -175,7 +174,7 @@ it("doesn't rebuild on build output, packages or deploy state when a glob covers
   let builds = 0;
   const infra = await compileInfra(path.join(root, "watch-f/main.ts"), {
     watch: true,
-    runtimeModules: ["**/*.ts"],
+    analyses: new ModuleAnalyses({ files: { runtime: ["**/*.ts"] } }),
     onDeclarationModules: () => builds++,
   });
   onTestFinished(infra.close);
@@ -193,23 +192,162 @@ it("doesn't rebuild on build output, packages or deploy state when a glob covers
   expect(builds).toBe(settled);
 });
 
+it("watches only the folder of a runtime glob with no glob characters", async () => {
+  write("watch-k/jobs/nightly.ts", runtimeModule("nightly"));
+  write("watch-k/main.ts", `console.log("no imports");\n`);
+
+  let builds = 0;
+  const infra = await compileInfra(path.join(root, "watch-k/main.ts"), {
+    watch: true,
+    analyses: new ModuleAnalyses({ files: { runtime: ["watch-k/jobs"] } }),
+    onDeclarationModules: () => builds++,
+  });
+  onTestFinished(infra.close);
+  const wait = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+  await wait(500);
+  const settled = builds;
+  write("watch-k/notes/readme.md", "notes");
+  await wait(1000);
+  expect(builds).toBe(settled);
+
+  write("watch-k/jobs/weekly.ts", runtimeModule("weekly"));
+  await waitFor(() => expect(builds).toBeGreaterThan(settled));
+});
+
 it("bundles a runtime file in a glob directory that is created during watch", async () => {
   write("watch-g/main.ts", `console.log("no imports");\n`);
   const bundle = path.join(root, "dist/watch-g/runtime/todos/index.mjs");
 
   onTestFinished(
-    await compile(
-      {
-        ...build("watch-g/main.ts"),
-        runtimeModules: ["watch-g/runtime/**/*.ts"],
-      },
-      { watch: true, logger },
-    ),
+    await compile(build("watch-g/main.ts", ["watch-g/runtime/**/*.ts"]), {
+      watch: true,
+      logger,
+    }),
   );
 
   // Lets the rebuild from macOS's late report of main.ts pass first, so
   // that only the watch on watch-g/ can start the next one.
   await new Promise((resolve) => setTimeout(resolve, 500));
   write("watch-g/runtime/todos.ts", runtimeModule("todos"));
+  await waitFor(() => expect(existsSync(bundle)).toBe(true));
+});
+
+it("checks a shared module again when a module that it imports changes", async () => {
+  write("watch-i/infra/orders.ts", `export const orders = { url: "u" };\n`);
+  write("watch-i/lib/util.ts", `export const util = () => "util";\n`);
+  write(
+    "watch-i/shared/schema.ts",
+    `import { util } from "../lib/util";\nexport const Order = { util };\n`,
+  );
+  write(
+    "watch-i/main.ts",
+    `import { Order } from "./shared/schema";\nconsole.log(Order);\n`,
+  );
+  const errors: unknown[] = [];
+  onTestFinished(
+    await compile(
+      {
+        entryPoint: path.join(root, "watch-i/main.ts"),
+        files: {
+          infra: ["watch-i/infra/**"],
+          runtime: [],
+          shared: ["watch-i/shared/**"],
+        },
+      },
+      {
+        watch: true,
+        logger: { ...logger, error: (error: unknown) => errors.push(error) },
+      },
+    ),
+  );
+  expect(errors).toEqual([]);
+
+  write(
+    "watch-i/lib/util.ts",
+    `import { orders } from "../infra/orders";\nexport const util = () => orders.url;\n`,
+  );
+  await waitFor(() =>
+    expect(String(errors.at(-1))).toContain(
+      "through watch-i/shared/schema.ts:1:1 → watch-i/lib/util.ts:1:1 → watch-i/infra/orders.ts.",
+    ),
+  );
+});
+
+it("fails each build that includes a broken shared module, and writes no bundle", async () => {
+  write("watch-j/infra/orders.ts", `export const orders = { url: "u" };\n`);
+  write("watch-j/lib/util.ts", `export const util = () => "util";\n`);
+  write(
+    "watch-j/shared/schema.ts",
+    `import { util } from "../lib/util";\nexport const Order = { util };\n`,
+  );
+  for (const id of ["todos", "jobs"]) {
+    write(
+      `watch-j/${id}.ts`,
+      `import { Order } from "./shared/schema";\n${runtimeModule(id).replace(`() => "${id}"`, "() => Order")}`,
+    );
+  }
+  write(
+    "watch-j/main.ts",
+    `import { fn } from "./todos";\nimport { fn as job } from "./jobs";\nimport { Order } from "./shared/schema";\nconsole.log(fn, job, Order);\n`,
+  );
+  const bundle = (id: string) =>
+    path.join(root, `dist/watch-j/${id}/index.mjs`);
+  const errors: unknown[] = [];
+  onTestFinished(
+    await compile(
+      {
+        entryPoint: path.join(root, "watch-j/main.ts"),
+        files: {
+          infra: ["watch-j/infra/**"],
+          runtime: [],
+          shared: ["watch-j/shared/**"],
+        },
+      },
+      {
+        watch: true,
+        logger: { ...logger, error: (error: unknown) => errors.push(error) },
+      },
+    ),
+  );
+  await waitFor(() => {
+    expect(existsSync(bundle("todos"))).toBe(true);
+    expect(existsSync(bundle("jobs"))).toBe(true);
+  });
+  expect(errors).toEqual([]);
+  const before = {
+    todos: readFileSync(bundle("todos"), "utf8"),
+    jobs: readFileSync(bundle("jobs"), "utf8"),
+  };
+
+  write(
+    "watch-j/lib/util.ts",
+    `import { orders } from "../infra/orders";\nexport const util = () => orders.url;\n`,
+  );
+  const reports = () =>
+    errors.filter((error) =>
+      String(error).includes("watch-j/shared/schema.ts, a shared module"),
+    );
+  // The infra build and both runtime builds fail.
+  await waitFor(() => expect(reports().length).toBeGreaterThanOrEqual(3));
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  expect(readFileSync(bundle("todos"), "utf8")).toBe(before.todos);
+  expect(readFileSync(bundle("jobs"), "utf8")).toBe(before.jobs);
+}, 15000);
+
+// Last, because the default globs read runtime/ at the root, which the
+// other tests don't use.
+it("bundles a file that is added under runtime/ with the default globs", async () => {
+  write("watch-h/main.ts", `console.log("no imports");\n`);
+  const bundle = path.join(root, "dist/runtime/added/index.mjs");
+  onTestFinished(
+    await compile(
+      { entryPoint: path.join(root, "watch-h/main.ts"), files: {} },
+      { watch: true, logger },
+    ),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  write("runtime/added.ts", runtimeModule("added"));
   await waitFor(() => expect(existsSync(bundle)).toBe(true));
 });
