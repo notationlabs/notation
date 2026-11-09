@@ -131,10 +131,22 @@ export const deployLookup: OutputLookup = (token) => {
 /**
  * Finds output values in the resource's output when it has one, such as the
  * output a plan reads from state, and leaves the rest unknown.
+ *
+ * A required output that the output lacks is unknown too. A record written
+ * before the schema gained the output lacks it, and deploy reads the
+ * resource again to fill it in before any dependent needs it.
  */
 export const planLookup: OutputLookup = (token) => {
   const output = token.resource.output as Record<string, unknown> | null;
   if (output == null) return { known: false };
+  const [field] = token.path;
+  if (
+    field !== undefined &&
+    !(field in output) &&
+    token.resource.schema[field]?.presence === "required"
+  ) {
+    return { known: false };
+  }
   return { known: true, value: readPath(output, token.path) };
 };
 

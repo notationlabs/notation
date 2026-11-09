@@ -165,11 +165,10 @@ describe("statementId", () => {
 });
 
 // An API deployed before ExecuteApiSourceArn existed has a state record
-// without it. Plan reads outputs from state, finds the field missing, and
-// treats the SourceArn as known and undefined. Deploy checks params the same
-// way before it changes anything, so it fails before it can read the API
-// again to fill in the output.
-it("a permission on an API whose state lacks ExecuteApiSourceArn fails to plan", async () => {
+// without it. Deploy checks params as plan does before it changes anything,
+// so if plan took the SourceArn as known and undefined, deploy would fail
+// before it could read the API again to fill in the output.
+it("a permission on an API whose state lacks ExecuteApiSourceArn plans its SourceArn as unknown", async () => {
   const params = { Name: "app", ProtocolType: "HTTP" } as const;
   let resources!: [
     InstanceType<typeof Api>,
@@ -211,7 +210,6 @@ it("a permission on an API whose state lacks ExecuteApiSourceArn fails to plan",
       },
     }),
   });
-  await expect(plan).rejects.toThrow(
-    "these required params are missing: SourceArn",
-  );
+  const node = (await plan).nodes.find((node) => node.id === "p")!;
+  expect(node.params.SourceArn).toEqual({ $unknown: "after-apply" });
 });
