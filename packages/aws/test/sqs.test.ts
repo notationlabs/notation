@@ -378,6 +378,96 @@ test("a FIFO queue with a standard dead-letter queue throws", async () => {
   );
 });
 
+test("a dead-letter queue given as an ARN sets the redrive policy with no dependency", async () => {
+  const dlqArn = "arn:aws:sqs:eu-west-2:123456789012:shared-dlq";
+  let orders!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    orders = queue({
+      id: "orders",
+      schema: Unknown,
+      deadLetterQueue: { queue: dlqArn, maxReceiveCount: 3 },
+    });
+  });
+
+  expect(orders.queue.getDependencies()).toEqual([]);
+  expect((await orders.queue.getParams()).RedrivePolicy).toEqual({
+    deadLetterTargetArn: dlqArn,
+    maxReceiveCount: 3,
+  });
+});
+
+test("a FIFO queue accepts the ARN of a FIFO dead-letter queue", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      queue({
+        id: "ledger",
+        fifo: true,
+        schema: Unknown,
+        deadLetterQueue: {
+          queue:
+            "arn:aws-us-gov:sqs:us-gov-west-1:123456789012:ledger-dlq.fifo",
+          maxReceiveCount: 3,
+        },
+      });
+    }),
+  ).resolves.toBeDefined();
+});
+
+test("a FIFO queue with the ARN of a standard dead-letter queue throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      queue({
+        id: "ledger",
+        fifo: true,
+        schema: Unknown,
+        deadLetterQueue: {
+          queue: "arn:aws:sqs:eu-west-2:123456789012:ledger-dlq",
+          maxReceiveCount: 3,
+        },
+      });
+    }),
+  ).rejects.toThrow(
+    'queue() "ledger" is a FIFO queue, but its dead-letter queue arn:aws:sqs:eu-west-2:123456789012:ledger-dlq is a standard queue.',
+  );
+});
+
+test("a standard queue with the ARN of a FIFO dead-letter queue throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      queue({
+        id: "orders",
+        schema: Unknown,
+        deadLetterQueue: {
+          queue: "arn:aws:sqs:eu-west-2:123456789012:orders-dlq.fifo",
+          maxReceiveCount: 3,
+        },
+      });
+    }),
+  ).rejects.toThrow("is a standard queue, but its dead-letter queue");
+});
+
+test.each([
+  "orders-dlq",
+  "arn:aws:sns:eu-west-2:123456789012:orders-dlq",
+  "arn:aws:sqs:eu-west-2:orders-dlq",
+  "https://sqs.eu-west-2.amazonaws.com/123456789012/orders-dlq",
+])(
+  "a dead-letter queue string that is not an SQS ARN throws: %s",
+  async (arn) => {
+    await expect(
+      collectResourceGraph(() => {
+        queue({
+          id: "orders",
+          schema: Unknown,
+          deadLetterQueue: { queue: arn, maxReceiveCount: 3 },
+        });
+      }),
+    ).rejects.toThrow(
+      `queue() "orders" has a dead-letter queue "${arn}", which is not the ARN of an SQS queue.`,
+    );
+  },
+);
+
 test("a standard queue with a FIFO option throws", async () => {
   await expect(
     collectResourceGraph(() => {

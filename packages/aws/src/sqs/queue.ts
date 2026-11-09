@@ -67,8 +67,11 @@ export type QueueConfig<S extends StandardSchemaV1 = StandardSchemaV1> = {
 };
 
 export type DeadLetterQueueConfig = {
-  /** The dead-letter queue, from `queue()`. */
-  queue: QueueGroup<any>;
+  /**
+   * The dead-letter queue: a queue from `queue()`, or the ARN of a queue that
+   * Notation doesn't manage, such as `arn:aws:sqs:eu-west-2:123456789012:dlq`.
+   */
+  queue: QueueGroup<any> | string;
   /** The number of receives after which SQS moves a message, from 1 to 1,000. */
   maxReceiveCount: number;
 };
@@ -116,7 +119,10 @@ export class QueueGroup<
           ReceiveMessageWaitTimeSeconds: config.receiveMessageWaitTime,
           MaximumMessageSize: config.maximumMessageSize,
           RedrivePolicy: config.deadLetterQueue && {
-            deadLetterTargetArn: config.deadLetterQueue.queue.arn,
+            deadLetterTargetArn:
+              typeof config.deadLetterQueue.queue === "string"
+                ? config.deadLetterQueue.queue
+                : config.deadLetterQueue.queue.arn,
             maxReceiveCount: config.deadLetterQueue.maxReceiveCount,
           },
           ContentBasedDeduplication: config.contentBasedDeduplication,
@@ -205,9 +211,29 @@ function assertFifoOptions(config: Omit<QueueConfig, "schema">): void {
     );
   }
   const dlq = config.deadLetterQueue?.queue;
-  if (dlq && (dlq.config.fifo ?? false) !== fifo) {
+  if (dlq === undefined) return;
+  if (typeof dlq === "string") assertQueueArn(config.id, dlq);
+  const dlqName = typeof dlq === "string" ? dlq : `"${dlq.id}"`;
+  // SQS requires a FIFO queue's name to end in .fifo, so the name of an ARN
+  // tells its type.
+  const dlqFifo =
+    typeof dlq === "string"
+      ? dlq.split(":").pop()!.endsWith(".fifo")
+      : (dlq.config.fifo ?? false);
+  if (dlqFifo !== fifo) {
     throw new Error(
-      `queue() "${config.id}" is a ${fifo ? "FIFO" : "standard"} queue, but its dead-letter queue "${dlq.id}" is ${fifo ? "a standard" : "a FIFO"} queue. SQS needs both queues to be of the same type.`,
+      `queue() "${config.id}" is a ${fifo ? "FIFO" : "standard"} queue, but its dead-letter queue ${dlqName} is ${fifo ? "a standard" : "a FIFO"} queue. SQS needs both queues to be of the same type.`,
+    );
+  }
+}
+
+const SQS_ARN =
+  /^arn:[a-z-]+:sqs:[a-z0-9-]+:\d{12}:[A-Za-z0-9_-]{1,80}(\.fifo)?$/;
+
+function assertQueueArn(id: string, arn: string): void {
+  if (!SQS_ARN.test(arn)) {
+    throw new Error(
+      `queue() "${id}" has a dead-letter queue "${arn}", which is not the ARN of an SQS queue. An SQS ARN has the form arn:<partition>:sqs:<region>:<account>:<name>.`,
     );
   }
 }

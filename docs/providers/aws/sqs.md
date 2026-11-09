@@ -32,7 +32,7 @@ type QueueConfig = {
   delaySeconds?: number;
   receiveMessageWaitTime?: number;
   maximumMessageSize?: number;
-  deadLetterQueue?: { queue: QueueGroup; maxReceiveCount: number };
+  deadLetterQueue?: { queue: QueueGroup | string; maxReceiveCount: number };
   contentBasedDeduplication?: boolean;
   deduplicationScope?: "queue" | "messageGroup";
   fifoThroughputLimit?: "perQueue" | "perMessageGroupId";
@@ -112,9 +112,24 @@ export const orderQueue = queue({
 
 `maxReceiveCount` is from 1 to 1,000. The dead-letter queue is a queue like any other, so it has a schema. SQS moves the messages unchanged, so give it a schema that accepts the messages of each queue that uses it. Notation doesn't compare the schemas. A message often reaches the dead-letter queue because it failed validation, so `DeadLetter` above accepts any value.
 
-The queue's `RedrivePolicy` holds the ARN of the dead-letter queue, so the queue depends on the dead-letter queue, which deploys first. When you remove `deadLetterQueue`, Notation removes the policy from the queue, and leaves the dead-letter queue and its messages.
+`queue` is a queue from `queue()`, or the ARN of a queue that Notation doesn't manage:
 
-A FIFO queue needs a FIFO dead-letter queue, and a standard queue needs a standard one. `queue()` throws when the two queues are of different types.
+```ts [infra/orders.ts]
+export const orderQueue = queue({
+  id: "orders",
+  schema: Order,
+  deadLetterQueue: {
+    queue: "arn:aws:sqs:eu-west-2:123456789012:shared-dlq",
+    maxReceiveCount: 3,
+  },
+});
+```
+
+`queue()` throws when the string doesn't have the form of an SQS ARN, `arn:<partition>:sqs:<region>:<account>:<name>`. Notation doesn't check that the queue exists.
+
+The queue's `RedrivePolicy` holds the ARN of the dead-letter queue. When the dead-letter queue comes from `queue()`, the queue depends on the dead-letter queue, which deploys first. When you remove `deadLetterQueue`, Notation removes the policy from the queue, and leaves the dead-letter queue and its messages.
+
+A FIFO queue needs a FIFO dead-letter queue, and a standard queue needs a standard one. `queue()` throws when the two queues are of different types. For an ARN, `queue()` reads the type from the queue's name, the last part of the ARN: SQS requires the name of a FIFO queue to end in `.fifo`.
 
 For a standard queue, a moved message keeps the time it was first sent, and the dead-letter queue's `messageRetentionPeriod` counts from that time. So give the dead-letter queue a longer `messageRetentionPeriod` than the queue.
 
