@@ -13,7 +13,8 @@
   "dependencies": {
     "@notation/aws": "workspace:*",
     "@notation/cli": "workspace:*",
-    "@notation/core": "workspace:*"
+    "@notation/core": "workspace:*",
+    "valibot": "^1.4.2"
   },
   "devDependencies": {
     "@types/node": "^22.20.5"

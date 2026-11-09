@@ -116,6 +116,9 @@ importers:
       '@notation/core':
         specifier: workspace:*
         version: link:../../packages/core
+      valibot:
+        specifier: ^1.4.2
+        version: 1.4.2(typescript@7.0.2)
     devDependencies:
       '@types/node':
         specifier: ^22.20.5

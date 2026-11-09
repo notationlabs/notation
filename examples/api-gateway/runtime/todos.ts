@@ -1,7 +1,7 @@
 import {
   $lambda,
+  apiGateway,
   DecodeError,
-  http,
   type LambdaHandler,
 } from "@notation/aws/lambda";
 import { NewTodo } from "./schema";
@@ -11,7 +11,7 @@ export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,
-  event: () => http({ body: NewTodo }),
+  event: () => apiGateway.schema(NewTodo),
 });
 
 const todos = await api.get<any[]>("/todos");
