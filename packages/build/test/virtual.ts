@@ -26,6 +26,7 @@ export function virtualMarks(
       return [
         base,
         `${base}.ts`,
+        `${base}.tsx`,
         `${base}.js`,
         base.replace(/\.js$/, ".ts"),
       ].find((f) => known.has(f));

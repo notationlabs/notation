@@ -1,3 +1,5 @@
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ModuleGlobs } from "@notation/core";
@@ -43,6 +45,28 @@ describe("FileKinds", () => {
       glob: "functions/*.ts",
       isDefault: false,
     });
+  });
+
+  it("reads a glob that names a folder as the files in that folder", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "notation-kinds-"));
+    try {
+      mkdirSync(path.join(dir, "infra"));
+      mkdirSync(path.join(dir, "jobs"));
+      const files = new FileKinds(
+        { infra: ["infra"], runtime: ["./jobs/"], shared: ["lib"] },
+        dir,
+      );
+      expect(files.globs).toEqual({
+        infra: ["infra/**"],
+        runtime: ["jobs/**"],
+        shared: ["lib"],
+      });
+      expect(files.kindOf(path.join(files.root, "infra/a/b.ts"))?.kind).toBe(
+        "infra",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("leaves out the files that a glob with ! matches", () => {
@@ -91,7 +115,8 @@ function check(
 ) {
   const analyses = new ModuleAnalyses({
     marks: virtualMarks({ ...packageFiles, ...files }, packages),
-    files: new FileKinds(globs, root),
+    files: globs,
+    root,
   });
   return () => analyses.checkShared(abs(file));
 }
@@ -150,7 +175,7 @@ describe("checkShared", () => {
         "infra/orders.ts": orders,
       }),
     ).toThrow(
-      'shared/schema.ts:2:1: shared/schema.ts, a shared module (files.shared: "shared/**", the default), imports infra/orders.ts, an infra module (files.infra: "infra/**", the default), through shared/schema.ts:2:1 → infra/orders.ts. Neither build strips a shared module, so it can\'t import an infra or runtime module, directly or through other modules.',
+      'shared/schema.ts, a shared module (files.shared: "shared/**", the default), imports infra/orders.ts, an infra module (files.infra: "infra/**", the default), through shared/schema.ts:2:1 → infra/orders.ts. Neither build strips a shared module, so it can\'t import an infra or runtime module, directly or through other modules. Move the code that needs infra/orders.ts out of the shared module.',
     );
   });
 
@@ -175,7 +200,7 @@ describe("checkShared", () => {
         "infra/orders.ts": orders,
       }),
     ).toThrow(
-      "through shared/schema.ts:1:1 → shared/other.ts:1:1 → lib/a.ts:3:1 → lib/b.ts:1:1 → infra/orders.ts.",
+      "through shared/schema.ts:1:1 → shared/other.ts:1:1 → lib/a.ts:3:1 → lib/b.ts:1:1 → infra/orders.ts. Neither build strips a shared module, so it can't import an infra or runtime module, directly or through other modules. Move the code that needs infra/orders.ts out of the shared module, or stop importing it through shared/other.ts.",
     );
   });
 
@@ -188,6 +213,34 @@ describe("checkShared", () => {
     ).toThrow("through shared/schema.ts:1:1 → infra/orders.ts.");
   });
 
+  it.each([
+    ["a JSX tag", `export const view = () => <Comp />;`],
+    [
+      "the object of a JSX member tag",
+      `export const view = () => <Comp.Item />;`,
+    ],
+  ])("follows an import that the module uses only in %s", (_, body) => {
+    expect(
+      check(
+        {
+          "shared/view.tsx": `import { Comp } from "../runtime/Comp";\n${body}`,
+          "runtime/Comp.tsx": `export const Comp = () => null;`,
+        },
+        "shared/view.tsx",
+      ),
+    ).toThrow("through shared/view.tsx:1:1 → runtime/Comp.tsx.");
+  });
+
+  it("doesn't count a JSX element whose tag starts with a lowercase letter", () => {
+    check(
+      {
+        "shared/view.tsx": `import { div } from "../runtime/div";\nexport const view = () => <div />;`,
+        "runtime/div.ts": `export const div = 1;`,
+      },
+      "shared/view.tsx",
+    )();
+  });
+
   it("follows the globs of the config", () => {
     const files = {
       "lib/schema.ts": `import { orders } from "../aws/orders";\nexport const url = () => orders.url;`,
@@ -195,7 +248,7 @@ describe("checkShared", () => {
     };
     const globs = { shared: ["lib/**"], infra: ["aws/**"] };
     expect(check(files, "lib/schema.ts", globs)).toThrow(
-      'lib/schema.ts:1:1: lib/schema.ts, a shared module (files.shared: "lib/**"), imports aws/orders.ts, an infra module (files.infra: "aws/**"),',
+      'lib/schema.ts, a shared module (files.shared: "lib/**"), imports aws/orders.ts, an infra module (files.infra: "aws/**"),',
     );
     expect(check(files, "lib/schema.ts", { infra: ["aws/**"] })).not.toThrow();
   });
