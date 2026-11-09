@@ -94,6 +94,7 @@ function writeAwsPackage() {
           import: "./lambda.js",
         },
         "./sqs": "./sqs.js",
+        "./api-gateway": "./api-gateway.js",
         "./helpers": "./helpers.js",
         "./sns": "./sns.js",
       },
@@ -109,8 +110,16 @@ function writeAwsPackage() {
       `  bind(queue, options) { return { kind: "sqs", schema: queue?.schema }; },`,
       `  schema(schema) { return { kind: "sqs", schema }; },`,
       `};`,
-      `/** @runtime options */`,
-      `export function http(options) { return { kind: "http", schema: options.body }; }`,
+      `export const apiGateway = {`,
+      `  /** @runtime api */`,
+      `  bind(api) {`,
+      `    return {`,
+      `      /** @runtime options.auth */`,
+      `      defineRoute(options) { return { kind: options.auth ? "apiGateway-jwt" : "apiGateway", schema: options.schema, claims: options.auth?.claims, api }; },`,
+      `    };`,
+      `  },`,
+      `  schema(body, options) { return { kind: options?.claims ? "apiGateway-jwt" : "apiGateway", schema: body, claims: options?.claims }; },`,
+      `};`,
       `/** @resource */`,
       `export function eventSourceMapping(config) {}`,
     ].join("\n"),
@@ -125,7 +134,14 @@ function writeAwsPackage() {
       `  bind(queue, options) { return { kind: "sqs", schema: queue?.schema }; },`,
       `  schema(schema) { return { kind: "sqs", schema }; },`,
       `};`,
-      `export function http(options) { return { kind: "http", schema: options.body }; }`,
+      `export const apiGateway = {`,
+      `  bind(api) {`,
+      `    return {`,
+      `      defineRoute(options) { return { kind: options.auth ? "apiGateway-jwt" : "apiGateway", schema: options.schema, claims: options.auth?.claims, api }; },`,
+      `    };`,
+      `  },`,
+      `  schema(body, options) { return { kind: options?.claims ? "apiGateway-jwt" : "apiGateway", schema: body, claims: options?.claims }; },`,
+      `};`,
       `export function eventSourceMapping() { throw new Error("infra only"); }`,
     ].join("\n"),
   );
@@ -135,6 +151,16 @@ function writeAwsPackage() {
       `import "./sdk.js";`,
       `/** @resource runtime: schema */`,
       `export function queue(config) { return { url: "placeholder-url", schema: config.schema }; }`,
+    ].join("\n"),
+  );
+  write(
+    "node_modules/@notation/aws/api-gateway.js",
+    [
+      `import "./sdk.js";`,
+      `/** @resource runtime: */`,
+      `export function api(config) { return { id: config.name, placeholder: "placeholder-api" }; }`,
+      `/** @resource runtime: claims */`,
+      `export function jwtAuthorizer(config) { return { claims: config.claims, issuer: config.issuer }; }`,
     ].join("\n"),
   );
   write(
@@ -858,9 +884,9 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
         handlerModule
           .replace(
             `import { $lambda, sqs } from "@notation/aws/lambda";`,
-            `import { $lambda, http } from "@notation/aws/lambda";\n  import { Order } from "../lib/defs";`,
+            `import { $lambda, apiGateway } from "@notation/aws/lambda";\n  import { Order } from "../lib/defs";`,
           )
-          .replace("sqs.bind(orders)", "http({ body: Order })"),
+          .replace("sqs.bind(orders)", "apiGateway.schema(Order)"),
       );
       write(
         "lib/defs.ts",
@@ -871,7 +897,7 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
         ].join("\n"),
       );
       await expect(buildProject(files)).rejects.toThrow(
-        `runtime/process-orders.ts:11:31: an option of $lambda that the function keeps refers to Order, ${from} The runtime build removes infra. Read infra values in the function through the declaration's env(). Move a plain value that a kept option uses to a shared module (files.shared), or to a file that no glob matches.`,
+        `runtime/process-orders.ts:11:36: an option of $lambda that the function keeps refers to Order, ${from} The runtime build removes infra. Read infra values in the function through the declaration's env(). Move a plain value that a kept option uses to a shared module (files.shared), or to a file that no glob matches.`,
       );
     },
   );
@@ -901,11 +927,11 @@ describe("modules that the runtime bundle keeps or leaves out", () => {
   it("fails when a kept option refers to an infra module, and says why it is infra", async () => {
     writeProject(
       handlerModule
-        .replace("{ $lambda, sqs }", "{ $lambda, http }")
-        .replace("sqs.bind(orders)", "http({ body: orders.schema })"),
+        .replace("{ $lambda, sqs }", "{ $lambda, apiGateway }")
+        .replace("sqs.bind(orders)", "apiGateway.schema(orders.schema)"),
     );
     await expect(buildProject()).rejects.toThrow(
-      'runtime/process-orders.ts:10:31: an option of $lambda that the function keeps refers to orders, from infra/orders.ts, an infra module (files.infra: "infra/**", the default).',
+      'runtime/process-orders.ts:10:36: an option of $lambda that the function keeps refers to orders, from infra/orders.ts, an infra module (files.infra: "infra/**", the default).',
     );
   });
 });
@@ -1334,6 +1360,46 @@ describe("shared modules", () => {
     expect(runHandler()[2]).toEqual({
       kind: "sqs",
       schema: { name: "Order" },
+    });
+  });
+
+  it("bundles the claims schema of an authorizer that the function routes with apiGateway.bind(api).defineRoute({ auth }), and leaves out the infra module", async () => {
+    writeProject(
+      handlerModule
+        .replace(
+          `import { $lambda, sqs } from "@notation/aws/lambda";`,
+          `import { $lambda, apiGateway } from "@notation/aws/lambda";\n  import { Order } from "../shared/schema";\n  import { ordersApi, userAuth } from "../infra/api";`,
+        )
+        .replace(
+          "sqs.bind(orders)",
+          `apiGateway.bind(ordersApi).defineRoute({ method: "POST", path: "/orders", schema: Order, auth: userAuth })`,
+        ),
+    );
+    write(
+      "infra/api.ts",
+      [
+        `import { api, jwtAuthorizer } from "@notation/aws/api-gateway";`,
+        `import { Claims } from "../shared/claims";`,
+        `export const ordersApi = api({ name: "orders" });`,
+        `export const userAuth = jwtAuthorizer({ api: ordersApi, issuer: "https://issuer", audience: ["app"], claims: Claims });`,
+      ].join("\n"),
+    );
+    write("shared/claims.ts", `export const Claims = { name: "Claims" };`);
+    const { bundle } = await buildProject();
+
+    expect(bundle).toContain("// shared/claims.ts");
+    expect(bundle).toContain(
+      `event: () => apiGateway.bind({}).defineRoute({\n\t\tmethod: "POST",\n\t\tpath: "/orders",\n\t\tschema: Order,\n\t\tauth: { claims: Claims }\n\t})`,
+    );
+    expect(bundle).not.toContain("infra/");
+    expect(bundle).not.toContain("placeholder-api");
+    expect(bundle).not.toContain("https://issuer");
+    expect(bundle).not.toContain("sdk loaded");
+    expect(runHandler()[2]).toEqual({
+      kind: "apiGateway-jwt",
+      schema: { name: "Order" },
+      claims: { name: "Claims" },
+      api: {},
     });
   });
 

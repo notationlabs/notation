@@ -159,3 +159,115 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
   );
   expect(bundle).not.toMatch(/@aws-sdk|aws\.iac|LambdaGroup|ordersQueue/);
 });
+
+it("deploys a declaration module that makes its own route with apiGateway.bind(api).defineRoute({ auth })", async () => {
+  write(
+    "shared/schema.ts",
+    `${schemaModule}
+  export const Claims = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: (value) =>
+        typeof value?.sub === "string"
+          ? { value }
+          : { issues: [{ message: "sub must be a string" }] },
+    },
+  };
+  `,
+  );
+  write(
+    "runtime/create-order.ts",
+    `
+    import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
+    import { Order } from "../shared/schema";
+    import { ordersApi, userAuth } from "../infra/api";
+
+    export const lambda = $lambda({
+      id: "create-order",
+      event: () =>
+        apiGateway.bind(ordersApi).defineRoute({ method: "POST", path: "/orders", schema: Order, auth: userAuth }),
+    });
+
+    export const handler: LambdaHandler<typeof lambda> = async (event) => {
+      try {
+        return { statusCode: 201, body: JSON.stringify(await lambda.decode(event)) };
+      } catch (error) {
+        if (!(error instanceof DecodeError)) throw error;
+        return { statusCode: 400, body: error.message };
+      }
+    };
+    `,
+  );
+  write(
+    "infra/api.ts",
+    `
+    import { api, jwtAuthorizer } from "@notation/aws/api-gateway";
+    import { Claims } from "../shared/schema";
+
+    export const ordersApi = api({ name: "orders-api" });
+    export const userAuth = jwtAuthorizer({
+      api: ordersApi,
+      issuer: "https://issuer.example/",
+      audience: ["orders"],
+      claims: Claims,
+    });
+    `,
+  );
+
+  await compileRuntimeModules(
+    (await compileInfra(path.join(root, "infra/api.ts"))).modules,
+  );
+
+  const script = `
+    import { collectResourceGraph } from "@notation/resource";
+
+    const graph = await collectResourceGraph(() => import("./dist/infra/api.mjs"));
+    const ofType = (type) => graph.resources.filter((r) => r.type === type);
+    const routes = ofType("aws/apiGateway/Route").map((r) => ({
+      key: r.config.RouteKey,
+      type: r.config.AuthorizationType,
+      auth: r.dependencies.auth?.id,
+    }));
+
+    const { handler } = await import("./dist/runtime/create-order/index.mjs");
+    const request = (sub) => ({
+      body: JSON.stringify({ id: "o1" }),
+      isBase64Encoded: false,
+      requestContext: { authorizer: { jwt: { claims: { sub } } } },
+    });
+    const responses = [await handler(request("u1"), {}), await handler(request(1), {})];
+    console.log(JSON.stringify({ routes, responses }));
+  `;
+  const output = execFileSync(
+    process.execPath,
+    ["--input-type=module", "-e", script],
+    { cwd: root, encoding: "utf8" },
+  );
+  const result = JSON.parse(output.trim().split("\n").at(-1)!);
+
+  expect(result.routes).toEqual([
+    {
+      key: "POST /orders",
+      type: "JWT",
+      auth: expect.stringMatching(/^orders-api-jwt-authorizer-/),
+    },
+  ]);
+  expect(result.responses).toEqual([
+    { statusCode: 201, body: '{"id":"o1"}' },
+    {
+      statusCode: 400,
+      body: "The request's JWT claims are not valid: sub must be a string",
+    },
+  ]);
+
+  const bundle = readFileSync(
+    path.join(root, "dist/runtime/create-order/index.mjs"),
+    "utf8",
+  );
+  expect(bundle).toContain("apiGateway.bind({}).defineRoute({");
+  expect(bundle).toContain("auth: { claims: Claims }");
+  expect(bundle).not.toMatch(
+    /@aws-sdk|aws\.iac|LambdaGroup|ordersApi|userAuth|issuer\.example/,
+  );
+});

@@ -69,6 +69,19 @@ export const apiGateway = {
   },
   schema(body, options) { return { kind: options?.claims ? "apiGateway-jwt" : "apiGateway", schema: body, claims: options?.claims }; },
 };
+
+export const eventBridge = {
+  /** @runtime */
+  defineSchedule(options) { return { kind: "eventBridge", schedule: options }; },
+  schedule() { return { kind: "eventBridge" }; },
+};
+`;
+
+export const awsEventBridge = `
+export const rate = (rate, unit) => ({ type: "rate", rate, unit });
+
+/** @resource */
+export function schedule(config) {}
 `;
 
 export const awsApiGateway = `
@@ -91,10 +104,12 @@ export const packages = {
   "@notation/aws/lambda": "node_modules/@notation/aws/lambda.js",
   "@notation/aws/sqs": "node_modules/@notation/aws/sqs.js",
   "@notation/aws/api-gateway": "node_modules/@notation/aws/api-gateway.js",
+  "@notation/aws/event-bridge": "node_modules/@notation/aws/event-bridge.js",
 };
 
 export const packageFiles = {
   "node_modules/@notation/aws/lambda.js": awsLambda,
   "node_modules/@notation/aws/sqs.js": awsSqs,
   "node_modules/@notation/aws/api-gateway.js": awsApiGateway,
+  "node_modules/@notation/aws/event-bridge.js": awsEventBridge,
 };

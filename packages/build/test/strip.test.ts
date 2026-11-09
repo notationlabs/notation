@@ -215,6 +215,29 @@ describe("stripForRuntime", () => {
     expect(code).not.toContain("../infra/orders");
   });
 
+  it("replaces each argument of a @runtime mark with no names with undefined", () => {
+    const { analysis, analyses } = setup(
+      handlerModule
+        .replace(
+          `import { Order, type OrderType } from "./schema";`,
+          `import { Order, type OrderType } from "./schema";\nimport { rate } from "@notation/aws/event-bridge";`,
+        )
+        .replace(
+          `import { $lambda, apiGateway, sqs, type LambdaHandler }`,
+          `import { $lambda, eventBridge, type LambdaHandler }`,
+        )
+        .replace(
+          "apiGateway.schema(Order)",
+          `eventBridge.defineSchedule({ name: "nightly", schedule: rate(1, "day") })`,
+        ),
+    );
+    const { code } = stripForRuntime(analysis, analyses)!;
+    expect(code).toContain(
+      "event: () => eventBridge.defineSchedule(undefined),",
+    );
+    expect(code).not.toContain("@notation/aws/event-bridge");
+  });
+
   it("removes an import whose uses it removed, and keeps the others", () => {
     const { analysis, analyses } = setup();
     const { code } = stripForRuntime(analysis, analyses)!;
