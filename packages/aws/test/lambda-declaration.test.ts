@@ -151,6 +151,31 @@ test("an invalid id throws when the declaration is made", () => {
   );
 });
 
+test("an invalid name and a duplicate id name $lambda in the error", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      inModule($lambda({ id: "orders", name: "bad.name" }));
+    }),
+  ).rejects.toThrow('Invalid $lambda name "bad.name"');
+  await expect(
+    collectResourceGraph(() => {
+      inModule($lambda({ id: "orders" }));
+      inModule($lambda({ id: "orders" }));
+    }),
+  ).rejects.toThrow('Duplicate $lambda id "orders"');
+});
+
+test("a $lambda whose AWS name is another Lambda's throws, with both modules", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      inModule($lambda({ id: "a", name: "b" }), "runtime/a.ts");
+      inModule($lambda({ id: "b" }), "runtime/b.ts");
+    }),
+  ).rejects.toThrow(
+    '$lambda({ id: "a", name: "b" }) in runtime/a.ts and $lambda({ id: "b" }) in runtime/b.ts both give a Lambda function the AWS name "b".',
+  );
+});
+
 test("env() in infra returns the evaluated env", () => {
   const fn = $lambda({
     id: "orders",

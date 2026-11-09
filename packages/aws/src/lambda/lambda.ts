@@ -2,7 +2,7 @@ import * as aws from "@notation/aws.iac";
 import * as std from "@notation/std.iac";
 import { getActiveResourceCollection } from "@notation/resource";
 import path from "path";
-import { awsName } from "src/naming";
+import { awsName, claimAwsName, describeDeclaration } from "src/naming";
 import { assertId, assertName, type NameSafe } from "src/id";
 
 export type LambdaConfig = {
@@ -50,12 +50,26 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
     return true;
   }
 
-  constructor(config: LambdaConfig) {
-    assertId("lambda()", config.id);
-    assertName("lambda()", config.name);
-    assertUniqueLambdaId(config.id);
+  /**
+   * @param declaredBy The function that declares the Lambda, such as
+   * `$lambda`, and the module that declares it, for errors.
+   */
+  constructor(
+    config: LambdaConfig,
+    declaredBy: { caller: string; where?: string } = { caller: "lambda()" },
+  ) {
+    const { caller, where } = declaredBy;
+    assertId(caller, config.id);
+    assertName(caller, config.name);
+    assertUniqueLambdaId(caller, config.id);
+    const functionName = awsName("lambdaFunction", config.name ?? config.id);
+    claimAwsName(
+      "Lambda function",
+      functionName,
+      describeDeclaration(caller, config.id, config.name, where),
+    );
     super("Lambda", config.id, config);
-    const { fn, role } = build(this, config);
+    const { fn, role } = build(this, config, functionName);
     this.fn = fn;
     this.role = role;
   }
@@ -95,7 +109,7 @@ export function lambda<const Id extends string>(
 }
 
 // IAM role names are unique regardless of case, so compare IDs in lower case
-function assertUniqueLambdaId(id: string) {
+function assertUniqueLambdaId(caller: string, id: string) {
   const collection = getActiveResourceCollection();
   if (!collection) return;
   const clash = collection.graph.resourceGroups.find(
@@ -106,13 +120,17 @@ function assertUniqueLambdaId(id: string) {
     const existing = clash.id;
     throw new Error(
       existing === id
-        ? `Duplicate lambda id "${id}": another lambda in this deployment already uses it. Give each lambda a unique id.`
-        : `Duplicate lambda id "${id}": it clashes with "${existing}", because AWS IAM role names ignore case. Give each lambda a unique id.`,
+        ? `Duplicate ${caller} id "${id}": another Lambda in this deployment already uses it. Give each Lambda a unique id.`
+        : `Duplicate ${caller} id "${id}": it clashes with "${existing}", because AWS IAM role names ignore case. Give each Lambda a unique id.`,
     );
   }
 }
 
-const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
+const build = (
+  functionGroup: LambdaGroup,
+  config: LambdaConfig,
+  functionName: string,
+) => {
   const filePath = config.code.path;
   const lambdaId = config.id;
 
@@ -152,7 +170,7 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
   const lambdaResource = functionGroup.add(
     new aws.lambda.LambdaFunction(lambdaId, {
       config: {
-        FunctionName: awsName("lambdaFunction", config.name ?? lambdaId),
+        FunctionName: functionName,
         Handler: `${fileName}.${config.handler ?? "handler"}`,
         Runtime: runtime,
         Timeout: config.timeout,

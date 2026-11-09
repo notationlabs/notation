@@ -91,7 +91,7 @@ test("two lambdas with the same id in one deployment throw", async () => {
       lambda({ id: "fn", code });
       lambda({ id: "fn", code });
     }),
-  ).rejects.toThrow('Duplicate lambda id "fn"');
+  ).rejects.toThrow('Duplicate lambda() id "fn"');
 });
 
 test("ids that differ only in case clash, as IAM role names ignore case", async () => {
@@ -100,7 +100,29 @@ test("ids that differ only in case clash, as IAM role names ignore case", async 
       lambda({ id: "myFn", code });
       lambda({ id: "myfn", code });
     }),
-  ).rejects.toThrow(/Duplicate lambda id "myfn": it clashes with "myFn"/);
+  ).rejects.toThrow(/Duplicate lambda\(\) id "myfn": it clashes with "myFn"/);
+});
+
+test("a name that is another Lambda's id throws, and names both declarations", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      lambda({ id: "b", code });
+      lambda({ id: "a", name: "b", code });
+    }),
+  ).rejects.toThrow(
+    'lambda({ id: "b" }) and lambda({ id: "a", name: "b" }) both give a Lambda function the AWS name "b". Give one of them another name.',
+  );
+});
+
+test("two Lambdas in different collections can have the same name", async () => {
+  await collectResourceGraph(() => {
+    lambda({ id: "a", name: "b", code });
+  });
+  await expect(
+    collectResourceGraph(() => {
+      lambda({ id: "b", code });
+    }),
+  ).resolves.toBeDefined();
 });
 
 test("distinct ids in one deployment are fine", async () => {

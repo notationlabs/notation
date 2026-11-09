@@ -129,18 +129,21 @@ function buildGroup(
     );
   }
   const modulePath = fromProjectRoot(record.path);
-  const group = new LambdaGroup({
-    id: config.id,
-    name: config.name,
-    code: {
-      type: "file",
-      path: toProjectRoot(filePaths.dist.runtime.index(modulePath)),
+  const group = new LambdaGroup(
+    {
+      id: config.id,
+      name: config.name,
+      code: {
+        type: "file",
+        path: toProjectRoot(filePaths.dist.runtime.index(modulePath)),
+      },
+      handler: "handler",
+      runtime: config.runtime,
+      timeout: config.timeout,
+      memory: config.memory,
     },
-    handler: "handler",
-    runtime: config.runtime,
-    timeout: config.timeout,
-    memory: config.memory,
-  });
+    { caller: "$lambda", where: record.path },
+  );
   const env = config.env?.();
   if (env && Object.keys(env).length > 0) {
     group.fn.contribute({ Environment: { Variables: env } });
