@@ -163,12 +163,7 @@ function removeEmptiedImports(
  * The object that replaces an expression of a kept option which names a
  * resource from an infra module, or `undefined` for any other expression.
  * The expression can be a name, or a member of an object literal or of a
- * namespace import, such as `queues.orders`. Adds an import to `added` for
- * each runtime option of the resource: by absolute path for a project file,
- * and by name for a package. An option can come from a shared module, a
- * package, or a file that no glob matches and that calls no resource
- * function at its top level, as for any other value that the runtime build
- * bundles.
+ * namespace import, such as `queues.orders`.
  * A value made by a call to a function that isn't a resource function fails.
  * The value can be a resource that a helper makes, or a plain value such as a
  * schema, and the build can't tell which. A resource whose `@resource` mark
@@ -212,21 +207,45 @@ function resourceStub(
     );
   }
   if (!mark.runtime) return undefined;
-  const definitionFile = found.value.file;
+  return runtimeOptions(call, mark.runtime, text, owner, file, analyses, added);
+}
+
+/**
+ * The object of a resource's runtime options, such as `{ schema:
+ * __notation_schema_0 }`, read from the object literal of its call. Adds an
+ * import to `added` for each option that the call sets: by absolute path for
+ * a project file, and by name for a package. An option can come from a shared
+ * module, a package, or a file that no glob matches and that calls no
+ * resource function at its top level, as for any other value that the
+ * runtime build bundles.
+ */
+function runtimeOptions(
+  call: Node,
+  options: string[],
+  // The expression that names the resource, as errors show it.
+  text: string,
+  // The module that declares the resource.
+  owner: ModuleAnalysis,
+  // The function's module, which reads the options.
+  file: string,
+  analyses: ModuleAnalyses,
+  added: string[],
+): string {
+  const definitionFile = owner.table.module.file;
   const first = call.arguments[0];
   const config = first ? unwrap(first) : undefined;
   const where = (n: Node) =>
     `${analyses.show(definitionFile)}:${location(owner.table.module.source, n.start)}`;
-  if (mark.runtime.length > 0 && config?.type !== "ObjectExpression") {
+  if (options.length > 0 && config?.type !== "ObjectExpression") {
     throw new Error(
-      `${where(call)}: ${text} must be declared with an object literal, so the build can find its ${mark.runtime.join(", ")}, which the function in ${analyses.show(file)} reads.`,
+      `${where(call)}: ${text} must be declared with an object literal, so the build can find its ${options.join(", ")}, which the function in ${analyses.show(file)} reads.`,
     );
   }
   const properties: Node[] = config?.properties ?? [];
   // A spread can hold an option, and the build can't read it there.
   const spread = properties.find((p) => p.type === "SpreadElement");
   const entries: string[] = [];
-  for (const option of mark.runtime) {
+  for (const option of options) {
     const property = properties.find(
       (p) => p.type === "Property" && keyOf(p) === option,
     );
