@@ -67,7 +67,12 @@ export const apiGateway = {
       },
     };
   },
-  schema(body, options) { return { kind: options?.claims ? "apiGateway-jwt" : "apiGateway", schema: body, claims: options?.claims }; },
+  schema(body) {
+    const event = { kind: "apiGateway", schema: body, claims: undefined };
+    return Object.defineProperty(event, "authSchema", {
+      value: (claims) => ({ kind: "apiGateway-jwt", schema: body, claims }),
+    });
+  },
 };
 
 export const eventBridge = {

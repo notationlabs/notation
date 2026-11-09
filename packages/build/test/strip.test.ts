@@ -36,7 +36,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event: Local) => {
 const files = {
   ...packageFiles,
   "runtime/handler.ts": handlerModule,
-  "runtime/schema.ts": `export const Order = {};\nexport type OrderType = {};`,
+  "runtime/schema.ts": `export const Order = {};\nexport const Claims = {};\nexport type OrderType = {};`,
   "runtime/sentry.ts": `console.log("init");`,
   "infra/orders.ts": `import { createQueue } from "@notation/aws/sqs";\nexport const ordersQueue = createQueue({ id: "orders" });\nexport const unused = 1;`,
 };
@@ -201,6 +201,27 @@ describe("stripForRuntime", () => {
 });`,
     );
     expect(code).toContain("export const handler");
+  });
+
+  it("leaves apiGateway.schema(Order).authSchema(Claims) as it is", () => {
+    const { analysis, analyses } = setup(
+      handlerModule
+        .replace(
+          `import { Order, type OrderType } from "./schema";`,
+          `import { Claims, Order, type OrderType } from "./schema";`,
+        )
+        .replace(
+          "apiGateway.schema(Order)",
+          "apiGateway.schema(Order).authSchema(Claims)",
+        ),
+    );
+    const { code } = stripForRuntime(analysis, analyses)!;
+    expect(code).toContain(
+      "event: () => apiGateway.schema(Order).authSchema(Claims),",
+    );
+    expect(code).toContain(
+      `import { Claims, Order, type OrderType } from "./schema";`,
+    );
   });
 
   it("replaces an argument that the @runtime mark doesn't name with undefined, even one that reads infra", () => {
