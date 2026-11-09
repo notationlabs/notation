@@ -916,43 +916,43 @@ describe("stripForRuntime", () => {
 
     it("replaces a shorthand auth option", () => {
       const code = strip(
-        `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", auth })`,
+        `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", schema: null, auth })`,
         [userAuth.replace("userAuth", "auth")],
         `import { ordersApi, auth } from "../infra/api";`,
       );
       expect(code).toContain(
-        `defineRoute({ method: "GET", path: "/orders", auth: { claims: __notation_claims_0 } })`,
+        `defineRoute({ method: "GET", path: "/orders", schema: null, auth: { claims: __notation_claims_0 } })`,
       );
     });
 
     it("replaces an authorizer with no claims with {}", () => {
       const code = strip(
-        `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", auth: userAuth })`,
+        `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", schema: null, auth: userAuth })`,
         [
           `export const userAuth = jwtAuthorizer({ id: "user-auth", api: ordersApi, issuer: "https://issuer", audience: ["app"] });`,
         ],
       );
       expect(code).toContain(
-        `apiGateway.bind({}).defineRoute({ method: "GET", path: "/orders", auth: {} })`,
+        `apiGateway.bind({}).defineRoute({ method: "GET", path: "/orders", schema: null, auth: {} })`,
       );
       expect(code).not.toContain("__notation_");
     });
 
     it("leaves a route with no auth option", () => {
       const code = strip(
-        `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders" })`,
+        `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", schema: null })`,
         [],
         `import { ordersApi } from "../infra/api";`,
       );
       expect(code).toContain(
-        `apiGateway.bind({}).defineRoute({ method: "GET", path: "/orders" })`,
+        `apiGateway.bind({}).defineRoute({ method: "GET", path: "/orders", schema: null })`,
       );
       expect(code).not.toContain("../infra/api");
     });
 
     it("finds the mark of a method that a named function returns", () => {
       const code = strip(
-        `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", auth: userAuth })`,
+        `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", schema: null, auth: userAuth })`,
         [userAuth],
         undefined,
         {
@@ -972,14 +972,14 @@ describe("stripForRuntime", () => {
         },
       );
       expect(code).toContain(
-        `apiGateway.bind({}).defineRoute({ method: "GET", path: "/orders", auth: { claims: __notation_claims_0 } })`,
+        `apiGateway.bind({}).defineRoute({ method: "GET", path: "/orders", schema: null, auth: { claims: __notation_claims_0 } })`,
       );
     });
 
     it("fails when the auth option refers to an infra value that isn't a resource with runtime options", () => {
       expect(() =>
         strip(
-          `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", auth: userAuth.claims })`,
+          `apiGateway.bind(ordersApi).defineRoute({ method: "GET", path: "/orders", schema: null, auth: userAuth.claims })`,
           [userAuth],
         ),
       ).toThrow(

@@ -78,7 +78,7 @@ export const apiGateway = {
 export const eventBridge = {
   /** @runtime */
   defineSchedule(options) { return { kind: "eventBridge", schedule: options }; },
-  schedule() { return { kind: "eventBridge" }; },
+  schema(detail) { return { kind: "eventBridge" }; },
 };
 `;
 
