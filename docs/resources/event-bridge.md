@@ -33,7 +33,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 When infra has finished loading, the declaration makes an EventBridge rule that targets the function, and the permission that lets the rule invoke it. Infra declares nothing for it.
 
-The function doesn't read the schedule, so the runtime build removes the options: the call becomes `eventBridge.defineSchedule(undefined)`, and the `rate` import goes with it.
+The runtime build keeps the options. `@notation/aws/event-bridge` sets `"sideEffects": false`, so the bundle includes `rate()` and leaves out the rest of the package.
 
 ```ts [@notation/aws/lambda]
 type ScheduleOptions = {

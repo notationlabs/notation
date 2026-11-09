@@ -129,8 +129,6 @@ The event of `apiGateway.schema(body)` has the kind `apiGateway`, so only routes
 apiGateway.schema(body: StandardSchemaV1 | null).authSchema(claims?: StandardSchemaV1);
 ```
 
-`authSchema` is a non-enumerable property of the event, so it is not part of the event's data that `decode()` and the infra checks read.
-
 ## `router(api)`
 
 ```ts [infra/api.ts]
