@@ -16,7 +16,7 @@ type ScheduleConfig = {
    * The Lambda to invoke on the schedule: a declaration from `$lambda`,
    * passed as `() => lambda`, or a Lambda group from `lambda()`.
    */
-  target: LambdaTarget<"scheduled" | "none">;
+  target: LambdaTarget<"eventBridge" | "none">;
 };
 
 export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
@@ -68,7 +68,7 @@ export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleConfig> {
 export function schedule(config: ScheduleConfig): void {
   whenLoaded(() => {
     const lambdaGroup = resolveLambda(config.target, "schedule()", [
-      "scheduled",
+      "eventBridge",
       "none",
     ]);
     new ScheduleGroup(config, lambdaGroup);

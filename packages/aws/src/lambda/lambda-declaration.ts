@@ -195,17 +195,13 @@ export function resolveLambda(
   const group = registered.build();
   const event = registered.kind();
   if (!kinds.includes(event)) {
-    const call =
-      event === "sqs" && "queue" in registered.event()!
-        ? "sqs.bind(queue)"
-        : eventCalls[event];
     throw new Error(
       `${caller} sends ${kinds
         .filter((k) => k !== "none")
         .map((k) => eventNames[k])
         .join(
           " or ",
-        )}, but the Lambda "${group.id}" is declared with ${event === "none" ? "no event" : `event: () => ${call}`}.`,
+        )}, but the Lambda "${group.id}" is declared with ${event === "none" ? "no event" : `event: () => ${eventCall(registered.event()!)}`}.`,
     );
   }
   return group;
@@ -213,19 +209,25 @@ export function resolveLambda(
 
 const eventNames: Record<LambdaEventKind, string> = {
   sqs: "sqs events",
-  http: "http events",
-  "http-jwt": "http events with a JWT authorizer",
-  scheduled: "scheduled events",
+  apiGateway: "apiGateway events",
+  "apiGateway-jwt": "apiGateway events with a JWT authorizer",
+  eventBridge: "eventBridge events",
   none: "any events",
 };
 
-const eventCalls: Record<LambdaEventKind, string> = {
-  sqs: "sqs.schema(schema)",
-  http: "http()",
-  "http-jwt": "http({ auth: jwt() })",
-  scheduled: "scheduled()",
-  none: "",
-};
+/** The call that declares an event, as errors show it. */
+export function eventCall(event: LambdaEvent): string {
+  switch (event.kind) {
+    case "sqs":
+      return "queue" in event ? "sqs.bind(queue)" : "sqs.schema(schema)";
+    case "apiGateway":
+      return "apiGateway.schema(body)";
+    case "apiGateway-jwt":
+      return "apiGateway.schema(body, { claims })";
+    case "eventBridge":
+      return "eventBridge.schedule()";
+  }
+}
 
 /**
  * The id and the event of a target's declaration, or undefined for a group

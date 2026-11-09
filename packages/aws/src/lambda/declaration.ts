@@ -49,52 +49,7 @@ export type SqsOptions = {
   maxBatchingWindow?: number;
 };
 
-/**
- * The function receives requests through a route with a JWT authorizer.
- * `Claims` types the token's claims in the event. It is not checked against
- * the tokens.
- */
-export type JwtAuth<Claims = JwtClaims> = {
-  type: "jwt";
-  /** Carries the claims type. It is never set. */
-  readonly "~claims"?: Claims;
-};
-
-type JwtClaims = APIGatewayEventRequestContextJWTAuthorizer["jwt"]["claims"];
-
-export type HttpAuth = JwtAuth<any>;
-
-/**
- * The function receives HTTP API requests, whose JSON body `decode()`
- * validates with `schema`. A request through a route with a JWT authorizer
- * has the kind `http-jwt`, because its event also holds the token's claims.
- */
-export type HttpEvent<
-  S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
-  A extends HttpAuth | undefined = HttpAuth | undefined,
-> = {
-  kind: A extends HttpAuth ? "http-jwt" : "http";
-  schema: S;
-  auth: A;
-};
-
-export type HttpOptions<
-  S extends StandardSchemaV1 | undefined,
-  A extends HttpAuth | undefined,
-> = {
-  /** Validates the JSON body of a request in `decode()`. */
-  body?: S;
-  /**
-   * The route's authorizer, such as `jwt<Claims>()`. Infra can only wire the
-   * function to routes with this authorizer.
-   */
-  auth?: A;
-};
-
-/** The function receives EventBridge scheduled events. */
-export type ScheduledEvent = { kind: "scheduled" };
-
-export type LambdaEvent = SqsEvent | HttpEvent | ScheduledEvent;
+export type LambdaEvent = SqsEvent | ApiGatewayEvent | EventBridgeScheduleEvent;
 
 /** The kind of a Lambda's event, or `none` for a Lambda declared without one. */
 export type LambdaEventKind = LambdaEvent["kind"] | "none";
@@ -129,33 +84,93 @@ export const sqs = {
   },
 };
 
-/**
- * The function receives HTTP API requests, from routes on an API.
- * @runtime options
- */
-export function http<
-  S extends StandardSchemaV1 | undefined = undefined,
-  A extends HttpAuth | undefined = undefined,
->(options: HttpOptions<S, A> = {}): HttpEvent<S, A> {
-  return {
-    kind: (options.auth ? "http-jwt" : "http") as HttpEvent<S, A>["kind"],
-    schema: options.body as S,
-    auth: options.auth as A,
-  };
-}
+/** The claims of a JWT, as API Gateway passes them to the function. */
+export type JwtClaims =
+  APIGatewayEventRequestContextJWTAuthorizer["jwt"]["claims"];
+
+export type ApiGatewayKind = "apiGateway" | "apiGateway-jwt";
+
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 /**
- * The function's routes have a JWT authorizer. `Claims` types the token's
- * claims in the handler's event.
+ * The function receives API Gateway HTTP API requests. `decode()` validates
+ * the JSON body with `schema`, and the JWT claims with `claims`. A request
+ * through a route with a JWT authorizer has the kind `apiGateway-jwt`,
+ * because its event also holds the token's claims.
  */
-export function jwt<Claims = JwtClaims>(): JwtAuth<Claims> {
-  return { type: "jwt" };
-}
+export type ApiGatewayEvent<
+  S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
+  C extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
+  K extends ApiGatewayKind = ApiGatewayKind,
+> = {
+  kind: K;
+  schema: S;
+  claims: C;
+};
 
-/** The function receives EventBridge scheduled events, from a schedule. */
-export function scheduled(): ScheduledEvent {
-  return { kind: "scheduled" };
-}
+/**
+ * A JWT authorizer, from `jwtAuthorizer()`. In the function it holds only
+ * the claims schema, as the runtime build replaces the authorizer with it.
+ */
+export type AuthorizerSource<
+  C extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
+> = {
+  readonly claims: C;
+};
+
+export type ApiGatewaySchemaOptions<C extends StandardSchemaV1 | undefined> = {
+  /**
+   * Validates the JWT claims of a request in `decode()`. A declaration with
+   * claims receives requests only through routes with a JWT authorizer, whose
+   * claims schema must be this schema.
+   */
+  claims?: C;
+};
+
+type ApiGatewayKindOf<C> = [C] extends [StandardSchemaV1]
+  ? "apiGateway-jwt"
+  : "apiGateway";
+
+/**
+ * The function receives API Gateway HTTP API requests, from routes that
+ * infra makes with `router()`.
+ */
+export const apiGateway = {
+  /**
+   * The function receives requests from routes that infra makes. `decode()`
+   * validates the JSON body with `body`, and the JWT claims with
+   * `options.claims`. With claims, the function receives requests only
+   * through routes with a JWT authorizer whose claims schema is the same
+   * schema. Without claims, it receives requests only through routes with no
+   * authorizer.
+   */
+  schema<
+    S extends StandardSchemaV1 | undefined = undefined,
+    C extends StandardSchemaV1 | undefined = undefined,
+  >(
+    body?: S,
+    options?: ApiGatewaySchemaOptions<C>,
+  ): ApiGatewayEvent<S, C, ApiGatewayKindOf<C>> {
+    return {
+      kind: (options?.claims
+        ? "apiGateway-jwt"
+        : "apiGateway") as ApiGatewayKindOf<C>,
+      schema: body as S,
+      claims: options?.claims as C,
+    };
+  },
+};
+
+/** The function receives EventBridge scheduled events. */
+export type EventBridgeScheduleEvent = { kind: "eventBridge" };
+
+/** The function receives EventBridge scheduled events. */
+export const eventBridge = {
+  /** The function receives the events of schedules that infra makes. */
+  schedule(): EventBridgeScheduleEvent {
+    return { kind: "eventBridge" };
+  },
+};
 
 type KindOf<E> = E extends { kind: infer K } ? K : "none";
 
@@ -163,13 +178,20 @@ type Decoded<S> = S extends StandardSchemaV1
   ? StandardSchemaV1.InferOutput<S>
   : unknown;
 
+// A request to a function with a claims schema must hold the JWT claims.
+type ApiGatewayRequest<C> = Pick<
+  APIGatewayProxyEventV2,
+  "body" | "isBase64Encoded"
+> &
+  ([C] extends [StandardSchemaV1]
+    ? { requestContext: { authorizer: { jwt: { claims: unknown } } } }
+    : {});
+
 type DecodeFor<E> =
   E extends SqsEvent<infer S>
     ? (record: SQSRecord) => Promise<Decoded<S>>
-    : E extends HttpEvent<infer S, any>
-      ? (
-          event: Pick<APIGatewayProxyEventV2, "body" | "isBase64Encoded">,
-        ) => Promise<Decoded<S>>
+    : E extends ApiGatewayEvent<infer S, infer C, any>
+      ? (event: ApiGatewayRequest<C>) => Promise<Decoded<S>>
       : never;
 
 /**
@@ -193,8 +215,10 @@ export interface Lambda<
   env(): Readonly<Env>;
   /**
    * Parses one item that the function received as JSON, and validates it
-   * with the event's schema. For SQS the item is a record, and for HTTP it
-   * is the request. Throws a `DecodeError` when the item is not valid.
+   * with the event's schema. For SQS the item is a record, and for API
+   * Gateway it is the request. For a request, `decode()` also validates the
+   * JWT claims with the event's claims schema, if it has one, but returns
+   * only the body. Throws a `DecodeError` when the item is not valid.
    */
   decode: DecodeFor<E>;
 }
@@ -211,11 +235,11 @@ type HandlerFor<E> = E extends SqsEvent
       event: SQSEvent,
       context: Context,
     ) => SQSBatchResponse | void | Promise<SQSBatchResponse | void>
-  : E extends HttpEvent<any, JwtAuth<infer Claims>>
-    ? HttpHandler<APIGatewayJWTProxyEventV2<Claims>>
-    : E extends HttpEvent
+  : E extends ApiGatewayEvent<any, any, "apiGateway-jwt">
+    ? HttpHandler<APIGatewayJWTProxyEventV2<JwtClaims>>
+    : E extends ApiGatewayEvent<any, any, "apiGateway">
       ? HttpHandler<APIGatewayProxyEventV2>
-      : E extends ScheduledEvent
+      : E extends EventBridgeScheduleEvent
         ? (
             event: EventBridgeEvent<"Scheduled Event", unknown>,
             context: Context,
@@ -266,35 +290,63 @@ export function createDecode(
   let event: LambdaEvent | undefined;
   return async (item) => {
     event ??= options.event?.();
-    if (!event || event.kind === "scheduled") {
+    if (!event || event.kind === "eventBridge") {
       throw new Error(
-        `decode() needs a Lambda declared with event: () => sqs.bind(queue), event: () => sqs.schema(schema) or event: () => http({ body: schema }).`,
+        `decode() needs a Lambda declared with event: () => sqs.bind(queue), sqs.schema(schema), apiGateway.bind(api).defineRoute(options) or apiGateway.schema(body).`,
       );
     }
+    const isSqs = event.kind === "sqs";
+    const name = isSqs ? "message" : "request";
+    if (event.kind !== "sqs" && event.claims) {
+      await validateClaims(event.claims, item);
+    }
     const body =
-      event.kind !== "sqs" && item?.isBase64Encoded
+      !isSqs && item?.isBase64Encoded
         ? Buffer.from(item.body ?? "", "base64").toString("utf8")
         : item?.body;
+    // A request with no body, such as a GET, has nothing to parse.
+    if (!isSqs && !event.schema && (body === undefined || body === "")) {
+      return undefined;
+    }
     let value: unknown;
     try {
       value = JSON.parse(body);
     } catch {
-      throw new DecodeError(
-        `The ${event.kind === "sqs" ? "message" : "request"} body is not valid JSON.`,
-      );
+      throw new DecodeError(`The ${name} body is not valid JSON.`);
     }
     if (!event.schema) return value;
     const result = await event.schema["~standard"].validate(value);
     if (result.issues) {
-      const details = result.issues.map((issue) => issue.message).join("; ");
       throw new DecodeError(
-        `The ${event.kind === "sqs" ? "message" : "request"} body is not valid: ${details}`,
+        `The ${name} body is not valid: ${details(result.issues)}`,
         result.issues,
       );
     }
     return result.value;
   };
 }
+
+async function validateClaims(
+  schema: StandardSchemaV1,
+  request: any,
+): Promise<void> {
+  const claims = request?.requestContext?.authorizer?.jwt?.claims;
+  if (claims === undefined) {
+    throw new DecodeError(
+      "The request has no JWT claims. Route it through a route with a JWT authorizer.",
+    );
+  }
+  const result = await schema["~standard"].validate(claims);
+  if (result.issues) {
+    throw new DecodeError(
+      `The request's JWT claims are not valid: ${details(result.issues)}`,
+      result.issues,
+    );
+  }
+}
+
+const details = (issues: ReadonlyArray<StandardSchemaV1.Issue>) =>
+  issues.map((issue) => issue.message).join("; ");
 
 /**
  * Makes `env()` for the function. The runtime build keeps the names of the

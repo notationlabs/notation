@@ -8,10 +8,10 @@ import {
 import * as infra from "src/lambda";
 import {
   $lambda,
+  apiGateway,
   DecodeError,
-  http,
-  jwt,
   sqs,
+  type JwtClaims,
   type LambdaHandler,
 } from "src/lambda";
 import * as runtime from "src/lambda/runtime";
@@ -182,8 +182,8 @@ test("decode() validates the body of an SQS record with the schema of sqs.schema
   await expect(fn.decode(record("{}"))).rejects.toBeInstanceOf(DecodeError);
 });
 
-test("decode() for http reads a base64 body", async () => {
-  const fn = $lambda({ id: "orders", event: () => http({ body: Order }) });
+test("decode() for apiGateway reads a base64 body", async () => {
+  const fn = $lambda({ id: "orders", event: () => apiGateway.schema(Order) });
   const body = Buffer.from('{"id":"1"}').toString("base64");
 
   await expect(fn.decode({ body, isBase64Encoded: true })).resolves.toEqual({
@@ -254,40 +254,134 @@ test("a declaration types its handler, env() and decode()", () => {
   $lambda({ id: "numbers", env: () => ({ N: 1 }) });
 });
 
-test("a JWT declaration types the claims in its handler's event", () => {
-  type Claims = { sub: string };
+type Claims = { sub: string };
+
+const Claims: StandardSchemaV1<unknown, Claims> = {
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate: (value) =>
+      typeof (value as Claims | undefined)?.sub === "string"
+        ? { value: value as Claims }
+        : { issues: [{ message: "sub must be a string" }] },
+  },
+};
+
+const request = (body: string | undefined, claims?: unknown) => ({
+  body,
+  isBase64Encoded: false,
+  requestContext: { authorizer: { jwt: { claims } } },
+});
+
+test("a declaration with claims types its handler's event as a request through a JWT authorizer", () => {
   const user = $lambda({
     id: "user",
-    event: () => http({ body: Order, auth: jwt<Claims>() }),
+    event: () => apiGateway.schema(Order, { claims: Claims }),
   });
   type Event = Parameters<LambdaHandler<typeof user>>[0];
 
   expectTypeOf<Event>().toExtend<APIGatewayProxyEventV2>();
+  // decode() validates the claims, but the event holds them as API Gateway
+  // sends them.
   expectTypeOf<
     Event["requestContext"]["authorizer"]["jwt"]["claims"]
-  >().toEqualTypeOf<Claims>();
+  >().toEqualTypeOf<JwtClaims>();
   expectTypeOf(user.decode).returns.resolves.toEqualTypeOf<Order>();
 
-  const plain = $lambda({ id: "plain", event: () => http() });
+  const plain = $lambda({ id: "plain", event: () => apiGateway.schema() });
   expectTypeOf<
     Parameters<LambdaHandler<typeof plain>>[0]
   >().toEqualTypeOf<APIGatewayProxyEventV2>();
+  expectTypeOf(plain.decode).returns.resolves.toEqualTypeOf<unknown>();
 
   const orders = $lambda({ id: "orders", event: () => sqs.schema(Order) });
   const ordersHandler: LambdaHandler<typeof orders> = async () => {};
   // @ts-expect-error an SQS handler can't serve a JWT Lambda
   const wrong: LambdaHandler<typeof user> = ordersHandler;
   void wrong;
+
+  // Only type-checked.
+  const typeOnly = () =>
+    // @ts-expect-error decode() of a declaration with claims needs the request's claims
+    user.decode({ body: "{}", isBase64Encoded: false });
+  void typeOnly;
 });
 
-test("decode() reads the body of a request to a JWT declaration", async () => {
+test("decode() validates the JWT claims of a request and returns the body", async () => {
   const fn = $lambda({
     id: "user",
-    event: () => http({ body: Order, auth: jwt() }),
+    event: () => apiGateway.schema(Order, { claims: Claims }),
   });
+
+  await expect(
+    fn.decode(request('{"id":"o1"}', { sub: "u1" })),
+  ).resolves.toEqual({ id: "o1" });
+  const error = await fn
+    .decode(request('{"id":"o1"}', { sub: 1 }))
+    .catch((e) => e);
+  expect(error).toBeInstanceOf(DecodeError);
+  expect(error.message).toBe(
+    "The request's JWT claims are not valid: sub must be a string",
+  );
+  expect(error.issues).toEqual([{ message: "sub must be a string" }]);
+});
+
+test("decode() throws a DecodeError for a request with no JWT claims, when the declaration has claims", async () => {
+  const fn = $lambda({
+    id: "user",
+    event: () => apiGateway.schema(undefined, { claims: Claims }),
+  });
+
+  await expect(
+    fn.decode({ body: "{}", isBase64Encoded: false } as any),
+  ).rejects.toThrow(
+    "The request has no JWT claims. Route it through a route with a JWT authorizer.",
+  );
+});
+
+test("decode() of a request with no body and no body schema returns undefined", async () => {
+  const fn = $lambda({
+    id: "user",
+    event: () => apiGateway.schema(undefined, { claims: Claims }),
+  });
+
+  await expect(fn.decode(request(undefined, { sub: "u1" }))).resolves.toBe(
+    undefined,
+  );
+  await expect(fn.decode(request(undefined, {}))).rejects.toThrow(
+    "sub must be a string",
+  );
+});
+
+test("decode() without a claims schema doesn't read the claims", async () => {
+  const fn = $lambda({ id: "orders", event: () => apiGateway.schema(Order) });
+
   await expect(
     fn.decode({ body: '{"id":"o1"}', isBase64Encoded: false }),
-  ).resolves.toEqual({
-    id: "o1",
+  ).resolves.toEqual({ id: "o1" });
+});
+
+test("the runtime variant validates claims as infra does", async () => {
+  const fn = runtime.$lambda({
+    id: "user",
+    event: () => runtime.apiGateway.schema(Order, { claims: Claims }),
   });
+
+  await expect(
+    fn.decode(request('{"id":"o1"}', { sub: "u1" })),
+  ).resolves.toEqual({ id: "o1" });
+  await expect(
+    fn.decode(request('{"id":"o1"}', { sub: 1 })),
+  ).rejects.toBeInstanceOf(DecodeError);
+});
+
+test("decode() of a declaration with an eventBridge event throws", async () => {
+  const fn = $lambda({
+    id: "nightly",
+    event: () => runtime.eventBridge.schedule(),
+  });
+
+  await expect((fn.decode as any)({})).rejects.toThrow(
+    "decode() needs a Lambda declared with event: () => sqs.bind(queue), sqs.schema(schema), apiGateway.bind(api).defineRoute(options) or apiGateway.schema(body).",
+  );
 });

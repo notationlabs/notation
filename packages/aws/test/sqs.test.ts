@@ -11,8 +11,8 @@ import {
 } from "@notation/resource";
 import {
   $lambda,
+  apiGateway,
   eventSourceMapping,
-  http,
   lambda,
   sqs,
   type Lambda,
@@ -251,10 +251,12 @@ test("eventSourceMapping of a declaration that a later module declares waits for
   expect(mappingOf(orders).id).toBe("orders-process-mapping");
 });
 
-test("eventSourceMapping of a declaration with an http event throws", async () => {
+test("eventSourceMapping of a declaration with an apiGateway event throws", async () => {
   await expect(
     collectResourceGraph(() => {
-      const fn = inModule($lambda({ id: "api", event: () => http() }));
+      const fn = inModule(
+        $lambda({ id: "api", event: () => apiGateway.schema() }),
+      );
       eventSourceMapping({
         source: queue({ name: "orders" }),
         // @ts-expect-error a queue can't feed a function of HTTP requests
@@ -262,7 +264,7 @@ test("eventSourceMapping of a declaration with an http event throws", async () =
       });
     }),
   ).rejects.toThrow(
-    'eventSourceMapping() sends sqs events, but the Lambda "api" is declared with event: () => http().',
+    'eventSourceMapping() sends sqs events, but the Lambda "api" is declared with event: () => apiGateway.schema(body).',
   );
 });
 

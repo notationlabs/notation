@@ -1,12 +1,12 @@
 import { test, expect } from "vitest";
-import { eventBridge } from "@notation/aws.iac";
+import { eventBridge as iac } from "@notation/aws.iac";
 import {
   collectResourceGraph,
   type ResourceGraph,
   type StandardSchemaV1,
 } from "@notation/resource";
 import { rate, schedule, ScheduleGroup } from "src/event-bridge";
-import { $lambda, lambda, LambdaGroup, scheduled, sqs } from "src/lambda";
+import { $lambda, eventBridge, lambda, LambdaGroup, sqs } from "src/lambda";
 import { inModule, lambdaGroup } from "./declare";
 
 const Anything: StandardSchemaV1 = {
@@ -33,7 +33,7 @@ test("each schedule on a lambda gets its own invoke permission", async () => {
   });
 
   const rules = fn.resources
-    .filter((r) => r instanceof eventBridge.LambdaEventBridgeRulePermission)
+    .filter((r) => r instanceof iac.LambdaEventBridgeRulePermission)
     .map((r) => r.dependencies.eventBridgeRule);
 
   expect(rules).toEqual([
@@ -83,7 +83,9 @@ test("the rule sends the bare event to the function", async () => {
 
 test("a schedule invokes a $lambda declaration", async () => {
   const graph = await collectResourceGraph(() => {
-    const fn = inModule($lambda({ id: "digest", event: () => scheduled() }));
+    const fn = inModule(
+      $lambda({ id: "digest", event: () => eventBridge.schedule() }),
+    );
     schedule({ name: "daily", schedule: rate(1, "day"), target: () => fn });
   });
   const fn = lambdaGroup(graph, "digest");
@@ -105,7 +107,7 @@ test("a schedule of a declaration with an sqs event throws", async () => {
       });
     }),
   ).rejects.toThrow(
-    'schedule() sends scheduled events, but the Lambda "process" is declared with event: () => sqs.schema(schema).',
+    'schedule() sends eventBridge events, but the Lambda "process" is declared with event: () => sqs.schema(schema).',
   );
 });
 
