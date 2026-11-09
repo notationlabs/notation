@@ -1,19 +1,17 @@
 import * as aws from "@notation/aws.iac";
-import {
-  resolveLambda,
-  whenLoaded,
-  type LambdaTarget,
-} from "src/lambda/lambda-declaration";
+import type { StandardSchemaV1 } from "@notation/resource";
+import { resolveLambda, whenLoaded } from "src/lambda/lambda-declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import type { ApiGroup } from "./api";
-import { AuthorizerConfig } from "./auth";
-import { authorizerKey, mapAuthConfig, mapAuthType } from "./utils";
+import type { HttpMethod } from "src/lambda/declaration";
+import type { JwtAuthorizerGroup } from "./auth";
+import { resourceId } from "src/id";
 
 type RouteGroupConfig = {
   apiGroup: ApiGroup;
-  method: string;
+  method: HttpMethod;
   path: `/${string}`;
-  auth: AuthorizerConfig;
+  auth?: JwtAuthorizerGroup<any>;
   lambdaGroup: LambdaGroup;
 };
 
@@ -22,8 +20,9 @@ export class RouteGroup extends aws.AwsResourceGroup {
 
   constructor({ apiGroup, method, path, auth, lambdaGroup }: RouteGroupConfig) {
     const apiResource = apiGroup.api;
-    const routeId = `${apiResource.id}-${method}-${path}`;
     const routeKey = `${method} ${path}`;
+    // The route key is last, as a path may hold `:`.
+    const routeId = resourceId("api-route", apiGroup.id, routeKey);
     super("API Gateway/Route", routeId);
 
     const lambdaResource = lambdaGroup.fn;
@@ -32,7 +31,7 @@ export class RouteGroup extends aws.AwsResourceGroup {
     // routes it serves
     const integration = lambdaGroup.addOnce(
       aws.apiGateway.LambdaIntegration,
-      `${apiResource.id}-${lambdaResource.id}-integration`,
+      resourceId("api-integration", apiGroup.id, lambdaGroup.id),
       {
         dependencies: {
           api: apiResource,
@@ -43,7 +42,7 @@ export class RouteGroup extends aws.AwsResourceGroup {
 
     lambdaGroup.addOnce(
       aws.lambda.LambdaApiGatewayV2Permission,
-      `${lambdaResource.id}-${apiResource.id}-permission`,
+      resourceId("api-permission", apiGroup.id, lambdaGroup.id),
       {
         dependencies: {
           api: apiResource,
@@ -52,33 +51,17 @@ export class RouteGroup extends aws.AwsResourceGroup {
       },
     );
 
-    let authorizer: aws.apiGateway.AuthInstance | undefined;
-
-    // an api allows 10 authorizers, so routes with the same jwt config share one
-    if (auth.type != "NONE") {
-      authorizer = apiGroup.addOnce(
-        aws.apiGateway.RouteAuth,
-        `${apiResource.id}-jwt-authorizer-${authorizerKey(auth)}`,
-        {
-          config: mapAuthConfig(apiResource.id, auth),
-          dependencies: {
-            api: apiResource,
-          },
-        },
-      );
-    }
-
     this.route = this.add(
       new aws.apiGateway.Route(routeId, {
         config: {
-          AuthorizationScopes: auth.scopes,
+          AuthorizationScopes: auth?.scopes ?? [],
           RouteKey: routeKey,
-          AuthorizationType: mapAuthType(auth),
+          AuthorizationType: auth ? "JWT" : "NONE",
         },
         dependencies: {
           api: apiResource,
           lambdaIntegration: integration,
-          auth: authorizer,
+          auth: auth?.auth,
         },
       }),
     );
@@ -86,25 +69,69 @@ export class RouteGroup extends aws.AwsResourceGroup {
 }
 
 /**
- * Routes requests for `method` and `path` on the API to a Lambda: a
- * declaration from `$lambda`, passed as `() => lambda`, or a Lambda
- * group from `lambda()`. A route with a JWT authorizer takes a declaration
- * with `http({ auth: jwt() })`, and a route without one takes `http()`. The
- * route is made when infra has finished loading.
+ * A Lambda that a route invokes: a declaration from `$lambda`, passed as
+ * `() => lambda`, or a Lambda group from `lambda()`. A route with no
+ * authorizer takes a declaration with `apiGateway.schema(body)`. A route with
+ * an authorizer takes a declaration with
+ * `apiGateway.schema(body).authSchema(claims)`, whose claims schema has the
+ * type of the authorizer's, or with `authSchema()` and no claims schema. An
+ * authorizer with no claims schema takes any claims schema. Both take a
+ * declaration with no event.
+ */
+export type ApiGatewayTarget<
+  A extends JwtAuthorizerGroup<any> | undefined = undefined,
+> =
+  | (() => {
+      readonly "~lambda"?:
+        | { kind: "none" }
+        | (A extends JwtAuthorizerGroup<infer C>
+            ? {
+                kind: "apiGateway-jwt";
+                event: {
+                  claims: [C] extends [undefined]
+                    ? any
+                    : (C & StandardSchemaV1) | undefined;
+                };
+              }
+            : { kind: "apiGateway" });
+    })
+  | LambdaGroup;
+
+/**
+ * Routes requests for `method` and `path` on the API to a Lambda. A route
+ * with an authorizer takes a declaration with `authSchema()`, whose claims
+ * schema is the authorizer's or unset, and a route without one takes a
+ * declaration with no authorizer.
+ * The route is made when infra has finished loading.
  * @resource
  */
-export function route(
+export function route<A extends JwtAuthorizerGroup<any> | undefined>(
   apiGroup: ApiGroup,
-  method: string, // todo: http methods only
+  method: HttpMethod,
   path: `/${string}`,
-  auth: AuthorizerConfig,
-  target: LambdaTarget<"http" | "http-jwt" | "none">,
+  auth: A,
+  target: ApiGatewayTarget<A>,
 ): void {
   whenLoaded(() => {
-    const lambdaGroup = resolveLambda(target, "route()", [
-      auth.type === "jwt" ? "http-jwt" : "http",
-      "none",
-    ]);
+    const routeName = `${method} ${path}`;
+    const { group: lambdaGroup, event } = resolveLambda(
+      target,
+      "route()",
+      auth ? "apiGateway-jwt" : "apiGateway",
+    );
+    // Either side may have no claims schema. Without one in the authorizer,
+    // the function still validates the claims. Without one in the
+    // declaration, the function doesn't validate them.
+    if (
+      auth?.claims !== undefined &&
+      event?.kind === "apiGateway-jwt" &&
+      event.claims !== undefined &&
+      auth.claims !== event.claims
+    ) {
+      throw new Error(
+        `route() routes ${routeName} to the Lambda "${lambdaGroup.id}", but the authorizer's claims schema is not the claims schema of the Lambda's event: () => apiGateway.schema(body).authSchema(claims), so the function would validate the claims with another schema. Give jwtAuthorizer() and authSchema() the same claims schema, imported from a shared module.`,
+      );
+    }
     new RouteGroup({ apiGroup, method, path, auth, lambdaGroup });
   });
 }

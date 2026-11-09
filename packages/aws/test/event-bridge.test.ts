@@ -1,9 +1,18 @@
 import { test, expect } from "vitest";
-import { eventBridge } from "@notation/aws.iac";
-import { collectResourceGraph, type ResourceGraph } from "@notation/resource";
+import { eventBridge as iac } from "@notation/aws.iac";
+import {
+  collectResourceGraph,
+  type ResourceGraph,
+  type StandardSchemaV1,
+} from "@notation/resource";
 import { rate, schedule, ScheduleGroup } from "src/event-bridge";
-import { $lambda, lambda, LambdaGroup, scheduled, sqs } from "src/lambda";
+import { $lambda, eventBridge, lambda, LambdaGroup, sqs } from "src/lambda";
+import * as runtime from "src/lambda/runtime";
 import { inModule, lambdaGroup } from "./declare";
+
+const Anything: StandardSchemaV1 = {
+  "~standard": { version: 1, vendor: "test", validate: (value) => ({ value }) },
+};
 
 const declareLambda = () =>
   lambda({
@@ -20,12 +29,12 @@ test("each schedule on a lambda gets its own invoke permission", async () => {
   let fn!: LambdaGroup;
   const graph = await collectResourceGraph(() => {
     fn = declareLambda();
-    schedule({ name: "daily", schedule: rate(1, "day"), target: fn });
-    schedule({ name: "hourly", schedule: rate(1, "hour"), target: fn });
+    schedule({ id: "daily", schedule: rate(1, "day"), target: fn });
+    schedule({ id: "hourly", schedule: rate(1, "hour"), target: fn });
   });
 
   const rules = fn.resources
-    .filter((r) => r instanceof eventBridge.LambdaEventBridgeRulePermission)
+    .filter((r) => r instanceof iac.LambdaEventBridgeRulePermission)
     .map((r) => r.dependencies.eventBridgeRule);
 
   expect(rules).toEqual([
@@ -34,10 +43,27 @@ test("each schedule on a lambda gets its own invoke permission", async () => {
   ]);
 });
 
+test("a schedule whose AWS name is another schedule's throws, and names both declarations", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const fn = declareLambda();
+      schedule({ id: "daily", schedule: rate(1, "day"), target: fn });
+      schedule({
+        id: "nightly",
+        name: "daily",
+        schedule: rate(1, "day"),
+        target: fn,
+      });
+    }),
+  ).rejects.toThrow(
+    'schedule({ id: "daily" }) and schedule({ id: "nightly", name: "daily" }) give two EventBridge rules the same AWS name, "daily".',
+  );
+});
+
 test("a schedule group is identified by its name", async () => {
   const graph = await collectResourceGraph(() => {
     schedule({
-      name: "daily",
+      id: "daily",
       schedule: rate(1, "day"),
       target: declareLambda(),
     });
@@ -55,7 +81,7 @@ test("the rule sends the bare event to the function", async () => {
   let fn!: LambdaGroup;
   const graph = await collectResourceGraph(() => {
     fn = declareLambda();
-    schedule({ name: "daily", schedule: rate(1, "day"), target: fn });
+    schedule({ id: "daily", schedule: rate(1, "day"), target: fn });
   });
   fn.fn.setOutput({
     FunctionName: "handler",
@@ -73,36 +99,52 @@ test("the rule sends the bare event to the function", async () => {
   expect(fn.fn.config.Environment).toBeUndefined();
 });
 
-test("a schedule invokes a $lambda declaration", async () => {
+test("a schedule invokes a $lambda declaration with eventBridge.schema(null)", async () => {
   const graph = await collectResourceGraph(() => {
-    const fn = inModule($lambda({ id: "digest", event: () => scheduled() }));
-    schedule({ name: "daily", schedule: rate(1, "day"), target: () => fn });
+    const fn = inModule(
+      $lambda({ id: "digest", event: () => eventBridge.schema(null) }),
+    );
+    schedule({ id: "daily", schedule: rate(1, "day"), target: () => fn });
   });
   const fn = lambdaGroup(graph, "digest");
 
   expect(scheduleGroup(graph, "daily").rule.dependencies.lambda).toBe(fn.fn);
 });
 
+test("eventBridge.schema() takes only null", () => {
+  // Only type-checked.
+  const typeOnly = () => {
+    // @ts-expect-error eventBridge.schema() needs null
+    eventBridge.schema();
+    // @ts-expect-error eventBridge.schema() doesn't take a schema yet
+    eventBridge.schema(Anything);
+  };
+  void typeOnly;
+  expect(eventBridge.schema(null)).toEqual({ kind: "eventBridge" });
+});
+
 test("a schedule of a declaration with an sqs event throws", async () => {
   await expect(
     collectResourceGraph(() => {
-      const fn = inModule($lambda({ id: "process", event: () => sqs() }));
+      const fn = inModule(
+        $lambda({ id: "process", event: () => sqs.schema(Anything) }),
+      );
       schedule({
-        name: "daily",
+        id: "daily",
         schedule: rate(1, "day"),
         // @ts-expect-error a schedule can't invoke a function of SQS messages
         target: () => fn,
       });
     }),
   ).rejects.toThrow(
-    'schedule() sends scheduled events, but the Lambda "process" is declared with event: () => sqs().',
+    'schedule() sends eventBridge events, but the Lambda "process" is declared with event: () => sqs.schema(schema).',
   );
 });
 
 test("schedule rejects a value that is not a declaration or a lambda group", () => {
   expect(() =>
     schedule({
-      name: "daily",
+      id: "daily",
       schedule: rate(1, "day"),
       target: {} as any,
     }),
@@ -121,6 +163,67 @@ test("schedule takes a lambda group from another copy of the package", () => {
   expect(fn).not.toBeInstanceOf(LambdaGroup);
 
   expect(() =>
-    schedule({ name: "daily", schedule: rate(1, "day"), target: fn }),
+    schedule({ id: "daily", schedule: rate(1, "day"), target: fn }),
   ).not.toThrow();
+});
+
+test("eventBridge.defineSchedule() in a declaration makes the rule and the permission", async () => {
+  const graph = await collectResourceGraph(() => {
+    inModule(
+      $lambda({
+        id: "digest",
+        event: () =>
+          eventBridge.defineSchedule({
+            id: "nightly",
+            schedule: rate(1, "day"),
+          }),
+      }),
+    );
+  });
+  const fn = lambdaGroup(graph, "digest");
+  const nightly = scheduleGroup(graph, "nightly");
+
+  expect(nightly.rule.config.ScheduleExpression).toBe("rate(1 day)");
+  expect(nightly.rule.dependencies.lambda).toBe(fn.fn);
+  expect(
+    fn.resources
+      .filter((r) => r instanceof iac.LambdaEventBridgeRulePermission)
+      .map((r) => r.dependencies.eventBridgeRule),
+  ).toEqual([nightly.rule]);
+});
+
+test("schedule() of a declaration that makes its own schedule throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const fn = inModule(
+        $lambda({
+          id: "digest",
+          event: () =>
+            eventBridge.defineSchedule({
+              id: "nightly",
+              schedule: rate(1, "day"),
+            }),
+        }),
+      );
+      schedule({ id: "daily", schedule: rate(1, "day"), target: () => fn });
+    }),
+  ).rejects.toThrow(
+    'schedule() can\'t wire the Lambda "digest", because the Lambda makes its own schedule in its declaration, with event: () => eventBridge.defineSchedule(options). Make the schedule in one place: remove the schedule() call, or declare the Lambda with event: () => eventBridge.schema(null).',
+  );
+});
+
+test("eventBridge.defineSchedule() takes undefined, as the runtime build passes", () => {
+  expect(runtime.eventBridge.defineSchedule(undefined as any)).toEqual({
+    kind: "eventBridge",
+    schedule: undefined,
+  });
+});
+
+test("eventBridge.defineSchedule() needs a name and a schedule", () => {
+  // Only type-checked.
+  const typeOnly = () => {
+    // @ts-expect-error the schedule is missing
+    eventBridge.defineSchedule({ id: "nightly" });
+  };
+  void typeOnly;
 });

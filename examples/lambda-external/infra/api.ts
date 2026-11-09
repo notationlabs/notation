@@ -5,7 +5,7 @@ import {
   externalPyLambda,
 } from "./lambda";
 
-const helloApi = api({ name: "hello-api" });
+const helloApi = api({ id: "hello-api" });
 const helloRouter = router(helloApi);
 
 helloRouter.get("/hello1", externalJsLambda);

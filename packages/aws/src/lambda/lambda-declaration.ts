@@ -12,8 +12,9 @@ import {
   type LambdaEvent,
   type LambdaEventKind,
 } from "./declaration";
+import { ScheduleGroup } from "src/event-bridge/schedule-group";
 import { isLambdaGroup, LambdaGroup, type LambdaConfig } from "./lambda";
-import { assertLambdaId, type NameSafe } from "./lambda-id";
+import { assertId, type NameSafe } from "src/id";
 
 export type LambdaDeclarationConfig<
   Id extends string,
@@ -25,7 +26,16 @@ export type LambdaDeclarationConfig<
    * in state. Changing the id replaces the function, so keep it stable.
    */
   id: NameSafe<Id>;
-  /** The events that the function receives, such as `() => sqs(Order)`. */
+  /**
+   * The function's name in AWS, in place of the id. The function is named
+   * `<app>--<stage>--<name>`. Changing the name replaces the function. Must
+   * be name-safe.
+   */
+  name?: string;
+  /**
+   * The events that the function receives, such as
+   * `() => sqs.bind(orderQueue)`.
+   */
   event?: () => E;
   /**
    * The values that the function's code reads, by name, such as
@@ -43,7 +53,10 @@ export type LambdaDeclarationConfig<
   memory?: number;
 };
 
-type Registered = { build: () => LambdaGroup; kind: () => LambdaEventKind };
+type Registered = {
+  build: () => LambdaGroup;
+  event: () => LambdaEvent | undefined;
+};
 
 // Holds a declaration's registration, on the declaration. Two installed
 // copies of this package each have their own module state, so a registry in
@@ -70,20 +83,34 @@ export function $lambda<
   E extends LambdaEvent | undefined = undefined,
   Env extends EnvVars = {},
 >(config: LambdaDeclarationConfig<Id, E, Env>): Lambda<E, Env> {
-  assertLambdaId(config.id);
+  assertId("$lambda", config.id);
+  // The event is evaluated once, on first use, as infra modules that it
+  // refers to may still be loading when $lambda is called.
+  let event: { value: LambdaEvent | undefined } | undefined;
+  const getEvent = () => (event ??= { value: config.event?.() }).value;
   const declaration = {
     id: config.id,
     env: () => (config.env?.() ?? {}) as Env,
-    decode: createDecode(config),
+    decode: createDecode({ event: getEvent }),
   } as unknown as Lambda<E, Env>;
-
-  let group: LambdaGroup | undefined;
-  const build = () => (group ??= buildGroup(declaration, config));
+  let built: { group: LambdaGroup } | { error: unknown } | undefined;
+  // A build that throws throws the same error on each later call, so the
+  // group isn't made twice, or returned without its event's resources.
+  const build = () => {
+    if (!built) {
+      try {
+        const group = buildGroup(declaration, config);
+        wireEvent(group, getEvent());
+        built = { group };
+      } catch (error) {
+        built = { error };
+      }
+    }
+    if ("error" in built) throw built.error;
+    return built.group;
+  };
   Object.defineProperty(declaration, registration, {
-    value: {
-      build,
-      kind: () => config.event?.()?.kind ?? "none",
-    } satisfies Registered,
+    value: { build, event: getEvent } satisfies Registered,
   });
   if (getActiveResourceCollection()) onEvaluationEnd(build);
   return declaration;
@@ -103,17 +130,21 @@ function buildGroup(
     );
   }
   const modulePath = fromProjectRoot(record.path);
-  const group = new LambdaGroup({
-    id: config.id,
-    code: {
-      type: "file",
-      path: toProjectRoot(filePaths.dist.runtime.index(modulePath)),
+  const group = new LambdaGroup(
+    {
+      id: config.id,
+      name: config.name,
+      code: {
+        type: "file",
+        path: toProjectRoot(filePaths.dist.runtime.index(modulePath)),
+      },
+      handler: "handler",
+      runtime: config.runtime,
+      timeout: config.timeout,
+      memory: config.memory,
     },
-    handler: "handler",
-    runtime: config.runtime,
-    timeout: config.timeout,
-    memory: config.memory,
-  });
+    { caller: "$lambda", where: record.path },
+  );
   const env = config.env?.();
   if (env && Object.keys(env).length > 0) {
     group.fn.contribute({ Environment: { Variables: env } });
@@ -125,6 +156,33 @@ function buildGroup(
   return group;
 }
 
+// Makes the resources that the event declares: the queue mapping of
+// `sqs.bind(queue)`, the route of `apiGateway.bind(api).defineRoute()`, or
+// the rule of `eventBridge.defineSchedule()`.
+function wireEvent(group: LambdaGroup, event: LambdaEvent | undefined): void {
+  switch (event?.kind) {
+    case "sqs":
+      event.queue?.["~subscribe"](group, event.options);
+      return;
+    case "apiGateway":
+    case "apiGateway-jwt":
+      if (event.route) {
+        const { api, ...route } = event.route;
+        api["~route"](group, route);
+      }
+      return;
+    case "eventBridge":
+      if (event.schedule) {
+        new ScheduleGroup(
+          event.schedule,
+          group,
+          "eventBridge.defineSchedule()",
+        );
+      }
+      return;
+  }
+}
+
 /**
  * A Lambda that infra can wire: a declaration, or a group from `lambda()`.
  * The return type has only optional properties, so TypeScript rejects a
@@ -134,17 +192,20 @@ export type LambdaTarget<K extends LambdaEventKind = LambdaEventKind> =
   (() => { readonly "~lambda"?: { kind: K } }) | LambdaGroup;
 
 /**
- * Finds the Lambda group of a target. A declaration is passed as a function,
- * such as `() => lambda`, because it can be in a module that is still
- * loading. `kinds` are the events the caller sends; a declaration with
- * another event fails. `caller` names the infra API in errors.
+ * Finds the Lambda group of a target, and the event of its declaration. A
+ * declaration is passed as a function, such as `() => lambda`, because it can
+ * be in a module that is still loading. A declaration fails when its event
+ * has another kind than `kind`, or when it wires itself to a queue, a route
+ * or a schedule, which the caller would wire a second time. The checks run
+ * before the group is built, so a rejected declaration wires nothing.
  */
 export function resolveLambda(
   target: unknown,
+  // The function that wires the Lambda, such as `route()`, for errors.
   caller: string,
-  kinds: LambdaEventKind[],
-): LambdaGroup {
-  if (isLambdaGroup(target)) return target;
+  kind: Exclude<LambdaEventKind, "none">,
+): { group: LambdaGroup; event: LambdaEvent | undefined } {
+  if (isLambdaGroup(target)) return { group: target, event: undefined };
   if (typeof target !== "function") {
     throw new Error(
       `${caller} expects a function that returns a Lambda declaration, such as \`() => lambda\`, or a Lambda group from lambda().`,
@@ -157,36 +218,69 @@ export function resolveLambda(
       `${caller} expects a function that returns a Lambda declaration from $lambda(), but it returned ${declaration === undefined ? "undefined" : "another value"}.`,
     );
   }
-  const group = registered.build();
-  const event = registered.kind();
-  if (!kinds.includes(event)) {
+  const event = registered.event();
+  const lambda = `the Lambda "${(declaration as Lambda<any, any>).id}"`;
+  if (event && event.kind !== kind) {
     throw new Error(
-      `${caller} sends ${kinds
-        .filter((k) => k !== "none")
-        .map((k) => eventNames[k])
-        .join(
-          " or ",
-        )}, but the Lambda "${group.id}" is declared with ${event === "none" ? "no event" : `event: () => ${eventCalls[event]}`}.`,
+      `${caller} sends ${eventNames[kind]}, but ${lambda} is declared with event: () => ${eventCall(event)}.`,
     );
   }
-  return group;
+  const wired = event && wiredBy(event);
+  if (wired) {
+    throw new Error(
+      `${caller} can't wire ${lambda}, because the Lambda makes its own ${wired.noun} in its declaration, with event: () => ${eventCall(event)}. Make the ${wired.noun} in one place: remove the ${caller} call, or declare the Lambda with event: () => ${wired.instead}.`,
+    );
+  }
+  return { group: registered.build(), event };
 }
 
-const eventNames: Record<LambdaEventKind, string> = {
+// What an event that wires its own Lambda makes, and the event to declare
+// in its place.
+function wiredBy(
+  event: LambdaEvent,
+): { noun: string; instead: string } | undefined {
+  switch (event.kind) {
+    case "sqs":
+      return event.queue
+        ? { noun: "queue mapping", instead: "sqs.schema(schema)" }
+        : undefined;
+    case "apiGateway":
+    case "apiGateway-jwt":
+      return event.route
+        ? { noun: "route", instead: "apiGateway.schema(body)" }
+        : undefined;
+    case "eventBridge":
+      return event.schedule
+        ? { noun: "schedule", instead: "eventBridge.schema(null)" }
+        : undefined;
+  }
+}
+
+const eventNames: Record<Exclude<LambdaEventKind, "none">, string> = {
   sqs: "sqs events",
-  http: "http events",
-  "http-jwt": "http events with a JWT authorizer",
-  scheduled: "scheduled events",
-  none: "any events",
+  apiGateway: "apiGateway events",
+  "apiGateway-jwt": "apiGateway events with a JWT authorizer",
+  eventBridge: "eventBridge events",
 };
 
-const eventCalls: Record<LambdaEventKind, string> = {
-  sqs: "sqs()",
-  http: "http()",
-  "http-jwt": "http({ auth: jwt() })",
-  scheduled: "scheduled()",
-  none: "",
-};
+/** The call that declares an event, as errors show it. */
+export function eventCall(event: LambdaEvent): string {
+  switch (event.kind) {
+    case "sqs":
+      return event.queue ? "sqs.bind(queue)" : "sqs.schema(schema)";
+    case "apiGateway":
+    case "apiGateway-jwt":
+      if (event.route) return "apiGateway.bind(api).defineRoute(options)";
+      if (event.kind === "apiGateway") return "apiGateway.schema(body)";
+      return event.claims
+        ? "apiGateway.schema(body).authSchema(claims)"
+        : "apiGateway.schema(body).authSchema()";
+    case "eventBridge":
+      return event.schedule
+        ? "eventBridge.defineSchedule(options)"
+        : "eventBridge.schema(null)";
+  }
+}
 
 /**
  * Runs `wire` when infra has finished loading, so that a declaration in a

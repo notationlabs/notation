@@ -8,11 +8,11 @@ test("resource ids and names embed the id", () => {
   const group = lambda({ id: "get-todos", code });
   expect(group.resources.map((r) => r.id).sort()).toEqual(
     [
-      "get-todos",
-      "get-todos-log-group",
-      "get-todos-policy",
-      "get-todos-role",
-      "get-todos-zip",
+      "lambda:get-todos",
+      "lambda:get-todos:log-group",
+      "lambda:get-todos:policy-attachment",
+      "lambda:get-todos:role",
+      "lambda:get-todos:zip",
     ].sort(),
   );
   expect(group.fn.config.FunctionName).toBe("get-todos");
@@ -58,7 +58,7 @@ test("the id does not depend on the code path", () => {
 
 test("mixed-case ids are accepted", () => {
   const group = lambda({ id: "todos-getTodos", code });
-  expect(group.fn.id).toBe("todos-getTodos");
+  expect(group.fn.id).toBe("lambda:todos-getTodos");
 });
 
 test("a missing id throws", () => {
@@ -70,14 +70,14 @@ test.each(["", "has space", "has.dot", "a/b", "é", "a".repeat(65)])(
   "the id %j is rejected",
   (id) => {
     expect(() => lambda({ id: id as any, code })).toThrow(
-      /lambda id|requires an id/,
+      /lambda\(\) id|requires an id/,
     );
   },
 );
 
 test("the error names the bad id", () => {
   expect(() => lambda({ id: "bad.id" as any, code })).toThrow(
-    'Invalid lambda id "bad.id"',
+    'Invalid lambda() id "bad.id"',
   );
 });
 
@@ -91,7 +91,7 @@ test("two lambdas with the same id in one deployment throw", async () => {
       lambda({ id: "fn", code });
       lambda({ id: "fn", code });
     }),
-  ).rejects.toThrow('Duplicate lambda id "fn"');
+  ).rejects.toThrow('Duplicate lambda() id "fn"');
 });
 
 test("ids that differ only in case clash, as IAM role names ignore case", async () => {
@@ -100,7 +100,29 @@ test("ids that differ only in case clash, as IAM role names ignore case", async 
       lambda({ id: "myFn", code });
       lambda({ id: "myfn", code });
     }),
-  ).rejects.toThrow(/Duplicate lambda id "myfn": it clashes with "myFn"/);
+  ).rejects.toThrow(/Duplicate lambda\(\) id "myfn": it clashes with "myFn"/);
+});
+
+test("a name that is another Lambda's id throws, and names both declarations", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      lambda({ id: "b", code });
+      lambda({ id: "a", name: "b", code });
+    }),
+  ).rejects.toThrow(
+    'lambda({ id: "b" }) and lambda({ id: "a", name: "b" }) give two Lambda functions the same AWS name, "b". Give one of them another name.',
+  );
+});
+
+test("two Lambdas in different collections can have the same name", async () => {
+  await collectResourceGraph(() => {
+    lambda({ id: "a", name: "b", code });
+  });
+  await expect(
+    collectResourceGraph(() => {
+      lambda({ id: "b", code });
+    }),
+  ).resolves.toBeDefined();
 });
 
 test("distinct ids in one deployment are fine", async () => {

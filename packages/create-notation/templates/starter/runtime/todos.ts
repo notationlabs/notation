@@ -1,11 +1,11 @@
-import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 
 export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,
-  event: () => http(),
+  event: () => apiGateway.schema(null),
 });
 
 const todos = await api.get<any[]>("/todos");

@@ -361,7 +361,7 @@ The token has two effects:
 
 ## Contributions
 
-Some params take values from several places. For example, a Lambda role's inline policy gets one statement from each queue that the function consumes. Each `queue.consume` call adds its statement to the policy, and none of them owns the whole document.
+Some params take values from several places. For example, a Lambda role's inline policy gets one statement from each queue that the function reads. Each queue that is mapped to the function, with `sqs.bind(queue)` or `eventSourceMapping()`, adds its statement to the policy, and none of them owns the whole document.
 
 A param is collected when its schema item has `collect`. `collect` receives the values and combines them into the param. The inline policy joins the statements:
 
@@ -377,11 +377,10 @@ PolicyDocument: {
 },
 ```
 
-While infra is being evaluated, any code can add to a collected param with `contribute`. `queue.consume` does this:
+While infra is being evaluated, any code can add to a collected param with `contribute`. The queue's `~subscribe` method, which maps the queue to a Lambda group, does this:
 
 ```ts [packages/aws/src/sqs/queue.ts]
-consume(handler: LambdaTarget<SqsHandler | SqsBatchHandler>, options: ConsumeOptions = {}) {
-  const lambdaGroup = resolveLambdaTarget(handler, "queue.consume()").group;
+"~subscribe"(lambdaGroup: LambdaGroup, options: SqsOptions = {}): void {
   const id = `${this.id}-${lambdaGroup.fn.id}-mapping`;
 
   lambdaGroup.policy.contribute(
@@ -412,8 +411,9 @@ A plain contribution cannot compute with an output value, because the output doe
 ```ts [infra/orders.ts]
 import { lambda } from "@notation/aws/lambda";
 import { queue } from "@notation/aws/sqs";
+import { Order } from "shared/schema";
 
-const orderQueue = queue({ name: "orders" });
+const orderQueue = queue({ id: "orders", schema: Order });
 const importer = lambda({
   id: "order-importer",
   code: { type: "file", path: "external/importer.mjs" },
@@ -447,7 +447,7 @@ As an aside, a provider that stores a collected map as one string should still k
 
 Contributions close when evaluation ends, and `contribute` and `dependOn` throw from then on. This keeps the params that plan and deploy read the same as the params that the infra code built. A resource made outside `collectResourceGraph` closes once code reads its params or dependencies.
 
-`onEvaluationEnd(callback)` registers a callback that runs after evaluation and before the close, for code whose values do not exist while modules are still being evaluated. It throws when no resource graph is being collected. In `@notation/aws`, `$lambda` uses it to build a Lambda's resources, and `queue.consume()`, `route()` and `schedule()` use it to wire a declaration. A runtime module and the infra module that wires it often import each other, so a declaration can be read safely only after every module has loaded. It is an engine mechanism, not user-facing API.
+`onEvaluationEnd(callback)` registers a callback that runs after evaluation and before the close, for code whose values do not exist while modules are still being evaluated. It throws when no resource graph is being collected. In `@notation/aws`, `$lambda` uses it to build a Lambda's resources and the resources that its event makes: the mapping of `sqs.bind(queue)`, the route of `apiGateway.bind(api).defineRoute()` and the rule of `eventBridge.defineSchedule()`. `eventSourceMapping()`, `route()` and `schedule()` use it to wire a declaration. A runtime module and the infra module that wires it often import each other, so a declaration can be read safely only after every module has loaded. It is an engine mechanism, not user-facing API.
 
 ### Declared modules
 
@@ -483,15 +483,18 @@ A group's constructor takes `(type, id, config?)`:
 - `id` – identifies the group across deployments. It must be unique among groups of the same type: declaring two groups with the same type and ID in one graph throws.
 - `config` – the group's configuration, stored as `group.config`. Defaults to `{}`.
 
-Each group derives its ID from a value the user supplies, the same value its resource IDs are built from, so the group's identity changes exactly when its resources' identities do:
+Each declared resource takes an `id` from the user. The group's ID is that `id`, and its resource IDs are built from it, so the group's identity changes exactly when its resources' identities do. A group that links two others builds its ID from their IDs. A group that belongs to an API, such as a route or an authorizer, builds its ID from the API's `id` and its own. No group ID depends on a setting or on an AWS name, so changing a setting such as an authorizer's issuer, or the `name` that overrides an AWS name, keeps every ID:
 
-| Group           | ID                         | Example               |
-| --------------- | -------------------------- | --------------------- |
-| `LambdaGroup`   | the lambda's `id`          | `todos`               |
-| `ApiGroup`      | the API's `name`           | `todo-api`            |
-| `RouteGroup`    | `<api id>-<method>-<path>` | `todo-api-GET-/todos` |
-| `ScheduleGroup` | the schedule's `name`      | `nightly`             |
-| `QueueGroup`    | the queue's `name`         | `orders`              |
+| Group                | ID                                   | Example                             |
+| -------------------- | ------------------------------------ | ----------------------------------- |
+| `LambdaGroup`        | the lambda's `id`                    | `todos`                             |
+| `ApiGroup`           | the API's `id`                       | `todo-api`                          |
+| `JwtAuthorizerGroup` | `api-authorizer:<api id>:<id>`       | `api-authorizer:todo-api:user-auth` |
+| `RouteGroup`         | `api-route:<api id>:<method> <path>` | `api-route:todo-api:GET /todos`     |
+| `ScheduleGroup`      | the schedule's `id`                  | `nightly`                           |
+| `QueueGroup`         | the queue's `id`                     | `orders`                            |
+
+A resource ID is a type prefix and the IDs that the resource belongs to, joined with `:`, as `resourceId()` in `@notation/aws` builds it. For example, a Lambda's role is `lambda:<lambda id>:role`, and a queue is `sqs-queue:<queue id>`. An `id` can't contain `:`, so two resources get the same ID only when they have the same type and the same IDs. Only the last part may contain `:`, such as the path in a route's ID. The mapping from a queue to a Lambda is a resource in the `QueueGroup`, with the ID `sqs-mapping:<queue id>:<lambda id>`. API integrations and permissions are resources in the `LambdaGroup`, with IDs such as `api-integration:<api id>:<lambda id>`.
 
 `add()` records the group on the resource as `resource.group`, a `{ type, id }` pair. A resource that is in no group has `group: null`. The reconciler persists the pair with each resource's state.
 

@@ -5,6 +5,7 @@ import { LambdaFunctionInstance } from "../lambda";
 import { EventBridgeRuleInstance } from "./rule";
 import { resource } from "@notation/resource";
 import { lambdaClient } from "src/utils/aws-clients";
+import { statementId } from "src/utils/statement-id";
 
 // TODO: much of the lambda permission types can be shared between event-bridge and api-gateway (other than the dependencies part):
 // move to a shared module?
@@ -108,7 +109,8 @@ export const LambdaEventBridgeRulePermission =
     .deriveParams(async ({ deps }) => {
       return {
         FunctionName: deps.lambda.output.FunctionName,
-        StatementId: `LambdaEventBridgeRulePermission-${deps.lambda.output.FunctionName}`,
+        // One statement per rule, as several rules can invoke one function.
+        StatementId: statementId("events", deps.eventBridgeRule.output.Name),
         Action: "lambda:InvokeFunction",
         Principal: "events.amazonaws.com",
         SourceArn: deps.eventBridgeRule.output.Arn,

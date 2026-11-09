@@ -51,21 +51,66 @@ export const awsLambda = `
 /** @declaration shared: id, event, env; keys: env; entry: handler */
 export function $lambda(config) { return config; }
 
-/** @runtime schema */
-export function sqs(schema, options) { return { kind: "sqs", schema, options }; }
+export const sqs = {
+  bind(queue, options) { return { kind: "sqs", schema: queue?.schema, queue, options }; },
+  schema(schema) { return { kind: "sqs", schema }; },
+};
+
+export const apiGateway = {
+  bind(api) {
+    return {
+      defineRoute(options) {
+        return { kind: options.auth ? "apiGateway-jwt" : "apiGateway", schema: options.schema, claims: options.auth?.claims };
+      },
+    };
+  },
+  schema(body) {
+    const event = { kind: "apiGateway", schema: body, claims: undefined };
+    return Object.defineProperty(event, "authSchema", {
+      value: (claims) => ({ kind: "apiGateway-jwt", schema: body, claims }),
+    });
+  },
+};
+
+export const eventBridge = {
+  defineSchedule(options) { return { kind: "eventBridge", schedule: options }; },
+  schema(detail) { return { kind: "eventBridge" }; },
+};
+`;
+
+export const awsEventBridge = `
+export const rate = (rate, unit) => ({ type: "rate", rate, unit });
+
+/** @resource */
+export function schedule(config) {}
+`;
+
+export const awsApiGateway = `
+/** @resource runtime: */
+export function api(config) { return { id: config.id }; }
+
+/** @resource runtime: claims */
+export function jwtAuthorizer(config) { return config; }
 `;
 
 export const awsSqs = `
-/** @resource */
+/** @resource runtime: schema */
 export function createQueue(config) { return { url: "\${url}", grant: () => ({}) }; }
+
+/** @resource */
+export function createTopic(config) { return { arn: "\${arn}" }; }
 `;
 
 export const packages = {
   "@notation/aws/lambda": "node_modules/@notation/aws/lambda.js",
   "@notation/aws/sqs": "node_modules/@notation/aws/sqs.js",
+  "@notation/aws/api-gateway": "node_modules/@notation/aws/api-gateway.js",
+  "@notation/aws/event-bridge": "node_modules/@notation/aws/event-bridge.js",
 };
 
 export const packageFiles = {
   "node_modules/@notation/aws/lambda.js": awsLambda,
   "node_modules/@notation/aws/sqs.js": awsSqs,
+  "node_modules/@notation/aws/api-gateway.js": awsApiGateway,
+  "node_modules/@notation/aws/event-bridge.js": awsEventBridge,
 };

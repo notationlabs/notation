@@ -8,7 +8,7 @@ import {
   type Reference,
 } from "./ast";
 import type { Declaration, ModuleAnalysis } from "./analyze";
-import type { Marks } from "./marks";
+import type { ImportBinding, Mark } from "./marks";
 import type { ModuleAnalyses } from "./modules";
 
 /**
@@ -19,8 +19,11 @@ import type { ModuleAnalyses } from "./modules";
  *    removed.
  * 2. A `keys` option keeps the keys of the object that it returns, and each
  *    value becomes `undefined`.
- * 3. A call to a function marked `@runtime` keeps only its runtime
- *    arguments. The others become `undefined`.
+ * 3. In a kept option, a resource from an infra module becomes an object of
+ *    the options that the resource's mark lists as runtime, imported from
+ *    where infra imports them: `sqs.bind(orderQueue)` becomes
+ *    `sqs.bind({ schema: Order })`. A resource whose mark lists no runtime
+ *    options is left, and fails as any other infra value does.
  * 4. An import whose uses were all removed is removed too, so the bundle
  *    doesn't load the module it imports from. Without this, the module would
  *    still load when `verbatimModuleSyntax` keeps unused imports.
@@ -82,17 +85,31 @@ export function stripForRuntime(
   const keptProperties = properties
     .filter(([key]) => keptOptions.has(key))
     .map(([, p]) => p);
+  const added: string[] = [];
   for (const property of keptProperties) {
-    walk(property.value, (node) => {
-      if (node.type !== "CallExpression") return;
-      const runtimeMark = markOfCallee(node.callee, analysis, marks);
-      if (runtimeMark?.kind !== "runtime") return;
-      node.arguments.forEach((argument: Node, position: number) => {
-        if (runtimeMark.positions.includes(position)) return;
-        removed.add(argument);
-        s.overwrite(argument.start, argument.end, "undefined");
-      });
+    const free = new Set(
+      freeReferences(property.value).map((reference) => reference.node),
+    );
+    walk(property.value, (node, parent) => {
+      // A node that was overwritten can't be edited again.
+      if (removed.has(node)) return false;
+      // A member path, such as `queues.orders`, is replaced as a whole, and
+      // the names in it aren't replaced on their own.
+      if (!memberPath(node)) return;
+      const stub = resourceStub(node, free, analysis, analyses, added);
+      if (stub === undefined) return false;
+      removed.add(node);
+      if (parent?.type === "Property" && parent.shorthand)
+        s.overwrite(parent.start, parent.end, `${keyOf(parent)}: ${stub}`);
+      else s.overwrite(node.start, node.end, stub);
+      return false;
     });
+  }
+  if (added.length > 0) {
+    // The imports go after a hashbang line, which must stay first.
+    const hashbang = /^#!.*(\r?\n|$)/.exec(module.source);
+    if (hashbang) s.appendLeft(hashbang[0].length, added.join(""));
+    else s.prepend(added.join(""));
   }
 
   for (const property of keptProperties) {
@@ -142,6 +159,313 @@ function removeEmptiedImports(
   }
 }
 
+/**
+ * The object that replaces an expression of a kept option which names a
+ * resource from an infra module, or `undefined` for any other expression.
+ * The expression can be a name, or a member of an object literal or of a
+ * namespace import, such as `queues.orders`.
+ * A value made by a call to a function that isn't a resource function fails.
+ * The value can be a resource that a helper makes, or a plain value such as a
+ * schema, and the build can't tell which. A resource whose `@resource` mark
+ * lists no runtime options is left as it is, so it gets the error for an
+ * infra value. A resource marked `@resource runtime:`, with no options,
+ * becomes `{}`.
+ */
+function resourceStub(
+  expression: Node,
+  // The identifiers in the option that refer to a binding outside it.
+  free: Set<Node>,
+  analysis: ModuleAnalysis,
+  analyses: ModuleAnalyses,
+  added: string[],
+): string | undefined {
+  const path = memberPath(unwrap(expression));
+  // A local binding, such as a parameter, can shadow the import's name.
+  if (!path || !free.has(path.root)) return undefined;
+  const { file, source } = analysis.table.module;
+  const binding = analysis.table.imports.get(path.root.name);
+  if (!binding) {
+    checkAlias(path.root, expression, analysis, analyses);
+    return undefined;
+  }
+  const resolved = analyses.marks.resolve(binding.source, file);
+  if (!resolved || !analyses.describeInfra(resolved)) return undefined;
+
+  const found = importedValue(resolved, binding, path.keys, analyses);
+  if (!found) return undefined;
+  const call = unwrap(found.value.node);
+  if (call.type !== "CallExpression") return undefined;
+
+  const text = source.slice(expression.start, expression.end);
+  const owner = analyses.fromFile(found.value.file);
+  const mark = owner && markOfCallee(call.callee, owner, analyses);
+  // A member of a resource, such as `orderQueue.schema`, is an infra value.
+  if (mark?.kind === "resource" && found.rest > 0) return undefined;
+  if (!owner || mark?.kind !== "resource") {
+    throw new Error(
+      `${analyses.show(file)}:${location(source, expression.start)}: the function reads ${text} from ${analyses.show(resolved)}, but ${text} isn't a call to a resource function, so the build can't find its options. If ${text} is a resource, declare it with a call such as \`queue({ id: "orders", schema: Order })\`, as a top-level const or in an object literal. If it is a plain value, such as a schema, move it to a shared module (files.shared).`,
+    );
+  }
+  if (!mark.runtime) return undefined;
+  return runtimeOptions(call, mark.runtime, text, owner, file, analyses, added);
+}
+
+/**
+ * The object of a resource's runtime options, such as `{ schema:
+ * __notation_schema_0 }`, read from the object literal of its call. Adds an
+ * import to `added` for each option that the call sets: by absolute path for
+ * a project file, and by name for a package. An option can come from a shared
+ * module, a package, or a file that no glob matches and that calls no
+ * resource function at its top level, as for any other value that the
+ * runtime build bundles.
+ */
+function runtimeOptions(
+  call: Node,
+  options: string[],
+  // The expression that names the resource, as errors show it.
+  text: string,
+  // The module that declares the resource.
+  owner: ModuleAnalysis,
+  // The function's module, which reads the options.
+  file: string,
+  analyses: ModuleAnalyses,
+  added: string[],
+): string {
+  const definitionFile = owner.table.module.file;
+  const first = call.arguments[0];
+  const config = first ? unwrap(first) : undefined;
+  const where = (n: Node) =>
+    `${analyses.show(definitionFile)}:${location(owner.table.module.source, n.start)}`;
+  if (options.length > 0 && config?.type !== "ObjectExpression") {
+    throw new Error(
+      `${where(call)}: ${text} must be declared with an object literal, so the build can find its ${options.join(", ")}, which the function in ${analyses.show(file)} reads.`,
+    );
+  }
+  const properties: Node[] = config?.properties ?? [];
+  // A spread can hold an option, and the build can't read it there.
+  const spread = properties.find((p) => p.type === "SpreadElement");
+  const entries: string[] = [];
+  for (const option of options) {
+    const property = properties.find(
+      (p) => p.type === "Property" && keyOf(p) === option,
+    );
+    if (!property && spread) {
+      throw new Error(
+        `${where(spread)}: ${text} has a spread, so the build can't tell whether it sets the ${option} that the function in ${analyses.show(file)} reads. Write ${option} in the object literal of ${text}.`,
+      );
+    }
+    if (!property) continue;
+    const value = unwrap(property.value);
+    const imported =
+      value.type === "Identifier"
+        ? owner.table.imports.get(value.name)
+        : undefined;
+    if (!imported || imported.imported === "*") {
+      throw new Error(
+        `${where(property)}: the ${option} of ${text} must be a name that ${analyses.show(definitionFile)} imports directly from a shared module (files.shared), such as \`${option}: Order\` with \`import { Order } from "../shared/schema"\`, because the function in ${analyses.show(file)} reads it. The build copies only a named or default import. For a member of a namespace import, or a value such as \`Order.extend(...)\`, export the value from the shared module and import it by name.`,
+      );
+    }
+    const from = analyses.marks.resolve(imported.source, definitionFile);
+    if (!from) {
+      throw new Error(
+        `${where(property)}: the build can't resolve "${imported.source}", where the ${option} of ${text} is imported from. The function in ${analyses.show(file)} reads it.`,
+      );
+    }
+    const kind = analyses.kindOf(from)?.kind;
+    if (kind === "infra" || kind === "runtime") {
+      throw new Error(
+        `${where(property)}: the ${option} of ${text} must be imported from a shared module (files.shared), because the function in ${analyses.show(file)} reads it.`,
+      );
+    }
+    const fromCall = analyses.unmatchedResourceCall(from);
+    if (fromCall) {
+      throw new Error(
+        `${where(property)}: the ${option} of ${text} is imported from ${analyses.show(from)}, which calls ${fromCall.name} at its top level, so the function in ${analyses.show(file)} can't load it. Move the ${option} to a shared module (files.shared).`,
+      );
+    }
+    // The import is written in the function's module, so a relative path or
+    // a tsconfig alias could resolve to another file there. A package keeps
+    // its name, so that the runtime build applies its export conditions.
+    const specifier = analyses.files.isPackageFile(from)
+      ? imported.source
+      : from;
+    const alias = `__notation_${option}_${added.length}`;
+    added.push(
+      `import { ${imported.imported} as ${alias} } from ${JSON.stringify(specifier)};\n`,
+    );
+    entries.push(`${option}: ${alias}`);
+  }
+  return entries.length > 0 ? `{ ${entries.join(", ")} }` : "{}";
+}
+
+// Throws when an expression of a kept option names a top-level const of the module that
+// holds a resource from an infra module, such as `const local = ordersQueue`.
+// The const would keep the infra import in the function.
+function checkAlias(
+  root: Node,
+  expression: Node,
+  analysis: ModuleAnalysis,
+  analyses: ModuleAnalyses,
+) {
+  const { file, source } = analysis.table.module;
+  const seen = new Set<string>();
+  let value = localValue(file, root.name, analyses, seen);
+  while (value && value.file === file) {
+    const path = memberPath(unwrap(value.node));
+    if (!path) return;
+    const binding = analysis.table.imports.get(path.root.name);
+    if (binding) {
+      const resolved = analyses.marks.resolve(binding.source, file);
+      if (!resolved || !analyses.describeInfra(resolved)) return;
+      const held = source.slice(value.node.start, value.node.end);
+      throw new Error(
+        `${analyses.show(file)}:${location(source, expression.start)}: ${root.name} holds ${held}, from ${analyses.show(resolved)}. Pass ${held} to the call directly, so the build can replace it with the resource's runtime options.`,
+      );
+    }
+    value = localValue(file, path.root.name, analyses, seen);
+  }
+}
+
+type Located = { file: string; node: Node };
+
+// A name followed by static member keys, such as `queues.orders` or
+// `queues["orders"]`.
+function memberPath(node: Node): { root: Node; keys: string[] } | undefined {
+  const keys: string[] = [];
+  while (node.type === "MemberExpression") {
+    const property = node.property;
+    if (!node.computed && property.type === "Identifier")
+      keys.unshift(property.name);
+    else if (node.computed && typeof property.value === "string")
+      keys.unshift(property.value);
+    else return undefined;
+    node = unwrap(node.object);
+  }
+  return node.type === "Identifier" ? { root: node, keys } : undefined;
+}
+
+function keyOf(property: Node): string | undefined {
+  if (!property.computed) return property.key.name ?? property.key.value;
+  return typeof property.key.value === "string"
+    ? property.key.value
+    : undefined;
+}
+
+// The value that an import and member keys name, such as `queues.orders`.
+// For a namespace import, the first key is the export's name.
+function importedValue(
+  file: string,
+  binding: Pick<ImportBinding, "imported">,
+  keys: string[],
+  analyses: ModuleAnalyses,
+): { value: Located; rest: number } | undefined {
+  const [exportName, ...rest] =
+    binding.imported === "*" ? keys : [binding.imported, ...keys];
+  if (exportName === undefined) return undefined;
+  const start = exportedValue(file, exportName, analyses, new Set());
+  return start && followKeys(start, rest, analyses);
+}
+
+// The expression that an export of a module holds, following re-exports and
+// imports.
+function exportedValue(
+  file: string,
+  name: string,
+  analyses: ModuleAnalyses,
+  seen: Set<string>,
+): Located | undefined {
+  // Export names and local names are kept apart, as they can be the same.
+  const key = `${file}#export:${name}`;
+  if (seen.has(key)) return undefined;
+  seen.add(key);
+  const table = analyses.marks.table(file);
+  if (!table) return undefined;
+  const target = table.exports.get(name);
+  if (!target) {
+    for (const source of table.stars) {
+      const resolved = analyses.marks.resolve(source, file);
+      const found = resolved && exportedValue(resolved, name, analyses, seen);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if ("source" in target) {
+    const resolved = analyses.marks.resolve(target.source, file);
+    return resolved && target.imported !== "*"
+      ? exportedValue(resolved, target.imported, analyses, seen)
+      : undefined;
+  }
+  return localValue(file, target.local, analyses, seen);
+}
+
+// The expression that a top-level name of a module holds: the initializer of
+// its const, its function declaration, or the export that it imports. A let
+// or var is undefined, as the module can assign another value to it.
+function localValue(
+  file: string,
+  name: string,
+  analyses: ModuleAnalyses,
+  seen: Set<string>,
+): Located | undefined {
+  const key = `${file}#${name}`;
+  if (seen.has(key)) return undefined;
+  seen.add(key);
+  const table = analyses.marks.table(file);
+  if (!table) return undefined;
+  const binding = table.imports.get(name);
+  if (binding) {
+    const resolved = analyses.marks.resolve(binding.source, file);
+    return resolved && binding.imported !== "*"
+      ? exportedValue(resolved, binding.imported, analyses, seen)
+      : undefined;
+  }
+  for (let statement of table.module.body) {
+    // `export default <expression>`, which the module table names *default*.
+    if (statement.type === "ExportDefaultDeclaration" && name === "*default*")
+      return { file, node: statement.declaration };
+    if (statement.type === "ExportNamedDeclaration" && statement.declaration)
+      statement = statement.declaration;
+    if (statement.type === "FunctionDeclaration" && statement.id?.name === name)
+      return { file, node: statement };
+    if (statement.type !== "VariableDeclaration") continue;
+    const declarator = statement.declarations.find(
+      (d: Node) => d.id.type === "Identifier" && d.id.name === name,
+    );
+    if (declarator?.init && statement.kind === "const")
+      return { file, node: declarator.init };
+  }
+  return undefined;
+}
+
+// Follows member keys through object literals and the names that hold them.
+// Stops at any other expression, such as a call, and counts the keys left.
+function followKeys(
+  start: Located,
+  keys: string[],
+  analyses: ModuleAnalyses,
+): { value: Located; rest: number } | undefined {
+  let value: Located | undefined = start;
+  let index = 0;
+  const seen = new Set<string>();
+  while (value) {
+    const node = unwrap(value.node);
+    if (node.type === "Identifier") {
+      value = localValue(value.file, node.name, analyses, seen);
+      continue;
+    }
+    if (index === keys.length || node.type !== "ObjectExpression") {
+      return { value, rest: keys.length - index };
+    }
+    const key = keys[index++];
+    const property = node.properties.find(
+      (p: Node) => p.type === "Property" && keyOf(p) === key,
+    );
+    if (!property) return undefined;
+    value = { file: value.file, node: property.value };
+  }
+  return undefined;
+}
+
 function mergeRanges(ranges: [number, number][]): [number, number][] {
   const merged: [number, number][] = [];
   for (const [start, end] of [...ranges].sort((a, b) => a[0] - b[0])) {
@@ -152,7 +476,15 @@ function mergeRanges(ranges: [number, number][]): [number, number][] {
   return merged;
 }
 
-function markOfCallee(callee: Node, analysis: ModuleAnalysis, marks: Marks) {
+// The mark of the function that a call calls. The callee can be a marked
+// function that the module declares or imports, or a member of a namespace
+// import.
+function markOfCallee(
+  callee: Node,
+  analysis: ModuleAnalysis,
+  analyses: ModuleAnalyses,
+): Mark | undefined {
+  const { marks } = analyses;
   const { table } = analysis;
   const file = table.module.file;
   callee = unwrap(callee);
@@ -164,17 +496,11 @@ function markOfCallee(callee: Node, analysis: ModuleAnalysis, marks: Marks) {
       ? marks.importMark(file, binding)
       : undefined;
   }
-  if (
-    callee.type === "MemberExpression" &&
-    !callee.computed &&
-    callee.object.type === "Identifier"
-  ) {
-    const binding = table.imports.get(callee.object.name);
-    if (binding?.imported === "*") {
-      return marks.importMark(file, binding, undefined, callee.property.name);
-    }
-  }
-  return undefined;
+  const path = memberPath(callee);
+  const binding = path && table.imports.get(path.root.name);
+  return binding?.imported === "*" && path!.keys.length === 1
+    ? marks.importMark(file, binding, undefined, path!.keys[0])
+    : undefined;
 }
 
 function checkReference(

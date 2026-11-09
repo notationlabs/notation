@@ -50,21 +50,21 @@ With this config, `npm run deploy` deploys `infra/api.ts` to the `dev` stage. To
 import { api, router } from "@notation/aws/api-gateway";
 import { lambda as todos } from "runtime/todos";
 
-const todoApi = api({ name: "todo-api" });
+const todoApi = api({ id: "todo-api" });
 const todoRouter = router(todoApi);
 
 todoRouter.get("/todos", () => todos);
 ```
 
 ```ts [runtime/todos.ts]
-import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 
 export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,
-  event: () => http(),
+  event: () => apiGateway.schema(null),
 });
 
 const todos = await api.get<any[]>("/todos");

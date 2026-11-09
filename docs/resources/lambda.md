@@ -9,12 +9,12 @@ A [runtime module](../manual/file-conventions.md#runtime-modules) calls `$lambda
 ::code-group
 
 ```ts [runtime/todos.ts]
-import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
 
 export const lambda = $lambda({
   id: "todos",
   timeout: 5,
-  event: () => http(),
+  event: () => apiGateway.schema(null),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
@@ -27,7 +27,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 import { api, router } from "@notation/aws/api-gateway";
 import { lambda as todos } from "runtime/todos";
 
-const todoRouter = router(api({ name: "todo-api" }));
+const todoRouter = router(api({ id: "todo-api" }));
 todoRouter.get("/todos", () => todos);
 todoRouter.post("/todos", () => todos);
 ```
@@ -47,16 +47,18 @@ The declaration adds the function even when nothing wires it. The options are li
 
 Infra APIs take the declaration as a function that returns it, such as `() => todos`. They call the function when infra has finished loading, so the runtime module and the infra module can import each other.
 
-| Infra API                                                      | Accepts                                                  |
-| -------------------------------------------------------------- | -------------------------------------------------------- |
-| [`queue.consume`](sqs.md#queueconsumetarget)                   | A declaration with `sqs()` or no `event`                 |
-| [`router.get`](api-gateway.md#routerapi), `.post`, ...         | A declaration with `http()` or no `event`                |
-| [`withJWTAuthorizer`](api-gateway.md#jwt-authorization) routes | A declaration with `http({ auth: jwt() })` or no `event` |
-| [`schedule`](event-bridge.md#scheduleconfig)                   | A declaration with `scheduled()` or no `event`           |
+| Infra API                                                   | Accepts                                                                        |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| [`eventSourceMapping`](sqs.md#eventsourcemappingconfig)     | A declaration with `sqs.schema()` or no `event`                                |
+| [`router.get`](api-gateway.md#routerapi), `.post`, ...      | A declaration with `apiGateway.schema(body)` or no `event`                     |
+| [`withAuthorizer`](api-gateway.md#jwt-authorization) routes | A declaration with `apiGateway.schema(body).authSchema(claims?)` or no `event` |
+| [`schedule`](event-bridge.md#scheduleconfig)                | A declaration with `eventBridge.schema(null)` or no `event`                    |
 
 Each API also takes a Lambda group from [`lambda()`](#lambdaconfig), as it is, with no function around it.
 
-A declaration whose event doesn't match is a type error. If TypeScript doesn't catch it, the infra API throws when infra runs, for example `route() sends http events, but the Lambda "orders" is declared with event: () => sqs().`
+A declaration whose event doesn't match is a type error. If TypeScript doesn't catch it, the infra API throws when infra runs, for example `route() sends apiGateway events, but the Lambda "orders" is declared with event: () => sqs.schema(schema).`
+
+A declaration can also make its own resources, with `sqs.bind(queue)`, `apiGateway.bind(api).defineRoute(options)` or `eventBridge.defineSchedule(options)`. The infra APIs throw for such a declaration, so that a queue, route or schedule is wired in one place.
 
 ### One handler for each function
 
@@ -64,13 +66,15 @@ The function has one entry point, `handler`, and Notation doesn't route events t
 
 ## IDs
 
-Every Lambda function has an ID. It names the function and the resources that support it (`<id>`, `<id>-role`, `<id>-zip`, `<id>-policy`, `<id>-role-policy` and `<id>-log-group`), and keys them in state. Changing an ID replaces the function.
+Every Lambda function has an ID. It keys the function and the resources that support it in state, as `lambda:<id>`, `lambda:<id>:role`, `lambda:<id>:zip`, `lambda:<id>:policy-attachment`, `lambda:<id>:role-policy` and `lambda:<id>:log-group`. Changing an ID replaces the function.
 
 In a runtime module, the ID is the declaration's `id`. The ID doesn't come from the module's path, so you can move or rename the module and keep its function.
 
 In AWS, the function is named `<app>--<stage>--<id>` and its role `<app>--<stage>--<id>-role`. If a name is longer than 64 characters, Notation shortens it. See [AWS names](../manual/project-config.md#aws-names).
 
-IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. `$lambda` and `lambda()` only accept string literals that follow this rule, and throw at runtime if they get anything else. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, count as the same, because IAM role names ignore case.
+`name` replaces the `id` in the function's AWS name. For example, `$lambda({ id: "orders", name: "order-handler" })` is named `<app>--<stage>--order-handler`. The role and the other resources keep names from the `id`, and the `id` stays the state key. Changing `name` replaces the function, because Lambda can't rename a function.
+
+IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. `$lambda` and `lambda()` only accept string literals that follow this rule, and throw at runtime if they get anything else. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, count as the same, because IAM role names ignore case. Two Lambda functions can't share an AWS name either, so `$lambda({ id: "a", name: "b" })` and `$lambda({ id: "b" })` in one deployment throw.
 
 ## `lambda(config)`
 
@@ -88,6 +92,7 @@ export const external = lambda({
 ```ts [@notation/aws/lambda]
 type LambdaConfig = {
   id: string;
+  name?: string;
   handler?: string; // default "handler"
   code: { type: "file" | "zip"; path: string };
   runtime?: string; // default "nodejs22.x"
@@ -115,7 +120,7 @@ A declaration adds statements with its `policy` option. For example, to let the 
 ```ts [runtime/orders.ts]
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs(),
+  event: () => sqs.bind(orderQueue),
   policy: () => [refundQueue.grant(["SendMessage"])],
 });
 ```
@@ -132,7 +137,7 @@ external.policy.contribute({
 });
 ```
 
-[`queue.consume`](sqs.md#queueconsumetarget) adds its read permission to the same policy.
+A queue that is mapped to the function, with [`sqs.bind(queue)`](sqs.md#sqsbindqueue-options) or [`eventSourceMapping()`](sqs.md#eventsourcemappingconfig), adds its read permission to the same policy.
 
 The group creates the policy resource only when code first contributes to it. This matters because IAM rejects a policy with no statements, so a function that nothing contributes to must have no inline policy. A role's inline policies share a limit of 10,240 characters.
 
@@ -145,7 +150,7 @@ A declaration contributes the values that it binds in `env`. The function reads 
 ```ts [runtime/orders.ts]
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs(),
+  event: () => sqs.bind(orderQueue),
   env: () => ({ ORDER_QUEUE_URL: orderQueue.url }),
 });
 ```

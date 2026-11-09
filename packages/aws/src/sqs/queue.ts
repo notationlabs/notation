@@ -1,19 +1,36 @@
 import * as aws from "@notation/aws.iac";
-import {
-  resolveLambda,
-  whenLoaded,
-  type LambdaTarget,
-} from "src/lambda/lambda-declaration";
-import { awsName } from "src/naming";
+import type { LambdaGroup } from "src/lambda/lambda";
+import type { SqsOptions } from "src/lambda/declaration";
+import type { StandardSchemaV1 } from "@notation/resource";
+import { awsName, claimAwsName, describeDeclaration } from "src/naming";
+import { assertId, assertName, resourceId, type IdOption } from "src/id";
 
-export type QueueConfig = {
+export type QueueConfig<S extends StandardSchemaV1 = StandardSchemaV1> = {
   /**
-   * Names the queue, and keys it in state. The queue is named
-   * `<app>--<stage>--<name>` in AWS. Changing the name replaces the queue.
-   * A FIFO queue's name ends in `.fifo`.
+   * Keys the queue in state. Changing the id replaces the queue, so keep it
+   * stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
+   * underscores.
    */
-  name: string;
+  id: string;
+  /**
+   * The queue's name in AWS, in place of the id. The queue is named
+   * `<app>--<stage>--<name>`. Changing the name replaces the queue. Must be
+   * name-safe.
+   */
+  name?: string;
+  /**
+   * Makes a FIFO queue. Its AWS name ends in `.fifo`, which Notation adds.
+   * It can't change after the queue is created.
+   */
   fifo?: boolean;
+  /**
+   * Validates the JSON body of each message, in `decode()` of a Lambda
+   * declared with `sqs.bind(queue)`, or with `sqs.schema(schema)` and mapped
+   * with `eventSourceMapping()`. `sqs.schema()` must be given this schema.
+   * Import it from a shared module, so the function can load it. A queue
+   * that takes any JSON body declares a schema such as `v.unknown()`.
+   */
+  schema: S;
   /** Seconds a received message stays hidden from other consumers. */
   visibilityTimeout?: number;
   /** Seconds the queue keeps a message. */
@@ -33,26 +50,32 @@ export type SqsAction =
   | "GetQueueUrl"
   | "PurgeQueue";
 
-export type ConsumeOptions = {
-  /** The most messages the function receives in one invocation. */
-  batchSize?: number;
-  /** Seconds to wait to fill a batch before the function is invoked. */
-  maxBatchingWindow?: number;
-};
-
-export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
+export class QueueGroup<
+  S extends StandardSchemaV1 = StandardSchemaV1,
+> extends aws.AwsResourceGroup<Omit<QueueConfig, "schema">> {
   readonly queue: aws.sqs.QueueInstance;
+  readonly schema: S;
   /** The queue's ARN. It is an output value, filled in at deploy. */
   readonly arn: string;
   /** The queue's URL. It is an output value, filled in at deploy. */
   readonly url: string;
 
-  constructor(config: QueueConfig) {
-    super("aws/sqs/queue", config.name, config);
+  constructor({ schema, ...config }: QueueConfig<S>) {
+    assertId("queue()", config.id);
+    assertName("queue()", config.name);
+    const name = config.name ?? config.id;
+    const queueName = awsName("sqsQueue", config.fifo ? `${name}.fifo` : name);
+    super("aws/sqs/queue", config.id, config);
+    claimAwsName(
+      "SQS queues",
+      queueName,
+      describeDeclaration("queue()", config.id, config.name),
+    );
+    this.schema = schema;
     this.queue = this.add(
-      new aws.sqs.Queue(`${config.name}-queue`, {
+      new aws.sqs.Queue(resourceId("sqs-queue", config.id), {
         config: {
-          QueueName: awsName("sqsQueue", config.name),
+          QueueName: queueName,
           FifoQueue: config.fifo,
           VisibilityTimeout: config.visibilityTimeout,
           MessageRetentionPeriod: config.messageRetentionPeriod,
@@ -75,27 +98,13 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
   }
 
   /**
-   * Invokes a Lambda with the queue's messages: a declaration from
-   * `$lambda`, passed as `() => lambda`, or a Lambda group from
-   * `lambda()`. Gives the function's role permission to read the queue, and
-   * maps the queue to the function. The mapping is made when infra has
-   * finished loading.
+   * Maps the queue to a Lambda, for `sqs.bind(queue)` in a declaration and for
+   * `eventSourceMapping()`.
    */
-  consume(
-    target: LambdaTarget<"sqs" | "none">,
-    options: ConsumeOptions = {},
-  ): void {
-    whenLoaded(() => this.#consume(target, options));
-  }
-
-  #consume(target: LambdaTarget<"sqs" | "none">, options: ConsumeOptions) {
-    const lambdaGroup = resolveLambda(target, "queue.consume()", [
-      "sqs",
-      "none",
-    ]);
-    const id = `${this.id}-${lambdaGroup.fn.id}-mapping`;
+  "~subscribe"(lambdaGroup: LambdaGroup, options: SqsOptions = {}): void {
+    const id = resourceId("sqs-mapping", this.id, lambdaGroup.id);
     if (this.resources.some((resource) => resource.id === id)) {
-      throw new Error(`Queue ${this.id} already feeds ${lambdaGroup.fn.id}`);
+      throw new Error(`Queue ${this.id} already feeds ${lambdaGroup.id}`);
     }
 
     lambdaGroup.policy.contribute({
@@ -105,7 +114,7 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
         ],
       },
     });
-    return this.add(
+    this.add(
       new aws.lambda.LambdaEventSourceMapping(id, {
         config: {
           EventSourceArn: this.arn,
@@ -120,9 +129,13 @@ export class QueueGroup extends aws.AwsResourceGroup<QueueConfig> {
 }
 
 /**
- * Declares an SQS queue.
- * @resource
+ * Declares an SQS queue. `id` must be a name-safe string literal; see
+ * `NameSafe`.
+ * @resource runtime: schema
  */
-export function queue(config: QueueConfig): QueueGroup {
+export function queue<
+  S extends StandardSchemaV1,
+  const Id extends string = never,
+>(config: Omit<QueueConfig<S>, "id"> & { id: IdOption<Id> }): QueueGroup<S> {
   return new QueueGroup(config);
 }

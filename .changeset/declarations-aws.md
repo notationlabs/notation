@@ -8,34 +8,39 @@ A runtime module declares the Lambda function that it deploys as, next to the fu
 
 ```ts
 import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
-import { ordersQueue } from "../infra/orders";
-import { Order } from "./schema";
+import { ordersQueue, refundsQueue } from "../infra/orders";
 
 export const lambda = $lambda({
   id: "process-orders",
-  event: () => sqs(Order),
-  policy: () => [ordersQueue.grant(["SendMessage"])],
-  env: () => ({ QUEUE_URL: ordersQueue.url }),
+  event: () => sqs.bind(ordersQueue, { batchSize: 5 }),
+  policy: () => [refundsQueue.grant(["SendMessage"])],
+  env: () => ({ REFUNDS_QUEUE_URL: refundsQueue.url }),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
   for (const record of event.Records) {
-    const order = await lambda.decode(record);
+    const { body: order } = await lambda.decode(record);
   }
 };
 ```
 
-- `$lambda` in `@notation/aws/lambda` declares the function. It takes `id`, `event`, `env`, `policy`, `runtime`, `timeout` and `memory`.
-- `event` is `() => sqs(schema)`, `() => http({ body: schema })` or `() => scheduled()`. The schema is any Standard Schema, and is optional.
-- `http({ auth: jwt<Claims>() })` declares a function whose routes have a JWT authorizer. `LambdaHandler` types the claims in its event as `Claims`. The routes of `withJWTAuthorizer()` accept only these declarations, and a plain router's routes reject them.
+- `$lambda` in `@notation/aws/lambda` declares the function. It takes `id`, `name`, `event`, `env`, `policy`, `runtime`, `timeout` and `memory`.
+- `event` names the AWS service that sends the event. Each service has a function-led form, which makes the resource from the declaration, and an infra-led form, which infra wires: `sqs.bind(queue)` or `sqs.schema(schema)`, `apiGateway.bind(api).defineRoute({ method, path, schema, auth })` or `apiGateway.schema(body)`, and `eventBridge.defineSchedule({ id, schedule })` or `eventBridge.schema(null)`. A schema is any Standard Schema, and every event form has one. An infra-led form always takes a schema argument: `sqs.schema()` and `apiGateway.schema()` take a schema, and `apiGateway.schema(null)` declares a function whose requests have no body. The `schema` option of `defineRoute()` is required in the same way, with `schema: null` for no body. `eventBridge.schema()` takes only `null` for now, as a scheduled event has no detail to validate. The event kinds are `sqs`, `apiGateway`, `apiGateway-jwt` and `eventBridge`.
+- `queue()` takes a required `schema`, so `decode()` validates every SQS message. `queue({ id })` with no schema is a type error, and it throws when infra runs. A queue that takes any JSON body declares a schema such as `v.unknown()`, and `body` is the parsed JSON as `unknown`. Import the schema from a shared module (`files.shared`), as the function loads it.
+- `sqs` is an object with two methods, and it can't be called. `sqs.bind(queue, options)` maps the queue to the function, and `decode()` validates each message with the queue's schema. The options are `batchSize` and `maxBatchingWindow`. `sqs.schema(schema)` declares a function that receives SQS messages from queues that infra maps to it with `eventSourceMapping()`, and `decode()` validates each message with `schema`.
+- `apiGateway.bind(api).defineRoute()` makes the route when the declaration is built. In the runtime build, the API becomes `{}` and an authorizer in `auth` becomes `{ claims }`. `router()` throws for such a declaration.
+- `jwtAuthorizer({ id, api, issuer, audience, scopes, claims })` in `@notation/aws/api-gateway` declares a JWT authorizer, which owns its API Gateway authorizer. `router(api).withAuthorizer(authorizer)` replaces `withJWTAuthorizer(config)`, and `JWTAuthorizerConfig` and `NO_AUTH` are removed. The routes of `withAuthorizer()` accept only a declaration with `apiGateway.schema(body).authSchema(claims)`, and check that its claims schema is the authorizer's, as an object at runtime and as a type. An authorizer with no claims schema accepts any. `.authSchema()` with no claims schema accepts any authorizer. A plain router's routes accept only a declaration with no `.authSchema()`.
+- `apiGateway.schema(body)` returns an event of the kind `apiGateway`. Its `authSchema(claims?)` method returns the event of the kind `apiGateway-jwt`.
+- `eventBridge.defineSchedule()` makes the rule and the permission when the declaration is built. `schedule()` throws for such a declaration.
 - `env` binds values by name. Deploy sets each one as an environment variable of the function. `lambda.env()` returns them, typed by name, and throws when one is not set. `env` must return an object literal with no spread or computed keys.
-- `lambda.decode(item)` parses the JSON body of an SQS record or an HTTP request, and validates it with the event's schema. It throws a `DecodeError` when the body is not valid.
+- `lambda.decode(item)` parses the JSON body of an SQS record or an API Gateway request, and validates it with the event's schema. A request body is decoded from base64 if `isBase64Encoded` is set, then parsed as JSON, and the schema validates the parsed value. A body that is not JSON throws a `DecodeError`, so a route that takes text declares a string schema, and the client sends the text as a JSON string. Form and binary bodies are not supported yet. With a body schema, an empty body is validated as `undefined`. With a body schema of `null`, `body` is `undefined`, and a request with a body throws a `DecodeError`. It returns the item with `body` decoded, typed from the item that it receives. For a request through a JWT authorizer, it also returns the JWT claims as a top-level `claims` field, validated with the claims schema, or typed as `JwtClaims` with no claims schema. It leaves `requestContext` as API Gateway sent it, and the handler's event types the claims there as the loose `JwtClaims`. It throws a `DecodeError` when the body or the claims are not valid. The error's `part` is `"body"` or `"claims"`, and the claims are checked first.
 - `policy` adds statements to the function's role.
 - `LambdaHandler<typeof lambda>` types the handler from the event, and `LambdaEnv<typeof lambda>` types the bound variables.
-- Infra wires the declaration as a function: `queue.consume(() => lambda)`, `router.get("/todos", () => lambda)` and `schedule({ name, schedule, target: () => lambda })`. A Lambda group from `lambda()` is passed as it is. The wiring runs when infra has finished loading, so a runtime module and the infra that wires it can import each other. `consume()`, `route()`, the router methods and `schedule()` return nothing.
-- Wiring a declaration whose event doesn't match fails: a queue needs an SQS Lambda, a route an HTTP Lambda, and a schedule a scheduled Lambda. A Lambda without `event` can be wired to any of them.
+- `queue.consume()` is removed. Declare the function with `event: () => sqs.bind(queue)`, or map the queue in infra with `eventSourceMapping({ source: queue, target: () => lambda, batchSize })` from `@notation/aws/lambda`.
+- Infra wires the declaration as a function: `eventSourceMapping({ source, target: () => lambda })`, `router(api).get("/todos", () => lambda)` and `schedule({ id, schedule, target: () => lambda })`. A Lambda group from `lambda()` is passed as it is. The wiring runs when infra has finished loading, so a runtime module and the infra that wires it can import each other. `eventSourceMapping()`, `route()`, the router methods and `schedule()` return nothing.
+- Wiring a declaration whose event doesn't match fails: a queue needs an `sqs` Lambda, a route an `apiGateway` Lambda, and a schedule an `eventBridge` Lambda. A Lambda without `event` can be wired to any of them.
+- `eventSourceMapping()` fails for a declaration that maps a queue itself with `sqs.bind(queue)`, and for a declaration with `sqs.schema(schema)` when the queue's schema is another object than `schema`. `eventSourceMapping()` also takes a declaration with `sqs.schema()` only if its schema has the type of the queue's schema, so a mismatch is a type error. A declaration with no `event`, and a Lambda group from `lambda()`, can read any queue.
 - `schedule()` takes `target` in place of `handler`, and the rule sends the EventBridge event unchanged.
-- `withJWTAuthorizer()` no longer takes a claims type. Declare the claims with `http({ auth: jwt<Claims>() })`.
 - `APIGatewayJWTProxyEventV2<Claims>` in `@notation/aws/shared` keeps the whole request context, and `TypedClaimsOverride` is removed.
 - The runtime build resolves `@notation/aws/lambda` to an entry without infra code, through the `notation-runtime` export condition.
 - Lambda IDs are 1 to 64 letters, digits, hyphens or underscores. `lambda()` takes `timeout` and `memory`, and `handler` defaults to `"handler"`.

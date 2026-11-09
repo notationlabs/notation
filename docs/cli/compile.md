@@ -15,14 +15,14 @@ Compiles the entry file and its runtime modules to `dist/`. The output is the sa
 ::code-group
 
 ```ts [runtime/todos.ts]
-import { $lambda, http, type LambdaHandler } from "@notation/aws/lambda";
+import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
 import { api } from "./utils";
 
 export const lambda = $lambda({
   id: "todos",
   timeout: 5,
   memory: 64,
-  event: () => http(),
+  event: () => apiGateway.schema(null),
 });
 
 const todos = await api.get<any[]>("/todos");
@@ -31,14 +31,14 @@ export const handler: LambdaHandler<typeof lambda> = async () => todos;
 ```
 
 ```ts [infra build]
-import { $lambda, http } from "@notation/aws/lambda";
+import { $lambda, apiGateway } from "@notation/aws/lambda";
 
 export const lambda = __notation_declaredIn(
   $lambda({
     id: "todos",
     timeout: 5,
     memory: 64,
-    event: () => http(),
+    event: () => apiGateway.schema(null),
   }),
   "runtime/todos.ts",
   "lambda",

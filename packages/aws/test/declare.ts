@@ -1,7 +1,16 @@
-import { declaredIn, type ResourceGraph } from "@notation/resource";
+import {
+  declaredIn,
+  type ResourceGraph,
+  type StandardSchemaV1,
+} from "@notation/resource";
 import { isLambdaGroup, type LambdaGroup } from "src/lambda";
 
 export const projectDir = "/some/project";
+
+// Stands in for `v.unknown()`, the schema of a queue that takes any JSON body.
+export const Unknown: StandardSchemaV1<unknown, unknown> = {
+  "~standard": { version: 1, vendor: "test", validate: (value) => ({ value }) },
+};
 
 // Records the module of a declaration, as the infra build does.
 export const inModule = <T>(declaration: T, file = "runtime/fn.ts"): T =>

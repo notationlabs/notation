@@ -1,13 +1,32 @@
-import { $lambda, http, jwt, type LambdaHandler } from "@notation/aws/lambda";
-import type { JWTClaims } from "shared/jwt";
+import {
+  $lambda,
+  apiGateway,
+  DecodeError,
+  type LambdaHandler,
+} from "@notation/aws/lambda";
+import { userApi, userAuth } from "infra/api";
 
+// The declaration makes its own route, GET /user, behind the authorizer.
 export const lambda = $lambda({
   id: "user",
   timeout: 5,
   memory: 64,
-  event: () => http({ auth: jwt<JWTClaims>() }),
+  event: () =>
+    apiGateway.bind(userApi).defineRoute({
+      method: "GET",
+      path: "/user",
+      schema: null,
+      auth: userAuth,
+    }),
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
-  return { message: event.requestContext.authorizer.jwt.claims.$username };
+  try {
+    const { claims } = await lambda.decode(event);
+    return { message: claims.$username };
+  } catch (error) {
+    if (!(error instanceof DecodeError)) throw error;
+    const statusCode = error.part === "claims" ? 403 : 400;
+    return { statusCode, body: error.message };
+  }
 };

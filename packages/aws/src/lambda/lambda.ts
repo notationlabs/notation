@@ -2,8 +2,8 @@ import * as aws from "@notation/aws.iac";
 import * as std from "@notation/std.iac";
 import { getActiveResourceCollection } from "@notation/resource";
 import path from "path";
-import { awsName } from "src/naming";
-import { assertLambdaId, type NameSafe } from "./lambda-id";
+import { awsName, claimAwsName, describeDeclaration } from "src/naming";
+import { assertId, assertName, resourceId, type NameSafe } from "src/id";
 
 export type LambdaConfig = {
   /**
@@ -14,6 +14,12 @@ export type LambdaConfig = {
    * Must be name-safe: 1 to 64 letters, digits, hyphens or underscores.
    */
   id: string;
+  /**
+   * The function's name in AWS, in place of the id. The function is named
+   * `<app>--<stage>--<name>`. Changing the name replaces the function. The
+   * role and the other resources keep names from the id. Must be name-safe.
+   */
+  name?: string;
   /**
    * The export of the code that Lambda calls with every event. Defaults to
    * `handler`.
@@ -44,11 +50,26 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
     return true;
   }
 
-  constructor(config: LambdaConfig) {
-    assertLambdaId(config.id);
-    assertUniqueLambdaId(config.id);
+  /**
+   * @param declaredBy The function that declares the Lambda, such as
+   * `$lambda`, and the module that declares it, for errors.
+   */
+  constructor(
+    config: LambdaConfig,
+    declaredBy: { caller: string; where?: string } = { caller: "lambda()" },
+  ) {
+    const { caller, where } = declaredBy;
+    assertId(caller, config.id);
+    assertName(caller, config.name);
+    assertUniqueLambdaId(caller, config.id);
+    const functionName = awsName("lambdaFunction", config.name ?? config.id);
+    claimAwsName(
+      "Lambda functions",
+      functionName,
+      describeDeclaration(caller, config.id, config.name, where),
+    );
     super("Lambda", config.id, config);
-    const { fn, role } = build(this, config);
+    const { fn, role } = build(this, config, functionName);
     this.fn = fn;
     this.role = role;
   }
@@ -61,13 +82,17 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
    * only when code first reads `policy` to contribute to it.
    */
   get policy(): aws.lambda.LambdaRolePolicyInstance {
-    return this.addOnce(aws.lambda.LambdaRolePolicy, `${this.id}-role-policy`, {
-      config: {
-        RoleName: this.role.config.RoleName,
-        PolicyName: `${this.id}-role-policy`,
+    return this.addOnce(
+      aws.lambda.LambdaRolePolicy,
+      resourceId("lambda", this.id, "role-policy"),
+      {
+        config: {
+          RoleName: this.role.config.RoleName,
+          PolicyName: `${this.id}-role-policy`,
+        },
+        dependencies: { role: this.role },
       },
-      dependencies: { role: this.role },
-    });
+    );
   }
 }
 
@@ -88,7 +113,7 @@ export function lambda<const Id extends string>(
 }
 
 // IAM role names are unique regardless of case, so compare IDs in lower case
-function assertUniqueLambdaId(id: string) {
+function assertUniqueLambdaId(caller: string, id: string) {
   const collection = getActiveResourceCollection();
   if (!collection) return;
   const clash = collection.graph.resourceGroups.find(
@@ -99,13 +124,17 @@ function assertUniqueLambdaId(id: string) {
     const existing = clash.id;
     throw new Error(
       existing === id
-        ? `Duplicate lambda id "${id}": another lambda in this deployment already uses it. Give each lambda a unique id.`
-        : `Duplicate lambda id "${id}": it clashes with "${existing}", because AWS IAM role names ignore case. Give each lambda a unique id.`,
+        ? `Duplicate ${caller} id "${id}": another Lambda in this deployment already uses it. Give each Lambda a unique id.`
+        : `Duplicate ${caller} id "${id}": it clashes with "${existing}", because AWS IAM role names ignore case. Give each Lambda a unique id.`,
     );
   }
 }
 
-const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
+const build = (
+  functionGroup: LambdaGroup,
+  config: LambdaConfig,
+  functionName: string,
+) => {
   const filePath = config.code.path;
   const lambdaId = config.id;
 
@@ -113,20 +142,20 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
 
   if (config.code.type === "file") {
     zipFile = functionGroup.add(
-      new std.fs.Zip(`${lambdaId}-zip`, {
+      new std.fs.Zip(resourceId("lambda", lambdaId, "zip"), {
         config: { sourceFilePath: filePath },
       }),
     );
   } else {
     zipFile = functionGroup.add(
-      new std.fs.File(`${lambdaId}-zip`, {
+      new std.fs.File(resourceId("lambda", lambdaId, "zip"), {
         config: { filePath },
       }),
     );
   }
 
   const role = functionGroup.add(
-    new aws.lambda.LambdaIamRole(`${lambdaId}-role`, {
+    new aws.lambda.LambdaIamRole(resourceId("lambda", lambdaId, "role"), {
       config: {
         RoleName: awsName("iamRole", `${lambdaId}-role`),
       },
@@ -134,18 +163,21 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
   );
 
   functionGroup.add(
-    new aws.lambda.LambdaRolePolicyAttachment(`${lambdaId}-policy`, {
-      dependencies: { role },
-    }),
+    new aws.lambda.LambdaRolePolicyAttachment(
+      resourceId("lambda", lambdaId, "policy-attachment"),
+      {
+        dependencies: { role },
+      },
+    ),
   );
 
   const fileName = path.parse(filePath).name;
   const runtime = config.runtime || "nodejs22.x";
 
   const lambdaResource = functionGroup.add(
-    new aws.lambda.LambdaFunction(lambdaId, {
+    new aws.lambda.LambdaFunction(resourceId("lambda", lambdaId), {
       config: {
-        FunctionName: awsName("lambdaFunction", lambdaId),
+        FunctionName: functionName,
         Handler: `${fileName}.${config.handler ?? "handler"}`,
         Runtime: runtime,
         Timeout: config.timeout,
@@ -161,7 +193,7 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
   );
 
   functionGroup.add(
-    new aws.lambda.LambdaLogGroup(`${lambdaId}-log-group`, {
+    new aws.lambda.LambdaLogGroup(resourceId("lambda", lambdaId, "log-group"), {
       config: { retentionInDays: 30 },
       dependencies: { lambda: lambdaResource },
     }),

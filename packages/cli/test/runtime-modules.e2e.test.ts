@@ -51,18 +51,17 @@ const schemaModule = `
 `;
 
 it("deploys a declaration module as a lambda that reads its bound variables", async () => {
-  write("runtime/schema.ts", schemaModule);
+  write("shared/schema.ts", schemaModule);
   write(
     "runtime/process-orders.ts",
     `
     import { $lambda, DecodeError, sqs, type LambdaHandler } from "@notation/aws/lambda";
     import { ordersQueue } from "../infra/orders";
-    import { Order } from "./schema";
 
     export const lambda = $lambda({
       id: "process-orders",
       timeout: 5,
-      event: () => sqs(Order),
+      event: () => sqs.bind(ordersQueue, { batchSize: 5 }),
       policy: () => [ordersQueue.grant(["SendMessage"])],
       env: () => ({ QUEUE_URL: ordersQueue.url, LOG_LEVEL: "info" }),
     });
@@ -71,7 +70,7 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
       const orders = [];
       for (const record of event.Records) {
         try {
-          orders.push(await lambda.decode(record));
+          orders.push((await lambda.decode(record)).body);
         } catch (error) {
           if (!(error instanceof DecodeError)) throw error;
         }
@@ -84,10 +83,9 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
     "infra/orders.ts",
     `
     import { queue } from "@notation/aws/sqs";
-    import { lambda } from "../runtime/process-orders";
+    import { Order } from "../shared/schema";
 
-    export const ordersQueue = queue({ name: "orders" });
-    ordersQueue.consume(() => lambda, { batchSize: 5 });
+    export const ordersQueue = queue({ id: "orders", schema: Order });
     `,
   );
 
@@ -147,7 +145,7 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
       "sqs:GetQueueAttributes",
       "sqs:SendMessage",
     ],
-    mappings: ["orders-process-orders-mapping"],
+    mappings: ["sqs-mapping:orders:process-orders"],
     zipSource: "dist/runtime/process-orders/index.mjs",
   });
   expect(JSON.parse(logged!)).toEqual({
@@ -160,4 +158,118 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
     "utf8",
   );
   expect(bundle).not.toMatch(/@aws-sdk|aws\.iac|LambdaGroup|ordersQueue/);
+});
+
+it("deploys a declaration module that makes its own route with apiGateway.bind(api).defineRoute({ auth })", async () => {
+  write(
+    "shared/schema.ts",
+    `${schemaModule}
+  export const Claims = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: (value) =>
+        typeof value?.sub === "string"
+          ? { value }
+          : { issues: [{ message: "sub must be a string" }] },
+    },
+  };
+  `,
+  );
+  write(
+    "runtime/create-order.ts",
+    `
+    import { $lambda, apiGateway, DecodeError, type LambdaHandler } from "@notation/aws/lambda";
+    import { Order } from "../shared/schema";
+    import { ordersApi, userAuth } from "../infra/api";
+
+    export const lambda = $lambda({
+      id: "create-order",
+      event: () =>
+        apiGateway.bind(ordersApi).defineRoute({ method: "POST", path: "/orders", schema: Order, auth: userAuth }),
+    });
+
+    export const handler: LambdaHandler<typeof lambda> = async (event) => {
+      try {
+        const { body: order, claims } = await lambda.decode(event);
+        return { statusCode: 201, body: JSON.stringify({ order, user: claims.sub }) };
+      } catch (error) {
+        if (!(error instanceof DecodeError)) throw error;
+        return { statusCode: 400, body: error.message };
+      }
+    };
+    `,
+  );
+  write(
+    "infra/api.ts",
+    `
+    import { api, jwtAuthorizer } from "@notation/aws/api-gateway";
+    import { Claims } from "../shared/schema";
+
+    export const ordersApi = api({ id: "orders-api" });
+    export const userAuth = jwtAuthorizer({
+      id: "user-auth",
+      api: ordersApi,
+      issuer: "https://issuer.example/",
+      audience: ["orders"],
+      claims: Claims,
+    });
+    `,
+  );
+
+  await compileRuntimeModules(
+    (await compileInfra(path.join(root, "infra/api.ts"))).modules,
+  );
+
+  const script = `
+    import { collectResourceGraph } from "@notation/resource";
+
+    const graph = await collectResourceGraph(() => import("./dist/infra/api.mjs"));
+    const ofType = (type) => graph.resources.filter((r) => r.type === type);
+    const routes = ofType("aws/apiGateway/Route").map((r) => ({
+      key: r.config.RouteKey,
+      type: r.config.AuthorizationType,
+      auth: r.dependencies.auth?.id,
+    }));
+
+    const { handler } = await import("./dist/runtime/create-order/index.mjs");
+    const request = (sub) => ({
+      body: JSON.stringify({ id: "o1" }),
+      isBase64Encoded: false,
+      requestContext: { authorizer: { jwt: { claims: { sub } } } },
+    });
+    const responses = [await handler(request("u1"), {}), await handler(request(1), {})];
+    console.log(JSON.stringify({ routes, responses }));
+  `;
+  const output = execFileSync(
+    process.execPath,
+    ["--input-type=module", "-e", script],
+    { cwd: root, encoding: "utf8" },
+  );
+  const result = JSON.parse(output.trim().split("\n").at(-1)!);
+
+  expect(result.routes).toEqual([
+    {
+      key: "POST /orders",
+      type: "JWT",
+      auth: "api-authorizer:orders-api:user-auth",
+    },
+  ]);
+  expect(result.responses).toEqual([
+    { statusCode: 201, body: '{"order":{"id":"o1"},"user":"u1"}' },
+    {
+      statusCode: 400,
+      body: "The request's JWT claims are not valid: sub must be a string",
+    },
+  ]);
+
+  const bundle = readFileSync(
+    path.join(root, "dist/runtime/create-order/index.mjs"),
+    "utf8",
+  );
+  expect(bundle).toContain("apiGateway.bind({}).defineRoute({");
+  expect(bundle).toContain("auth: { claims: Claims }");
+  expect(bundle).not.toMatch(
+    /@aws-sdk|aws\.iac|LambdaGroup|ordersApi|userAuth|issuer\.example/,
+  );
 });

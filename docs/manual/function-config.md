@@ -7,7 +7,8 @@ A runtime module declares the Lambda function that it deploys as with `$lambda` 
 ```ts [@notation/aws/lambda]
 type LambdaDeclarationConfig = {
   id: string; // name-safe string literal
-  event?: () => SqsEvent | HttpEvent | ScheduledEvent;
+  name?: string; // the function's AWS name, in place of the id
+  event?: () => SqsEvent | ApiGatewayEvent | EventBridgeScheduleEvent;
   env?: () => Record<string, string>;
   policy?: () => PolicyStatement[];
   runtime?: string; // such as "nodejs22.x"
@@ -16,28 +17,27 @@ type LambdaDeclarationConfig = {
 };
 ```
 
-| Option    | Meaning                                                                                                   |
-| --------- | --------------------------------------------------------------------------------------------------------- |
-| `id`      | Names the function and its role, zip, policy and log group, and keys them in state. See [`id`](#id).      |
-| `event`   | The events that the function receives: `sqs(schema?)`, `http({ body?, auth? })` or `scheduled()`.         |
-| `env`     | Values that the function reads, by name. Deploy sets each one as an environment variable of the function. |
-| `policy`  | Statements to add to the function role's inline policy.                                                   |
-| `runtime` | The Lambda runtime.                                                                                       |
-| `timeout` | Seconds that the function may run for each event.                                                         |
-| `memory`  | Megabytes of memory for the function.                                                                     |
+| Option    | Meaning                                                                                                                                                                                                                                                                                                                                                       |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`      | Names the function and its role, zip, policy and log group, and keys them in state. See [`id`](#id).                                                                                                                                                                                                                                                          |
+| `event`   | The events that the function receives: `sqs.bind(queue, options?)`, `sqs.schema(schema)`, `apiGateway.bind(api).defineRoute(options)`, `apiGateway.schema(body)`, `apiGateway.schema(body).authSchema(claims?)`, `eventBridge.defineSchedule(options)` or `eventBridge.schema(null)`. An API Gateway `body` is a schema, or `null` for requests with no body. |
+| `env`     | Values that the function reads, by name. Deploy sets each one as an environment variable of the function.                                                                                                                                                                                                                                                     |
+| `policy`  | Statements to add to the function role's inline policy.                                                                                                                                                                                                                                                                                                       |
+| `runtime` | The Lambda runtime.                                                                                                                                                                                                                                                                                                                                           |
+| `timeout` | Seconds that the function may run for each event.                                                                                                                                                                                                                                                                                                             |
+| `memory`  | Megabytes of memory for the function.                                                                                                                                                                                                                                                                                                                         |
 
 ## Usage
 
 ```ts [runtime/orders.ts]
 import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
 import { orderQueue, refundQueue } from "infra/orders";
-import { Order } from "./schema";
 
 export const lambda = $lambda({
   id: "orders",
   timeout: 30,
   memory: 256,
-  event: () => sqs(Order),
+  event: () => sqs.bind(orderQueue, { batchSize: 5 }),
   env: () => ({ REFUND_QUEUE_URL: refundQueue.url }),
   policy: () => [refundQueue.grant(["SendMessage"])],
 });
@@ -47,9 +47,9 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 };
 ```
 
-The module deploys as one Lambda function with the ID `orders`, 256 MB of memory and a 30-second timeout. The function receives SQS messages whose bodies `lambda.decode()` validates with `Order`. The function's role may send messages to `refundQueue`, and the function reads the queue's URL with `lambda.env().REFUND_QUEUE_URL`.
+The module deploys as one Lambda function with the ID `orders`, 256 MB of memory and a 30-second timeout. The function receives the messages of `orderQueue`, up to 5 in each invocation, and `lambda.decode()` validates each body with the queue's schema. The function's role may send messages to `refundQueue`, and the function reads the queue's URL with `lambda.env().REFUND_QUEUE_URL`.
 
-The declaration doesn't connect the function to a queue. Infra does that with `orderQueue.consume(() => lambda)`. See [SQS](../resources/sqs.md#queueconsumetarget).
+`sqs.bind(orderQueue)` maps the queue to the function when infra has finished loading, and gives the function's role permission to read the queue. The infra module declares `orderQueue` with `queue({ id: "orders", schema: Order })`, and imports `Order` from a shared module. See [SQS](../resources/sqs.md#sqsbindqueue-options). For a function that infra maps queues to with `eventSourceMapping()`, use `sqs.schema(Order)` in place of `sqs.bind()`.
 
 ## Options that refer to infra are functions
 
@@ -76,6 +76,8 @@ The declaration needs no export unless another module refers to it. In practice 
 `id` is required. It names the function, its IAM role and its log group, and keys them in state. The ID doesn't depend on the module's path, so you can move or rename the module and keep its function. Changing the ID replaces the function.
 
 Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. TypeScript reports an ID that breaks the rule, and `$lambda` throws on one when the infra code runs. Two Lambda functions in one deployment can't share an ID. See [Lambda IDs](../resources/lambda.md#ids).
+
+`name` sets the function's AWS name in place of the `id`, and keeps the `<app>--<stage>--` prefix. The `id` still keys the function in state. The runtime build removes `name`, as it removes the other options that the function doesn't read.
 
 ## `env`
 

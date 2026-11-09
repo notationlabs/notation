@@ -1,4 +1,8 @@
-import { scopedPhysicalName, type PhysicalNameRule } from "@notation/resource";
+import {
+  getActiveResourceCollection,
+  scopedPhysicalName,
+  type PhysicalNameRule,
+} from "@notation/resource";
 
 /**
  * The length limits of the AWS names that Notation generates. App, stage and
@@ -23,4 +27,60 @@ const rules = {
  */
 export function awsName(kind: keyof typeof rules, id: string): string {
   return scopedPhysicalName(id, rules[kind]);
+}
+
+/**
+ * Describes a declaration in errors, such as `$lambda({ id: "a", name: "b" })`.
+ * @param caller The function that declares the resource, such as `queue()`.
+ * @param where The module of the declaration, when it is known.
+ */
+export function describeDeclaration(
+  caller: string,
+  id: string,
+  name?: string,
+  where?: string,
+): string {
+  const options =
+    name === undefined ? `id: "${id}"` : `id: "${id}", name: "${name}"`;
+  const call = `${caller.replace(/\(\)$/, "")}({ ${options} })`;
+  return where ? `${call} in ${where}` : call;
+}
+
+// The declarations that gave each AWS name in a collection, keyed by kind and
+// name. Two installed copies of this package share the map, through
+// `Symbol.for`, as they share the declaration registry.
+const claims: WeakMap<object, Map<string, string>> = ((globalThis as any)[
+  Symbol.for("@notation/aws/awsNameClaims")
+] ??= new WeakMap());
+
+/**
+ * Records that `declaration` gives one of `kinds` the AWS name `name`.
+ * Throws when another declaration in the deployment already gave one of
+ * `kinds` the same name. Does nothing when no resource graph is being
+ * collected.
+ * @param kinds The kind of resource, in the plural, such as
+ * `Lambda functions`. A kind whose names are unique only within a parent
+ * names the parent, such as `JWT authorizers of the API "todos"`.
+ */
+export function claimAwsName(
+  kinds: string,
+  name: string,
+  declaration: string,
+): void {
+  const collection = getActiveResourceCollection();
+  if (!collection) return;
+  let claimed = claims.get(collection);
+  if (!claimed) {
+    claimed = new Map();
+    claims.set(collection, claimed);
+  }
+  // A newline can't appear in a kind.
+  const key = `${kinds}\n${name}`;
+  const previous = claimed.get(key);
+  if (previous) {
+    throw new Error(
+      `${previous} and ${declaration} give two ${kinds} the same AWS name, "${name}". Give one of them another name.`,
+    );
+  }
+  claimed.set(key, declaration);
 }

@@ -14,7 +14,7 @@ describe("analyzeModule", () => {
   it("finds the declaration and its options", () => {
     const { declaration, resourceCall } = run(`
       import { $lambda, sqs } from "@notation/aws/lambda";
-      export const lambda = $lambda({ id: "fn", event: () => sqs(null), "env": () => ({}) });
+      export const lambda = $lambda({ id: "fn", event: () => sqs.schema({}), "env": () => ({}) });
     `);
     expect(resourceCall).toBeUndefined();
     expect(declaration?.binding).toBe("lambda");
