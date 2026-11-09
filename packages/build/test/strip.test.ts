@@ -585,6 +585,20 @@ describe("stripForRuntime", () => {
       );
     });
 
+    it("fails when the resource isn't declared with an object literal", () => {
+      expect(() =>
+        strip({
+          "infra/orders.ts": [
+            `import { createQueue } from "@notation/aws/sqs";`,
+            `const config = { id: "orders" };`,
+            `export const ordersQueue = createQueue(config);`,
+          ].join("\n"),
+        }),
+      ).toThrow(
+        "infra/orders.ts:3:28: ordersQueue must be declared with an object literal, so the build can find its schema, which the function in runtime/handler.ts reads.",
+      );
+    });
+
     it("fails when a helper makes the resource", () => {
       expect(() =>
         strip({
