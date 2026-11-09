@@ -127,10 +127,12 @@ Nothing checks the messages that a sender writes. To send messages, use `@aws-sd
 
 ```ts [@notation/aws/lambda]
 type EventSourceMappingConfig = SqsOptions & {
-  source: QueueGroup;
+  source: SqsSource<any>;
   target: LambdaTarget<"sqs" | "none">;
 };
 ```
+
+`source` is a queue from `queue()`. `SqsSource` is the part of a queue that `sqs()` and `eventSourceMapping()` use: its `schema`, and a method that maps it to a function.
 
 `target` is a declaration, passed as a function such as `() => processOrders`, or a Lambda group from [`lambda()`](lambda.md#lambdaconfig), passed as it is. The declaration must have `event: () => sqs()`, or no `event`. See [Wiring a declaration](lambda.md#wiring-a-declaration).
 
