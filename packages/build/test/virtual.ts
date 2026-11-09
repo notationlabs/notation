@@ -73,8 +73,13 @@ export const apiGateway = {
 };
 
 export const eventBridge = {
-  defineSchedule(options) { return { kind: "eventBridge", schedule: options }; },
-  schema(detail) { return { kind: "eventBridge" }; },
+  bind(bus) {
+    return {
+      defineRule(options) { return { kind: "eventBridge", schema: options.schema, rule: { bus, options } }; },
+    };
+  },
+  defineSchedule(options) { return { kind: "eventBridge", schema: null, schedule: options }; },
+  schema(detail) { return { kind: "eventBridge", schema: detail }; },
 };
 `;
 
@@ -83,6 +88,15 @@ export const rate = (rate, unit) => ({ type: "rate", rate, unit });
 
 /** @resource */
 export function schedule(config) {}
+
+/** @resource runtime: */
+export function eventBus(config) { return { id: config.id }; }
+
+/** @resource runtime: */
+export function defaultEventBus() { return { id: "default" }; }
+
+/** @resource */
+export function rule(config) {}
 `;
 
 export const awsApiGateway = `
