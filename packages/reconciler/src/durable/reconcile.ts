@@ -22,6 +22,7 @@ import {
   resolveResourceClass,
   type ResourceRegistry,
 } from "../resource-registry";
+import { assertSameType, ResourceTypeChangedError } from "../resource-type";
 import {
   applyDriftDetection,
   createResourceOperation,
@@ -76,6 +77,7 @@ export async function* reconcileResource(
 
   const emit = durableEmitter(step, opts.emit);
   const session = yield* openStateSession(step, opts, resource);
+  assertSameType(resource, session.node);
   if (session.node) resource.setOutput(session.node.output);
 
   let action = decideAction({ resource, stateNode: session.node, params });
@@ -336,6 +338,10 @@ async function* deleteBlockingDependents(
  * — or has already been deleted — and is skipped, which is also what makes
  * the sweep of a partly-deleted deployment idempotent. `step` must already be
  * scoped to the resource.
+ *
+ * A record of another type than the resource is deleted through the
+ * registered class of the record's type, as that class made it. Without a
+ * registered class, the delete fails.
  */
 export async function* deleteResource(
   step: DurableStepRunner,
@@ -346,11 +352,26 @@ export async function* deleteResource(
 ): AsyncGenerator<any, void, any> {
   const session = yield* openStateSession(step, opts, resource);
   if (!session.node) return;
-  resource.setOutput(session.node.output);
+  let target = resource;
+  if (session.node.type !== resource.type) {
+    const Resource = resolveResourceClass(
+      workflowRegistry(opts),
+      session.node.type as ResourceType,
+    );
+    if (!Resource) {
+      throw new ResourceTypeChangedError(
+        resource.id,
+        session.node.type,
+        resource.type,
+      );
+    }
+    target = await recordedResource(Resource, session.node);
+  }
+  target.setOutput(session.node.output);
 
   const emit = durableEmitter(step, opts.emit);
   yield* deleteResourceOperation(step, {
-    resource,
+    resource: target,
     dryRun: opts.dryRun,
     emit: (event) => emit({ ...event, ...cause }),
     maxOperationAttempts: opts.maxOperationAttempts,

@@ -11,6 +11,7 @@ import {
 import { MemoryStateBackend } from "@notation/state";
 import { describe, expect, it } from "vitest";
 import { createPlan } from "../src/planner";
+import { ResourceTypeChangedError } from "../src/resource-type";
 
 describe("createPlan", () => {
   it("plans desired creates and persisted orphans without mutation execution", async () => {
@@ -47,6 +48,73 @@ describe("createPlan", () => {
         decision: "delete-orphan",
         dependsOn: ["orphan-role"],
       }),
+    ]);
+  });
+
+  it("fails when a resource has the ID of a state record of another type", async () => {
+    const NewResource = resource({ type: "test/planner/new" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+      });
+    const state = new MemoryStateBackend({
+      permission: {
+        version: 1,
+        id: "permission",
+        type: "test/planner/old",
+        config: {},
+        params: {},
+        output: {},
+        lastOperation: "create",
+        lastOperationAt: "2026-07-22T00:00:00.000Z",
+      },
+    });
+
+    const plan = createPlan({
+      resources: [new NewResource("permission")],
+      state,
+      driftDetection: false,
+    });
+
+    await expect(plan).rejects.toSatisfy(ResourceTypeChangedError.is);
+    await expect(plan).rejects.toThrow(
+      "Resource permission has type test/planner/new in the graph, but its " +
+        "state record has type test/planner/old. A resource can't change " +
+        "type under the same ID. The provider must give the " +
+        "test/planner/new resource a new ID",
+    );
+  });
+
+  it("plans the record of an old type under another ID as an orphan", async () => {
+    const NewResource = resource({ type: "test/planner/new" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+      });
+    const state = new MemoryStateBackend({
+      permission: {
+        version: 1,
+        id: "permission",
+        type: "test/planner/old",
+        config: {},
+        params: {},
+        output: {},
+        lastOperation: "create",
+        lastOperationAt: "2026-07-22T00:00:00.000Z",
+      },
+    });
+
+    const plan = await createPlan({
+      resources: [new NewResource("invoke-permission")],
+      state,
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toMatchObject([
+      { id: "invoke-permission", decision: "create" },
+      { id: "permission", type: "test/planner/old", decision: "delete-orphan" },
     ]);
   });
 

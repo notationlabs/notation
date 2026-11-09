@@ -16,6 +16,7 @@ import {
   type PlanNode,
 } from "./plan";
 import type { ResourceRegistry } from "./resource-registry";
+import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
 
 export type CreatePlanOptions = {
@@ -133,7 +134,7 @@ export async function createPlan({
 
 /**
  * Loads the resource's outputs from state, then returns and checks the
- * params that plan knows. Outputs in state stand in for the outputs of
+ * params that plan knows. A state record of another type fails. Outputs in state stand in for the outputs of
  * dependencies, so the dependencies must be loaded first.
  */
 export async function planKnownParams(
@@ -145,6 +146,7 @@ export async function planKnownParams(
   params: Record<string, unknown>;
 }> {
   const stateNode = await state.get(resource.id);
+  assertSameType(resource, stateNode);
   if (stateNode) resource.setOutput(stateNode.output);
   const params = await resource.planParams();
   await validateParams(resource, params, point);

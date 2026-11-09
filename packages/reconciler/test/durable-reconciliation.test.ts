@@ -29,6 +29,7 @@ import {
   createResourceRegistry,
   type ResourceRegistry,
 } from "../src/resource-registry";
+import { ResourceTypeChangedError } from "../src/resource-type";
 
 const logger = pino({ level: "silent" });
 
@@ -1007,6 +1008,79 @@ function removeEdges(runtime: ReturnType<typeof createRuntime>, id: string) {
     )
     .run({ ...where, $state: JSON.stringify(record) });
 }
+
+describe("a resource whose state record has another type", () => {
+  function defineTyped(type: string, calls: string[]) {
+    return resource({ type: type as ResourceType })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => void calls.push(`create ${type}`),
+        delete: async () => void calls.push(`delete ${type}`),
+      });
+  }
+
+  it("fails deploy before any change", async () => {
+    const calls: string[] = [];
+    const Old = defineTyped("test/durable/old", calls);
+    const New = defineTyped("test/durable/new", calls);
+    const resources: BaseResource[] = [new Old("permission")];
+    const runtime = createRuntime(resources, "type-changed-deploy", {
+      registry: createResourceRegistry([Old]),
+    });
+    await runtime.run("deploy-1");
+
+    resources[0] = new New("permission");
+    const deploy = runtime.run("deploy-2");
+
+    await expect(deploy).rejects.toSatisfy(ResourceTypeChangedError.is);
+    await expect(deploy).rejects.toThrow(
+      "Resource permission has type test/durable/new in the graph, but its state record has type test/durable/old",
+    );
+    expect(calls).toEqual(["create test/durable/old"]);
+    expect(await runtime.state.get("permission")).toMatchObject({
+      type: "test/durable/old",
+    });
+    runtime.close();
+  });
+
+  it("is deleted by destroy through the class of the record's type", async () => {
+    const calls: string[] = [];
+    const Old = defineTyped("test/durable/old", calls);
+    const New = defineTyped("test/durable/new", calls);
+    const resources: BaseResource[] = [new Old("permission")];
+    const runtime = createRuntime(resources, "type-changed-destroy", {
+      registry: createResourceRegistry([Old]),
+    });
+    await runtime.run("deploy-1");
+
+    resources[0] = new New("permission");
+    await runtime.destroy("destroy-1");
+
+    expect(calls).toEqual([
+      "create test/durable/old",
+      "delete test/durable/old",
+    ]);
+    expect(await runtime.state.get("permission")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("fails destroy when no class is registered for the record's type", async () => {
+    const calls: string[] = [];
+    const Old = defineTyped("test/durable/old", calls);
+    const New = defineTyped("test/durable/new", calls);
+    const resources: BaseResource[] = [new Old("permission")];
+    const runtime = createRuntime(resources, "type-changed-unregistered");
+    await runtime.run("deploy-1");
+
+    resources[0] = new New("permission");
+
+    await expect(runtime.destroy("destroy-1")).rejects.toSatisfy(
+      ResourceTypeChangedError.is,
+    );
+    expect(calls).toEqual(["create test/durable/old"]);
+    runtime.close();
+  });
+});
 
 describe("dependency edges in state", () => {
   function defineRecorded(type: string, deleted: string[]) {
