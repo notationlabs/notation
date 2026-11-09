@@ -29,10 +29,15 @@ function analyse(analyses: ModuleAnalyses, file: string) {
 // The directories to watch for new runtime files: the part of each glob
 // before its first segment with a glob character. If that directory doesn't
 // exist yet, its nearest existing parent is watched, but not a directory
-// above the root, so that creating runtime/ during watch is seen.
+// above the root, so that creating runtime/ during watch is seen. A glob
+// with no glob characters, such as `jobs`, comes with `jobs/**`. Its own
+// base would be the folder that holds `jobs`, so it is left out, and the base
+// of `jobs/**` covers it.
 function globBases(root: string, globs: string[]): string[] {
   const bases = new Set<string>();
+  const all = new Set(globs);
   for (const glob of globs) {
+    if (all.has(`${glob}/**`)) continue;
     const segments = glob.split(/[\\/]/);
     const first = segments.findIndex((segment) => globCharacters.test(segment));
     let base = path.resolve(

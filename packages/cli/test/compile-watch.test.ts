@@ -191,6 +191,30 @@ it("doesn't rebuild on build output, packages or deploy state when a glob covers
   expect(builds).toBe(settled);
 });
 
+it("watches only the folder of a runtime glob with no glob characters", async () => {
+  write("watch-k/jobs/nightly.ts", runtimeModule("nightly"));
+  write("watch-k/main.ts", `console.log("no imports");\n`);
+
+  let builds = 0;
+  const infra = await compileInfra(path.join(root, "watch-k/main.ts"), {
+    watch: true,
+    analyses: new ModuleAnalyses({ files: { runtime: ["watch-k/jobs"] } }),
+    onDeclarationModules: () => builds++,
+  });
+  onTestFinished(infra.close);
+  const wait = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+  await wait(500);
+  const settled = builds;
+  write("watch-k/notes/readme.md", "notes");
+  await wait(1000);
+  expect(builds).toBe(settled);
+
+  write("watch-k/jobs/weekly.ts", runtimeModule("weekly"));
+  await waitFor(() => expect(builds).toBeGreaterThan(settled));
+});
+
 it("bundles a runtime file in a glob directory that is created during watch", async () => {
   write("watch-g/main.ts", `console.log("no imports");\n`);
   const bundle = path.join(root, "dist/watch-g/runtime/todos/index.mjs");
