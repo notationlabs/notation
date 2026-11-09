@@ -28,15 +28,16 @@ The `$` marks a function that the build handles specially. `$lambda` must be cal
 
 `event` in the declaration chooses the type of the handler:
 
-| `event`                                                                             | `LambdaHandler<typeof lambda>`                                                                       |
-| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `() => sqs.bind(queue)` or `() => sqs.schema(schema)`                               | `(event: SQSEvent, context: Context) => SQSBatchResponse \| void` (or a promise)                     |
-| `() => apiGateway.schema(body)`, or `defineRoute()` with no `auth`                  | `(event: APIGatewayProxyEventV2, context: Context) => ApiGatewayResult` (or a promise)               |
-| `() => apiGateway.schema(body).authSchema(claims?)`, or `defineRoute()` with `auth` | `(event: APIGatewayJWTProxyEventV2<JwtClaims>, context: Context) => ApiGatewayResult` (or a promise) |
-| `() => eventBridge.schema(null)` or `() => eventBridge.defineSchedule(options)`     | `(event: EventBridgeEvent<"Scheduled Event", unknown>, context: Context) => void` (or a promise)     |
-| no `event`                                                                          | `(event: unknown, context: Context) => unknown`                                                      |
+| `event`                                                                                 | `LambdaHandler<typeof lambda>`                                                                       |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `() => sqs.bind(queue)` or `() => sqs.schema(schema)`                                   | `(event: SQSEvent, context: Context) => SQSBatchResponse \| void` (or a promise)                     |
+| `() => apiGateway.schema(body)`, or `defineRoute()` with no `auth`                      | `(event: APIGatewayProxyEventV2, context: Context) => ApiGatewayResult` (or a promise)               |
+| `() => apiGateway.schema(body).authSchema(claims?)`, or `defineRoute()` with `auth`     | `(event: APIGatewayJWTProxyEventV2<JwtClaims>, context: Context) => ApiGatewayResult` (or a promise) |
+| `() => eventBridge.schema(detail)` or `() => eventBridge.bind(bus).defineRule(options)` | `(event: EventBridgeEvent<string, unknown>, context: Context) => void` (or a promise)                |
+| `() => eventBridge.schema(null)` or `() => eventBridge.defineSchedule(options)`         | `(event: EventBridgeEvent<"Scheduled Event", unknown>, context: Context) => void` (or a promise)     |
+| no `event`                                                                              | `(event: unknown, context: Context) => unknown`                                                      |
 
-`event` also decides where infra can wire the function: an `sqs` Lambda to a queue, an `apiGateway` Lambda to a route, and an `eventBridge` Lambda to a schedule. A Lambda with `.authSchema()` or `auth` can only be wired to a route with a JWT authorizer, and a Lambda without either only to a route without an authorizer. A Lambda with no `event` can be wired to any of them. See [End-to-End Types](./types.md).
+`event` also decides where infra can wire the function: an `sqs` Lambda to a queue, an `apiGateway` Lambda to a route, and an `eventBridge` Lambda to a rule or a schedule. An `eventBridge` Lambda with a detail schema can only be wired to a rule, and one with `eventBridge.schema(null)` only to a schedule. A Lambda with `.authSchema()` or `auth` can only be wired to a route with a JWT authorizer, and a Lambda without either only to a route without an authorizer. A Lambda with no `event` can be wired to any of them. See [End-to-End Types](./types.md).
 
 Notation has no event kind for DynamoDB streams. A function for another event source has no `event`, and its handler types the event itself.
 
@@ -129,7 +130,8 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 - A request through a JWT authorizer, to a Lambda with `.authSchema()` or `defineRoute({ auth })`, also gets a top-level `claims` field. `decode()` validates the claims with the claims schema, if there is one, and throws a `DecodeError` for claims that the schema rejects. See [Claims in `decode()`](../providers/aws/api-gateway.md#claims-in-decode).
 - When the body is not valid, `decode()` throws a `DecodeError`. Its `issues` hold the schema's issues. Its `part` is `"body"` for an error in the body and `"claims"` for an error in the claims, so a handler can return 400 for one and 403 for the other.
 - A message that fails validation fails again on every retry, so the handler logs it and skips it. If the handler threw instead, Lambda would retry the whole batch until the queue's retention period ends.
-- An `eventBridge` Lambda, or a Lambda with no `event`, has no `decode()`. Calling it is a type error.
+- For an `eventBridge` Lambda with a detail schema, the item is the event. `decode()` validates `detail` with the schema, and doesn't parse JSON, because the detail is already an object. A `DecodeError` for the detail has the `part` `"detail"`. See [Validating events](../providers/aws/event-bridge.md#validating-events).
+- An `eventBridge` Lambda with `eventBridge.schema(null)` or `defineSchedule()`, or a Lambda with no `event`, has no `decode()`. Calling it is a type error.
 
 `decode()` only checks what the function receives. Nothing checks that a sender writes a body that matches the schema, and a value such as a `Date` doesn't survive `JSON.stringify` and `JSON.parse` as a `Date`.
 
