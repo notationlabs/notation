@@ -422,23 +422,21 @@ test("sqs.bind(queue) in a declaration maps the queue to the function", async ()
   ]);
 });
 
-test("a declaration whose queue fails to map builds one group", () => {
+test("resolveLambda doesn't wire a declaration that makes its own queue mapping", () => {
   let calls = 0;
-  const failing = {
+  const subscribing = {
     schema: Unknown,
     "~subscribe"() {
       calls++;
-      throw new Error("mapping failed");
     },
   };
   const fn = inModule(
-    $lambda({ id: "process", event: () => sqs.bind(failing) }),
+    $lambda({ id: "process", event: () => sqs.bind(subscribing) }),
   );
-  const build = () => resolveLambda(() => fn, "test", "sqs");
-
-  expect(build).toThrow("mapping failed");
-  expect(build).toThrow("makes its own queue mapping");
-  expect(calls).toBe(1);
+  expect(() => resolveLambda(() => fn, "test", "sqs")).toThrow(
+    "makes its own queue mapping",
+  );
+  expect(calls).toBe(0);
 });
 
 test("sqs.bind(queue) can name a queue that a later module declares", async () => {

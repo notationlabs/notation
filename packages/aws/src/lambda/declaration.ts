@@ -279,8 +279,7 @@ export type ScheduleOptions = {
 export const eventBridge = {
   /**
    * The function receives the events of a schedule, whose rule the infra
-   * build makes. The function doesn't read the options, so the runtime build
-   * removes them. `id` must be a name-safe string literal; see `NameSafe`.
+   * build makes. `id` must be a name-safe string literal; see `NameSafe`.
    */
   defineSchedule<const Id extends string>(
     options: Omit<ScheduleOptions, "id"> & { id: NameSafe<Id> },

@@ -189,7 +189,8 @@ export type LambdaTarget<K extends LambdaEventKind = LambdaEventKind> =
  * declaration is passed as a function, such as `() => lambda`, because it can
  * be in a module that is still loading. A declaration fails when its event
  * has another kind than `kind`, or when it wires itself to a queue, a route
- * or a schedule, which the caller would wire a second time.
+ * or a schedule, which the caller would wire a second time. The checks run
+ * before the group is built, so a rejected declaration wires nothing.
  */
 export function resolveLambda(
   target: unknown,
@@ -210,9 +211,8 @@ export function resolveLambda(
       `${caller} expects a function that returns a Lambda declaration from $lambda(), but it returned ${declaration === undefined ? "undefined" : "another value"}.`,
     );
   }
-  const group = registered.build();
   const event = registered.event();
-  const lambda = `the Lambda "${group.id}"`;
+  const lambda = `the Lambda "${(declaration as Lambda<any, any>).id}"`;
   if (event && event.kind !== kind) {
     throw new Error(
       `${caller} sends ${eventNames[kind]}, but ${lambda} is declared with event: () => ${eventCall(event)}.`,
@@ -224,7 +224,7 @@ export function resolveLambda(
       `${caller} can't wire ${lambda}, because the Lambda makes its own ${wired.noun} in its declaration, with event: () => ${eventCall(event)}. Make the ${wired.noun} in one place: remove the ${caller} call, or declare the Lambda with event: () => ${wired.instead}.`,
     );
   }
-  return { group, event };
+  return { group: registered.build(), event };
 }
 
 // What an event that wires its own Lambda makes, and the event to declare
