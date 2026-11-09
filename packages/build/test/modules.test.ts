@@ -232,6 +232,25 @@ describe("checkShared", () => {
     ).toThrow("through shared/schema.ts:1:1 → infra/orders.ts.");
   });
 
+  it("throws once for a module that fails, until a file changes", () => {
+    const analyses = new ModuleAnalyses({
+      marks: virtualMarks(
+        {
+          ...packageFiles,
+          "shared/schema.ts": `import "../infra/orders";`,
+          "infra/orders.ts": orders,
+        },
+        packages,
+      ),
+      root,
+    });
+    const schema = abs("shared/schema.ts");
+    expect(() => analyses.checkShared(schema)).toThrow("infra/orders.ts");
+    analyses.checkShared(schema);
+    analyses.invalidate(abs("infra/orders.ts"));
+    expect(() => analyses.checkShared(schema)).toThrow("infra/orders.ts");
+  });
+
   it.each([
     ["a JSX tag", `export const view = () => <Comp />;`],
     [

@@ -218,6 +218,30 @@ describe("stripForRuntime", () => {
     );
   });
 
+  it("keeps an import that the function uses as a JSX tag", () => {
+    const view = path.join(root, "runtime/view.tsx");
+    const marks = virtualMarks(
+      {
+        ...files,
+        "runtime/badge.tsx": `export const Badge = () => null;`,
+        "runtime/view.tsx": [
+          `import { $lambda } from "@notation/aws/lambda";`,
+          `import { Badge } from "./badge";`,
+          `export const lambda = $lambda({ id: "view", policy: () => [Badge] });`,
+          `export const handler = () => <Badge />;`,
+        ].join("\n"),
+      },
+      packages,
+    );
+    const analysis = analyzeModule(marks.table(view)!, marks);
+    const { code } = stripForRuntime(
+      analysis,
+      new ModuleAnalyses({ marks, root }),
+    )!;
+    expect(code).not.toContain("policy");
+    expect(code).toContain(`import { Badge } from "./badge";`);
+  });
+
   it("removes the last option with the comma before it", () => {
     const source = `
       import { $lambda } from "@notation/aws/lambda";

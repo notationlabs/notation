@@ -250,6 +250,55 @@ it("checks a shared module again when a module that it imports changes", async (
   );
 });
 
+it("reports an error in a shared module that infra and a function import once", async () => {
+  write("watch-j/infra/orders.ts", `export const orders = { url: "u" };\n`);
+  write("watch-j/lib/util.ts", `export const util = () => "util";\n`);
+  write(
+    "watch-j/shared/schema.ts",
+    `import { util } from "../lib/util";\nexport const Order = { util };\n`,
+  );
+  write(
+    "watch-j/todos.ts",
+    `import { Order } from "./shared/schema";\n${runtimeModule("todos").replace(`() => "todos"`, "() => Order")}`,
+  );
+  write(
+    "watch-j/main.ts",
+    `import { fn } from "./todos";\nimport { Order } from "./shared/schema";\nconsole.log(fn, Order);\n`,
+  );
+  const bundle = path.join(root, "dist/watch-j/todos/index.mjs");
+  const errors: unknown[] = [];
+  onTestFinished(
+    await compile(
+      {
+        entryPoint: path.join(root, "watch-j/main.ts"),
+        files: {
+          infra: ["watch-j/infra/**"],
+          runtime: [],
+          shared: ["watch-j/shared/**"],
+        },
+      },
+      {
+        watch: true,
+        logger: { ...logger, error: (error: unknown) => errors.push(error) },
+      },
+    ),
+  );
+  await waitFor(() => expect(existsSync(bundle)).toBe(true));
+  expect(errors).toEqual([]);
+
+  write(
+    "watch-j/lib/util.ts",
+    `import { orders } from "../infra/orders";\nexport const util = () => orders.url;\n`,
+  );
+  const reports = () =>
+    errors.filter((error) =>
+      String(error).includes("watch-j/shared/schema.ts, a shared module"),
+    );
+  await waitFor(() => expect(reports()).toHaveLength(1));
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  expect(reports()).toHaveLength(1);
+}, 15000);
+
 // Last, because the default globs read runtime/ at the root, which the
 // other tests don't use.
 it("bundles a file that is added under runtime/ with the default globs", async () => {

@@ -118,12 +118,7 @@ export function infraPlugin({
     },
     buildEnd(error) {
       if (error) return;
-      const shared = analyses.infraShared;
-      shared.clear();
-      for (const id of this.getModuleIds()) {
-        if (analyses.kindOf(id)?.kind === "shared") shared.add(id);
-      }
-      for (const id of shared) analyses.checkShared(id);
+      for (const id of this.getModuleIds()) analyses.checkShared(id);
     },
     generateBundle() {
       if (!onDeclarationModules) return;
@@ -206,8 +201,8 @@ export type RuntimePluginOptions = {
  *    that call a resource function at their top level.
  * 4. Fails the build if an infra module, or an infra function from a
  *    package, is still in the bundle, and names the import chain.
- * 5. Fails the build if a shared module in the bundle breaks its rules. The
- *    shared modules that the last infra build checked are skipped.
+ * 5. Fails the build if a shared module in the bundle breaks its rules,
+ *    unless another build has reported the error since the last change.
  */
 export function runtimePlugin({
   analyses,
@@ -253,9 +248,7 @@ export function runtimePlugin({
     },
     buildEnd(error) {
       if (error) return;
-      for (const id of this.getModuleIds()) {
-        if (!analyses.infraShared.has(id)) analyses.checkShared(id);
-      }
+      for (const id of this.getModuleIds()) analyses.checkShared(id);
     },
     generateBundle(_, bundle) {
       const show = (file: string) => analyses.show(file);

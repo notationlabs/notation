@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import type { ModuleGlobs } from "@notation/core";
 import {
   analyzeModule,
@@ -40,14 +41,8 @@ export class ModuleAnalyses {
   readonly marks: Marks;
   readonly files: FileKinds;
   #analyses = new Map<string, ModuleAnalysis>();
-  // The shared modules that passed `checkShared` since the last change.
-  #sharedPassed = new Set<string>();
-
-  /**
-   * The shared modules in the last infra build, which that build checks. A
-   * runtime build skips them, so that watch mode reports each error once.
-   */
-  readonly infraShared = new Set<string>();
+  // The shared modules that `checkShared` has checked since the last change.
+  #sharedChecked = new Set<string>();
 
   constructor(options: ModuleAnalysesOptions = {}) {
     this.marks = options.marks ?? new Marks();
@@ -62,6 +57,8 @@ export class ModuleAnalyses {
   fromSource(file: string, source: string): ModuleAnalysis {
     const cached = this.#analyses.get(file);
     if (cached?.table.module.source === source) return cached;
+    // A build can read a changed file before its watcher reports the change.
+    if (cached) this.#sharedChecked.clear();
     const analysis = analyzeModule(
       this.marks.setSource(file, source),
       this.marks,
@@ -83,10 +80,15 @@ export class ModuleAnalyses {
     return analysis;
   }
 
+  // Each watcher calls this for a change, and the file system can report a
+  // change twice. A file whose source is the same as its analysis is kept,
+  // so that a shared module isn't checked, and its error reported, again.
   invalidate(file: string) {
+    const cached = this.#analyses.get(file);
+    if (cached && cached.table.module.source === readSource(file)) return;
     this.#analyses.delete(file);
     this.marks.invalidate(file);
-    this.#sharedPassed.clear();
+    this.#sharedChecked.clear();
   }
 
   /** A file for an error message, relative to the project root. */
@@ -172,9 +174,18 @@ export class ModuleAnalyses {
    * imports a resource function, or imports an infra or runtime module. The
    * last is checked through the value imports of the modules that it
    * imports, up to an infra or runtime module or a package file.
+   *
+   * Each module is checked once until a file changes, and only the first
+   * check of a module that fails throws. So in watch mode, an error in a
+   * shared module that infra and several functions import is reported once.
    */
   checkShared(file: string) {
-    if (this.#sharedPassed.has(file)) return;
+    if (this.#sharedChecked.has(file)) return;
+    this.#sharedChecked.add(file);
+    this.#checkShared(file);
+  }
+
+  #checkShared(file: string) {
     const match = this.kindOf(file);
     if (match?.kind !== "shared") return;
     const analysis = this.fromFile(file);
@@ -193,10 +204,7 @@ export class ModuleAnalyses {
     }
 
     const found = this.#forbiddenImport(file, analysis);
-    if (!found) {
-      this.#sharedPassed.add(file);
-      return;
-    }
+    if (!found) return;
     const steps: Step[] = [];
     for (let step: Step | undefined = found.step; step; step = step.previous)
       steps.unshift(step);
@@ -240,6 +248,14 @@ export class ModuleAnalyses {
         if (next) queue.push({ file: target, analysis: next, previous: step });
       }
     }
+    return undefined;
+  }
+}
+
+function readSource(file: string): string | undefined {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
     return undefined;
   }
 }
