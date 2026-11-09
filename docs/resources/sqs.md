@@ -104,7 +104,7 @@ When you remove `batchSize` or `maxBatchingWindow`, Notation sets the mapping ba
 
 `lambda.decode(record)` parses the record's body as JSON, and validates it with the queue's `schema`. It returns the schema's output type. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
 
-The schema must be imported from a shared module, such as `shared/schema.ts` in `files.shared`. **This matters because the function loads the schema, but not the infra module.** In the function's bundle, the runtime build replaces `orderQueue` with an object that holds only the schema:
+Import the schema from a shared module, such as `shared/schema.ts` in `files.shared`, or from a package. A file with no kind also works, if it calls no resource function at its top level. **This matters because the function loads the schema, but not the infra module.** In the function's bundle, the runtime build replaces `orderQueue` with an object that holds only the schema:
 
 ```ts [runtime/orders.ts, as the runtime build strips it]
 import { Order as __notation_schema_0 } from "/path/to/my-app/shared/schema.ts"; // <- added by the build

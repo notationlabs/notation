@@ -119,7 +119,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 ```
 
 - The infra module declares `orderQueue` with `queue({ name: "orders", schema: Order })`. `Order` is any [Standard Schema](https://standardschema.dev), such as a Zod or Valibot schema. `decode()` returns the schema's output type.
-- `Order` must be in a shared module (`files.shared`), such as `shared/schema.ts`, because the function loads it. The runtime build replaces `orderQueue` with `{ schema: Order }`. See [Validating messages](../resources/sqs.md#validating-messages).
+- `Order` belongs in a shared module (`files.shared`), such as `shared/schema.ts`, because the function loads it. It can't be in an infra or runtime module. The runtime build replaces `orderQueue` with `{ schema: Order }`. See [Validating messages](../resources/sqs.md#validating-messages).
 - Without a schema, as in `sqs()`, `sqs(queue)` for a queue with no schema, or `http()`, `decode()` returns the parsed JSON as `unknown`.
 - When the body is not JSON, or the schema rejects it, `decode()` throws a `DecodeError`. Its `issues` hold the schema's issues.
 - A message that fails validation fails again on every retry, so the handler logs it and skips it. If the handler threw instead, Lambda would retry the whole batch until the queue's retention period ends.

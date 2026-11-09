@@ -162,6 +162,9 @@ function removeEmptiedImports(
  * name, or a member of an object literal or of a namespace import, such as
  * `queues.orders`. Adds an import to `added` for each runtime option of the
  * resource: by absolute path for a project file, and by name for a package.
+ * An option can come from a shared module, a package, or a file that no glob
+ * matches and that calls no resource function at its top level, as for any
+ * other value that the runtime build bundles.
  * A value made by a call to a function that isn't a resource function fails.
  * The value can be a resource that a helper makes, or a plain value such as a
  * schema, and the build can't tell which. A resource whose `@resource` mark
@@ -244,6 +247,12 @@ function resourceStub(
     if (!from) {
       throw new Error(
         `${where(property)}: the build can't resolve "${imported.source}", where the ${option} of ${text} is imported from. The function in ${analyses.show(file)} reads it.`,
+      );
+    }
+    const call = analyses.unmatchedResourceCall(from);
+    if (call) {
+      throw new Error(
+        `${where(property)}: the ${option} of ${text} is imported from ${analyses.show(from)}, which calls ${call.name} at its top level, so the function in ${analyses.show(file)} can't load it. Move the ${option} to a shared module (files.shared).`,
       );
     }
     // The import is written in the function's module, so a relative path or

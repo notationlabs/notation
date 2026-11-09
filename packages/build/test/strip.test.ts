@@ -552,6 +552,39 @@ describe("stripForRuntime", () => {
       );
     });
 
+    it("imports a schema from a file that no glob matches by its absolute path", () => {
+      const { code } = strip({
+        "infra/orders.ts": [
+          `import { createQueue } from "@notation/aws/sqs";`,
+          `import { Order } from "../lib/schema";`,
+          `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+        ].join("\n"),
+        "lib/schema.ts": `export const Order = {};`,
+      });
+      expect(code).toContain(
+        `import { Order as __notation_schema_0 } from "/project/lib/schema.ts";`,
+      );
+    });
+
+    it("fails when the schema's file has no kind and calls a resource function", () => {
+      expect(() =>
+        strip({
+          "infra/orders.ts": [
+            `import { createQueue } from "@notation/aws/sqs";`,
+            `import { Order } from "../lib/schema";`,
+            `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+          ].join("\n"),
+          "lib/schema.ts": [
+            `import { createQueue } from "@notation/aws/sqs";`,
+            `export const Order = {};`,
+            `export const dlq = createQueue({ id: "dlq" });`,
+          ].join("\n"),
+        }),
+      ).toThrow(
+        "infra/orders.ts:3:56: the schema of ordersQueue is imported from lib/schema.ts, which calls createQueue at its top level, so the function in runtime/handler.ts can't load it. Move the schema to a shared module (files.shared).",
+      );
+    });
+
     it("fails when a helper makes the resource", () => {
       expect(() =>
         strip({
