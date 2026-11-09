@@ -267,7 +267,26 @@ For a request through a JWT authorizer, `lambda.decode(event)` reads `event.requ
 
 `decode()` throws a `DecodeError` when the claims are not valid, and when the request has no claims. It leaves `requestContext` as API Gateway sent it.
 
-The handler's event types `requestContext.authorizer.jwt.claims` as `JwtClaims`, the loose type from `aws-lambda`, because API Gateway passes them as the token holds them. Read the typed claims from the result of `decode()`.
+**API Gateway passes each claim as a string.** An HTTP API's JWT authorizer turns every claim value into a string before it calls the function. A number such as `exp` arrives as `"1700000000"`, and an array such as `["admin", "staff"]` arrives as `"[admin staff]"`. So a claims schema reads strings, and converts the ones that it needs as other types:
+
+```ts [shared/claims.ts]
+import * as v from "valibot";
+
+export const Claims = v.object({
+  sub: v.string(),
+  exp: v.pipe(v.string(), v.transform(Number)),
+  groups: v.optional(
+    v.pipe(
+      v.string(),
+      v.transform((value) => value.slice(1, -1).split(" ").filter(Boolean)),
+    ),
+  ),
+});
+```
+
+The AWS documentation shows the claims only as strings, and doesn't describe how other values are converted. Check the claims that your identity provider's tokens hold, by logging `event.requestContext.authorizer.jwt.claims` once.
+
+The handler's event types `requestContext.authorizer.jwt.claims` as `JwtClaims`, the loose type from `aws-lambda`, which allows numbers, booleans and arrays that API Gateway doesn't send. Read the typed claims from the result of `decode()`.
 
 ### JwtAuthorizerConfig
 
