@@ -37,11 +37,11 @@ export default defineConfig({
 });
 ```
 
-| Key       | Default          | What the build does with a matching file                                                                    |
-| --------- | ---------------- | ----------------------------------------------------------------------------------------------------------- |
-| `infra`   | `["infra/**"]`   | Leaves it out of each function's bundle, unless the function uses it, which fails the build.                |
-| `runtime` | `["runtime/**"]` | Reads it for a declaration, such as `$lambda`, and deploys the function even if infra doesn't import it.    |
-| `shared`  | `["shared/**"]`  | Bundles it as written in both builds, and fails if it declares a function or imports infra or runtime code. |
+| Key       | Default          | What the build does with a matching file                                                                                                                               |
+| --------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `infra`   | `["infra/**"]`   | Leaves it out of each function's bundle, unless the function uses it, which fails the build.                                                                           |
+| `runtime` | `["runtime/**"]` | Reads it for a declaration, such as `$lambda`, and deploys the function even if infra doesn't import it.                                                               |
+| `shared`  | `["shared/**"]`  | Bundles it as written in both builds, and fails if it declares a function or imports infra or runtime code. A shared module that neither build includes isn't checked. |
 
 See [Module kinds](./file-conventions.md#module-kinds) for each kind.
 
@@ -50,6 +50,7 @@ See [Module kinds](./file-conventions.md#module-kinds) for each kind.
 The globs follow these rules:
 
 - A leading `./` is allowed: `./runtime/**` is the same as `runtime/**`.
+- A glob that ends in `/`, or that has no glob characters and names a folder, matches the files in that folder: `infra` and `infra/` are the same as `infra/**`.
 - A glob that starts with `!` excludes files. For example, `infra: ["infra/**", "!infra/**/*.test.ts"]` makes the test files in `infra/` have no kind.
 - The build reads only JS and TS files, so a glob such as `infra/**` matches the same modules as `infra/**/*.ts` when the folder holds only `.ts` files.
 - No file in `dist/`, `node_modules/` or a dot-directory such as `.notation/` has a kind, and no file outside the project root has one.

@@ -51,18 +51,18 @@ const defaultModuleGlobs = {
 };
 ```
 
-`kindOf(file)` matches the file's path, relative to the project root, against the globs with `path.matchesGlob`. A glob that starts with `!` excludes the files that it matches from its kind. A file in `dist/`, `node_modules/` or a dot-directory has no kind, and so does a file outside the root. `kindOf` fails if two kinds match the file. The result depends only on the path, so `FileKinds` keeps it for the life of the watcher.
+`kindOf(file)` matches the file's path, relative to the project root, against the globs with `path.matchesGlob`. The root is resolved to its real path, because Rolldown gives real paths. A glob that ends in `/`, or that has no glob characters and names a folder, is read as that folder's `**`, so `"infra"` matches the files in `infra/`. A glob that starts with `!` excludes the files that it matches from its kind. A file in `dist/`, `node_modules/` or a dot-directory has no kind, and so does a file outside the root. `kindOf` fails if two kinds match the file. The result depends only on the path, so `FileKinds` keeps it for the life of the watcher.
 
 **The infra entry checks every file for two kinds on each build.** Its `load` hook globs the files of all three kinds, and calls `kindOf` on each, so a conflict fails the build even for a file that nothing imports.
 
 Each kind changes the builds in one place:
 
-| Kind      | Where                         | What                                                                                  |
-| --------- | ----------------------------- | ------------------------------------------------------------------------------------- |
-| `infra`   | `runtimePlugin`'s `transform` | Returns `moduleSideEffects: false`, and adds the module to the bundle check.          |
-| `runtime` | `infraEntryPlugin`'s `load`   | Imports each file with a declaration after the entry.                                 |
-| `shared`  | `buildEnd` of both plugins    | Calls `ModuleAnalyses.checkShared` for each shared module in the build.               |
-| any       | `infraPlugin`'s `transform`   | Fails for a declaration in an `infra` or `shared` module, through `checkDeclaration`. |
+| Kind      | Where                         | What                                                                                                                                                |
+| --------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `infra`   | `runtimePlugin`'s `transform` | Returns `moduleSideEffects: false`, and adds the module to the bundle check. Fails for a module in the bundle that imports it for its side effects. |
+| `runtime` | `infraEntryPlugin`'s `load`   | Imports each file with a declaration after the entry.                                                                                               |
+| `shared`  | `buildEnd` of both plugins    | Calls `ModuleAnalyses.checkShared` for each shared module in the build. A runtime build skips the shared modules that the last infra build checked. |
+| any       | `infraPlugin`'s `transform`   | Fails for a declaration in an `infra` or `shared` module, through `checkDeclaration`.                                                               |
 
 A declaration is found and stripped in any project module outside `node_modules`, whatever its kind. So a `$lambda` module that infra imports is deployed even if no glob matches it.
 
@@ -80,9 +80,11 @@ For a package file outside `node_modules/`, the runtime plugin infers infra as b
 2. imports or re-exports a resource function, by name, through a namespace member such as `sqs.queue`, or through `export * from`,
 3. reaches an infra or runtime module through its imports.
 
-For step 3, the check walks the imports breadth first, so the error names the shortest chain. An edge is an `import` with no specifiers, an `import` with a name that the module uses as a value, an `export { x } from` or an `export * from`. The value names come from `analysis.references`, which leaves out names in types, and from local `export { x }` specifiers. The walk passes through shared modules and files with no kind. It stops at package files and doesn't follow dynamic `import()`.
+For step 3, the check walks the imports breadth first, so the error names the shortest chain. An edge is an `import` with no specifiers, an `import` with a name that the module uses as a value, an `export { x } from` or an `export * from`. The value names come from `analysis.references`, which leaves out names in types and includes JSX tags such as `<Comp />`, and from local `export { x }` specifiers. The walk passes through shared modules and files with no kind. It stops at package files and doesn't follow dynamic `import()`.
 
 The check runs in `buildEnd`, not in `transform`. It reads the modules that the shared module imports, and in watch mode an edit to one of them doesn't run the shared module's `transform` again. `buildEnd` runs on every rebuild, so the check sees the edit.
+
+The infra build records the shared modules that it includes in `ModuleAnalyses.infraShared`, and each runtime build checks only the shared modules that aren't in that set. So in watch mode an error in a shared module that infra and N functions import is reported once, not N + 1 times. `ModuleAnalyses` also remembers each shared module that passed, until any file changes. A shared module that neither build includes isn't checked.
 
 ## Marks
 
@@ -127,7 +129,7 @@ The tags are in JSDoc because Rolldown and tsdown keep JSDoc comments in a packa
 `analyzeModule` in `packages/build/src/analyze.ts` reads two facts from each project module:
 
 1. **The declaration**, if the module has one. Every reference to a function marked `@declaration` must be a call written `const name = fn({ ... })` at the top level, with one object literal that has no spread, computed keys or accessors. Any other reference fails the build with its file and line. A module with two declarations fails too. The analysis records the declaration's binding, its call, and its options by key.
-2. **The first call to a resource function at the top level**, outside any function, as `resourceCall`. The runtime plugin uses it only for package files, which have no kind. See [Package files](#package-files).
+2. **The first call to a resource function at the top level**, outside any function, as `resourceCall`. The runtime plugin uses it to mark package files, which have no kind, as infra, and to say in an error that a project file with no kind belongs in `files.infra`. See [Package files](#package-files).
 
 A reference inside a function that is itself marked `@declaration` in the same module is skipped. This lets a user write a wrapper around `$lambda` and mark the wrapper.
 
@@ -252,20 +254,22 @@ export const lambda = $lambda({
 4. An import whose uses the strip removed is removed too. For example, the import of `orderQueue` goes once its use in `env` is gone. An import that had no uses to begin with stays, because it may be there for its side effects, such as a polyfill.
 5. The binding and its export stay, so an infra module that imports `lambda` still links.
 
-The strip then checks the kept options. A reference to an import from an infra module, or a call to a resource function, fails the build with its file and line.
+The strip then checks the kept options. A reference to an import from an infra module, or a call to a resource function, fails the build with its file and line. So does a reference to an import from a project file with no kind that calls a resource function at its top level, such as `dlq` in `event: () => sqs(dlq)`. That error says to add the file to `files.infra`.
 
 ### Leaving infra out
 
 An import loads its module and runs the module's top-level code, even when nothing uses the import's bindings. So step 4 of the strip is what keeps `infra/orders.ts` out of the bundle of `runtime/orders.ts`. The TypeScript transform removes an unused import by default, but with `verbatimModuleSyntax` it keeps every import that isn't `import type`, so the strip doesn't rely on it.
 
-An infra module can also be reached through a module that the strip doesn't change, such as a shared module that imports `orderQueue` and uses it in a function the handler never calls. For that case, the runtime plugin marks each infra module free of side effects, through the `moduleSideEffects` result of its `transform` hook. The bundler then drops the infra module if nothing in the bundle uses its bindings. Other modules keep their side effects, so a setup module that imports infra still runs its top-level code. An infra module is a file that `files.infra` matches, or a package file outside `node_modules/` that calls a resource function at its top level. A file with no kind that calls `queue()` at its top level, such as `lib/queues.ts`, is not marked, so the bundler keeps it if the function imports it, and the check below fails the build.
+An infra module can also be reached through a module that the strip doesn't change, such as a helper with no kind that imports `orderQueue` and uses it in a function the handler never calls. For that case, the runtime plugin marks each infra module free of side effects, through the `moduleSideEffects` result of its `transform` hook. The bundler then drops the infra module if nothing in the bundle uses its bindings. Other modules keep their side effects, so a setup module that imports infra still runs its top-level code. An infra module is a file that `files.infra` matches, or a package file outside `node_modules/` that calls a resource function at its top level. A file with no kind that calls `queue()` at its top level, such as `lib/queues.ts`, is not marked, so the bundler keeps it if the function imports it, and the check below fails the build. The error then says to add the file to `files.infra`.
+
+A side-effect import, such as `import "../infra/setup"`, binds nothing, so the bundler always drops an infra module that is imported this way, and the function never runs its code. The plugin's `transform` fails for each module in the bundle with such an import of a module that `files.infra` matches. The check reads the import statements of the module, so it costs no analysis of effects.
 
 The provider packages declare `"sideEffects": false` in their `package.json`, so the bundler also drops a package module whose exports the function doesn't use.
 
 In `generateBundle`, the plugin checks that no infra module is left in the bundle. A handler that reads `orderQueue.url` directly keeps `infra/orders.ts` in the bundle, and the build fails:
 
 ```
-The function in runtime/orders.ts uses infra/orders.ts, an infra module (files.infra: "infra/**", the default): orderQueue at runtime/orders.ts:15:31. It imports infra/orders.ts through runtime/orders.ts → infra/orders.ts. The runtime build leaves infra out, so runtime code can't use it.
+The function in runtime/orders.ts uses infra/orders.ts, an infra module (files.infra: "infra/**", the default): orderQueue at runtime/orders.ts:15:31. It imports infra/orders.ts through runtime/orders.ts → infra/orders.ts. The runtime build leaves infra out, so runtime code can't use it. Read infra values through the declaration's env(). Move a plain value that the function needs, such as a constant, to a shared module (files.shared).
 ```
 
 The error says why the module is infra, and lists each reference to an import from the infra module, in any project module in the bundle. Then it names the shortest chain of imports from the function's module to the infra module. References in the declaration's options are left out, because the strip has removed or checked them. The list can include a reference in code that tree-shaking dropped, since the module is in the bundle either way. If the plugin finds no reference, such as for an `export { orderQueue } from "../infra/orders"`, the error names only the chain.

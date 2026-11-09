@@ -63,7 +63,9 @@ The build fails with the file and line when:
 - a runtime module has more than one declaration,
 - an infra module imports a name from a runtime module that the declaration doesn't use,
 - `$lambda` is not called as `const name = $lambda({ ... })` at the top level, with an object literal,
-- `event` refers to an infra module, or
-- the function uses an infra module, or a resource function from a package. The error names each use and the chain of imports. The check reads the code before minify, so an unused call to an infra helper or to `queue()` also fails the build.
+- `event` refers to an infra module,
+- a module in the function's bundle imports an infra module for its side effects, as in `import "../infra/setup"`,
+- a shared module breaks its rules. See [Shared modules](../manual/file-conventions.md#shared-modules), or
+- the function uses an infra module, or a resource function from a package. The error names each use and the chain of imports. The check reads the code before minify, so an unused call to an infra helper or to `queue()` also fails the build. If a file that `files.infra` doesn't match calls the resource function at its top level, the error says to add the file to `files.infra`.
 
 See [Compiler](../internals/compiler.md) for how each pass works.

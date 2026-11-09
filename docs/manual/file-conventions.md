@@ -157,21 +157,29 @@ export const handler: LambdaHandler<typeof lambda> = async () => {
 The runtime build leaves infra modules out of the function's bundle. An infra module is a file that `files.infra` matches, `infra/**` by default. If the function uses an infra module, the build fails, says why the module is infra, and names the chain of imports:
 
 ```text
-The bundle of runtime/orders.ts includes infra/orders.ts, an infra module (files.infra: "infra/**", the default). The bundle imports it through runtime/orders.ts → infra/orders.ts, and uses orderQueue at runtime/orders.ts:12:15. The runtime build leaves infra out, so runtime code can't use it.
+The function in runtime/orders.ts uses infra/orders.ts, an infra module (files.infra: "infra/**", the default): orderQueue at runtime/orders.ts:12:15. It imports infra/orders.ts through runtime/orders.ts → infra/orders.ts. The runtime build leaves infra out, so runtime code can't use it. Read infra values through the declaration's env(). Move a plain value that the function needs, such as a constant, to a shared module (files.shared).
 ```
 
-**Any module may import infra, as long as the function doesn't use that import.** For example, `runtime/format.ts` can import `orderQueue` for one export, and a function can use its other exports. The runtime build drops the infra module, and keeps the rest of `runtime/format.ts`, including its top-level code. Put code that infra and runtime share, such as a schema, in a shared module.
+**An infra module never runs in the function, even if it calls no resource function.** A function that uses a plain constant from `infra/config.ts` fails the build. Put a value that the function needs in a shared module, or in a file that no glob matches.
+
+**A setup module under `infra/` doesn't run in the function either.** For example, `infra/setup.ts` sets a global. A module in the function's bundle that imports it for its side effects fails the build, because the import would do nothing:
+
+```text
+runtime/orders.ts:3:1: runtime/orders.ts imports infra/setup.ts, an infra module (files.infra: "infra/**", the default), for its side effects. The runtime build leaves infra modules out, so the import does nothing in the function. Move the code that the function needs to a shared module (files.shared), or remove the import.
+```
+
+**A runtime module, or a file with no kind, may import a value from an infra module, as long as the function doesn't use that value.** For example, `runtime/format.ts` can import `orderQueue` for one export, and a function can use its other exports. The runtime build drops the infra module, and keeps the rest of `runtime/format.ts`, including its top-level code. A shared module may not import an infra module. Put code that infra and runtime share, such as a schema, in a shared module.
 
 ## Module kinds
 
 The globs of `files` in `notation.config.ts` give each file its kind. The kind comes from the file's path only, so an edit to a file never changes its kind. See [Files](./project-config.md#files) for the globs.
 
-| Kind      | Default folder | Infra build                       | Runtime build                                           |
-| --------- | -------------- | --------------------------------- | ------------------------------------------------------- |
-| `infra`   | `infra/`       | Runs it.                          | Leaves it out. The build fails if the function uses it. |
-| `runtime` | `runtime/`     | Runs only the declaration of it.  | Bundles it.                                             |
-| `shared`  | `shared/`      | Runs it as written.               | Bundles it as written.                                  |
-| no kind   | any other file | Runs it, or only its declaration. | Bundles it as written.                                  |
+| Kind      | Default folder | Infra build                       | Runtime build                                                                               |
+| --------- | -------------- | --------------------------------- | ------------------------------------------------------------------------------------------- |
+| `infra`   | `infra/`       | Runs it.                          | Leaves it out. The build fails if the function uses it, or imports it for its side effects. |
+| `runtime` | `runtime/`     | Runs only the declaration of it.  | Bundles it.                                                                                 |
+| `shared`  | `shared/`      | Runs it as written.               | Bundles it as written.                                                                      |
+| no kind   | any other file | Runs it, or only its declaration. | Bundles it as written.                                                                      |
 
 ### Shared modules
 
@@ -183,7 +191,7 @@ import * as v from "valibot";
 export const Order = v.object({ id: v.string() });
 ```
 
-**Neither build strips a shared module, so the build checks that it is safe in both.** A shared module fails the build if it:
+**Neither build strips a shared module, so the build checks that it is safe in both.** A shared module that either build includes fails the build if it:
 
 - declares a function, such as with `$lambda`,
 - imports a resource function, such as `queue` from `@notation/aws/sqs`,
@@ -192,12 +200,14 @@ export const Order = v.object({ id: v.string() });
 The error names the chain of imports, with the position of each import:
 
 ```text
-shared/schema.ts:1:1: shared/schema.ts, a shared module (files.shared: "shared/**", the default), imports infra/orders.ts, an infra module (files.infra: "infra/**", the default), through shared/schema.ts:1:1 → lib/url.ts:1:1 → infra/orders.ts. Neither build strips a shared module, so it can't import an infra or runtime module, directly or through other modules.
+shared/schema.ts, a shared module (files.shared: "shared/**", the default), imports infra/orders.ts, an infra module (files.infra: "infra/**", the default), through shared/schema.ts:1:1 → lib/url.ts:1:1 → infra/orders.ts. Neither build strips a shared module, so it can't import an infra or runtime module, directly or through other modules. Move the code that needs infra/orders.ts out of the shared module, or stop importing it through lib/url.ts.
 ```
+
+A shared module that nothing imports isn't checked.
 
 The check follows the imports that load a module at runtime:
 
-- `import { x } from`, when the module uses `x` as a value. TypeScript removes an import that is used only in types, so `import { type Order }` and `import type` don't count.
+- `import { x } from`, when the module uses `x` as a value, including as a JSX tag such as `<X />`. TypeScript removes an import that is used only in types, so `import { type Order }` and `import type` don't count.
 - `import "./setup"`, which loads the module for its side effects.
 - `export { x } from` and `export * from`.
 
@@ -207,7 +217,13 @@ The check doesn't follow dynamic `import()`, and it doesn't enter packages.
 
 A file that no glob matches, such as `lib/format.ts`, has no kind. Both builds bundle it as written, and the build makes no check of it. A declaration in such a file is still found and stripped when infra imports it.
 
-**A file with no kind that calls a resource function at its top level stays in the function's bundle.** For example, `lib/queues.ts` with `export const dlq = queue({ name: "dlq" })` fails the runtime build if a function imports anything from it. To leave it out, add it to `files.infra`.
+**A file with no kind that calls a resource function at its top level stays in the function's bundle.** For example, `lib/queues.ts` with `export const dlq = queue({ name: "dlq" })` fails the runtime build if a function imports anything from it. The error says to add the file to `files.infra`, which leaves it out:
+
+```text
+The function in runtime/orders.ts uses queue from @notation/aws/sqs.js, a function that declares infrastructure: queue at lib/queues.ts:2:20. It imports @notation/aws/sqs.js through runtime/orders.ts → runtime/format.ts → lib/queues.ts → @notation/aws/sqs.js. Infra functions can't run in a runtime module. lib/queues.ts calls queue at its top level, but files.infra doesn't match it. Add lib/queues.ts to files.infra to leave it out of the function.
+```
+
+So a project that keeps its infra outside `infra/`, such as in `src/`, sets `files.infra` to that folder.
 
 ### Packages
 
