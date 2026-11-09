@@ -9,15 +9,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@notation/durable": "0.9.0",
     "@notation/core": "workspace:*",
+    "@notation/durable": "0.9.0",
     "@notation/reconciler": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/utils": "workspace:*",
-    "valibot": "^1.4.2"
+    "valibot": "^1.5.0"
   },
   "devDependencies": {
-    "@types/node": "^22.13.4",
-    "vitest": "^4.1.10"
+    "@types/node": "^22.20.5",
+    "vitest": "^4.1.12"
   }
 }

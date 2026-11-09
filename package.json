@@ -17,22 +17,24 @@
   },
   "homepage": "https://github.com/notation-dev/notation#readme",
   "dependencies": {
-    "@changesets/cli": "^2.27.12",
+    "@changesets/cli": "^2.31.1",
     "@notation/aws.iac": "workspace:*",
     "@notation/std.iac": "workspace:*",
-    "@pokit/core": "^1.0.0",
-    "@pokit/terminal": "^1.0.0",
-    "@types/node": "^22.13.4",
-    "execa": "^9.5.2",
-    "glob": "^13.0.6",
+    "@pokit/core": "^1.0.1",
+    "@pokit/terminal": "^1.0.1",
+    "@types/node": "^22.20.5",
+    "execa": "^9.6.1",
     "husky": "^9.1.7",
     "pok-plugins": "github:djgrant/pok-plugins",
-    "pokit": "^0.5.0",
-    "prettier": "^3.9.4",
+    "pokit": "^0.5.1",
+    "prettier": "^3.9.10",
     "tsconfig": "workspace:*",
-    "tsdown": "^0.23.5",
-    "turbo": "^2.10.4",
+    "tsdown": "^0.23.7",
+    "turbo": "^2.11.10",
     "typescript": "7.1.0-beta",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.12"
+  },
+  "devDependencies": {
+    "glob": "^14.0.4"
   }
 }

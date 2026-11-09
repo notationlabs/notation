@@ -16,6 +16,6 @@
     "@notation/core": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^22.13.4"
+    "@types/node": "^22.20.5"
   }
 }

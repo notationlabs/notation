@@ -17,11 +17,11 @@
     "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/utils": "workspace:*",
-    "fflate": "0.8.2",
-    "valibot": "^1.4.2"
+    "fflate": "0.8.3",
+    "valibot": "^1.5.0"
   },
   "devDependencies": {
     "@notation/reconciler": "workspace:*",
-    "@types/node": "^22.13.4"
+    "@types/node": "^22.20.5"
   }
 }

@@ -27,21 +27,21 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@notation/durable": "0.9.0",
     "@notation/reconciler": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/state": "workspace:*",
-    "@notation/durable": "0.9.0",
-    "esbuild": "^0.25.0",
-    "js-base64": "^3.7.7",
-    "valibot": "^1.4.2",
-    "lodash-es": "^4.17.21",
-    "pako": "^2.1.0",
-    "pino": "^9.14.0"
+    "esbuild": "^0.25.12",
+    "js-base64": "^3.9.6",
+    "lodash-es": "^4.18.1",
+    "pako": "^2.2.0",
+    "pino": "^9.14.0",
+    "valibot": "^1.5.0"
   },
   "devDependencies": {
     "@types/common-tags": "^1.8.4",
     "@types/lodash-es": "^4.17.12",
-    "@types/pako": "^2.0.3",
+    "@types/pako": "^2.0.4",
     "common-tags": "^1.8.2"
   }
 }

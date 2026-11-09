@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p templates/starter"
   },
   "dependencies": {
-    "fs-extra": "^11.3.0",
+    "fs-extra": "^11.4.1",
     "which-pm-runs": "^1.1.0"
   },
   "devDependencies": {
