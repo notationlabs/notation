@@ -31,7 +31,7 @@ const Order: StandardSchemaV1<unknown, Order> = {
   },
 };
 
-const orders = queue({ name: "orders", schema: Order });
+const orders = queue({ id: "orders", schema: Order });
 
 const record = (body: string) => ({ body }) as SQSRecord;
 
@@ -70,6 +70,16 @@ test("runtime, timeout and memory are applied to the function", async () => {
     Timeout: 5,
     MemorySize: 256,
   });
+});
+
+test("name overrides the function's AWS name, and the id stays its state key", async () => {
+  const graph = await collectResourceGraph(() => {
+    inModule($lambda({ id: "orders", name: "order-handler" }));
+  });
+  const group = lambdaGroup(graph, "orders");
+
+  expect(group.fn.id).toBe("orders");
+  expect(group.fn.config.FunctionName).toBe("order-handler");
 });
 
 test("env is set as the function's environment variables", async () => {
@@ -137,7 +147,7 @@ test("a declaration that the infra build did not record throws when it is built"
 
 test("an invalid id throws when the declaration is made", () => {
   expect(() => $lambda({ id: "bad.id" as any })).toThrow(
-    'Invalid lambda id "bad.id"',
+    'Invalid $lambda id "bad.id"',
   );
 });
 

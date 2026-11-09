@@ -6,6 +6,7 @@ import {
   type LambdaTarget,
 } from "src/lambda/lambda-declaration";
 import type { ScheduleOptions } from "src/lambda/declaration";
+import type { NameSafe } from "src/id";
 import { ScheduleGroup } from "./schedule-group";
 
 export { ScheduleGroup };
@@ -23,23 +24,26 @@ export type ScheduleConfig = ScheduleOptions & {
 /**
  * Invokes a Lambda on a schedule. The schedule's resources are made when
  * infra has finished loading. A declaration can make its own schedule, with
- * `event: () => eventBridge.defineSchedule(options)`.
+ * `event: () => eventBridge.defineSchedule(options)`. `id` must be a
+ * name-safe string literal; see `NameSafe`.
  * @resource
  */
-export function schedule(config: ScheduleConfig): void {
+export function schedule<const Id extends string>(
+  config: Omit<ScheduleConfig, "id"> & { id: NameSafe<Id> },
+): void {
   const { target, ...options } = config;
   whenLoaded(() => {
     const declaration = declarationOf(target);
     const event = declaration?.event;
     if (event?.kind === "eventBridge" && event.schedule) {
       throw new Error(
-        `schedule() invokes the Lambda "${declaration!.id}" on the schedule "${options.name}", but the Lambda makes its own schedule in its declaration, with event: () => ${eventCall(event)}. Schedule the Lambda in one place: remove the schedule() call, or declare the Lambda with event: () => eventBridge.schedule().`,
+        `schedule() invokes the Lambda "${declaration!.id}" on the schedule "${options.id}", but the Lambda makes its own schedule in its declaration, with event: () => ${eventCall(event)}. Schedule the Lambda in one place: remove the schedule() call, or declare the Lambda with event: () => eventBridge.schedule().`,
       );
     }
     const lambdaGroup = resolveLambda(target, "schedule()", [
       "eventBridge",
       "none",
     ]);
-    new ScheduleGroup(options, lambdaGroup);
+    new ScheduleGroup(options as ScheduleOptions, lambdaGroup);
   });
 }

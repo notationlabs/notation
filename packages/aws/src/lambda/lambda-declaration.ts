@@ -16,7 +16,7 @@ import {
 } from "./declaration";
 import { ScheduleGroup } from "src/event-bridge/schedule-group";
 import { isLambdaGroup, LambdaGroup, type LambdaConfig } from "./lambda";
-import { assertLambdaId, type NameSafe } from "./lambda-id";
+import { assertId, type NameSafe } from "src/id";
 
 export type LambdaDeclarationConfig<
   Id extends string,
@@ -28,6 +28,12 @@ export type LambdaDeclarationConfig<
    * in state. Changing the id replaces the function, so keep it stable.
    */
   id: NameSafe<Id>;
+  /**
+   * The function's name in AWS, in place of the id. The function is named
+   * `<app>--<stage>--<name>`. Changing the name replaces the function. Must
+   * be name-safe.
+   */
+  name?: string;
   /**
    * The events that the function receives, such as
    * `() => sqs.bind(orderQueue)`.
@@ -80,7 +86,7 @@ export function $lambda<
   E extends LambdaEvent | undefined = undefined,
   Env extends EnvVars = {},
 >(config: LambdaDeclarationConfig<Id, E, Env>): Lambda<E, Env> {
-  assertLambdaId(config.id);
+  assertId("$lambda", config.id);
   const declaration = {
     id: config.id,
     env: () => (config.env?.() ?? {}) as Env,
@@ -125,6 +131,7 @@ function buildGroup(
   const modulePath = fromProjectRoot(record.path);
   const group = new LambdaGroup({
     id: config.id,
+    name: config.name,
     code: {
       type: "file",
       path: toProjectRoot(filePaths.dist.runtime.index(modulePath)),
@@ -194,7 +201,7 @@ function addSchedule(
 ): void {
   const event = config.event?.();
   if (event?.kind !== "eventBridge" || !event.schedule) return;
-  new ScheduleGroup(event.schedule, group);
+  new ScheduleGroup(event.schedule, group, "eventBridge.defineSchedule()");
 }
 
 /**

@@ -10,6 +10,7 @@ import type {
 } from "aws-lambda";
 import type { Schedule } from "src/event-bridge/schedule";
 import type { LambdaGroup } from "./lambda";
+import type { NameSafe } from "src/id";
 import type {
   APIGatewayJWTProxyEventV2,
   ApiGatewayResult,
@@ -257,10 +258,17 @@ export type EventBridgeScheduleEvent = {
 
 export type ScheduleOptions = {
   /**
-   * Names the rule, and keys it in state. Changing the name replaces the
-   * rule.
+   * Keys the rule in state. Changing the id replaces the rule, so keep it
+   * stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
+   * underscores.
    */
-  name: string;
+  id: string;
+  /**
+   * The rule's name in AWS, in place of the id. The rule is named
+   * `<app>--<stage>--<name>`. Changing the name replaces the rule. Must be
+   * name-safe.
+   */
+  name?: string;
   /** When the rule invokes the function, such as `rate(1, "day")`. */
   schedule: Schedule;
 };
@@ -275,10 +283,12 @@ export const eventBridge = {
   /**
    * The function receives the events of a schedule, whose rule the infra
    * build makes. The function doesn't read the options, so the runtime build
-   * removes them.
+   * removes them. `id` must be a name-safe string literal; see `NameSafe`.
    * @runtime
    */
-  defineSchedule(options: ScheduleOptions): EventBridgeScheduleEvent {
+  defineSchedule<const Id extends string>(
+    options: Omit<ScheduleOptions, "id"> & { id: NameSafe<Id> },
+  ): EventBridgeScheduleEvent {
     return { kind: "eventBridge", schedule: options };
   },
   /** The function receives the events of schedules that infra makes. */

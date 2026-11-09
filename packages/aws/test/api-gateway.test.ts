@@ -35,7 +35,7 @@ const routeGroup = (graph: ResourceGraph, id: string) => {
 test("two routes on one api to one lambda share its integration and permission", async () => {
   let fn!: LambdaGroup;
   await collect(() => {
-    const apiResourceGroup = api({ name: "api" });
+    const apiResourceGroup = api({ id: "api" });
     fn = declareLambda();
     route(apiResourceGroup, "GET", "/hello", undefined, fn);
     route(apiResourceGroup, "POST", "/hello", undefined, fn);
@@ -53,7 +53,7 @@ test("two routes on one api to one lambda share its integration and permission",
 test("router provides methods for each HTTP verb", async () => {
   const methods = ["get", "post", "put", "delete", "patch"] as const;
   const graph = await collect(() => {
-    const apiRouter = router(api({ name: "api" }));
+    const apiRouter = router(api({ id: "api" }));
     const handler = declareLambda();
     for (const method of methods) apiRouter[method]("/hello", handler);
   });
@@ -69,7 +69,7 @@ test("router provides methods for each HTTP verb", async () => {
 test("api and route groups are identified by the api name and route", async () => {
   let todoApi!: ReturnType<typeof api>;
   const graph = await collect(() => {
-    todoApi = api({ name: "todo-api" });
+    todoApi = api({ id: "todo-api" });
     route(todoApi, "GET", "/todos", undefined, declareLambda());
   });
   const todoRoute = routeGroup(graph, "todo-api-GET-/todos");
@@ -85,7 +85,7 @@ test("declaring the same route twice in one deployment throws", async () => {
   await expect(
     collect(() => {
       const handler = declareLambda();
-      const todoApi = api({ name: "todo-api" });
+      const todoApi = api({ id: "todo-api" });
       route(todoApi, "GET", "/todos", undefined, handler);
       route(todoApi, "GET", "/todos", undefined, handler);
     }),
@@ -95,8 +95,8 @@ test("declaring the same route twice in one deployment throws", async () => {
 test("a lambda routed from two apis gets an integration per api", async () => {
   const graph = await collect(() => {
     const handler = declareLambda();
-    route(api({ name: "a" }), "GET", "/x", undefined, handler);
-    route(api({ name: "b" }), "GET", "/x", undefined, handler);
+    route(api({ id: "a" }), "GET", "/x", undefined, handler);
+    route(api({ id: "b" }), "GET", "/x", undefined, handler);
   });
 
   const integrationA = routeGroup(graph, "a-GET-/x").route.dependencies
@@ -111,14 +111,16 @@ test("a lambda routed from two apis gets an integration per api", async () => {
 test("routes of one authorizer share its RouteAuth, which the authorizer owns", async () => {
   const graph = await collect(() => {
     const handler = declareLambda();
-    const userApi = api({ name: "user-api" });
+    const userApi = api({ id: "user-api" });
     const userAuth = jwtAuthorizer({
+      id: "user-auth",
       api: userApi,
       issuer: "https://issuer.example/",
       audience: ["https://api.example"],
       scopes: ["write"],
     });
     const otherAuth = jwtAuthorizer({
+      id: "other-auth",
       api: userApi,
       issuer: "https://issuer.example/",
       audience: ["other"],
@@ -134,9 +136,10 @@ test("routes of one authorizer share its RouteAuth, which the authorizer owns", 
   expect(routeOf("user-api-GET-/c").dependencies.auth).not.toBe(authA);
   expect(authA?.group).toEqual({
     type: "API Gateway/JWT Authorizer",
-    id: authA?.id,
+    id: "user-auth",
   });
-  expect(authA?.id).toMatch(/^user-api-jwt-authorizer-[0-9a-f]{8}$/);
+  expect(authA?.id).toBe("user-auth-authorizer");
+  expect(authA?.config.Name).toBe("user-auth");
   expect(routeOf("user-api-GET-/a").config).toMatchObject({
     AuthorizationType: "JWT",
     AuthorizationScopes: ["write"],
@@ -144,27 +147,104 @@ test("routes of one authorizer share its RouteAuth, which the authorizer owns", 
   expect(routeOf("user-api-GET-/c").config.AuthorizationScopes).toEqual([]);
 });
 
-test("a second authorizer with the same issuer and audience on one api throws", async () => {
+test("two authorizers with the same issuer and audience on one api are allowed when their ids differ", async () => {
+  const graph = await collect(() => {
+    const userApi = api({ id: "user-api" });
+    const config = { api: userApi, issuer: "https://i", audience: ["a"] };
+    jwtAuthorizer({ id: "first-auth", ...config });
+    jwtAuthorizer({ id: "second-auth", ...config });
+  });
+  const ids = graph.resources
+    .filter((r) => r.group?.type === "API Gateway/JWT Authorizer")
+    .map((r) => r.id);
+
+  expect(ids).toEqual(["first-auth-authorizer", "second-auth-authorizer"]);
+});
+
+test("a second authorizer with the same id throws", async () => {
   await expect(
     collect(() => {
-      const userApi = api({ name: "user-api" });
-      const config = { api: userApi, issuer: "https://i", audience: ["a"] };
-      jwtAuthorizer(config);
-      jwtAuthorizer(config);
+      const userApi = api({ id: "user-api" });
+      jwtAuthorizer({
+        id: "auth",
+        api: userApi,
+        issuer: "https://a",
+        audience: ["a"],
+      });
+      jwtAuthorizer({
+        id: "auth",
+        api: userApi,
+        issuer: "https://b",
+        audience: ["b"],
+      });
     }),
-  ).rejects.toThrow(
-    'Duplicate API Gateway/JWT Authorizer id "user-api-jwt-authorizer-',
-  );
+  ).rejects.toThrow('Duplicate API Gateway/JWT Authorizer id "auth"');
+});
+
+test("changing an authorizer's issuer or audience keeps its id", async () => {
+  const authorizerWith = (issuer: string, audience: string[]) =>
+    collect(() => {
+      jwtAuthorizer({
+        id: "user-auth",
+        api: api({ id: "user-api" }),
+        issuer,
+        audience,
+      });
+    }).then((graph) =>
+      graph.resources.find(
+        (r) => r.group?.type === "API Gateway/JWT Authorizer",
+      )!,
+    );
+  const before = await authorizerWith("https://old", ["a"]);
+  const after = await authorizerWith("https://new", ["b"]);
+
+  expect(after.id).toBe(before.id);
+  expect(after.config.JwtConfiguration).toEqual({
+    Issuer: "https://new",
+    Audience: ["b"],
+  });
+});
+
+test("an authorizer's name overrides its AWS name", async () => {
+  const graph = await collect(() => {
+    jwtAuthorizer({
+      id: "user-auth",
+      name: "users",
+      api: api({ id: "user-api" }),
+      issuer: "https://i",
+      audience: ["a"],
+    });
+  });
+  const auth = graph.resources.find(
+    (r) => r.group?.type === "API Gateway/JWT Authorizer",
+  )!;
+
+  expect(auth.id).toBe("user-auth-authorizer");
+  expect(auth.config.Name).toBe("users");
+});
+
+test("jwtAuthorizer() rejects an id that is not name-safe", () => {
+  const userApi = api({ id: "user-api" });
+  expect(() =>
+    jwtAuthorizer({
+      // @ts-expect-error dots are not name-safe
+      id: "bad.id",
+      api: userApi,
+      issuer: "https://i",
+      audience: [],
+    }),
+  ).toThrow('Invalid jwtAuthorizer() id "bad.id"');
 });
 
 test("withAuthorizer() of an authorizer on another api throws", () => {
   const userAuth = jwtAuthorizer({
-    api: api({ name: "user-api" }),
+    id: "user-auth",
+    api: api({ id: "user-api" }),
     issuer: "https://i",
     audience: ["a"],
   });
   expect(() =>
-    router(api({ name: "todo-api" })).withAuthorizer(userAuth),
+    router(api({ id: "todo-api" })).withAuthorizer(userAuth),
   ).toThrow(
     'withAuthorizer() takes an authorizer of the API "todo-api", but the authorizer is on the API "user-api".',
   );
@@ -178,7 +258,7 @@ test("a route to a lambda group from lambda() sets no environment", async () => 
       handler: "main",
       code: { type: "file", path: "external/hello.mjs" },
     });
-    router(api({ name: "hello-api" })).get("/hello", fn);
+    router(api({ id: "hello-api" })).get("/hello", fn);
   });
 
   fn.role.setOutput({ Arn: "arn:role" } as any);
@@ -197,7 +277,7 @@ test("a route to a $lambda declaration integrates its function", async () => {
       $lambda({ id: "todos", event: () => apiGateway.schema() }),
     );
     const plain = inModule($lambda({ id: "plain" }), "runtime/plain.ts");
-    const todoRouter = router(api({ name: "todo-api" }));
+    const todoRouter = router(api({ id: "todo-api" }));
     todoRouter.get("/todos", () => todos);
     todoRouter.get("/plain", () => plain);
   });
@@ -214,12 +294,12 @@ test("a route to a $lambda declaration integrates its function", async () => {
 test("a route to a declaration with an sqs event throws", async () => {
   await expect(
     collect(() => {
-      const orders = queue({ name: "orders" });
+      const orders = queue({ id: "orders" });
       const fn = inModule(
         $lambda({ id: "process", event: () => sqs.bind(orders) }),
       );
       // @ts-expect-error a route can't serve a function of SQS messages
-      router(api({ name: "todo-api" })).get("/todos", () => fn);
+      router(api({ id: "todo-api" })).get("/todos", () => fn);
     }),
   ).rejects.toThrow(
     'route() sends apiGateway events, but the Lambda "process" is declared with event: () => sqs.bind(queue).',
@@ -253,6 +333,8 @@ const authorizerOn = <C extends StandardSchemaV1 | undefined = undefined>(
   claims?: C,
 ) =>
   jwtAuthorizer({
+    // Each API in these tests has one authorizer, named after the API.
+    id: `${apiGroup.id}-auth` as "auth",
     api: apiGroup,
     issuer: "https://auth.example.com/",
     audience: ["https://api.example.com"],
@@ -267,7 +349,7 @@ test("a route with an authorizer integrates a declaration with the authorizer's 
         event: () => apiGateway.schema().authSchema(Claims),
       }),
     );
-    const userApi = api({ name: "user-api" });
+    const userApi = api({ id: "user-api" });
     router(userApi)
       .withAuthorizer(authorizerOn(userApi, Claims))
       .get("/user", () => user);
@@ -287,7 +369,7 @@ test("a route with an authorizer with no claims schema integrates a declaration 
         event: () => apiGateway.schema().authSchema(Claims),
       }),
     );
-    const userApi = api({ name: "user-api" });
+    const userApi = api({ id: "user-api" });
     router(userApi)
       .withAuthorizer(authorizerOn(userApi))
       .get("/user", () => user);
@@ -306,7 +388,7 @@ test("a route with an authorizer whose claims schema is another object than the 
           event: () => apiGateway.schema().authSchema(Claims),
         }),
       );
-      const userApi = api({ name: "user-api" });
+      const userApi = api({ id: "user-api" });
       router(userApi)
         .withAuthorizer(authorizerOn(userApi, Copy))
         .get("/user", () => user);
@@ -324,11 +406,11 @@ test("a route with an authorizer integrates a declaration with authSchema() and 
     const plain = inModule(
       $lambda({ id: "plain", event: () => apiGateway.schema().authSchema() }),
     );
-    const userApi = api({ name: "user-api" });
+    const userApi = api({ id: "user-api" });
     router(userApi)
       .withAuthorizer(authorizerOn(userApi, Claims))
       .get("/user", () => user);
-    const plainApi = api({ name: "plain-api" });
+    const plainApi = api({ id: "plain-api" });
     router(plainApi)
       .withAuthorizer(authorizerOn(plainApi))
       .get("/plain", () => plain);
@@ -345,7 +427,7 @@ test("a route without an authorizer to a declaration with authSchema() and no cl
         $lambda({ id: "user", event: () => apiGateway.schema().authSchema() }),
       );
       // @ts-expect-error the declaration expects the claims
-      router(api({ name: "user-api" })).get("/user", () => user);
+      router(api({ id: "user-api" })).get("/user", () => user);
     }),
   ).rejects.toThrow(
     'route() sends apiGateway events, but the Lambda "user" is declared with event: () => apiGateway.schema(body).authSchema().',
@@ -361,10 +443,15 @@ test("a route with an authorizer rejects a declaration whose claims schema type 
     id: "other",
     event: () => apiGateway.schema().authSchema(OtherClaims),
   });
-  const userApi = api({ name: "user-api" });
+  const userApi = api({ id: "user-api" });
   const authed = router(userApi).withAuthorizer(authorizerOn(userApi, Claims));
   const loose = router(userApi).withAuthorizer(
-    jwtAuthorizer({ api: userApi, issuer: "https://other", audience: ["a"] }),
+    jwtAuthorizer({
+      id: "loose-auth",
+      api: userApi,
+      issuer: "https://other",
+      audience: ["a"],
+    }),
   );
 
   const any = $lambda({
@@ -394,7 +481,7 @@ test("a route without an authorizer to a declaration with claims throws", async 
         }),
       );
       // @ts-expect-error the request has no claims
-      router(api({ name: "user-api" })).get("/user", () => user);
+      router(api({ id: "user-api" })).get("/user", () => user);
     }),
   ).rejects.toThrow(
     'route() sends apiGateway events, but the Lambda "user" is declared with event: () => apiGateway.schema(body).authSchema(claims).',
@@ -407,7 +494,7 @@ test("a route with an authorizer to a declaration with no claims throws", async 
       const todos = inModule(
         $lambda({ id: "todos", event: () => apiGateway.schema() }),
       );
-      const todoApi = api({ name: "todo-api" });
+      const todoApi = api({ id: "todo-api" });
       router(todoApi)
         .withAuthorizer(authorizerOn(todoApi))
         // @ts-expect-error the declaration doesn't expect the claims
@@ -420,7 +507,7 @@ test("a route with an authorizer to a declaration with no claims throws", async 
 
 test("route rejects a value that is not a declaration or a lambda group", () => {
   expect(() =>
-    route(api({ name: "todo-api" }), "GET", "/todos", undefined, {
+    route(api({ id: "todo-api" }), "GET", "/todos", undefined, {
       resource: {},
       export: "getTodos",
     } as any),
@@ -430,11 +517,11 @@ test("route rejects a value that is not a declaration or a lambda group", () => 
 test("routes behind a jwt authorizer take only functions of HTTP requests", async () => {
   await expect(
     collect(() => {
-      const orders = queue({ name: "orders" });
+      const orders = queue({ id: "orders" });
       const fn = inModule(
         $lambda({ id: "process", event: () => sqs.bind(orders) }),
       );
-      const todoApi = api({ name: "todo-api" });
+      const todoApi = api({ id: "todo-api" });
       const authed = router(todoApi).withAuthorizer(authorizerOn(todoApi));
       // @ts-expect-error a route can't serve a function of SQS messages
       authed.get("/process", () => fn);
@@ -446,7 +533,7 @@ test("routes behind a jwt authorizer take only functions of HTTP requests", asyn
 
 test("apiGateway.bind(api).defineRoute() in a declaration makes the route", async () => {
   const graph = await collect(() => {
-    const todoApi = api({ name: "todo-api" });
+    const todoApi = api({ id: "todo-api" });
     inModule(
       $lambda({
         id: "todos",
@@ -481,7 +568,7 @@ test("apiGateway.bind(api).defineRoute({ auth }) makes the route with the author
           .defineRoute({ method: "POST", path: "/user", auth }),
     });
   const graph = await collect(() => {
-    userAuth = authorizerOn(api({ name: "user-api" }), Claims);
+    userAuth = authorizerOn(api({ id: "user-api" }), Claims);
     user = inModule(declareUser(userAuth));
   });
   const userRoute = routeGroup(graph, "user-api-POST-/user").route;
@@ -503,7 +590,7 @@ test("apiGateway.bind(api).defineRoute({ auth }) makes the route with the author
 });
 
 test("apiGateway.bind(api).defineRoute() types the event from its options", () => {
-  const userApi = api({ name: "user-api" });
+  const userApi = api({ id: "user-api" });
   const userAuth = authorizerOn(userApi, Claims);
   const user = $lambda({
     id: "user",
@@ -580,7 +667,7 @@ test("decode() reads the claims schema from the object that the runtime build pa
 test("route() of a declaration that makes its own route throws", async () => {
   await expect(
     collect(() => {
-      const todoApi = api({ name: "todo-api" });
+      const todoApi = api({ id: "todo-api" });
       const todos = inModule(
         $lambda({
           id: "todos",
@@ -600,8 +687,8 @@ test("route() of a declaration that makes its own route throws", async () => {
 test("apiGateway.bind(api).defineRoute({ auth }) with an authorizer on another api throws", async () => {
   await expect(
     collect(() => {
-      const userAuth = authorizerOn(api({ name: "user-api" }));
-      const todoApi = api({ name: "todo-api" });
+      const userAuth = authorizerOn(api({ id: "user-api" }));
+      const todoApi = api({ id: "todo-api" });
       inModule(
         $lambda({
           id: "todos",

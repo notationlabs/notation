@@ -70,14 +70,14 @@ test.each(["", "has space", "has.dot", "a/b", "é", "a".repeat(65)])(
   "the id %j is rejected",
   (id) => {
     expect(() => lambda({ id: id as any, code })).toThrow(
-      /lambda id|requires an id/,
+      /lambda\(\) id|requires an id/,
     );
   },
 );
 
 test("the error names the bad id", () => {
   expect(() => lambda({ id: "bad.id" as any, code })).toThrow(
-    'Invalid lambda id "bad.id"',
+    'Invalid lambda() id "bad.id"',
   );
 });
 

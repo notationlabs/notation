@@ -15,4 +15,4 @@ export {
   LambdaGroup,
   type LambdaConfig,
 } from "./lambda";
-export { isNameSafe, LAMBDA_ID_MAX_LENGTH, type NameSafe } from "./lambda-id";
+export { ID_MAX_LENGTH, isNameSafe, type NameSafe } from "src/id";

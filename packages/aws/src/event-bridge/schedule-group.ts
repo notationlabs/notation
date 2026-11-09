@@ -1,21 +1,29 @@
 import * as aws from "@notation/aws.iac";
 import type { ScheduleOptions } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
+import { assertId, assertName } from "src/id";
 import { awsName } from "src/naming";
 import { toAwsScheduleExpression } from "./aws-conversions";
 
 export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleOptions> {
   readonly rule: aws.eventBridge.EventBridgeRuleInstance;
 
-  constructor(config: ScheduleOptions, lambdaGroup: LambdaGroup) {
-    super("aws/eventBridge/schedule", config.name, config);
+  /** `caller` names the function that declares the schedule, in errors. */
+  constructor(
+    config: ScheduleOptions,
+    lambdaGroup: LambdaGroup,
+    caller = "schedule()",
+  ) {
+    assertId(caller, config.id);
+    assertName(caller, config.name);
+    super("aws/eventBridge/schedule", config.id, config);
 
     const lambdaResource = lambdaGroup.fn;
 
     this.rule = this.add(
-      new aws.eventBridge.EventBridgeRule(`${config.name}-eventbridge-rule`, {
+      new aws.eventBridge.EventBridgeRule(`${config.id}-eventbridge-rule`, {
         config: {
-          Name: awsName("eventBridgeRule", config.name),
+          Name: awsName("eventBridgeRule", config.name ?? config.id),
           ScheduleExpression: toAwsScheduleExpression(config.schedule),
           EventBusName: "default",
           Targets: [
@@ -33,7 +41,7 @@ export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleOptions> {
 
     lambdaGroup.add(
       new aws.eventBridge.LambdaEventBridgeRulePermission(
-        `${config.name}-eventbridge-permission`,
+        `${config.id}-eventbridge-permission`,
         {
           dependencies: {
             lambda: lambdaResource,

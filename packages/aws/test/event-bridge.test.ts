@@ -29,8 +29,8 @@ test("each schedule on a lambda gets its own invoke permission", async () => {
   let fn!: LambdaGroup;
   const graph = await collectResourceGraph(() => {
     fn = declareLambda();
-    schedule({ name: "daily", schedule: rate(1, "day"), target: fn });
-    schedule({ name: "hourly", schedule: rate(1, "hour"), target: fn });
+    schedule({ id: "daily", schedule: rate(1, "day"), target: fn });
+    schedule({ id: "hourly", schedule: rate(1, "hour"), target: fn });
   });
 
   const rules = fn.resources
@@ -46,7 +46,7 @@ test("each schedule on a lambda gets its own invoke permission", async () => {
 test("a schedule group is identified by its name", async () => {
   const graph = await collectResourceGraph(() => {
     schedule({
-      name: "daily",
+      id: "daily",
       schedule: rate(1, "day"),
       target: declareLambda(),
     });
@@ -64,7 +64,7 @@ test("the rule sends the bare event to the function", async () => {
   let fn!: LambdaGroup;
   const graph = await collectResourceGraph(() => {
     fn = declareLambda();
-    schedule({ name: "daily", schedule: rate(1, "day"), target: fn });
+    schedule({ id: "daily", schedule: rate(1, "day"), target: fn });
   });
   fn.fn.setOutput({
     FunctionName: "handler",
@@ -87,7 +87,7 @@ test("a schedule invokes a $lambda declaration", async () => {
     const fn = inModule(
       $lambda({ id: "digest", event: () => eventBridge.schedule() }),
     );
-    schedule({ name: "daily", schedule: rate(1, "day"), target: () => fn });
+    schedule({ id: "daily", schedule: rate(1, "day"), target: () => fn });
   });
   const fn = lambdaGroup(graph, "digest");
 
@@ -101,7 +101,7 @@ test("a schedule of a declaration with an sqs event throws", async () => {
         $lambda({ id: "process", event: () => sqs.schema(Anything) }),
       );
       schedule({
-        name: "daily",
+        id: "daily",
         schedule: rate(1, "day"),
         // @ts-expect-error a schedule can't invoke a function of SQS messages
         target: () => fn,
@@ -115,7 +115,7 @@ test("a schedule of a declaration with an sqs event throws", async () => {
 test("schedule rejects a value that is not a declaration or a lambda group", () => {
   expect(() =>
     schedule({
-      name: "daily",
+      id: "daily",
       schedule: rate(1, "day"),
       target: {} as any,
     }),
@@ -134,7 +134,7 @@ test("schedule takes a lambda group from another copy of the package", () => {
   expect(fn).not.toBeInstanceOf(LambdaGroup);
 
   expect(() =>
-    schedule({ name: "daily", schedule: rate(1, "day"), target: fn }),
+    schedule({ id: "daily", schedule: rate(1, "day"), target: fn }),
   ).not.toThrow();
 });
 
@@ -145,7 +145,7 @@ test("eventBridge.defineSchedule() in a declaration makes the rule and the permi
         id: "digest",
         event: () =>
           eventBridge.defineSchedule({
-            name: "nightly",
+            id: "nightly",
             schedule: rate(1, "day"),
           }),
       }),
@@ -171,12 +171,12 @@ test("schedule() of a declaration that makes its own schedule throws", async () 
           id: "digest",
           event: () =>
             eventBridge.defineSchedule({
-              name: "nightly",
+              id: "nightly",
               schedule: rate(1, "day"),
             }),
         }),
       );
-      schedule({ name: "daily", schedule: rate(1, "day"), target: () => fn });
+      schedule({ id: "daily", schedule: rate(1, "day"), target: () => fn });
     }),
   ).rejects.toThrow(
     'schedule() invokes the Lambda "digest" on the schedule "daily", but the Lambda makes its own schedule in its declaration, with event: () => eventBridge.defineSchedule(options). Schedule the Lambda in one place: remove the schedule() call, or declare the Lambda with event: () => eventBridge.schedule().',
@@ -194,7 +194,7 @@ test("eventBridge.defineSchedule() needs a name and a schedule", () => {
   // Only type-checked.
   const typeOnly = () => {
     // @ts-expect-error the schedule is missing
-    eventBridge.defineSchedule({ name: "nightly" });
+    eventBridge.defineSchedule({ id: "nightly" });
   };
   void typeOnly;
 });

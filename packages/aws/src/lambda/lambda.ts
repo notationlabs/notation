@@ -3,7 +3,7 @@ import * as std from "@notation/std.iac";
 import { getActiveResourceCollection } from "@notation/resource";
 import path from "path";
 import { awsName } from "src/naming";
-import { assertLambdaId, type NameSafe } from "./lambda-id";
+import { assertId, assertName, type NameSafe } from "src/id";
 
 export type LambdaConfig = {
   /**
@@ -14,6 +14,12 @@ export type LambdaConfig = {
    * Must be name-safe: 1 to 64 letters, digits, hyphens or underscores.
    */
   id: string;
+  /**
+   * The function's name in AWS, in place of the id. The function is named
+   * `<app>--<stage>--<name>`. Changing the name replaces the function. The
+   * role and the other resources keep names from the id. Must be name-safe.
+   */
+  name?: string;
   /**
    * The export of the code that Lambda calls with every event. Defaults to
    * `handler`.
@@ -45,7 +51,8 @@ export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
   }
 
   constructor(config: LambdaConfig) {
-    assertLambdaId(config.id);
+    assertId("lambda()", config.id);
+    assertName("lambda()", config.name);
     assertUniqueLambdaId(config.id);
     super("Lambda", config.id, config);
     const { fn, role } = build(this, config);
@@ -145,7 +152,7 @@ const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
   const lambdaResource = functionGroup.add(
     new aws.lambda.LambdaFunction(lambdaId, {
       config: {
-        FunctionName: awsName("lambdaFunction", lambdaId),
+        FunctionName: awsName("lambdaFunction", config.name ?? lambdaId),
         Handler: `${fileName}.${config.handler ?? "handler"}`,
         Runtime: runtime,
         Timeout: config.timeout,

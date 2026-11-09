@@ -1,12 +1,24 @@
 import * as aws from "@notation/aws.iac";
 import type { StandardSchemaV1 } from "@notation/resource";
 import type { AuthorizerSource } from "src/lambda/declaration";
+import { assertId, assertName, type NameSafe } from "src/id";
 import type { ApiGroup } from "./api";
-import { authorizerKey, mapAuthConfig } from "./utils";
 
 export type JwtAuthorizerConfig<
   C extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
 > = {
+  /**
+   * Keys the authorizer in state. Changing the id replaces the authorizer,
+   * so keep it stable. Must be name-safe: 1 to 64 letters, digits, hyphens
+   * or underscores.
+   */
+  id: string;
+  /**
+   * The authorizer's name in AWS, in place of the id. The authorizer belongs
+   * to its API, whose name already has the app and stage, so the name has no
+   * prefix. Must be name-safe.
+   */
+  name?: string;
   /** The API whose routes the authorizer guards, from `api()`. */
   api: ApiGroup;
   /** The URL of the token's issuer, such as `https://example.auth0.com/`. */
@@ -46,18 +58,24 @@ export class JwtAuthorizerGroup<
 
   constructor(config: JwtAuthorizerConfig<C>) {
     const { api, claims, ...rest } = config;
-    const apiResource = api.api;
-    // An API allows 10 authorizers. The id keeps the issuer and audience, so
-    // a second authorizer with the same ones is a duplicate.
-    const id = `${apiResource.id}-jwt-authorizer-${authorizerKey(rest)}`;
-    super("API Gateway/JWT Authorizer", id, { api, ...rest });
+    assertId("jwtAuthorizer()", rest.id);
+    assertName("jwtAuthorizer()", rest.name);
+    super("API Gateway/JWT Authorizer", rest.id, { api, ...rest });
     this.api = api;
     this.claims = claims as C;
     this.scopes = rest.scopes ?? [];
     this.auth = this.add(
-      new aws.apiGateway.RouteAuth(id, {
-        config: mapAuthConfig(apiResource.id, rest),
-        dependencies: { api: apiResource },
+      new aws.apiGateway.RouteAuth(`${rest.id}-authorizer`, {
+        config: {
+          Name: rest.name ?? rest.id,
+          AuthorizerType: "JWT",
+          IdentitySource: ["$request.header.Authorization"],
+          JwtConfiguration: {
+            Audience: rest.audience,
+            Issuer: rest.issuer,
+          },
+        },
+        dependencies: { api: api.api },
       }),
     );
   }
@@ -73,11 +91,15 @@ export function isJwtAuthorizerGroup(
  * Declares a JWT authorizer on an API. Routes take it with
  * `router(api).withAuthorizer(authorizer)`, and a Lambda takes it with
  * `apiGateway.bind(api).defineRoute({ auth: authorizer })`. In the function,
- * the authorizer holds only its claims schema.
+ * the authorizer holds only its claims schema. `id` must be a name-safe
+ * string literal; see `NameSafe`.
  * @resource runtime: claims
  */
 export function jwtAuthorizer<
   C extends StandardSchemaV1 | undefined = undefined,
->(config: JwtAuthorizerConfig<C>): JwtAuthorizerGroup<C> {
+  const Id extends string = string,
+>(
+  config: Omit<JwtAuthorizerConfig<C>, "id"> & { id: NameSafe<Id> },
+): JwtAuthorizerGroup<C> {
   return new JwtAuthorizerGroup(config);
 }

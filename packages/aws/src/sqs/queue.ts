@@ -3,16 +3,27 @@ import type { LambdaGroup } from "src/lambda/lambda";
 import type { SqsOptions } from "src/lambda/declaration";
 import type { StandardSchemaV1 } from "@notation/resource";
 import { awsName } from "src/naming";
+import { assertId, assertName, type NameSafe } from "src/id";
 
 export type QueueConfig<
   S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
 > = {
   /**
-   * Names the queue, and keys it in state. The queue is named
-   * `<app>--<stage>--<name>` in AWS. Changing the name replaces the queue.
-   * A FIFO queue's name ends in `.fifo`.
+   * Keys the queue in state. Changing the id replaces the queue, so keep it
+   * stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
+   * underscores.
    */
-  name: string;
+  id: string;
+  /**
+   * The queue's name in AWS, in place of the id. The queue is named
+   * `<app>--<stage>--<name>`. Changing the name replaces the queue. Must be
+   * name-safe.
+   */
+  name?: string;
+  /**
+   * Makes a FIFO queue. Its AWS name ends in `.fifo`, which Notation adds.
+   * It can't change after the queue is created.
+   */
   fifo?: boolean;
   /**
    * Validates the JSON body of each message, in `decode()` of a Lambda
@@ -51,12 +62,15 @@ export class QueueGroup<
   readonly url: string;
 
   constructor({ schema, ...config }: QueueConfig<S>) {
-    super("aws/sqs/queue", config.name, config);
+    assertId("queue()", config.id);
+    assertName("queue()", config.name);
+    super("aws/sqs/queue", config.id, config);
     this.schema = schema as S;
+    const name = config.name ?? config.id;
     this.queue = this.add(
-      new aws.sqs.Queue(`${config.name}-queue`, {
+      new aws.sqs.Queue(`${config.id}-queue`, {
         config: {
-          QueueName: awsName("sqsQueue", config.name),
+          QueueName: awsName("sqsQueue", config.fifo ? `${name}.fifo` : name),
           FifoQueue: config.fifo,
           VisibilityTimeout: config.visibilityTimeout,
           MessageRetentionPeriod: config.messageRetentionPeriod,
@@ -110,11 +124,13 @@ export class QueueGroup<
 }
 
 /**
- * Declares an SQS queue.
+ * Declares an SQS queue. `id` must be a name-safe string literal; see
+ * `NameSafe`.
  * @resource runtime: schema
  */
-export function queue<S extends StandardSchemaV1 | undefined = undefined>(
-  config: QueueConfig<S>,
-): QueueGroup<S> {
+export function queue<
+  S extends StandardSchemaV1 | undefined = undefined,
+  const Id extends string = string,
+>(config: Omit<QueueConfig<S>, "id"> & { id: NameSafe<Id> }): QueueGroup<S> {
   return new QueueGroup(config);
 }

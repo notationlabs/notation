@@ -13,7 +13,7 @@ import type { LambdaDeclarationConfig } from "./lambda-declaration";
 // code. The types come from `index.ts` in both builds.
 
 export * from "./declaration";
-export { isNameSafe, LAMBDA_ID_MAX_LENGTH } from "./lambda-id";
+export { ID_MAX_LENGTH, isNameSafe } from "src/id";
 
 /** The function's view of its declaration: `env()` and `decode()`. */
 export function $lambda<
