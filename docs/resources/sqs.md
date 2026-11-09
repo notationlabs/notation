@@ -71,7 +71,7 @@ export const lambda = $lambda({
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
   for (const record of event.Records) {
-    const order = await lambda.decode(record);
+    const { body: order } = await lambda.decode(record);
     console.log(order.orderId);
   }
 };
@@ -108,7 +108,7 @@ When you remove `batchSize` or `maxBatchingWindow`, Notation sets the mapping ba
 
 ### Validating messages
 
-`lambda.decode(record)` parses the record's body as JSON, and validates it with the queue's `schema`. It returns the schema's output type. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
+`lambda.decode(record)` parses the record's body as JSON, and validates it with the queue's `schema`. It returns the record with `body` in place of the JSON string, so `body` has the schema's output type. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
 
 Import the schema from a shared module, such as `shared/schema.ts` in `files.shared`, or from a package. A file with no kind also works, if it calls no resource function at its top level. **This matters because the function loads the schema, but not the infra module.** In the function's bundle, the runtime build replaces `orderQueue` with an object that holds only the schema:
 
@@ -142,7 +142,7 @@ export const lambda = $lambda({
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
   for (const record of event.Records) {
-    const order = await lambda.decode(record);
+    const { body: order } = await lambda.decode(record);
     console.log(order.orderId);
   }
 };
@@ -223,8 +223,8 @@ export const lambda = $lambda({
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
   for (const record of event.Records) {
-    const order = await lambda.decode(record);
-    const priority = record.eventSourceARN === lambda.env().PRIORITY_QUEUE_ARN;
+    const { body: order, eventSourceARN } = await lambda.decode(record);
+    const priority = eventSourceARN === lambda.env().PRIORITY_QUEUE_ARN;
     console.log(order.orderId, priority);
   }
 };

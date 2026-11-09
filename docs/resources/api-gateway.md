@@ -2,11 +2,11 @@
 
 `@notation/aws/api-gateway` builds HTTP APIs backed by Lambda functions. A Lambda function receives the requests of a route in one of two ways:
 
-| Function-led                                                                | Infra-led                                                              |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `event: () => apiGateway.bind(todoApi).defineRoute({ method, path })`       | `event: () => apiGateway.schema(NewTodo)`                              |
-| The declaration makes one route on an API that infra declares.              | Infra makes routes with `router(todoApi).post("/todos", () => todos)`. |
-| `decode()` validates with the route's `schema` and the authorizer's claims. | `decode()` validates with `NewTodo` and the declaration's claims.      |
+| Function-led                                                                | Infra-led                                                                                 |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `event: () => apiGateway.bind(todoApi).defineRoute({ method, path })`       | `event: () => apiGateway.schema(NewTodo)`                                                 |
+| The declaration makes one route on an API that infra declares.              | Infra makes routes with `router(todoApi).post("/todos", () => todos)`.                    |
+| `decode()` validates with the route's `schema` and the authorizer's claims. | `decode()` validates with `NewTodo`, and with the claims schema of `.authSchema(Claims)`. |
 
 `apiGateway` comes from `@notation/aws/lambda`. `api()`, `jwtAuthorizer()` and `router()` come from `@notation/aws/api-gateway`, and only run in infra.
 
@@ -50,7 +50,7 @@ export const lambda = $lambda({
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
-  const todo = await lambda.decode(event);
+  const { body: todo } = await lambda.decode(event);
   return { statusCode: 201, body: JSON.stringify(todo) };
 };
 ```
@@ -96,9 +96,9 @@ export const lambda = $lambda({
 
 `defineRoute()` makes one route. To serve several routes from one function, declare it with `apiGateway.schema()` and route it from infra with `router()`.
 
-## `apiGateway.schema(body, options)`
+## `apiGateway.schema(body)`
 
-A declaration that infra routes to names the schemas of its requests, and no API:
+A declaration that infra routes to names the schema of its request bodies, and no API:
 
 ```ts [runtime/todos.ts]
 import { $lambda, apiGateway, type LambdaHandler } from "@notation/aws/lambda";
@@ -110,16 +110,21 @@ export const lambda = $lambda({
 });
 ```
 
-Both arguments are optional. A function that only serves `GET` routes has no body to validate, so it calls `apiGateway.schema()`, or `apiGateway.schema(undefined, { claims: Claims })` for routes behind an authorizer.
+`body` is optional. A function that only serves `GET` routes has no body to validate, so it calls `apiGateway.schema()`.
+
+The event of `apiGateway.schema()` has the kind `apiGateway`, so only routes with no authorizer can invoke the function. For routes behind a JWT authorizer, call `.authSchema()` on the event:
+
+| Call                                            | Kind             | Routes that can invoke the function                             |
+| ----------------------------------------------- | ---------------- | --------------------------------------------------------------- |
+| `apiGateway.schema(NewTodo)`                    | `apiGateway`     | Routes with no authorizer                                       |
+| `apiGateway.schema(NewTodo).authSchema(Claims)` | `apiGateway-jwt` | Routes whose authorizer has the claims schema `Claims`, or none |
+| `apiGateway.schema(NewTodo).authSchema()`       | `apiGateway-jwt` | Routes with any JWT authorizer                                  |
 
 ```ts [@notation/aws/lambda]
-apiGateway.schema(body?: StandardSchemaV1, options?: { claims?: StandardSchemaV1 });
+apiGateway.schema(body?: StandardSchemaV1).authSchema(claims?: StandardSchemaV1);
 ```
 
-`options.claims` decides which routes can invoke the function:
-
-- With `claims`, the event has the kind `apiGateway-jwt`, and only routes with an authorizer can invoke the function.
-- Without `claims`, the event has the kind `apiGateway`, and only routes with no authorizer can invoke the function.
+`authSchema` is a non-enumerable property of the event, so it is not part of the event's data that `decode()` and the infra checks read.
 
 ## `router(api)`
 
@@ -154,7 +159,8 @@ The route methods return nothing.
 | Target                                                     | Route with no authorizer | Route with an authorizer                                         |
 | ---------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------- |
 | A declaration with `apiGateway.schema(body)`               | Routed                   | Throws                                                           |
-| A declaration with `apiGateway.schema(body, { claims })`   | Throws                   | Routed if the authorizer's `claims` is the same schema, or unset |
+| A declaration with `.authSchema(claims)`                   | Throws                   | Routed if the authorizer's `claims` is the same schema, or unset |
+| A declaration with `.authSchema()`                         | Throws                   | Routed                                                           |
 | A declaration with no `event`                              | Routed                   | Routed                                                           |
 | A Lambda group from `lambda()`                             | Routed                   | Routed                                                           |
 | A declaration with `apiGateway.bind(api).defineRoute(...)` | Throws                   | Throws                                                           |
@@ -173,7 +179,7 @@ Each route, from `router()` or from `defineRoute()`, produces a full resource su
 
 ### Request bodies
 
-`lambda.decode(event)` decodes a base64 body, parses it as JSON, validates it with the body schema and returns the schema's output type. With no body schema, it returns the parsed JSON as `unknown`, or `undefined` for a request with no body. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
+`lambda.decode(event)` returns the request with `body` decoded. It decodes a base64 body, parses it as JSON, and validates it with the body schema, so `body` has the schema's output type. With no body schema, `body` is the parsed JSON as `unknown`, or `undefined` for a request with no body. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
 
 ## JWT authorization
 
@@ -208,8 +214,8 @@ export const lambda = $lambda({
 });
 
 export const handler: LambdaHandler<typeof lambda> = async (event) => {
-  await lambda.decode(event); // <- throws a DecodeError for claims that Claims rejects
-  return { message: event.requestContext.authorizer.jwt.claims.sub };
+  const { claims } = await lambda.decode(event); // <- throws a DecodeError for claims that Claims rejects
+  return { message: claims.sub };
 };
 ```
 
@@ -228,19 +234,34 @@ router(userApi)
 ```ts [runtime/profile.ts]
 export const lambda = $lambda({
   id: "profile",
-  event: () => apiGateway.schema(undefined, { claims: Claims }),
+  event: () => apiGateway.schema().authSchema(Claims),
 });
 ```
 
 ::
 
-**The claims check compares objects, not types.** `withAuthorizer()` routes throw when the authorizer's `claims` is another object than the one in `apiGateway.schema()`. TypeScript also checks the pairing: a declaration whose claims schema has another type than the authorizer's is a type error. An authorizer with no `claims` can route to a declaration with any claims schema, because the function still validates the claims. `withAuthorizer()` also throws for an authorizer on another API.
+**The claims check compares objects, not types.** `withAuthorizer()` routes throw when the authorizer's `claims` is another object than the one in `.authSchema(Claims)`. TypeScript also checks the pairing: a declaration whose claims schema has another type than the authorizer's is a type error.
+
+Either side can leave out the claims schema:
+
+- An authorizer with no `claims` can route to a declaration with any claims schema, because the function still validates the claims.
+- A declaration with `.authSchema()` and no claims schema can be routed from any authorizer. The function then doesn't validate the claims.
+
+`withAuthorizer()` also throws for an authorizer on another API.
 
 ### Claims in `decode()`
 
-`lambda.decode(event)` validates `event.requestContext.authorizer.jwt.claims` with the claims schema before it reads the body. It throws a `DecodeError` when the claims are not valid, and when the request has no claims. It returns only the body.
+For a request through a JWT authorizer, `lambda.decode(event)` reads `event.requestContext.authorizer.jwt.claims`, validates them with the claims schema, and returns them as a top-level `claims` field, next to `body`:
 
-The handler's event types the claims as `JwtClaims`, the loose type from `aws-lambda`, because API Gateway passes them as the token holds them. The claims schema's output type is not used in the event.
+| Declaration                                      | `claims` in the result of `decode()`              |
+| ------------------------------------------------ | ------------------------------------------------- |
+| `.authSchema(Claims)`, or `auth` with `Claims`   | The output type of `Claims`                       |
+| `.authSchema()`, or `auth` with no claims schema | The claims as API Gateway sends them, `JwtClaims` |
+| No authorizer                                    | No `claims` field                                 |
+
+`decode()` throws a `DecodeError` when the claims are not valid, and when the request has no claims. It leaves `requestContext` as API Gateway sent it.
+
+The handler's event types `requestContext.authorizer.jwt.claims` as `JwtClaims`, the loose type from `aws-lambda`, because API Gateway passes them as the token holds them. Read the typed claims from the result of `decode()`.
 
 ### JwtAuthorizerConfig
 
