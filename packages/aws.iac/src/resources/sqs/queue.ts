@@ -20,6 +20,24 @@ type QueueAttributeParams = {
   DelaySeconds?: number;
   /** Seconds a receive call waits for a message to arrive. */
   ReceiveMessageWaitTimeSeconds?: number;
+  /** The most bytes a message can hold. */
+  MaximumMessageSize?: number;
+  /**
+   * The queue that SQS moves a message to after it has been received
+   * `maxReceiveCount` times without being deleted.
+   */
+  RedrivePolicy?: RedrivePolicy;
+  /** FIFO only. Deduplicates messages by a hash of their body. */
+  ContentBasedDeduplication?: boolean;
+  /** FIFO only. Whether deduplication applies to the queue or to each message group. */
+  DeduplicationScope?: "queue" | "messageGroup";
+  /** FIFO only. Whether the throughput quota applies to the queue or to each message group. */
+  FifoThroughputLimit?: "perQueue" | "perMessageGroupId";
+};
+
+export type RedrivePolicy = {
+  deadLetterTargetArn: string;
+  maxReceiveCount: number;
 };
 
 type QueueParams = QueueAttributeParams & {
@@ -27,20 +45,38 @@ type QueueParams = QueueAttributeParams & {
   FifoQueue?: boolean;
 };
 
+// SQS returns the FIFO attributes only for a FIFO queue, and the redrive
+// policy only for a queue that has one.
+type OptionalReadAttributes =
+  | "RedrivePolicy"
+  | "ContentBasedDeduplication"
+  | "DeduplicationScope"
+  | "FifoThroughputLimit";
+
 export type QueueSchema = AwsSchema<{
   Key: { QueueUrl: string };
   CreateParams: QueueParams;
   UpdateParams: QueueAttributeParams;
-  ReadResult: Required<QueueParams> & { QueueUrl: string; QueueArn: string };
+  ReadResult: Required<Omit<QueueParams, OptionalReadAttributes>> &
+    Pick<QueueParams, OptionalReadAttributes> & {
+      QueueUrl: string;
+      QueueArn: string;
+    };
 }>;
 
 // SetQueueAttributes cannot unset an attribute, so a removed attribute is
-// set to the value SQS gives a new queue.
-const ATTRIBUTE_DEFAULTS: Required<QueueAttributeParams> = {
+// set to the value SQS gives a new queue. An empty RedrivePolicy removes the
+// dead-letter queue.
+const ATTRIBUTE_DEFAULTS: Required<AttributeValues> = {
   VisibilityTimeout: 30,
   MessageRetentionPeriod: 345_600,
   DelaySeconds: 0,
   ReceiveMessageWaitTimeSeconds: 0,
+  MaximumMessageSize: 1_048_576,
+  RedrivePolicy: "",
+  ContentBasedDeduplication: false,
+  DeduplicationScope: "queue",
+  FifoThroughputLimit: "perQueue",
 };
 
 const ATTRIBUTE_NAMES = Object.keys(
@@ -102,6 +138,44 @@ const queueSchema = queue.defineSchema({
     propertyType: "param",
     presence: "optional",
     value: seconds(20),
+  },
+  MaximumMessageSize: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.pipe(
+      v.number(),
+      v.integer(),
+      v.minValue(1_024),
+      v.maxValue(1_048_576),
+    ),
+  },
+  RedrivePolicy: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.object({
+      deadLetterTargetArn: v.string(),
+      maxReceiveCount: v.pipe(
+        v.number(),
+        v.integer(),
+        v.minValue(1),
+        v.maxValue(1_000),
+      ),
+    }),
+  },
+  ContentBasedDeduplication: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.boolean(),
+  },
+  DeduplicationScope: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.picklist(["queue", "messageGroup"]),
+  },
+  FifoThroughputLimit: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.picklist(["perQueue", "perMessageGroupId"]),
   },
 } as const);
 
@@ -173,6 +247,16 @@ export const Queue = queueSchema.defineOperations({
         ReceiveMessageWaitTimeSeconds: Number(
           Attributes.ReceiveMessageWaitTimeSeconds,
         ),
+        MaximumMessageSize: Number(Attributes.MaximumMessageSize),
+        RedrivePolicy: parseRedrivePolicy(Attributes.RedrivePolicy),
+        ContentBasedDeduplication:
+          Attributes.ContentBasedDeduplication === undefined
+            ? undefined
+            : Attributes.ContentBasedDeduplication === "true",
+        DeduplicationScope: Attributes.DeduplicationScope as
+          QueueAttributeParams["DeduplicationScope"] | undefined,
+        FifoThroughputLimit: Attributes.FifoThroughputLimit as
+          QueueAttributeParams["FifoThroughputLimit"] | undefined,
       };
     } catch (error) {
       if (error instanceof sdk.QueueDoesNotExist) {
@@ -185,10 +269,11 @@ export const Queue = queueSchema.defineOperations({
   },
 
   update: async (key, patch) => {
-    const attributes: QueueAttributeParams = {};
+    const attributes: AttributeValues = {};
     for (const name of ATTRIBUTE_NAMES) {
       if (name in patch)
-        attributes[name] = patch[name] ?? ATTRIBUTE_DEFAULTS[name];
+        (attributes as Record<string, unknown>)[name] =
+          patch[name] ?? ATTRIBUTE_DEFAULTS[name];
     }
     if (Object.keys(attributes).length === 0) return;
     await sqsClient().send(
@@ -222,11 +307,27 @@ async function getQueueUrl(QueueName: string): Promise<string | undefined> {
   }
 }
 
-function toAttributes(attributes: QueueAttributeParams) {
+type AttributeValues = {
+  [K in keyof QueueAttributeParams]?: QueueAttributeParams[K] | "";
+};
+
+function toAttributes(attributes: AttributeValues) {
   const encoded: Record<string, string> = {};
   for (const name of ATTRIBUTE_NAMES) {
     const value = attributes[name];
-    if (value !== undefined) encoded[name] = String(value);
+    if (value === undefined) continue;
+    encoded[name] =
+      typeof value === "object" ? JSON.stringify(value) : String(value);
   }
   return encoded;
+}
+
+// SQS returns the policy as a JSON string. The count is read with Number(),
+// as the string can hold it as a string.
+function parseRedrivePolicy(
+  policy: string | undefined,
+): RedrivePolicy | undefined {
+  if (!policy) return undefined;
+  const { deadLetterTargetArn, maxReceiveCount } = JSON.parse(policy);
+  return { deadLetterTargetArn, maxReceiveCount: Number(maxReceiveCount) };
 }

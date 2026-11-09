@@ -18,6 +18,13 @@ type EventSourceMappingParams = {
   BatchSize?: number;
   MaximumBatchingWindowInSeconds?: number;
   Enabled?: boolean;
+  /**
+   * `["ReportBatchItemFailures"]` lets the function return the messages that
+   * failed, as `{ batchItemFailures }`, so Lambda retries only those.
+   */
+  FunctionResponseTypes?: "ReportBatchItemFailures"[];
+  /** For SQS: the most instances of the function that the mapping invokes at once. */
+  ScalingConfig?: { MaximumConcurrency?: number };
 };
 
 export type LambdaEventSourceMappingSchema = AwsSchema<{
@@ -35,7 +42,13 @@ export type LambdaEventSourceMappingSchema = AwsSchema<{
       | "MaximumBatchingWindowInSeconds"
       | "State"
     >
-  > & { Enabled: boolean };
+  > &
+    Pick<
+      EventSourceMappingParams,
+      "FunctionResponseTypes" | "ScalingConfig"
+    > & {
+      Enabled: boolean;
+    };
 }>;
 
 export type LambdaEventSourceMappingDependencies = {
@@ -93,6 +106,20 @@ const lambdaEventSourceMappingSchema = lambdaEventSourceMapping.defineSchema({
     propertyType: "param",
     presence: "optional",
     value: v.boolean(),
+  },
+  FunctionResponseTypes: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.array(v.literal("ReportBatchItemFailures")),
+  },
+  ScalingConfig: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.object({
+      MaximumConcurrency: v.optional(
+        v.pipe(v.number(), v.integer(), v.minValue(2), v.maxValue(1_000)),
+      ),
+    }),
   },
   State: {
     propertyType: "computed",
@@ -175,6 +202,9 @@ export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
             result.MaximumBatchingWindowInSeconds!,
           State: result.State!,
           Enabled: result.State === "Enabled",
+          FunctionResponseTypes: (result.FunctionResponseTypes ??
+            []) as "ReportBatchItemFailures"[],
+          ScalingConfig: result.ScalingConfig ?? {},
         };
       } catch (error) {
         if (error instanceof sdk.ResourceNotFoundException) {
@@ -188,13 +218,16 @@ export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
     },
 
     // UpdateEventSourceMapping leaves an omitted field as it was, so a field
-    // removed from config is reset to the API's default.
+    // removed from config is reset to the API's default. An empty
+    // FunctionResponseTypes or ScalingConfig removes the setting.
     update: async (key, patch, params) => {
       const defaults: Omit<EventSourceMappingParams, "EventSourceArn"> = {
         FunctionName: params.FunctionName,
         BatchSize: defaultBatchSize(params.EventSourceArn),
         MaximumBatchingWindowInSeconds: 0,
         Enabled: true,
+        FunctionResponseTypes: [],
+        ScalingConfig: {},
       };
       const changes = Object.fromEntries(
         (Object.keys(patch) as (keyof typeof defaults)[]).map((name) => [

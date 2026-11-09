@@ -11,6 +11,8 @@ import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
 
 const url = "https://sqs.eu-west-2.amazonaws.com/123456789012/orders";
 
+const dlqArn = "arn:aws:sqs:eu-west-2:123456789012:orders-dlq";
+
 const queue = new Queue("orders-queue", { config: { QueueName: "orders" } });
 
 const queueDoesNotExist = () =>
@@ -45,6 +47,34 @@ describe("SQS queue", () => {
       QueueName: "orders",
       Attributes: { VisibilityTimeout: "60" },
       tags: { [CREATE_TOKEN_TAG]: createTokenTagValue("token") },
+    });
+  });
+
+  it("creates the redrive policy as JSON and the FIFO attributes as strings", async () => {
+    const send = mockSend((command) => {
+      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
+      return { QueueUrl: url };
+    });
+
+    await queue.create({
+      QueueName: "orders.fifo",
+      FifoQueue: true,
+      ContentBasedDeduplication: true,
+      DeduplicationScope: "messageGroup",
+      MaximumMessageSize: 2_048,
+      RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 3 },
+    });
+
+    const command = send.mock.calls[1]![0] as sdk.CreateQueueCommand;
+    expect(command.input.Attributes).toEqual({
+      FifoQueue: "true",
+      ContentBasedDeduplication: "true",
+      DeduplicationScope: "messageGroup",
+      MaximumMessageSize: "2048",
+      RedrivePolicy: JSON.stringify({
+        deadLetterTargetArn: dlqArn,
+        maxReceiveCount: 3,
+      }),
     });
   });
 
@@ -87,6 +117,7 @@ describe("SQS queue", () => {
         MessageRetentionPeriod: "345600",
         DelaySeconds: "0",
         ReceiveMessageWaitTimeSeconds: "0",
+        MaximumMessageSize: "1048576",
       },
     }));
 
@@ -104,6 +135,42 @@ describe("SQS queue", () => {
       MessageRetentionPeriod: 345600,
       DelaySeconds: 0,
       ReceiveMessageWaitTimeSeconds: 0,
+      MaximumMessageSize: 1048576,
+      RedrivePolicy: undefined,
+      ContentBasedDeduplication: undefined,
+      DeduplicationScope: undefined,
+      FifoThroughputLimit: undefined,
+    });
+  });
+
+  it("reads the redrive policy and the FIFO attributes", async () => {
+    mockSend(() => ({
+      Attributes: {
+        QueueArn: "arn:aws:sqs:eu-west-2:123456789012:orders.fifo",
+        FifoQueue: "true",
+        VisibilityTimeout: "30",
+        MessageRetentionPeriod: "345600",
+        DelaySeconds: "0",
+        ReceiveMessageWaitTimeSeconds: "0",
+        MaximumMessageSize: "1048576",
+        RedrivePolicy: `{"deadLetterTargetArn":"${dlqArn}","maxReceiveCount":"3"}`,
+        ContentBasedDeduplication: "false",
+        DeduplicationScope: "queue",
+        FifoThroughputLimit: "perQueue",
+      },
+    }));
+
+    const result = await queue.read!({ QueueUrl: url });
+
+    expect(() =>
+      validateValues(queue, queue.toResult(result), "read"),
+    ).not.toThrow();
+    expect(result).toMatchObject({
+      FifoQueue: true,
+      RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 3 },
+      ContentBasedDeduplication: false,
+      DeduplicationScope: "queue",
+      FifoThroughputLimit: "perQueue",
     });
   });
 
@@ -131,6 +198,44 @@ describe("SQS queue", () => {
       QueueUrl: url,
       Attributes: { VisibilityTimeout: "30", DelaySeconds: "5" },
     });
+  });
+
+  it("removes a removed redrive policy, and resets the FIFO attributes", async () => {
+    const send = mockSend(() => ({}));
+
+    await queue.update!(
+      { QueueUrl: url },
+      {
+        RedrivePolicy: undefined,
+        MaximumMessageSize: undefined,
+        ContentBasedDeduplication: undefined,
+        DeduplicationScope: undefined,
+        FifoThroughputLimit: undefined,
+      } as any,
+      { QueueName: "orders" },
+      {} as any,
+    );
+
+    const command = send.mock.calls[0]![0] as sdk.SetQueueAttributesCommand;
+    expect(command.input.Attributes).toEqual({
+      RedrivePolicy: "",
+      MaximumMessageSize: "1048576",
+      ContentBasedDeduplication: "false",
+      DeduplicationScope: "queue",
+      FifoThroughputLimit: "perQueue",
+    });
+  });
+
+  it("rejects a maxReceiveCount that SQS does not allow", () => {
+    expect(
+      () =>
+        new Queue("bad-queue", {
+          config: {
+            QueueName: "bad",
+            RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 0 },
+          },
+        }),
+    ).toThrow(ValueValidationError);
   });
 
   it("reports a missing queue as not found", async () => {
