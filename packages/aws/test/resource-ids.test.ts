@@ -5,6 +5,7 @@ import { route } from "src/api-gateway/route";
 import { rate, schedule } from "src/event-bridge";
 import { eventSourceMapping, lambda } from "src/lambda";
 import { queue } from "src/sqs";
+import { Unknown } from "./declare";
 
 const code = { type: "file", path: "src/fns/handler.fn.js" } as const;
 
@@ -17,7 +18,7 @@ test("resources of declarations of different types with the same id have differe
   const graph = await collectResourceGraph(() => {
     const fn = lambda({ id: "todos", code });
     api({ id: "todos" });
-    queue({ id: "todos" });
+    queue({ id: "todos", schema: Unknown });
     schedule({ id: "todos", schedule: rate(1, "day"), target: fn });
   });
 
@@ -28,8 +29,8 @@ test("ids that join to the same text with a hyphen give different resource ids",
   const graph = await collectResourceGraph(() => {
     const bc = lambda({ id: "b-c", code });
     const c = lambda({ id: "c", code });
-    const a = queue({ id: "a" });
-    const ab = queue({ id: "a-b" });
+    const a = queue({ id: "a", schema: Unknown });
+    const ab = queue({ id: "a-b", schema: Unknown });
     eventSourceMapping({ source: a, target: bc });
     eventSourceMapping({ source: ab, target: c });
     route(api({ id: "a" }), "GET", "/x", undefined, bc);

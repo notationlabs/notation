@@ -20,9 +20,7 @@ import type {
 // infra code, so it imports only types.
 
 /** The function receives SQS messages, which `decode()` validates with `schema`. */
-export type SqsEvent<
-  S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
-> = {
+export type SqsEvent<S extends StandardSchemaV1 = StandardSchemaV1> = {
   kind: "sqs";
   schema: S;
   /**
@@ -37,9 +35,7 @@ export type SqsEvent<
  * A queue that `sqs.bind()` reads, from `queue()`. In the function it holds only
  * the queue's schema, as the runtime build replaces the queue with it.
  */
-export type SqsSource<
-  S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
-> = {
+export type SqsSource<S extends StandardSchemaV1 = StandardSchemaV1> = {
   readonly schema: S;
   "~subscribe"(group: LambdaGroup, options?: SqsOptions): void;
 };
@@ -69,7 +65,7 @@ export const sqs = {
    * module is replaced with its runtime options, as `{ schema }`.
    * @runtime queue
    */
-  bind<S extends StandardSchemaV1 | undefined>(
+  bind<S extends StandardSchemaV1>(
     queue: SqsSource<S>,
     options?: SqsOptions,
   ): SqsEvent<S> {
@@ -78,8 +74,8 @@ export const sqs = {
   /**
    * The function receives SQS messages, from queues that infra maps to it
    * with `eventSourceMapping()`. `decode()` validates each message's JSON
-   * body with `schema`. A queue that infra maps to the function must have no
-   * schema, or this schema.
+   * body with `schema`. A queue that infra maps to the function must have
+   * this schema.
    */
   schema<S extends StandardSchemaV1>(schema: S): SqsEvent<S> {
     return { kind: "sqs", schema };
@@ -305,10 +301,6 @@ export const eventBridge = {
 
 type KindOf<E> = E extends { kind: infer K } ? K : "none";
 
-type Decoded<S> = S extends StandardSchemaV1
-  ? StandardSchemaV1.InferOutput<S>
-  : unknown;
-
 // The body of a request as `decode()` returns it: the output of the body
 // schema, or `undefined` for a body schema of `null`.
 type DecodedRequestBody<S> = S extends StandardSchemaV1
@@ -344,7 +336,7 @@ type DecodeFor<E> =
   E extends SqsEvent<infer S>
     ? <R extends SQSRecord>(
         record: R,
-      ) => Promise<Replace<R, { body: Decoded<S> }>>
+      ) => Promise<Replace<R, { body: StandardSchemaV1.InferOutput<S> }>>
     : E extends ApiGatewayEvent<infer S, infer C, infer K>
       ? <R extends ApiGatewayRequest<K>>(
           event: R,
@@ -494,7 +486,7 @@ export function createDecode(
 }
 
 async function decodeBody(
-  schema: StandardSchemaV1 | undefined,
+  schema: StandardSchemaV1,
   body: string,
   name: "message",
 ): Promise<unknown> {
@@ -504,7 +496,6 @@ async function decodeBody(
   } catch {
     throw new DecodeError(`The ${name} body is not valid JSON.`);
   }
-  if (!schema) return value;
   return validateBody(schema, value, name);
 }
 

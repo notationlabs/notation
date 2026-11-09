@@ -5,9 +5,7 @@ import type { StandardSchemaV1 } from "@notation/resource";
 import { awsName, claimAwsName, describeDeclaration } from "src/naming";
 import { assertId, assertName, resourceId, type NameSafe } from "src/id";
 
-export type QueueConfig<
-  S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
-> = {
+export type QueueConfig<S extends StandardSchemaV1 = StandardSchemaV1> = {
   /**
    * Keys the queue in state. Changing the id replaces the queue, so keep it
    * stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
@@ -29,9 +27,10 @@ export type QueueConfig<
    * Validates the JSON body of each message, in `decode()` of a Lambda
    * declared with `sqs.bind(queue)`, or with `sqs.schema(schema)` and mapped
    * with `eventSourceMapping()`. `sqs.schema()` must be given this schema.
-   * Import it from a shared module, so the function can load it.
+   * Import it from a shared module, so the function can load it. A queue
+   * that takes any JSON body declares a schema such as `v.unknown()`.
    */
-  schema?: S;
+  schema: S;
   /** Seconds a received message stays hidden from other consumers. */
   visibilityTimeout?: number;
   /** Seconds the queue keeps a message. */
@@ -52,8 +51,8 @@ export type SqsAction =
   | "PurgeQueue";
 
 export class QueueGroup<
-  S extends StandardSchemaV1 | undefined = undefined,
-> extends aws.AwsResourceGroup<QueueConfig> {
+  S extends StandardSchemaV1 = StandardSchemaV1,
+> extends aws.AwsResourceGroup<Omit<QueueConfig, "schema">> {
   readonly queue: aws.sqs.QueueInstance;
   readonly schema: S;
   /** The queue's ARN. It is an output value, filled in at deploy. */
@@ -64,6 +63,11 @@ export class QueueGroup<
   constructor({ schema, ...config }: QueueConfig<S>) {
     assertId("queue()", config.id);
     assertName("queue()", config.name);
+    if (typeof schema?.["~standard"]?.validate !== "function") {
+      throw new Error(
+        `queue({ id: "${config.id}" }) has no schema. Give it a Standard Schema, such as v.unknown() for a queue that takes any JSON body.`,
+      );
+    }
     const name = config.name ?? config.id;
     const queueName = awsName("sqsQueue", config.fifo ? `${name}.fifo` : name);
     super("aws/sqs/queue", config.id, config);
@@ -72,7 +76,7 @@ export class QueueGroup<
       queueName,
       describeDeclaration("queue()", config.id, config.name),
     );
-    this.schema = schema as S;
+    this.schema = schema;
     this.queue = this.add(
       new aws.sqs.Queue(resourceId("sqs-queue", config.id), {
         config: {
@@ -135,7 +139,7 @@ export class QueueGroup<
  * @resource runtime: schema
  */
 export function queue<
-  S extends StandardSchemaV1 | undefined = undefined,
+  S extends StandardSchemaV1,
   const Id extends string = string,
 >(config: Omit<QueueConfig<S>, "id"> & { id: NameSafe<Id> }): QueueGroup<S> {
   return new QueueGroup(config);

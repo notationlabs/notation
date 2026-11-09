@@ -16,7 +16,7 @@ import {
   type LambdaHandler,
 } from "src/lambda";
 import { queue } from "src/sqs";
-import { inModule, lambdaGroup } from "./declare";
+import { inModule, lambdaGroup, Unknown } from "./declare";
 
 const declareLambda = () =>
   lambda({
@@ -331,7 +331,7 @@ test("a route to a $lambda declaration integrates its function", async () => {
 test("a route to a declaration with an sqs event throws", async () => {
   await expect(
     collect(() => {
-      const orders = queue({ id: "orders" });
+      const orders = queue({ id: "orders", schema: Unknown });
       const fn = inModule(
         $lambda({ id: "process", event: () => sqs.bind(orders) }),
       );
@@ -563,7 +563,7 @@ test("route rejects a value that is not a declaration or a lambda group", () => 
 test("routes behind a jwt authorizer take only functions of HTTP requests", async () => {
   await expect(
     collect(() => {
-      const orders = queue({ id: "orders" });
+      const orders = queue({ id: "orders", schema: Unknown });
       const fn = inModule(
         $lambda({ id: "process", event: () => sqs.bind(orders) }),
       );

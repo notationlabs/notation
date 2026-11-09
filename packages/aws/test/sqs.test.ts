@@ -22,7 +22,7 @@ import {
 } from "src/lambda";
 import { resolveLambda } from "src/lambda/lambda-declaration";
 import { queue } from "src/sqs";
-import { inModule, lambdaGroup } from "./declare";
+import { inModule, lambdaGroup, Unknown } from "./declare";
 
 const code = { type: "file", path: "src/fns/handler.fn.js" } as const;
 
@@ -76,7 +76,7 @@ test("eventSourceMapping grants the function access to the queue and maps the qu
   let mapping!: awsLambda.LambdaEventSourceMappingInstance;
   await collectResourceGraph(() => {
     fn = lambda({ id: "process", code });
-    orders = queue({ id: "orders" });
+    orders = queue({ id: "orders", schema: Unknown });
     eventSourceMapping({ source: orders, target: fn, batchSize: 5 });
   });
   mapping = mappingOf(orders);
@@ -106,8 +106,8 @@ test("two queues feeding one function each add a statement", async () => {
   let refunds!: ReturnType<typeof queue>;
   await collectResourceGraph(() => {
     fn = lambda({ id: "process", code });
-    refunds = queue({ id: "refunds" });
-    orders = queue({ id: "orders" });
+    refunds = queue({ id: "refunds", schema: Unknown });
+    orders = queue({ id: "orders", schema: Unknown });
     eventSourceMapping({ source: refunds, target: fn });
     eventSourceMapping({ source: orders, target: fn });
   });
@@ -134,7 +134,7 @@ test("mapping one queue twice with one function throws", async () => {
   await expect(
     collectResourceGraph(() => {
       const fn = lambda({ id: "process", code });
-      const orders = queue({ id: "orders" });
+      const orders = queue({ id: "orders", schema: Unknown });
       eventSourceMapping({ source: orders, target: fn });
       eventSourceMapping({ source: orders, target: fn });
     }),
@@ -146,7 +146,7 @@ test("eventSourceMapping with a lambda group from lambda() sets no environment",
   let orders!: ReturnType<typeof queue>;
   await collectResourceGraph(() => {
     fn = lambda({ id: "process", code });
-    orders = queue({ id: "orders" });
+    orders = queue({ id: "orders", schema: Unknown });
     eventSourceMapping({ source: orders, target: fn });
   });
 
@@ -184,17 +184,22 @@ test("eventSourceMapping maps a queue to a declaration with sqs.schema(), whose 
   );
 });
 
-test("eventSourceMapping maps a queue with no schema to a declaration with sqs.schema()", async () => {
-  let orders!: ReturnType<typeof queue>;
-  await collectResourceGraph(() => {
-    const fn = inModule(
-      $lambda({ id: "process", event: () => sqs.schema(Order) }),
-    );
-    orders = queue({ id: "orders" });
-    eventSourceMapping({ source: orders, target: () => fn });
-  });
-
-  expect(mappingOf(orders).id).toBe("sqs-mapping:orders:process");
+test("eventSourceMapping of a queue whose schema is not the declaration's throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const orders = queue({ id: "orders", schema: Order });
+      const fn = inModule(
+        $lambda({ id: "process", event: () => sqs.schema(Refund) }),
+      );
+      eventSourceMapping({
+        source: orders,
+        // @ts-expect-error the declaration validates refunds, and the queue holds orders
+        target: () => fn,
+      });
+    }),
+  ).rejects.toThrow(
+    `eventSourceMapping() maps the queue "orders" to the Lambda "process", but the Lambda's event: () => sqs.schema(schema) has another schema than the queue.`,
+  );
 });
 
 test("eventSourceMapping of a queue whose schema is another object than the declaration's throws", async () => {
@@ -208,7 +213,7 @@ test("eventSourceMapping of a queue whose schema is another object than the decl
       eventSourceMapping({ source: orders, target: () => fn });
     }),
   ).rejects.toThrow(
-    `eventSourceMapping() maps the queue "orders" to the Lambda "process", but the queue's schema is not the schema of the Lambda's event: () => sqs.schema(schema), so the function would validate the queue's messages with another schema. Give queue() and sqs.schema() the same schema, imported from a shared module.`,
+    `eventSourceMapping() maps the queue "orders" to the Lambda "process", but the Lambda's event: () => sqs.schema(schema) has another schema than the queue. Give queue() and sqs.schema() the same schema, imported from a shared module.`,
   );
 });
 
@@ -216,12 +221,10 @@ test("eventSourceMapping rejects a declaration whose schema type is not the queu
   const refund = $lambda({ id: "refund", event: () => sqs.schema(Refund) });
   const order = $lambda({ id: "order", event: () => sqs.schema(Order) });
   const orders = queue({ id: "orders", schema: Order });
-  const untyped = queue({ id: "untyped" });
 
   // The calls are only type-checked.
   const typeOnly = () => {
     eventSourceMapping({ source: orders, target: () => order });
-    eventSourceMapping({ source: untyped, target: () => refund });
     eventSourceMapping({
       source: orders,
       // @ts-expect-error the declaration validates refunds, and the queue holds orders
@@ -235,7 +238,7 @@ test("eventSourceMapping takes a declaration with no event", async () => {
   let orders!: ReturnType<typeof queue>;
   await collectResourceGraph(() => {
     const fn = inModule($lambda({ id: "process" }));
-    orders = queue({ id: "orders" });
+    orders = queue({ id: "orders", schema: Unknown });
     eventSourceMapping({ source: orders, target: () => fn });
   });
 
@@ -244,9 +247,9 @@ test("eventSourceMapping takes a declaration with no event", async () => {
 
 test("eventSourceMapping of a declaration that a later module declares waits for evaluation to end", async () => {
   let fn!: Lambda<SqsEvent<typeof Order>>;
-  let orders!: ReturnType<typeof queue>;
+  let orders!: ReturnType<typeof queue<typeof Order>>;
   await collectResourceGraph(() => {
-    orders = queue({ id: "orders" });
+    orders = queue({ id: "orders", schema: Order });
     eventSourceMapping({ source: orders, target: () => fn });
     fn = inModule($lambda({ id: "process", event: () => sqs.schema(Order) }));
   });
@@ -261,7 +264,7 @@ test("eventSourceMapping of a declaration with an apiGateway event throws", asyn
         $lambda({ id: "api", event: () => apiGateway.schema(null) }),
       );
       eventSourceMapping({
-        source: queue({ id: "orders" }),
+        source: queue({ id: "orders", schema: Unknown }),
         // @ts-expect-error a queue can't feed a function of HTTP requests
         target: () => fn,
       });
@@ -275,7 +278,7 @@ test("eventSourceMapping of a function that returns no declaration throws", asyn
   await expect(
     collectResourceGraph(() => {
       eventSourceMapping({
-        source: queue({ id: "orders" }),
+        source: queue({ id: "orders", schema: Unknown }),
         target: (() => undefined) as any,
       });
     }),
@@ -287,9 +290,9 @@ test("eventSourceMapping of a function that returns no declaration throws", asyn
 test("eventSourceMapping of a function that returns another resource throws", async () => {
   await expect(
     collectResourceGraph(() => {
-      const other = queue({ id: "other" });
+      const other = queue({ id: "other", schema: Unknown });
       eventSourceMapping({
-        source: queue({ id: "orders" }),
+        source: queue({ id: "orders", schema: Unknown }),
         // @ts-expect-error a queue is not a Lambda declaration
         target: () => other,
       });
@@ -304,7 +307,7 @@ test("eventSourceMapping after evaluation has ended throws", async () => {
   let orders!: ReturnType<typeof queue>;
   await collectResourceGraph(() => {
     fn = lambda({ id: "process", code });
-    orders = queue({ id: "orders" });
+    orders = queue({ id: "orders", schema: Unknown });
     fn.policy;
   });
 
@@ -316,8 +319,8 @@ test("eventSourceMapping after evaluation has ended throws", async () => {
 test("a queue whose AWS name is another queue's throws, and names both declarations", async () => {
   await expect(
     collectResourceGraph(() => {
-      queue({ id: "orders" });
-      queue({ id: "sales", name: "orders" });
+      queue({ id: "orders", schema: Unknown });
+      queue({ id: "sales", name: "orders", schema: Unknown });
     }),
   ).rejects.toThrow(
     'queue({ id: "orders" }) and queue({ id: "sales", name: "orders" }) give two SQS queues the same AWS name, "orders".',
@@ -327,14 +330,14 @@ test("a queue whose AWS name is another queue's throws, and names both declarati
 test("a FIFO queue and a standard queue can share a name", async () => {
   await expect(
     collectResourceGraph(() => {
-      queue({ id: "orders" });
-      queue({ id: "sales", name: "orders", fifo: true });
+      queue({ id: "orders", schema: Unknown });
+      queue({ id: "sales", name: "orders", fifo: true, schema: Unknown });
     }),
   ).resolves.toBeDefined();
 });
 
 test("grant allows the actions on the queue", () => {
-  const orders = queue({ id: "orders" });
+  const orders = queue({ id: "orders", schema: Unknown });
   deploy(orders);
 
   expect(orders.grant(["SendMessage"])).toEqual({
@@ -353,7 +356,10 @@ test("a plan creates the queue and the policy before the mapping", async () => {
       id: "process",
       code: { type: "zip", path: zipPath },
     });
-    eventSourceMapping({ source: queue({ id: "orders" }), target: fn });
+    eventSourceMapping({
+      source: queue({ id: "orders", schema: Unknown }),
+      target: fn,
+    });
   });
 
   const plan = await createPlan({
@@ -382,7 +388,10 @@ test("eventSourceMapping accepts a declaration from another copy of the package"
     const fn = inModule(
       other.$lambda({ id: "process", event: () => sqs.schema(Order) }),
     );
-    eventSourceMapping({ source: queue({ id: "orders" }), target: () => fn });
+    eventSourceMapping({
+      source: queue({ id: "orders", schema: Order }),
+      target: () => fn,
+    });
   });
   expect(lambdaGroup(graph, "process").id).toBe("process");
 });
@@ -416,7 +425,7 @@ test("sqs.bind(queue) in a declaration maps the queue to the function", async ()
 test("a declaration whose queue fails to map builds one group", () => {
   let calls = 0;
   const failing = {
-    schema: undefined,
+    schema: Unknown,
     "~subscribe"() {
       calls++;
       throw new Error("mapping failed");
@@ -437,7 +446,7 @@ test("sqs.bind(queue) can name a queue that a later module declares", async () =
   let orders!: ReturnType<typeof queue>;
   await collectResourceGraph(() => {
     inModule($lambda({ id: "process", event: () => sqs.bind(orders) }));
-    orders = queue({ id: "orders" });
+    orders = queue({ id: "orders", schema: Unknown });
   });
 
   expect(mappingOf(orders).id).toBe("sqs-mapping:orders:process");
@@ -457,6 +466,29 @@ test("decode() validates a message with the queue's schema", async () => {
   );
 });
 
+test("decode() with a schema that takes any value returns the parsed JSON", async () => {
+  const anything = queue({ id: "anything", schema: Unknown });
+  const fn = $lambda({ id: "process", event: () => sqs.bind(anything) });
+  const { body: decoded } = await fn.decode({
+    body: '{"orderId":"a","items":[1,2]}',
+  } as SQSRecord);
+
+  expectTypeOf(decoded).toEqualTypeOf<unknown>();
+  expect(decoded).toEqual({ orderId: "a", items: [1, 2] });
+  await expect(fn.decode({ body: "not json" } as any)).rejects.toThrow(
+    "The message body is not valid JSON.",
+  );
+});
+
+test("a queue with no schema is a type error, and throws", () => {
+  expect(() =>
+    // @ts-expect-error a queue must have a schema
+    queue({ id: "orders" }),
+  ).toThrow(
+    'queue({ id: "orders" }) has no schema. Give it a Standard Schema, such as v.unknown() for a queue that takes any JSON body.',
+  );
+});
+
 test("decode() reads the schema from the object that the runtime build passes", async () => {
   const fn = $lambda({
     id: "process",
@@ -472,7 +504,7 @@ test("decode() reads the schema from the object that the runtime build passes", 
 test("eventSourceMapping of a declaration that maps a queue itself throws", async () => {
   await expect(
     collectResourceGraph(() => {
-      const orders = queue({ id: "orders" });
+      const orders = queue({ id: "orders", schema: Unknown });
       const fn = inModule(
         $lambda({ id: "process", event: () => sqs.bind(orders) }),
       );

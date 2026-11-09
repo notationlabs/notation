@@ -4,7 +4,7 @@ import type { LambdaGroup } from "./lambda";
 import { declarationOf, resolveLambda, whenLoaded } from "./lambda-declaration";
 
 export type EventSourceMappingConfig<
-  S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
+  S extends StandardSchemaV1 = StandardSchemaV1,
 > = SqsOptions & {
   /** The queue that Lambda reads, from `queue()`. */
   source: SqsSource<S>;
@@ -12,23 +12,19 @@ export type EventSourceMappingConfig<
    * The function that Lambda invokes with the queue's messages: a declaration
    * from `$lambda`, passed as `() => lambda`, or a group from `lambda()`. A
    * declaration must be declared with `event: () => sqs.schema(schema)`, or
-   * with no event. When the queue has a schema, `sqs.schema()` must be given
-   * the same schema.
+   * with no event. `sqs.schema()` must be given the queue's schema.
    */
   target: SqsTarget<NoInfer<S>>;
 };
 
-/**
- * A Lambda that can read a queue whose schema has the type `S`. A queue with
- * no schema can be read by a declaration with any schema.
- */
-export type SqsTarget<S extends StandardSchemaV1 | undefined> =
+/** A Lambda that can read a queue whose schema has the type `S`. */
+export type SqsTarget<S extends StandardSchemaV1> =
   | (() => {
       readonly "~lambda"?:
         | { kind: "none" }
         | {
             kind: "sqs";
-            event: SqsEvent<[S] extends [undefined] ? any : S>;
+            event: SqsEvent<S>;
           };
     })
   | LambdaGroup;
@@ -40,7 +36,7 @@ export type SqsTarget<S extends StandardSchemaV1 | undefined> =
  * a queue itself, with `event: () => sqs.bind(queue)`.
  * @resource
  */
-export function eventSourceMapping<S extends StandardSchemaV1 | undefined>(
+export function eventSourceMapping<S extends StandardSchemaV1>(
   config: EventSourceMappingConfig<S>,
 ): void {
   const { source, target, ...options } = config;
@@ -57,14 +53,9 @@ export function eventSourceMapping<S extends StandardSchemaV1 | undefined>(
       "sqs",
       "none",
     ]);
-    // A queue with no schema is allowed, as the function still validates.
-    if (
-      event?.kind === "sqs" &&
-      source.schema !== undefined &&
-      source.schema !== event.schema
-    ) {
+    if (event?.kind === "sqs" && source.schema !== event.schema) {
       throw new Error(
-        `eventSourceMapping() maps ${queueName} to the Lambda "${group.id}", but the queue's schema is not the schema of the Lambda's event: () => sqs.schema(schema), so the function would validate the queue's messages with another schema. Give queue() and sqs.schema() the same schema, imported from a shared module.`,
+        `eventSourceMapping() maps ${queueName} to the Lambda "${group.id}", but the Lambda's event: () => sqs.schema(schema) has another schema than the queue. Give queue() and sqs.schema() the same schema, imported from a shared module.`,
       );
     }
     source["~subscribe"](group, options);
