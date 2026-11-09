@@ -322,8 +322,8 @@ function toAttributes(attributes: AttributeValues) {
   return encoded;
 }
 
-// SQS returns the policy as a JSON string. The count is read with Number(),
-// as the string can hold it as a string.
+// SQS returns the policy as a JSON string, in which maxReceiveCount can be a
+// number or a string, so the count is converted with Number().
 function parseRedrivePolicy(
   policy: string | undefined,
 ): RedrivePolicy | undefined {
