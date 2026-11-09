@@ -7,7 +7,7 @@ import {
 import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
 import {
-  loadProviderRegistry,
+  loadStateProviderRegistry,
   mergeResourceRegistries,
 } from "../resource-registry";
 import {
@@ -20,7 +20,7 @@ export type DestroyAppOptions = {
   maxOperationAttempts?: number;
   /**
    * Classes to delete orphaned records through, on top of the classes of
-   * the installed provider packages and of the graph.
+   * the provider packages that state names and of the graph.
    */
   registry?: ResourceRegistry;
   runtime?: NodeDurableRuntime;
@@ -44,17 +44,21 @@ export async function destroyApp({
     { app: deployment.app, stage: deployment.stage },
     { declarationChecks: false },
   );
-  const providerRegistry = await loadProviderRegistry();
   await runDurableWorkflow(
     { deployment, workflowId: "destroy", runtime, databasePath, executionId },
-    (step, executionId, runtime) =>
-      durable.destroy(step, {
+    async function* (step, executionId, runtime) {
+      const providerRegistry = yield* loadStateProviderRegistry(
+        step,
+        runtime.state,
+      );
+      yield* durable.destroy(step, {
         executionId,
         resources: graph.resources,
         state: runtime.state,
         registry: mergeResourceRegistries(providerRegistry, registry),
         emit,
         maxOperationAttempts,
-      }),
+      });
+    },
   );
 }

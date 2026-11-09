@@ -1,4 +1,4 @@
-import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -8,7 +8,9 @@ import {
   resolveResourceClass,
   type ResourceRegistry,
 } from "@notation/reconciler";
+import type { DurableStep } from "@notation/reconciler/durable";
 import type { ResourceClass } from "@notation/resource";
+import type { StateBackend, StateNode } from "@notation/state";
 import type { BaseResource } from "src/orchestrator/resource";
 import { projectRoot } from "src/utils/paths";
 
@@ -25,26 +27,49 @@ export function createResourceRegistryFromGraph(
   return createResourceRegistryFromResources(resources);
 }
 
-/** The packages whose `resourceClasses` deploy and destroy register. */
-export const providerPackages = ["@notation/std.iac", "@notation/aws.iac"];
+/**
+ * The packages that a state record written before provider packages were
+ * recorded is assumed to come from.
+ */
+export const legacyProviderPackages = [
+  "@notation/aws.iac",
+  "@notation/std.iac",
+];
+
+/** The provider packages that the records in state name, sorted. */
+export function stateProviderPackages(
+  nodes: Pick<StateNode, "provider">[],
+): string[] {
+  const packages = new Set<string>();
+  for (const node of nodes) {
+    const names = node.provider ? [node.provider] : legacyProviderPackages;
+    for (const name of names) packages.add(name);
+  }
+  return [...packages].sort();
+}
 
 /**
- * Registers the `resourceClasses` of each provider package that the project
- * has installed, so that deploy and destroy can delete a record whose type
- * is no longer in the graph. A package that is not installed, or that is too
- * old to export `resourceClasses`, is skipped.
+ * Registers the `resourceClasses` of each package, so that deploy and destroy
+ * can delete a record whose type is no longer in the graph. A package that
+ * can't be resolved, or that exports no `resourceClasses`, is skipped.
  *
- * Each package is imported from the project's node_modules, as the infra
- * bundle imports it, and not from core's own dependencies: core does not
- * depend on the providers, which depend on core.
+ * Each package is resolved from the project root, as the infra bundle
+ * resolves it, and not from core's own dependencies: core does not depend on
+ * the providers, which depend on core.
  */
 export async function loadProviderRegistry(
+  packages: string[],
   root: string = projectRoot(),
 ): Promise<ResourceRegistry> {
+  const require = createRequire(path.join(root, "package.json"));
   const classes: ResourceClass<any, any, any>[] = [];
-  for (const name of providerPackages) {
-    const entry = findPackageEntry(name, root);
-    if (!entry) continue;
+  for (const name of packages) {
+    let entry: string;
+    try {
+      entry = require.resolve(name);
+    } catch {
+      continue;
+    }
     const provider = await import(pathToFileURL(entry).href);
     if (Array.isArray(provider.resourceClasses)) {
       classes.push(...provider.resourceClasses);
@@ -53,31 +78,15 @@ export async function loadProviderRegistry(
   return createResourceRegistry(classes);
 }
 
-// Node can't resolve a package from another directory under the `import`
-// condition without a flag, so the package's ESM entry is found by hand, in
-// the way the infra build finds installed packages.
-function findPackageEntry(name: string, root: string): string | undefined {
-  for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
-    const packageDir = path.join(dir, "node_modules", name);
-    const manifest = path.join(packageDir, "package.json");
-    if (fs.existsSync(manifest)) {
-      const pkg = JSON.parse(fs.readFileSync(manifest, "utf8"));
-      return path.join(packageDir, packageEntry(pkg));
-    }
-    if (dir === path.dirname(dir)) return undefined;
-  }
-}
-
-function packageEntry(pkg: { exports?: unknown; main?: string }): string {
-  const root =
-    typeof pkg.exports === "object" && pkg.exports !== null
-      ? (pkg.exports as Record<string, unknown>)["."]
-      : pkg.exports;
-  if (typeof root === "string") return root;
-  if (typeof root === "object" && root !== null) {
-    const conditions = root as Record<string, unknown>;
-    const entry = conditions.import ?? conditions.default;
-    if (typeof entry === "string") return entry;
-  }
-  return pkg.main ?? "index.js";
+/** Registers the classes of the provider packages that state names. */
+export async function* loadStateProviderRegistry(
+  step: DurableStep,
+  state: StateBackend,
+): AsyncGenerator<any, ResourceRegistry, any> {
+  // A step, so that a resumed execution loads the packages of the records it
+  // read the first time, including those of records it has deleted since.
+  const packages = yield* step.run("notation:providers", async () =>
+    stateProviderPackages(await state.values()),
+  );
+  return loadProviderRegistry(packages);
 }

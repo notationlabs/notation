@@ -7,7 +7,7 @@ import {
 import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
 import {
-  loadProviderRegistry,
+  loadStateProviderRegistry,
   mergeResourceRegistries,
 } from "../resource-registry";
 import {
@@ -22,7 +22,7 @@ export type DeployAppOptions = {
   maxOperationAttempts?: number;
   /**
    * Classes to delete orphaned records through, on top of the classes of
-   * the installed provider packages and of the graph.
+   * the provider packages that state names and of the graph.
    */
   registry?: ResourceRegistry;
   runtime?: NodeDurableRuntime;
@@ -48,11 +48,14 @@ export async function deployApp({
     app: deployment.app,
     stage: deployment.stage,
   });
-  const providerRegistry = await loadProviderRegistry();
   await runDurableWorkflow(
     { deployment, workflowId: "deploy", runtime, databasePath, executionId },
-    (step, executionId, runtime) =>
-      durable.deploy(step, {
+    async function* (step, executionId, runtime) {
+      const providerRegistry = yield* loadStateProviderRegistry(
+        step,
+        runtime.state,
+      );
+      yield* durable.deploy(step, {
         executionId,
         resources: graph.resources,
         state: runtime.state,
@@ -61,6 +64,7 @@ export async function deployApp({
         dryRun,
         driftDetection,
         maxOperationAttempts,
-      }),
+      });
+    },
   );
 }

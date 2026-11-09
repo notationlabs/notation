@@ -3,9 +3,19 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { SqliteRuntime, createSqliteDb } from "@notation/durable/sqlite/node";
+import type { ReconcilerEvent } from "@notation/reconciler";
+import {
+  DurableStateBackend,
+  resourceStateStore,
+} from "@notation/reconciler/durable";
 import { resource, type BaseResource } from "@notation/resource";
+import { resolveDeploymentId } from "src/config/deployment";
 import { deployApp } from "src/provisioner";
-import { loadProviderRegistry } from "src/provisioner/resource-registry";
+import {
+  loadProviderRegistry,
+  stateProviderPackages,
+} from "src/provisioner/resource-registry";
 import { setConfigFile } from "src/utils/paths";
 
 const { graph } = vi.hoisted(() => ({
@@ -19,66 +29,203 @@ vi.mock("src/orchestrator/graph", () => ({
   }),
 }));
 
-const deleteQueue = vi.fn(async () => undefined);
-const Queue = resource({ type: "test/provider/Queue" })
-  .defineSchema({})
-  .defineOperations({ create: async () => undefined, delete: deleteQueue });
+const deleted = vi.fn((_type: string) => undefined);
+const defineQueue = (type: string, provider: string) =>
+  resource({ type: type as `${string}/${string}/${string}`, provider })
+    .defineSchema({})
+    .defineOperations({
+      create: async () => undefined,
+      delete: async () => void deleted(type),
+    });
+
+const Queue = defineQueue("test/acme/Queue", "@acme/queues");
+const LegacyQueue = defineQueue("test/legacy/Queue", "@notation/aws.iac");
+
+const deployment = {
+  app: "orders",
+  stage: "prod",
+  entryPoint: "",
+  files: {},
+};
 
 let root: string;
+let databasePath: string;
+let events: ReconcilerEvent[];
 
-// A project with a provider package installed whose resourceClasses hold
-// Queue. The package reads the class from a global, so that the test and
-// the package share one class.
-beforeEach(async () => {
-  root = await mkdtemp(path.join(tmpdir(), "notation-providers-"));
-  fs.writeFileSync(path.join(root, "notation.config.ts"), "");
-  const packageDir = path.join(root, "node_modules", "@notation", "aws.iac");
+// Each package reads its classes from a global, so that the test and the
+// package share one class.
+function installPackage(name: string, classes?: unknown[]) {
+  const packageDir = path.join(root, "node_modules", ...name.split("/"));
   fs.mkdirSync(path.join(packageDir, "dist"), { recursive: true });
   fs.writeFileSync(
     path.join(packageDir, "package.json"),
     JSON.stringify({
-      name: "@notation/aws.iac",
+      name,
       type: "module",
       exports: {
-        ".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
+        ".": {
+          types: "./dist/index.d.ts",
+          import: "./dist/index.js",
+          default: "./dist/index.js",
+        },
       },
     }),
   );
+  const key = `__notationTestClasses:${name}`;
+  (globalThis as any)[key] = classes;
   fs.writeFileSync(
     path.join(packageDir, "dist", "index.js"),
-    "export const resourceClasses = globalThis.__notationTestClasses;",
+    classes
+      ? `export const resourceClasses = globalThis[${JSON.stringify(key)}];`
+      : "export const other = 1;",
   );
-  (globalThis as any).__notationTestClasses = [Queue];
+}
+
+function deploy(executionId: string) {
+  return deployApp({
+    deployment,
+    databasePath,
+    executionId,
+    emit: (event) => void events.push(event),
+  });
+}
+
+async function withState<T>(
+  fn: (state: DurableStateBackend, runtime: SqliteRuntime) => Promise<T>,
+): Promise<T> {
+  const database = createSqliteDb({ path: databasePath });
+  try {
+    const runtime = new SqliteRuntime(database);
+    const state = new DurableStateBackend(
+      runtime.stores,
+      resolveDeploymentId(deployment),
+    );
+    return await fn(state, runtime);
+  } finally {
+    database.close();
+  }
+}
+
+// Turns a record into one written before provider packages were recorded.
+function removeProvider(id: string) {
+  return withState(async (state, runtime) => {
+    const store = runtime.stores.store(resourceStateStore, state.storeId(id));
+    const { state: record } = await store.get();
+    const { provider: _, ...rest } = record!;
+    await store.update(() => rest);
+  });
+}
+
+function setProvider(id: string, provider: string) {
+  return withState(async (state, runtime) => {
+    const store = runtime.stores.store(resourceStateStore, state.storeId(id));
+    const { state: record } = await store.get();
+    await store.update(() => ({ ...record!, provider }));
+  });
+}
+
+beforeEach(async () => {
+  root = await mkdtemp(path.join(tmpdir(), "notation-providers-"));
+  fs.writeFileSync(path.join(root, "notation.config.ts"), "");
+  deployment.entryPoint = path.join(root, "infra.ts");
+  databasePath = path.join(root, "workflows.db");
+  events = [];
   setConfigFile(path.join(root, "notation.config.ts"));
-  deleteQueue.mockClear();
+  deleted.mockClear();
 });
 
 afterEach(async () => {
   setConfigFile(undefined);
-  delete (globalThis as any).__notationTestClasses;
+  for (const key of Object.keys(globalThis)) {
+    if (key.startsWith("__notationTestClasses:")) {
+      delete (globalThis as any)[key];
+    }
+  }
   await rm(root, { recursive: true, force: true });
 });
 
-it("registers the resource classes of the provider packages the project has installed", async () => {
-  const registry = await loadProviderRegistry();
+it("names the provider of each record, and the fallback packages for a record with none", () => {
+  expect(stateProviderPackages([{ provider: "@acme/queues" }, {}, {}])).toEqual(
+    ["@acme/queues", "@notation/aws.iac", "@notation/std.iac"],
+  );
+});
+
+it("registers the resource classes of the packages it resolves from the project root", async () => {
+  installPackage("@acme/queues", [Queue]);
+  installPackage("@acme/empty");
+  const registry = await loadProviderRegistry([
+    "@acme/queues",
+    "@acme/empty",
+    "@acme/missing",
+  ]);
   expect([...registry]).toEqual([[Queue.type, Queue]]);
 });
 
-it("deploy deletes an orphan whose type is no longer in the graph", async () => {
-  const deployment = {
-    app: "orders",
-    stage: "prod",
-    entryPoint: path.join(root, "infra.ts"),
-    files: {},
-  };
-  const databasePath = path.join(root, "workflows.db");
-  const run = (executionId: string) =>
-    deployApp({ deployment, databasePath, executionId, emit: () => {} });
+it("resolves the workspace's own provider packages from the repository root", async () => {
+  const repoRoot = path.resolve(import.meta.dirname, "../../../..");
+  const registry = await loadProviderRegistry(
+    ["@notation/aws.iac", "@notation/std.iac"],
+    repoRoot,
+  );
+  expect(registry.has("aws/lambda/LambdaPermission")).toBe(true);
+  expect(registry.has("std/fs/Zip")).toBe(true);
+});
 
+it("records the provider package in each state record", async () => {
+  installPackage("@acme/queues", [Queue]);
   graph.resources = [new Queue("queue")];
-  await run("deploy-1");
-  graph.resources = [];
-  await run("deploy-2");
+  await deploy("deploy-1");
 
-  expect(deleteQueue).toHaveBeenCalledOnce();
+  const record = await withState((state) => state.get("queue"));
+  expect(record).toMatchObject({ type: Queue.type, provider: "@acme/queues" });
+});
+
+it("deletes an orphan whose type is absent from the graph through the provider its record names", async () => {
+  installPackage("@acme/queues", [Queue]);
+  graph.resources = [new Queue("queue")];
+  await deploy("deploy-1");
+  graph.resources = [];
+  await deploy("deploy-2");
+
+  expect(deleted.mock.calls).toEqual([[Queue.type]]);
+  expect(await withState((state) => state.values())).toEqual([]);
+});
+
+it("deletes an orphan whose record names no provider through the fallback packages", async () => {
+  installPackage("@notation/aws.iac", [LegacyQueue]);
+  graph.resources = [new LegacyQueue("queue")];
+  await deploy("deploy-1");
+  await removeProvider("queue");
+  graph.resources = [];
+  await deploy("deploy-2");
+
+  expect(deleted.mock.calls).toEqual([[LegacyQueue.type]]);
+});
+
+it("skips an orphan whose provider package is not installed, with a warning", async () => {
+  installPackage("@acme/queues", [Queue]);
+  graph.resources = [new Queue("queue")];
+  await deploy("deploy-1");
+  await setProvider("queue", "@acme/uninstalled");
+  graph.resources = [];
+  await deploy("deploy-2");
+
+  expect(deleted).not.toHaveBeenCalled();
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      event: "reconciler.orphan-deletion.skipped",
+      resourceId: "queue",
+    }),
+  );
+});
+
+it("writes the provider into an old record on a deploy that changes nothing else", async () => {
+  installPackage("@acme/queues", [Queue]);
+  graph.resources = [new Queue("queue")];
+  await deploy("deploy-1");
+  await removeProvider("queue");
+  await deploy("deploy-2");
+
+  const record = await withState((state) => state.get("queue"));
+  expect(record).toMatchObject({ provider: "@acme/queues", version: 3 });
 });

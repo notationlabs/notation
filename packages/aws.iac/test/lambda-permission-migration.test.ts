@@ -24,7 +24,7 @@ vi.mock("src/context", () => ({
 const RULE_ARN = "arn:aws:events:us-west-2:123456789012:rule/app--prod--daily";
 
 // Stand-ins for the function and the rule, whose outputs are their params.
-const Fn = resource({ type: "test/migration/Fn" })
+const Fn = resource({ type: "test/migration/Fn", provider: "test" })
   .defineSchema({
     FunctionName: {
       presence: "required",
@@ -37,7 +37,7 @@ const Fn = resource({ type: "test/migration/Fn" })
     create: async () => undefined,
     delete: async () => undefined,
   });
-const Rule = resource({ type: "test/migration/Rule" })
+const Rule = resource({ type: "test/migration/Rule", provider: "test" })
   .defineSchema({
     Name: {
       presence: "required",
