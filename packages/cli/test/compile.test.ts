@@ -1308,6 +1308,41 @@ describe("shared modules", () => {
     ).toContain("schema loaded");
   });
 
+  // The infra module that declares the queue is one folder deeper than the
+  // function's module, so its relative import of the schema would not resolve
+  // from the function's module.
+  it("bundles the schema of a queue that the function reads with sqs(queue), and leaves out the infra module", async () => {
+    writeProject(
+      handlerModule
+        .replace(`import { Order } from "./schema";`, "")
+        .replace("sqs({ schema: Order })", "sqs(orders)"),
+    );
+    write(
+      "shared/schema.ts",
+      `console.log("schema loaded");\nexport const Order = { name: "Order" };`,
+    );
+    write("infra/orders.ts", `export { orders } from "./queues/orders";`);
+    write(
+      "infra/queues/orders.ts",
+      [
+        `import { queue } from "@notation/aws/sqs";`,
+        `import { Order } from "../../shared/schema";`,
+        `export const orders = queue({ name: "orders", schema: Order });`,
+      ].join("\n"),
+    );
+    const { bundle } = await buildProject();
+
+    expect(bundle).toContain("// shared/schema.ts");
+    expect(bundle).toContain("event: () => sqs({ schema: Order })");
+    expect(bundle).not.toContain("infra/");
+    expect(bundle).not.toContain("placeholder-url");
+    expect(bundle).not.toContain("sdk loaded");
+    expect(runHandler()[2]).toEqual({
+      kind: "sqs",
+      schema: { name: "Order" },
+    });
+  });
+
   it("fails the infra build when a shared module imports infra through other modules", async () => {
     writeProject();
     write(
