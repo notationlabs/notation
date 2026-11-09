@@ -140,9 +140,9 @@ test("routes of one authorizer share its RouteAuth, which the authorizer owns", 
   );
   expect(authA?.group).toEqual({
     type: "API Gateway/JWT Authorizer",
-    id: "user-auth",
+    id: "api-authorizer:user-api:user-auth",
   });
-  expect(authA?.id).toBe("api-authorizer:user-auth");
+  expect(authA?.id).toBe("api-authorizer:user-api:user-auth");
   expect(authA?.config.Name).toBe("user-auth");
   expect(routeOf("api-route:user-api:GET /a").config).toMatchObject({
     AuthorizationType: "JWT",
@@ -165,8 +165,8 @@ test("two authorizers with the same issuer and audience on one api are allowed w
     .map((r) => r.id);
 
   expect(ids).toEqual([
-    "api-authorizer:first-auth",
-    "api-authorizer:second-auth",
+    "api-authorizer:user-api:first-auth",
+    "api-authorizer:user-api:second-auth",
   ]);
 });
 
@@ -187,7 +187,9 @@ test("a second authorizer with the same id throws", async () => {
         audience: ["b"],
       });
     }),
-  ).rejects.toThrow('Duplicate API Gateway/JWT Authorizer id "auth"');
+  ).rejects.toThrow(
+    'Duplicate API Gateway/JWT Authorizer id "api-authorizer:user-api:auth"',
+  );
 });
 
 test("an authorizer whose AWS name is another's on the same api throws, and names both declarations", async () => {
@@ -216,6 +218,26 @@ test("authorizers on different apis can share an AWS name", async () => {
       });
     }),
   ).resolves.toBeDefined();
+});
+
+test("two apis can each have an authorizer with the id users", async () => {
+  const graph = await collect(() => {
+    const config = { issuer: "https://i", audience: ["a"] };
+    jwtAuthorizer({ id: "users", api: api({ id: "a" }), ...config });
+    jwtAuthorizer({ id: "users", api: api({ id: "b" }), ...config });
+  });
+  const authorizers = graph.resourceGroups.filter(
+    (g) => g.type === "API Gateway/JWT Authorizer",
+  );
+
+  expect(authorizers.map((g) => g.id)).toEqual([
+    "api-authorizer:a:users",
+    "api-authorizer:b:users",
+  ]);
+  expect(authorizers.map((g) => g.resources[0]?.id)).toEqual([
+    "api-authorizer:a:users",
+    "api-authorizer:b:users",
+  ]);
 });
 
 test("changing an authorizer's issuer or audience keeps its id", async () => {
@@ -256,7 +278,7 @@ test("an authorizer's name overrides its AWS name", async () => {
     (r) => r.group?.type === "API Gateway/JWT Authorizer",
   )!;
 
-  expect(auth.id).toBe("api-authorizer:user-auth");
+  expect(auth.id).toBe("api-authorizer:user-api:user-auth");
   expect(auth.config.Name).toBe("users");
 });
 

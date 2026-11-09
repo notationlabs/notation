@@ -252,7 +252,7 @@ it("deploys a declaration module that makes its own route with apiGateway.bind(a
     {
       key: "POST /orders",
       type: "JWT",
-      auth: "api-authorizer:user-auth",
+      auth: "api-authorizer:orders-api:user-auth",
     },
   ]);
   expect(result.responses).toEqual([

@@ -9,7 +9,8 @@ export type JwtAuthorizerConfig<
   C extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
 > = {
   /**
-   * Keys the authorizer in state. Changing the id replaces the authorizer,
+   * Keys the authorizer in state, with its API's id. Two APIs can each have
+   * an authorizer with the same id. Changing the id replaces the authorizer,
    * so keep it stable. Must be name-safe: 1 to 64 letters, digits, hyphens
    * or underscores.
    */
@@ -62,7 +63,8 @@ export class JwtAuthorizerGroup<
     assertId("jwtAuthorizer()", rest.id);
     assertName("jwtAuthorizer()", rest.name);
     const name = rest.name ?? rest.id;
-    super("API Gateway/JWT Authorizer", rest.id, { api, ...rest });
+    const authId = resourceId("api-authorizer", api.id, rest.id);
+    super("API Gateway/JWT Authorizer", authId, { api, ...rest });
     // Authorizer names are unique within their API.
     claimAwsName(
       `JWT authorizers of the API "${api.id}"`,
@@ -73,7 +75,7 @@ export class JwtAuthorizerGroup<
     this.claims = claims as C;
     this.scopes = rest.scopes ?? [];
     this.auth = this.add(
-      new aws.apiGateway.RouteAuth(resourceId("api-authorizer", rest.id), {
+      new aws.apiGateway.RouteAuth(authId, {
         config: {
           Name: name,
           AuthorizerType: "JWT",
