@@ -244,7 +244,7 @@ import { Order as __notation_schema_0 } from "/path/to/my-app/shared/schema.ts";
 
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs.bind({ schema: __notation_schema_0 }, undefined),
+  event: () => sqs.bind({ schema: __notation_schema_0 }, { batchSize: 5 }),
   env: () => ({ ORDER_QUEUE_URL: undefined }),
 });
 ```
