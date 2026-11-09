@@ -483,16 +483,16 @@ A group's constructor takes `(type, id, config?)`:
 - `id` – identifies the group across deployments. It must be unique among groups of the same type: declaring two groups with the same type and ID in one graph throws.
 - `config` – the group's configuration, stored as `group.config`. Defaults to `{}`.
 
-Each declared resource takes an `id` from the user. The group's ID is that `id`, and its resource IDs are built from it, so the group's identity changes exactly when its resources' identities do. A group that links two others builds its ID from their IDs. No group ID depends on a setting or on an AWS name, so changing a setting such as an authorizer's issuer, or the `name` that overrides an AWS name, keeps every ID:
+Each declared resource takes an `id` from the user. The group's ID is that `id`, and its resource IDs are built from it, so the group's identity changes exactly when its resources' identities do. A group that links two others builds its ID from their IDs. A group that belongs to an API, such as a route or an authorizer, builds its ID from the API's `id` and its own. No group ID depends on a setting or on an AWS name, so changing a setting such as an authorizer's issuer, or the `name` that overrides an AWS name, keeps every ID:
 
-| Group                | ID                                   | Example                         |
-| -------------------- | ------------------------------------ | ------------------------------- |
-| `LambdaGroup`        | the lambda's `id`                    | `todos`                         |
-| `ApiGroup`           | the API's `id`                       | `todo-api`                      |
-| `JwtAuthorizerGroup` | the authorizer's `id`                | `user-auth`                     |
-| `RouteGroup`         | `api-route:<api id>:<method> <path>` | `api-route:todo-api:GET /todos` |
-| `ScheduleGroup`      | the schedule's `id`                  | `nightly`                       |
-| `QueueGroup`         | the queue's `id`                     | `orders`                        |
+| Group                | ID                                   | Example                             |
+| -------------------- | ------------------------------------ | ----------------------------------- |
+| `LambdaGroup`        | the lambda's `id`                    | `todos`                             |
+| `ApiGroup`           | the API's `id`                       | `todo-api`                          |
+| `JwtAuthorizerGroup` | `api-authorizer:<api id>:<id>`       | `api-authorizer:todo-api:user-auth` |
+| `RouteGroup`         | `api-route:<api id>:<method> <path>` | `api-route:todo-api:GET /todos`     |
+| `ScheduleGroup`      | the schedule's `id`                  | `nightly`                           |
+| `QueueGroup`         | the queue's `id`                     | `orders`                            |
 
 A resource ID is a type prefix and the IDs that the resource belongs to, joined with `:`, as `resourceId()` in `@notation/aws` builds it. For example, a Lambda's role is `lambda:<lambda id>:role`, and a queue is `sqs-queue:<queue id>`. An `id` can't contain `:`, so two resources get the same ID only when they have the same type and the same IDs. Only the last part may contain `:`, such as the path in a route's ID. The mapping from a queue to a Lambda is a resource in the `QueueGroup`, with the ID `sqs-mapping:<queue id>:<lambda id>`. API integrations and permissions are resources in the `LambdaGroup`, with IDs such as `api-integration:<api id>:<lambda id>`.
 

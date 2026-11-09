@@ -327,7 +327,7 @@ type JwtAuthorizerConfig = {
 };
 ```
 
-`id` keys the authorizer in state. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Two authorizers in one deployment can't share an `id`.
+`id` keys the authorizer in state, together with its API's `id`. The state key is `api-authorizer:<api id>:<id>`, such as `api-authorizer:todo-api:user-auth`. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Two authorizers of one API can't share an `id`, but two APIs can each have an authorizer with the same `id`.
 
 **The `issuer` and `audience` don't affect the state key.** Changing them updates the authorizer in place, and the routes keep pointing at it. Two authorizers on one API can have the same `issuer` and `audience` if their IDs differ. An HTTP API allows 10 authorizers.
 
