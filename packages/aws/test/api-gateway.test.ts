@@ -1,12 +1,20 @@
-import { test, expect } from "vitest";
-import { type ResourceGraph } from "@notation/resource";
+import { test, expect, expectTypeOf } from "vitest";
 import {
   collectResourceGraph as collect,
+  type ResourceGraph,
   type StandardSchemaV1,
 } from "@notation/resource";
 import { api, jwtAuthorizer, router } from "src/api-gateway";
 import { route, RouteGroup } from "src/api-gateway/route";
-import { $lambda, apiGateway, lambda, sqs, type LambdaGroup } from "src/lambda";
+import {
+  $lambda,
+  apiGateway,
+  lambda,
+  sqs,
+  type JwtClaims,
+  type LambdaGroup,
+  type LambdaHandler,
+} from "src/lambda";
 import { queue } from "src/sqs";
 import { inModule, lambdaGroup } from "./declare";
 
@@ -390,5 +398,189 @@ test("routes behind a jwt authorizer take only functions of HTTP requests", asyn
     }),
   ).rejects.toThrow(
     'the Lambda "process" is declared with event: () => sqs.bind(queue)',
+  );
+});
+
+test("apiGateway.bind(api).defineRoute() in a declaration makes the route", async () => {
+  const graph = await collect(() => {
+    const todoApi = api({ name: "todo-api" });
+    inModule(
+      $lambda({
+        id: "todos",
+        event: () =>
+          apiGateway
+            .bind(todoApi)
+            .defineRoute({ method: "GET", path: "/todos" }),
+      }),
+    );
+  });
+  const todos = routeGroup(graph, "todo-api-GET-/todos").route;
+
+  expect(todos.config).toMatchObject({
+    RouteKey: "GET /todos",
+    AuthorizationType: "NONE",
+  });
+  expect(todos.dependencies.lambdaIntegration.dependencies.lambda).toBe(
+    lambdaGroup(graph, "todos").fn,
+  );
+  expect(todos.dependencies.auth).toBeUndefined();
+});
+
+test("apiGateway.bind(api).defineRoute({ auth }) makes the route with the authorizer, and decode() validates with its claims schema", async () => {
+  let userAuth!: ReturnType<typeof authorizerOn<typeof Claims>>;
+  let user!: ReturnType<typeof declareUser>;
+  const declareUser = (auth: typeof userAuth) =>
+    $lambda({
+      id: "user",
+      event: () =>
+        apiGateway
+          .bind(auth.api)
+          .defineRoute({ method: "POST", path: "/user", auth }),
+    });
+  const graph = await collect(() => {
+    userAuth = authorizerOn(api({ name: "user-api" }), Claims);
+    user = inModule(declareUser(userAuth));
+  });
+  const userRoute = routeGroup(graph, "user-api-POST-/user").route;
+
+  expect(userRoute.config.AuthorizationType).toBe("JWT");
+  expect(userRoute.dependencies.auth).toBe(userAuth.auth);
+  const request = (claims: unknown) => ({
+    body: "{}",
+    isBase64Encoded: false,
+    requestContext: { authorizer: { jwt: { claims } } },
+  });
+  await expect(user.decode(request({ sub: "u1" }))).resolves.toEqual({});
+  await expect(user.decode(request({}))).rejects.toThrow(
+    "sub must be a string",
+  );
+});
+
+test("apiGateway.bind(api).defineRoute() types the event from its options", () => {
+  const userApi = api({ name: "user-api" });
+  const userAuth = authorizerOn(userApi, Claims);
+  const user = $lambda({
+    id: "user",
+    event: () =>
+      apiGateway.bind(userApi).defineRoute({
+        method: "POST",
+        path: "/user",
+        schema: OtherClaims,
+        auth: userAuth,
+      }),
+  });
+  const plain = $lambda({
+    id: "plain",
+    event: () =>
+      apiGateway.bind(userApi).defineRoute({ method: "GET", path: "/plain" }),
+  });
+
+  expectTypeOf<
+    NonNullable<(typeof user)["~lambda"]>["kind"]
+  >().toEqualTypeOf<"apiGateway-jwt">();
+  expectTypeOf<
+    NonNullable<(typeof user)["~lambda"]>["event"]["claims"]
+  >().toEqualTypeOf<typeof Claims>();
+  expectTypeOf(user.decode).returns.resolves.toEqualTypeOf<OtherClaimsType>();
+  expectTypeOf<
+    Parameters<
+      LambdaHandler<typeof user>
+    >[0]["requestContext"]["authorizer"]["jwt"]["claims"]
+  >().toEqualTypeOf<JwtClaims>();
+  expectTypeOf<
+    NonNullable<(typeof plain)["~lambda"]>["kind"]
+  >().toEqualTypeOf<"apiGateway">();
+
+  // Only type-checked.
+  const typeOnly = () => {
+    // @ts-expect-error a schema is not an API
+    apiGateway.bind(Claims);
+    apiGateway.bind(userApi).defineRoute({
+      method: "GET",
+      path: "/user",
+      // @ts-expect-error a schema is not an authorizer
+      auth: Claims,
+    });
+  };
+  void typeOnly;
+});
+
+test("decode() reads the claims schema from the object that the runtime build passes", async () => {
+  const fn = $lambda({
+    id: "user",
+    // The runtime build replaces the API with {} and the authorizer with its
+    // runtime options.
+    event: () =>
+      apiGateway.bind({} as any).defineRoute({
+        method: "GET",
+        path: "/user",
+        auth: { claims: Claims },
+      }),
+  });
+
+  await expect(
+    fn.decode({
+      body: undefined,
+      isBase64Encoded: false,
+      requestContext: { authorizer: { jwt: { claims: {} } } },
+    }),
+  ).rejects.toThrow("sub must be a string");
+});
+
+test("route() of a declaration that makes its own route throws", async () => {
+  await expect(
+    collect(() => {
+      const todoApi = api({ name: "todo-api" });
+      const todos = inModule(
+        $lambda({
+          id: "todos",
+          event: () =>
+            apiGateway
+              .bind(todoApi)
+              .defineRoute({ method: "GET", path: "/todos" }),
+        }),
+      );
+      router(todoApi).get("/todos/all", () => todos);
+    }),
+  ).rejects.toThrow(
+    'route() routes GET /todos/all to the Lambda "todos", which makes its own route in its declaration, with event: () => apiGateway.bind(api).defineRoute(options). Route the Lambda in one place: remove the route() call, or declare the Lambda with event: () => apiGateway.schema(body).',
+  );
+});
+
+test("apiGateway.bind(api).defineRoute({ auth }) with an authorizer on another api throws", async () => {
+  await expect(
+    collect(() => {
+      const userAuth = authorizerOn(api({ name: "user-api" }));
+      const todoApi = api({ name: "todo-api" });
+      inModule(
+        $lambda({
+          id: "todos",
+          event: () =>
+            apiGateway
+              .bind(todoApi)
+              .defineRoute({ method: "GET", path: "/todos", auth: userAuth }),
+        }),
+      );
+    }),
+  ).rejects.toThrow(
+    'The Lambda "todos" routes GET /todos on the API "todo-api", but its authorizer is on the API "user-api".',
+  );
+});
+
+test("apiGateway.bind() of a value that is not an API throws when the declaration is built", async () => {
+  await expect(
+    collect(() => {
+      inModule(
+        $lambda({
+          id: "todos",
+          event: () =>
+            apiGateway
+              .bind({} as any)
+              .defineRoute({ method: "GET", path: "/todos" }),
+        }),
+      );
+    }),
+  ).rejects.toThrow(
+    'The Lambda "todos" is declared with apiGateway.bind(api), but the value passed to apiGateway.bind() is not an API from api().',
   );
 });

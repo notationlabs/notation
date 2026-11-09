@@ -106,7 +106,50 @@ export type ApiGatewayEvent<
   kind: K;
   schema: S;
   claims: C;
+  /**
+   * The route that the infra build makes, from
+   * `apiGateway.bind(api).defineRoute()`. It is not set for
+   * `apiGateway.schema()`.
+   */
+  route?: ApiGatewayRoute;
 };
+
+/** A route that a declaration makes, on an API that infra declares. */
+export type ApiGatewayRoute = {
+  api: ApiSource;
+  method: HttpMethod;
+  path: `/${string}`;
+  auth?: AuthorizerSource;
+};
+
+/**
+ * An API that `apiGateway.bind()` routes to, from `api()`. In the function it
+ * is `{}`, as the runtime build replaces the API with it.
+ */
+export type ApiSource = {
+  "~route"(group: LambdaGroup, route: Omit<ApiGatewayRoute, "api">): void;
+};
+
+export type ApiGatewayRouteOptions<
+  S extends StandardSchemaV1 | undefined,
+  A extends AuthorizerSource | undefined,
+> = {
+  method: HttpMethod;
+  path: `/${string}`;
+  /**
+   * Validates the JSON body of a request in `decode()`. Import it from a
+   * shared module, so the function can load it.
+   */
+  schema?: S;
+  /**
+   * The route's authorizer, from `jwtAuthorizer()`. `decode()` validates the
+   * JWT claims with its claims schema. In the runtime build, the authorizer
+   * is replaced with its runtime options, as `{ claims }`.
+   */
+  auth?: A;
+};
+
+type ClaimsOf<A> = A extends AuthorizerSource<infer C> ? C : undefined;
 
 /**
  * A JWT authorizer, from `jwtAuthorizer()`. In the function it holds only
@@ -132,10 +175,47 @@ type ApiGatewayKindOf<C> = [C] extends [StandardSchemaV1]
   : "apiGateway";
 
 /**
- * The function receives API Gateway HTTP API requests, from routes that
- * infra makes with `router()`.
+ * The function receives API Gateway HTTP API requests: from a route that the
+ * declaration makes, with `apiGateway.bind(api).defineRoute(options)`, or
+ * from routes that infra makes with `router()`, with
+ * `apiGateway.schema(body)`.
  */
 export const apiGateway = {
+  /**
+   * Binds the function to `api`, an API that infra declares. Call
+   * `defineRoute()` on the result. In the runtime build, an API from an infra
+   * module is replaced with `{}`.
+   * @runtime api
+   */
+  bind(api: ApiSource) {
+    return {
+      /**
+       * The function receives the requests of a route on the API, which the
+       * infra build makes. `decode()` validates the JSON body with `schema`,
+       * and the JWT claims with the claims schema of `auth`. With `auth`, the
+       * event has the kind `apiGateway-jwt`.
+       * @runtime options.auth
+       */
+      defineRoute<
+        S extends StandardSchemaV1 | undefined = undefined,
+        A extends AuthorizerSource | undefined = undefined,
+      >(
+        options: ApiGatewayRouteOptions<S, A>,
+      ): ApiGatewayEvent<
+        S,
+        ClaimsOf<A>,
+        A extends AuthorizerSource ? "apiGateway-jwt" : "apiGateway"
+      > {
+        const { method, path, schema, auth } = options;
+        return {
+          kind: (auth ? "apiGateway-jwt" : "apiGateway") as any,
+          schema: schema as S,
+          claims: auth?.claims as ClaimsOf<A>,
+          route: { api, method, path, auth },
+        };
+      },
+    };
+  },
   /**
    * The function receives requests from routes that infra makes. `decode()`
    * validates the JSON body with `body`, and the JWT claims with

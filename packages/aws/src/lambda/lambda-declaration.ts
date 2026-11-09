@@ -11,6 +11,7 @@ import {
   type Lambda,
   type LambdaEvent,
   type LambdaEventKind,
+  type ApiSource,
   type SqsSource,
 } from "./declaration";
 import { isLambdaGroup, LambdaGroup, type LambdaConfig } from "./lambda";
@@ -86,12 +87,13 @@ export function $lambda<
   } as unknown as Lambda<E, Env>;
 
   let group: LambdaGroup | undefined;
-  // The group is assigned before the queue is mapped, so a mapping that
-  // throws doesn't build a second group on the next call.
+  // The group is assigned before the event's resources are made, so one
+  // that throws doesn't build a second group on the next call.
   const build = () => {
     if (group) return group;
     group = buildGroup(declaration, config);
     subscribeQueue(group, config);
+    addRoute(group, config);
     return group;
   };
   Object.defineProperty(declaration, registration, {
@@ -160,6 +162,26 @@ function subscribeQueue(
   queue["~subscribe"](group, event.options);
 }
 
+// Makes the route of `event: () => apiGateway.bind(api).defineRoute(options)`.
+function addRoute(
+  group: LambdaGroup,
+  config: Omit<
+    LambdaDeclarationConfig<string, LambdaEvent | undefined, EnvVars>,
+    "id"
+  > & { id: string },
+): void {
+  const event = config.event?.();
+  if (event?.kind !== "apiGateway" && event?.kind !== "apiGateway-jwt") return;
+  if (!event.route) return;
+  const { api, ...route } = event.route;
+  if (typeof (api as Partial<ApiSource>)?.["~route"] !== "function") {
+    throw new Error(
+      `The Lambda "${config.id}" is declared with apiGateway.bind(api), but the value passed to apiGateway.bind() is not an API from api().`,
+    );
+  }
+  api["~route"](group, route);
+}
+
 /**
  * A Lambda that infra can wire: a declaration, or a group from `lambda()`.
  * The return type has only optional properties, so TypeScript rejects a
@@ -221,9 +243,11 @@ export function eventCall(event: LambdaEvent): string {
     case "sqs":
       return "queue" in event ? "sqs.bind(queue)" : "sqs.schema(schema)";
     case "apiGateway":
-      return "apiGateway.schema(body)";
     case "apiGateway-jwt":
-      return "apiGateway.schema(body, { claims })";
+      if (event.route) return "apiGateway.bind(api).defineRoute(options)";
+      return event.kind === "apiGateway"
+        ? "apiGateway.schema(body)"
+        : "apiGateway.schema(body, { claims })";
     case "eventBridge":
       return "eventBridge.schedule()";
   }
