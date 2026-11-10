@@ -112,7 +112,6 @@ export type ResourceGroupRef = { type: string; id: string };
 
 export interface BaseResource {
   readonly type: ResourceType;
-  /** The name of the package that provides the resource's class. */
   readonly provider: string;
   readonly schema: Schema;
   readonly config: any;

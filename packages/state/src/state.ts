@@ -8,7 +8,6 @@ export type StateNode = {
   version: number;
   id: string;
   type: string;
-  /** The package that provides the class of `type`. */
   provider: string;
   config: DurableObject;
   params: DurableObject;
