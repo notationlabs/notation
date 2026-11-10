@@ -135,6 +135,19 @@ describe("LambdaEventSourceMapping", () => {
     ).toThrow(ValueValidationError);
   });
 
+  it.each([
+    { BatchSize: 0 },
+    { BatchSize: 10_001 },
+    { MaximumBatchingWindowInSeconds: 301 },
+  ])("rejects %o, which Lambda does not allow", (config) => {
+    expect(
+      () =>
+        new LambdaEventSourceMapping("bad-mapping", {
+          config: { EventSourceArn: queueArn, FunctionName: "app", ...config },
+        }),
+    ).toThrow(ValueValidationError);
+  });
+
   it("sends only the fields that changed", async () => {
     const send = mockSend(() => ({}));
 

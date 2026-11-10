@@ -95,12 +95,12 @@ const lambdaEventSourceMappingSchema = lambdaEventSourceMapping.defineSchema({
   BatchSize: {
     propertyType: "param",
     presence: "optional",
-    value: v.number(),
+    value: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(10_000)),
   },
   MaximumBatchingWindowInSeconds: {
     propertyType: "param",
     presence: "optional",
-    value: v.number(),
+    value: v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(300)),
   },
   Enabled: {
     propertyType: "param",
