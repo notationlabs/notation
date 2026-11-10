@@ -178,6 +178,46 @@ describe("WorkerScript", () => {
     expect(error.message).toContain("got no response within 120 seconds");
   });
 
+  it("reports a create whose response body timed out as unknown", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_, init) => {
+      if ((init?.method ?? "GET") === "GET") return fail(404, 10007);
+      const response = new Response("{}");
+      vi.spyOn(response, "text").mockRejectedValue(
+        new DOMException("The operation timed out.", "TimeoutError"),
+      );
+      return response;
+    });
+
+    const error = await script.create(params).catch((e) => e);
+    expect(error).toBeInstanceOf(ResourceCreationUnknownError);
+    expect(error.message).toContain("got no response within 120 seconds");
+  });
+
+  it("reports a create whose upload failed on the network as unknown", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_, init) => {
+      if ((init?.method ?? "GET") === "GET") return fail(404, 10007);
+      throw new TypeError("fetch failed");
+    });
+
+    const error = await script.create(params).catch((e) => e);
+    expect(error).toBeInstanceOf(ResourceCreationUnknownError);
+    expect(error.message).toContain("failed on the network: fetch failed");
+  });
+
+  it("throws a TypeError from outside the request as it is", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_, init) => {
+      if ((init?.method ?? "GET") === "GET") return fail(404, 10007);
+      return ok({});
+    });
+    vi.spyOn(FormData.prototype, "set").mockImplementationOnce(() => {
+      throw new TypeError("x is not a function");
+    });
+
+    const error = await script.create(params).catch((e) => e);
+    expect(error).not.toBeInstanceOf(ResourceCreationUnknownError);
+    expect(error).toBeInstanceOf(TypeError);
+  });
+
   it("waits and tries again when the API is rate limited", async () => {
     mockFetch(
       () => new Response("", { status: 429, headers: { "Retry-After": "2" } }),
@@ -222,11 +262,11 @@ describe("WorkerScript", () => {
     });
   });
 
-  it("reads the compatibility settings", async () => {
+  it("reads the compatibility settings, with the flags sorted", async () => {
     mockFetch(() =>
       ok({
         compatibility_date: "2026-10-12",
-        compatibility_flags: ["nodejs_compat"],
+        compatibility_flags: ["nodejs_compat", "global_fetch_strictly_public"],
         bindings: [],
       }),
     );
@@ -237,7 +277,7 @@ describe("WorkerScript", () => {
       AccountId: "acc",
       ScriptName: "app--dev--api",
       CompatibilityDate: "2026-10-12",
-      CompatibilityFlags: ["nodejs_compat"],
+      CompatibilityFlags: ["global_fetch_strictly_public", "nodejs_compat"],
     });
     expect(calls[0]!.url).toMatch(/\/scripts\/app--dev--api\/settings$/);
   });
@@ -272,7 +312,7 @@ describe("WorkerScript", () => {
 describe("durableObjectExports", () => {
   it.each([
     [
-      "whose namespace was removed",
+      "whose namespace was removed, or had its id changed",
       [{ id: "b", className: "Counter" }],
       [{ id: "a", className: "Counter" }],
     ],

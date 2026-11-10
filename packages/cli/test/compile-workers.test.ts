@@ -319,7 +319,7 @@ it("builds a worker that exports a type without the type keyword", async () => {
   expect(read(apiBundle)).not.toContain("Local");
 });
 
-it("defines NODE_ENV and imports a bare Node built-in as its node: module", async () => {
+it("defines NODE_ENV and imports a bare Node built-in as its node: module, over an installed polyfill", async () => {
   writeProject(
     [
       reexport,
@@ -327,11 +327,20 @@ it("defines NODE_ENV and imports a bare Node built-in as its node: module", asyn
       `console.log(process.env.NODE_ENV, typeof EventEmitter);`,
     ].join("\n"),
   );
+  write(
+    "node_modules/events/package.json",
+    JSON.stringify({ name: "events", main: "index.js" }),
+  );
+  write(
+    "node_modules/events/index.js",
+    `exports.EventEmitter = function polyfilledEmitter() {};`,
+  );
   const warnings = vi.spyOn(console, "warn");
   const logs = vi.spyOn(console, "log");
   await build();
   const code = read(apiBundle);
   expect(code).toMatch(/from "node:events"/);
+  expect(code).not.toContain("polyfilledEmitter");
   // vitest sets NODE_ENV to "test".
   expect(code).toContain(`console.log("test", typeof EventEmitter)`);
   expect(code).not.toContain("process.env");

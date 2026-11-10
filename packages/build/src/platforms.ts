@@ -35,21 +35,20 @@ const node: Platform = {
 };
 
 // workerd provides Node's built-in modules as `node:` modules, under the
-// nodejs_compat flag. A bare name, such as `events`, that no installed
-// package provides is imported as its `node:` module. workerd has no
-// `require`, so a `require()` of a built-in, as in a CommonJS package, gets
-// a module that imports it, as wrangler does.
+// nodejs_compat flag. A bare name, such as `events`, is imported as its
+// `node:` module, even when an installed package, such as a polyfill, has
+// the same name. A name with a trailing slash, such as `events/`, is left
+// to resolve as a package. workerd has no `require`, so a `require()` of a
+// built-in, as in a CommonJS package, gets a module that imports it, as
+// wrangler does.
 const requiredBuiltin = "\0notation-required-builtin:";
 const nodeBuiltinsPlugin: Plugin = {
   name: "notation-workerd-builtins",
-  async resolveId(source, importer, options) {
-    const prefixed = source.startsWith("node:");
-    if (!prefixed && !builtinModules.includes(source)) return null;
-    const name = source.replace(/^node:/, "");
-    if (!prefixed) {
-      const resolved = await this.resolve(source, importer, options);
-      if (resolved && !resolved.external) return resolved;
+  resolveId(source, _importer, options) {
+    if (!source.startsWith("node:") && !builtinModules.includes(source)) {
+      return null;
     }
+    const name = source.replace(/^node:/, "");
     return options.kind === "require-call"
       ? `${requiredBuiltin}${name}`
       : { id: `node:${name}`, external: true };

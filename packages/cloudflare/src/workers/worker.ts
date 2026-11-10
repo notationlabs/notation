@@ -2,16 +2,16 @@ import { filePaths, fromProjectRoot, toProjectRoot } from "@notation/core";
 import {
   getActiveResourceCollection,
   getDeclaredIn,
-  isOutputValue,
   onEvaluationEnd,
   ResourceGroup,
   type DeclaredIn,
 } from "@notation/resource";
 import * as std from "@notation/std/resources";
 import * as cloudflare from "src/resources";
-import type {
-  HostedNamespace,
-  WorkerBinding,
+import {
+  sortedFlags,
+  type HostedNamespace,
+  type WorkerBinding,
 } from "src/resources/workers/worker-script";
 import { assertWorkerId, perCollection, workerName } from "src/id";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
@@ -164,7 +164,7 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
     );
   }
   const scriptName = workerName(config.name ?? config.id);
-  const declaration = { id: config.id } as Worker<B>;
+  const declaration = { id: config.id } as unknown as Worker<B>;
   let bindings: Bindings | undefined;
   let group: WorkerGroup | undefined;
 
@@ -212,12 +212,10 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
           filePaths.dist.runtime.index(fromProjectRoot(record.path)),
         ),
         compatibilityDate: config.compatibilityDate,
-        compatibilityFlags: [
+        compatibilityFlags: sortedFlags([
           NODEJS_COMPAT,
-          ...(config.compatibilityFlags ?? []).filter(
-            (flag) => flag !== NODEJS_COMPAT,
-          ),
-        ],
+          ...(config.compatibilityFlags ?? []),
+        ]),
         bindings: resolved.bindings,
         namespaces: resolved.namespaces,
         url: config.url ?? true,
@@ -271,12 +269,8 @@ function resolveBindings(self: Entry): ResolvedBindings {
     dependsOn: [],
   };
   for (const [name, value] of Object.entries(self.bindings())) {
-    if (typeof value === "string" || isOutputValue(value)) {
-      resolved.bindings.push({
-        type: "plain_text",
-        name,
-        text: value as string,
-      });
+    if (typeof value === "string") {
+      resolved.bindings.push({ type: "plain_text", name, text: value });
       continue;
     }
     const namespace = registeredNamespace(value);

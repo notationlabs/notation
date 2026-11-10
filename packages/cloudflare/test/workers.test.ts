@@ -352,18 +352,23 @@ describe("$worker", () => {
     );
   });
 
-  it("adds nodejs_compat to the compatibility flags", async () => {
+  it("adds nodejs_compat to the compatibility flags, and sorts them", async () => {
     const graph = await collect(() => {
       inWorker(
         $worker({
           id: "api",
           compatibilityDate,
-          compatibilityFlags: ["streams_enable_constructors"],
+          compatibilityFlags: [
+            "streams_enable_constructors",
+            "nodejs_compat",
+            "allow_custom_ports",
+          ],
         }),
         "runtime/api.ts",
       );
     });
     expect(group(graph, "api").script.config.CompatibilityFlags).toEqual([
+      "allow_custom_ports",
       "nodejs_compat",
       "streams_enable_constructors",
     ]);
@@ -461,5 +466,14 @@ describe("WorkerEnv", () => {
     expectTypeOf<Env["GREETING"]>().toEqualTypeOf<string>();
     // @ts-expect-error a name that the declaration doesn't bind
     type _ = Env["MISSING"];
+  });
+
+  it("rejects a binding that is another object with an id", () => {
+    runtime.$worker({
+      id: "api",
+      compatibilityDate,
+      // @ts-expect-error an object with an id is not a namespace or a Worker
+      bindings: () => ({ BUCKET: { id: "uploads" } }),
+    });
   });
 });

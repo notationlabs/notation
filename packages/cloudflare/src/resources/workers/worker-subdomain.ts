@@ -1,11 +1,6 @@
 import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
-import {
-  cloudflare,
-  cloudflareCreate,
-  isNotFound,
-  scriptPath,
-} from "src/resources/api";
+import { cloudflare, isNotFound, scriptPath } from "src/resources/api";
 import type { WorkerScriptInstance } from "./worker-script";
 
 export type WorkerSubdomainSchema = {
@@ -61,9 +56,11 @@ const setEnabled = (account: string, scriptName: string, enabled: boolean) =>
  */
 export const WorkerSubdomain = workerSubdomainSchema
   .defineOperations({
-    create: cloudflareCreate(async (params) => {
+    // Enabling the route is idempotent, so a create that failed is safe to
+    // repeat, and needs no check of whether it took effect.
+    create: async (params) => {
       await setEnabled(params.AccountId, params.ScriptName, true);
-    }),
+    },
 
     read: async (key) => {
       let enabled: boolean | undefined;

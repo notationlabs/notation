@@ -18,7 +18,7 @@ export type * from "./declaration";
 export function $worker<const Id extends string, B extends Bindings = {}>(
   config: WorkerDeclarationConfig<Id, B>,
 ): Worker<B> {
-  return { id: config.id } as Worker<B>;
+  return { id: config.id } as unknown as Worker<B>;
 }
 
 /** The Worker's view of a namespace declaration. */
@@ -26,7 +26,7 @@ export function $durableObject<
   const Id extends string,
   C extends DurableObjectClass,
 >(config: DurableObjectDeclarationConfig<Id, C>): DurableObjectDeclaration<C> {
-  return { id: config.id } as DurableObjectDeclaration<C>;
+  return { id: config.id } as unknown as DurableObjectDeclaration<C>;
 }
 
 const infraOnly = (name: string) =>

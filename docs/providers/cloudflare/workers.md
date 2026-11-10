@@ -96,7 +96,7 @@ export default {
 
 | Option  | Description                                                                                                                                                                   |
 | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`    | Keys the namespace. Use 1 to 64 letters, digits, hyphens or underscores.                                                                                                      |
+| `id`    | Keys the namespace. Use 1 to 64 letters, digits, hyphens or underscores. Keep it stable: see [Renaming and deleting](#renaming-and-deleting).                                 |
 | `class` | The namespace's class, by name, such as `class: Counter`. Cloudflare finds the class by its export name, so the hosting Worker exports the class under the name written here. |
 
 The infra build doesn't load the class, or its imports such as `cloudflare:workers`. It replaces the class with a function of the same name.
@@ -116,9 +116,10 @@ The host is found by the export's name only. A Worker that binds the namespace a
 A new namespace uses SQLite storage. Deploy uploads Cloudflare's declarative `exports` map of the hosting Worker, with each namespace that the Worker hosted before:
 
 - When a namespace's `class` changes and its `id` stays the same, deploy renames the class, and the namespace keeps its objects.
-- When a namespace's declaration is removed, or its `id` changes, deploy deletes the namespace with all its objects. This can't be undone.
+- When a namespace's declaration is removed, deploy deletes the namespace with all its objects. This can't be undone.
+- When a namespace's `id` and `class` both change, deploy deletes the old namespace with all its objects, and makes a new, empty one.
 - When the class export moves to the module of another Worker that binds the namespace, that Worker becomes the host. Deploy deletes the namespace on the old host, with all its objects, and the new host gets an empty namespace.
-- Cloudflare keys a namespace by its class name. So a deploy fails, before the upload, if a namespace takes a class that another namespace had on the same Worker before, as the new namespace would get the old one's objects. Rename or remove the old namespace in one deploy, and give its class to the new namespace in a later deploy.
+- Cloudflare keys a namespace by its class name. So a deploy fails, before the upload, if a namespace takes a class that another namespace had on the same Worker before, as the new namespace would get the old one's objects. This includes a change of `id` alone. Rename or remove the old namespace in one deploy, and give its class to the new namespace in a later deploy. The check runs during deploy, not plan, so resources that deploy changes before the Worker may already have changed.
 
 ## Credentials
 

@@ -162,7 +162,9 @@ export const WorkerScript = workerScriptSchema
         AccountId: key.AccountId,
         ScriptName: key.ScriptName,
         CompatibilityDate: settings.compatibility_date,
-        CompatibilityFlags: settings.compatibility_flags,
+        CompatibilityFlags: settings.compatibility_flags
+          ? sortedFlags(settings.compatibility_flags)
+          : undefined,
       };
     },
 
@@ -190,6 +192,15 @@ export const WorkerScript = workerScriptSchema
   }));
 
 export type WorkerScriptInstance = InstanceType<typeof WorkerScript>;
+
+/**
+ * Sorts the flags, without duplicates. A Worker's declaration sorts its
+ * flags, and the read sorts them too, so the order that Cloudflare
+ * returns them in is not read as a change.
+ */
+export function sortedFlags(flags: string[]): string[] {
+  return [...new Set(flags)].sort();
+}
 
 async function readSettings(
   account: string,

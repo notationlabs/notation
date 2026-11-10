@@ -15,10 +15,11 @@ export interface DurableObjectDeclaration<
 > {
   readonly id: string;
   /**
-   * Carries the class for the type helpers. It is never set, so it is
-   * optional.
+   * Carries the class for the type helpers. It is never set at runtime. It
+   * is required in the type, so that another object with an `id` is not
+   * taken for a namespace.
    */
-  readonly "~durableObject"?: { class: C };
+  readonly "~durableObject": { class: C };
 }
 
 /**
@@ -29,7 +30,7 @@ export interface DurableObjectDeclaration<
 export type BindingValue =
   | string
   | DurableObjectDeclaration<any>
-  | { readonly "~worker"?: { bindings: Bindings } };
+  | { readonly "~worker": { bindings: Bindings } };
 
 export type Bindings = Record<string, BindingValue>;
 
@@ -40,10 +41,11 @@ export type Bindings = Record<string, BindingValue>;
 export interface Worker<B extends Bindings = Bindings> {
   readonly id: string;
   /**
-   * Carries the bindings for the type helpers. It is never set, so it is
-   * optional.
+   * Carries the bindings for the type helpers. It is never set at runtime.
+   * It is required in the type, so that another object with an `id` is not
+   * taken for a Worker.
    */
-  readonly "~worker"?: { bindings: B };
+  readonly "~worker": { bindings: B };
 }
 
 type NamespaceOf<C> = C extends abstract new (...args: any[]) => infer I
@@ -54,13 +56,12 @@ type NamespaceOf<C> = C extends abstract new (...args: any[]) => infer I
 
 type ClassOf<V> = V extends DurableObjectDeclaration<infer C> ? C : never;
 
-// The marker fields are optional, so a Worker is assignable to a namespace
-// declaration and the other way round. The keys tell them apart.
-type BindingType<V> = "~durableObject" extends keyof V
-  ? NamespaceOf<ClassOf<V>>
-  : "~worker" extends keyof V
-    ? cf.Fetcher
-    : string;
+type BindingType<V> =
+  V extends DurableObjectDeclaration<any>
+    ? NamespaceOf<ClassOf<V>>
+    : V extends { readonly "~worker": unknown }
+      ? cf.Fetcher
+      : string;
 
 /**
  * The `env` that the Worker's handlers receive, from the declaration:
@@ -69,10 +70,10 @@ type BindingType<V> = "~durableObject" extends keyof V
  * a string is a string.
  */
 export type WorkerEnv<
-  W extends { readonly "~worker"?: { bindings: Bindings } },
+  W extends { readonly "~worker": { bindings: Bindings } },
 > = {
-  readonly [K in keyof NonNullable<W["~worker"]>["bindings"]]: BindingType<
-    NonNullable<W["~worker"]>["bindings"][K]
+  readonly [K in keyof W["~worker"]["bindings"]]: BindingType<
+    W["~worker"]["bindings"][K]
   >;
 };
 
@@ -82,5 +83,5 @@ export type WorkerEnv<
  * WorkerHandler<typeof worker>`.
  */
 export type WorkerHandler<
-  W extends { readonly "~worker"?: { bindings: Bindings } },
+  W extends { readonly "~worker": { bindings: Bindings } },
 > = cf.ExportedHandler<WorkerEnv<W>>;

@@ -11,8 +11,10 @@ export type DurableObjectDeclarationConfig<
 > = {
   /**
    * Keys the namespace. Its class can be renamed while the id stays the
-   * same, and the namespace keeps its objects. Changing the id deletes the
-   * namespace and its objects, and makes a new one, so keep it stable.
+   * same, and the namespace keeps its objects. Changing the id and the class
+   * together deletes the namespace and its objects, and makes a new one.
+   * Changing the id alone fails the deploy, as Cloudflare keys a namespace
+   * by its class name. Keep the id stable.
    */
   id: Id;
   /**
@@ -71,7 +73,9 @@ export function $durableObject<
     }
     ids.add(config.id);
   }
-  const declaration = { id: config.id } as DurableObjectDeclaration<C>;
+  const declaration = {
+    id: config.id,
+  } as unknown as DurableObjectDeclaration<C>;
   Object.defineProperty(declaration, registration, {
     value: { className } satisfies Registered,
   });
