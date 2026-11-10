@@ -17,7 +17,7 @@ import { buildDepthLevels, collectDependents } from "../dependency-graph";
 import { createBlocksDelete } from "../delete-cascade";
 import type { OperationLifecycleEvent } from "../events";
 import { resolveResourceClass, workflowRegistry } from "../resource-registry";
-import { ResourceTypeChangedError, assertSameType } from "../resource-type";
+import { assertSameType } from "../resource-type";
 import {
   applyDriftDetection,
   createResourceOperation,
@@ -72,6 +72,9 @@ export async function* reconcileResource(
 
   const emit = durableEmitter(step, opts.emit);
   const session = yield* openStateSession(step, opts, resource);
+  // notation:validate made this check before the hold. It is made again
+  // against the record read under the hold, which another execution may
+  // have written since.
   assertSameType(resource, session.node);
   if (session.node) resource.setOutput(session.node.output);
 
@@ -342,7 +345,6 @@ async function* deleteBlockingDependents(
  * scoped to the resource.
  * A record of another type than the resource is deleted through the class of
  * the record's type, so that destroy does not need code to agree with state.
- * The delete fails when that class is not in the registry.
  */
 export async function* deleteResource(
   step: DurableStepRunner,
@@ -360,10 +362,10 @@ export async function* deleteResource(
       session.node.type as ResourceType,
     );
     if (!Resource) {
-      throw new ResourceTypeChangedError(
-        declared.id,
-        session.node.type,
-        declared.type,
+      throw new Error(
+        `No class is registered for type ${session.node.type}, the type of ` +
+          `the state record of ${declared.id}. The orphan sweep keeps such a ` +
+          `record, so destroy should not reach it.`,
       );
     }
     resource = await instantiateRecord(Resource, session.node);

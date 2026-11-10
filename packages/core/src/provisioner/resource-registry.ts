@@ -74,7 +74,6 @@ export async function loadProviderRegistry(
   failures: ProviderLoadFailedEvent[];
 }> {
   const require = createRequire(path.join(root, "package.json"));
-  let dirs: string[] | undefined;
   const classes: ResourceClass<any, any, any>[] = [];
   const failures: ProviderLoadFailedEvent[] = [];
   const fail = (provider: string, errorMessage: string) =>
@@ -85,13 +84,14 @@ export async function loadProviderRegistry(
       errorMessage,
     });
   for (const name of packages) {
+    // A record names a package, and a path in its place would import a file.
+    if (name.startsWith(".") || path.isAbsolute(name)) {
+      fail(name, `${name} is a path, not a package name`);
+      continue;
+    }
     let entry: string;
     try {
-      entry = resolvePackage(
-        require,
-        name,
-        () => (dirs ??= dependencyDirs(root)),
-      );
+      entry = resolvePackage(require, name, root);
     } catch (error) {
       fail(
         name,
@@ -116,9 +116,22 @@ export async function loadProviderRegistry(
       fail(name, `${name} does not export a resourceClasses array`);
       continue;
     }
+    if (!resourceClasses.every(isResourceClass)) {
+      fail(name, `${name} exports a resourceClasses entry that is not a class`);
+      continue;
+    }
     classes.push(...resourceClasses);
   }
   return { registry: createResourceRegistry(classes), failures };
+}
+
+function isResourceClass(
+  value: unknown,
+): value is ResourceClass<any, any, any> {
+  return (
+    typeof value === "function" &&
+    typeof (value as { type?: unknown }).type === "string"
+  );
 }
 
 function errorMessage(error: unknown): string {
@@ -128,31 +141,39 @@ function errorMessage(error: unknown): string {
 // A package that is found but can't be resolved, such as one with no export
 // for the require conditions, fails with the error of the directory it was
 // found from. A package found nowhere fails with the project root's error.
+// The dependency tree is walked only when the root can't resolve the package,
+// and the walk stops at the first directory that can.
 function resolvePackage(
   require: NodeJS.Require,
   name: string,
-  dependencyDirs: () => string[],
+  root: string,
 ): string {
   let notFound: unknown;
-  for (const dir of [undefined, ...dependencyDirs()]) {
+  try {
+    return require.resolve(name);
+  } catch (error) {
+    if (!isNotFound(error)) throw error;
+    notFound = error;
+  }
+  for (const dir of dependencyDirs(root)) {
     try {
-      return dir
-        ? require.resolve(name, { paths: [dir] })
-        : require.resolve(name);
+      return require.resolve(name, { paths: [dir] });
     } catch (error) {
-      if ((error as { code?: string }).code !== "MODULE_NOT_FOUND") throw error;
-      notFound ??= error;
+      if (!isNotFound(error)) throw error;
     }
   }
   throw notFound;
+}
+
+function isNotFound(error: unknown): boolean {
+  return (error as { code?: string }).code === "MODULE_NOT_FOUND";
 }
 
 // The real directory of each package in the project's dependency tree,
 // breadth first. A symlink is followed, as Node follows it, so that pnpm's
 // links resolve each package's own dependencies. The project's dev
 // dependencies are included, and those of other packages are not.
-function dependencyDirs(root: string): string[] {
-  const dirs: string[] = [];
+function* dependencyDirs(root: string): Generator<string> {
   const seen = new Set<string>();
   const pending = [root];
   for (let dir = pending.shift(); dir; dir = pending.shift()) {
@@ -160,11 +181,10 @@ function dependencyDirs(root: string): string[] {
       const found = findPackageDir(dir, name);
       if (!found || seen.has(found)) continue;
       seen.add(found);
-      dirs.push(found);
+      yield found;
       pending.push(found);
     }
   }
-  return dirs;
 }
 
 function dependencyNames(dir: string, includeDev: boolean): string[] {

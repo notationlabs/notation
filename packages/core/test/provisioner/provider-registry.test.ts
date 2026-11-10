@@ -190,6 +190,33 @@ it("returns a package that exports no resourceClasses array as a failure", async
   ]);
 });
 
+it("returns a package whose resourceClasses holds something other than a class as a failure", async () => {
+  installPackage("@acme/queues", [Queue, null]);
+  const { registry, failures } = await loadProviderRegistry(
+    ["@acme/queues"],
+    root,
+  );
+  expect([...registry]).toEqual([]);
+  expect(failures).toEqual([
+    expect.objectContaining({
+      provider: "@acme/queues",
+      errorMessage:
+        "@acme/queues exports a resourceClasses entry that is not a class",
+    }),
+  ]);
+});
+
+it("does not import a provider that is a path", async () => {
+  const { failures } = await loadProviderRegistry(
+    ["./queues", "/tmp/queues"],
+    root,
+  );
+  expect(failures.map((failure) => failure.errorMessage)).toEqual([
+    "./queues is a path, not a package name",
+    "/tmp/queues is a path, not a package name",
+  ]);
+});
+
 it("registers the classes that a CommonJS package exports under default", async () => {
   installPackage("@acme/queues", [Queue]);
   const packageDir = path.join(root, "node_modules", "@acme", "queues");
