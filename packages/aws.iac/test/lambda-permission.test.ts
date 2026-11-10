@@ -6,7 +6,6 @@ import {
   ResourceNotFoundError,
   SchemaStructureError,
   validateParams,
-  ValueValidationError,
 } from "@notation/resource";
 import { createPlan } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
@@ -73,16 +72,13 @@ describe("LambdaPermission", () => {
 
   it("can be declared without a SourceArn", async () => {
     const params = await new LambdaPermission("p", {
-      config: { Action: "lambda:InvokeFunction", Principal: "123456789012" },
+      config: {
+        Action: "lambda:InvokeFunction",
+        Principal: "events.amazonaws.com",
+      },
       dependencies: { lambda: fn },
     }).getParams();
     expect(params).not.toHaveProperty("SourceArn");
-  });
-
-  it("rejects a SourceAccount that is not an account ID", () => {
-    expect(() => permission({ SourceAccount: "me" })).toThrow(
-      ValueValidationError,
-    );
   });
 
   it("places the source's output value as its SourceArn", async () => {

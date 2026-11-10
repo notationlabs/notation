@@ -62,9 +62,7 @@ type QueueParams = QueueAttributeParams & {
 
 // SQS returns the FIFO attributes only for a FIFO queue.
 type OptionalReadAttributes =
-  | "ContentBasedDeduplication"
-  | "DeduplicationScope"
-  | "FifoThroughputLimit";
+  "ContentBasedDeduplication" | "DeduplicationScope" | "FifoThroughputLimit";
 
 export type QueueSchema = AwsSchema<{
   Key: { QueueUrl: string };

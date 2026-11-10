@@ -10,26 +10,18 @@ import type { LambdaFunctionInstance } from "./lambda";
 type LambdaPermissionKey = {
   FunctionName: string;
   StatementId: string;
-  Qualifier?: string;
 };
 
 type LambdaPermissionParams = LambdaPermissionKey & {
   /** The action the principal may take, such as `lambda:InvokeFunction`. */
   Action: string;
-  /**
-   * The service or account that may invoke the function, such as
-   * `events.amazonaws.com`.
-   */
+  /** The service that may invoke the function, such as `events.amazonaws.com`. */
   Principal: string;
   /**
    * The ARN of the resource that may invoke the function. Without it, a
    * service principal may invoke the function on behalf of any account.
    */
   SourceArn?: string;
-  /** The account that owns the source. S3 needs it, as a bucket ARN has no account. */
-  SourceAccount?: string;
-  /** The auth type of the function URL, for a permission to call one. */
-  FunctionUrlAuthType?: sdk.FunctionUrlAuthType;
 };
 
 export type LambdaPermissionSchema = AwsSchema<{
@@ -60,12 +52,6 @@ const lambdaPermissionSchema = lambdaPermission.defineSchema({
     secondaryKey: true,
     value: v.pipe(v.string(), v.regex(/^[0-9A-Za-z_-]{1,100}$/)),
   },
-  Qualifier: {
-    propertyType: "param",
-    presence: "optional",
-    secondaryKey: true,
-    value: v.string(),
-  },
   Action: {
     propertyType: "param",
     presence: "required",
@@ -81,21 +67,11 @@ const lambdaPermissionSchema = lambdaPermission.defineSchema({
     presence: "optional",
     value: v.string(),
   },
-  SourceAccount: {
-    propertyType: "param",
-    presence: "optional",
-    value: v.pipe(v.string(), v.regex(/^\d{12}$/)),
-  },
-  FunctionUrlAuthType: {
-    propertyType: "param",
-    presence: "optional",
-    value: v.enum(sdk.FunctionUrlAuthType),
-  },
 } as const);
 
 /**
  * A statement in a Lambda function's resource policy, which lets a service
- * or account invoke the function. Its params follow Lambda's AddPermission.
+ * invoke the function. Its params follow Lambda's AddPermission.
  * The `StatementId` is made from the resource ID, so it is unique among the
  * function's statements while resource IDs are unique.
  */
@@ -116,17 +92,10 @@ export const LambdaPermission = lambdaPermissionSchema
       return {
         FunctionName: key.FunctionName,
         StatementId: key.StatementId,
-        Qualifier: key.Qualifier,
         Action: statement.Action,
-        Principal:
-          typeof statement.Principal === "string"
-            ? statement.Principal
-            : (statement.Principal?.Service ?? statement.Principal?.AWS),
+        Principal: statement.Principal.Service,
         SourceArn: statement.Condition?.ArnLike?.["AWS:SourceArn"],
-        SourceAccount: statement.Condition?.StringEquals?.["AWS:SourceAccount"],
-        FunctionUrlAuthType:
-          statement.Condition?.StringEquals?.["lambda:FunctionUrlAuthType"],
-      } as LambdaPermissionSchema["ReadResult"];
+      };
     },
     delete: async (key) => {
       try {
@@ -147,11 +116,8 @@ export type LambdaPermissionInstance = InstanceType<typeof LambdaPermission>;
 type PolicyStatement = {
   Sid: string;
   Action: string;
-  Principal?: string | { Service?: string; AWS?: string };
-  Condition?: {
-    ArnLike?: Record<string, string>;
-    StringEquals?: Record<string, string>;
-  };
+  Principal: { Service: string };
+  Condition?: { ArnLike?: Record<string, string> };
 };
 
 async function findStatement(
@@ -159,10 +125,7 @@ async function findStatement(
 ): Promise<PolicyStatement | undefined> {
   try {
     const { Policy } = await lambdaClient().send(
-      new sdk.GetPolicyCommand({
-        FunctionName: key.FunctionName,
-        Qualifier: key.Qualifier,
-      }),
+      new sdk.GetPolicyCommand({ FunctionName: key.FunctionName }),
     );
     const statements: PolicyStatement[] = Policy
       ? JSON.parse(Policy).Statement
