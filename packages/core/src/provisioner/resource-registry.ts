@@ -47,11 +47,6 @@ export function stateProviderPackages(
   return [...packages].sort();
 }
 
-export type ProviderLoadFailure = Omit<
-  ProviderLoadFailedEvent,
-  "level" | "event"
->;
-
 /**
  * Core does not depend on the providers, which depend on core, so each
  * package is resolved from the project. The project usually depends on a
@@ -64,29 +59,34 @@ export type ProviderLoadFailure = Omit<
 export async function loadProviderRegistry(
   packages: string[],
   root: string = projectRoot(),
-): Promise<{ registry: ResourceRegistry; failures: ProviderLoadFailure[] }> {
-  const resolvers = projectResolvers(root);
+): Promise<{
+  registry: ResourceRegistry;
+  failures: ProviderLoadFailedEvent[];
+}> {
+  const require = createRequire(path.join(root, "package.json"));
+  const paths = [root, ...dependencyDirs(root)];
   const classes: ResourceClass<any, any, any>[] = [];
-  const failures: ProviderLoadFailure[] = [];
+  const failures: ProviderLoadFailedEvent[] = [];
+  const fail = (provider: string, errorMessage: string) =>
+    failures.push({
+      level: "warn",
+      event: "reconciler.provider.load-failed",
+      provider,
+      errorMessage,
+    });
   for (const name of packages) {
-    const entry = resolveFrom(resolvers, name);
-    if (!entry) {
-      failures.push({
-        provider: name,
-        reason: "not-resolved",
-        errorMessage: `Could not resolve ${name} from ${root} or its dependencies`,
-      });
+    let entry: string;
+    try {
+      entry = require.resolve(name, { paths });
+    } catch {
+      fail(name, `Could not resolve ${name} from ${root} or its dependencies`);
       continue;
     }
     let provider: { resourceClasses?: unknown };
     try {
       provider = await import(pathToFileURL(entry).href);
     } catch (error) {
-      failures.push({
-        provider: name,
-        reason: "import-failed",
-        errorMessage: error instanceof Error ? error.message : String(error),
-      });
+      fail(name, error instanceof Error ? error.message : String(error));
       continue;
     }
     if (Array.isArray(provider.resourceClasses)) {
@@ -96,47 +96,33 @@ export async function loadProviderRegistry(
   return { registry: createResourceRegistry(classes), failures };
 }
 
-// The project root first, then the real directory of each dependency in the
-// project's package.json. A symlink is followed, as Node follows it, so that
-// pnpm's links resolve the dependency's own dependencies.
-function projectResolvers(root: string): NodeJS.Require[] {
-  const manifestPath = path.join(root, "package.json");
-  const resolvers = [createRequire(manifestPath)];
+// The real directory of each dependency in the project's package.json. A
+// symlink is followed, as Node follows it, so that pnpm's links resolve the
+// dependency's own dependencies.
+function dependencyDirs(root: string): string[] {
   let manifest: Record<string, Record<string, string> | undefined>;
   try {
-    manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    manifest = JSON.parse(
+      fs.readFileSync(path.join(root, "package.json"), "utf8"),
+    );
   } catch {
-    return resolvers;
+    return [];
   }
   const names = Object.keys({
     ...manifest.dependencies,
     ...manifest.devDependencies,
   });
+  const dirs: string[] = [];
   for (const name of names) {
-    const dir = path.join(root, "node_modules", ...name.split("/"));
     try {
-      resolvers.push(
-        createRequire(path.join(fs.realpathSync(dir), "package.json")),
+      dirs.push(
+        fs.realpathSync(path.join(root, "node_modules", ...name.split("/"))),
       );
     } catch {
       continue;
     }
   }
-  return resolvers;
-}
-
-function resolveFrom(
-  resolvers: NodeJS.Require[],
-  name: string,
-): string | undefined {
-  for (const require of resolvers) {
-    try {
-      return require.resolve(name);
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
+  return dirs;
 }
 
 export async function loadPlanProviderRegistry(
@@ -147,7 +133,7 @@ export async function loadPlanProviderRegistry(
   const { registry, failures } = await loadProviderRegistry(
     stateProviderPackages(await state.values(), resources),
   );
-  for (const failure of failures) await emit(loadFailedEvent(failure));
+  for (const failure of failures) await emit(failure);
   return registry;
 }
 
@@ -168,18 +154,8 @@ export async function* loadStateProviderRegistry(
   for (const failure of failures) {
     yield* step.run(
       `notation:providers:${encodeURIComponent(failure.provider)}:emit`,
-      () => emit(loadFailedEvent(failure)),
+      () => emit(failure),
     );
   }
   return registry;
-}
-
-function loadFailedEvent(
-  failure: ProviderLoadFailure,
-): ProviderLoadFailedEvent {
-  return {
-    level: "warn",
-    event: "reconciler.provider.load-failed",
-    ...failure,
-  };
 }

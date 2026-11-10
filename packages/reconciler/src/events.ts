@@ -77,8 +77,7 @@ export type ProviderLoadFailedEvent = {
   level: "warn";
   event: "reconciler.provider.load-failed";
   provider: string;
-  reason: "not-resolved" | "import-failed";
-  errorMessage?: string;
+  errorMessage: string;
 };
 
 export type ReconcilerEvent =

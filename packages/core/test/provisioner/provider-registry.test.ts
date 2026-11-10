@@ -176,7 +176,7 @@ it("returns a package that it can't resolve as a failure, and skips it", async (
   expect(failures).toEqual([
     expect.objectContaining({
       provider: "@acme/missing",
-      reason: "not-resolved",
+      errorMessage: expect.stringContaining("Could not resolve @acme/missing"),
     }),
   ]);
 });
@@ -195,8 +195,9 @@ it("returns a package that throws on import as a failure, and loads the others",
   expect([...registry]).toEqual([[Queue.type, Queue]]);
   expect(failures).toEqual([
     {
+      level: "warn",
+      event: "reconciler.provider.load-failed",
       provider: "@acme/broken",
-      reason: "import-failed",
       errorMessage: "broken on import",
     },
   ]);
@@ -275,7 +276,6 @@ it("skips an orphan whose provider package is not installed, with a warning", as
     expect.objectContaining({
       event: "reconciler.provider.load-failed",
       provider: "@acme/uninstalled",
-      reason: "not-resolved",
     }),
   );
   expect(events).toContainEqual(
