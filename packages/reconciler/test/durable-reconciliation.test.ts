@@ -2158,7 +2158,7 @@ describe("replacement with dependents", () => {
     runtime.close();
   });
 
-  it("replaces a resource whose type no known class lists when a dependent has no registered class, and warns about the dependent in the sweep", async () => {
+  it("replaces a resource when a dependent has no registered class, and warns about the dependent in the sweep", async () => {
     const world = defineWorld();
     const declareFn = (fnName: string, withMapping: boolean) => {
       const bus = new world.Bus("bus", { config: { name: "orders" } as any });
@@ -2200,7 +2200,7 @@ describe("replacement with dependents", () => {
     runtime.close();
   });
 
-  it("fails at the provider and keeps state when no known class lists the type of a replaced bus with an orphan rule", async () => {
+  it("fails at the provider and keeps state when a replaced bus has an orphan rule with no registered class", async () => {
     const world = defineWorld();
     const resources = declare(world, "orders");
     const runtime = createRuntime(resources, "replace-unlisted-bus");
@@ -2210,7 +2210,7 @@ describe("replacement with dependents", () => {
     };
 
     await runtime.run("deploy-1");
-    // No resource in code is a rule, so no known class lists the bus type,
+    // No resource in code is a rule, so the rule has no registered class,
     // and deploy deletes the bus without deleting the rule first.
     resources.splice(0, resources.length, ...busAndFn());
     world.calls.length = 0;
