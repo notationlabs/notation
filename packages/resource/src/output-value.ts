@@ -142,8 +142,7 @@ export const planLookup: OutputLookup = (token) => {
   const [field] = token.path;
   if (
     field !== undefined &&
-    !(field in output) &&
-    token.resource.schema[field]?.presence === "required"
+    lacksRequiredOutput(token.resource, output, field)
   ) {
     return { known: false };
   }
@@ -194,9 +193,11 @@ export class PendingOutput extends Error {
 /**
  * Gives views of dependencies for code that runs at plan. A view of a
  * dependency with no output throws `PendingOutput` when its output is read.
- * So does a read of a required output that the dependency's output lacks, as
- * `planLookup` treats it as unknown. `readPending` is set by such a read, so a
- * plan still knows of it when the code catches the error.
+ * When the dependency's output lacks a required output, which `planLookup`
+ * treats as unknown, the view throws when code reads that output, tests for
+ * it with `in`, or lists the output's keys, as a spread or `Object.keys` does.
+ * `readPending` is set by such a read, so a plan still knows of it when the
+ * code catches the error.
  */
 export function createPlanViews() {
   const views = {
@@ -220,13 +221,15 @@ export function createPlanViews() {
     if (output == null) {
       return Object.create(dep, { output: { get: () => pending(dep) } });
     }
-    const missing = missingRequiredOutputs(dep, output);
-    if (missing.length === 0) return dep;
+    const lacks = (key: string | symbol) =>
+      typeof key === "string" && lacksRequiredOutput(dep, output, key);
+    if (!Object.keys(dep.schema).some(lacks)) return dep;
     const partial = new Proxy(output, {
       get: (target, key, receiver) =>
-        typeof key === "string" && missing.includes(key)
-          ? pending(dep)
-          : Reflect.get(target, key, receiver),
+        lacks(key) ? pending(dep) : Reflect.get(target, key, receiver),
+      has: (target, key) => (lacks(key) ? pending(dep) : key in target),
+      // The listed keys would leave out the missing output.
+      ownKeys: () => pending(dep),
     });
     return Object.create(dep, { output: { value: partial } });
   };
@@ -234,13 +237,16 @@ export function createPlanViews() {
   return views;
 }
 
-function missingRequiredOutputs(
-  dep: BaseResource,
+/**
+ * Whether `output` lacks `key`, which the resource's schema requires. A
+ * record written before the schema gained the output lacks it.
+ */
+function lacksRequiredOutput(
+  resource: BaseResource,
   output: Record<string, unknown>,
-): string[] {
-  return Object.entries(dep.schema)
-    .filter(([key, item]) => item.presence === "required" && !(key in output))
-    .map(([key]) => key);
+  key: string,
+): boolean {
+  return resource.schema[key]?.presence === "required" && !(key in output);
 }
 
 export type PlanViews = ReturnType<typeof createPlanViews>;

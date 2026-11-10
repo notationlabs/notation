@@ -174,6 +174,37 @@ describe("resource dependencies", () => {
       $unknown: "after-apply",
     });
   });
+
+  it.each([
+    ["spreads", (output: any) => ({ ...output }).volatileComputed],
+    ["tests with in", (output: any) => ("volatileComputed" in output ? 1 : 0)],
+  ])(
+    "plans params as unknown when deriveParams %s an output that lacks a required output",
+    async (_how, read) => {
+      const TestResourceWithDeps = TestResource.requireDependencies<{
+        dep1: InstanceType<typeof TestResource>;
+      }>().deriveParams(({ deps }) => ({
+        requiredParam: read(deps.dep1.output),
+        intrinsicParam: true,
+      }));
+
+      const dependency = new TestResource("dep", {
+        config: testResourceConfig,
+      });
+      const { volatileComputed: _, ...oldOutput } = testResourceOutput;
+      dependency.setOutput(oldOutput as typeof testResourceOutput);
+
+      const { requiredParam: __, ...config } = testResourceConfig;
+      const dependent = new TestResourceWithDeps("dependent", {
+        config,
+        dependencies: { dep1: dependency },
+      });
+
+      expect((await dependent.planParams()).requiredParam).toEqual({
+        $unknown: "after-apply",
+      });
+    },
+  );
 });
 
 describe("resource operation signals", () => {
