@@ -12,8 +12,7 @@ import { lambda, sqs } from "@notation/aws/resources";
 import { fs } from "@notation/std/resources";
 ```
 
-- A provider is a package or a package subpath, such as `@notation/aws/resources`. Its entry must export only resource classes, or namespaces whose values are all resource classes. Plan, deploy and destroy skip a provider that exports any other value, with a `reconciler.provider.load-failed` warning that names the value.
-- A provider name can't contain `\` or `%`, as in Node's package names.
+- A provider is a package or a package subpath, such as `@notation/aws/resources`. Deploy and destroy register each resource class among the entry's exports and among the values of each exported namespace.
+- A provider name can contain only letters, digits, `_`, `.`, `~` and `-`, with `@` before a scope and `/` between segments. A segment can't start with a dot.
 - `resourceClasses` is removed from both packages, and `resourceClassesIn` is removed from `@notation/resource`.
 - `AwsResourceGroup` is exported from `@notation/aws/shared`.
-- `apiGateway.routeSchema`, `lambda.LAMBDA_ENVIRONMENT_MAX_BYTES`, `fs.fileSchema` and `fs.zipSchema` are no longer exported, because a provider entry can export only resource classes.

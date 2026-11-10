@@ -427,7 +427,7 @@ async function readCode(filePath: string, expectedSha256: string) {
  * Lambda's limit on a function's environment variables. Lambda measures the
  * variables as one JSON object.
  */
-const LAMBDA_ENVIRONMENT_MAX_BYTES = 4096;
+export const LAMBDA_ENVIRONMENT_MAX_BYTES = 4096;
 
 function encodeEnvironment(
   functionName: string,

@@ -15,7 +15,7 @@ const fileResource = resource<FileSchema>({
   provider: "@notation/std/resources",
 });
 
-const fileSchema = fileResource.defineSchema({
+export const fileSchema = fileResource.defineSchema({
   filePath: {
     propertyType: "param",
     presence: "required",

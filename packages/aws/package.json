@@ -11,7 +11,6 @@
     },
     "./resources": {
       "types": "./dist/resources/index.d.ts",
-      "import": "./dist/resources/index.js",
       "default": "./dist/resources/index.js"
     },
     "./*": {

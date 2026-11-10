@@ -26,7 +26,7 @@ const zipResource = resource<ZipSchema>({
   provider: "@notation/std/resources",
 });
 
-const zipSchema = zipResource.defineSchema({
+export const zipSchema = zipResource.defineSchema({
   sourceFilePath: {
     propertyType: "param",
     presence: "required",

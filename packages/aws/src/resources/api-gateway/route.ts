@@ -26,7 +26,7 @@ const route = resource<RouteSdkSchema>({
   provider: "@notation/aws/resources",
 });
 
-const routeSchema = route.defineSchema({
+export const routeSchema = route.defineSchema({
   RouteId: {
     propertyType: "computed",
     presence: "required",

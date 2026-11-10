@@ -2,15 +2,12 @@ import { expect, it } from "vitest";
 import { isResourceClass } from "@notation/resource";
 import * as aws from "src/resources";
 
-it("exports only namespaces of resource classes that name this subpath as their provider", () => {
-  const exported = Object.values(aws).flatMap((namespace) =>
-    Object.values(namespace),
-  );
-  expect(exported.length).toBeGreaterThan(0);
-  for (const Resource of exported) {
-    expect(isResourceClass(Resource)).toBe(true);
-    expect((Resource as { provider: string }).provider).toBe(
-      "@notation/aws/resources",
-    );
+it("exports resource classes that name this subpath as their provider", () => {
+  const classes = Object.values(aws)
+    .flatMap((namespace) => Object.values(namespace))
+    .filter(isResourceClass);
+  expect(classes.length).toBeGreaterThan(0);
+  for (const Resource of classes) {
+    expect(Resource.provider).toBe("@notation/aws/resources");
   }
 });
