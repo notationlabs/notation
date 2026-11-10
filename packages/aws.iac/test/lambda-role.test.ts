@@ -55,6 +55,7 @@ async function planUnchangedRole(config: DurableObject) {
         version: 1,
         id: "role",
         type: LambdaIamRole.type,
+        provider: "test",
         config,
         params: JSON.parse(JSON.stringify(params)),
         output: JSON.parse(JSON.stringify(params)),

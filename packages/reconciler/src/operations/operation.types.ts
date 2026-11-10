@@ -46,6 +46,7 @@ export type PersistedResourceState = Pick<
   StateNode,
   | "id"
   | "type"
+  | "provider"
   | "config"
   | "params"
   | "output"

@@ -33,6 +33,35 @@ export function createResourceRegistryFromResources(
   return registry;
 }
 
+/**
+ * Combines registries into one. Where two have a class for the same type,
+ * the later one's class is kept.
+ */
+export function mergeResourceRegistries(
+  ...registries: (ResourceRegistry | undefined)[]
+): ResourceRegistry {
+  const merged: ResourceRegistry = new Map();
+  for (const registry of registries) {
+    for (const [type, Resource] of registry ?? []) merged.set(type, Resource);
+  }
+  return merged;
+}
+
+/**
+ * The classes that a workflow can find a record's class in: those that the
+ * caller registers, and the classes of the resources in code. A class in code
+ * is kept over a registered class of the same type.
+ */
+export function workflowRegistry(opts: {
+  resources: BaseResource[];
+  registry?: ResourceRegistry;
+}): ResourceRegistry {
+  return mergeResourceRegistries(
+    opts.registry,
+    createResourceRegistryFromResources(opts.resources),
+  );
+}
+
 export function resolveResourceClass(
   registry: ResourceRegistry,
   type: ResourceType,

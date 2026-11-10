@@ -11,7 +11,10 @@ import {
 } from "./resource.doubles";
 
 describe("resource basics", () => {
-  const TestResource = resource({ type: "provider/service/resource" })
+  const TestResource = resource({
+    type: "provider/service/resource",
+    provider: "test",
+  })
     .defineSchema({})
     .defineOperations({} as any);
 
@@ -25,6 +28,7 @@ describe("resource basics", () => {
   test("blocksDeleteOf", () => {
     const Child = resource({
       type: "provider/service/child",
+      provider: "test",
       blocksDeleteOf: ["provider/service/parent"],
     })
       .defineSchema({})

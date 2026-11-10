@@ -1,9 +1,9 @@
 import * as v from "valibot";
 import {
-  resource,
   ResourceNotFoundError,
   ResourceOperationPendingError,
 } from "@notation/resource";
+import { resource } from "src/resource";
 import * as sdk from "@aws-sdk/client-lambda";
 import { lambdaClient } from "src/utils/aws-clients";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";

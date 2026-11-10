@@ -5,6 +5,7 @@ import {
   ValueValidationError,
 } from "@notation/resource";
 import { VersionConflict } from "@notation/state";
+import { ResourceTypeChangedError } from "../resource-type";
 import { registerErrorClass } from "./sdk";
 
 // @notation/durable rebuilds a recorded error from the class registered under its
@@ -17,3 +18,4 @@ registerErrorClass(
 registerErrorClass("ResourceNotFoundError", ResourceNotFoundError);
 registerErrorClass("ValueValidationError", ValueValidationError);
 registerErrorClass("SchemaStructureError", SchemaStructureError);
+registerErrorClass("ResourceTypeChangedError", ResourceTypeChangedError);

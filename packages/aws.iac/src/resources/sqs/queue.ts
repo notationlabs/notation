@@ -1,9 +1,9 @@
 import * as v from "valibot";
 import {
-  resource,
   ResourceNotFoundError,
   ResourceOperationPendingError,
 } from "@notation/resource";
+import { resource } from "src/resource";
 import * as sdk from "@aws-sdk/client-sqs";
 import { sqsClient } from "src/utils/aws-clients";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
@@ -62,9 +62,7 @@ type QueueParams = QueueAttributeParams & {
 
 // SQS returns the FIFO attributes only for a FIFO queue.
 type OptionalReadAttributes =
-  | "ContentBasedDeduplication"
-  | "DeduplicationScope"
-  | "FifoThroughputLimit";
+  "ContentBasedDeduplication" | "DeduplicationScope" | "FifoThroughputLimit";
 
 export type QueueSchema = AwsSchema<{
   Key: { QueueUrl: string };

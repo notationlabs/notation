@@ -7,3 +7,4 @@ export * from "./planner";
 export * from "./step-runner";
 export * from "./logger-subscriber";
 export * from "./protocol";
+export * from "./resource-type";

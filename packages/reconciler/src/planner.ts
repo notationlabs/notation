@@ -5,7 +5,7 @@ import {
   buildResourceDepthLevels,
   collectDependents,
 } from "./dependency-graph";
-import { cascadeRegistry, createBlocksDelete } from "./delete-cascade";
+import { createBlocksDelete } from "./delete-cascade";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
 import {
@@ -15,7 +15,8 @@ import {
   type Plan,
   type PlanNode,
 } from "./plan";
-import type { ResourceRegistry } from "./resource-registry";
+import { workflowRegistry, type ResourceRegistry } from "./resource-registry";
+import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
 
 export type CreatePlanOptions = {
@@ -52,7 +53,7 @@ export async function createPlan({
   );
   const blocksDelete = createBlocksDelete(
     stateNodes,
-    cascadeRegistry({ resources, registry }),
+    workflowRegistry({ resources, registry }),
   );
   // The resources that deploy deletes before a replaced resource, by ID, with
   // the ID of the replaced resource.
@@ -133,8 +134,9 @@ export async function createPlan({
 
 /**
  * Loads the resource's outputs from state, then returns and checks the
- * params that plan knows. Outputs in state stand in for the outputs of
- * dependencies, so the dependencies must be loaded first.
+ * params that plan knows. A state record of another type fails. Outputs in
+ * state stand in for the outputs of dependencies, so the dependencies must be
+ * loaded first.
  */
 export async function planKnownParams(
   resource: BaseResource,
@@ -145,6 +147,7 @@ export async function planKnownParams(
   params: Record<string, unknown>;
 }> {
   const stateNode = await state.get(resource.id);
+  assertSameType(resource, stateNode);
   if (stateNode) resource.setOutput(stateNode.output);
   const params = await resource.planParams();
   await validateParams(resource, params, point);

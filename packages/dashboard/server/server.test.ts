@@ -9,6 +9,7 @@ describe("dashboard state", () => {
         version: 1,
         id: "service",
         type: "test/service/main",
+        provider: "test",
         config: {},
         params: {},
         output: { ready: true },

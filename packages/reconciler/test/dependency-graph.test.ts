@@ -75,7 +75,7 @@ describe("buildDepthLevels", () => {
 
 describe("buildResourceDepthLevels", () => {
   it("throws on a cycle", () => {
-    const Node = resource({ type: "test/graph/node" })
+    const Node = resource({ type: "test/graph/node", provider: "test" })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
@@ -93,7 +93,7 @@ describe("buildResourceDepthLevels", () => {
 });
 
 describe("assertDependenciesPresent", () => {
-  const Node = resource({ type: "test/graph/node" })
+  const Node = resource({ type: "test/graph/node", provider: "test" })
     .defineSchema({})
     .defineOperations({
       create: async () => undefined,

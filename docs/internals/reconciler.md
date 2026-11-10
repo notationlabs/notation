@@ -16,6 +16,7 @@ The reconciler expresses deployment and destruction as `@notation/durable` async
 | In state, provider state differs from stored state                                       | **drift-update**   |
 | In state, provider state differs in an immutable or key param                            | **drift-replace**  |
 | In state, not in graph                                                                   | **delete-orphan**  |
+| In state with another type                                                               | plan fails         |
 
 The change decision comes from the resource schema, through `diffParams` in `@notation/resource`. It compares comparable params (`param` items that are not `volatile` or `hidden`) field by field. A changed field forces replacement when its schema item is `immutable`, `primaryKey` or `secondaryKey`, or when the resource has no `update` operation. A change anywhere inside such a field replaces the whole resource.
 
@@ -26,6 +27,8 @@ Replacement deletes the resource and then creates it again, because a resource u
 The dependents of a replaced resource stay in place. When deploy reaches each of them, it decides again with the outputs of the new resource. A dependent whose params change is updated, or replaced if a changed param forces replacement. For example, replacing a Lambda role updates the function's `Role`, and does not delete the function or its log group. A dependent whose type blocks the delete of the replaced resource is deleted first instead. See [Dependents of a replaced resource](#dependents-of-a-replaced-resource).
 
 An unknown immutable or key param plans **replace** with the field marked "unknown, may force replacement". The planner treats a replaced resource's output as unknown, so its dependents plan against unknown params, and can show **replace** in turn. Deploy decides again for each resource once its dependencies have converged, with real params, so it replaces only what really changed. [Unknown values](#unknown-values) explains when plan marks a param unknown.
+
+A resource can't change type under the same ID, as its class would read, update or delete the resource of another class. When a state record's type differs from the type of the resource with its ID, plan, deploy and destroy throw `ResourceTypeChangedError` before any change. A provider that changes the type of a resource gives it a new ID instead. The new resource is then created in the dependency walk, and the old record is deleted in the orphan sweep after the walk, so the new resource exists before the old one is deleted. The old type's class must stay registered for the sweep to delete it.
 
 ### Dependents of a replaced resource
 
@@ -54,9 +57,11 @@ Step 1 lists the state records when the replacement starts. A resource that depl
 
 Each resource is checked with the class of the type in its state record. Deploy finds the class among the classes of the resources in code and the classes in the registry, so state holds nothing extra for this. An orphan that blocks the delete is deleted in step 1, before the sweep. This is so even when an orphan with no registered class depends on it, which the sweep would keep. If the provider refuses that delete, the deploy fails.
 
-An orphan whose type has no registered class is treated as not blocking the delete. When no registry is passed, as on the CLI, only the classes of the resources in code are found. Suppose the deploy that renames a bus also removes the last EventBridge rule in code. The old rule has no registered class, so deploy deletes the bus without deleting the rule first, and AWS refuses the delete. Deploy may already have deleted other dependents in step 1. The next deploy creates them again, and fails at the bus in the same way.
+An orphan whose type has no registered class is treated as not blocking the delete.
 
-To avoid this, deploy the replacement before you remove the last resource of that type. For a bus, rename the bus while a rule is still declared, then remove the rule. Deploying the removal first does not help. The sweep skips the orphan because its type has no registered class, and keeps its record. [Issue #77](https://github.com/notationlabs/notation/issues/77) proposes recording provider packages in state and merging their registries, which will remove this limit.
+On the CLI, plan and deploy register the classes of the provider packages that state names (see [Dependency edges](#dependency-edges)), so an orphan's type has no registered class only when its package is not installed or no longer exports the class. For example, if the deploy that renames a bus also removes the last EventBridge rule in code, the rule's class still comes from `@notation/aws.iac`, and deploy deletes the old rule before the bus.
+
+When an orphan's class can't be loaded, deploy deletes the resource it depends on without deleting the orphan first, and the provider refuses the delete. Deploy may already have deleted other dependents in step 1. The next deploy creates them again, and fails in the same way. To fix this, install the provider package again, or declare a resource of the orphan's type again.
 
 Some cases:
 
@@ -129,6 +134,8 @@ The sweep deletes orphans in reverse order of these edges, as deploy and destroy
 
 Orphans that form a cycle cannot be ordered. They, and the orphans that depend on them, are deleted first, in storage order, so a provider that refuses one of the deletes fails the deploy. An orphan in this group with no registered class does not keep the orphans it depends on in the group, as the sweep can delete them before it reaches the orphan.
 
+The sweep looks up an orphan's class by its type in the caller's `registry`, merged with the classes of the resources in the graph. Each state record stores the provider package of its resource in `provider`, which the resource class declares with `resource({ type, provider })`. `deployApp` and `destroyApp` in `@notation/core` collect the provider packages that state names, in a `notation:providers` step, and pass the `resourceClasses` that each package exports. Only the records whose type has no class in the graph count, as the graph's classes cover the others. Each package is resolved with `createRequire` from the project root, and then imported. A project usually depends on a provider such as `@notation/aws` and not on its provider package `@notation/aws.iac`, and pnpm does not link such a transitive package into the project's `node_modules`. So a package that the root can't resolve is resolved from the real directory of each dependency in the project's `package.json`, as Node resolves it when that dependency imports it. A package that exports no `resourceClasses` is skipped. A package that can't be resolved or that throws on import is skipped, and a `reconciler.provider.load-failed` warning names it. Deploy and destroy emit the warning in a step under `notation:providers:<package>`, so a resumed execution does not emit it again. The sweep's `reconciler.orphan-deletion.skipped` warning still names each record that is left in place. Core does not list the provider packages, so a provider from outside this repository works the same way. `planApp` loads the same packages without a step, so plan finds the same blocking dependents as deploy. Without these classes, a record whose type no longer appears in the graph could not be deleted.
+
 When an orphan's type has no registered class, the sweep keeps the orphan and every orphan it depends on, directly or through another orphan. In destroy, it also keeps every resource in the desired set that the orphan depends on, directly or through another kept resource, and destroy does not delete those resources. The `reconciler.orphan-deletion.skipped` warning names the kept resources in `keptDependencies`. Each orphan with no registered class emits its own warning, including an orphan that another skipped orphan already keeps.
 
 Dry-run deploy performs decisions and emits lifecycle events without provider mutations or state mutations. When drift detection is enabled, it can still call provider read operations to decide whether a nominal noop has drifted.
@@ -164,5 +171,6 @@ The durable workflows emit these events:
 | `reconciler.operation.lifecycle`     | When an operation starts, finishes, skips, or fails                           |
 | `reconciler.hold.waiting`            | When another execution holds the deployment                                   |
 | `reconciler.orphan-deletion.skipped` | When no registered class can delete an orphan; names the orphans kept with it |
+| `reconciler.provider.load-failed`    | When a provider package that state names can't be resolved or imported        |
 
 Lifecycle events cover create, read, update, and delete with `start`, `success`, `error`, `skip`, or `dry-run` status. The delete of a dependent that blocks the delete of a replaced resource has `reason: "dependency-replaced"`, and names the replaced resource in `replacedDependency`.

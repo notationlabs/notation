@@ -14,12 +14,10 @@ import {
 } from "@notation/resource";
 import { VersionConflict, type StateNode } from "@notation/state";
 import { buildDepthLevels, collectDependents } from "../dependency-graph";
-import { cascadeRegistry, createBlocksDelete } from "../delete-cascade";
+import { createBlocksDelete } from "../delete-cascade";
 import type { OperationLifecycleEvent } from "../events";
-import {
-  createResourceRegistryFromResources,
-  resolveResourceClass,
-} from "../resource-registry";
+import { resolveResourceClass, workflowRegistry } from "../resource-registry";
+import { assertSameType } from "../resource-type";
 import {
   applyDriftDetection,
   createResourceOperation,
@@ -74,6 +72,7 @@ export async function* reconcileResource(
 
   const emit = durableEmitter(step, opts.emit);
   const session = yield* openStateSession(step, opts, resource);
+  assertSameType(resource, session.node);
   if (session.node) resource.setOutput(session.node.output);
 
   let action = decideAction({ resource, stateNode: session.node, params });
@@ -295,7 +294,7 @@ async function* deleteBlockingDependents(
   opts: DurableDeployOptions,
   resource: BaseResource,
 ): AsyncGenerator<any, void, any> {
-  const registry = cascadeRegistry(opts);
+  const registry = workflowRegistry(opts);
   // Skips listing state, which copies every record into the journal.
   const blockable = [...registry.values()].some((Class) =>
     Class.blocksDeleteOf.includes(resource.type),
@@ -334,6 +333,8 @@ async function* deleteBlockingDependents(
  * — or has already been deleted — and is skipped, which is also what makes
  * the sweep of a partly-deleted deployment idempotent. `step` must already be
  * scoped to the resource.
+ * A record of another type than the resource fails the delete, as plan and
+ * deploy fail on it.
  */
 export async function* deleteResource(
   step: DurableStepRunner,
@@ -344,6 +345,7 @@ export async function* deleteResource(
 ): AsyncGenerator<any, void, any> {
   const session = yield* openStateSession(step, opts, resource);
   if (!session.node) return;
+  assertSameType(resource, session.node);
   resource.setOutput(session.node.output);
 
   const emit = durableEmitter(step, opts.emit);
@@ -378,8 +380,7 @@ export async function* sweepOrphans(
     opts.resources.map((resource) => [resource.id, resource]),
   );
   const persisted = yield* scope.run("list", () => opts.state.values());
-  const registry =
-    opts.registry ?? createResourceRegistryFromResources(opts.resources);
+  const registry = workflowRegistry(opts);
 
   const orphans = persisted.filter((node) => !resourceById.has(node.id));
   const edgesById = new Map(

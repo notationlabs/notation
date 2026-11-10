@@ -5,7 +5,10 @@ import {
   resolveResourceClass,
 } from "src/provisioner/resource-registry";
 
-const TestResource = resource({ type: "test/service/resource" })
+const TestResource = resource({
+  type: "test/service/resource",
+  provider: "test",
+})
   .defineSchema({})
   .defineOperations({
     create: async () => undefined,

@@ -25,7 +25,10 @@ describe("NodeDurableRuntime", () => {
       databasePath: path.join(directory, "workflows.db"),
     });
     let attempts = 0;
-    const PendingResource = resource({ type: "test/runtime/pending" })
+    const PendingResource = resource({
+      type: "test/runtime/pending",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => {
@@ -68,7 +71,10 @@ describe("NodeDurableRuntime", () => {
     const directory = await mkdtemp(path.join(tmpdir(), "notation-resume-"));
     const databasePath = path.join(directory, "workflows.db");
     let creates = 0;
-    const TestResource = resource({ type: "test/runtime/resume" })
+    const TestResource = resource({
+      type: "test/runtime/resume",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => {
