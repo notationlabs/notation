@@ -394,6 +394,33 @@ describe("createPlan", () => {
       expect(plan.nodes[2]).not.toHaveProperty("diff");
     });
 
+    it("by the edges in code, for a dependent whose record has no edges", async () => {
+      const { dependsOn: _, ...ruleRecord } = record(
+        "rule",
+        Rule.type,
+        { name: "rule", parent: "orders" },
+        [],
+      );
+      const state = new MemoryStateBackend({
+        bus: record("bus", Bus.type, { name: "orders" }, []),
+        rule: ruleRecord,
+      });
+      const bus = new Bus("bus", { config: { name: "shop" } as any });
+      const rule = child(Rule, "rule", bus);
+
+      const plan = await createPlan({
+        resources: [bus, rule],
+        state,
+        driftDetection: false,
+      });
+
+      expect(plan.nodes[1]).toMatchObject({
+        id: "rule",
+        decision: "replace",
+        replacedDependency: "bus",
+      });
+    });
+
     it("by the edges in state, for a dependent that moves to another resource", async () => {
       const state = new MemoryStateBackend({
         orders: record("orders", Bus.type, { name: "orders" }, []),

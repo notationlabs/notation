@@ -953,6 +953,27 @@ describe("orphan deletion", () => {
   });
 });
 
+// Rewrites a record as an earlier version wrote it, with no edges. Written
+// to SQLite directly, as the store client would validate it against the
+// current schema.
+function removeEdges(runtime: ReturnType<typeof createRuntime>, id: string) {
+  const where = {
+    $storeName: durable.resourceStateStore.name,
+    $storeId: runtime.state.storeId(id),
+  };
+  const row = runtime.database
+    .query(
+      "SELECT state FROM stores WHERE store_name = $storeName AND store_id = $storeId",
+    )
+    .get(where) as { state: string };
+  const { dependsOn: _, ...record } = JSON.parse(row.state);
+  runtime.database
+    .query(
+      "UPDATE stores SET state = $state WHERE store_name = $storeName AND store_id = $storeId",
+    )
+    .run({ ...where, $state: JSON.stringify(record) });
+}
+
 describe("dependency edges in state", () => {
   function defineRecorded(type: string, deleted: string[]) {
     return resource({ type: type as ResourceType })
@@ -961,27 +982,6 @@ describe("dependency edges in state", () => {
         create: async () => undefined,
         delete: async () => void deleted.push(type),
       });
-  }
-
-  // Rewrites a record as an earlier version wrote it, with no edges. Written
-  // to SQLite directly, as the store client would validate it against the
-  // current schema.
-  function removeEdges(runtime: ReturnType<typeof createRuntime>, id: string) {
-    const where = {
-      $storeName: durable.resourceStateStore.name,
-      $storeId: runtime.state.storeId(id),
-    };
-    const row = runtime.database
-      .query(
-        "SELECT state FROM stores WHERE store_name = $storeName AND store_id = $storeId",
-      )
-      .get(where) as { state: string };
-    const { dependsOn: _, ...record } = JSON.parse(row.state);
-    runtime.database
-      .query(
-        "UPDATE stores SET state = $state WHERE store_name = $storeName AND store_id = $storeId",
-      )
-      .run({ ...where, $state: JSON.stringify(record) });
   }
 
   it("records each resource's dependencies, sorted", async () => {
@@ -2005,6 +2005,27 @@ describe("replacement with dependents", () => {
         replacedDependency: "bus",
       }),
       expect.not.objectContaining({ reason: expect.anything() }),
+    ]);
+    runtime.close();
+  });
+
+  it("deletes a dependent whose record has no edges, by the edges in code", async () => {
+    const world = defineWorld();
+    const resources = declare(world, "orders");
+    const runtime = createRuntime(resources, "replace-dependents-no-edges");
+
+    await runtime.run("deploy-1");
+    removeEdges(runtime, "rule");
+    resources.splice(0, resources.length, ...declare(world, "shop"));
+    world.calls.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(world.calls).toEqual([
+      "delete:rule",
+      "delete:orders",
+      "create:shop",
+      "create:rule",
+      "update:fn",
     ]);
     runtime.close();
   });
