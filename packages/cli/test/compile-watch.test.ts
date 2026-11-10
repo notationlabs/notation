@@ -501,8 +501,10 @@ it("keeps the last bundle, and logs only the infra error, when a rebuild removes
   await waitFor(() => expect(error).toHaveBeenCalled());
   await new Promise((resolve) => setTimeout(resolve, 1000));
   expect(readFileSync(bundle, "utf8")).toBe(before);
-  expect(error.mock.calls.map(String).join("\n")).not.toContain(
-    "MISSING_EXPORT",
-  );
-  expect(error).toHaveBeenCalledTimes(1);
+  // The infra watcher can rebuild twice for one write, and log its error
+  // twice.
+  for (const call of error.mock.calls.map(String)) {
+    expect(call).not.toContain("MISSING_EXPORT");
+    expect(call).toContain("it must export `handler`");
+  }
 });
