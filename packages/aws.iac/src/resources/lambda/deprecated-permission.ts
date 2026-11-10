@@ -1,8 +1,7 @@
 import * as v from "valibot";
-import * as sdk from "@aws-sdk/client-lambda";
 import { type ResourceType } from "@notation/resource";
 import { resource } from "src/resource";
-import { lambdaClient } from "src/utils/aws-clients";
+import { removeStatement } from "./lambda-permission";
 import { AwsSchema } from "src/utils/types";
 
 type DeprecatedPermissionKey = { FunctionName: string; StatementId: string };
@@ -42,12 +41,6 @@ export function deprecatedPermission(type: ResourceType) {
           `${type} can no longer be created. Use lambda.LambdaPermission.`,
         );
       },
-      delete: async (key) => {
-        try {
-          await lambdaClient().send(new sdk.RemovePermissionCommand(key));
-        } catch (error) {
-          if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
-        }
-      },
+      delete: removeStatement,
     });
 }

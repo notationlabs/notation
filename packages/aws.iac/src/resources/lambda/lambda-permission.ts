@@ -16,7 +16,11 @@ type LambdaPermissionKey = {
 type LambdaPermissionParams = LambdaPermissionKey & {
   /** The action the principal may take, such as `lambda:InvokeFunction`. */
   Action: string;
-  /** The service that may invoke the function, such as `events.amazonaws.com`. */
+  /**
+   * The service that may invoke the function, such as `events.amazonaws.com`.
+   * AddPermission also takes an account ID or `*`, but `LambdaPermission`
+   * only takes a service, as `read` finds the principal under `Service`.
+   */
   Principal: string;
   /**
    * The ARN of the resource that may invoke the function. Without it, a
@@ -60,7 +64,13 @@ const lambdaPermissionSchema = lambdaPermission.defineSchema({
   Principal: {
     propertyType: "param",
     presence: "required",
-    value: v.string(),
+    value: v.pipe(
+      v.string(),
+      v.regex(
+        /^[a-z0-9-]+(\.[a-z0-9-]+)+$/,
+        "Principal must be a service, such as events.amazonaws.com",
+      ),
+    ),
   },
   SourceArn: {
     propertyType: "param",
@@ -71,7 +81,8 @@ const lambdaPermissionSchema = lambdaPermission.defineSchema({
 
 /**
  * A statement in a Lambda function's resource policy, which lets a service
- * invoke the function. Its params follow Lambda's AddPermission.
+ * invoke the function. Its params follow Lambda's AddPermission, with a
+ * service as the only kind of principal.
  * The `StatementId` is made from the resource ID, so it is unique among the
  * function's statements while resource IDs are unique.
  */
@@ -97,13 +108,7 @@ export const LambdaPermission = lambdaPermissionSchema
         SourceArn: statement.Condition?.ArnLike?.["AWS:SourceArn"],
       };
     },
-    delete: async (key) => {
-      try {
-        await lambdaClient().send(new sdk.RemovePermissionCommand(key));
-      } catch (error) {
-        if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
-      }
-    },
+    delete: removeStatement,
   })
   .requireDependencies<LambdaPermissionDependencies>()
   .deriveParams(({ id, deps }) => ({
@@ -135,5 +140,14 @@ async function findStatement(
     // Lambda reports a function with no policy as not found, too.
     if (error instanceof sdk.ResourceNotFoundException) return undefined;
     throw error;
+  }
+}
+
+/** Removes a statement, and succeeds when it is already gone. */
+export async function removeStatement(key: LambdaPermissionKey) {
+  try {
+    await lambdaClient().send(new sdk.RemovePermissionCommand(key));
+  } catch (error) {
+    if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
   }
 }
