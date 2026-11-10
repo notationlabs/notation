@@ -191,7 +191,7 @@ it("deploy creates a group's new permission before it deletes the old one as an 
 
   expect(calls).toEqual([
     "add events-app--prod--daily",
-    "add eventbridge-invoke-permission_daily",
+    "add eventbridge-invoke-permission_daily-a61d7216fe5e",
     "remove events-app--prod--daily",
   ]);
   expect((await runtime.state.values()).map((node) => node.id).sort()).toEqual([

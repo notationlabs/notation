@@ -66,7 +66,7 @@ test("a route's permission lets the api invoke the lambda", async () => {
 
   expect(await permission.getParams()).toEqual({
     FunctionName: "orders",
-    StatementId: "api-invoke-permission_todo-api_handler",
+    StatementId: "api-invoke-permission_todo-api_handler-40c21f09a9eb",
     Action: "lambda:InvokeFunction",
     Principal: "apigateway.amazonaws.com",
     SourceArn: "arn:api/*/*",

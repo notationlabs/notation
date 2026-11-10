@@ -45,12 +45,12 @@ test("each schedule on a lambda gets its own invoke permission", async () => {
     await Promise.all(permissions.map((p) => p.getParams())),
   ).toMatchObject([
     {
-      StatementId: "eventbridge-invoke-permission_daily",
+      StatementId: "eventbridge-invoke-permission_daily-a61d7216fe5e",
       Principal: "events.amazonaws.com",
       SourceArn: "arn:daily",
     },
     {
-      StatementId: "eventbridge-invoke-permission_hourly",
+      StatementId: "eventbridge-invoke-permission_hourly-a685021371c9",
       Principal: "events.amazonaws.com",
       SourceArn: "arn:hourly",
     },

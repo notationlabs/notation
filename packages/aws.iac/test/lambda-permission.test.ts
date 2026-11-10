@@ -50,7 +50,7 @@ describe("LambdaPermission", () => {
     expect(await permission().getParams()).toEqual({
       FunctionName: "app--prod--orders",
       Action: "lambda:InvokeFunction",
-      StatementId: "eventbridge-invoke-permission_daily",
+      StatementId: "eventbridge-invoke-permission_daily-a61d7216fe5e",
       Principal: "events.amazonaws.com",
       SourceArn: "arn:aws:events:us-west-2:123456789012:rule/daily",
     });
@@ -174,10 +174,19 @@ describe("LambdaPermission", () => {
 });
 
 describe("statementId", () => {
-  it("replaces characters that Lambda doesn't allow", () => {
+  it("keeps an ID that Lambda accepts", () => {
+    expect(statementId("api-permission_todos")).toBe("api-permission_todos");
+  });
+
+  it("replaces characters that Lambda doesn't allow, and ends the ID with a hash", () => {
     expect(statementId("api-permission:todo-api:todos")).toBe(
-      "api-permission_todo-api_todos",
+      "api-permission_todo-api_todos-54afaaeaf3ac",
     );
+  });
+
+  it("gives different IDs to two IDs that differ only in a replaced character", () => {
+    expect(statementId("p:a.b")).not.toBe(statementId("p:a_b"));
+    expect(statementId("p:a_b")).not.toBe("p_a_b");
   });
 
   it("cuts an ID longer than 100 characters, and ends it with a hash", () => {
