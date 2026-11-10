@@ -8,11 +8,6 @@ import {
 } from "@notation/resource";
 import * as std from "@notation/std/resources";
 import * as cloudflare from "src/resources";
-import {
-  sortedFlags,
-  type HostedNamespace,
-  type WorkerBinding,
-} from "src/resources/workers/worker-script";
 import { assertWorkerId, workerName } from "src/id";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
 import { describeNamespace, registeredNamespace } from "./durable-object";
@@ -66,8 +61,8 @@ export type WorkerGroupConfig = {
   codePath: string;
   compatibilityDate: string;
   compatibilityFlags: string[];
-  bindings: WorkerBinding[];
-  namespaces: HostedNamespace[];
+  bindings: cloudflare.workers.WorkerBinding[];
+  namespaces: cloudflare.workers.HostedNamespace[];
   url: boolean;
 };
 
@@ -215,7 +210,7 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
           filePaths.dist.runtime.index(fromProjectRoot(record.path)),
         ),
         compatibilityDate: config.compatibilityDate,
-        compatibilityFlags: sortedFlags([
+        compatibilityFlags: cloudflare.workers.sortedFlags([
           NODEJS_COMPAT,
           ...(config.compatibilityFlags ?? []),
         ]),
@@ -238,10 +233,11 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
 
 // A Worker is built from onEvaluationEnd, so a graph is always being
 // collected while it is built.
-function whileCollecting<T>(value: T | undefined): T {
+function active<T>(store: () => T | undefined, name: string): T {
+  const value = store();
   if (value === undefined) {
     throw new Error(
-      "@notation/cloudflare built a Worker while no resource graph is being collected.",
+      `@notation/cloudflare read its ${name} while no resource graph is being collected.`,
     );
   }
   return value;
@@ -255,7 +251,7 @@ function bindingCycleError(cycle: Entry[]): Error {
 }
 
 function claimName(scriptName: string, declaration: string) {
-  const claimed = whileCollecting(claimedNames());
+  const claimed = active(claimedNames, "Worker names");
   const previous = claimed.get(scriptName);
   if (previous) {
     throw new Error(
@@ -266,8 +262,8 @@ function claimName(scriptName: string, declaration: string) {
 }
 
 type ResolvedBindings = {
-  bindings: WorkerBinding[];
-  namespaces: HostedNamespace[];
+  bindings: cloudflare.workers.WorkerBinding[];
+  namespaces: cloudflare.workers.HostedNamespace[];
   dependsOn: Entry[];
 };
 
@@ -329,7 +325,7 @@ function resolveBindings(self: Entry): ResolvedBindings {
 
 function addHosted(
   self: Entry,
-  namespaces: HostedNamespace[],
+  namespaces: cloudflare.workers.HostedNamespace[],
   namespace: DurableObjectDeclaration,
   className: string,
 ) {
@@ -349,7 +345,7 @@ function hostOf(
   className: string,
   bindingName: string,
 ): Entry {
-  const hosts = whileCollecting(declaredWorkers()).filter(
+  const hosts = active(declaredWorkers, "Workers").filter(
     (entry) =>
       Object.values(entry.bindings()).includes(namespace) &&
       exportsOf(entry).includes(className),

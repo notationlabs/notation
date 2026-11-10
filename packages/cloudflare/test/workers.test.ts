@@ -20,6 +20,7 @@ import {
   type WorkerEnv,
   type WorkerGroup,
 } from "src/workers";
+import * as infra from "src/workers";
 import * as runtime from "src/workers/runtime";
 
 const projectDir = "/some/project";
@@ -476,4 +477,8 @@ describe("WorkerEnv", () => {
       bindings: () => ({ BUCKET: { id: "uploads" } }),
     });
   });
+});
+
+it("the runtime variant exports the same names as the infra module", () => {
+  expect(Object.keys(runtime).sort()).toEqual(Object.keys(infra).sort());
 });
