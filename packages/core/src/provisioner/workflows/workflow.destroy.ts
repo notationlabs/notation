@@ -50,6 +50,8 @@ export async function destroyApp({
       const providerRegistry = yield* loadStateProviderRegistry(
         step,
         runtime.state,
+        graph.resources,
+        emit,
       );
       yield* durable.destroy(step, {
         executionId,

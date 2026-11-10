@@ -8,9 +8,8 @@ import {
 import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
 import {
-  loadProviderRegistry,
+  loadPlanProviderRegistry,
   mergeResourceRegistries,
-  stateProviderPackages,
 } from "../resource-registry";
 import { withRuntime, type NodeDurableRuntime } from "../durable-runtime";
 
@@ -45,8 +44,10 @@ export async function planApp({
     async (runtime) => {
       // Deploy loads the same packages, so plan finds the same blocking
       // dependents as deploy.
-      const providerRegistry = await loadProviderRegistry(
-        stateProviderPackages(await runtime.state.values()),
+      const providerRegistry = await loadPlanProviderRegistry(
+        runtime.state,
+        graph.resources,
+        emit,
       );
       return createPlan({
         resources: graph.resources,

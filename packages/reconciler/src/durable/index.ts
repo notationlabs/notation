@@ -7,6 +7,8 @@
  *
  *   notation:providers         @notation/core's read of the provider
  *                              packages that state names
+ *   notation:providers:<package>:emit   its warning of a package
+ *                              that fails to load
  *   notation:validate          deploy's check of known params, before
  *                              any change
  *   notation:deploy:<id>:*     per-resource reconciliation steps

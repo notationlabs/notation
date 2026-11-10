@@ -149,27 +149,87 @@ afterEach(async () => {
 });
 
 it("names the provider of each record, and the fallback packages for a record with none", () => {
-  expect(stateProviderPackages([{ provider: "@acme/queues" }, {}, {}])).toEqual(
-    ["@acme/queues", "@notation/aws.iac", "@notation/std.iac"],
-  );
+  expect(
+    stateProviderPackages([
+      { type: "test/acme/Queue", provider: "@acme/queues" },
+      { type: "test/legacy/Queue" },
+      { type: "test/legacy/Topic" },
+    ]),
+  ).toEqual([
+    { name: "@acme/queues", fallback: false },
+    { name: "@notation/aws.iac", fallback: true },
+    { name: "@notation/std.iac", fallback: true },
+  ]);
 });
+
+it("names no package for a record whose type has a class in code", () => {
+  expect(
+    stateProviderPackages(
+      [
+        { type: Queue.type, provider: "@acme/uninstalled" },
+        { type: Queue.type },
+      ],
+      [new Queue("queue")],
+    ),
+  ).toEqual([]);
+});
+
+const named = (...names: string[]) =>
+  names.map((name) => ({ name, fallback: false }));
 
 it("registers the resource classes of the packages it resolves from the project root", async () => {
   installPackage("@acme/queues", [Queue]);
   installPackage("@acme/empty");
-  const registry = await loadProviderRegistry(
-    ["@acme/queues", "@acme/empty"],
+  const { registry, failures } = await loadProviderRegistry(
+    named("@acme/queues", "@acme/empty"),
     root,
   );
   expect([...registry]).toEqual([[Queue.type, Queue]]);
+  expect(failures).toEqual([]);
 });
 
-it("warns with the name of a package that it can't resolve, and skips it", async () => {
-  const warn = vi.fn();
-  const registry = await loadProviderRegistry(["@acme/missing"], root, warn);
+it("returns a package that it can't resolve as a failure, and skips it", async () => {
+  const { registry, failures } = await loadProviderRegistry(
+    named("@acme/missing"),
+    root,
+  );
   expect([...registry]).toEqual([]);
-  expect(warn).toHaveBeenCalledOnce();
-  expect(warn.mock.calls[0][0]).toContain("@acme/missing");
+  expect(failures).toEqual([
+    expect.objectContaining({
+      provider: "@acme/missing",
+      reason: "not-resolved",
+    }),
+  ]);
+});
+
+it("skips a fallback package that it can't resolve, with no failure", async () => {
+  const { registry, failures } = await loadProviderRegistry(
+    [{ name: "@acme/missing", fallback: true }],
+    root,
+  );
+  expect([...registry]).toEqual([]);
+  expect(failures).toEqual([]);
+});
+
+it("returns a package that throws on import as a failure, and loads the others", async () => {
+  installPackage("@acme/queues", [Queue]);
+  installPackage("@acme/broken");
+  fs.writeFileSync(
+    path.join(root, "node_modules", "@acme", "broken", "dist", "index.js"),
+    'throw new Error("broken on import");',
+  );
+  const { registry, failures } = await loadProviderRegistry(
+    named("@acme/broken", "@acme/queues"),
+    root,
+  );
+  expect([...registry]).toEqual([[Queue.type, Queue]]);
+  expect(failures).toEqual([
+    {
+      provider: "@acme/broken",
+      reason: "import-failed",
+      errorMessage: "broken on import",
+    },
+  ]);
 });
 
 // pnpm links only the project's own dependencies into its node_modules. A
@@ -194,16 +254,18 @@ it("resolves a package that the project depends on through another package, as p
     path.join(root, "node_modules", "@acme", "sdk"),
   );
 
-  const warn = vi.fn();
-  const registry = await loadProviderRegistry(["@acme/queues"], root, warn);
+  const { registry, failures } = await loadProviderRegistry(
+    named("@acme/queues"),
+    root,
+  );
   expect([...registry]).toEqual([[Queue.type, Queue]]);
-  expect(warn).not.toHaveBeenCalled();
+  expect(failures).toEqual([]);
 });
 
 it("resolves the workspace's own provider packages from the repository root", async () => {
   const repoRoot = path.resolve(import.meta.dirname, "../../../..");
-  const registry = await loadProviderRegistry(
-    ["@notation/aws.iac", "@notation/std.iac"],
+  const { registry } = await loadProviderRegistry(
+    named("@notation/aws.iac", "@notation/std.iac"),
     repoRoot,
   );
   expect(registry.has("aws/lambda/LambdaPermission")).toBe(true);
@@ -252,9 +314,28 @@ it("skips an orphan whose provider package is not installed, with a warning", as
   expect(deleted).not.toHaveBeenCalled();
   expect(events).toContainEqual(
     expect.objectContaining({
+      event: "reconciler.provider.load-failed",
+      provider: "@acme/uninstalled",
+      reason: "not-resolved",
+    }),
+  );
+  expect(events).toContainEqual(
+    expect.objectContaining({
       event: "reconciler.orphan-deletion.skipped",
       resourceId: "queue",
     }),
+  );
+});
+
+it("loads no provider package, and warns of none, when every record's type has a class in code", async () => {
+  installPackage("@acme/queues", [Queue]);
+  graph.resources = [new Queue("queue")];
+  await deploy("deploy-1");
+  await setProvider("queue", "@acme/uninstalled");
+  await deploy("deploy-2");
+
+  expect(events.map((event) => event.event)).not.toContain(
+    "reconciler.provider.load-failed",
   );
 });
 

@@ -69,12 +69,25 @@ export type OrphanDeletionSkippedEvent = {
   keptDependencies: string[];
 };
 
+/**
+ * A provider package that a state record names could not be loaded, so the
+ * records of its types that are absent from code can't be deleted.
+ */
+export type ProviderLoadFailedEvent = {
+  level: "warn";
+  event: "reconciler.provider.load-failed";
+  provider: string;
+  reason: "not-resolved" | "import-failed";
+  errorMessage?: string;
+};
+
 export type ReconcilerEvent =
   | OperationLifecycleEvent
   | DeployDecisionEvent
   | DriftDetectedEvent
   | HoldWaitingEvent
-  | OrphanDeletionSkippedEvent;
+  | OrphanDeletionSkippedEvent
+  | ProviderLoadFailedEvent;
 
 export type ReconcilerEventEmitter = (
   event: ReconcilerEvent,

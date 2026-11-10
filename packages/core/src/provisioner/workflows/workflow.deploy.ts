@@ -54,6 +54,8 @@ export async function deployApp({
       const providerRegistry = yield* loadStateProviderRegistry(
         step,
         runtime.state,
+        graph.resources,
+        emit,
       );
       yield* durable.deploy(step, {
         executionId,

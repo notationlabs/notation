@@ -7,6 +7,8 @@ import {
   createResourceRegistryFromResources,
   mergeResourceRegistries,
   resolveResourceClass,
+  type ProviderLoadFailedEvent,
+  type ReconcilerEventEmitter,
   type ResourceRegistry,
 } from "@notation/reconciler";
 import type { DurableStep } from "@notation/reconciler/durable";
@@ -37,23 +39,51 @@ export const legacyProviderPackages = [
   "@notation/std.iac",
 ];
 
-/** The provider packages that the records in state name, sorted. */
+export type ProviderPackage = {
+  name: string;
+  /**
+   * Whether the package is only a guess for records that name no provider. A
+   * project need not install such a package, so a failed resolve of it is
+   * not reported.
+   */
+  fallback: boolean;
+};
+
+/**
+ * The provider packages of the records whose type has no class in code,
+ * sorted by name. Only such a record needs a class from its package: deploy
+ * and destroy delete it as an orphan, and plan finds its delete cascades.
+ */
 export function stateProviderPackages(
-  nodes: Pick<StateNode, "provider">[],
-): string[] {
-  const packages = new Set<string>();
+  nodes: Pick<StateNode, "type" | "provider">[],
+  resources: Pick<BaseResource, "type">[] = [],
+): ProviderPackage[] {
+  const typesInCode = new Set<string>(resources.map((r) => r.type));
+  const packages = new Map<string, ProviderPackage>();
   for (const node of nodes) {
-    const names = node.provider ? [node.provider] : legacyProviderPackages;
-    for (const name of names) packages.add(name);
+    if (typesInCode.has(node.type)) continue;
+    if (node.provider) {
+      packages.set(node.provider, { name: node.provider, fallback: false });
+      continue;
+    }
+    for (const name of legacyProviderPackages) {
+      if (!packages.has(name)) packages.set(name, { name, fallback: true });
+    }
   }
-  return [...packages].sort();
+  return [...packages.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
+
+export type ProviderLoadFailure = Omit<
+  ProviderLoadFailedEvent,
+  "level" | "event"
+>;
 
 /**
  * Registers the `resourceClasses` of each package, so that deploy and destroy
  * can delete a record whose type is no longer in the graph. A package that
- * exports no `resourceClasses` is skipped. A package that can't be resolved is
- * skipped with a warning, and its records are left in place.
+ * exports no `resourceClasses` is skipped. A package that can't be resolved
+ * or imported is skipped and returned in `failures`, and its records are left
+ * in place. A fallback package that can't be resolved is skipped silently.
  *
  * Core does not depend on the providers, which depend on core, so each
  * package is resolved from the project. The project usually depends on a
@@ -64,26 +94,40 @@ export function stateProviderPackages(
  * Node resolves it when a dependency imports it.
  */
 export async function loadProviderRegistry(
-  packages: string[],
+  packages: ProviderPackage[],
   root: string = projectRoot(),
-  warn: (message: string) => void = console.warn,
-): Promise<ResourceRegistry> {
+): Promise<{ registry: ResourceRegistry; failures: ProviderLoadFailure[] }> {
   const resolvers = projectResolvers(root);
   const classes: ResourceClass<any, any, any>[] = [];
-  for (const name of packages) {
+  const failures: ProviderLoadFailure[] = [];
+  for (const { name, fallback } of packages) {
     const entry = resolveFrom(resolvers, name);
     if (!entry) {
-      warn(
-        `Could not resolve the provider package ${name} from ${root} or its dependencies. Records from this package will not be deleted.`,
-      );
+      if (!fallback) {
+        failures.push({
+          provider: name,
+          reason: "not-resolved",
+          errorMessage: `Could not resolve ${name} from ${root} or its dependencies`,
+        });
+      }
       continue;
     }
-    const provider = await import(pathToFileURL(entry).href);
+    let provider: { resourceClasses?: unknown };
+    try {
+      provider = await import(pathToFileURL(entry).href);
+    } catch (error) {
+      failures.push({
+        provider: name,
+        reason: "import-failed",
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
     if (Array.isArray(provider.resourceClasses)) {
       classes.push(...provider.resourceClasses);
     }
   }
-  return createResourceRegistry(classes);
+  return { registry: createResourceRegistry(classes), failures };
 }
 
 // The project root first, then the real directory of each dependency in the
@@ -129,15 +173,56 @@ function resolveFrom(
   return undefined;
 }
 
-/** Registers the classes of the provider packages that state names. */
+/**
+ * Registers the classes of the provider packages that state names, for plan.
+ * Emits a warning for each package that fails to load.
+ */
+export async function loadPlanProviderRegistry(
+  state: StateBackend,
+  resources: BaseResource[],
+  emit: ReconcilerEventEmitter,
+): Promise<ResourceRegistry> {
+  const { registry, failures } = await loadProviderRegistry(
+    stateProviderPackages(await state.values(), resources),
+  );
+  for (const failure of failures) await emit(loadFailedEvent(failure));
+  return registry;
+}
+
+/**
+ * Registers the classes of the provider packages that state names, for deploy
+ * and destroy. Emits a warning for each package that fails to load, once per
+ * execution.
+ */
 export async function* loadStateProviderRegistry(
   step: DurableStep,
   state: StateBackend,
+  resources: BaseResource[],
+  emit: ReconcilerEventEmitter,
 ): AsyncGenerator<any, ResourceRegistry, any> {
   // A step, so that a resumed execution loads the packages of the records it
   // read the first time, including those of records it has deleted since.
   const packages = yield* step.run("notation:providers", async () =>
-    stateProviderPackages(await state.values()),
+    stateProviderPackages(await state.values(), resources),
   );
-  return loadProviderRegistry(packages);
+  // Classes can't be journaled, so a resumed execution imports the packages
+  // again. The warnings are steps, so that a resume does not repeat them.
+  const { registry, failures } = await loadProviderRegistry(packages);
+  for (const failure of failures) {
+    yield* step.run(
+      `notation:providers:${encodeURIComponent(failure.provider)}:emit`,
+      () => emit(loadFailedEvent(failure)),
+    );
+  }
+  return registry;
+}
+
+function loadFailedEvent(
+  failure: ProviderLoadFailure,
+): ProviderLoadFailedEvent {
+  return {
+    level: "warn",
+    event: "reconciler.provider.load-failed",
+    ...failure,
+  };
 }
