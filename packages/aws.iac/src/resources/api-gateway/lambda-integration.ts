@@ -1,6 +1,5 @@
 import * as v from "valibot";
-import { ResourceNotFoundError } from "@notation/resource";
-import { resource } from "src/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { ApiInstance } from "./api";
 import { LambdaFunctionInstance } from "../lambda";
@@ -22,6 +21,7 @@ export type LambdaIntegrationDependencies = {
 
 const integration = resource<LambdaIntegrationSchema>({
   type: "aws/apiGateway/LambdaIntegration",
+  provider: "@notation/aws.iac",
 });
 
 const integrationSchema = integration.defineSchema({

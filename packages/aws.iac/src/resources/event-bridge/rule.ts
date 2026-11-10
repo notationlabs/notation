@@ -1,6 +1,5 @@
 import * as v from "valibot";
-import { ResourceNotFoundError } from "@notation/resource";
-import { resource } from "src/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import { AwsSchema } from "src/utils/types";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/utils/aws-clients";
@@ -66,6 +65,7 @@ function assertNoFailedTargets(
 
 const eventBridgeRule = resource<EventBridgeRuleSchema>({
   type: "aws/eventBridge/rule",
+  provider: "@notation/aws.iac",
   // AWS refuses to delete a bus that has rules. The default bus is never
   // deleted, so it is not listed.
   blocksDeleteOf: [EventBus.type],

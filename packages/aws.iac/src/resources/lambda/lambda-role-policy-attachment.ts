@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { resource } from "src/resource";
+import { resource } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-iam";
 import { iamClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
@@ -16,6 +16,7 @@ export type LambdaRolePolicyAttachmentDependencies = {
 
 const lambdaRolePolicyAttachment = resource<LambdaRolePolicyAttachmentSchema>({
   type: "aws/lambda/LambdaRolePolicyAttachment",
+  provider: "@notation/aws.iac",
 });
 
 const lambdaRolePolicyAttachmentSchema =

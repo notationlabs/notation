@@ -1,9 +1,9 @@
 import * as v from "valibot";
 import {
+  resource,
   ResourceNotFoundError,
   ResourceOperationPendingError,
 } from "@notation/resource";
-import { resource } from "src/resource";
 import * as sdk from "@aws-sdk/client-sqs";
 import { sqsClient } from "src/utils/aws-clients";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
@@ -99,6 +99,7 @@ const ATTRIBUTE_NAMES = Object.keys(
 
 const queue = resource<QueueSchema>({
   type: "aws/sqs/Queue",
+  provider: "@notation/aws.iac",
 });
 
 const seconds = (max: number) =>

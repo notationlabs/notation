@@ -1,8 +1,7 @@
 import * as v from "valibot";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { AwsSchema } from "src/utils/types";
-import { ResourceNotFoundError } from "@notation/resource";
-import { resource } from "src/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { ApiInstance } from "./api";
 
@@ -19,6 +18,7 @@ type AuthorizerDependencies = {
 
 const authorizer = resource<AuthorizerSdkSchema>({
   type: "aws/apiGateway/Authorizer",
+  provider: "@notation/aws.iac",
 });
 
 const jwtConfiguration = v.object({
