@@ -147,7 +147,7 @@ type RetryOptions = {
 
 `id` keys the rule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. In AWS, the rule is named `<app>--<stage>--<id>`, such as `my-app--prod--order-placed`. `name` replaces the `id` in the rule's AWS name. Changing `name` also replaces the rule.
 
-AWS lets two buses have rules with the same name, but Notation doesn't: in one deployment, no two rules or schedules can have the same AWS name. This matters because the permission that lets a rule invoke a function is named after the rule, and a function can't have two permissions with the same name.
+AWS lets two buses have rules with the same name, but Notation doesn't: in one deployment, no two rules or schedules can have the same AWS name.
 
 `pattern` is the [event pattern](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns.html) that the rule matches. Each field holds a list of values, and the field matches when the event's field has one of them. A value can also be a content filter, such as `{ prefix: "order-" }` or `{ numeric: [">", 100] }`. `detail` holds a pattern for the event's detail, field by field:
 

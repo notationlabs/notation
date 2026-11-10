@@ -22,8 +22,8 @@ export class RuleGroup extends aws.AwsResourceGroup<RuleOptions> {
     const ruleName = awsName("eventBridgeRule", config.name ?? config.id);
     super("aws/eventBridge/rule", config.id, config);
     // AWS names rules uniquely on each bus, but the name is claimed across
-    // buses, so that a function's permission statement, which is named
-    // after the rule, is unique too. Schedules claim the same names.
+    // buses, and schedules claim the same names. Nothing depends on this, so
+    // the claim could be limited to each bus.
     claimAwsName(
       "EventBridge rules",
       ruleName,
@@ -56,13 +56,15 @@ export class RuleGroup extends aws.AwsResourceGroup<RuleOptions> {
     );
 
     lambdaGroup.add(
-      new aws.eventBridge.LambdaEventBridgeRulePermission(
+      new aws.lambda.LambdaPermission(
         resourceId("eventbridge-pattern-permission", config.id),
         {
-          dependencies: {
-            lambda: lambdaResource,
-            eventBridgeRule: this.rule,
+          config: {
+            Action: "lambda:InvokeFunction",
+            Principal: "events.amazonaws.com",
+            SourceArn: this.rule.outputValue("Arn"),
           },
+          dependencies: { lambda: lambdaResource },
         },
       ),
     );

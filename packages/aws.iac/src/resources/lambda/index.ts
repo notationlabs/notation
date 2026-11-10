@@ -1,4 +1,4 @@
-export * from "./lambda-api-permission";
+export * from "./lambda-permission";
 export * from "./lambda-event-source-mapping";
 export * from "./lambda-log-group";
 export * from "./lambda-role-policy";

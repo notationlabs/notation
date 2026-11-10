@@ -1,6 +1,6 @@
 import { expect, expectTypeOf, test } from "vitest";
 import type { EventBridgeEvent } from "aws-lambda";
-import { eventBridge as iac } from "@notation/aws.iac";
+import { eventBridge as iac, lambda as iacLambda } from "@notation/aws.iac";
 import {
   collectResourceGraph,
   type ResourceGraph,
@@ -48,10 +48,13 @@ const ruleGroup = (graph: ResourceGraph, id: string) =>
     (g): g is RuleGroup => g instanceof RuleGroup && g.id === id,
   )!;
 
+// The rules that a function's permissions name in their SourceArn.
 const permissionsOf = (fn: LambdaGroup) =>
   fn.resources
-    .filter((r) => r instanceof iac.LambdaEventBridgeRulePermission)
-    .map((r) => r.dependencies.eventBridgeRule);
+    .filter((r) => r instanceof iacLambda.LambdaPermission)
+    .flatMap((r) =>
+      r.getDependencies().filter((d) => d instanceof iac.EventBridgeRule),
+    );
 
 const event = (detail: unknown) =>
   ({
