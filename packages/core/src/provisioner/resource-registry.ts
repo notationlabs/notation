@@ -53,12 +53,6 @@ export type ProviderLoadFailure = Omit<
 >;
 
 /**
- * Registers the `resourceClasses` of each package, so that deploy and destroy
- * can delete a record whose type is no longer in the graph. A package that
- * exports no `resourceClasses` is skipped. A package that can't be resolved
- * or imported is skipped and returned in `failures`, and its records are left
- * in place.
- *
  * Core does not depend on the providers, which depend on core, so each
  * package is resolved from the project. The project usually depends on a
  * provider package such as `@notation/aws` and not on the provider package it
@@ -157,11 +151,6 @@ export async function loadPlanProviderRegistry(
   return registry;
 }
 
-/**
- * Registers the classes of the provider packages that state names, for deploy
- * and destroy. Emits a warning for each package that fails to load, once per
- * execution.
- */
 export async function* loadStateProviderRegistry(
   step: DurableStep,
   state: StateBackend,
