@@ -250,6 +250,16 @@ it("registers the named exports of an ES module that also exports a default obje
   expect(failures).toEqual([]);
 });
 
+it("registers a class that is the default export", async () => {
+  writeQueuesModule("index.mjs", `export default ${queueGlobal};`);
+  const { registry, failures } = await loadProviderRegistry(
+    ["@acme/queues"],
+    root,
+  );
+  expect([...registry]).toEqual([[Queue.type, Queue]]);
+  expect(failures).toEqual([]);
+});
+
 it("leaves out a class that declares another provider", async () => {
   writeQueuesModule(
     "index.mjs",
