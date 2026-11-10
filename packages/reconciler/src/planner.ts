@@ -134,8 +134,9 @@ export async function createPlan({
 
 /**
  * Loads the resource's outputs from state, then returns and checks the
- * params that plan knows. A state record of another type fails. Outputs in state stand in for the outputs of
- * dependencies, so the dependencies must be loaded first.
+ * params that plan knows. A state record of another type fails. Outputs in
+ * state stand in for the outputs of dependencies, so the dependencies must be
+ * loaded first.
  */
 export async function planKnownParams(
   resource: BaseResource,
