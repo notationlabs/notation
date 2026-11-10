@@ -303,7 +303,9 @@ it("builds a worker that doesn't re-export the class, whose calls then fail in w
   writeProject("");
   await build();
   expect(read(apiBundle)).not.toContain("Counter");
-  expect(await serve(path.join(root, apiBundle))).not.toContain("count=");
+  expect(await serve(path.join(root, apiBundle))).toMatch(
+    /^Error: internal error; reference = /,
+  );
 }, 60_000);
 
 it("re-exports a name that is not an identifier", async () => {
@@ -341,3 +343,186 @@ it("defines NODE_ENV and imports a bare Node built-in as its node: module", asyn
     "api COUNTERS count=1",
   );
 }, 60_000);
+
+it("runs a CommonJS dependency that requires a Node built-in under workerd", async () => {
+  writeProject(
+    [
+      reexport,
+      `import cjs from "cjsdep";`,
+      `if (cjs.bare !== "function" || cjs.prefixed !== "function") throw new Error(JSON.stringify(cjs));`,
+    ].join("\n"),
+  );
+  write(
+    "node_modules/cjsdep/package.json",
+    JSON.stringify({ name: "cjsdep", main: "index.js" }),
+  );
+  write(
+    "node_modules/cjsdep/index.js",
+    [
+      `const EventEmitter = require("events");`,
+      `const { EventEmitter: Prefixed } = require("node:events");`,
+      `module.exports = { bare: typeof EventEmitter, prefixed: typeof Prefixed };`,
+    ].join("\n"),
+  );
+  await build();
+  expect(read(apiBundle)).not.toMatch(/__require\(/);
+  expect(await serve(path.join(root, apiBundle), ["nodejs_compat"])).toBe(
+    "api COUNTERS count=1",
+  );
+}, 60_000);
+
+describe("a runtime: option whose value is not a name that the module declares or imports", () => {
+  it.each([
+    "ns.Counter",
+    `"Counter"`,
+    "42",
+    "make()",
+    "() => Counter",
+    "function Foo() {}",
+    "null",
+    "undefined",
+    "Math.random() > 2 ? Counter : null",
+  ])('gives class: %s the name "" in the infra bundle', async (value) => {
+    writeProject();
+    write("runtime/cls.ts", `export class Counter {}`);
+    write(
+      "runtime/counter.ts",
+      `import * as ns from "./cls";\n` +
+        counterModule.replace("class: Counter", `class: ${value}`),
+    );
+    await compileInfra(path.join(root, "infra/main.ts"));
+    expect(runInfra("namespace.className")).toBe("");
+  });
+
+  it('gives a method the name "" in the infra bundle', async () => {
+    writeProject();
+    write(
+      "runtime/counter.ts",
+      counterModule.replace("class: Counter", "class() { return 1; }"),
+    );
+    await compileInfra(path.join(root, "infra/main.ts"));
+    expect(runInfra("namespace.className")).toBe("");
+  });
+});
+
+describe("an export of the Worker module that workerd doesn't start with", () => {
+  it.each([
+    [
+      "a string",
+      `export const version = "1";`,
+      "5:14",
+      "a primitive, not an object",
+    ],
+    [
+      "null",
+      `export const nothing = null;`,
+      "5:14",
+      "a primitive, not an object",
+    ],
+    ["no initialiser", `export let later;`, "5:12", "undefined"],
+    [
+      "export * as",
+      `export * as all from "./counter";`,
+      "5:1",
+      "a module namespace object",
+    ],
+  ])("fails the build for %s", async (_, classExport, at, value) => {
+    writeProject(`${reexport}\n${classExport}`);
+    await expect(build()).rejects.toThrow(
+      `${path.join(root, "runtime/api.ts")}:${at}: the module exports`,
+    );
+    await expect(build()).rejects.toThrow(`whose value is ${value}.`);
+  });
+
+  it("builds and starts a Worker that exports an object", async () => {
+    writeProject(`${reexport}\nexport const settings = { region: "eu" };`);
+    expect((await build())[0]!.exports).toEqual(["Counter", "settings"]);
+    expect(await serve(path.join(root, apiBundle))).toBe(
+      "api COUNTERS count=1",
+    );
+  }, 60_000);
+});
+
+it("fails the infra build on an import that Node can't load, and names the import chain", async () => {
+  writeProject();
+  write(
+    "runtime/cls.ts",
+    [
+      `import { DurableObject } from "cloudflare:workers";`,
+      `export class Imported extends DurableObject {}`,
+      `export const NAME = "counters";`,
+    ].join("\n"),
+  );
+  write(
+    "runtime/counter.ts",
+    [
+      `import { $durableObject } from "@notation/cloudflare/workers";`,
+      `import { Imported, NAME } from "./cls";`,
+      `export const counters = $durableObject({ id: NAME, class: Imported });`,
+    ].join("\n"),
+  );
+  const failure = compileInfra(path.join(root, "infra/main.ts"));
+  await expect(failure).rejects.toThrow(
+    "runtime/cls.ts imports cloudflare:workers, which the infra build can't load",
+  );
+  await expect(failure).rejects.toThrow(
+    /through [^.]*runtime\/counter\.ts → runtime\/cls\.ts\./,
+  );
+});
+
+it("fails with the user's file when the Worker re-exports a type without the type keyword", async () => {
+  writeProject(`${reexport}\nexport { Env } from "./types";`);
+  write("runtime/types.ts", `export interface Env { COUNTERS: unknown }`);
+  await expect(build()).rejects.toThrow(
+    `runtime/api.ts exports Env from "./types", and Env is only a type in runtime/types.ts.`,
+  );
+});
+
+it("leaves out a namespace that holds only types", async () => {
+  writeProject(
+    `${reexport}\nexport namespace Shapes { export type Id = string; export interface Item {} }`,
+  );
+  expect((await build())[0]!.exports).toEqual(["Counter"]);
+  expect(read(apiBundle)).not.toContain("Shapes");
+});
+
+it("fails the infra build when a declaration keeps a class that imports cloudflare:workers", async () => {
+  writeProject();
+  write(
+    "runtime/counter.ts",
+    counterModule.replace(
+      "class: Counter",
+      "class: make(Counter), label: Counter.name",
+    ) + `\nfunction make(c) { return c; }\n`,
+  );
+  await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
+    "runtime/counter.ts imports cloudflare:workers, which the infra build can't load",
+  );
+});
+
+// The workerd tests use the miniflare that the docs site's wrangler resolves
+// to, so that the lockfile holds one miniflare and one workerd. The repo has
+// no pnpm catalog, and an override would hold wrangler's miniflare back.
+it("pins miniflare to the version that wrangler uses in the lockfile", () => {
+  const repo = fileURLToPath(new URL("../../../", import.meta.url));
+  const lockfile = readFileSync(path.join(repo, "pnpm-lock.yaml"), "utf8");
+  const wranglers = [
+    ...lockfile.matchAll(
+      /^ {2}wrangler@[^\n]+:\n {4}dependencies:\n((?: {6}[^\n]+\n)+)/gm,
+    ),
+  ];
+  const versions = new Set(
+    wranglers.map(([, deps]) => /^ {6}miniflare: ([^(\s]+)/m.exec(deps!)![1]),
+  );
+  const cli = JSON.parse(
+    readFileSync(
+      fileURLToPath(new URL("../package.json", import.meta.url)),
+      "utf8",
+    ),
+  );
+  expect(wranglers.length).toBeGreaterThan(0);
+  expect(
+    [...versions],
+    "Set miniflare in packages/cli/package.json to the version that wrangler depends on.",
+  ).toEqual([cli.devDependencies.miniflare]);
+});

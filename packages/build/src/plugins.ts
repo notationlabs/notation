@@ -8,10 +8,11 @@ import {
   infraInterface,
   runtimeExports,
   stripForInfra,
+  typeOnlyNames,
   type DeclarationModule,
 } from "./infra-strip";
 import type { ImportBinding, Mark } from "./marks";
-import { isProjectModule, type ModuleAnalyses } from "./modules";
+import { isProjectModule, readSource, type ModuleAnalyses } from "./modules";
 import { stripForRuntime } from "./runtime-strip";
 
 const isBareSpecifier = (source: string) =>
@@ -81,12 +82,20 @@ export function infraPlugin({
   // By importer directory and package name. Cleared on each build, so that
   // a package installed during watch is seen.
   const installed = new Map<string, boolean>();
+  const unloadable: { source: string; scheme: string; importer: string }[] = [];
   return {
     name: "notation-infra",
     buildStart() {
       installed.clear();
+      unloadable.length = 0;
     },
     resolveId(source, importer) {
+      // Reported in buildEnd, when the importers of each module are known.
+      const scheme = importer && unloadableScheme(source);
+      if (scheme) {
+        unloadable.push({ source, scheme, importer });
+        return { id: source, external: true };
+      }
       if (
         !importer ||
         !isBareSpecifier(source) ||
@@ -119,6 +128,13 @@ export function infraPlugin({
     },
     buildEnd(error) {
       if (error) return;
+      const show = (file: string) => analyses.show(file);
+      for (const { source, scheme, importer } of unloadable) {
+        const chain = importerChain(this, importer).map(show);
+        this.error(
+          `${show(importer)} imports ${source}, which the infra build can't load: the infra build runs on Node, and Node can't import ${scheme}: modules. The infra build imports ${show(importer)} through ${chain.join(" → ")}. A declaration's infra copy leaves out the values of its runtime: options, and the code that only they use. Pass a value that needs ${source}, such as a class, in a runtime: option, and move what the infra build uses, such as an ID, to a module that doesn't import ${source}.`,
+        );
+      }
       for (const id of this.getModuleIds()) analyses.checkShared(id);
     },
     generateBundle() {
@@ -130,6 +146,33 @@ export function infraPlugin({
       onDeclarationModules(found);
     },
   };
+}
+
+// The URL scheme of a specifier that Node can't import, such as `cloudflare`
+// in `cloudflare:workers`. A one-letter scheme is a Windows drive.
+function unloadableScheme(source: string): string | undefined {
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]+):/.exec(source)?.[1];
+  return scheme && !["node", "file", "data"].includes(scheme.toLowerCase())
+    ? scheme
+    : undefined;
+}
+
+// A chain of imports from the infra entry to `file`, without the generated
+// entry.
+function importerChain(
+  graph: { getModuleInfo(id: string): { importers: readonly string[] } | null },
+  file: string,
+): string[] {
+  const chain = [file];
+  for (let id = file; ;) {
+    const importer = graph
+      .getModuleInfo(id)
+      ?.importers.find((next) => !chain.includes(next));
+    if (!importer || importer.startsWith("\0")) break;
+    chain.unshift(importer);
+    id = importer;
+  }
+  return chain;
 }
 
 // Fails if the infra copy of a module imports a name from a runtime module
@@ -178,7 +221,7 @@ export const runtimeEntry = entryId;
  * The entry of a runtime bundle. It re-exports `names` from the module at
  * `file`: the native entry, such as `handler`, and on `workerd` the module's
  * other exports, such as Durable Object classes. The declaration is not an
- * export of the bundle, so the bundler can drop it.
+ * export of the bundle, so the bundler can drop it. Exported for tests.
  */
 export function createRuntimeEntry(file: string, names: string[]): string {
   const show = (name: string) =>
@@ -212,6 +255,8 @@ export function runtimePlugin({
   module,
 }: RuntimePluginOptions): Plugin {
   const infraModules = new Set<string>();
+  // Set when the module no longer has an entry to bundle.
+  let skipped = false;
   return {
     name: "notation-runtime",
     resolveId(source) {
@@ -221,13 +266,20 @@ export function runtimePlugin({
       if (id !== resolvedEntryId) return null;
       // In watch mode, a change to the module rebuilds this bundle before
       // the infra rebuild replaces the watcher, so the entry reads the
-      // module as it is now. A module that has lost its entry gets an empty
-      // bundle until then.
-      const analysis = analyses.fromFile(module.path);
+      // module from disk, as it is now. If the module has lost its entry,
+      // the build writes nothing, and the last bundle stays: the infra
+      // build either fails or no longer bundles the module.
+      const source = readSource(module.path);
+      const analysis =
+        source === undefined
+          ? undefined
+          : analyses.fromSource(module.path, source);
       const names = analysis ? runtimeExports(analysis) : [];
-      return names.length === 0
-        ? "export {};\n"
-        : createRuntimeEntry(module.path, names);
+      skipped =
+        names.length === 0 || !analyses.marks.hasExport(module.path, names[0]!);
+      if (skipped) return "export {};\n";
+      checkTypeReexports(analysis!, names, analyses);
+      return createRuntimeEntry(module.path, names);
     },
     transform: {
       filter: { id: { include: scriptFile, exclude: nodeModules } },
@@ -249,6 +301,10 @@ export function runtimePlugin({
       for (const id of this.getModuleIds()) analyses.checkShared(id);
     },
     generateBundle(_, bundle) {
+      if (skipped) {
+        for (const fileName of Object.keys(bundle)) delete bundle[fileName];
+        return;
+      }
       const show = (file: string) => analyses.show(file);
       for (const output of Object.values(bundle)) {
         if (output.type !== "chunk") continue;
@@ -297,6 +353,56 @@ export function runtimePlugin({
       }
     },
   };
+}
+
+// Fails if the bundle would re-export a name that is only a type in the
+// module that it comes from, such as `export { Env } from "./types"` of an
+// interface. Rolldown would report a missing export in the generated entry.
+function checkTypeReexports(
+  analysis: ModuleAnalysis,
+  names: string[],
+  analyses: ModuleAnalyses,
+) {
+  const file = analysis.table.module.file;
+  for (const name of names) {
+    const target = analysis.table.exports.get(name);
+    if (!target || !("source" in target) || target.imported === "*") continue;
+    const origin = typeOrigin(
+      target.source,
+      target.imported,
+      file,
+      analyses,
+      new Set(),
+    );
+    if (!origin) continue;
+    throw new Error(
+      `${analyses.show(file)} exports ${name} from ${JSON.stringify(target.source)}, and ${name} is only a type in ${analyses.show(origin)}. The runtime bundle re-exports the module's value exports, so write \`export type { ${name} }\`.`,
+    );
+  }
+}
+
+// The file where `name`, which the module at `source` exports, is declared
+// as a type only. Follows re-exports, but not `export * from`.
+function typeOrigin(
+  source: string,
+  name: string,
+  importer: string,
+  analyses: ModuleAnalyses,
+  seen: Set<string>,
+): string | undefined {
+  const file = analyses.marks.resolve(source, importer);
+  if (!file || seen.has(file)) return undefined;
+  seen.add(file);
+  const analysis = analyses.fromFile(file);
+  if (!analysis) return undefined;
+  const target = analysis.table.exports.get(name);
+  // The table leaves out type exports, such as `export interface Env`.
+  if (!target) return typeOnlyNames(analysis).has(name) ? file : undefined;
+  if ("local" in target) {
+    return typeOnlyNames(analysis).has(target.local) ? file : undefined;
+  }
+  if (target.imported === "*") return undefined;
+  return typeOrigin(target.source, target.imported, file, analyses, seen);
 }
 
 type ImportUse = { at: string; name: string };

@@ -6,6 +6,7 @@ import {
   stripForInfra,
   stripForRuntime,
 } from "src/index";
+import { createRuntimeEntry } from "src/plugins";
 import { packageFiles, packages, root, virtualMarks } from "./virtual";
 
 const handlerModule = `
@@ -154,7 +155,7 @@ describe("stripForInfra", () => {
     `;
     const { code } = infra(source);
     expect(code).toContain(
-      `handler: (0, () => { throw new Error("handler only runs in the function, not in the infra build."); })`,
+      `handler: __notation_unnamed("handler only runs in the function, not in the infra build.")`,
     );
     expect(code).not.toContain("run()");
   });
@@ -168,9 +169,34 @@ describe("stripForInfra", () => {
     `;
     const extra = { "runtime/counter.ts": "export class Counter {}" };
     const { code } = infra(source, extra);
-    const thrower = /class: (\(0, \(\) => \{[^}]*\}\))/.exec(code)![1]!;
-    expect(new Function(`return { class: ${thrower} }.class.name`)()).toBe("");
+    expect(code).toContain(`class: __notation_unnamed(`);
     expect(code).not.toContain("./counter");
+  });
+
+  it("gives a global name, such as undefined, a function with no name, and doesn't follow it", () => {
+    const source = `
+      /** @declaration shared: id, label; runtime: class */
+      function $durableObject(config) { return config; }
+      export const counters = $durableObject({ id: "counters", label: undefined, class: undefined });
+    `;
+    const { code } = infra(source);
+    expect(code).toContain(`class: __notation_unnamed(`);
+    expect(code).toContain(`label: undefined`);
+  });
+
+  it.each([
+    ["a method", "class() { return 1; }"],
+    ["an async method", "async class() { return 1; }"],
+  ])("replaces a runtime-only option that is %s", (_, option) => {
+    const source = `
+      /** @declaration shared: id; runtime: class */
+      function $durableObject(config) { return config; }
+      export const counters = $durableObject({ id: "counters", ${option} });
+    `;
+    const { code } = infra(source);
+    expect(code).toContain(
+      `{ id: "counters", class: __notation_unnamed("class only runs in the function, not in the infra build.") }`,
+    );
   });
 
   it("fails when the declaration uses the name of a runtime-only option elsewhere", () => {
@@ -1174,6 +1200,20 @@ describe("stripForRuntime", () => {
     const { analysis, analyses } = setup(source);
     expect(() => stripForRuntime(analysis, analyses)).toThrow(
       "the env option of $lambda must be a function that returns an object literal",
+    );
+  });
+});
+
+describe("createRuntimeEntry", () => {
+  it("re-exports the names from the module, and quotes a name that is not an identifier", () => {
+    expect(
+      createRuntimeEntry("/project/runtime/api.ts", [
+        "default",
+        "Counter",
+        "my-class",
+      ]),
+    ).toBe(
+      `export { default, Counter, "my-class" } from "/project/runtime/api.ts";\n`,
     );
   });
 });

@@ -445,3 +445,64 @@ it("doesn't log an error when a rebuild takes a module's entry away", async () =
   await new Promise((resolve) => setTimeout(resolve, 1000));
   expect(error).not.toHaveBeenCalled();
 });
+
+it("keeps the last bundle when a rebuild removes the declaration and the infra build fails", async () => {
+  write("watch-decl-loss/jobs.ts", runtimeModule("jobs"));
+  write(
+    "watch-decl-loss/main.ts",
+    `import { fn } from "./jobs";\nconsole.log(fn);\n`,
+  );
+  const bundle = path.join(root, "dist/watch-decl-loss/jobs/index.mjs");
+  const error = vi.fn();
+  const watchLogger = { info: () => {}, error } as unknown as Logger;
+
+  onTestFinished(
+    await compile(build("watch-decl-loss/main.ts"), {
+      watch: true,
+      logger: watchLogger,
+    }),
+  );
+  await waitFor(() => expect(existsSync(bundle)).toBe(true));
+  const before = readFileSync(bundle, "utf8");
+  expect(before).toContain(`"jobs"`);
+
+  write(
+    "watch-decl-loss/jobs.ts",
+    runtimeModule("jobs").replace("export const fn", "// export const fn"),
+  );
+  await waitFor(() => expect(error).toHaveBeenCalled());
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  expect(readFileSync(bundle, "utf8")).toBe(before);
+});
+
+it("keeps the last bundle, and logs only the infra error, when a rebuild removes the entry export", async () => {
+  write("watch-handler-loss/jobs.ts", runtimeModule("jobs"));
+  write(
+    "watch-handler-loss/main.ts",
+    `import { fn } from "./jobs";\nconsole.log(fn);\n`,
+  );
+  const bundle = path.join(root, "dist/watch-handler-loss/jobs/index.mjs");
+  const error = vi.fn();
+  const watchLogger = { info: () => {}, error } as unknown as Logger;
+
+  onTestFinished(
+    await compile(build("watch-handler-loss/main.ts"), {
+      watch: true,
+      logger: watchLogger,
+    }),
+  );
+  await waitFor(() => expect(existsSync(bundle)).toBe(true));
+  const before = readFileSync(bundle, "utf8");
+
+  write(
+    "watch-handler-loss/jobs.ts",
+    runtimeModule("jobs").replace("export const handler", "const handler"),
+  );
+  await waitFor(() => expect(error).toHaveBeenCalled());
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  expect(readFileSync(bundle, "utf8")).toBe(before);
+  expect(error.mock.calls.map(String).join("\n")).not.toContain(
+    "MISSING_EXPORT",
+  );
+  expect(error).toHaveBeenCalledTimes(1);
+});

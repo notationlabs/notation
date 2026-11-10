@@ -245,7 +245,8 @@ export class ModuleAnalyses {
   }
 }
 
-function readSource(file: string): string | undefined {
+/** The source of a file, or `undefined` if it can't be read. */
+export function readSource(file: string): string | undefined {
   try {
     return fs.readFileSync(file, "utf8");
   } catch {

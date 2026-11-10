@@ -7,6 +7,10 @@ import type { Marks } from "./marks";
 /** The name of the helper that records the module of a declaration. */
 export const declaredInHelper = "__notation_declaredIn";
 
+// The name of the helper that makes the function for a `runtime:` option
+// whose value isn't a name.
+const unnamedHelper = "__notation_unnamed";
+
 // The same key as `declaredIn` in @notation/resource, which reads the record.
 // The helper is written into the module, so the user's project doesn't have
 // to resolve a notation package from the module's directory.
@@ -16,6 +20,9 @@ function ${declaredInHelper}(value, path, binding, moduleExports) {
     Object.defineProperty(value, Symbol.for("@notation/declaredIn"), { value: { path, binding, ...moduleExports } });
   }
   return value;
+}
+function ${unnamedHelper}(message) {
+  return () => { throw new Error(message); };
 }
 `;
 
@@ -113,8 +120,8 @@ function keptStatements(analysis: ModuleAnalysis) {
     const property = declaration.properties.get(option);
     if (!property) continue;
     skip.add(property);
-    const value = unwrap(property.value);
-    if (value.type === "Identifier") runtimeNames.set(value.name, option);
+    const name = moduleName(analysis, property);
+    if (name) runtimeNames.set(name, option);
   }
   const kept = new Set<Node>([declaration.statement]);
   const usedImports = new Set<string>();
@@ -191,13 +198,15 @@ export function stripForInfra(
       `${module.file}: the module declares a function with ${declaration.name}, so it must export \`${entry}\`, the entry that the platform calls.`,
     );
   }
-  if (
-    analysis.table.marks.has(declaredInHelper) ||
-    module.source.includes(`function ${declaredInHelper}(`)
-  ) {
-    throw new Error(
-      `${module.file}: the name ${declaredInHelper} is reserved for the build.`,
-    );
+  for (const name of [declaredInHelper, unnamedHelper]) {
+    if (
+      analysis.table.marks.has(name) ||
+      module.source.includes(`function ${name}(`)
+    ) {
+      throw new Error(
+        `${module.file}: the name ${name} is reserved for the build.`,
+      );
+    }
   }
 
   const { owners, kept, usedImports } = keptStatements(analysis);
@@ -237,12 +246,13 @@ export function stripForInfra(
     declaration.mark.platform === "workerd" && entry
       ? otherExports(analysis, entry)
       : undefined;
+  if (exports) checkWorkerdExports(analysis, exports);
   const record = [
     path.relative(root, module.file).split(path.sep).join("/"),
     declaration.binding,
     ...(exports ? [{ exports, starExports: analysis.table.stars }] : []),
   ];
-  replaceRuntimeOptions(s, declaration, module);
+  replaceRuntimeOptions(s, analysis);
   s.prependLeft(declaration.call.start, `${declaredInHelper}(`);
   s.appendRight(
     declaration.call.end,
@@ -298,11 +308,79 @@ function otherExports(analysis: ModuleAnalysis, entry: string): string[] {
     .sort();
 }
 
-// The local names that only name a type: interfaces, type aliases, `declare`
-// statements and type imports. `export { Local }` of such a name has no
-// value to re-export. A name that also has a value, such as an interface
-// merged with a class, is left out.
-function typeOnlyNames(analysis: ModuleAnalysis): Set<string> {
+// Fails on an export that workerd won't start a module with, where the
+// build can see the value: a namespace object from `export * as ns from`,
+// and a variable with no initialiser or a primitive one, such as
+// `export const version = "1"`. workerd accepts a function, a class or an
+// object whose prototype chain ends in Object.prototype.
+function checkWorkerdExports(analysis: ModuleAnalysis, exports: string[]) {
+  const { module } = analysis.table;
+  const fail = (node: Node, name: string, value: string) => {
+    throw new Error(
+      `${module.file}:${location(module.source, node.start)}: the module exports ${name}, whose value is ${value}. The runtime bundle re-exports the module's exports, and workerd doesn't start a module that exports a value other than a function, a class or an object. Move ${name} to another module, or don't export it.`,
+    );
+  };
+  const declarators = new Map<string, Node>();
+  for (const statement of module.body) {
+    const node =
+      statement.type === "ExportNamedDeclaration"
+        ? statement.declaration
+        : statement;
+    if (node?.type !== "VariableDeclaration") continue;
+    for (const declarator of node.declarations) {
+      if (declarator.id.type === "Identifier") {
+        declarators.set(declarator.id.name, declarator);
+      }
+    }
+  }
+  for (const name of exports) {
+    const target = analysis.table.exports.get(name)!;
+    if ("source" in target) {
+      if (target.imported !== "*") continue;
+      const statement = module.body.find(
+        (node: Node) =>
+          node.type === "ExportAllDeclaration" &&
+          node.exported &&
+          (node.exported.name ?? node.exported.value) === name,
+      );
+      fail(statement!, name, "a module namespace object");
+      continue;
+    }
+    const declarator = declarators.get(target.local);
+    if (!declarator) continue;
+    if (!declarator.init) fail(declarator, name, "undefined");
+    else if (isPrimitive(declarator.init)) {
+      fail(declarator, name, "a primitive, not an object");
+    }
+  }
+}
+
+// Whether an expression always gives a primitive value, such as `"1"`,
+// `-1`, `a + b` or `undefined`.
+function isPrimitive(expression: Node): boolean {
+  const node = unwrap(expression);
+  switch (node.type) {
+    case "Literal":
+      return !node.regex;
+    case "TemplateLiteral":
+    case "UnaryExpression":
+    case "BinaryExpression":
+      return true;
+    case "Identifier":
+      return node.name === "undefined";
+    default:
+      return false;
+  }
+}
+
+/**
+ * The local names of a module that only name a type: interfaces, type
+ * aliases, `declare` statements, namespaces that hold only types, and type
+ * imports. `export { Local }` of such a name has no value to re-export. A
+ * name that also has a value, such as an interface merged with a class, is
+ * left out.
+ */
+export function typeOnlyNames(analysis: ModuleAnalysis): Set<string> {
   const types = new Set<string>();
   const values = new Set<string>(analysis.table.imports.keys());
   for (const statement of analysis.table.module.body) {
@@ -317,7 +395,8 @@ function typeOnlyNames(analysis: ModuleAnalysis): Set<string> {
       }
     } else if (
       node.type === "TSInterfaceDeclaration" ||
-      node.type === "TSTypeAliasDeclaration"
+      node.type === "TSTypeAliasDeclaration" ||
+      (node.type === "TSModuleDeclaration" && holdsOnlyTypes(node))
     ) {
       types.add(node.id.name);
     } else {
@@ -328,6 +407,38 @@ function typeOnlyNames(analysis: ModuleAnalysis): Set<string> {
   }
   for (const name of values) types.delete(name);
   return types;
+}
+
+// Whether a namespace holds only types, so that TypeScript emits no value
+// for it.
+function holdsOnlyTypes(namespace: Node): boolean {
+  const body = namespace.body;
+  if (!body) return true;
+  if (body.type === "TSModuleDeclaration") return holdsOnlyTypes(body);
+  return body.body.every((statement: Node) => {
+    const node =
+      statement.type === "ExportNamedDeclaration" && statement.declaration
+        ? statement.declaration
+        : statement;
+    return node.type === "TSModuleDeclaration"
+      ? holdsOnlyTypes(node)
+      : isTypeOnly(statement);
+  });
+}
+
+// The name that a `runtime:` option passes, such as `Counter` in
+// `class: Counter`, if the module declares or imports it. A global, such as
+// `undefined`, doesn't count.
+function moduleName(analysis: ModuleAnalysis, property: Node) {
+  if (property.method) return undefined;
+  const value = unwrap(property.value);
+  if (value.type !== "Identifier") return undefined;
+  const declared = analysis.table.module.body.some((statement: Node) =>
+    declaredBy(statement).includes(value.name),
+  );
+  return declared || analysis.table.imports.has(value.name)
+    ? (value.name as string)
+    : undefined;
 }
 
 const keptName = (name: string, owners: Map<string, Node>, kept: Set<Node>) => {
@@ -370,16 +481,14 @@ function keptImport(
   return `import ${parts.join(", ")} from ${from};`;
 }
 
-// An option whose value is a name, such as `class: Counter`, becomes a
-// function with that name, so the infra build can read `config.class.name`
-// without loading the class. The name is the local name at the call site.
-// Any other value becomes a function whose name is "", so that a provider
-// can reject an option that needs a name.
-function replaceRuntimeOptions(
-  s: MagicString,
-  declaration: Declaration,
-  module: { file: string; source: string },
-) {
+// An option whose value is a name that the module declares or imports, such
+// as `class: Counter`, becomes a function with that name, so the infra build
+// can read `config.class.name` without loading the class. The name is the
+// local name at the call site. Any other value becomes a function whose
+// name is "", so that a provider can reject an option that needs a name.
+function replaceRuntimeOptions(s: MagicString, analysis: ModuleAnalysis) {
+  const declaration = analysis.declaration!;
+  const { module } = analysis.table;
   for (const option of declaration.mark.runtime) {
     const property = declaration.properties.get(option);
     if (!property) continue;
@@ -389,15 +498,19 @@ function replaceRuntimeOptions(
         `${module.file}:${location(module.source, value.start)}: the ${option} option of ${declaration.name} is a class expression. Declare the class at the top level of the module, and pass its name.`,
       );
     }
-    const message = `${option} only runs in the function, not in the infra build.`;
-    const body = `{ throw new Error(${JSON.stringify(message)}); }`;
-    const thrower =
-      value.type === "Identifier"
-        ? `function ${value.name}() ${body}`
-        : // The comma keeps JS from naming the function after the key.
-          `(0, () => ${body})`;
-    if (property.shorthand) {
-      s.overwrite(property.start, property.end, `${option}: ${thrower}`);
+    const message = JSON.stringify(
+      `${option} only runs in the function, not in the infra build.`,
+    );
+    const name = moduleName(analysis, property);
+    // A function returned from the helper has no name. Rolldown removes a
+    // comma or `void` in front of an arrow function, and the function would
+    // then take the option's key as its name.
+    const thrower = name
+      ? `function ${name}() { throw new Error(${message}); }`
+      : `${unnamedHelper}(${message})`;
+    if (property.shorthand || property.method) {
+      const key = module.source.slice(property.key.start, property.key.end);
+      s.overwrite(property.start, property.end, `${key}: ${thrower}`);
     } else {
       s.overwrite(property.value.start, property.value.end, thrower);
     }
