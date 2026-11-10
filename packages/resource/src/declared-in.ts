@@ -8,7 +8,7 @@ export type DeclaredIn = {
   path: string;
   /** The local name of the binding that holds the declaration. */
   binding: string;
-} & Partial<DeclaredExports>;
+} & (DeclaredExports | { exports?: undefined; starExports?: undefined });
 
 /**
  * The exports of a module whose platform reads named exports, such as a

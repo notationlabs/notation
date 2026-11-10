@@ -9,6 +9,7 @@ import {
   type Node,
   type ParsedModule,
 } from "./ast";
+import { isPlatformName, platformNames, type PlatformName } from "./platforms";
 
 /**
  * Marks a function that declares a function resource, such as a Lambda.
@@ -31,11 +32,8 @@ export type DeclarationMark = {
   /** The export of the module that the platform calls, such as `handler`. */
   entry?: string;
   /** The platform that runs the runtime bundle. Absent means `node`. */
-  platform?: Platform;
+  platform?: PlatformName;
 };
-
-export const platforms = ["node", "workerd"] as const;
-export type Platform = (typeof platforms)[number];
 
 /**
  * Marks a function that declares a resource. Written `@resource`, or
@@ -116,12 +114,12 @@ export function parseMark(jsDoc: string, where: string): Mark | undefined {
         }
         mark.entry = value;
       } else if (name === "platform") {
-        if (!(platforms as readonly string[]).includes(value)) {
+        if (!isPlatformName(value)) {
           throw new Error(
-            `${where}: unknown platform "${value}" in the @declaration mark. Use ${platforms.join(" or ")}.`,
+            `${where}: unknown platform "${value}" in the @declaration mark. Use ${platformNames.join(" or ")}.`,
           );
         }
-        mark.platform = value as Platform;
+        mark.platform = value;
       } else {
         throw new Error(
           `${where}: unknown clause "${name}" in the @declaration mark. Use shared, runtime, keys, entry or platform.`,

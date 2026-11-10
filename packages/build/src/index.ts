@@ -10,6 +10,7 @@ export {
   type DeclarationModule,
 } from "./infra-strip";
 export { stripForRuntime } from "./runtime-strip";
+export { platformOf, type Platform, type PlatformName } from "./platforms";
 export {
   infraPlugin,
   runtimeEntry,

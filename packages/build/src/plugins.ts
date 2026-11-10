@@ -4,15 +4,14 @@ import type { Plugin } from "rolldown";
 import type { ModuleAnalysis } from "./analyze";
 import { location } from "./ast";
 import { nodeModules, scriptFile } from "./files";
+import { checkTypeReexports, runtimeExports } from "./exports";
 import {
   infraInterface,
-  runtimeExports,
   stripForInfra,
-  typeOnlyNames,
   type DeclarationModule,
 } from "./infra-strip";
 import type { ImportBinding, Mark } from "./marks";
-import { isProjectModule, readSource, type ModuleAnalyses } from "./modules";
+import { isProjectModule, type ModuleAnalyses } from "./modules";
 import { stripForRuntime } from "./runtime-strip";
 
 const isBareSpecifier = (source: string) =>
@@ -217,9 +216,10 @@ export const runtimeEntry = entryId;
 
 /**
  * The entry of a runtime bundle. It re-exports `names` from the module at
- * `file`: the native entry, such as `handler`, and on `workerd` the module's
- * other exports, such as Durable Object classes. The declaration is not an
- * export of the bundle, so the bundler can drop it. Exported for tests.
+ * `file`: the native entry, such as `handler`, and the module's other
+ * exports if the platform reads them, such as Durable Object classes on
+ * workerd. The declaration is not an export of the bundle, so the bundler
+ * can drop it. Exported for tests.
  */
 export function createRuntimeEntry(file: string, names: string[]): string {
   const show = (name: string) =>
@@ -253,7 +253,6 @@ export function runtimePlugin({
   module,
 }: RuntimePluginOptions): Plugin {
   const infraModules = new Set<string>();
-  let skipped = false;
   return {
     name: "notation-runtime",
     resolveId(source) {
@@ -263,18 +262,14 @@ export function runtimePlugin({
       if (id !== resolvedEntryId) return null;
       // In watch mode, a change to the module rebuilds this bundle before
       // the infra rebuild replaces the watcher, so the entry reads the
-      // module from disk, as it is now. If the module has lost its entry,
-      // the build writes nothing, and the last bundle stays: the infra
-      // build either fails or no longer bundles the module.
-      const source = readSource(module.path);
-      const analysis =
-        source === undefined
-          ? undefined
-          : analyses.fromSource(module.path, source);
+      // module from disk, as it is now.
+      const analysis = analyses.fromDisk(module.path);
       const names = analysis ? runtimeExports(analysis) : [];
-      skipped =
-        names.length === 0 || !analyses.marks.hasExport(module.path, names[0]!);
-      if (skipped) return "export {};\n";
+      if (
+        names.length === 0 ||
+        !analyses.marks.hasExport(module.path, names[0]!)
+      )
+        return "export {};\n";
       checkTypeReexports(analysis!, names, analyses);
       return createRuntimeEntry(module.path, names);
     },
@@ -298,7 +293,14 @@ export function runtimePlugin({
       for (const id of this.getModuleIds()) analyses.checkShared(id);
     },
     generateBundle(_, bundle) {
-      if (skipped) {
+      // An entry that exports nothing means that the module has lost its
+      // declaration, its entry or its entry export. The build writes
+      // nothing, and the last bundle stays: the infra build either fails or
+      // no longer bundles the module.
+      const entry = Object.values(bundle).find(
+        (output) => output.type === "chunk" && output.isEntry,
+      );
+      if (entry?.type === "chunk" && entry.exports.length === 0) {
         for (const fileName of Object.keys(bundle)) delete bundle[fileName];
         return;
       }
@@ -350,55 +352,6 @@ export function runtimePlugin({
       }
     },
   };
-}
-
-// Rolldown would report a missing export in the generated entry, which
-// doesn't say that the name is only a type.
-function checkTypeReexports(
-  analysis: ModuleAnalysis,
-  names: string[],
-  analyses: ModuleAnalyses,
-) {
-  const file = analysis.table.module.file;
-  for (const name of names) {
-    const target = analysis.table.exports.get(name);
-    if (!target || !("source" in target) || target.imported === "*") continue;
-    const origin = typeOrigin(
-      target.source,
-      target.imported,
-      file,
-      analyses,
-      new Set(),
-    );
-    if (!origin) continue;
-    throw new Error(
-      `${analyses.show(file)} exports ${name} from ${JSON.stringify(target.source)}, and ${name} is only a type in ${analyses.show(origin)}. The runtime bundle re-exports the module's value exports, so write \`export type { ${name} }\`.`,
-    );
-  }
-}
-
-// The file that declares `name` as only a type. Follows re-exports, but not
-// `export * from`.
-function typeOrigin(
-  source: string,
-  name: string,
-  importer: string,
-  analyses: ModuleAnalyses,
-  seen: Set<string>,
-): string | undefined {
-  const file = analyses.marks.resolve(source, importer);
-  if (!file || seen.has(file)) return undefined;
-  seen.add(file);
-  const analysis = analyses.fromFile(file);
-  if (!analysis) return undefined;
-  const target = analysis.table.exports.get(name);
-  // The table leaves out type exports, such as `export interface Env`.
-  if (!target) return typeOnlyNames(analysis).has(name) ? file : undefined;
-  if ("local" in target) {
-    return typeOnlyNames(analysis).has(target.local) ? file : undefined;
-  }
-  if (target.imported === "*") return undefined;
-  return typeOrigin(target.source, target.imported, file, analyses, seen);
 }
 
 type ImportUse = { at: string; name: string };

@@ -67,6 +67,16 @@ export class ModuleAnalyses {
     return analysis;
   }
 
+  /**
+   * Analyses a module from its source on disk now, which can be newer than
+   * the analysis that `fromFile` keeps until the watcher reports a change.
+   * Undefined if the file can't be read.
+   */
+  fromDisk(file: string): ModuleAnalysis | undefined {
+    const source = readSource(file);
+    return source === undefined ? undefined : this.fromSource(file, source);
+  }
+
   /** Analyses a module from the file system. */
   fromFile(file: string): ModuleAnalysis | undefined {
     if (!isProjectModule(file)) return undefined;
@@ -245,7 +255,7 @@ export class ModuleAnalyses {
   }
 }
 
-export function readSource(file: string): string | undefined {
+function readSource(file: string): string | undefined {
   try {
     return fs.readFileSync(file, "utf8");
   } catch {

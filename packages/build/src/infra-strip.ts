@@ -1,8 +1,17 @@
 import path from "node:path";
 import MagicString from "magic-string";
-import { freeReferences, location, unwrap, type Node } from "./ast";
-import type { Declaration, ModuleAnalysis } from "./analyze";
+import type { ModuleAnalysis } from "./analyze";
+import {
+  declaredBy,
+  freeReferences,
+  isTypeOnly,
+  location,
+  unwrap,
+  type Node,
+} from "./ast";
+import { otherExports } from "./exports";
 import type { Marks } from "./marks";
+import { defaultPlatform, platformOf, type PlatformName } from "./platforms";
 
 /** The name of the helper that records the module of a declaration. */
 export const declaredInHelper = "__notation_declaredIn";
@@ -24,78 +33,36 @@ function ${unnamedHelper}(message) {
 }
 `;
 
-/** A declaration module, as the infra build records it. */
+/**
+ * A declaration module, as the infra build records it. A declaration whose
+ * mark has no `entry`, such as a Durable Object namespace, has no runtime
+ * bundle of its own. `platform` is absent for the default platform, Node.
+ */
 export type DeclarationModule = {
   /** The absolute path of the module. */
   path: string;
   /** The local name of the binding that holds the declaration. */
   binding: string;
-  /**
-   * The export that the platform calls, such as `handler`. A declaration
-   * whose mark has no `entry`, such as a Durable Object namespace, has no
-   * runtime bundle of its own.
-   */
-  entry?: string;
-  /** Set for `workerd`. Absent means `node`. */
-  platform?: "workerd";
-  /**
-   * The other exports that the runtime bundle re-exports, besides `entry`.
-   * Only on `workerd`, which reads named exports such as Durable Object
-   * classes. The declaration's binding is left out.
-   */
-  exports?: string[];
-};
-
-const isTypeOnly = (statement: Node): boolean =>
-  statement.type === "TSTypeAliasDeclaration" ||
-  statement.type === "TSInterfaceDeclaration" ||
-  (statement.type === "ImportDeclaration" && statement.importKind === "type") ||
-  ((statement.type === "ExportNamedDeclaration" ||
-    statement.type === "ExportAllDeclaration") &&
-    statement.exportKind === "type") ||
-  (statement.type === "ExportNamedDeclaration" &&
-    statement.declaration &&
-    isTypeOnly(statement.declaration)) ||
-  statement.declare === true;
-
-function declaredBy(statement: Node): string[] {
-  const node =
-    statement.type === "ExportNamedDeclaration"
-      ? statement.declaration
-      : statement;
-  if (!node) return [];
-  if (node.type === "VariableDeclaration") {
-    return node.declarations.flatMap((declarator: Node) =>
-      namesOf(declarator.id),
-    );
-  }
-  if (
-    node.type === "FunctionDeclaration" ||
-    node.type === "ClassDeclaration" ||
-    node.type === "TSEnumDeclaration" ||
-    node.type === "TSModuleDeclaration"
-  ) {
-    return node.id?.type === "Identifier" ? [node.id.name] : [];
-  }
-  return [];
-}
-
-function namesOf(pattern: Node): string[] {
-  const names: string[] = [];
-  const visit = (node: Node | null) => {
-    if (!node) return;
-    if (node.type === "Identifier") names.push(node.name);
-    else if (node.type === "ObjectPattern")
-      node.properties.forEach((p: Node) =>
-        visit(p.type === "RestElement" ? p.argument : p.value),
-      );
-    else if (node.type === "ArrayPattern") node.elements.forEach(visit);
-    else if (node.type === "RestElement") visit(node.argument);
-    else if (node.type === "AssignmentPattern") visit(node.left);
-  };
-  visit(pattern);
-  return names;
-}
+} & (
+  | { entry?: undefined; platform?: undefined; exports?: undefined }
+  | {
+      /** The export that the platform calls, such as `handler`. */
+      entry: string;
+      platform?: undefined;
+      exports?: undefined;
+    }
+  | {
+      entry: string;
+      platform: Exclude<PlatformName, typeof defaultPlatform>;
+      /**
+       * The other exports that the runtime bundle re-exports, besides
+       * `entry`, for a platform that reads named exports, such as Durable
+       * Object classes on workerd. Empty for a platform that only reads the
+       * entry.
+       */
+      exports: string[];
+    }
+);
 
 // The statements that the infra copy of a declaration module keeps: the
 // declaration and the top-level statements that it uses, and the imports
@@ -238,11 +205,9 @@ export function stripForInfra(
     s.remove(statement.start, statement.end);
   }
 
-  const exports =
-    declaration.mark.platform === "workerd" && entry
-      ? otherExports(analysis, entry)
-      : undefined;
-  if (exports) checkWorkerdExports(analysis, exports);
+  const platform = declaration.mark.platform;
+  const exports = otherExports(analysis);
+  if (exports) platformOf(platform).checkExports?.(analysis, exports);
   const record = [
     path.relative(root, module.file).split(path.sep).join("/"),
     declaration.binding,
@@ -266,153 +231,13 @@ export function stripForInfra(
     declaration: {
       path: module.file,
       binding: declaration.binding,
-      ...(entry ? { entry } : {}),
-      ...(exports ? { platform: "workerd" as const, exports } : {}),
+      ...(!entry
+        ? {}
+        : platform && platform !== defaultPlatform
+          ? { entry, platform, exports: exports ?? [] }
+          : { entry }),
     },
   };
-}
-
-/**
- * The exports that the runtime bundle of a declaration module re-exports:
- * the entry, and on `workerd` the module's other value exports. Empty when
- * the declaration has no entry.
- */
-export function runtimeExports(analysis: ModuleAnalysis): string[] {
-  const entry = analysis.declaration?.mark.entry;
-  if (!entry) return [];
-  return analysis.declaration!.mark.platform === "workerd"
-    ? [entry, ...otherExports(analysis, entry)]
-    : [entry];
-}
-
-// Names from `export * from` are missing, as the module's table doesn't
-// hold them.
-function otherExports(analysis: ModuleAnalysis, entry: string): string[] {
-  const binding = analysis.declaration!.binding;
-  const types = typeOnlyNames(analysis);
-  return [...analysis.table.exports]
-    .filter(
-      ([name, target]) =>
-        name !== entry &&
-        !(
-          "local" in target &&
-          (target.local === binding || types.has(target.local))
-        ),
-    )
-    .map(([name]) => name)
-    .sort();
-}
-
-// workerd only starts a module whose exports are functions, classes or
-// objects whose prototype chain ends in Object.prototype. This check covers
-// the values that the build can see.
-function checkWorkerdExports(analysis: ModuleAnalysis, exports: string[]) {
-  const { module } = analysis.table;
-  const fail = (node: Node, name: string, value: string) => {
-    throw new Error(
-      `${module.file}:${location(module.source, node.start)}: the module exports ${name}, whose value is ${value}. The runtime bundle re-exports the module's exports, and workerd doesn't start a module that exports a value other than a function, a class or an object. Move ${name} to another module, or don't export it.`,
-    );
-  };
-  const declarators = new Map<string, Node>();
-  for (const statement of module.body) {
-    const node =
-      statement.type === "ExportNamedDeclaration"
-        ? statement.declaration
-        : statement;
-    if (node?.type !== "VariableDeclaration") continue;
-    for (const declarator of node.declarations) {
-      if (declarator.id.type === "Identifier") {
-        declarators.set(declarator.id.name, declarator);
-      }
-    }
-  }
-  for (const name of exports) {
-    const target = analysis.table.exports.get(name)!;
-    if ("source" in target) {
-      if (target.imported !== "*") continue;
-      const statement = module.body.find(
-        (node: Node) =>
-          node.type === "ExportAllDeclaration" &&
-          node.exported &&
-          (node.exported.name ?? node.exported.value) === name,
-      );
-      fail(statement!, name, "a module namespace object");
-      continue;
-    }
-    const declarator = declarators.get(target.local);
-    if (!declarator) continue;
-    if (!declarator.init) fail(declarator, name, "undefined");
-    else if (isPrimitive(declarator.init)) {
-      fail(declarator, name, "a primitive, not an object");
-    }
-  }
-}
-
-function isPrimitive(expression: Node): boolean {
-  const node = unwrap(expression);
-  switch (node.type) {
-    case "Literal":
-      return !node.regex;
-    case "TemplateLiteral":
-    case "UnaryExpression":
-    case "BinaryExpression":
-      return true;
-    case "Identifier":
-      return node.name === "undefined";
-    default:
-      return false;
-  }
-}
-
-/**
- * The local names of a module that only name a type: interfaces, type
- * aliases, `declare` statements, namespaces that hold only types, and type
- * imports. `export { Local }` of such a name has no value to re-export. A
- * name that also has a value, such as an interface merged with a class, is
- * left out.
- */
-export function typeOnlyNames(analysis: ModuleAnalysis): Set<string> {
-  const types = new Set<string>();
-  const values = new Set<string>(analysis.table.imports.keys());
-  for (const statement of analysis.table.module.body) {
-    const node =
-      statement.type === "ExportNamedDeclaration" && statement.declaration
-        ? statement.declaration
-        : statement;
-    if (node.type === "ImportDeclaration") {
-      for (const specifier of node.specifiers) {
-        if (node.importKind === "type" || specifier.importKind === "type")
-          types.add(specifier.local.name);
-      }
-    } else if (
-      node.type === "TSInterfaceDeclaration" ||
-      node.type === "TSTypeAliasDeclaration" ||
-      (node.type === "TSModuleDeclaration" && holdsOnlyTypes(node))
-    ) {
-      types.add(node.id.name);
-    } else {
-      for (const name of declaredBy(node)) {
-        (node.declare ? types : values).add(name);
-      }
-    }
-  }
-  for (const name of values) types.delete(name);
-  return types;
-}
-
-function holdsOnlyTypes(namespace: Node): boolean {
-  const body = namespace.body;
-  if (!body) return true;
-  if (body.type === "TSModuleDeclaration") return holdsOnlyTypes(body);
-  return body.body.every((statement: Node) => {
-    const node =
-      statement.type === "ExportNamedDeclaration" && statement.declaration
-        ? statement.declaration
-        : statement;
-    return node.type === "TSModuleDeclaration"
-      ? holdsOnlyTypes(node)
-      : isTypeOnly(statement);
-  });
 }
 
 // The name that a `runtime:` option passes, such as `Counter` in

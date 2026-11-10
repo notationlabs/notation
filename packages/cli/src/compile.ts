@@ -1,11 +1,9 @@
-import { builtinModules } from "node:module";
 import path from "node:path";
 import {
   rolldown,
   watch as rolldownWatch,
   type InputOptions,
   type OutputOptions,
-  type Plugin,
 } from "rolldown";
 import {
   infraEntry,
@@ -14,9 +12,9 @@ import {
   infraWatchExclude,
   ModuleAnalyses,
   runtimeEntry,
+  platformOf,
   runtimePlugin,
   type DeclarationModule,
-  type Platform,
 } from "@notation/build";
 import {
   filePaths,
@@ -211,8 +209,8 @@ export type CompileRuntimeOptions = {
 /**
  * Bundles each declaration module that has an entry to
  * `dist/<module path>/index.mjs`, as one file. The bundle's entry is
- * generated: it re-exports the module's entry, such as `handler`, and on
- * workerd the module's other exports. Returns a function that stops watching.
+ * generated: it re-exports the module's entry, such as `handler`, and the
+ * module's other exports if the platform reads them. Returns a function that stops watching.
  */
 export async function compileRuntimeModules(
   modules: DeclarationModule[],
@@ -223,7 +221,7 @@ export async function compileRuntimeModules(
   const analyses = opts.analyses ?? new ModuleAnalyses();
   const distDir = filePaths.dist.dir();
   const configs = bundled.map((module) => {
-    const { plugins, ...platform } = platformOptions[module.platform ?? "node"];
+    const { plugins, ...platform } = platformOf(module.platform).build;
     return {
       input: {
         input: {
@@ -277,71 +275,6 @@ export async function compileRuntimeModules(
   });
   return () => watcher.close();
 }
-
-// workerd provides Node's built-in modules as `node:` modules, under the
-// nodejs_compat flag. A bare name, such as `events`, that no installed
-// package provides is imported as its `node:` module. workerd has no
-// `require`, so a `require()` of a built-in, as in a CommonJS package, gets
-// a module that imports it, as wrangler does.
-const requiredBuiltin = "\0notation-required-builtin:";
-const nodeBuiltinsPlugin: Plugin = {
-  name: "notation-workerd-builtins",
-  async resolveId(source, importer, options) {
-    const prefixed = source.startsWith("node:");
-    if (!prefixed && !builtinModules.includes(source)) return null;
-    const name = source.replace(/^node:/, "");
-    if (!prefixed) {
-      const resolved = await this.resolve(source, importer, options);
-      if (resolved && !resolved.external) return resolved;
-    }
-    return options.kind === "require-call"
-      ? `${requiredBuiltin}${name}`
-      : { id: `node:${name}`, external: true };
-  },
-  load(id) {
-    if (!id.startsWith(requiredBuiltin)) return null;
-    const name = id.slice(requiredBuiltin.length);
-    return `import builtin from "node:${name}";\nmodule.exports = builtin;\n`;
-  },
-};
-
-// Like wrangler on deploy, unless NODE_ENV is set.
-const nodeEnv = JSON.stringify(process.env.NODE_ENV || "production");
-
-// The conditions and the NODE_ENV defines for workerd are the ones that
-// wrangler uses. workerd provides the `cloudflare:` and `node:` modules, so
-// the bundle leaves them external.
-const platformOptions: Record<Platform, InputOptions> = {
-  node: {
-    platform: "node",
-    resolve: {
-      conditionNames: ["notation-runtime", "node", "import", "default"],
-    },
-  },
-  workerd: {
-    platform: "neutral",
-    resolve: {
-      conditionNames: [
-        "notation-runtime",
-        "workerd",
-        "worker",
-        "browser",
-        "import",
-        "default",
-      ],
-      mainFields: ["browser", "module", "main"],
-    },
-    external: [/^cloudflare:/],
-    transform: {
-      define: {
-        "process.env.NODE_ENV": nodeEnv,
-        "global.process.env.NODE_ENV": nodeEnv,
-        "globalThis.process.env.NODE_ENV": nodeEnv,
-      },
-    },
-    plugins: [nodeBuiltinsPlugin],
-  },
-};
 
 function sameModules(a: DeclarationModule[], b: DeclarationModule[]) {
   return JSON.stringify(a) === JSON.stringify(b);
