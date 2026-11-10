@@ -290,6 +290,9 @@ importers:
       '@notation/aws':
         specifier: workspace:*
         version: link:../aws
+      '@notation/cloudflare':
+        specifier: workspace:*
+        version: link:../cloudflare
       '@notation/resource':
         specifier: workspace:*
         version: link:../resource
