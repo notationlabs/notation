@@ -66,19 +66,24 @@ export const auditQueue = queue({ id: "audit", schema: AuditEvent });
 
 The other settings can change in place. When you remove one, Notation sets it back to the value SQS gives a new queue, because SQS can't unset a queue attribute:
 
-| Setting                     | SQS attribute                   | Default                 |
-| --------------------------- | ------------------------------- | ----------------------- |
-| `visibilityTimeout`         | `VisibilityTimeout`             | 30 seconds              |
-| `messageRetentionPeriod`    | `MessageRetentionPeriod`        | 345,600 s (4 days)      |
-| `delaySeconds`              | `DelaySeconds`                  | 0                       |
-| `receiveMessageWaitTime`    | `ReceiveMessageWaitTimeSeconds` | 0                       |
-| `maximumMessageSize`        | `MaximumMessageSize`            | 1,048,576 bytes (1 MiB) |
-| `deadLetterQueue`           | `RedrivePolicy`                 | No dead-letter queue    |
-| `contentBasedDeduplication` | `ContentBasedDeduplication`     | `false`                 |
-| `deduplicationScope`        | `DeduplicationScope`            | `"queue"`               |
-| `fifoThroughputLimit`       | `FifoThroughputLimit`           | `"perQueue"`            |
+| Setting                  | SQS attribute                   | Default                 |
+| ------------------------ | ------------------------------- | ----------------------- |
+| `visibilityTimeout`      | `VisibilityTimeout`             | 30 seconds              |
+| `messageRetentionPeriod` | `MessageRetentionPeriod`        | 345,600 s (4 days)      |
+| `delaySeconds`           | `DelaySeconds`                  | 0                       |
+| `receiveMessageWaitTime` | `ReceiveMessageWaitTimeSeconds` | 0                       |
+| `maximumMessageSize`     | `MaximumMessageSize`            | 1,048,576 bytes (1 MiB) |
+| `deadLetterQueue`        | `RedrivePolicy`                 | No dead-letter queue    |
 
-The last three settings are for FIFO queues only. `queue()` throws when a standard queue sets one of them. For high throughput, set `deduplicationScope: "messageGroup"` and `fifoThroughputLimit: "perMessageGroupId"`. SQS allows `"perMessageGroupId"` only with `"messageGroup"`, so `queue()` throws when `fifoThroughputLimit` is `"perMessageGroupId"` and `deduplicationScope` is not `"messageGroup"`. With `contentBasedDeduplication: true`, SQS deduplicates messages by a SHA-256 hash of the body, so a sender doesn't have to give a deduplication ID.
+A FIFO queue also takes these settings. `queue()` throws when a standard queue sets one of them.
+
+| Setting                     | SQS attribute               | Default      |
+| --------------------------- | --------------------------- | ------------ |
+| `contentBasedDeduplication` | `ContentBasedDeduplication` | `false`      |
+| `deduplicationScope`        | `DeduplicationScope`        | `"queue"`    |
+| `fifoThroughputLimit`       | `FifoThroughputLimit`       | `"perQueue"` |
+
+For high throughput, set `deduplicationScope: "messageGroup"` and `fifoThroughputLimit: "perMessageGroupId"`. SQS allows `"perMessageGroupId"` only with `"messageGroup"`, so `queue()` throws when `fifoThroughputLimit` is `"perMessageGroupId"` and `deduplicationScope` is not `"messageGroup"`. With `contentBasedDeduplication: true`, SQS deduplicates messages by a SHA-256 hash of the body, so a sender doesn't have to give a deduplication ID.
 
 SQS encrypts a new queue with keys that SQS owns (SSE-SQS). Notation doesn't set the encryption attributes, so a queue keeps this default.
 
