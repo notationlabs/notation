@@ -206,14 +206,16 @@ it("returns a package whose resourceClasses holds something other than a class a
   ]);
 });
 
-it("does not import a provider that is a path", async () => {
+it("does not import a provider that is a path or a subpath", async () => {
   const { failures } = await loadProviderRegistry(
-    ["./queues", "/tmp/queues"],
+    ["./queues", "/tmp/queues", "@acme/queues/internal/file", "queues/file"],
     root,
   );
   expect(failures.map((failure) => failure.errorMessage)).toEqual([
-    "./queues is a path, not a package name",
-    "/tmp/queues is a path, not a package name",
+    "./queues is not a package name",
+    "/tmp/queues is not a package name",
+    "@acme/queues/internal/file is not a package name",
+    "queues/file is not a package name",
   ]);
 });
 
@@ -318,6 +320,36 @@ it("resolves a package that the project depends on through another package, as p
   const { registry, failures } = await loadProviderRegistry(
     ["@acme/queues"],
     root,
+  );
+  expect([...registry]).toEqual([[Queue.type, Queue]]);
+  expect(failures).toEqual([]);
+});
+
+it("walks the dependency tree from the package.json above a project root that has none", async () => {
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ dependencies: { "@acme/sdk": "1.0.0" } }),
+  );
+  const store = path.join(
+    root,
+    "node_modules",
+    ".pnpm",
+    "acme+sdk",
+    "node_modules",
+  );
+  installPackage("@acme/sdk", undefined, store);
+  installPackage("@acme/queues", [Queue], store);
+  fs.mkdirSync(path.join(root, "node_modules", "@acme"), { recursive: true });
+  fs.symlinkSync(
+    path.join(store, "@acme", "sdk"),
+    path.join(root, "node_modules", "@acme", "sdk"),
+  );
+  const infra = path.join(root, "infra");
+  fs.mkdirSync(infra);
+
+  const { registry, failures } = await loadProviderRegistry(
+    ["@acme/queues"],
+    infra,
   );
   expect([...registry]).toEqual([[Queue.type, Queue]]);
   expect(failures).toEqual([]);

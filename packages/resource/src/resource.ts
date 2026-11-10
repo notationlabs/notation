@@ -847,9 +847,16 @@ export function resourceClassesIn(
   ...namespaces: Record<string, unknown>[]
 ): ResourceClass<any, any, any>[] {
   return namespaces.flatMap((namespace) =>
-    Object.values(namespace).filter(
-      (value): value is ResourceClass<any, any, any> =>
-        typeof value === "function" && "type" in value && "provider" in value,
-    ),
+    Object.values(namespace).filter(isResourceClass),
+  );
+}
+
+export function isResourceClass(
+  value: unknown,
+): value is ResourceClass<any, any, any> {
+  return (
+    typeof value === "function" &&
+    typeof (value as { type?: unknown }).type === "string" &&
+    typeof (value as { provider?: unknown }).provider === "string"
   );
 }

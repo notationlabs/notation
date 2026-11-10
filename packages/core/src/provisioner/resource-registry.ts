@@ -12,7 +12,7 @@ import {
   type ResourceRegistry,
 } from "@notation/reconciler";
 import type { DurableStep } from "@notation/reconciler/durable";
-import type { ResourceClass } from "@notation/resource";
+import { isResourceClass, type ResourceClass } from "@notation/resource";
 import type { StateBackend, StateNode } from "@notation/state";
 import type { BaseResource } from "src/orchestrator/resource";
 import { projectRoot } from "src/utils/paths";
@@ -74,6 +74,7 @@ export async function loadProviderRegistry(
   failures: ProviderLoadFailedEvent[];
 }> {
   const require = createRequire(path.join(root, "package.json"));
+  const dirs = cachedDependencyDirs(root);
   const classes: ResourceClass<any, any, any>[] = [];
   const failures: ProviderLoadFailedEvent[] = [];
   const fail = (provider: string, errorMessage: string) =>
@@ -84,14 +85,15 @@ export async function loadProviderRegistry(
       errorMessage,
     });
   for (const name of packages) {
-    // A record names a package, and a path in its place would import a file.
-    if (name.startsWith(".") || path.isAbsolute(name)) {
-      fail(name, `${name} is a path, not a package name`);
+    // A record names a package. A path or a subpath in its place would
+    // import a file.
+    if (!packageName.test(name)) {
+      fail(name, `${name} is not a package name`);
       continue;
     }
     let entry: string;
     try {
-      entry = resolvePackage(require, name, root);
+      entry = resolvePackage(require, name, dirs);
     } catch (error) {
       fail(
         name,
@@ -125,15 +127,6 @@ export async function loadProviderRegistry(
   return { registry: createResourceRegistry(classes), failures };
 }
 
-function isResourceClass(
-  value: unknown,
-): value is ResourceClass<any, any, any> {
-  return (
-    typeof value === "function" &&
-    typeof (value as { type?: unknown }).type === "string"
-  );
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -146,7 +139,7 @@ function errorMessage(error: unknown): string {
 function resolvePackage(
   require: NodeJS.Require,
   name: string,
-  root: string,
+  dependencyDirs: () => Iterable<string>,
 ): string {
   let notFound: unknown;
   try {
@@ -155,7 +148,7 @@ function resolvePackage(
     if (!isNotFound(error)) throw error;
     notFound = error;
   }
-  for (const dir of dependencyDirs(root)) {
+  for (const dir of dependencyDirs()) {
     try {
       return require.resolve(name, { paths: [dir] });
     } catch (error) {
@@ -163,6 +156,22 @@ function resolvePackage(
     }
   }
   throw notFound;
+}
+
+const packageName = /^(@[^/@.][^/]*\/)?[^/@.][^/]*$/;
+
+// The tree is walked at most once for all the packages of one load, and
+// only as far as a package needs.
+function cachedDependencyDirs(root: string): () => Iterable<string> {
+  const found: string[] = [];
+  const walk = dependencyDirs(root);
+  return function* () {
+    yield* found;
+    for (const dir of walk) {
+      found.push(dir);
+      yield dir;
+    }
+  };
 }
 
 function isNotFound(error: unknown): boolean {
@@ -174,10 +183,12 @@ function isNotFound(error: unknown): boolean {
 // links resolve each package's own dependencies. The project's dev
 // dependencies are included, and those of other packages are not.
 function* dependencyDirs(root: string): Generator<string> {
+  const project = manifestDir(root);
+  if (!project) return;
   const seen = new Set<string>();
-  const pending = [root];
+  const pending = [project];
   for (let dir = pending.shift(); dir; dir = pending.shift()) {
-    for (const name of dependencyNames(dir, dir === root)) {
+    for (const name of dependencyNames(dir, dir === project)) {
       const found = findPackageDir(dir, name);
       if (!found || seen.has(found)) continue;
       seen.add(found);
@@ -201,6 +212,15 @@ function dependencyNames(dir: string, includeDev: boolean): string[] {
     ...manifest.optionalDependencies,
     ...(includeDev ? manifest.devDependencies : {}),
   });
+}
+
+// The project root is the directory of notation.config.ts, and the project's
+// package.json can be in a directory above it.
+function manifestDir(root: string): string | undefined {
+  for (let dir = root; ; dir = path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, "package.json"))) return dir;
+    if (path.dirname(dir) === dir) return undefined;
+  }
 }
 
 // Looks in the node_modules of `from` and of each directory above it, as Node
