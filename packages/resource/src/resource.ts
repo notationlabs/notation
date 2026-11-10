@@ -406,6 +406,9 @@ export abstract class Resource<
    */
   async planParams(): Promise<Record<string, unknown>> {
     this.#sealed = true;
+    const pending = this.getDependencies().some((dep) => dep.output == null);
+    if (!pending) return withoutUndefined(await this.getParams());
+
     const views = createPlanViews();
     const derivedParams = await tryAtPlan(views, () =>
       this.deriveParams({

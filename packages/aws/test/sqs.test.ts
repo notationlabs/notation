@@ -598,7 +598,7 @@ test("a batchSize over 10 on a FIFO queue throws", async () => {
       eventSourceMapping({ source: ledger, target: fn, batchSize: 20 });
     }),
   ).rejects.toThrow(
-    "sets batchSize: 20, but Lambda allows at most 10 for a FIFO queue.",
+    'sets batchSize: 20, but Lambda allows at most 10 for a FIFO queue.',
   );
 });
 
