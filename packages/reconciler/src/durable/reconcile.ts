@@ -14,11 +14,7 @@ import {
 } from "@notation/resource";
 import { VersionConflict, type StateNode } from "@notation/state";
 import { buildDepthLevels, collectDependents } from "../dependency-graph";
-import {
-  createBlocksDelete,
-  createClassOf,
-  isDeleteBlockable,
-} from "../delete-cascade";
+import { cascadeRegistry, createBlocksDelete } from "../delete-cascade";
 import type { OperationLifecycleEvent } from "../events";
 import {
   createResourceRegistryFromResources,
@@ -299,39 +295,34 @@ async function* deleteBlockingDependents(
   opts: DurableDeployOptions,
   resource: BaseResource,
 ): AsyncGenerator<any, void, any> {
+  const registry = cascadeRegistry(opts);
   // Skips listing state, which copies every record into the journal.
-  if (
-    !isDeleteBlockable({
-      type: resource.type,
-      resources: opts.resources,
-      registry: opts.registry,
-    })
-  ) {
-    return;
-  }
+  const blockable = [...registry.values()].some((Class) =>
+    Class.blocksDeleteOf.includes(resource.type),
+  );
+  if (!blockable) return;
+
   const records = yield* step.run("list", () => opts.state.values());
   const resourceById = new Map(
     opts.resources.map((desired) => [desired.id, desired]),
   );
   const recordById = new Map(records.map((node) => [node.id, node]));
-  const edgesById = new Map(
-    records.map((node) => [node.id, recordedEdges(node, resourceById)]),
-  );
-  const classOf = createClassOf({
-    records,
-    resources: opts.resources,
-    registry: opts.registry,
-  });
   const dependents = collectDependents(
     resource.id,
-    edgesById,
-    createBlocksDelete(classOf),
+    new Map(
+      records.map((node) => [node.id, recordedEdges(node, resourceById)]),
+    ),
+    createBlocksDelete(records, registry),
   );
 
   for (const id of dependents) {
+    const record = recordById.get(id)!;
     yield* deleteResource(
       step.scope(encodeURIComponent(id)),
-      await instantiateRecord(classOf(id)!, recordById.get(id)!),
+      await instantiateRecord(
+        registry.get(record.type as ResourceType)!,
+        record,
+      ),
       opts,
       { reason: "dependency-replaced", replacedDependency: resource.id },
     );

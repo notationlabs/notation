@@ -5,7 +5,7 @@ import {
   buildResourceDepthLevels,
   collectDependents,
 } from "./dependency-graph";
-import { createBlocksDelete, createClassOf } from "./delete-cascade";
+import { cascadeRegistry, createBlocksDelete } from "./delete-cascade";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
 import {
@@ -51,7 +51,8 @@ export async function createPlan({
     stateNodes.map((node) => [node.id, recordedEdges(node, resourceById)]),
   );
   const blocksDelete = createBlocksDelete(
-    createClassOf({ records: stateNodes, resources, registry }),
+    stateNodes,
+    cascadeRegistry({ resources, registry }),
   );
   // The resources that deploy deletes before a replaced resource, by ID, with
   // the ID of the replaced resource.
@@ -81,9 +82,7 @@ export async function createPlan({
         "replaceFields" in action ? action.replaceFields : undefined;
       const replacedDependency = cascaded.get(resource.id);
 
-      // A resource in a cascade has had the dependents that block its
-      // delete collected with it.
-      if (replaceFields && !replacedDependency) {
+      if (replaceFields) {
         for (const id of collectDependents(
           resource.id,
           edgesById,

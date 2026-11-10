@@ -1,73 +1,41 @@
-import type {
-  BaseResource,
-  ResourceClass,
-  ResourceType,
-} from "@notation/resource";
+import type { BaseResource, ResourceType } from "@notation/resource";
 import type { StateNode } from "@notation/state";
 import {
   createResourceRegistryFromResources,
-  resolveResourceClass,
   type ResourceRegistry,
 } from "./resource-registry";
 
-export type ClassOf = (id: string) => ResourceClass<any, any, any> | undefined;
-
 /**
- * Finds the class of a resource in state or in code. A resource in code has
- * its own class. A resource that is only in state has the registered class of
- * the type in its record.
+ * The classes that a cascade can find: those that the caller registers, and
+ * the classes of the resources in code.
  */
-export function createClassOf(opts: {
-  records: StateNode[];
+export function cascadeRegistry(opts: {
   resources: BaseResource[];
   registry?: ResourceRegistry;
-}): ClassOf {
-  const resourceById = new Map(
-    opts.resources.map((resource) => [resource.id, resource]),
+}): ResourceRegistry {
+  return new Map([
+    ...(opts.registry ?? []),
+    ...createResourceRegistryFromResources(opts.resources),
+  ]);
+}
+
+/**
+ * Whether the record `dependentId` blocks the delete of the record
+ * `dependencyId`: the class of the dependent's type lists the type of the
+ * dependency in `blocksDeleteOf`. A dependent with no class does not block
+ * the delete.
+ */
+export function createBlocksDelete(
+  records: StateNode[],
+  registry: ResourceRegistry,
+) {
+  const typeById = new Map(
+    records.map((node) => [node.id, node.type as ResourceType]),
   );
-  const recordById = new Map(opts.records.map((node) => [node.id, node]));
-  const registry =
-    opts.registry ?? createResourceRegistryFromResources(opts.resources);
-
-  return (id) => {
-    const resource = resourceById.get(id);
-    if (resource) {
-      return resource.constructor as unknown as ResourceClass<any, any, any>;
-    }
-    const type = recordById.get(id)?.type as ResourceType | undefined;
-    return type ? resolveResourceClass(registry, type) : undefined;
-  };
-}
-
-/**
- * Whether `dependentId` blocks the delete of `dependencyId`: the class of the
- * dependent lists the type of the dependency in `blocksDeleteOf`. A dependent
- * with no class does not block the delete.
- */
-export function createBlocksDelete(classOf: ClassOf) {
   return (dependentId: string, dependencyId: string): boolean => {
-    const type = classOf(dependencyId)?.type;
-    if (type === undefined) return false;
-    return classOf(dependentId)?.blocksDeleteOf.includes(type) ?? false;
+    const dependentType = typeById.get(dependentId);
+    const type = typeById.get(dependencyId);
+    if (!dependentType || !type) return false;
+    return registry.get(dependentType)?.blocksDeleteOf.includes(type) ?? false;
   };
-}
-
-/**
- * Whether any class in code or in the registry lists `type` in
- * `blocksDeleteOf`. When none does, no resource blocks the delete of a
- * resource of that type.
- */
-export function isDeleteBlockable(opts: {
-  type: ResourceType;
-  resources: BaseResource[];
-  registry?: ResourceRegistry;
-}): boolean {
-  const classes = [
-    ...opts.resources.map(
-      (resource) =>
-        resource.constructor as unknown as ResourceClass<any, any, any>,
-    ),
-    ...(opts.registry?.values() ?? []),
-  ];
-  return classes.some((Class) => Class.blocksDeleteOf.includes(opts.type));
 }
