@@ -1,6 +1,7 @@
 import * as v from "valibot";
 import * as sdk from "@aws-sdk/client-lambda";
-import { resource, type ResourceType } from "@notation/resource";
+import { type ResourceType } from "@notation/resource";
+import { resource } from "src/resource";
 import { lambdaClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
 
@@ -20,7 +21,6 @@ type DeprecatedPermissionSchema = AwsSchema<{
 export function deprecatedPermission(type: ResourceType) {
   return resource<DeprecatedPermissionSchema>({
     type,
-    provider: "@notation/aws.iac",
   })
     .defineSchema({
       FunctionName: {

@@ -1,5 +1,6 @@
 import * as v from "valibot";
-import { resource, ResourceNotFoundError } from "@notation/resource";
+import { ResourceNotFoundError } from "@notation/resource";
+import { resource } from "src/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import {
@@ -21,7 +22,6 @@ type ApiSdkSchema = AwsSchema<{
 
 const api = resource<ApiSdkSchema>({
   type: "aws/apiGateway/Api",
-  provider: "@notation/aws.iac",
 });
 
 const cors = v.object({

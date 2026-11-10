@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { resource } from "@notation/resource";
+import { resource } from "src/resource";
 import * as sdk from "@aws-sdk/client-cloudwatch-logs";
 import { cloudWatchLogsClient } from "src/utils/aws-clients";
 import { AwsSchema } from "src/utils/types";
@@ -14,7 +14,6 @@ export type LambdaLogGroupDependencies = { lambda: LambdaFunctionInstance };
 
 const lambdaLogGroup = resource<LambdaLogGroupSchema>({
   type: "aws/lambda/LambdaLogGroup",
-  provider: "@notation/aws.iac",
 });
 
 const lambdaLogGroupSchema = lambdaLogGroup.defineSchema({

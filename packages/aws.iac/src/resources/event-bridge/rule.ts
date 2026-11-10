@@ -1,5 +1,6 @@
 import * as v from "valibot";
-import { resource, ResourceNotFoundError } from "@notation/resource";
+import { ResourceNotFoundError } from "@notation/resource";
+import { resource } from "src/resource";
 import { AwsSchema } from "src/utils/types";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/utils/aws-clients";
@@ -68,7 +69,6 @@ const eventBridgeRule = resource<EventBridgeRuleSchema>({
   // AWS refuses to delete a bus that has rules. The default bus is never
   // deleted, so it is not listed.
   blocksDeleteOf: [EventBus.type],
-  provider: "@notation/aws.iac",
 });
 
 const keyValue = v.object({ Key: v.string(), Value: v.string() });

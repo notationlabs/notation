@@ -1,5 +1,6 @@
 import * as v from "valibot";
-import { resource, ResourceNotFoundError } from "@notation/resource";
+import { ResourceNotFoundError } from "@notation/resource";
+import { resource } from "src/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/utils/aws-clients";
 import { awsCreate } from "src/utils/errors";
@@ -23,7 +24,6 @@ type RouteDependencies = {
 
 const route = resource<RouteSdkSchema>({
   type: "aws/apiGateway/Route",
-  provider: "@notation/aws.iac",
 });
 
 export const routeSchema = route.defineSchema({

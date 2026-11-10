@@ -1,5 +1,6 @@
 import * as v from "valibot";
-import { resource, ResourceNotFoundError } from "@notation/resource";
+import { ResourceNotFoundError } from "@notation/resource";
+import { resource } from "src/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { ApiInstance } from "./api";
 import { apiGatewayClient } from "src/utils/aws-clients";
@@ -18,7 +19,6 @@ type StageDependencies = {
 
 const stage = resource<StageSchema>({
   type: "aws/apiGateway/Stage",
-  provider: "@notation/aws.iac",
 });
 
 const accessLogSettings = v.object({

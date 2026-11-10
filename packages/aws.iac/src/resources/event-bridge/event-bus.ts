@@ -1,5 +1,6 @@
 import * as v from "valibot";
-import { resource, ResourceNotFoundError } from "@notation/resource";
+import { ResourceNotFoundError } from "@notation/resource";
+import { resource } from "src/resource";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/utils/aws-clients";
 import { awsCreate } from "src/utils/errors";
@@ -13,7 +14,6 @@ export type EventBusSchema = AwsSchema<{
 
 const eventBus = resource<EventBusSchema>({
   type: "aws/eventBridge/EventBus",
-  provider: "@notation/aws.iac",
 });
 
 const eventBusSchema = eventBus.defineSchema({
@@ -55,7 +55,6 @@ export type EventBusInstance = InstanceType<typeof EventBus>;
 
 const defaultEventBus = resource<EventBusSchema>({
   type: "aws/eventBridge/DefaultEventBus",
-  provider: "@notation/aws.iac",
 });
 
 const defaultEventBusSchema = defaultEventBus.defineSchema({

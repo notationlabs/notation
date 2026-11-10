@@ -1,9 +1,9 @@
 import {
   mergeContributions,
-  resource,
   ResourceNotFoundError,
   ResourceOperationPendingError,
 } from "@notation/resource";
+import { resource } from "src/resource";
 import * as sdk from "@aws-sdk/client-lambda";
 import * as v from "valibot";
 import { fromProjectRoot } from "@notation/core/paths";
@@ -69,7 +69,6 @@ export type LambdaDependencies = {
 
 const lambdaFunction = resource<LambdaFunctionSchema>({
   type: "aws/lambda/LambdaFunction",
-  provider: "@notation/aws.iac",
 });
 
 const lambdaFunctionSchema = lambdaFunction.defineSchema({

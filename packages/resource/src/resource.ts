@@ -836,3 +836,19 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
 
 // Backwards-compatible alias (existing code uses `resource()`)
 export const resource = defineResource;
+
+/**
+ * The resource classes among the exports of each module namespace, such as
+ * `import * as lambda from "./resources/lambda"`. A provider package exports
+ * them as `resourceClasses`.
+ */
+export function resourceClassesIn(
+  ...namespaces: Record<string, unknown>[]
+): ResourceClass<any, any, any>[] {
+  return namespaces.flatMap((namespace) =>
+    Object.values(namespace).filter(
+      (value): value is ResourceClass<any, any, any> =>
+        typeof value === "function" && "type" in value && "provider" in value,
+    ),
+  );
+}
