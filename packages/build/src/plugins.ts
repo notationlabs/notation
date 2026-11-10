@@ -4,7 +4,7 @@ import type { Plugin } from "rolldown";
 import type { ModuleAnalysis } from "./analyze";
 import { location } from "./ast";
 import { nodeModules, scriptFile } from "./files";
-import { checkTypeReexports, runtimeExports } from "./exports";
+import { runtimeExports } from "./exports";
 import {
   infraInterface,
   stripForInfra,
@@ -235,7 +235,6 @@ export function runtimePlugin({
         !analyses.marks.hasExport(module.path, names[0]!)
       )
         return "export {};\n";
-      checkTypeReexports(analysis!, names, analyses);
       return createRuntimeEntry(module.path, names);
     },
     transform: {

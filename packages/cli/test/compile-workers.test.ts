@@ -415,7 +415,6 @@ describe("an export of the Worker module that workerd doesn't start with", () =>
       "5:14",
       "a primitive, not an object",
     ],
-    ["no initialiser", `export let later;`, "5:12", "undefined"],
     [
       "export * as",
       `export * as all from "./counter";`,
@@ -428,6 +427,11 @@ describe("an export of the Worker module that workerd doesn't start with", () =>
       `${path.join(root, "runtime/api.ts")}:${at}: the module exports`,
     );
     await expect(build()).rejects.toThrow(`whose value is ${value}.`);
+  });
+
+  it("builds a Worker that assigns an exported variable after its declaration", async () => {
+    writeProject(`${reexport}\nexport let later;\nlater = { region: "eu" };`);
+    expect((await build())[0]!.exports).toEqual(["Counter", "later"]);
   });
 
   it("builds and starts a Worker that exports an object", async () => {
@@ -473,22 +477,6 @@ it("builds an infra module with an import of another scheme, such as bun:", asyn
   ).resolves.toBeDefined();
 });
 
-it("fails with the user's file when the Worker re-exports a type without the type keyword", async () => {
-  writeProject(`${reexport}\nexport { Env } from "./types";`);
-  write("runtime/types.ts", `export interface Env { COUNTERS: unknown }`);
-  await expect(build()).rejects.toThrow(
-    `runtime/api.ts exports Env from "./types", and Env is only a type in runtime/types.ts.`,
-  );
-});
-
-it("leaves out a namespace that holds only types", async () => {
-  writeProject(
-    `${reexport}\nexport namespace Shapes { export type Id = string; export interface Item {} }`,
-  );
-  expect((await build())[0]!.exports).toEqual(["Counter"]);
-  expect(read(apiBundle)).not.toContain("Shapes");
-});
-
 it("fails the infra build when a declaration keeps a class that imports cloudflare:workers", async () => {
   writeProject();
   write(
@@ -501,31 +489,4 @@ it("fails the infra build when a declaration keeps a class that imports cloudfla
   await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
     "runtime/counter.ts imports cloudflare:workers, which the infra build can't load",
   );
-});
-
-// The workerd tests use the miniflare that the docs site's wrangler resolves
-// to, so that the lockfile holds one miniflare and one workerd. The repo has
-// no pnpm catalog, and an override would hold wrangler's miniflare back.
-it("pins miniflare to the version that wrangler uses in the lockfile", () => {
-  const repo = fileURLToPath(new URL("../../../", import.meta.url));
-  const lockfile = readFileSync(path.join(repo, "pnpm-lock.yaml"), "utf8");
-  const wranglers = [
-    ...lockfile.matchAll(
-      /^ {2}wrangler@[^\n]+:\n {4}dependencies:\n((?: {6}[^\n]+\n)+)/gm,
-    ),
-  ];
-  const versions = new Set(
-    wranglers.map(([, deps]) => /^ {6}miniflare: ([^(\s]+)/m.exec(deps!)![1]),
-  );
-  const cli = JSON.parse(
-    readFileSync(
-      fileURLToPath(new URL("../package.json", import.meta.url)),
-      "utf8",
-    ),
-  );
-  expect(wranglers.length).toBeGreaterThan(0);
-  expect(
-    [...versions],
-    "Set miniflare in packages/cli/package.json to the version that wrangler depends on.",
-  ).toEqual([cli.devDependencies.miniflare]);
 });

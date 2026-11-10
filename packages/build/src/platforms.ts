@@ -1,8 +1,37 @@
 import { builtinModules } from "node:module";
-import type { Plugin } from "rolldown";
-import type { ModuleAnalysis } from "../analyze";
-import { location, unwrap, type Node } from "../ast";
-import type { Platform } from "./types";
+import type { InputOptions, Plugin } from "rolldown";
+import type { ModuleAnalysis } from "./analyze";
+import { location, unwrap, type Node } from "./ast";
+
+/** A platform that runs the runtime bundle of a declaration module. */
+export type Platform = {
+  /**
+   * The Rolldown input options of the runtime bundle, such as `platform`,
+   * `resolve` and `plugins`.
+   */
+  build: InputOptions;
+  /**
+   * Whether the runtime entry also re-exports the module's other value
+   * exports, besides the declaration's entry, for a platform that reads
+   * named exports, such as Durable Object classes.
+   */
+  reexportsModule: boolean;
+  /**
+   * Fails for one of `names`, the other exports that the runtime entry
+   * re-exports, whose value the platform doesn't start with.
+   */
+  checkExports?: (analysis: ModuleAnalysis, names: string[]) => void;
+};
+
+const node: Platform = {
+  build: {
+    platform: "node",
+    resolve: {
+      conditionNames: ["notation-runtime", "node", "import", "default"],
+    },
+  },
+  reexportsModule: false,
+};
 
 // workerd provides Node's built-in modules as `node:` modules, under the
 // nodejs_compat flag. A bare name, such as `events`, that no installed
@@ -72,8 +101,7 @@ function checkExports(analysis: ModuleAnalysis, names: string[]) {
     }
     const declarator = declarators.get(target.local);
     if (!declarator) continue;
-    if (!declarator.init) fail(declarator, name, "undefined");
-    else if (isPrimitive(declarator.init)) {
+    if (declarator.init && isPrimitive(declarator.init)) {
       fail(declarator, name, "a primitive, not an object");
     }
   }
@@ -98,7 +126,7 @@ function isPrimitive(expression: Node): boolean {
 // The conditions and the NODE_ENV defines are the ones that wrangler uses.
 // workerd provides the `cloudflare:` and `node:` modules, so the bundle
 // leaves them external.
-export const workerd: Platform = {
+const workerd: Platform = {
   build: {
     platform: "neutral",
     resolve: {
@@ -122,6 +150,19 @@ export const workerd: Platform = {
     },
     plugins: [nodeBuiltinsPlugin],
   },
-  reexports: "module",
+  reexportsModule: true,
   checkExports,
 };
+
+const platforms = { node, workerd };
+
+export type PlatformName = keyof typeof platforms;
+
+export const platformNames = Object.keys(platforms) as PlatformName[];
+
+export const isPlatformName = (name: string): name is PlatformName =>
+  Object.hasOwn(platforms, name);
+
+/** The platform of a mark's `platform:` clause, or Node when it has none. */
+export const platformOf = (name: PlatformName = "node"): Platform =>
+  platforms[name];

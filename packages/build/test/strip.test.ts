@@ -199,29 +199,16 @@ describe("stripForInfra", () => {
     );
   });
 
-  it("fails when the declaration uses the name of a runtime-only option elsewhere", () => {
+  it("keeps a class that the declaration also uses outside its runtime-only option", () => {
     const source = `
       /** @declaration shared: id, label; runtime: class */
       function $durableObject(config) { return config; }
       export class Counter {}
       export const counters = $durableObject({ id: "counters", label: Counter.name, class: Counter });
     `;
-    expect(() => infra(source)).toThrow(
-      "/project/runtime/handler.ts:5:71: Counter is the class option of $durableObject, which the infra build leaves out, so the declaration can't use Counter anywhere else.",
-    );
-  });
-
-  it("fails when a statement that the declaration uses refers to the name of a runtime-only option", () => {
-    const source = `
-      /** @declaration shared: id, label; runtime: class */
-      function $durableObject(config) { return config; }
-      export class Counter {}
-      const label = Counter.name;
-      export const counters = $durableObject({ id: "counters", label, class: Counter });
-    `;
-    expect(() => infra(source)).toThrow(
-      "/project/runtime/handler.ts:5:21: Counter is the class option of $durableObject",
-    );
+    const { code } = infra(source);
+    expect(code).toContain("export class Counter {}");
+    expect(code).toContain(`class: function Counter() {`);
   });
 
   it("names the function that replaces a runtime-only option that names a class", () => {
@@ -241,15 +228,17 @@ describe("stripForInfra", () => {
     expect(declaration.entry).toBeUndefined();
   });
 
-  it("fails when a runtime-only option is a class expression", () => {
+  it('gives a class expression in a runtime-only option the name ""', () => {
     const source = `
       /** @declaration runtime: class */
       function createNamespace(config) { return config; }
-      const counters = createNamespace({ id: "counters", class: class Counter {} });
+      const counters = createNamespace({ id: "counters", class: (class Counter {}) });
     `;
-    expect(() => infra(source)).toThrow(
-      "the class option of createNamespace is a class expression",
+    const { code } = infra(source);
+    expect(code).toContain(
+      `class: __notation_unnamed("class only runs in the function, not in the infra build.")`,
     );
+    expect(code).not.toContain("class Counter");
   });
 
   it("records the other exports of a workerd module, without the declaration", () => {
@@ -328,7 +317,7 @@ describe("stripForInfra", () => {
     );
   });
 
-  it("records neither platform nor exports for a workerd declaration with no entry", () => {
+  it("records the platform but no exports for a workerd declaration with no entry", () => {
     const source = `
       /** @declaration shared: id; platform: workerd */
       function $namespace(config) { return config; }
@@ -336,7 +325,11 @@ describe("stripForInfra", () => {
       export const counters = $namespace({ id: "counters" });
     `;
     const { code, declaration } = infra(source);
-    expect(declaration).toEqual({ path: file, binding: "counters" });
+    expect(declaration).toEqual({
+      path: file,
+      binding: "counters",
+      platform: "workerd",
+    });
     expect(code).toContain(`, "runtime/handler.ts", "counters")`);
   });
 
@@ -364,17 +357,6 @@ describe("stripForInfra", () => {
     expect(code).toContain(`class: function Counter() {`);
     expect(code).not.toContain("as any");
     expect(code).not.toContain("class Counter");
-  });
-
-  it("fails when a runtime-only option is a class expression in parentheses", () => {
-    const source = `
-      /** @declaration runtime: class */
-      function $durableObject(config) { return config; }
-      export const counters = $durableObject({ id: "counters", class: (class {}) });
-    `;
-    expect(() => infra(source)).toThrow(
-      "/project/runtime/handler.ts:4:72: the class option of $durableObject is a class expression",
-    );
   });
 
   it("fails when the module doesn't export the entry", () => {

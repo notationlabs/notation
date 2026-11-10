@@ -5,13 +5,12 @@ import {
   declaredBy,
   freeReferences,
   isTypeOnly,
-  location,
   unwrap,
   type Node,
 } from "./ast";
 import { otherExports } from "./exports";
 import type { Marks } from "./marks";
-import { defaultPlatform, platformOf, type PlatformName } from "./platforms";
+import { platformOf, type PlatformName } from "./platforms";
 
 /** The name of the helper that records the module of a declaration. */
 export const declaredInHelper = "__notation_declaredIn";
@@ -36,33 +35,25 @@ function ${unnamedHelper}(message) {
 /**
  * A declaration module, as the infra build records it. A declaration whose
  * mark has no `entry`, such as a Durable Object namespace, has no runtime
- * bundle of its own. `platform` is absent for the default platform, Node.
+ * bundle of its own.
  */
 export type DeclarationModule = {
   /** The absolute path of the module. */
   path: string;
   /** The local name of the binding that holds the declaration. */
   binding: string;
-} & (
-  | { entry?: undefined; platform?: undefined; exports?: undefined }
-  | {
-      /** The export that the platform calls, such as `handler`. */
-      entry: string;
-      platform?: undefined;
-      exports?: undefined;
-    }
-  | {
-      entry: string;
-      platform: Exclude<PlatformName, typeof defaultPlatform>;
-      /**
-       * The other exports that the runtime bundle re-exports, besides
-       * `entry`, for a platform that reads named exports, such as Durable
-       * Object classes on workerd. Empty for a platform that only reads the
-       * entry.
-       */
-      exports: string[];
-    }
-);
+  /** The export that the platform calls, such as `handler`. */
+  entry?: string;
+  /** The mark's `platform`. Absent for the default platform, Node. */
+  platform?: PlatformName;
+  /**
+   * The other exports that the runtime bundle re-exports, besides `entry`,
+   * for a platform that reads named exports, such as Durable Object classes
+   * on workerd. Absent when there is no entry, or the platform only reads
+   * the entry.
+   */
+  exports?: string[];
+};
 
 // The statements that the infra copy of a declaration module keeps: the
 // declaration and the top-level statements that it uses, and the imports
@@ -78,13 +69,9 @@ function keptStatements(analysis: ModuleAnalysis) {
   }
 
   const skip = new Set<Node>();
-  const runtimeNames = new Map<string, string>();
   for (const option of declaration.mark.runtime) {
     const property = declaration.properties.get(option);
-    if (!property) continue;
-    skip.add(property);
-    const name = moduleName(analysis, property);
-    if (name) runtimeNames.set(name, option);
+    if (property) skip.add(property);
   }
   const kept = new Set<Node>([declaration.statement]);
   const usedImports = new Set<string>();
@@ -96,14 +83,6 @@ function keptStatements(analysis: ModuleAnalysis) {
         ? freeReferences(statement, skip)
         : freeReferences(statement);
     for (const { node } of references) {
-      const option = runtimeNames.get(node.name);
-      if (option) {
-        // Keeping the name would load the value that the option leaves out,
-        // such as a class that imports cloudflare:workers.
-        throw new Error(
-          `${module.file}:${location(module.source, node.start)}: ${node.name} is the ${option} option of ${declaration.name}, which the infra build leaves out, so the declaration can't use ${node.name} anywhere else.`,
-        );
-      }
       const owner = owners.get(node.name);
       if (owner && !kept.has(owner)) {
         kept.add(owner);
@@ -213,7 +192,7 @@ export function stripForInfra(
     declaration.binding,
     ...(exports ? [{ exports, starExports: analysis.table.stars }] : []),
   ];
-  replaceRuntimeOptions(s, analysis);
+  replaceRuntimeOptions(s, analysis, owners);
   s.prependLeft(declaration.call.start, `${declaredInHelper}(`);
   s.appendRight(
     declaration.call.end,
@@ -231,27 +210,11 @@ export function stripForInfra(
     declaration: {
       path: module.file,
       binding: declaration.binding,
-      ...(!entry
-        ? {}
-        : platform && platform !== defaultPlatform
-          ? { entry, platform, exports: exports ?? [] }
-          : { entry }),
+      ...(entry && { entry }),
+      ...(platform && { platform }),
+      ...(exports && { exports }),
     },
   };
-}
-
-// The name that a `runtime:` option passes, such as `Counter` in
-// `class: Counter`, if the module declares or imports it.
-function moduleName(analysis: ModuleAnalysis, property: Node) {
-  if (property.method) return undefined;
-  const value = unwrap(property.value);
-  if (value.type !== "Identifier") return undefined;
-  const declared = analysis.table.module.body.some((statement: Node) =>
-    declaredBy(statement).includes(value.name),
-  );
-  return declared || analysis.table.imports.has(value.name)
-    ? (value.name as string)
-    : undefined;
 }
 
 const keptName = (name: string, owners: Map<string, Node>, kept: Set<Node>) => {
@@ -297,24 +260,29 @@ function keptImport(
 // An option whose value is a name that the module declares or imports, such
 // as `class: Counter`, becomes a function with that name, so the infra build
 // can read `config.class.name` without loading the class. The name is the
-// local name at the call site. Any other value becomes a function whose
-// name is "", so that a provider can reject an option that needs a name.
-function replaceRuntimeOptions(s: MagicString, analysis: ModuleAnalysis) {
+// local name at the call site. Any other value, such as a class expression,
+// becomes a function whose name is "", so that a provider can reject an
+// option that needs a name.
+function replaceRuntimeOptions(
+  s: MagicString,
+  analysis: ModuleAnalysis,
+  owners: Map<string, Node>,
+) {
   const declaration = analysis.declaration!;
-  const { module } = analysis.table;
+  const { module, imports } = analysis.table;
   for (const option of declaration.mark.runtime) {
     const property = declaration.properties.get(option);
     if (!property) continue;
-    const value = unwrap(property.value);
-    if (value.type === "ClassExpression") {
-      throw new Error(
-        `${module.file}:${location(module.source, value.start)}: the ${option} option of ${declaration.name} is a class expression. Declare the class at the top level of the module, and pass its name.`,
-      );
-    }
     const message = JSON.stringify(
       `${option} only runs in the function, not in the infra build.`,
     );
-    const name = moduleName(analysis, property);
+    const value = unwrap(property.value);
+    const name =
+      !property.method &&
+      value.type === "Identifier" &&
+      (owners.has(value.name) || imports.has(value.name))
+        ? (value.name as string)
+        : undefined;
     // A function returned from the helper has no name. Rolldown removes a
     // comma or `void` in front of an arrow function, and the function would
     // then take the option's key as its name.

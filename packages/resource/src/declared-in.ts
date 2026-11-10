@@ -2,18 +2,21 @@
 // with this key, so the two must stay the same.
 const declaredInKey = Symbol.for("@notation/declaredIn");
 
-/** The module of a declaration, as the infra build records it. */
+/**
+ * The module of a declaration, as the infra build records it. `exports` and
+ * `starExports` are set together, for a module whose platform reads named
+ * exports, such as a Worker module that exports its Durable Object classes.
+ */
 export type DeclaredIn = {
   /** The path of the module, relative to the project root, with `/` separators. */
   path: string;
   /** The local name of the binding that holds the declaration. */
   binding: string;
-} & (DeclaredExports | { exports?: undefined; starExports?: undefined });
+} & Partial<DeclaredExports>;
 
 /**
- * The exports of a module whose platform reads named exports, such as a
- * Worker module that exports its Durable Object classes. The infra build
- * records them for a declaration marked `platform: workerd`.
+ * The exports of a module whose platform reads named exports. The infra
+ * build records them for a declaration marked `platform: workerd`.
  */
 export type DeclaredExports = {
   /**
