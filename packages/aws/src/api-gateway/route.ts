@@ -1,4 +1,5 @@
-import * as aws from "@notation/aws.iac";
+import * as aws from "src/resources";
+import { AwsResourceGroup } from "src/resource-group";
 import type { StandardSchemaV1 } from "@notation/resource";
 import { resolveLambda, whenLoaded } from "src/lambda/lambda-declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
@@ -15,7 +16,7 @@ type RouteGroupConfig = {
   lambdaGroup: LambdaGroup;
 };
 
-export class RouteGroup extends aws.AwsResourceGroup {
+export class RouteGroup extends AwsResourceGroup {
   readonly route: aws.apiGateway.RouteInstance;
 
   constructor({ apiGroup, method, path, auth, lambdaGroup }: RouteGroupConfig) {

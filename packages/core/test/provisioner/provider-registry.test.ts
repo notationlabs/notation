@@ -39,6 +39,10 @@ const defineQueue = (type: string, provider: string) =>
     });
 
 const Queue = defineQueue("test/acme/Queue", "@acme/queues");
+const SubpathQueue = defineQueue(
+  "test/acme/SubpathQueue",
+  "@acme/queues/resources",
+);
 
 const deployment = {
   app: "orders",
@@ -52,7 +56,7 @@ let databasePath: string;
 let events: ReconcilerEvent[];
 
 // Each package reads its classes from a global, so that the test and the
-// package share one class.
+// package share one class. The package exports each class under its own name.
 function installPackage(
   name: string,
   classes?: unknown[],
@@ -79,8 +83,13 @@ function installPackage(
   fs.writeFileSync(
     path.join(packageDir, "dist", "index.js"),
     classes
-      ? `export const resourceClasses = globalThis[${JSON.stringify(key)}];`
-      : "export const other = 1;",
+      ? classes
+          .map(
+            (_, i) =>
+              `export const Class${i} = globalThis[${JSON.stringify(key)}][${i}];`,
+          )
+          .join("\n")
+      : "export {};",
   );
 }
 
@@ -179,56 +188,157 @@ it("registers the resource classes of the packages it resolves from the project 
   expect(failures).toEqual([]);
 });
 
-it("returns a package that exports no resourceClasses array as a failure", async () => {
+it("returns a package that exports no resource classes as a failure", async () => {
   installPackage("@acme/empty");
   const { failures } = await loadProviderRegistry(["@acme/empty"], root);
   expect(failures).toEqual([
     expect.objectContaining({
       provider: "@acme/empty",
-      errorMessage: "@acme/empty does not export a resourceClasses array",
-    }),
-  ]);
-});
-
-it("returns a package whose resourceClasses holds something other than a class as a failure", async () => {
-  installPackage("@acme/queues", [Queue, null]);
-  const { registry, failures } = await loadProviderRegistry(
-    ["@acme/queues"],
-    root,
-  );
-  expect([...registry]).toEqual([]);
-  expect(failures).toEqual([
-    expect.objectContaining({
-      provider: "@acme/queues",
       errorMessage:
-        "@acme/queues exports a resourceClasses entry that is not a class",
+        "@acme/empty exports no resource classes that declare it as their provider",
     }),
   ]);
 });
 
-it("does not import a provider that is a path or a subpath", async () => {
-  const { failures } = await loadProviderRegistry(
-    ["./queues", "/tmp/queues", "@acme/queues/internal/file", "queues/file"],
-    root,
-  );
-  expect(failures.map((failure) => failure.errorMessage)).toEqual([
-    "./queues is not a package name",
-    "/tmp/queues is not a package name",
-    "@acme/queues/internal/file is not a package name",
-    "queues/file is not a package name",
-  ]);
-});
-
-it("registers the classes that a CommonJS package exports under default", async () => {
+// Writes the module source of @acme/queues, which reads Queue from a global.
+// The manifest names the module as main, unless manifest is given.
+function writeQueuesModule(
+  file: string,
+  source: string,
+  manifest: object = { main: `./dist/${file}` },
+) {
   installPackage("@acme/queues", [Queue]);
   const packageDir = path.join(root, "node_modules", "@acme", "queues");
   fs.writeFileSync(
     path.join(packageDir, "package.json"),
-    JSON.stringify({ name: "@acme/queues", main: "./dist/index.cjs" }),
+    JSON.stringify({ name: "@acme/queues", ...manifest }),
   );
-  fs.writeFileSync(
-    path.join(packageDir, "dist", "index.cjs"),
-    'module.exports = { ["resource" + "Classes"]: globalThis["__notationTestClasses:@acme/queues"] };',
+  fs.writeFileSync(path.join(packageDir, "dist", file), source);
+}
+
+const queueGlobal = 'globalThis["__notationTestClasses:@acme/queues"][0]';
+
+it("registers the classes of a subpath that exports namespaces of resource classes", async () => {
+  writeQueuesModule(
+    "resources.js",
+    `export const sqs = { Queue: ${queueGlobal} };`,
+    {
+      type: "module",
+      exports: { "./resources": { default: "./dist/resources.js" } },
+    },
+  );
+  (globalThis as any)["__notationTestClasses:@acme/queues"] = [SubpathQueue];
+  const { registry, failures } = await loadProviderRegistry(
+    ["@acme/queues/resources"],
+    root,
+  );
+  expect([...registry]).toEqual([[SubpathQueue.type, SubpathQueue]]);
+  expect(failures).toEqual([]);
+});
+
+it("registers the named exports of an ES module that also exports a default object", async () => {
+  writeQueuesModule(
+    "index.mjs",
+    `export const sqs = { Queue: ${queueGlobal} };\n` +
+      "export default { version: 1 };",
+  );
+  const { registry, failures } = await loadProviderRegistry(
+    ["@acme/queues"],
+    root,
+  );
+  expect([...registry]).toEqual([[Queue.type, Queue]]);
+  expect(failures).toEqual([]);
+});
+
+it("registers a class that is the default export", async () => {
+  writeQueuesModule("index.mjs", `export default ${queueGlobal};`);
+  const { registry, failures } = await loadProviderRegistry(
+    ["@acme/queues"],
+    root,
+  );
+  expect([...registry]).toEqual([[Queue.type, Queue]]);
+  expect(failures).toEqual([]);
+});
+
+it("leaves out a class that declares another provider", async () => {
+  writeQueuesModule(
+    "index.mjs",
+    `export const sqs = { Queue: ${queueGlobal}, SubpathQueue: globalThis.__notationTestSubpathQueue };`,
+  );
+  (globalThis as any).__notationTestSubpathQueue = SubpathQueue;
+  try {
+    const { registry } = await loadProviderRegistry(["@acme/queues"], root);
+    expect([...registry]).toEqual([[Queue.type, Queue]]);
+  } finally {
+    delete (globalThis as any).__notationTestSubpathQueue;
+  }
+});
+
+it("does not import a builtin module", async () => {
+  const { failures } = await loadProviderRegistry(["fs"], root);
+  expect(failures.map((failure) => failure.errorMessage)).toEqual([
+    "fs is not an installed package",
+  ]);
+});
+
+it("ignores exports that are not resource classes", async () => {
+  writeQueuesModule(
+    "index.mjs",
+    `export const sqs = { Queue: ${queueGlobal}, queueSchema: {} };\n` +
+      "export const MAX_BYTES = 4096;",
+  );
+  const { registry, failures } = await loadProviderRegistry(
+    ["@acme/queues"],
+    root,
+  );
+  expect([...registry]).toEqual([[Queue.type, Queue]]);
+  expect(failures).toEqual([]);
+});
+
+it("does not import a provider that is a path", async () => {
+  const { failures } = await loadProviderRegistry(
+    [
+      "./queues",
+      "/tmp/queues",
+      "@acme/queues/../file",
+      "queues/.hidden",
+      "queues\\..\\x",
+      "queues/%2e%2e/x",
+      "C:/Users/x/evil.js",
+      "node:fs",
+    ],
+    root,
+  );
+  expect(failures.map((failure) => failure.errorMessage)).toEqual([
+    "./queues is not a package name or subpath",
+    "/tmp/queues is not a package name or subpath",
+    "@acme/queues/../file is not a package name or subpath",
+    "queues/.hidden is not a package name or subpath",
+    "queues\\..\\x is not a package name or subpath",
+    "queues/%2e%2e/x is not a package name or subpath",
+    "C:/Users/x/evil.js is not a package name or subpath",
+    "node:fs is not a package name or subpath",
+  ]);
+});
+
+it("registers the classes of a CommonJS module that sets __esModule", async () => {
+  writeQueuesModule(
+    "index.cjs",
+    'Object.defineProperty(exports, "__esModule", { value: true });\n' +
+      `exports.sqs = { Queue: ${queueGlobal} };`,
+  );
+  const { registry, failures } = await loadProviderRegistry(
+    ["@acme/queues"],
+    root,
+  );
+  expect([...registry]).toEqual([[Queue.type, Queue]]);
+  expect(failures).toEqual([]);
+});
+
+it("registers the classes that a CommonJS package exports under default", async () => {
+  writeQueuesModule(
+    "index.cjs",
+    `module.exports = { sqs: { Queue: ${queueGlobal} } };`,
   );
   const { registry, failures } = await loadProviderRegistry(
     ["@acme/queues"],
@@ -403,7 +513,7 @@ it("resolves a package two levels down the project's dependency tree, as pnpm in
 it("resolves the workspace's own provider packages from the repository root", async () => {
   const repoRoot = path.resolve(import.meta.dirname, "../../../..");
   const { registry } = await loadProviderRegistry(
-    ["@notation/aws.iac", "@notation/std.iac"],
+    ["@notation/aws/resources", "@notation/std/resources"],
     repoRoot,
   );
   expect(registry.has("aws/sqs/Queue")).toBe(true);

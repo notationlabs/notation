@@ -1,4 +1,5 @@
-import * as aws from "@notation/aws.iac";
+import * as aws from "src/resources";
+import { AwsResourceGroup } from "src/resource-group";
 import type { StandardSchemaV1 } from "@notation/resource";
 import type { AuthorizerSource } from "src/lambda/declaration";
 import { assertId, assertName, resourceId, type IdOption } from "src/id";
@@ -46,7 +47,7 @@ const authorizerMark = Symbol.for("@notation/aws/JwtAuthorizerGroup");
 export class JwtAuthorizerGroup<
   C extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
 >
-  extends aws.AwsResourceGroup<JwtAuthorizerConfig>
+  extends AwsResourceGroup<JwtAuthorizerConfig>
   implements AuthorizerSource<C>
 {
   readonly api: ApiGroup;

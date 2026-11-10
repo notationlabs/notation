@@ -1,4 +1,5 @@
-import * as aws from "@notation/aws.iac";
+import * as aws from "src/resources";
+import { AwsResourceGroup } from "src/resource-group";
 import type { LambdaGroup } from "src/lambda/lambda";
 import type { SqsOptions } from "src/lambda/declaration";
 import type { StandardSchemaV1 } from "@notation/resource";
@@ -87,7 +88,7 @@ export type SqsAction =
 
 export class QueueGroup<
   S extends StandardSchemaV1 = StandardSchemaV1,
-> extends aws.AwsResourceGroup<Omit<QueueConfig, "schema">> {
+> extends AwsResourceGroup<Omit<QueueConfig, "schema">> {
   readonly queue: aws.sqs.QueueInstance;
   readonly schema: S;
   /** The queue's ARN. It is an output value, filled in at deploy. */

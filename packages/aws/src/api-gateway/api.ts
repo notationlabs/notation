@@ -1,4 +1,5 @@
-import * as aws from "@notation/aws.iac";
+import * as aws from "src/resources";
+import { AwsResourceGroup } from "src/resource-group";
 import type { ApiGatewayRoute, ApiSource } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import { assertId, assertName, resourceId, type NameSafe } from "src/id";
@@ -20,10 +21,7 @@ export type ApiConfig = {
   name?: string;
 };
 
-export class ApiGroup
-  extends aws.AwsResourceGroup<ApiConfig>
-  implements ApiSource
-{
+export class ApiGroup extends AwsResourceGroup<ApiConfig> implements ApiSource {
   readonly api: aws.apiGateway.ApiInstance;
 
   constructor(config: ApiConfig) {

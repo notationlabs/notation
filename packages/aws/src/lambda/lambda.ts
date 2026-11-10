@@ -1,5 +1,6 @@
-import * as aws from "@notation/aws.iac";
-import * as std from "@notation/std.iac";
+import * as aws from "src/resources";
+import { AwsResourceGroup } from "src/resource-group";
+import * as std from "@notation/std/resources";
 import { getActiveResourceCollection } from "@notation/resource";
 import path from "path";
 import { awsName, claimAwsName, describeDeclaration } from "src/naming";
@@ -42,7 +43,7 @@ export type LambdaConfig = {
 // other copy. `Symbol.for` returns the same symbol in both.
 const lambdaGroupMark = Symbol.for("@notation/aws/LambdaGroup");
 
-export class LambdaGroup extends aws.AwsResourceGroup<LambdaConfig> {
+export class LambdaGroup extends AwsResourceGroup<LambdaConfig> {
   readonly fn: aws.lambda.LambdaFunctionInstance;
   readonly role: aws.lambda.LambdaIamRoleInstance;
 

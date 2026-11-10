@@ -1,5 +1,5 @@
 import { test, expect } from "vitest";
-import { lambda as iac } from "@notation/aws.iac";
+import { lambda as iac } from "src/resources";
 import {
   collectResourceGraph,
   type ResourceGraph,

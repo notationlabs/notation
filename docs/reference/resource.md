@@ -22,7 +22,7 @@ const LambdaFunction = defineResource<{
   };
   UpdateParams: { FunctionName: string };
   ReadResult: { FunctionArn: string };
-}>({ type: "aws/lambda/LambdaFunction", provider: "@notation/aws.iac" })
+}>({ type: "aws/lambda/LambdaFunction", provider: "@notation/aws/resources" })
   .defineSchema({
     // params – input properties
     FunctionName: {
@@ -83,11 +83,11 @@ const LambdaFunction = defineResource<{
 
 `meta` defines runtime values for state tracking, reconciliation, and display
 
-| Field            | Purpose                                                                                                                                                                          |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `type`           | a `platform/service/ResourceName` string (e.g. `aws/lambda/LambdaFunction`).                                                                                                     |
-| `provider`       | the name of the package that exports the class in its `resourceClasses` (e.g. `@notation/aws.iac`). State records it with the type. See [Provider packages](#provider-packages). |
-| `blocksDeleteOf` | `ResourceType[]?`. The types that the provider refuses to delete while a resource of this type depends on them. Defaults to `[]`.                                                |
+| Field            | Purpose                                                                                                                                                              |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`           | a `platform/service/ResourceName` string (e.g. `aws/lambda/LambdaFunction`).                                                                                         |
+| `provider`       | the package or package subpath that exports the class (e.g. `@notation/aws/resources`). State records it with the type. See [Provider packages](#provider-packages). |
+| `blocksDeleteOf` | `ResourceType[]?`. The types that the provider refuses to delete while a resource of this type depends on them. Defaults to `[]`.                                    |
 
 When deploy replaces a resource of a listed type, it first deletes each resource of this type that depends on it, and creates it again after the new resource. AWS, for example, does not delete an EventBridge bus that has rules, so `aws/eventBridge/rule` lists the bus type:
 
@@ -108,10 +108,10 @@ List a type only when the provider refuses the delete. A dependent of a type tha
 
 ### Provider packages
 
-When a resource's type no longer appears in code, deploy and destroy load the class from the package that `provider` names, to delete the resource. `@notation/core` resolves the package with `require.resolve` from the project, and then imports it. The package must meet these conditions, or the record is left in place with a `reconciler.provider.load-failed` warning:
+When a resource's type no longer appears in code, deploy and destroy load the class from the package or package subpath that `provider` names, to delete the resource. `@notation/core` resolves it with `require.resolve` from the project, and then imports it. The provider must meet these conditions, or the record is left in place with a `reconciler.provider.load-failed` warning:
 
-- Its `exports` must have a `require` or `default` condition. A package with only an `import` condition can't be resolved.
-- Its entry must export `resourceClasses`, an array that holds every resource class of the package.
+- Its entry in `exports` must have a `require` or `default` condition. An entry with only an `import` condition can't be resolved.
+- Its entry must export resource classes, or namespaces of them, such as `export * as lambda from "./lambda"`. The loader registers each resource class among the exports and among the values of each exported namespace, and ignores other values. It also ignores a class whose `provider` names another package, such as a class re-exported from another provider. Give the provider its own entry, such as a `/resources` subpath, so that loading it does not import the rest of the package.
 - The project, or a package in the project's dependency tree, must depend on it.
 
 A class defined in the project itself can name the project's package, if the project's `package.json` has `exports` that meet the first two conditions, as Node resolves a package's own name through its `exports`. Otherwise, pass the class to deploy and destroy in `registry`, so that they can delete its resources.
@@ -328,7 +328,7 @@ find: async (_params, token) => {
 },
 ```
 
-In `@notation/aws.iac`, `awsCreate` wraps a `create` handler and throws `ResourceCreationUnknownError` when an AWS call times out, loses its connection or gets a server error.
+In `@notation/aws/resources`, `awsCreate` wraps a `create` handler and throws `ResourceCreationUnknownError` when an AWS call times out, loses its connection or gets a server error.
 
 ## Dependencies
 
@@ -388,7 +388,7 @@ Some params take values from several places. For example, a Lambda role's inline
 
 A param is collected when its schema item has `collect`. `collect` receives the values and combines them into the param. The inline policy joins the statements:
 
-```ts [packages/aws.iac/src/resources/lambda/lambda-role-policy.ts]
+```ts [packages/aws/src/resources/lambda/lambda-role-policy.ts]
 PolicyDocument: {
   propertyType: "param",
   presence: "required",

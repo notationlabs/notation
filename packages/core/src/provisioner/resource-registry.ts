@@ -53,9 +53,9 @@ export function stateProviderPackages(
 }
 
 // Packages are resolved from the project, because core does not depend on
-// them. Under pnpm, a package such as @notation/aws.iac is usually a
-// dependency of a dependency and is not linked into the project's
-// node_modules, so the dependency tree is searched as well.
+// them. Under pnpm, a provider package is often a dependency of a dependency
+// and is not linked into the project's node_modules, so the dependency tree is
+// searched as well.
 export async function loadProviderRegistry(
   packages: string[],
   root: string = projectRoot(),
@@ -75,9 +75,9 @@ export async function loadProviderRegistry(
       errorMessage,
     });
   for (const name of packages) {
-    // Paths and subpaths are rejected, so that state can't import any file.
-    if (!packageName.test(name)) {
-      fail(name, `${name} is not a package name`);
+    // Paths are rejected, so that state can't import any file.
+    if (!packageSpecifier.test(name)) {
+      fail(name, `${name} is not a package name or subpath`);
       continue;
     }
     let entry: string;
@@ -91,27 +91,30 @@ export async function loadProviderRegistry(
       );
       continue;
     }
-    let provider: { resourceClasses?: unknown; default?: unknown };
+    // A builtin such as fs resolves to its bare name, which would be imported
+    // as a file in the working directory.
+    if (!path.isAbsolute(entry)) {
+      fail(name, `${name} is not an installed package`);
+      continue;
+    }
+    let found: ResourceClass<any, any, any>[];
     try {
-      provider = await import(pathToFileURL(entry).href);
+      found = resourceClassesIn(await import(pathToFileURL(entry).href));
     } catch (error) {
       fail(name, errorMessage(error));
       continue;
     }
-    // import() of a CommonJS module can put its exports under default.
-    const resourceClasses =
-      provider.resourceClasses ??
-      (provider.default as { resourceClasses?: unknown } | undefined)
-        ?.resourceClasses;
-    if (!Array.isArray(resourceClasses)) {
-      fail(name, `${name} does not export a resourceClasses array`);
+    // A class that another provider declares is left out, so that each type is
+    // loaded from the provider its state record names.
+    found = found.filter((Resource) => Resource.provider === name);
+    if (found.length === 0) {
+      fail(
+        name,
+        `${name} exports no resource classes that declare it as their provider`,
+      );
       continue;
     }
-    if (!resourceClasses.every(isResourceClass)) {
-      fail(name, `${name} exports a resourceClasses entry that is not a class`);
-      continue;
-    }
-    classes.push(...resourceClasses);
+    classes.push(...found);
   }
   return { registry: createResourceRegistry(classes), failures };
 }
@@ -145,7 +148,26 @@ function resolvePackage(
   throw notFound;
 }
 
-const packageName = /^(@[^/@.][^/]*\/)?[^/@.][^/]*$/;
+// A package name, with an optional subpath such as @notation/aws/resources.
+// Each segment is limited to word characters, "." "~" and "-", and does not
+// start with a dot, so that state can't name a path.
+const segment = "[\\w~-][\\w.~-]*";
+const packageSpecifier = new RegExp(`^@?${segment}(/${segment})*$`);
+
+// Reads the resource classes among the exports and among the values of each
+// exported namespace. import() of a CommonJS module puts its exports under
+// default, so default is read as well as the module.
+function resourceClassesIn(module: Record<string, unknown>) {
+  return [module, module.default]
+    .filter(isObject)
+    .flatMap((root) => Object.values(root))
+    .flatMap((value) => (isObject(value) ? Object.values(value) : [value]))
+    .filter(isResourceClass);
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
 
 // Shares one walk of the tree between the packages of one load.
 function cachedDependencyDirs(root: string): () => Iterable<string> {

@@ -12,10 +12,7 @@ import type { Schedule } from "src/event-bridge/schedule";
 import type { EventPattern } from "src/event-bridge/pattern";
 import type { LambdaGroup } from "./lambda";
 import type { NameSafe } from "src/id";
-import type {
-  APIGatewayJWTProxyEventV2,
-  ApiGatewayResult,
-} from "src/shared/lambda.handler";
+import type { APIGatewayJWTProxyEventV2, ApiGatewayResult } from "./handler";
 
 // This module is part of both builds. In the runtime build it must not import
 // infra code, so it imports only types.

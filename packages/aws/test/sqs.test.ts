@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, expectTypeOf, test } from "vitest";
 import type { SQSRecord } from "aws-lambda";
-import { lambda as awsLambda } from "@notation/aws.iac";
+import { lambda as awsLambda } from "src/resources";
 import { createPlan } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
 import {

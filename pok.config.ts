@@ -8,7 +8,6 @@ const build = "pnpm exec turbo run build";
 
 const framework: ReleasePackage[] = [
   { file: "packages/aws/package.json", build },
-  { file: "packages/aws.iac/package.json", build },
   { file: "packages/cli/package.json", build },
   { file: "packages/core/package.json", build },
   { file: "packages/dashboard/package.json", build },
@@ -16,7 +15,7 @@ const framework: ReleasePackage[] = [
   { file: "packages/reconciler/package.json", build },
   { file: "packages/resource/package.json", build },
   { file: "packages/state/package.json", build },
-  { file: "packages/std.iac/package.json", build },
+  { file: "packages/std/package.json", build },
   { file: "packages/utils/package.json", build },
 ];
 

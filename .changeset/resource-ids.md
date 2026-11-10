@@ -1,6 +1,5 @@
 ---
 "@notation/aws": minor
-"@notation/aws.iac": minor
 ---
 
 Every resource that you declare takes a required `id`, as `$lambda` and `lambda()` already do. The `id` keys the resource in state, and Notation builds the AWS name from it.

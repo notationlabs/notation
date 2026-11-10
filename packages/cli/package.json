@@ -24,7 +24,6 @@
   },
   "devDependencies": {
     "@notation/aws": "workspace:*",
-    "@notation/aws.iac": "workspace:*",
     "@notation/resource": "workspace:*",
     "@types/which-pm-runs": "^1.0.2"
   }

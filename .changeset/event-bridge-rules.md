@@ -1,6 +1,5 @@
 ---
 "@notation/aws": minor
-"@notation/aws.iac": minor
 ---
 
 EventBridge rules can now send the events on an event bus to a Lambda function, and `eventBridge.schema()` takes a schema for the event's detail.
@@ -34,4 +33,4 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 - `decode(event)` validates the event's `detail` with the schema, and returns the event with `detail` typed as the schema's output. A `DecodeError` for the detail has the `part` `"detail"`. A function of scheduled events still has no `decode()`.
 - `LambdaHandler<typeof lambda>` types the event of a rule as `EventBridgeEvent<string, unknown>`.
 - `EventBridgeRuleEvent<S>` is the event type of `eventBridge`. `EventBridgeScheduleEvent` is now `EventBridgeRuleEvent<null>`, and has `schema: null`. `ScheduleConfig.target` is a `ScheduleTarget`, which is `RuleTarget<null>`.
-- `@notation/aws.iac` adds `eventBridge.EventBus` and `eventBridge.DefaultEventBus`. `eventBridge.EventBridgeRule` takes a `State`, and an optional `eventBus` dependency, and blocks the delete of an `EventBus`. It sends and reads `EventPattern` in compact JSON, so a pattern that config holds in another layout is not reported as drift.
+- `@notation/aws/resources` adds `eventBridge.EventBus` and `eventBridge.DefaultEventBus`. `eventBridge.EventBridgeRule` takes a `State`, and an optional `eventBus` dependency, and blocks the delete of an `EventBus`. It sends and reads `EventPattern` in compact JSON, so a pattern that config holds in another layout is not reported as drift.

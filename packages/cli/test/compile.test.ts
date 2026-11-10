@@ -45,7 +45,7 @@ it("reports a declaration error at the line of the user's source", async () => {
   writeFileSync(
     entryPoint,
     [
-      `import { fs } from "@notation/std.iac";`,
+      `import { fs } from "@notation/std/resources";`,
       ``,
       `type Config = { filePath: string };`,
       `const config = { filePath: 42 } as unknown as Config;`,
