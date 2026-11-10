@@ -153,6 +153,7 @@ export class QueueGroup<
     if (this.resources.some((resource) => resource.id === id)) {
       throw new Error(`Queue ${this.id} already feeds ${lambdaGroup.id}`);
     }
+    assertBatchOptions(this.id, lambdaGroup.id, this.config.fifo, options);
 
     lambdaGroup.policy.contribute({
       PolicyDocument: {
@@ -209,6 +210,30 @@ function assertQueueOptions(config: Omit<QueueConfig, "schema">): void {
     );
   }
   assertDeadLetterQueueType(config.id, fifo, config.deadLetterQueue?.queue);
+}
+
+// Lambda rejects these options only at deploy. When maximumBatchingWindow is
+// removed, the mapping is updated with a window of 0, so a batchSize over 10
+// without a window also fails on update.
+function assertBatchOptions(
+  queueId: string,
+  lambdaId: string,
+  fifo: boolean | undefined,
+  options: SqsOptions,
+): void {
+  const { batchSize, maximumBatchingWindow } = options;
+  if (batchSize === undefined || batchSize <= 10) return;
+  const mapping = `The mapping of the queue "${queueId}" to the Lambda "${lambdaId}"`;
+  if (fifo) {
+    throw new Error(
+      `${mapping} sets batchSize: ${batchSize}, but Lambda allows at most 10 for a FIFO queue.`,
+    );
+  }
+  if (!maximumBatchingWindow) {
+    throw new Error(
+      `${mapping} sets batchSize: ${batchSize} without maximumBatchingWindow. Lambda needs a batching window of at least 1 second when batchSize is over 10.`,
+    );
+  }
 }
 
 // The type of a queue from queue() is in its config. A FIFO queue's name ends

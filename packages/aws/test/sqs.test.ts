@@ -556,6 +556,57 @@ test("a mapping without the options leaves them unset", async () => {
   expect(params.Enabled).toBeUndefined();
 });
 
+test("a batchSize over 10 without maximumBatchingWindow throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const fn = lambda({ id: "process", code });
+      const orders = queue({ id: "orders", schema: Unknown });
+      eventSourceMapping({ source: orders, target: fn, batchSize: 20 });
+    }),
+  ).rejects.toThrow(
+    'The mapping of the queue "orders" to the Lambda "process" sets batchSize: 20 without maximumBatchingWindow.',
+  );
+});
+
+test("a batchSize over 10 with maximumBatchingWindow sets both", async () => {
+  let fn!: LambdaGroup;
+  let orders!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    fn = lambda({ id: "process", code });
+    orders = queue({ id: "orders", schema: Unknown });
+    eventSourceMapping({
+      source: orders,
+      target: fn,
+      batchSize: 100,
+      maximumBatchingWindow: 5,
+    });
+  });
+  deploy(orders);
+  fn.fn.setOutput({ FunctionName: "process" } as any);
+
+  expect(await mappingOf(orders).getParams()).toMatchObject({
+    BatchSize: 100,
+    MaximumBatchingWindowInSeconds: 5,
+  });
+});
+
+test("a batchSize over 10 on a FIFO queue throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const fn = lambda({ id: "process", code });
+      const ledger = queue({ id: "ledger", fifo: true, schema: Unknown });
+      eventSourceMapping({
+        source: ledger,
+        target: fn,
+        batchSize: 20,
+        maximumBatchingWindow: 5,
+      });
+    }),
+  ).rejects.toThrow(
+    'sets batchSize: 20, but Lambda allows at most 10 for a FIFO queue.',
+  );
+});
+
 test("grant allows the actions on the queue", () => {
   const orders = queue({ id: "orders", schema: Unknown });
   deploy(orders);

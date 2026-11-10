@@ -207,6 +207,8 @@ type SqsOptions = {
 
 When you remove an option, Notation sets the mapping back to the Lambda default.
 
+A `batchSize` over 10 needs a `maximumBatchingWindow` of at least 1 second, and a FIFO queue allows a `batchSize` of at most 10. Lambda would reject either at deploy, so the mapping throws when infra loads.
+
 `maximumConcurrency` is the most instances of the function that the mapping invokes at once, from 2 to 1,000. It limits this mapping only. The function's reserved concurrency limits the function as a whole.
 
 `enabled: false` pauses the mapping. Lambda stops reading the queue, and the messages stay in it.
