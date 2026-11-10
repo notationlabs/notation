@@ -11,6 +11,7 @@ import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
 
 export const worker = $worker({
   id: "api",
+  compatibilityDate: "2026-10-12",
   bindings: () => ({ GREETING: "hello" }),
 });
 
@@ -30,14 +31,14 @@ When infra has finished loading, the declaration adds a Worker group with:
 
 The declaration adds the Worker even when nothing imports it.
 
-| Option               | Description                                                                                                                                             |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`                 | Names the Worker and keys it in state. Use 1 to 63 lowercase letters, digits or hyphens. Changing the id replaces the Worker.                           |
-| `name`               | The Worker's name in Cloudflare, in place of the id. The Worker is named `<app>--<stage>--<name>`. Changing the name replaces the Worker.               |
-| `bindings`           | A function that returns the values that the code reads from `env`, by name. See [Bindings](#bindings).                                                  |
-| `compatibilityDate`  | The Worker's compatibility date. Defaults to `2026-10-12`. A later version of the package can move the default, so set it to keep a Worker on one date. |
-| `compatibilityFlags` | The Worker's compatibility flags. Defaults to `["nodejs_compat"]`. The build imports Node's built-in modules as `node:` modules, which need the flag.   |
-| `url`                | Serves the Worker on `https://<name>.<account subdomain>.workers.dev`. Defaults to `true`, as in wrangler.                                              |
+| Option               | Description                                                                                                                                              |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                 | Names the Worker and keys it in state. Use 1 to 63 lowercase letters, digits or hyphens. Changing the id replaces the Worker.                            |
+| `name`               | The Worker's name in Cloudflare, in place of the id. The Worker is named `<app>--<stage>--<name>`. Changing the name replaces the Worker.                |
+| `bindings`           | A function that returns the values that the code reads from `env`, by name. See [Bindings](#bindings).                                                   |
+| `compatibilityDate`  | Required. The Worker's compatibility date, such as `"2026-10-12"`. Cloudflare runs the Worker with the behaviour of the runtime on that date.            |
+| `compatibilityFlags` | The Worker's compatibility flags. `nodejs_compat` is always added, as the build imports Node's built-in modules as `node:` modules, which need the flag. |
+| `url`                | Serves the Worker on `https://<name>.<account subdomain>.workers.dev`. Defaults to `true`, as in wrangler.                                               |
 
 ### Bindings
 
@@ -79,6 +80,7 @@ export { Counter } from "./counter";
 
 export const worker = $worker({
   id: "api",
+  compatibilityDate: "2026-10-12",
   bindings: () => ({ COUNTERS: counters }),
 });
 
@@ -107,6 +109,8 @@ Exactly one of the Workers that bind a namespace exports its class, and that Wor
 - two Workers that bind the namespace export the class.
 - one Worker hosts two namespaces with the same class.
 
+The host is found by the export's name only. A Worker that binds the namespace and exports a different class under the same name, such as another `Counter`, is taken as the host.
+
 ### Renaming and deleting
 
 A new namespace uses SQLite storage. Deploy uploads Cloudflare's declarative `exports` map of the hosting Worker, with each namespace that the Worker hosted before:
@@ -122,5 +126,7 @@ Deploy reads two environment variables:
 
 - `CLOUDFLARE_API_TOKEN`: an API token with the **Workers Scripts: Edit** permission.
 - `CLOUDFLARE_ACCOUNT_ID`: the account to deploy to. It is stored in state, so a later deploy updates or deletes each Worker in the account it was made in.
+
+A Worker can't move to another account. If `CLOUDFLARE_ACCOUNT_ID` changes, the plan replaces every Worker: it creates each one in the new account, and deletes each one in the old account, with the objects of the namespaces that it hosts. The token must still have access to the old account. If the old account answers that the Worker doesn't exist, the delete counts as done, and the Worker is left in that account.
 
 A Worker that exists already in the account, with the same name, is not taken over. The create fails.

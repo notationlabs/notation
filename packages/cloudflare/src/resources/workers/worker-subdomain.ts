@@ -46,10 +46,11 @@ const workerSubdomainSchema = workerSubdomain.defineSchema({
   },
 } as const);
 
+// `previews_enabled` is left out, so a preview URL setting made in the
+// dashboard is kept.
 const setEnabled = (account: string, scriptName: string, enabled: boolean) =>
   cloudflare("POST", `${scriptPath(account, scriptName)}/subdomain`, {
     enabled,
-    previews_enabled: false,
   });
 
 /**

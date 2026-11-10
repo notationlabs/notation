@@ -7,9 +7,10 @@ import { location, unwrap, type Node } from "./ast";
 export type Platform = {
   /**
    * The Rolldown input options of the runtime bundle, such as `platform`,
-   * `resolve` and `plugins`.
+   * `resolve` and `plugins`. Called for each build, so that options that
+   * read the environment, such as `NODE_ENV`, read it as it is then.
    */
-  build: InputOptions;
+  build: () => InputOptions;
   /**
    * Whether the runtime entry also re-exports the module's other value
    * exports, besides the declaration's entry, for a platform that reads
@@ -24,12 +25,12 @@ export type Platform = {
 };
 
 const node: Platform = {
-  build: {
+  build: () => ({
     platform: "node",
     resolve: {
       conditionNames: ["notation-runtime", "node", "import", "default"],
     },
-  },
+  }),
   reexportsModule: false,
 };
 
@@ -60,9 +61,6 @@ const nodeBuiltinsPlugin: Plugin = {
   },
 };
 
-// Like wrangler on deploy, unless NODE_ENV is set.
-const nodeEnv = JSON.stringify(process.env.NODE_ENV || "production");
-
 // workerd only starts a module whose exports are functions, classes or
 // objects whose prototype chain ends in Object.prototype. This check covers
 // the values that the build can see.
@@ -79,7 +77,9 @@ function checkExports(analysis: ModuleAnalysis, names: string[]) {
       statement.type === "ExportNamedDeclaration"
         ? statement.declaration
         : statement;
-    if (node?.type !== "VariableDeclaration") continue;
+    // A `let` or `var` can be assigned an object later, so only a `const`
+    // is checked.
+    if (node?.type !== "VariableDeclaration" || node.kind !== "const") continue;
     for (const declarator of node.declarations) {
       if (declarator.id.type === "Identifier") {
         declarators.set(declarator.id.name, declarator);
@@ -127,28 +127,32 @@ function isPrimitive(expression: Node): boolean {
 // workerd provides the `cloudflare:` and `node:` modules, so the bundle
 // leaves them external.
 const workerd: Platform = {
-  build: {
-    platform: "neutral",
-    resolve: {
-      conditionNames: [
-        "notation-runtime",
-        "workerd",
-        "worker",
-        "browser",
-        "import",
-        "default",
-      ],
-      mainFields: ["browser", "module", "main"],
-    },
-    external: [/^cloudflare:/],
-    transform: {
-      define: {
-        "process.env.NODE_ENV": nodeEnv,
-        "global.process.env.NODE_ENV": nodeEnv,
-        "globalThis.process.env.NODE_ENV": nodeEnv,
+  build: () => {
+    // Like wrangler on deploy, unless NODE_ENV is set.
+    const nodeEnv = JSON.stringify(process.env.NODE_ENV || "production");
+    return {
+      platform: "neutral",
+      resolve: {
+        conditionNames: [
+          "notation-runtime",
+          "workerd",
+          "worker",
+          "browser",
+          "import",
+          "default",
+        ],
+        mainFields: ["browser", "module", "main"],
       },
-    },
-    plugins: [nodeBuiltinsPlugin],
+      external: [/^cloudflare:/],
+      transform: {
+        define: {
+          "process.env.NODE_ENV": nodeEnv,
+          "global.process.env.NODE_ENV": nodeEnv,
+          "globalThis.process.env.NODE_ENV": nodeEnv,
+        },
+      },
+      plugins: [nodeBuiltinsPlugin],
+    };
   },
   reexportsModule: true,
   checkExports,

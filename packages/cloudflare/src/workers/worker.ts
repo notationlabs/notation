@@ -17,20 +17,9 @@ import { assertWorkerId, perCollection, workerName } from "src/id";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
 import { describeNamespace, registeredNamespace } from "./durable-object";
 
-/**
- * The compatibility date of a Worker that doesn't set one. It is the date of
- * the workerd release that the build is tested with. A later version of
- * this package can move it, which changes the behaviour of Workers that
- * rely on it, so set `compatibilityDate` to keep a Worker on one date.
- */
-const COMPATIBILITY_DATE = "2026-10-12";
-
-/**
- * The compatibility flags of a Worker that doesn't set them. The build
- * imports Node's built-in modules as `node:` modules, which workerd
- * provides under `nodejs_compat`.
- */
-const COMPATIBILITY_FLAGS = ["nodejs_compat"];
+// The build imports Node's built-in modules as `node:` modules, which
+// workerd provides under this flag, so every Worker gets it.
+const NODEJS_COMPAT = "nodejs_compat";
 
 export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
   /**
@@ -53,9 +42,15 @@ export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
    * literal with no spread or computed keys.
    */
   bindings?: () => B;
-  /** The Worker's compatibility date, such as `"2026-10-12"`. */
-  compatibilityDate?: string;
-  /** The Worker's compatibility flags. Defaults to `["nodejs_compat"]`. */
+  /**
+   * The Worker's compatibility date, such as `"2026-10-12"`. Cloudflare
+   * runs the Worker with the behaviour of the runtime on that date.
+   */
+  compatibilityDate: string;
+  /**
+   * The Worker's compatibility flags. `nodejs_compat` is always added, as
+   * the build imports Node's built-in modules as `node:` modules.
+   */
   compatibilityFlags?: string[];
   /**
    * Serves the Worker on its workers.dev URL. Defaults to `true`, as in
@@ -126,6 +121,8 @@ type Entry = {
   declaration: Worker<any>;
   id: string;
   scriptName: string;
+  /** Describes the Worker in errors, with its module when it is known. */
+  describe: () => string;
   record: () => DeclaredIn;
   bindings: () => Bindings;
   /** `chain` holds the Workers whose builds are building this one. */
@@ -161,16 +158,12 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
   if (config.name !== undefined) {
     assertWorkerId("$worker", "name", config.name);
   }
+  if (typeof config.compatibilityDate !== "string") {
+    throw new Error(
+      `$worker({ id: "${config.id}" }) requires compatibilityDate, such as "2026-10-12". Cloudflare runs the Worker with the behaviour of the runtime on that date, so the date is set in the code, and changes only when you change it.`,
+    );
+  }
   const scriptName = workerName(config.name ?? config.id);
-  const where = () => getDeclaredIn(declaration)?.path;
-  const describe = () => {
-    const options =
-      config.name === undefined
-        ? `id: "${config.id}"`
-        : `id: "${config.id}", name: "${config.name}"`;
-    return `$worker({ ${options} })${where() ? ` in ${where()}` : ""}`;
-  };
-
   const declaration = { id: config.id } as Worker<B>;
   let bindings: Bindings | undefined;
   let group: WorkerGroup | undefined;
@@ -179,6 +172,14 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
     declaration,
     id: config.id,
     scriptName,
+    describe: () => {
+      const options =
+        config.name === undefined
+          ? `id: "${config.id}"`
+          : `id: "${config.id}", name: "${config.name}"`;
+      const where = getDeclaredIn(declaration)?.path;
+      return `$worker({ ${options} })${where ? ` in ${where}` : ""}`;
+    },
     record: () => {
       const record = getDeclaredIn(declaration);
       if (!record) {
@@ -198,20 +199,25 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
       if (chain.includes(entry)) {
         throw bindingCycleError([...chain.slice(chain.indexOf(entry)), entry]);
       }
-      const resolved = resolveBindings(entry, describe);
+      const resolved = resolveBindings(entry);
       const record = entry.record();
       const after = resolved.dependsOn.map(
         (other) => other.build([...chain, entry]).script,
       );
-      claimName(scriptName, describe());
+      claimName(scriptName, entry.describe());
       group = new WorkerGroup({
         id: config.id,
         scriptName,
         codePath: toProjectRoot(
           filePaths.dist.runtime.index(fromProjectRoot(record.path)),
         ),
-        compatibilityDate: config.compatibilityDate ?? COMPATIBILITY_DATE,
-        compatibilityFlags: config.compatibilityFlags ?? COMPATIBILITY_FLAGS,
+        compatibilityDate: config.compatibilityDate,
+        compatibilityFlags: [
+          NODEJS_COMPAT,
+          ...(config.compatibilityFlags ?? []).filter(
+            (flag) => flag !== NODEJS_COMPAT,
+          ),
+        ],
         bindings: resolved.bindings,
         namespaces: resolved.namespaces,
         url: config.url ?? true,
@@ -258,10 +264,7 @@ type ResolvedBindings = {
  * class. Each other Worker that binds the namespace binds it on that
  * Worker, and is uploaded after it.
  */
-function resolveBindings(
-  self: Entry,
-  describe: () => string,
-): ResolvedBindings {
+function resolveBindings(self: Entry): ResolvedBindings {
   const resolved: ResolvedBindings = {
     bindings: [],
     namespaces: [],
@@ -281,7 +284,7 @@ function resolveBindings(
       const ns = value as DurableObjectDeclaration;
       const host = hostOf(self, ns, namespace.className, name);
       if (host === self) {
-        addHosted(resolved.namespaces, ns, namespace.className, describe);
+        addHosted(self, resolved.namespaces, ns, namespace.className);
         resolved.bindings.push({
           type: "durable_object_namespace",
           name,
@@ -309,23 +312,23 @@ function resolveBindings(
       continue;
     }
     throw new Error(
-      `${describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker, or a string.`,
+      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker, or a string.`,
     );
   }
   return resolved;
 }
 
 function addHosted(
+  self: Entry,
   namespaces: HostedNamespace[],
   namespace: DurableObjectDeclaration,
   className: string,
-  describe: () => string,
 ) {
   if (namespaces.some((hosted) => hosted.id === namespace.id)) return;
   const clash = namespaces.find((hosted) => hosted.className === className);
   if (clash) {
     throw new Error(
-      `${describe()} hosts the namespaces "${clash.id}" and "${namespace.id}", which both have the class ${className}. Cloudflare keeps one namespace for each class that a Worker exports, so give each namespace its own class.`,
+      `${self.describe()} hosts the namespaces "${clash.id}" and "${namespace.id}", which both have the class ${className}. Cloudflare keeps one namespace for each class that a Worker exports, so give each namespace its own class.`,
     );
   }
   namespaces.push({ id: namespace.id, className });

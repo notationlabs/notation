@@ -221,7 +221,7 @@ export async function compileRuntimeModules(
   const analyses = opts.analyses ?? new ModuleAnalyses();
   const distDir = filePaths.dist.dir();
   const configs = bundled.map((module) => {
-    const { plugins, ...platform } = platformOf(module.platform).build;
+    const { plugins, ...platform } = platformOf(module.platform).build();
     return {
       input: {
         input: {

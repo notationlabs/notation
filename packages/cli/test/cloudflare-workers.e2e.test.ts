@@ -167,6 +167,7 @@ function writeProject() {
 
     export const worker = $worker({
       id: "api",
+      compatibilityDate: "2026-10-12",
       bindings: () => ({ COUNTERS: counters, GREETING: "hello" }),
     });
 
@@ -187,6 +188,7 @@ function writeProject() {
 
     export const worker = $worker({
       id: "reports",
+      compatibilityDate: "2026-10-12",
       url: false,
       bindings: () => ({ COUNTERS: counters, API: api }),
     });

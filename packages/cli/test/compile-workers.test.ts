@@ -315,7 +315,7 @@ it("re-exports a name that is not an identifier", async () => {
 it("builds a worker that exports a type without the type keyword", async () => {
   writeProject(`${reexport}\ninterface Local {}\nexport { Local };`);
   await build();
-    expect(recordedExports()).toEqual(["Counter"]);
+  expect(recordedExports()).toEqual(["Counter"]);
   expect(read(apiBundle)).not.toContain("Local");
 });
 
@@ -432,11 +432,17 @@ describe("an export of the Worker module that workerd doesn't start with", () =>
     await expect(build()).rejects.toThrow(`whose value is ${value}.`);
   });
 
-  it("builds a Worker that assigns an exported variable after its declaration", async () => {
-    writeProject(`${reexport}\nexport let later;\nlater = { region: "eu" };`);
-    await build();
-    expect(recordedExports()).toEqual(["Counter", "later"]);
-  });
+  it.each([
+    ["no initialiser", "export let later;"],
+    ["a primitive initialiser", "export let later = 0;"],
+  ])(
+    "builds a Worker that assigns an exported let with %s after its declaration",
+    async (_, declaration) => {
+      writeProject(`${reexport}\n${declaration}\nlater = { region: "eu" };`);
+      await build();
+      expect(recordedExports()).toEqual(["Counter", "later"]);
+    },
+  );
 
   it("builds and starts a Worker that exports an object", async () => {
     writeProject(`${reexport}\nexport const settings = { region: "eu" };`);

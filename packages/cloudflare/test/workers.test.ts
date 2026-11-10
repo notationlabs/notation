@@ -23,6 +23,7 @@ import {
 import * as runtime from "src/workers/runtime";
 
 const projectDir = "/some/project";
+const compatibilityDate = "2026-10-12";
 
 beforeEach(() => setConfigFile(`${projectDir}/notation.config.ts`));
 afterEach(() => setConfigFile(undefined));
@@ -60,9 +61,9 @@ const collect = (evaluate: () => unknown) =>
   collectResourceGraph(evaluate, { scope: { app: "shop", stage: "dev" } });
 
 describe("$worker", () => {
-  it("uploads the runtime bundle of its module, with the default compatibility settings", async () => {
+  it("uploads the runtime bundle of its module, with nodejs_compat", async () => {
     const graph = await collect(() => {
-      inWorker($worker({ id: "api" }), "runtime/api.ts");
+      inWorker($worker({ id: "api", compatibilityDate }), "runtime/api.ts");
     });
     const api = group(graph, "api");
 
@@ -86,7 +87,7 @@ describe("$worker", () => {
           id: "api",
           name: "public-api",
           compatibilityDate: "2026-01-01",
-          compatibilityFlags: [],
+          compatibilityFlags: ["nodejs_compat", "streams_enable_constructors"],
           url: false,
         }),
         "runtime/api.ts",
@@ -97,17 +98,21 @@ describe("$worker", () => {
     expect(api.script.config).toMatchObject({
       ScriptName: "shop--dev--public-api",
       CompatibilityDate: "2026-01-01",
-      CompatibilityFlags: [],
+      CompatibilityFlags: ["nodejs_compat", "streams_enable_constructors"],
     });
     expect(api.subdomain).toBeUndefined();
   });
 
   it("binds strings as plain text and other Workers as services", async () => {
     const graph = await collect(() => {
-      const auth = inWorker($worker({ id: "auth" }), "runtime/auth.ts");
+      const auth = inWorker(
+        $worker({ id: "auth", compatibilityDate }),
+        "runtime/auth.ts",
+      );
       inWorker(
         $worker({
           id: "api",
+          compatibilityDate,
           bindings: () => ({ GREETING: "hello", AUTH: auth }),
         }),
         "runtime/api.ts",
@@ -129,7 +134,11 @@ describe("$worker", () => {
         "runtime/counter.ts",
       );
       inWorker(
-        $worker({ id: "api", bindings: () => ({ COUNTERS: counters }) }),
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters }),
+        }),
         "runtime/api.ts",
         ["Counter"],
       );
@@ -155,11 +164,19 @@ describe("$worker", () => {
         "runtime/counter.ts",
       );
       inWorker(
-        $worker({ id: "reports", bindings: () => ({ COUNTERS: counters }) }),
+        $worker({
+          id: "reports",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters }),
+        }),
         "runtime/reports.ts",
       );
       inWorker(
-        $worker({ id: "api", bindings: () => ({ COUNTERS: counters }) }),
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters }),
+        }),
         "runtime/api.ts",
         ["Counter"],
       );
@@ -188,7 +205,11 @@ describe("$worker", () => {
           "runtime/counter.ts",
         );
         inWorker(
-          $worker({ id: "api", bindings: () => ({ COUNTERS: counters }) }),
+          $worker({
+            id: "api",
+            compatibilityDate,
+            bindings: () => ({ COUNTERS: counters }),
+          }),
           "runtime/api.ts",
           [],
           ["./counter"],
@@ -208,7 +229,11 @@ describe("$worker", () => {
         );
         for (const id of ["api", "reports"]) {
           inWorker(
-            $worker({ id, bindings: () => ({ COUNTERS: counters }) }),
+            $worker({
+              id,
+              compatibilityDate,
+              bindings: () => ({ COUNTERS: counters }),
+            }),
             `runtime/${id}.ts`,
             ["Counter"],
           );
@@ -225,7 +250,11 @@ describe("$worker", () => {
         const a = $durableObject({ id: "a", class: Counter });
         const b = $durableObject({ id: "b", class: Counter });
         inWorker(
-          $worker({ id: "api", bindings: () => ({ A: a, B: b }) }),
+          $worker({
+            id: "api",
+            compatibilityDate,
+            bindings: () => ({ A: a, B: b }),
+          }),
           "runtime/api.ts",
           ["Counter"],
         );
@@ -239,11 +268,19 @@ describe("$worker", () => {
     await expect(
       collect(() => {
         const api: unknown = inWorker(
-          $worker({ id: "api", bindings: () => ({ REPORTS: reports }) }),
+          $worker({
+            id: "api",
+            compatibilityDate,
+            bindings: () => ({ REPORTS: reports }),
+          }),
           "runtime/api.ts",
         );
         const reports = inWorker(
-          $worker({ id: "reports", bindings: () => ({ API: api as any }) }),
+          $worker({
+            id: "reports",
+            compatibilityDate,
+            bindings: () => ({ API: api as any }),
+          }),
           "runtime/reports.ts",
         );
       }),
@@ -262,6 +299,7 @@ describe("$worker", () => {
         const api: unknown = inWorker(
           $worker({
             id: "api",
+            compatibilityDate,
             bindings: () => ({ COUNTERS: counters, REPORTS: reports }),
           }),
           "runtime/api.ts",
@@ -270,6 +308,7 @@ describe("$worker", () => {
         const reports = inWorker(
           $worker({
             id: "reports",
+            compatibilityDate,
             bindings: () => ({ COUNTERS: counters, API: api as any }),
           }),
           "runtime/reports.ts",
@@ -283,7 +322,11 @@ describe("$worker", () => {
   it("builds a Worker that binds itself", async () => {
     const graph = await collect(() => {
       const api: unknown = inWorker(
-        $worker({ id: "api", bindings: () => ({ SELF: api as any }) }),
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ SELF: api as any }),
+        }),
         "runtime/api.ts",
       );
     });
@@ -296,7 +339,11 @@ describe("$worker", () => {
     await expect(
       collect(() => {
         inWorker(
-          $worker({ id: "api", bindings: () => ({ PORT: 8080 as any }) }),
+          $worker({
+            id: "api",
+            compatibilityDate,
+            bindings: () => ({ PORT: 8080 as any }),
+          }),
           "runtime/api.ts",
         );
       }),
@@ -305,10 +352,33 @@ describe("$worker", () => {
     );
   });
 
+  it("adds nodejs_compat to the compatibility flags", async () => {
+    const graph = await collect(() => {
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          compatibilityFlags: ["streams_enable_constructors"],
+        }),
+        "runtime/api.ts",
+      );
+    });
+    expect(group(graph, "api").script.config.CompatibilityFlags).toEqual([
+      "nodejs_compat",
+      "streams_enable_constructors",
+    ]);
+  });
+
+  it("fails for a Worker with no compatibility date", () => {
+    expect(() => $worker({ id: "api" } as any)).toThrow(
+      `$worker({ id: "api" }) requires compatibilityDate, such as "2026-10-12".`,
+    );
+  });
+
   it("fails for a Worker that the infra build didn't record", async () => {
     await expect(
       collect(() => {
-        $worker({ id: "api" });
+        $worker({ id: "api", compatibilityDate });
       }),
     ).rejects.toThrow(`The Worker "api" has no module.`);
   });
@@ -316,7 +386,7 @@ describe("$worker", () => {
   it("fails for an id that is not a valid Worker name", async () => {
     await expect(
       collect(() => {
-        $worker({ id: "Orders_API" });
+        $worker({ id: "Orders_API", compatibilityDate });
       }),
     ).rejects.toThrow(`Invalid $worker id "Orders_API"`);
   });
@@ -324,8 +394,11 @@ describe("$worker", () => {
   it("fails when two Workers get the same name", async () => {
     await expect(
       collect(() => {
-        inWorker($worker({ id: "api" }), "runtime/api.ts");
-        inWorker($worker({ id: "other", name: "api" }), "runtime/other.ts");
+        inWorker($worker({ id: "api", compatibilityDate }), "runtime/api.ts");
+        inWorker(
+          $worker({ id: "other", compatibilityDate, name: "api" }),
+          "runtime/other.ts",
+        );
       }),
     ).rejects.toThrow(`give two Workers the same name, "shop--dev--api"`);
   });
@@ -356,7 +429,11 @@ describe("runtime", () => {
     const counters = runtime.$durableObject({ id: "counters", class: Counter });
     expect(counters).toEqual({ id: "counters" });
     expect(
-      runtime.$worker({ id: "api", bindings: () => ({ COUNTERS: counters }) }),
+      runtime.$worker({
+        id: "api",
+        compatibilityDate,
+        bindings: () => ({ COUNTERS: counters }),
+      }),
     ).toEqual({ id: "api" });
   });
 
@@ -369,9 +446,10 @@ describe("runtime", () => {
 describe("WorkerEnv", () => {
   it("types each binding from its value", () => {
     const counters = runtime.$durableObject({ id: "counters", class: Counter });
-    const auth = runtime.$worker({ id: "auth" });
+    const auth = runtime.$worker({ id: "auth", compatibilityDate });
     const worker = runtime.$worker({
       id: "api",
+      compatibilityDate,
       bindings: () => ({ COUNTERS: counters, AUTH: auth, GREETING: "hi" }),
     });
     type Env = WorkerEnv<typeof worker>;

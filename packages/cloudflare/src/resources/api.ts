@@ -35,6 +35,20 @@ export class CloudflareApiError extends Error {
   }
 }
 
+// Long enough for the upload of a Worker at Cloudflare's size limit.
+const REQUEST_TIMEOUT_MS = 120_000;
+
+/** A Cloudflare call that got no response within the timeout. */
+export class CloudflareTimeoutError extends Error {
+  constructor(request: string, options?: ErrorOptions) {
+    super(
+      `Cloudflare API ${request} got no response within ${REQUEST_TIMEOUT_MS / 1_000} seconds`,
+      options,
+    );
+    this.name = "CloudflareTimeoutError";
+  }
+}
+
 export const isNotFound = (error: unknown): boolean =>
   error instanceof CloudflareApiError &&
   (error.status === 404 || error.hasCode(WORKER_NOT_FOUND));
@@ -92,11 +106,20 @@ export async function cloudflare<T>(
     headers["Content-Type"] = "application/json";
     payload = JSON.stringify(body);
   }
-  const response = await fetch(`${API_URL}${path}`, {
-    method,
-    headers,
-    body: payload,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method,
+      headers,
+      body: payload,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if ((error as Error)?.name === "TimeoutError") {
+      throw new CloudflareTimeoutError(request, { cause: error });
+    }
+    throw error;
+  }
   if (response.status === 429) {
     const retryAfter = Number(response.headers.get("Retry-After"));
     throw new ResourceOperationPendingError(
@@ -129,12 +152,12 @@ export async function cloudflare<T>(
 
 /**
  * Returns true when a Cloudflare call may have taken effect without a
- * response reaching the caller: the request failed on the network, or the
- * API answered with a server error.
+ * response reaching the caller: the request failed on the network or timed
+ * out, or the API answered with a server error.
  */
 function callMayHaveTakenEffect(error: unknown): boolean {
   if (error instanceof CloudflareApiError) return error.status >= 500;
-  return error instanceof TypeError;
+  return error instanceof TypeError || error instanceof CloudflareTimeoutError;
 }
 
 /**

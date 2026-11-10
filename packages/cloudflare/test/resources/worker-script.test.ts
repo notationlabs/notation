@@ -167,6 +167,17 @@ describe("WorkerScript", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("reports a create whose upload timed out as unknown", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_, init) => {
+      if ((init?.method ?? "GET") === "GET") return fail(404, 10007);
+      throw new DOMException("The operation timed out.", "TimeoutError");
+    });
+
+    const error = await script.create(params).catch((e) => e);
+    expect(error).toBeInstanceOf(ResourceCreationUnknownError);
+    expect(error.message).toContain("got no response within 120 seconds");
+  });
+
   it("waits and tries again when the API is rate limited", async () => {
     mockFetch(
       () => new Response("", { status: 429, headers: { "Retry-After": "2" } }),
@@ -273,14 +284,11 @@ describe("durableObjectExports", () => {
       ],
       [{ id: "a", className: "Counter" }],
     ],
-  ])(
-    "fails when a new namespace takes a class %s",
-    (_, hosted, previous) => {
-      expect(() => durableObjectExports(hosted, previous)).toThrow(
-        `The Durable Object namespace "b" has the class Counter, which the namespace "a" had before.`,
-      );
-    },
-  );
+  ])("fails when a new namespace takes a class %s", (_, hosted, previous) => {
+    expect(() => durableObjectExports(hosted, previous)).toThrow(
+      `The Durable Object namespace "b" has the class Counter, which the namespace "a" had before.`,
+    );
+  });
 });
 
 describe("WorkerSubdomain", () => {
@@ -298,10 +306,7 @@ describe("WorkerSubdomain", () => {
 
     await subdomain.create(key);
     expect(calls[0]).toMatchObject({ method: "POST" });
-    expect(JSON.parse(calls[0]!.body as string)).toEqual({
-      enabled: true,
-      previews_enabled: false,
-    });
+    expect(JSON.parse(calls[0]!.body as string)).toEqual({ enabled: true });
     await expect(subdomain.read!(key)).resolves.toEqual({
       ...key,
       Url: "https://app--dev--api.team.workers.dev",
