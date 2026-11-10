@@ -18,6 +18,7 @@ export class RuleGroup extends aws.AwsResourceGroup<RuleOptions> {
     assertId(caller, config.id);
     assertName(caller, config.name);
     assertPattern(caller, config.id, config.pattern);
+    if (config.retry) assertRetry(caller, config.id, config.retry);
     const ruleName = awsName("eventBridgeRule", config.name ?? config.id);
     super("aws/eventBridge/rule", config.id, config);
     // AWS names rules uniquely on each bus, but the name is claimed across
@@ -38,7 +39,7 @@ export class RuleGroup extends aws.AwsResourceGroup<RuleOptions> {
         {
           config: {
             Name: ruleName,
-            EventBusName: bus.busName,
+            EventBusName: bus.bus.config.Name,
             EventPattern: JSON.stringify(config.pattern),
             State: config.enabled === false ? "DISABLED" : "ENABLED",
             Targets: [
@@ -88,6 +89,31 @@ function assertPattern(caller: string, id: string, pattern: unknown): void {
   ) {
     throw new Error(
       `${caller} with id "${id}" needs a pattern that names at least one field, such as { source: ["shop"] }.`,
+    );
+  }
+}
+
+// EventBridge rejects these values only at deploy, in PutTargets.
+function assertRetry(caller: string, id: string, retry: RetryOptions): void {
+  const { maxAttempts, maxEventAge } = retry;
+  if (
+    maxAttempts !== undefined &&
+    !(Number.isInteger(maxAttempts) && maxAttempts >= 0 && maxAttempts <= 185)
+  ) {
+    throw new Error(
+      `${caller} with id "${id}" sets retry.maxAttempts: ${maxAttempts}. EventBridge allows a whole number from 0 to 185.`,
+    );
+  }
+  if (
+    maxEventAge !== undefined &&
+    !(
+      Number.isInteger(maxEventAge) &&
+      maxEventAge >= 60 &&
+      maxEventAge <= 86_400
+    )
+  ) {
+    throw new Error(
+      `${caller} with id "${id}" sets retry.maxEventAge: ${maxEventAge}. EventBridge allows a whole number of seconds from 60 to 86,400.`,
     );
   }
 }

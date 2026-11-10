@@ -218,7 +218,7 @@ const eventBridgeRuleSchema = eventBridgeRule.defineSchema({
   State: {
     presence: "optional",
     propertyType: "param",
-    value: v.picklist(["ENABLED", "DISABLED"]),
+    value: v.enum(sdk.RuleState),
   },
   Targets: {
     presence: "required",

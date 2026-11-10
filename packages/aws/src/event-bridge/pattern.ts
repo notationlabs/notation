@@ -20,6 +20,9 @@ export type DetailPattern = {
  * See https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns.html
  */
 export type EventPattern = {
+  id?: PatternMatcher[];
+  version?: PatternMatcher[];
+  time?: PatternMatcher[];
   source?: PatternMatcher[];
   "detail-type"?: PatternMatcher[];
   account?: PatternMatcher[];

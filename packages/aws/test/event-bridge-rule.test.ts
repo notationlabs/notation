@@ -60,7 +60,7 @@ const event = (detail: unknown) =>
     detail,
   }) as EventBridgeEvent<string, unknown>;
 
-test("eventBus() declares a bus named after the app, the stage and the id", async () => {
+test("eventBus() declares a bus keyed by the id", async () => {
   let orders!: ReturnType<typeof eventBus>;
   await collectResourceGraph(() => {
     orders = eventBus({ id: "orders" });
@@ -68,7 +68,6 @@ test("eventBus() declares a bus named after the app, the stage and the id", asyn
 
   expect(orders.bus).toBeInstanceOf(iac.EventBus);
   expect(orders.bus.id).toBe("eventbridge-bus:orders");
-  expect(orders.bus.config.Name).toBe(orders.busName);
 });
 
 test("a bus's grant allows the actions on the bus's ARN", () => {
@@ -121,7 +120,7 @@ test("rule() sends the events of a pattern on a bus to a declaration with eventB
 
   expect(placed.rule.id).toBe("eventbridge-pattern-rule:order-placed");
   expect(placed.rule.config).toMatchObject({
-    EventBusName: orders.busName,
+    EventBusName: orders.bus.config.Name,
     EventPattern: JSON.stringify(pattern),
     State: "ENABLED",
   });
@@ -249,6 +248,46 @@ test("a rule with an empty pattern throws", async () => {
   );
 });
 
+test.each([
+  ["undefined", undefined],
+  ["object", {}],
+])(
+  "rule() with a bus that is %s throws, and names the rule",
+  async (kind, bus) => {
+    await expect(
+      collectResourceGraph(() => {
+        rule({
+          id: "order-placed",
+          bus: bus as any,
+          pattern,
+          target: lambda({ id: "fn", code }),
+        });
+      }),
+    ).rejects.toThrow(
+      `rule() with id "order-placed" needs a bus from eventBus() or defaultEventBus(), but its bus is ${kind}.`,
+    );
+  },
+);
+
+test.each([
+  [{ maxAttempts: 186 }, "retry.maxAttempts: 186"],
+  [{ maxAttempts: 1.5 }, "retry.maxAttempts: 1.5"],
+  [{ maxEventAge: 59 }, "retry.maxEventAge: 59"],
+  [{ maxEventAge: 86_401 }, "retry.maxEventAge: 86401"],
+])("a rule with retry %o throws", async (retry, message) => {
+  await expect(
+    collectResourceGraph(() => {
+      rule({
+        id: "order-placed",
+        bus: defaultEventBus(),
+        pattern,
+        retry,
+        target: lambda({ id: "fn", code }),
+      });
+    }),
+  ).rejects.toThrow(`rule() with id "order-placed" sets ${message}.`);
+});
+
 test("a rule whose AWS name is a schedule's throws", async () => {
   await expect(
     collectResourceGraph(() => {
@@ -286,7 +325,7 @@ test("eventBridge.bind(bus).defineRule() in a declaration makes the rule and the
   const fn = lambdaGroup(graph, "fulfil");
   const placed = ruleGroup(graph, "order-placed");
 
-  expect(placed.rule.config.EventBusName).toBe(orders.busName);
+  expect(placed.rule.config.EventBusName).toBe(orders.bus.config.Name);
   expect(placed.rule.dependencies.lambda).toBe(fn.fn);
   expect(permissionsOf(fn)).toEqual([placed.rule]);
 });

@@ -3,7 +3,7 @@ import { resolveLambda, whenLoaded } from "src/lambda/lambda-declaration";
 import type { EventBridgeRuleEvent, RuleOptions } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import type { NameSafe } from "src/id";
-import type { EventBus } from "./event-bus";
+import { EventBus } from "./event-bus";
 import { RuleGroup } from "./rule-group";
 
 export type RuleConfig = RuleOptions & {
@@ -42,6 +42,13 @@ export function rule<const Id extends string>(
   config: Omit<RuleConfig, "id"> & { id: NameSafe<Id> },
 ): void {
   const { bus, target, ...options } = config;
+  // The bus is read now, not when infra has loaded. An import cycle can make
+  // it undefined here.
+  if (!(bus instanceof EventBus)) {
+    throw new Error(
+      `rule() with id "${config.id}" needs a bus from eventBus() or defaultEventBus(), but its bus is ${bus === undefined ? "undefined" : typeof bus}. If the bus is imported, check for an import cycle.`,
+    );
+  }
   whenLoaded(() => {
     const { group, event } = resolveLambda(target, "rule()", "eventBridge");
     if (event?.kind === "eventBridge" && event.schema === null) {
