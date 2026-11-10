@@ -400,29 +400,14 @@ export abstract class Resource<
 
   /**
    * At plan, `deriveParams` receives views of its dependencies. Reading the
-   * output of a dependency that has none yet throws `PendingOutput`. When
+   * output of a dependency that has none yet throws `PendingOutput`, as does
+   * reading a required output that an old state record lacks. When
    * `deriveParams` reads such an output, the plan cannot tell which params
    * are known: every param not set in config is unknown. When it reads none,
    * the plan is exact.
    */
   async planParams(): Promise<Record<string, unknown>> {
     this.#sealed = true;
-    const pending = this.getDependencies().some((dep) => dep.output == null);
-    if (!pending) {
-      // Output values are still looked up as at plan, so that a required
-      // output missing from an old state record is unknown, not undefined.
-      const derivedParams = await this.deriveParams({
-        id: this.id,
-        config: this.config,
-        deps: this.dependencies,
-      });
-      const params = await this.#combineParams(derivedParams, true);
-      return markUnknownOutputValues(withoutUndefined(params)) as Record<
-        string,
-        unknown
-      >;
-    }
-
     const views = createPlanViews();
     const derivedParams = await tryAtPlan(views, () =>
       this.deriveParams({

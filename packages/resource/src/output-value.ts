@@ -194,8 +194,9 @@ export class PendingOutput extends Error {
 /**
  * Gives views of dependencies for code that runs at plan. A view of a
  * dependency with no output throws `PendingOutput` when its output is read.
- * `readPending` is set by such a read, so a plan still knows of it when the
- * code catches the error.
+ * So does a read of a required output that the dependency's output lacks, as
+ * `planLookup` treats it as unknown. `readPending` is set by such a read, so a
+ * plan still knows of it when the code catches the error.
  */
 export function createPlanViews() {
   const views = {
@@ -203,23 +204,43 @@ export function createPlanViews() {
     of<Deps extends Record<string, BaseResource | void>>(deps: Deps): Deps {
       const viewed: Record<string, BaseResource | void> = {};
       for (const [name, dep] of Object.entries(deps)) {
-        viewed[name] = dep && dep.output == null ? pendingView(dep) : dep;
+        viewed[name] = dep && view(dep);
       }
       return viewed as Deps;
     },
   };
 
-  const pendingView = (dep: BaseResource): BaseResource =>
-    Object.create(dep, {
-      output: {
-        get() {
-          views.readPending = true;
-          throw new PendingOutput(dep);
-        },
-      },
+  const pending = (dep: BaseResource): never => {
+    views.readPending = true;
+    throw new PendingOutput(dep);
+  };
+
+  const view = (dep: BaseResource): BaseResource => {
+    const output = dep.output as Record<string, unknown> | null;
+    if (output == null) {
+      return Object.create(dep, { output: { get: () => pending(dep) } });
+    }
+    const missing = missingRequiredOutputs(dep, output);
+    if (missing.length === 0) return dep;
+    const partial = new Proxy(output, {
+      get: (target, key, receiver) =>
+        typeof key === "string" && missing.includes(key)
+          ? pending(dep)
+          : Reflect.get(target, key, receiver),
     });
+    return Object.create(dep, { output: { value: partial } });
+  };
 
   return views;
+}
+
+function missingRequiredOutputs(
+  dep: BaseResource,
+  output: Record<string, unknown>,
+): string[] {
+  return Object.entries(dep.schema)
+    .filter(([key, item]) => item.presence === "required" && !(key in output))
+    .map(([key]) => key);
 }
 
 export type PlanViews = ReturnType<typeof createPlanViews>;

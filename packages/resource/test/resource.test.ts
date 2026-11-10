@@ -150,6 +150,30 @@ describe("resource dependencies", () => {
       intrinsicParam: true,
     });
   });
+  // A state record written before the schema gained an output lacks it.
+  // Deploy reads the dependency again before the dependent needs it.
+  it("plans params as unknown when deriveParams reads a required output that the dependency's output lacks", async () => {
+    const TestResourceWithDeps = TestResource.requireDependencies<{
+      dep1: InstanceType<typeof TestResource>;
+    }>().deriveParams(({ deps }) => ({
+      requiredParam: deps.dep1.output.volatileComputed,
+      intrinsicParam: true,
+    }));
+
+    const dependency = new TestResource("dep", { config: testResourceConfig });
+    const { volatileComputed: _, ...oldOutput } = testResourceOutput;
+    dependency.setOutput(oldOutput as typeof testResourceOutput);
+
+    const { requiredParam: __, ...config } = testResourceConfig;
+    const dependent = new TestResourceWithDeps("dependent", {
+      config,
+      dependencies: { dep1: dependency },
+    });
+
+    expect((await dependent.planParams()).requiredParam).toEqual({
+      $unknown: "after-apply",
+    });
+  });
 });
 
 describe("resource operation signals", () => {
