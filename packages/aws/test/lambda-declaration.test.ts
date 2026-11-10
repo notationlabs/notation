@@ -13,6 +13,7 @@ import {
   sqs,
   type JwtClaims,
   type LambdaHandler,
+  type SqsOptions,
 } from "src/lambda";
 import * as runtime from "src/lambda/runtime";
 import { queue } from "src/sqs";
@@ -325,13 +326,46 @@ test("an SQS handler can return batch item failures only when the mapping report
   // @ts-expect-error Lambda would ignore the failures and delete the messages
   const ignoredOff: LambdaHandler<typeof off> = () => failures;
 
+  const batched = $lambda({
+    id: "batched",
+    event: () => sqs.bind(orders, { batchSize: 5 }),
+  });
+  // @ts-expect-error Lambda would ignore the failures and delete the messages
+  const ignoredBatched: LambdaHandler<typeof batched> = async () => failures;
+
   // The mapping of sqs.schema() is made in infra, so either result is allowed.
   const mapped = $lambda({ id: "mapped", event: () => sqs.schema(Order) });
   const mappedReports: LambdaHandler<typeof mapped> = async () => failures;
   const mappedNone: LambdaHandler<typeof mapped> = async () => {};
 
-  void [reports, reportsNone, ignored, succeeds, ignoredOff];
+  void [reports, reportsNone, ignored, succeeds, ignoredOff, ignoredBatched];
   void [mappedReports, mappedNone];
+});
+
+test("sqs.bind() rejects unknown option names next to known ones", () => {
+  // @ts-expect-error maxBatchingWindow was renamed to maximumBatchingWindow
+  sqs.bind(orders, { batchSize: 5, maxBatchingWindow: 20 });
+  // @ts-expect-error a typo of reportBatchItemFailures
+  sqs.bind(orders, { batchSize: 5, reportBatchItemFailure: true });
+});
+
+test("a boolean or a wide SqsOptions lets the handler return either result", () => {
+  const failures = { batchItemFailures: [{ itemIdentifier: "1" }] };
+  const flag = Math.random() > 0.5;
+  const options: SqsOptions = {};
+
+  const flagged = $lambda({
+    id: "flagged",
+    event: () => sqs.bind(orders, { reportBatchItemFailures: flag }),
+  });
+  const wide = $lambda({ id: "wide", event: () => sqs.bind(orders, options) });
+  const flaggedReports: LambdaHandler<typeof flagged> = async () => failures;
+  const wideReports: LambdaHandler<typeof wide> = async () => failures;
+  const empty = $lambda({ id: "empty", event: () => sqs.bind(orders, {}) });
+  // @ts-expect-error Lambda would ignore the failures and delete the messages
+  const ignoredEmpty: LambdaHandler<typeof empty> = async () => failures;
+
+  void [flaggedReports, wideReports, ignoredEmpty];
 });
 
 type Claims = { sub: string };

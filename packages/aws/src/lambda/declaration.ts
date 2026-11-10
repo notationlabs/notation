@@ -42,13 +42,16 @@ export type SqsEvent<
 
 // `true` or `false` when the options set reportBatchItemFailures to a
 // literal or leave it out, and `boolean` when they set it to a boolean.
-type ReportsFailures<O extends SqsOptions> = O extends {
-  reportBatchItemFailures: true;
-}
-  ? true
-  : O extends { reportBatchItemFailures?: false }
-    ? false
-    : boolean;
+// The key is checked first: `{ batchSize: 5 }` does not extend
+// `{ reportBatchItemFailures?: false }`, as the two types share no property.
+type ReportsFailures<O extends SqsOptions> =
+  "reportBatchItemFailures" extends keyof O
+    ? O["reportBatchItemFailures"] extends true
+      ? true
+      : O["reportBatchItemFailures"] extends false | undefined
+        ? false
+        : boolean
+    : false;
 
 /**
  * A queue that `sqs.bind()` reads, from `queue()`. In the function it holds only
@@ -99,7 +102,9 @@ export const sqs = {
    */
   bind<S extends StandardSchemaV1, const O extends SqsOptions = {}>(
     queue: SqsSource<S>,
-    options?: O,
+    // The mapped type rejects unknown option names. TypeScript doesn't check
+    // a generic argument for excess properties.
+    options?: O & { [K in Exclude<keyof O, keyof SqsOptions>]: never },
   ): SqsEvent<S, ReportsFailures<O>> {
     // TypeScript can't relate O to ReportsFailures<O>.
     const typed = options as SqsEvent<S, ReportsFailures<O>>["options"];
