@@ -34,8 +34,8 @@ export function createResourceRegistryFromResources(
 }
 
 /**
- * Combines registries into one. Where two have a class for the same type,
- * the later one's class is kept.
+ * Where two registries have a class for the same type, the later one's class
+ * is kept.
  */
 export function mergeResourceRegistries(
   ...registries: (ResourceRegistry | undefined)[]

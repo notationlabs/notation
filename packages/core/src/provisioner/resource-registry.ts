@@ -145,10 +145,7 @@ function resolveFrom(
   return undefined;
 }
 
-/**
- * Registers the classes of the provider packages that state names, for plan.
- * Emits a warning for each package that fails to load.
- */
+/** Registers the classes of the provider packages that state names, for plan. */
 export async function loadPlanProviderRegistry(
   state: StateBackend,
   resources: BaseResource[],
