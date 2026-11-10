@@ -14,14 +14,9 @@ import {
 } from "@notation/resource";
 import { VersionConflict, type StateNode } from "@notation/state";
 import { buildDepthLevels, collectDependents } from "../dependency-graph";
-import { cascadeRegistry, createBlocksDelete } from "../delete-cascade";
+import { createBlocksDelete } from "../delete-cascade";
 import type { OperationLifecycleEvent } from "../events";
-import {
-  createResourceRegistryFromResources,
-  mergeResourceRegistries,
-  resolveResourceClass,
-  type ResourceRegistry,
-} from "../resource-registry";
+import { resolveResourceClass, workflowRegistry } from "../resource-registry";
 import { assertSameType } from "../resource-type";
 import {
   applyDriftDetection,
@@ -307,7 +302,7 @@ async function* deleteBlockingDependents(
   opts: DurableDeployOptions,
   resource: BaseResource,
 ): AsyncGenerator<any, void, any> {
-  const registry = cascadeRegistry(opts);
+  const registry = workflowRegistry(opts);
   // Skips listing state, which copies every record into the journal.
   const blockable = [...registry.values()].some((Class) =>
     Class.blocksDeleteOf.includes(resource.type),
@@ -438,17 +433,6 @@ export async function* sweepOrphans(
   }
 
   return kept;
-}
-
-/**
- * The classes that deploy and destroy can delete a record through: those
- * that the caller registers, and the classes of the resources in the graph.
- */
-function workflowRegistry(opts: DurableWorkflowOptions): ResourceRegistry {
-  return mergeResourceRegistries(
-    opts.registry,
-    createResourceRegistryFromResources(opts.resources),
-  );
 }
 
 /**

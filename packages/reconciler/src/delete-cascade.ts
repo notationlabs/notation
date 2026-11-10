@@ -1,23 +1,6 @@
 import type { BaseResource, ResourceType } from "@notation/resource";
 import type { StateNode } from "@notation/state";
-import {
-  createResourceRegistryFromResources,
-  type ResourceRegistry,
-} from "./resource-registry";
-
-/**
- * The classes that a cascade can find: those that the caller registers, and
- * the classes of the resources in code.
- */
-export function cascadeRegistry(opts: {
-  resources: BaseResource[];
-  registry?: ResourceRegistry;
-}): ResourceRegistry {
-  return new Map([
-    ...(opts.registry ?? []),
-    ...createResourceRegistryFromResources(opts.resources),
-  ]);
-}
+import type { ResourceRegistry } from "./resource-registry";
 
 /**
  * Whether the record `dependentId` blocks the delete of the record
