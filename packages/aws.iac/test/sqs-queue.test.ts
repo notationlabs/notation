@@ -81,6 +81,23 @@ describe("SQS queue", () => {
     });
   });
 
+  it("creates the queue without the empty redrive policies", async () => {
+    const send = mockSend((command) => {
+      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
+      return { QueueUrl: url };
+    });
+
+    await queue.create({
+      QueueName: "orders",
+      VisibilityTimeout: 60,
+      RedrivePolicy: "",
+      RedriveAllowPolicy: "",
+    });
+
+    const command = send.mock.calls[1]![0] as sdk.CreateQueueCommand;
+    expect(command.input.Attributes).toEqual({ VisibilityTimeout: "60" });
+  });
+
   it("creates the redrive allow policy as JSON", async () => {
     const send = mockSend((command) => {
       if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();

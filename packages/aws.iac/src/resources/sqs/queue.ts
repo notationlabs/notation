@@ -349,11 +349,13 @@ async function getQueueUrl(QueueName: string): Promise<string | undefined> {
   }
 }
 
+// An empty policy is left out, as a new queue has no policy, and SQS might
+// not accept "" in CreateQueue.
 function toAttributes(attributes: QueueAttributeParams) {
   const encoded: Record<string, string> = {};
   for (const name of ATTRIBUTE_NAMES) {
     const value = attributes[name];
-    if (value !== undefined) encoded[name] = encode(value);
+    if (value !== undefined && value !== "") encoded[name] = encode(value);
   }
   return encoded;
 }
