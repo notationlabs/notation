@@ -1,9 +1,11 @@
+import { builtinModules } from "node:module";
 import path from "node:path";
 import {
   rolldown,
   watch as rolldownWatch,
   type InputOptions,
   type OutputOptions,
+  type Plugin,
 } from "rolldown";
 import {
   infraEntry,
@@ -206,42 +208,45 @@ export type CompileRuntimeOptions = {
 };
 
 /**
- * Bundles each declaration module to `dist/<module path>/index.mjs`, as one
- * file. The bundle's entry is generated: it re-exports the module's entry,
- * such as `handler`. Returns a function that stops watching.
+ * Bundles each declaration module that has an entry to
+ * `dist/<module path>/index.mjs`, as one file. The bundle's entry is
+ * generated: it re-exports the module's entry, such as `handler`, and on
+ * workerd the module's other exports. Returns a function that stops watching.
  */
 export async function compileRuntimeModules(
   modules: DeclarationModule[],
   opts: CompileRuntimeOptions = {},
 ): Promise<() => Promise<void>> {
-  if (modules.length === 0) return async () => {};
+  const bundled = modules.filter((module) => module.entry);
+  if (bundled.length === 0) return async () => {};
   const analyses = opts.analyses ?? new ModuleAnalyses();
   const distDir = filePaths.dist.dir();
-  const configs = modules.map((module) => ({
-    input: {
+  const configs = bundled.map((module) => {
+    const { plugins = [], ...platform } =
+      platformOptions[module.platform ?? "node"];
+    return {
       input: {
-        [path
-          .relative(distDir, filePaths.dist.runtime.index(module.path))
-          .replace(/\.mjs$/, "")]: runtimeEntry,
-      },
-      cwd: projectRoot(),
-      platform: "node",
-      tsconfig: true,
-      resolve: {
-        conditionNames: ["notation-runtime", "node", "import", "default"],
-      },
-      // Inlining would copy a short constant from an infra module into the
-      // function, and the infra module would render nothing, so the bundle
-      // check wouldn't see the use.
-      optimization: { inlineConst: false },
-      plugins: [runtimePlugin({ analyses, module })],
-    } satisfies InputOptions,
-    output: {
-      ...outputOptions,
-      dir: distDir,
-      codeSplitting: false,
-    } satisfies OutputOptions,
-  }));
+        input: {
+          [path
+            .relative(distDir, filePaths.dist.runtime.index(module.path))
+            .replace(/\.mjs$/, "")]: runtimeEntry,
+        },
+        cwd: projectRoot(),
+        tsconfig: true,
+        ...platform,
+        // Inlining would copy a short constant from an infra module into the
+        // function, and the infra module would render nothing, so the bundle
+        // check wouldn't see the use.
+        optimization: { inlineConst: false },
+        plugins: [...plugins, runtimePlugin({ analyses, module })],
+      } satisfies InputOptions,
+      output: {
+        ...outputOptions,
+        dir: distDir,
+        codeSplitting: false,
+      } satisfies OutputOptions,
+    };
+  });
 
   if (!opts.watch) {
     await Promise.all(
@@ -272,6 +277,60 @@ export async function compileRuntimeModules(
   });
   return () => watcher.close();
 }
+
+// workerd provides Node's built-in modules as `node:` modules, under the
+// nodejs_compat flag. A bare name, such as `events`, that no installed
+// package provides is imported as its `node:` module.
+const nodeBuiltinsPlugin: Plugin = {
+  name: "notation-workerd-builtins",
+  async resolveId(source, importer, options) {
+    if (!builtinModules.includes(source)) return null;
+    const resolved = await this.resolve(source, importer, options);
+    if (resolved && !resolved.external) return resolved;
+    return { id: `node:${source}`, external: true };
+  },
+};
+
+// Like wrangler on deploy, unless NODE_ENV is set.
+const nodeEnv = JSON.stringify(process.env.NODE_ENV || "production");
+
+// The conditions and the NODE_ENV defines for workerd are the ones that
+// wrangler uses. workerd provides the `cloudflare:` and `node:` modules, so
+// the bundle leaves them external.
+const platformOptions: Record<
+  "node" | "workerd",
+  Partial<InputOptions> & { plugins?: Plugin[] }
+> = {
+  node: {
+    platform: "node",
+    resolve: {
+      conditionNames: ["notation-runtime", "node", "import", "default"],
+    },
+  },
+  workerd: {
+    platform: "neutral",
+    resolve: {
+      conditionNames: [
+        "notation-runtime",
+        "workerd",
+        "worker",
+        "browser",
+        "import",
+        "default",
+      ],
+      mainFields: ["browser", "module", "main"],
+    },
+    external: [/^cloudflare:/, /^node:/],
+    transform: {
+      define: {
+        "process.env.NODE_ENV": nodeEnv,
+        "global.process.env.NODE_ENV": nodeEnv,
+        "globalThis.process.env.NODE_ENV": nodeEnv,
+      },
+    },
+    plugins: [nodeBuiltinsPlugin],
+  },
+};
 
 function sameModules(a: DeclarationModule[], b: DeclarationModule[]) {
   return JSON.stringify(a) === JSON.stringify(b);

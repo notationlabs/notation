@@ -6,6 +6,7 @@ import { location } from "./ast";
 import { nodeModules, scriptFile } from "./files";
 import {
   infraInterface,
+  runtimeExports,
   stripForInfra,
   type DeclarationModule,
 } from "./infra-strip";
@@ -174,15 +175,15 @@ const resolvedEntryId = `\0${entryId}`;
 export const runtimeEntry = entryId;
 
 /**
- * The entry of a runtime bundle. It re-exports only the native entry, such as
- * `handler`, so the declaration is not an export of the bundle, and the
- * bundler can drop it.
+ * The entry of a runtime bundle. It re-exports `names` from the module at
+ * `file`: the native entry, such as `handler`, and on `workerd` the module's
+ * other exports, such as Durable Object classes. The declaration is not an
+ * export of the bundle, so the bundler can drop it.
  */
-export function createRuntimeEntry(module: DeclarationModule): string {
-  const from = JSON.stringify(module.path);
-  return module.entry === "default"
-    ? `export { default } from ${from};\n`
-    : `export { ${module.entry} } from ${from};\n`;
+export function createRuntimeEntry(file: string, names: string[]): string {
+  const show = (name: string) =>
+    /^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name);
+  return `export { ${names.map(show).join(", ")} } from ${JSON.stringify(file)};\n`;
 }
 
 export type RuntimePluginOptions = {
@@ -217,7 +218,16 @@ export function runtimePlugin({
       return source === entryId ? resolvedEntryId : null;
     },
     load(id) {
-      return id === resolvedEntryId ? createRuntimeEntry(module) : null;
+      if (id !== resolvedEntryId) return null;
+      // In watch mode, a change to the module rebuilds this bundle before
+      // the infra rebuild replaces the watcher, so the entry reads the
+      // module as it is now. A module that has lost its entry gets an empty
+      // bundle until then.
+      const analysis = analyses.fromFile(module.path);
+      const names = analysis ? runtimeExports(analysis) : [];
+      return names.length === 0
+        ? "export {};\n"
+        : createRuntimeEntry(module.path, names);
     },
     transform: {
       filter: { id: { include: scriptFile, exclude: nodeModules } },

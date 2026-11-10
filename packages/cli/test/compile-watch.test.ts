@@ -351,3 +351,97 @@ it("bundles a file that is added under runtime/ with the default globs", async (
   write("runtime/added.ts", runtimeModule("added"));
   await waitFor(() => expect(existsSync(bundle)).toBe(true));
 });
+
+it("bundles a module when a rebuild gives its declaration an entry", async () => {
+  const module = (clause: string) =>
+    [
+      `/** @declaration ${clause} */`,
+      `function declare(config) { return config; }`,
+      `export const fn = declare({ id: "counters" });`,
+      `export const handler = () => "counters";`,
+      ``,
+    ].join("\n");
+  write("watch-entry/counters.ts", module("shared: id"));
+  write(
+    "watch-entry/main.ts",
+    `import { fn } from "./counters";\nconsole.log(fn);\n`,
+  );
+  const bundle = path.join(root, "dist/watch-entry/counters/index.mjs");
+
+  onTestFinished(
+    await compile(build("watch-entry/main.ts"), { watch: true, logger }),
+  );
+  expect(existsSync(bundle)).toBe(false);
+
+  write("watch-entry/counters.ts", module("shared: id; entry: handler"));
+  await waitFor(() => expect(existsSync(bundle)).toBe(true));
+});
+
+it("rebuilds a Worker module that removes an export without an error", async () => {
+  const module = (classExport: string) =>
+    [
+      `/** @declaration shared: id; entry: default; platform: workerd */`,
+      `function declare(config) { return config; }`,
+      `class Counter {}`,
+      classExport,
+      `export const worker = declare({ id: "api" });`,
+      `export default { fetch: () => new Response("api") };`,
+      ``,
+    ].join("\n");
+  write("watch-exports/api.ts", module("export { Counter };"));
+  write(
+    "watch-exports/main.ts",
+    `import { worker } from "./api";\nconsole.log(worker);\n`,
+  );
+  const bundle = path.join(root, "dist/watch-exports/api/index.mjs");
+  const error = vi.fn();
+  const watchLogger = { info: () => {}, error } as unknown as Logger;
+
+  onTestFinished(
+    await compile(build("watch-exports/main.ts"), {
+      watch: true,
+      logger: watchLogger,
+    }),
+  );
+  await waitFor(() =>
+    expect(readFileSync(bundle, "utf8")).toContain("Counter"),
+  );
+
+  write("watch-exports/api.ts", module(""));
+  await waitFor(() =>
+    expect(readFileSync(bundle, "utf8")).not.toContain("Counter"),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  expect(error).not.toHaveBeenCalled();
+});
+
+it("doesn't log an error when a rebuild takes a module's entry away", async () => {
+  const withEntry = runtimeModule("jobs");
+  const withoutEntry = [
+    `/** @declaration shared: id */`,
+    `function declare(config) { return config; }`,
+    `export const fn = declare({ id: "jobs" });`,
+    ``,
+  ].join("\n");
+  write("watch-entry-loss/jobs.ts", withEntry);
+  write(
+    "watch-entry-loss/main.ts",
+    `import { fn } from "./jobs";\nconsole.log(fn);\n`,
+  );
+  const bundle = path.join(root, "dist/watch-entry-loss/jobs/index.mjs");
+  const error = vi.fn();
+  const info = vi.fn();
+  const watchLogger = { info, error } as unknown as Logger;
+
+  onTestFinished(
+    await compile(build("watch-entry-loss/main.ts"), {
+      watch: true,
+      logger: watchLogger,
+    }),
+  );
+  await waitFor(() => expect(existsSync(bundle)).toBe(true));
+
+  write("watch-entry-loss/jobs.ts", withoutEntry);
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  expect(error).not.toHaveBeenCalled();
+});

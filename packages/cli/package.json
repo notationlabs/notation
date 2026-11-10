@@ -25,6 +25,7 @@
   "devDependencies": {
     "@notation/aws": "workspace:*",
     "@notation/resource": "workspace:*",
-    "@types/which-pm-runs": "^1.0.2"
+    "@types/which-pm-runs": "^1.0.2",
+    "miniflare": "5.20261012.0-beta"
   }
 }

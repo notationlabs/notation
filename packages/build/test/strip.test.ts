@@ -94,7 +94,7 @@ describe("stripForInfra", () => {
       /export const lambda = __notation_declaredIn\(\$lambda\(\{[\s\S]*\}\), "runtime\/handler\.ts", "lambda"\);/,
     );
     expect(code).toContain(
-      "function __notation_declaredIn(value, path, binding)",
+      "function __notation_declaredIn(value, path, binding, moduleExports)",
     );
   });
 
@@ -147,16 +147,208 @@ describe("stripForInfra", () => {
 
   it("replaces runtime-only options with a function that throws", () => {
     const source = `
-      /** @declaration runtime: class */
-      function createNamespace(config) { return config; }
-      const counters = createNamespace({ id: "counters", class: class Counter {} });
+      /** @declaration runtime: handler */
+      function createJob(config) { return config; }
+      const job = createJob({ id: "job", handler: () => run() });
       export const handler = 1;
     `;
     const { code } = infra(source);
     expect(code).toContain(
-      `class: () => { throw new Error("class only runs in the function, not in the infra build."); }`,
+      `handler: (0, () => { throw new Error("handler only runs in the function, not in the infra build."); })`,
     );
-    expect(code).not.toContain("Counter");
+    expect(code).not.toContain("run()");
+  });
+
+  it('gives the function that replaces an option that is not a name the name ""', () => {
+    const source = `
+      import * as ns from "./counter";
+      /** @declaration shared: id; runtime: class */
+      function $durableObject(config) { return { className: config.class.name }; }
+      export const counters = $durableObject({ id: "counters", class: ns.Counter });
+    `;
+    const extra = { "runtime/counter.ts": "export class Counter {}" };
+    const { code } = infra(source, extra);
+    const thrower = /class: (\(0, \(\) => \{[^}]*\}\))/.exec(code)![1]!;
+    expect(new Function(`return { class: ${thrower} }.class.name`)()).toBe("");
+    expect(code).not.toContain("./counter");
+  });
+
+  it("fails when the declaration uses the name of a runtime-only option elsewhere", () => {
+    const source = `
+      /** @declaration shared: id, label; runtime: class */
+      function $durableObject(config) { return config; }
+      export class Counter {}
+      export const counters = $durableObject({ id: "counters", label: Counter.name, class: Counter });
+    `;
+    expect(() => infra(source)).toThrow(
+      "/project/runtime/handler.ts:5:71: Counter is the class option of $durableObject, which the infra build leaves out, so the declaration can't use Counter anywhere else.",
+    );
+  });
+
+  it("fails when a statement that the declaration uses refers to the name of a runtime-only option", () => {
+    const source = `
+      /** @declaration shared: id, label; runtime: class */
+      function $durableObject(config) { return config; }
+      export class Counter {}
+      const label = Counter.name;
+      export const counters = $durableObject({ id: "counters", label, class: Counter });
+    `;
+    expect(() => infra(source)).toThrow(
+      "/project/runtime/handler.ts:5:21: Counter is the class option of $durableObject",
+    );
+  });
+
+  it("names the function that replaces a runtime-only option that names a class", () => {
+    const source = `
+      import { DurableObject } from "cloudflare:workers";
+      /** @declaration shared: id; runtime: class */
+      function $durableObject(config) { return config; }
+      export class Counter extends DurableObject { fetch() { return 1; } }
+      export const counters = $durableObject({ id: "counters", class: Counter });
+    `;
+    const { code, declaration } = infra(source);
+    expect(code).toContain(
+      `class: function Counter() { throw new Error("class only runs in the function, not in the infra build."); }`,
+    );
+    expect(code).not.toContain("cloudflare:workers");
+    expect(code).not.toContain("extends DurableObject");
+    expect(declaration.entry).toBeUndefined();
+  });
+
+  it("fails when a runtime-only option is a class expression", () => {
+    const source = `
+      /** @declaration runtime: class */
+      function createNamespace(config) { return config; }
+      const counters = createNamespace({ id: "counters", class: class Counter {} });
+    `;
+    expect(() => infra(source)).toThrow(
+      "the class option of createNamespace is a class expression",
+    );
+  });
+
+  it("records the other exports of a workerd module, without the declaration", () => {
+    const source = `
+      /** @declaration shared: id; entry: default; platform: workerd */
+      function $worker(config) { return config; }
+      export { Counter } from "./counter";
+      export const worker = $worker({ id: "api" });
+      export default { fetch() {} };
+    `;
+    const extra = { "runtime/counter.ts": "export class Counter {}" };
+    expect(infra(source, extra).declaration).toEqual({
+      path: file,
+      binding: "worker",
+      entry: "default",
+      platform: "workerd",
+      exports: ["Counter"],
+    });
+  });
+
+  it("leaves type-only exports out of a workerd module's other exports", () => {
+    const source = `
+      import type { Env } from "./env";
+      /** @declaration shared: id; entry: default; platform: workerd */
+      function $worker(config) { return config; }
+      export { Counter, type Options } from "./counter";
+      export type { Env };
+      export type Handler = () => void;
+      export interface Props {}
+      export type * from "./types";
+      export const worker = $worker({ id: "api" });
+      export default { fetch() {} };
+    `;
+    const extra = { "runtime/counter.ts": "export class Counter {}" };
+    expect(infra(source, extra).declaration.exports).toEqual(["Counter"]);
+  });
+
+  it("leaves types exported without the type keyword out of a workerd module's other exports", () => {
+    const source = `
+      import type { Env } from "./env";
+      import { type Options, Counter } from "./counter";
+      /** @declaration shared: id; entry: default; platform: workerd */
+      function $worker(config) { return config; }
+      interface Local {}
+      type Alias = string;
+      declare const injected: string;
+      interface Merged {}
+      class Merged {}
+      export { Local, Alias, Env, Options, injected, Counter, Merged };
+      export const worker = $worker({ id: "api" });
+      export default { fetch() {} };
+    `;
+    const extra = {
+      "runtime/counter.ts":
+        "export class Counter {}\nexport type Options = {};",
+      "runtime/env.ts": "export type Env = {};",
+    };
+    expect(infra(source, extra).declaration.exports).toEqual([
+      "Counter",
+      "Merged",
+    ]);
+  });
+
+  it("records the exports and the export * sources of a workerd module with its declaration", () => {
+    const source = `
+      /** @declaration shared: id; entry: default; platform: workerd */
+      function $worker(config) { return config; }
+      export { Counter } from "./counter";
+      export * from "./counter";
+      export const worker = $worker({ id: "api" });
+      export default { fetch() {} };
+    `;
+    const extra = { "runtime/counter.ts": "export class Counter {}" };
+    expect(infra(source, extra).code).toContain(
+      `, "runtime/handler.ts", "worker", {"exports":["Counter"],"starExports":["./counter"]})`,
+    );
+  });
+
+  it("records neither platform nor exports for a workerd declaration with no entry", () => {
+    const source = `
+      /** @declaration shared: id; platform: workerd */
+      function $namespace(config) { return config; }
+      export class Counter {}
+      export const counters = $namespace({ id: "counters" });
+    `;
+    const { code, declaration } = infra(source);
+    expect(declaration).toEqual({ path: file, binding: "counters" });
+    expect(code).toContain(`, "runtime/handler.ts", "counters")`);
+  });
+
+  it("names the function that replaces a shorthand runtime-only option", () => {
+    const source = `
+      /** @declaration runtime: job */
+      function createJob(config) { return config; }
+      function job() {}
+      const declared = createJob({ id: "job", job });
+      export const handler = 1;
+    `;
+    expect(infra(source).code).toContain(
+      `job: function job() { throw new Error("job only runs in the function, not in the infra build."); }`,
+    );
+  });
+
+  it("names the function that replaces a runtime-only option with a type assertion", () => {
+    const source = `
+      /** @declaration runtime: class */
+      function $durableObject(config) { return config; }
+      export class Counter {}
+      export const counters = $durableObject({ id: "counters", class: Counter as any });
+    `;
+    const { code } = infra(source);
+    expect(code).toContain(`class: function Counter() {`);
+    expect(code).not.toContain("as any");
+    expect(code).not.toContain("class Counter");
+  });
+
+  it("fails when a runtime-only option is a class expression in parentheses", () => {
+    const source = `
+      /** @declaration runtime: class */
+      function $durableObject(config) { return config; }
+      export const counters = $durableObject({ id: "counters", class: (class {}) });
+    `;
+    expect(() => infra(source)).toThrow(
+      "/project/runtime/handler.ts:4:72: the class option of $durableObject is a class expression",
+    );
   });
 
   it("fails when the module doesn't export the entry", () => {
@@ -195,7 +387,7 @@ describe("stripForRuntime", () => {
     const { analysis, analyses } = setup();
     const { code } = stripForRuntime(analysis, analyses)!;
     expect(code).toContain(
-      `export const lambda = $lambda({
+      `export const lambda = /*#__PURE__*/ $lambda({
   id: "process-orders",
   event: () => apiGateway.schema(Order),
   env: () => ({ QUEUE_URL: undefined, LOG_LEVEL: undefined }),

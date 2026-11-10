@@ -44,7 +44,7 @@ export const lambda = __notation_declaredIn(
   "lambda",
 );
 
-function __notation_declaredIn(value, path, binding) {
+function __notation_declaredIn(value, path, binding, moduleExports) {
   /* ... */
 }
 ```

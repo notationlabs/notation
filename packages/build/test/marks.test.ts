@@ -30,6 +30,36 @@ describe("parseMark", () => {
     });
   });
 
+  it("reads the platform of a declaration mark", () => {
+    expect(
+      parseMark(
+        "* @declaration shared: id; entry: default; platform: workerd ",
+        "f",
+      ),
+    ).toEqual({
+      kind: "declaration",
+      shared: ["id"],
+      runtime: [],
+      keys: [],
+      entry: "default",
+      platform: "workerd",
+    });
+  });
+
+  it("fails for an unknown platform", () => {
+    expect(() =>
+      parseMark("* @declaration entry: default; platform: deno ", "f"),
+    ).toThrow(
+      'f: unknown platform "deno" in the @declaration mark. Use node or workerd.',
+    );
+  });
+
+  it("fails for an entry clause with no export name", () => {
+    expect(() => parseMark("* @declaration shared: id; entry: ", "f")).toThrow(
+      "f: the entry clause of the @declaration mark has no export name.",
+    );
+  });
+
   it("reads a resource mark", () => {
     expect(parseMark("* @resource ", "f")).toEqual({ kind: "resource" });
   });

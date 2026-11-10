@@ -8,6 +8,24 @@ export type DeclaredIn = {
   path: string;
   /** The local name of the binding that holds the declaration. */
   binding: string;
+} & Partial<DeclaredExports>;
+
+/**
+ * The exports of a module whose platform reads named exports, such as a
+ * Worker module that exports its Durable Object classes. The infra build
+ * records them for a declaration marked `platform: workerd`.
+ */
+export type DeclaredExports = {
+  /**
+   * The value exports of the module that its bundle re-exports, other than
+   * the entry and the declaration.
+   */
+  exports: string[];
+  /**
+   * The specifiers of the module's `export * from` statements. The bundle
+   * doesn't re-export their names.
+   */
+  starExports: string[];
 };
 
 /**
@@ -15,12 +33,19 @@ export type DeclaredIn = {
  * returns, and returns the value. The infra build wraps each declaration in
  * a call like this one.
  */
-export function declaredIn<T>(value: T, path: string, binding: string): T {
+export function declaredIn<T>(
+  value: T,
+  path: string,
+  binding: string,
+  moduleExports?: DeclaredExports,
+): T {
   if (
     (typeof value === "object" && value !== null) ||
     typeof value === "function"
   ) {
-    Object.defineProperty(value, declaredInKey, { value: { path, binding } });
+    Object.defineProperty(value, declaredInKey, {
+      value: { path, binding, ...moduleExports },
+    });
   }
   return value;
 }

@@ -310,6 +310,34 @@ describe("declaration modules", () => {
     ]);
   });
 
+  it("drops a $lambda call that the handler doesn't use, and exports only the handler", async () => {
+    writeProject(`
+      import { $lambda, sqs } from "@notation/aws/lambda";
+      import { orders } from "../infra/orders";
+
+      export const lambda = $lambda({
+        id: "process-orders",
+        event: () => sqs.bind(orders),
+        env: () => ({ QUEUE_URL: orders.url }),
+      });
+
+      export class Helper {}
+      export const handler = async () => "ok";
+    `);
+    await compileRuntimeModules(
+      (await compileInfra(path.join(root, "infra/orders.ts"))).modules,
+    );
+
+    const bundle = readFileSync(
+      path.join(root, "dist/runtime/process-orders/index.mjs"),
+      "utf8",
+    );
+    expect(bundle).not.toContain(`"process-orders"`);
+    expect(bundle).not.toContain("$lambda");
+    expect(bundle).not.toContain("Helper");
+    expect(bundle).toMatch(/^export \{ handler \};$/m);
+  });
+
   it("fails when the function reads an infra module directly", async () => {
     writeProject(
       handlerModule.replace(

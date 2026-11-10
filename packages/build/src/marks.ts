@@ -30,7 +30,12 @@ export type DeclarationMark = {
   keys: string[];
   /** The export of the module that the platform calls, such as `handler`. */
   entry?: string;
+  /** The platform that runs the runtime bundle. Absent means `node`. */
+  platform?: Platform;
 };
+
+export const platforms = ["node", "workerd"] as const;
+export type Platform = (typeof platforms)[number];
 
 /**
  * Marks a function that declares a resource. Written `@resource`, or
@@ -104,10 +109,22 @@ export function parseMark(jsDoc: string, where: string): Mark | undefined {
       if (name === "shared" || name === "runtime" || name === "keys") {
         mark[name] = list(value);
       } else if (name === "entry") {
+        if (!value) {
+          throw new Error(
+            `${where}: the entry clause of the @declaration mark has no export name. Write entry: handler, or leave the clause out for a declaration with no runtime bundle.`,
+          );
+        }
         mark.entry = value;
+      } else if (name === "platform") {
+        if (!(platforms as readonly string[]).includes(value)) {
+          throw new Error(
+            `${where}: unknown platform "${value}" in the @declaration mark. Use ${platforms.join(" or ")}.`,
+          );
+        }
+        mark.platform = value as Platform;
       } else {
         throw new Error(
-          `${where}: unknown clause "${name}" in the @declaration mark. Use shared, runtime, keys or entry.`,
+          `${where}: unknown clause "${name}" in the @declaration mark. Use shared, runtime, keys, entry or platform.`,
         );
       }
     }

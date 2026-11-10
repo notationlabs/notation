@@ -1,6 +1,6 @@
 import path from "node:path";
 import MagicString from "magic-string";
-import { freeReferences, type Node } from "./ast";
+import { freeReferences, location, unwrap, type Node } from "./ast";
 import type { Declaration, ModuleAnalysis } from "./analyze";
 import type { Marks } from "./marks";
 
@@ -11,9 +11,9 @@ export const declaredInHelper = "__notation_declaredIn";
 // The helper is written into the module, so the user's project doesn't have
 // to resolve a notation package from the module's directory.
 const helper = `
-function ${declaredInHelper}(value, path, binding) {
+function ${declaredInHelper}(value, path, binding, moduleExports) {
   if ((typeof value === "object" && value !== null) || typeof value === "function") {
-    Object.defineProperty(value, Symbol.for("@notation/declaredIn"), { value: { path, binding } });
+    Object.defineProperty(value, Symbol.for("@notation/declaredIn"), { value: { path, binding, ...moduleExports } });
   }
   return value;
 }
@@ -25,8 +25,20 @@ export type DeclarationModule = {
   path: string;
   /** The local name of the binding that holds the declaration. */
   binding: string;
-  /** The export that the platform calls, such as `handler`. */
-  entry: string;
+  /**
+   * The export that the platform calls, such as `handler`. A declaration
+   * whose mark has no `entry`, such as a Durable Object namespace, has no
+   * runtime bundle of its own.
+   */
+  entry?: string;
+  /** Set for `workerd`. Absent means `node`. */
+  platform?: "workerd";
+  /**
+   * The other exports that the runtime bundle re-exports, besides `entry`.
+   * Only on `workerd`, which reads named exports such as Durable Object
+   * classes. The declaration's binding is left out.
+   */
+  exports?: string[];
 };
 
 const isTypeOnly = (statement: Node): boolean =>
@@ -82,20 +94,46 @@ function namesOf(pattern: Node): string[] {
 
 // The statements that the infra copy of a declaration module keeps: the
 // declaration and the top-level statements that it uses, and the imports
-// that those statements use.
+// that those statements use. References in `runtime:` options don't count,
+// because the strip replaces those options. So a Durable Object class that
+// `class: Counter` names, and the imports of the class, are removed.
 function keptStatements(analysis: ModuleAnalysis) {
+  const declaration = analysis.declaration!;
   const { module } = analysis.table;
   const owners = new Map<string, Node>();
   for (const statement of module.body) {
     for (const name of declaredBy(statement)) owners.set(name, statement);
   }
 
-  const kept = new Set<Node>([analysis.declaration!.statement]);
+  const skip = new Set<Node>();
+  // The names that are the whole value of a runtime: option, such as
+  // `Counter` in `class: Counter`, by name.
+  const runtimeNames = new Map<string, string>();
+  for (const option of declaration.mark.runtime) {
+    const property = declaration.properties.get(option);
+    if (!property) continue;
+    skip.add(property);
+    const value = unwrap(property.value);
+    if (value.type === "Identifier") runtimeNames.set(value.name, option);
+  }
+  const kept = new Set<Node>([declaration.statement]);
   const usedImports = new Set<string>();
-  const queue: Node[] = [analysis.declaration!.statement];
+  const queue: Node[] = [declaration.statement];
   while (queue.length > 0) {
     const statement = queue.pop()!;
-    for (const { node } of freeReferences(statement)) {
+    const references =
+      statement === declaration.statement
+        ? freeReferences(statement, skip)
+        : freeReferences(statement);
+    for (const { node } of references) {
+      const option = runtimeNames.get(node.name);
+      if (option) {
+        // Keeping the name would load the value that the option leaves out,
+        // such as a class that imports cloudflare:workers.
+        throw new Error(
+          `${module.file}:${location(module.source, node.start)}: ${node.name} is the ${option} option of ${declaration.name}, which the infra build leaves out, so the declaration can't use ${node.name} anywhere else.`,
+        );
+      }
       const owner = owners.get(node.name);
       if (owner && !kept.has(owner)) {
         kept.add(owner);
@@ -195,11 +233,20 @@ export function stripForInfra(
     s.remove(statement.start, statement.end);
   }
 
-  replaceRuntimeOptions(s, declaration);
+  const exports =
+    declaration.mark.platform === "workerd" && entry
+      ? otherExports(analysis, entry)
+      : undefined;
+  const record = [
+    path.relative(root, module.file).split(path.sep).join("/"),
+    declaration.binding,
+    ...(exports ? [{ exports, starExports: analysis.table.stars }] : []),
+  ];
+  replaceRuntimeOptions(s, declaration, module);
   s.prependLeft(declaration.call.start, `${declaredInHelper}(`);
   s.appendRight(
     declaration.call.end,
-    `, ${JSON.stringify(path.relative(root, module.file).split(path.sep).join("/"))}, ${JSON.stringify(declaration.binding)})`,
+    `, ${record.map((arg) => JSON.stringify(arg)).join(", ")})`,
   );
   s.append(helper);
 
@@ -213,9 +260,74 @@ export function stripForInfra(
     declaration: {
       path: module.file,
       binding: declaration.binding,
-      entry: entry ?? "handler",
+      ...(entry ? { entry } : {}),
+      ...(exports ? { platform: "workerd" as const, exports } : {}),
     },
   };
+}
+
+/**
+ * The exports that the runtime bundle of a declaration module re-exports:
+ * the entry, and on `workerd` the module's other value exports. Empty when
+ * the declaration has no entry.
+ */
+export function runtimeExports(analysis: ModuleAnalysis): string[] {
+  const entry = analysis.declaration?.mark.entry;
+  if (!entry) return [];
+  return analysis.declaration!.mark.platform === "workerd"
+    ? [entry, ...otherExports(analysis, entry)]
+    : [entry];
+}
+
+// The value exports of a module other than `entry` and the declaration. A
+// name from `export * from` isn't listed, as the module's table doesn't hold
+// it.
+function otherExports(analysis: ModuleAnalysis, entry: string): string[] {
+  const binding = analysis.declaration!.binding;
+  const types = typeOnlyNames(analysis);
+  return [...analysis.table.exports]
+    .filter(
+      ([name, target]) =>
+        name !== entry &&
+        !(
+          "local" in target &&
+          (target.local === binding || types.has(target.local))
+        ),
+    )
+    .map(([name]) => name)
+    .sort();
+}
+
+// The local names that only name a type: interfaces, type aliases, `declare`
+// statements and type imports. `export { Local }` of such a name has no
+// value to re-export. A name that also has a value, such as an interface
+// merged with a class, is left out.
+function typeOnlyNames(analysis: ModuleAnalysis): Set<string> {
+  const types = new Set<string>();
+  const values = new Set<string>(analysis.table.imports.keys());
+  for (const statement of analysis.table.module.body) {
+    const node =
+      statement.type === "ExportNamedDeclaration" && statement.declaration
+        ? statement.declaration
+        : statement;
+    if (node.type === "ImportDeclaration") {
+      for (const specifier of node.specifiers) {
+        if (node.importKind === "type" || specifier.importKind === "type")
+          types.add(specifier.local.name);
+      }
+    } else if (
+      node.type === "TSInterfaceDeclaration" ||
+      node.type === "TSTypeAliasDeclaration"
+    ) {
+      types.add(node.id.name);
+    } else {
+      for (const name of declaredBy(node)) {
+        (node.declare ? types : values).add(name);
+      }
+    }
+  }
+  for (const name of values) types.delete(name);
+  return types;
 }
 
 const keptName = (name: string, owners: Map<string, Node>, kept: Set<Node>) => {
@@ -258,12 +370,32 @@ function keptImport(
   return `import ${parts.join(", ")} from ${from};`;
 }
 
-function replaceRuntimeOptions(s: MagicString, declaration: Declaration) {
+// An option whose value is a name, such as `class: Counter`, becomes a
+// function with that name, so the infra build can read `config.class.name`
+// without loading the class. The name is the local name at the call site.
+// Any other value becomes a function whose name is "", so that a provider
+// can reject an option that needs a name.
+function replaceRuntimeOptions(
+  s: MagicString,
+  declaration: Declaration,
+  module: { file: string; source: string },
+) {
   for (const option of declaration.mark.runtime) {
     const property = declaration.properties.get(option);
     if (!property) continue;
+    const value = unwrap(property.value);
+    if (value.type === "ClassExpression") {
+      throw new Error(
+        `${module.file}:${location(module.source, value.start)}: the ${option} option of ${declaration.name} is a class expression. Declare the class at the top level of the module, and pass its name.`,
+      );
+    }
     const message = `${option} only runs in the function, not in the infra build.`;
-    const thrower = `() => { throw new Error(${JSON.stringify(message)}); }`;
+    const body = `{ throw new Error(${JSON.stringify(message)}); }`;
+    const thrower =
+      value.type === "Identifier"
+        ? `function ${value.name}() ${body}`
+        : // The comma keeps JS from naming the function after the key.
+          `(0, () => ${body})`;
     if (property.shorthand) {
       s.overwrite(property.start, property.end, `${option}: ${thrower}`);
     } else {

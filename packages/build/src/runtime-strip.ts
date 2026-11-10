@@ -120,6 +120,12 @@ export function stripForRuntime(
 
   removeEmptiedImports(module.body, analysis.references, removed, s);
 
+  // The pure mark lets the bundler drop a declaration that the bundle
+  // doesn't use, such as a Durable Object namespace in a module that a Worker
+  // imports for its class. So the runtime half of a declaration function must
+  // have no side effects.
+  s.prependLeft(declaration.call.start, "/*#__PURE__*/ ");
+
   return {
     code: s.toString(),
     map: s.generateMap({
