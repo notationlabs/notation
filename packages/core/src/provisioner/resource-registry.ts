@@ -98,12 +98,26 @@ export async function loadProviderRegistry(
       fail(name, errorMessage(error));
       continue;
     }
-    const found = resourceClassesIn(provider);
-    if (found.length === 0) {
+    let found: ReturnType<typeof readProviderExports>;
+    try {
+      found = readProviderExports(provider);
+    } catch (error) {
+      fail(name, errorMessage(error));
+      continue;
+    }
+    if (found.others.length > 0) {
+      fail(
+        name,
+        `${name} exports values that are not resource classes: ` +
+          found.others.join(", "),
+      );
+      continue;
+    }
+    if (found.classes.length === 0) {
       fail(name, `${name} exports no resource classes`);
       continue;
     }
-    classes.push(...found);
+    classes.push(...found.classes);
   }
   return { registry: createResourceRegistry(classes), failures };
 }
@@ -138,22 +152,39 @@ function resolvePackage(
 }
 
 // A package name, with an optional subpath whose segments do not start with
-// a dot, such as @notation/aws/resources.
-const packageSpecifier = /^(@[^/@.][^/]*\/)?[^/@.][^/]*(\/[^/.][^/]*)*$/;
+// a dot, such as @notation/aws/resources. Backslashes and percent signs are
+// rejected as Node rejects them in package names, because on Windows a
+// backslash in a segment such as "\.." resolves to a parent directory.
+const packageSpecifier =
+  /^(@[^/\\%@.][^/\\%]*\/)?[^/\\%@.][^/\\%]*(\/[^/\\%.][^/\\%]*)*$/;
 
-// A provider module exports resource classes and namespaces of them. The
-// depth also covers a CommonJS module, whose exports import() puts under
-// default.
-function resourceClassesIn(
-  value: unknown,
-  depth = 3,
-): ResourceClass<any, any, any>[] {
-  if (isResourceClass(value)) return [value];
-  if (depth === 0 || typeof value !== "object" || value === null) return [];
-  const classes = Object.values(value).flatMap((entry) =>
-    resourceClassesIn(entry, depth - 1),
-  );
-  return [...new Set(classes)];
+// A provider module exports only resource classes and namespaces of resource
+// classes. import() of a CommonJS module puts its exports under both default
+// and "module.exports", so those two keys may hold namespaces, and it adds
+// __esModule when the module sets it.
+function readProviderExports(provider: unknown): {
+  classes: ResourceClass<any, any, any>[];
+  others: string[];
+} {
+  const classes = new Set<ResourceClass<any, any, any>>();
+  const others: string[] = [];
+  const visit = (value: unknown, path: string, levels: number) => {
+    if (isResourceClass(value)) {
+      classes.add(value);
+    } else if (levels > 0 && typeof value === "object" && value !== null) {
+      for (const [key, entry] of Object.entries(value)) {
+        visit(entry, `${path}.${key}`, levels - 1);
+      }
+    } else {
+      others.push(path);
+    }
+  };
+  for (const [key, value] of Object.entries(provider as object)) {
+    if (key === "__esModule") continue;
+    const commonJs = key === "default" || key === "module.exports";
+    visit(value, key, commonJs ? 2 : 1);
+  }
+  return { classes: [...classes], others };
 }
 
 // Shares one walk of the tree between the packages of one load.

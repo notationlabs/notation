@@ -85,7 +85,7 @@ function installPackage(
               `export const Class${i} = globalThis[${JSON.stringify(key)}][${i}];`,
           )
           .join("\n")
-      : "export const other = 1;",
+      : "export {};",
   );
 }
 
@@ -226,7 +226,14 @@ it("registers the classes of a subpath that exports namespaces of resource class
 
 it("does not import a provider that is a path", async () => {
   const { failures } = await loadProviderRegistry(
-    ["./queues", "/tmp/queues", "@acme/queues/../file", "queues/.hidden"],
+    [
+      "./queues",
+      "/tmp/queues",
+      "@acme/queues/../file",
+      "queues/.hidden",
+      "queues\\..\\x",
+      "queues/%2e%2e/x",
+    ],
     root,
   );
   expect(failures.map((failure) => failure.errorMessage)).toEqual([
@@ -234,6 +241,85 @@ it("does not import a provider that is a path", async () => {
     "/tmp/queues is not a package name or subpath",
     "@acme/queues/../file is not a package name or subpath",
     "queues/.hidden is not a package name or subpath",
+    "queues\\..\\x is not a package name or subpath",
+    "queues/%2e%2e/x is not a package name or subpath",
+  ]);
+});
+
+// Each test writes the module source of @acme/queues, which reads Queue from
+// a global.
+function writeQueuesModule(file: string, source: string) {
+  installPackage("@acme/queues", [Queue]);
+  const packageDir = path.join(root, "node_modules", "@acme", "queues");
+  fs.writeFileSync(
+    path.join(packageDir, "package.json"),
+    JSON.stringify({ name: "@acme/queues", main: `./dist/${file}` }),
+  );
+  fs.writeFileSync(path.join(packageDir, "dist", file), source);
+}
+
+const queueGlobal = 'globalThis["__notationTestClasses:@acme/queues"][0]';
+
+it("returns a package that exports a value that is not a resource class as a failure", async () => {
+  writeQueuesModule(
+    "index.mjs",
+    `export const sqs = { Queue: ${queueGlobal}, queueSchema: {} };\n` +
+      "export const MAX_BYTES = 4096;",
+  );
+  const { registry, failures } = await loadProviderRegistry(
+    ["@acme/queues"],
+    root,
+  );
+  expect([...registry]).toEqual([]);
+  expect(failures).toEqual([
+    expect.objectContaining({
+      provider: "@acme/queues",
+      errorMessage:
+        "@acme/queues exports values that are not resource classes: " +
+        "MAX_BYTES, sqs.queueSchema",
+    }),
+  ]);
+});
+
+it("returns a package that nests a namespace inside a namespace as a failure", async () => {
+  writeQueuesModule(
+    "index.mjs",
+    `export const aws = { sqs: { Queue: ${queueGlobal} } };`,
+  );
+  const { failures } = await loadProviderRegistry(["@acme/queues"], root);
+  expect(failures).toEqual([
+    expect.objectContaining({
+      errorMessage:
+        "@acme/queues exports values that are not resource classes: aws.sqs",
+    }),
+  ]);
+});
+
+it("registers the classes of a CommonJS module that sets __esModule", async () => {
+  writeQueuesModule(
+    "index.cjs",
+    'Object.defineProperty(exports, "__esModule", { value: true });\n' +
+      `exports.sqs = { Queue: ${queueGlobal} };`,
+  );
+  const { registry, failures } = await loadProviderRegistry(
+    ["@acme/queues"],
+    root,
+  );
+  expect([...registry]).toEqual([[Queue.type, Queue]]);
+  expect(failures).toEqual([]);
+});
+
+it("returns a package whose exports throw when read as a failure", async () => {
+  writeQueuesModule(
+    "index.mjs",
+    'export const sqs = { get Queue() { throw new Error("getter failed"); } };',
+  );
+  const { failures } = await loadProviderRegistry(["@acme/queues"], root);
+  expect(failures).toEqual([
+    expect.objectContaining({
+      provider: "@acme/queues",
+      errorMessage: "getter failed",
+    }),
   ]);
 });
 
