@@ -240,7 +240,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 };
 ```
 
-`LambdaHandler` lets an SQS handler return `{ batchItemFailures }` with or without the option. Without it, Lambda ignores the result. A message that keeps failing returns to the queue until it expires, or until SQS moves it to the [dead-letter queue](#dead-letter-queues).
+Without the option, Lambda ignores the result and deletes every message in the batch, including the failed ones. So for a declaration with `sqs.bind()`, `LambdaHandler` lets the handler return `{ batchItemFailures }` only when `reportBatchItemFailures` is `true`. For a declaration with `sqs.schema()`, infra makes the mapping, so `LambdaHandler` allows either result, and you must set the option on `eventSourceMapping()`. A message that keeps failing returns to the queue until it expires, or until SQS moves it to the [dead-letter queue](#dead-letter-queues).
 
 ### Validating messages
 

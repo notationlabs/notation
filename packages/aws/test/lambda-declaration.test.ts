@@ -303,6 +303,37 @@ test("a declaration types its handler, env() and decode()", () => {
   $lambda({ id: "numbers", env: () => ({ N: 1 }) });
 });
 
+test("an SQS handler can return batch item failures only when the mapping reports them", () => {
+  const failures = { batchItemFailures: [{ itemIdentifier: "1" }] };
+
+  const reporting = $lambda({
+    id: "reporting",
+    event: () => sqs.bind(orders, { reportBatchItemFailures: true }),
+  });
+  const reports: LambdaHandler<typeof reporting> = async () => failures;
+  const reportsNone: LambdaHandler<typeof reporting> = async () => {};
+
+  const plain = $lambda({ id: "plain", event: () => sqs.bind(orders) });
+  // @ts-expect-error Lambda would ignore the failures and delete the messages
+  const ignored: LambdaHandler<typeof plain> = async () => failures;
+  const succeeds: LambdaHandler<typeof plain> = async () => {};
+
+  const off = $lambda({
+    id: "off",
+    event: () => sqs.bind(orders, { reportBatchItemFailures: false }),
+  });
+  // @ts-expect-error Lambda would ignore the failures and delete the messages
+  const ignoredOff: LambdaHandler<typeof off> = () => failures;
+
+  // The mapping of sqs.schema() is made in infra, so either result is allowed.
+  const mapped = $lambda({ id: "mapped", event: () => sqs.schema(Order) });
+  const mappedReports: LambdaHandler<typeof mapped> = async () => failures;
+  const mappedNone: LambdaHandler<typeof mapped> = async () => {};
+
+  void [reports, reportsNone, ignored, succeeds, ignoredOff];
+  void [mappedReports, mappedNone];
+});
+
 type Claims = { sub: string };
 
 const Claims: StandardSchemaV1<unknown, Claims> = {
