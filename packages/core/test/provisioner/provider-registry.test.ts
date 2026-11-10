@@ -140,9 +140,13 @@ afterEach(async () => {
 it("names the provider of each record once, sorted", () => {
   expect(
     stateProviderPackages([
-      { type: "test/acme/Topic", provider: "@acme/topics" },
-      { type: "test/acme/Queue", provider: "@acme/queues" },
-      { type: "test/acme/DeadLetterQueue", provider: "@acme/queues" },
+      { id: "topic", type: "test/acme/Topic", provider: "@acme/topics" },
+      { id: "queue", type: "test/acme/Queue", provider: "@acme/queues" },
+      {
+        id: "dead-letter",
+        type: "test/acme/DeadLetterQueue",
+        provider: "@acme/queues",
+      },
     ]),
   ).toEqual(["@acme/queues", "@acme/topics"]);
 });
@@ -150,21 +154,80 @@ it("names the provider of each record once, sorted", () => {
 it("names no package for a record whose type has a class in code", () => {
   expect(
     stateProviderPackages(
-      [{ type: Queue.type, provider: "@acme/uninstalled" }],
+      [{ id: "queue", type: Queue.type, provider: "@acme/uninstalled" }],
       [new Queue("queue")],
     ),
   ).toEqual([]);
 });
 
+it("fails on a record with no provider package", () => {
+  expect(() =>
+    stateProviderPackages(
+      [{ id: "queue", type: Queue.type, provider: undefined as any }],
+      [new Queue("queue")],
+    ),
+  ).toThrow("The state record of queue has no provider package");
+});
+
 it("registers the resource classes of the packages it resolves from the project root", async () => {
   installPackage("@acme/queues", [Queue]);
-  installPackage("@acme/empty");
   const { registry, failures } = await loadProviderRegistry(
-    ["@acme/queues", "@acme/empty"],
+    ["@acme/queues"],
     root,
   );
   expect([...registry]).toEqual([[Queue.type, Queue]]);
   expect(failures).toEqual([]);
+});
+
+it("returns a package that exports no resourceClasses array as a failure", async () => {
+  installPackage("@acme/empty");
+  const { failures } = await loadProviderRegistry(["@acme/empty"], root);
+  expect(failures).toEqual([
+    expect.objectContaining({
+      provider: "@acme/empty",
+      errorMessage: "@acme/empty does not export a resourceClasses array",
+    }),
+  ]);
+});
+
+it("registers the classes that a CommonJS package exports under default", async () => {
+  installPackage("@acme/queues", [Queue]);
+  const packageDir = path.join(root, "node_modules", "@acme", "queues");
+  fs.writeFileSync(
+    path.join(packageDir, "package.json"),
+    JSON.stringify({ name: "@acme/queues", main: "./dist/index.cjs" }),
+  );
+  fs.writeFileSync(
+    path.join(packageDir, "dist", "index.cjs"),
+    'module.exports = { ["resource" + "Classes"]: globalThis["__notationTestClasses:@acme/queues"] };',
+  );
+  const { registry, failures } = await loadProviderRegistry(
+    ["@acme/queues"],
+    root,
+  );
+  expect([...registry]).toEqual([[Queue.type, Queue]]);
+  expect(failures).toEqual([]);
+});
+
+it("names the cause when a package has no export for the require conditions", async () => {
+  installPackage("@acme/queues", [Queue]);
+  fs.writeFileSync(
+    path.join(root, "node_modules", "@acme", "queues", "package.json"),
+    JSON.stringify({
+      name: "@acme/queues",
+      type: "module",
+      exports: { ".": { import: "./dist/index.js" } },
+    }),
+  );
+  const { failures } = await loadProviderRegistry(["@acme/queues"], root);
+  expect(failures).toEqual([
+    expect.objectContaining({
+      provider: "@acme/queues",
+      errorMessage: expect.stringMatching(
+        /Could not resolve @acme\/queues .*: No "exports" main defined/,
+      ),
+    }),
+  ]);
 });
 
 it("returns a package that it can't resolve as a failure, and skips it", async () => {
@@ -222,6 +285,51 @@ it("resolves a package that the project depends on through another package, as p
   fs.mkdirSync(path.join(root, "node_modules", "@acme"), { recursive: true });
   fs.symlinkSync(
     path.join(store, "@acme", "sdk"),
+    path.join(root, "node_modules", "@acme", "sdk"),
+  );
+
+  const { registry, failures } = await loadProviderRegistry(
+    ["@acme/queues"],
+    root,
+  );
+  expect([...registry]).toEqual([[Queue.type, Queue]]);
+  expect(failures).toEqual([]);
+});
+
+it("resolves a package two levels down the project's dependency tree, as pnpm installs it", async () => {
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ dependencies: { "@acme/sdk": "1.0.0" } }),
+  );
+  const pnpm = path.join(root, "node_modules", ".pnpm");
+  const sdkStore = path.join(pnpm, "acme+sdk", "node_modules");
+  const coreStore = path.join(pnpm, "acme+core", "node_modules");
+  installPackage("@acme/sdk", undefined, sdkStore);
+  installPackage("@acme/core", undefined, coreStore);
+  installPackage("@acme/queues", [Queue], coreStore);
+  const sdkManifest = path.join(sdkStore, "@acme", "sdk", "package.json");
+  fs.writeFileSync(
+    sdkManifest,
+    JSON.stringify({
+      ...JSON.parse(fs.readFileSync(sdkManifest, "utf8")),
+      dependencies: { "@acme/core": "1.0.0" },
+    }),
+  );
+  const coreManifest = path.join(coreStore, "@acme", "core", "package.json");
+  fs.writeFileSync(
+    coreManifest,
+    JSON.stringify({
+      ...JSON.parse(fs.readFileSync(coreManifest, "utf8")),
+      dependencies: { "@acme/queues": "1.0.0" },
+    }),
+  );
+  fs.symlinkSync(
+    path.join(coreStore, "@acme", "core"),
+    path.join(sdkStore, "@acme", "core"),
+  );
+  fs.mkdirSync(path.join(root, "node_modules", "@acme"), { recursive: true });
+  fs.symlinkSync(
+    path.join(sdkStore, "@acme", "sdk"),
     path.join(root, "node_modules", "@acme", "sdk"),
   );
 
