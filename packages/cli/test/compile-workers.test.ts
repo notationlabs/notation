@@ -138,8 +138,6 @@ function writeProject(classExport = reexport) {
   write("runtime/api.ts", apiModule(classExport));
 }
 
-// Runs the infra bundle in a new process, and prints what `report` returns
-// as JSON.
 function runInfra(report: string) {
   const script = `
     await import(${JSON.stringify(pathToFileURL(path.join(root, "dist/infra/main.mjs")).href)});
@@ -252,8 +250,6 @@ it("writes a runtime bundle for the worker only, which exports the class and hol
   expect(code).not.toContain(`"counters"`);
 });
 
-// Starts the worker bundle under workerd, with the binding that deploy would
-// set up, and makes one request.
 async function serve(bundle: string, compatibilityFlags: string[] = []) {
   const mf = new Miniflare({
     workers: [

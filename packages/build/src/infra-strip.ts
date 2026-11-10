@@ -7,8 +7,6 @@ import type { Marks } from "./marks";
 /** The name of the helper that records the module of a declaration. */
 export const declaredInHelper = "__notation_declaredIn";
 
-// The name of the helper that makes the function for a `runtime:` option
-// whose value isn't a name.
 const unnamedHelper = "__notation_unnamed";
 
 // The same key as `declaredIn` in @notation/resource, which reads the record.
@@ -113,8 +111,6 @@ function keptStatements(analysis: ModuleAnalysis) {
   }
 
   const skip = new Set<Node>();
-  // The names that are the whole value of a runtime: option, such as
-  // `Counter` in `class: Counter`, by name.
   const runtimeNames = new Map<string, string>();
   for (const option of declaration.mark.runtime) {
     const property = declaration.properties.get(option);
@@ -289,9 +285,8 @@ export function runtimeExports(analysis: ModuleAnalysis): string[] {
     : [entry];
 }
 
-// The value exports of a module other than `entry` and the declaration. A
-// name from `export * from` isn't listed, as the module's table doesn't hold
-// it.
+// Names from `export * from` are missing, as the module's table doesn't
+// hold them.
 function otherExports(analysis: ModuleAnalysis, entry: string): string[] {
   const binding = analysis.declaration!.binding;
   const types = typeOnlyNames(analysis);
@@ -308,11 +303,9 @@ function otherExports(analysis: ModuleAnalysis, entry: string): string[] {
     .sort();
 }
 
-// Fails on an export that workerd won't start a module with, where the
-// build can see the value: a namespace object from `export * as ns from`,
-// and a variable with no initialiser or a primitive one, such as
-// `export const version = "1"`. workerd accepts a function, a class or an
-// object whose prototype chain ends in Object.prototype.
+// workerd only starts a module whose exports are functions, classes or
+// objects whose prototype chain ends in Object.prototype. This check covers
+// the values that the build can see.
 function checkWorkerdExports(analysis: ModuleAnalysis, exports: string[]) {
   const { module } = analysis.table;
   const fail = (node: Node, name: string, value: string) => {
@@ -355,8 +348,6 @@ function checkWorkerdExports(analysis: ModuleAnalysis, exports: string[]) {
   }
 }
 
-// Whether an expression always gives a primitive value, such as `"1"`,
-// `-1`, `a + b` or `undefined`.
 function isPrimitive(expression: Node): boolean {
   const node = unwrap(expression);
   switch (node.type) {
@@ -409,8 +400,6 @@ export function typeOnlyNames(analysis: ModuleAnalysis): Set<string> {
   return types;
 }
 
-// Whether a namespace holds only types, so that TypeScript emits no value
-// for it.
 function holdsOnlyTypes(namespace: Node): boolean {
   const body = namespace.body;
   if (!body) return true;
@@ -427,8 +416,7 @@ function holdsOnlyTypes(namespace: Node): boolean {
 }
 
 // The name that a `runtime:` option passes, such as `Counter` in
-// `class: Counter`, if the module declares or imports it. A global, such as
-// `undefined`, doesn't count.
+// `class: Counter`, if the module declares or imports it.
 function moduleName(analysis: ModuleAnalysis, property: Node) {
   if (property.method) return undefined;
   const value = unwrap(property.value);

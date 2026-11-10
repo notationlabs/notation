@@ -148,8 +148,7 @@ export function infraPlugin({
   };
 }
 
-// The URL scheme of a specifier that Node can't import, such as `cloudflare`
-// in `cloudflare:workers`. A one-letter scheme is a Windows drive.
+// A one-letter scheme is a Windows drive, so the pattern needs two letters.
 function unloadableScheme(source: string): string | undefined {
   const scheme = /^([A-Za-z][A-Za-z0-9+.-]+):/.exec(source)?.[1];
   return scheme && !["node", "file", "data"].includes(scheme.toLowerCase())
@@ -157,8 +156,7 @@ function unloadableScheme(source: string): string | undefined {
     : undefined;
 }
 
-// A chain of imports from the infra entry to `file`, without the generated
-// entry.
+// Stops before the generated entry, whose ID starts with \0.
 function importerChain(
   graph: { getModuleInfo(id: string): { importers: readonly string[] } | null },
   file: string,
@@ -255,7 +253,6 @@ export function runtimePlugin({
   module,
 }: RuntimePluginOptions): Plugin {
   const infraModules = new Set<string>();
-  // Set when the module no longer has an entry to bundle.
   let skipped = false;
   return {
     name: "notation-runtime",
@@ -355,9 +352,8 @@ export function runtimePlugin({
   };
 }
 
-// Fails if the bundle would re-export a name that is only a type in the
-// module that it comes from, such as `export { Env } from "./types"` of an
-// interface. Rolldown would report a missing export in the generated entry.
+// Rolldown would report a missing export in the generated entry, which
+// doesn't say that the name is only a type.
 function checkTypeReexports(
   analysis: ModuleAnalysis,
   names: string[],
@@ -381,8 +377,8 @@ function checkTypeReexports(
   }
 }
 
-// The file where `name`, which the module at `source` exports, is declared
-// as a type only. Follows re-exports, but not `export * from`.
+// The file that declares `name` as only a type. Follows re-exports, but not
+// `export * from`.
 function typeOrigin(
   source: string,
   name: string,
