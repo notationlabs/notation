@@ -1114,7 +1114,7 @@ describe("a resource whose state record has another type", () => {
     runtime.close();
   });
 
-  it("is deleted by destroy through the class of the record's type", async () => {
+  it("fails destroy before any change", async () => {
     const calls: string[] = [];
     const Old = defineTyped("test/durable/old", calls);
     const New = defineTyped("test/durable/new", calls);
@@ -1125,30 +1125,14 @@ describe("a resource whose state record has another type", () => {
     await runtime.run("deploy-1");
 
     resources[0] = new New("permission");
-    await runtime.destroy("destroy-1");
-
-    expect(calls).toEqual([
-      "create test/durable/old",
-      "delete test/durable/old",
-    ]);
-    expect(await runtime.state.get("permission")).toBeUndefined();
-    runtime.close();
-  });
-
-  it("fails destroy when no class is registered for the record's type", async () => {
-    const calls: string[] = [];
-    const Old = defineTyped("test/durable/old", calls);
-    const New = defineTyped("test/durable/new", calls);
-    const resources: BaseResource[] = [new Old("permission")];
-    const runtime = createRuntime(resources, "type-changed-unregistered");
-    await runtime.run("deploy-1");
-
-    resources[0] = new New("permission");
 
     await expect(runtime.destroy("destroy-1")).rejects.toSatisfy(
       ResourceTypeChangedError.is,
     );
     expect(calls).toEqual(["create test/durable/old"]);
+    expect(await runtime.state.get("permission")).toMatchObject({
+      type: "test/durable/old",
+    });
     runtime.close();
   });
 });

@@ -353,7 +353,10 @@ describe("createPlan", () => {
     const Zone = resource({ type: "test/planner/zone", provider: "test" })
       .defineSchema({ name } as any)
       .defineOperations(operations);
-    const ZoneBus = resource({ type: "test/planner/zone-bus", provider: "test" })
+    const ZoneBus = resource({
+      type: "test/planner/zone-bus",
+      provider: "test",
+    })
       .defineSchema({ name } as any)
       .defineOperations(operations)
       .requireDependencies<{ zone: BaseResource }>()

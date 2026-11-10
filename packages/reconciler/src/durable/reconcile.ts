@@ -22,7 +22,7 @@ import {
   resolveResourceClass,
   type ResourceRegistry,
 } from "../resource-registry";
-import { assertSameType, ResourceTypeChangedError } from "../resource-type";
+import { assertSameType } from "../resource-type";
 import {
   applyDriftDetection,
   createResourceOperation,
@@ -346,10 +346,8 @@ async function* deleteBlockingDependents(
  * — or has already been deleted — and is skipped, which is also what makes
  * the sweep of a partly-deleted deployment idempotent. `step` must already be
  * scoped to the resource.
- *
- * A record of another type than the resource is deleted through the
- * registered class of the record's type, as that class made it. Without a
- * registered class, the delete fails.
+ * A record of another type than the resource fails the delete, as plan and
+ * deploy fail on it.
  */
 export async function* deleteResource(
   step: DurableStepRunner,
@@ -360,26 +358,12 @@ export async function* deleteResource(
 ): AsyncGenerator<any, void, any> {
   const session = yield* openStateSession(step, opts, resource);
   if (!session.node) return;
-  let target = resource;
-  if (session.node.type !== resource.type) {
-    const Resource = resolveResourceClass(
-      workflowRegistry(opts),
-      session.node.type as ResourceType,
-    );
-    if (!Resource) {
-      throw new ResourceTypeChangedError(
-        resource.id,
-        session.node.type,
-        resource.type,
-      );
-    }
-    target = await instantiateRecord(Resource, session.node);
-  }
-  target.setOutput(session.node.output);
+  assertSameType(resource, session.node);
+  resource.setOutput(session.node.output);
 
   const emit = durableEmitter(step, opts.emit);
   yield* deleteResourceOperation(step, {
-    resource: target,
+    resource,
     dryRun: opts.dryRun,
     emit: (event) => emit({ ...event, ...cause }),
     maxOperationAttempts: opts.maxOperationAttempts,
