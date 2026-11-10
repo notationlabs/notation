@@ -1,0 +1,32 @@
+{
+  "type": "module",
+  "name": "@notation/std",
+  "version": "0.16.0",
+  "sideEffects": false,
+  "exports": {
+    "./resources": {
+      "types": "./dist/resources/index.d.ts",
+      "import": "./dist/resources/index.js",
+      "default": "./dist/resources/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@notation/core": "workspace:*",
+    "@notation/resource": "workspace:*",
+    "@notation/utils": "workspace:*",
+    "fflate": "0.8.3",
+    "valibot": "^1.5.0"
+  },
+  "devDependencies": {
+    "@notation/reconciler": "workspace:*",
+    "@types/node": "^22.20.5"
+  }
+}

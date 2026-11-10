@@ -1,11 +1,12 @@
-import * as aws from "@notation/aws.iac";
+import * as aws from "src/resources";
+import { AwsResourceGroup } from "src/shared/resource-group";
 import type { ScheduleOptions } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import { assertId, assertName, resourceId } from "src/id";
 import { awsName, claimAwsName, describeDeclaration } from "src/naming";
 import { toAwsScheduleExpression } from "./aws-conversions";
 
-export class ScheduleGroup extends aws.AwsResourceGroup<ScheduleOptions> {
+export class ScheduleGroup extends AwsResourceGroup<ScheduleOptions> {
   readonly rule: aws.eventBridge.EventBridgeRuleInstance;
 
   constructor(

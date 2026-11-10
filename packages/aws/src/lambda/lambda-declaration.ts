@@ -1,4 +1,4 @@
-import * as aws from "@notation/aws.iac";
+import * as aws from "src/resources";
 import { filePaths, fromProjectRoot, toProjectRoot } from "@notation/core";
 import {
   getActiveResourceCollection,

@@ -1,6 +1,5 @@
 ---
 "@notation/aws": patch
-"@notation/aws.iac": patch
 "@notation/cli": patch
 "@notation/core": patch
 "@notation/dashboard": patch
@@ -8,7 +7,7 @@
 "@notation/reconciler": patch
 "@notation/resource": patch
 "@notation/state": patch
-"@notation/std.iac": patch
+"@notation/std": patch
 "@notation/utils": patch
 "create-notation": patch
 ---

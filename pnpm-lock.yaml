@@ -26,12 +26,12 @@ importers:
       '@changesets/cli':
         specifier: ^2.31.1
         version: 2.31.1(@types/node@22.20.5)
-      '@notation/aws.iac':
+      '@notation/aws':
         specifier: workspace:*
-        version: link:packages/aws.iac
-      '@notation/std.iac':
+        version: link:packages/aws
+      '@notation/std':
         specifier: workspace:*
-        version: link:packages/std.iac
+        version: link:packages/std
       '@pokit/core':
         specifier: ^1.0.1
         version: 1.0.1
@@ -204,34 +204,6 @@ importers:
 
   packages/aws:
     dependencies:
-      '@notation/aws.iac':
-        specifier: workspace:*
-        version: link:../aws.iac
-      '@notation/core':
-        specifier: workspace:*
-        version: link:../core
-      '@notation/resource':
-        specifier: workspace:*
-        version: link:../resource
-      '@notation/std.iac':
-        specifier: workspace:*
-        version: link:../std.iac
-      '@types/aws-lambda':
-        specifier: ^8.10.164
-        version: 8.10.164
-      aws-jwt-verify:
-        specifier: ^5.2.1
-        version: 5.2.1
-    devDependencies:
-      '@notation/reconciler':
-        specifier: workspace:*
-        version: link:../reconciler
-      '@notation/state':
-        specifier: workspace:*
-        version: link:../state
-
-  packages/aws.iac:
-    dependencies:
       '@aws-sdk/client-apigatewayv2':
         specifier: ^3.1164.0
         version: 3.1164.0
@@ -259,15 +231,18 @@ importers:
       '@notation/resource':
         specifier: workspace:*
         version: link:../resource
-      '@notation/std.iac':
+      '@notation/std':
         specifier: workspace:*
-        version: link:../std.iac
+        version: link:../std
       '@notation/utils':
         specifier: workspace:*
         version: link:../utils
       '@types/aws-lambda':
         specifier: ^8.10.164
         version: 8.10.164
+      aws-jwt-verify:
+        specifier: ^5.2.1
+        version: 5.2.1
       valibot:
         specifier: ^1.5.0
         version: 1.5.0(typescript@7.0.2)
@@ -315,9 +290,6 @@ importers:
       '@notation/aws':
         specifier: workspace:*
         version: link:../aws
-      '@notation/aws.iac':
-        specifier: workspace:*
-        version: link:../aws.iac
       '@notation/resource':
         specifier: workspace:*
         version: link:../resource
@@ -474,7 +446,7 @@ importers:
         specifier: ^22.20.5
         version: 22.20.5
 
-  packages/std.iac:
+  packages/std:
     dependencies:
       '@notation/core':
         specifier: workspace:*

@@ -9,6 +9,11 @@
       "notation-runtime": "./dist/lambda/runtime.js",
       "import": "./dist/lambda/index.js"
     },
+    "./resources": {
+      "types": "./dist/resources/index.d.ts",
+      "import": "./dist/resources/index.js",
+      "default": "./dist/resources/index.js"
+    },
     "./*": {
       "import": "./dist/*/index.js",
       "types": "./dist/*/index.d.ts"
@@ -23,12 +28,20 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@notation/aws.iac": "workspace:*",
+    "@aws-sdk/client-apigatewayv2": "^3.1164.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3.1164.0",
+    "@aws-sdk/client-eventbridge": "^3.1164.0",
+    "@aws-sdk/client-iam": "^3.1164.0",
+    "@aws-sdk/client-lambda": "^3.1164.0",
+    "@aws-sdk/client-sqs": "^3.1164.0",
+    "@aws-sdk/client-sts": "^3.1164.0",
     "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
-    "@notation/std.iac": "workspace:*",
+    "@notation/std": "workspace:*",
+    "@notation/utils": "workspace:*",
     "@types/aws-lambda": "^8.10.164",
-    "aws-jwt-verify": "^5.2.1"
+    "aws-jwt-verify": "^5.2.1",
+    "valibot": "^1.5.0"
   },
   "devDependencies": {
     "@notation/reconciler": "workspace:*",

@@ -1,9 +1,8 @@
 ---
-"@notation/aws.iac": minor
 "@notation/aws": minor
 ---
 
-`@notation/aws.iac` adds `lambda.LambdaPermission`, a statement in a function's resource policy that lets a service invoke the function. It replaces `lambda.LambdaApiGatewayV2Permission` and `eventBridge.LambdaEventBridgeRulePermission`, which are removed with their `Schema`, `Dependencies` and `Instance` types.
+`@notation/aws/resources` adds `lambda.LambdaPermission`, a statement in a function's resource policy that lets a service invoke the function. It replaces `lambda.LambdaApiGatewayV2Permission` and `eventBridge.LambdaEventBridgeRulePermission`, which are removed with their `Schema`, `Dependencies` and `Instance` types.
 
 - `LambdaPermission` takes `Action`, `Principal` (a service, such as `events.amazonaws.com`) and an optional `SourceArn`, and depends on the function.
 - Its `StatementId` comes from its resource ID. An ID that has characters other than letters, digits, `-` and `_`, or that is longer than 100 characters, ends in a hash of the full ID.

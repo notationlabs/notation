@@ -1,11 +1,12 @@
-import * as aws from "@notation/aws.iac";
+import * as aws from "src/resources";
+import { AwsResourceGroup } from "src/shared/resource-group";
 import type { RetryOptions, RuleOptions } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import { assertId, assertName, resourceId } from "src/id";
 import { awsName, claimAwsName, describeDeclaration } from "src/naming";
 import type { EventBus } from "./event-bus";
 
-export class RuleGroup extends aws.AwsResourceGroup<RuleOptions> {
+export class RuleGroup extends AwsResourceGroup<RuleOptions> {
   readonly rule: aws.eventBridge.EventBridgeRuleInstance;
 
   constructor(

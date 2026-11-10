@@ -6,6 +6,7 @@ export default defineConfig({
     "src/event-bridge/index.ts",
     "src/lambda/index.ts",
     "src/lambda/runtime.ts",
+    "src/resources/index.ts",
     "src/sqs/index.ts",
     "src/shared/index.ts",
   ],

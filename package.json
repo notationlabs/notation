@@ -18,8 +18,8 @@
   "homepage": "https://github.com/notation-dev/notation#readme",
   "dependencies": {
     "@changesets/cli": "^2.31.1",
-    "@notation/aws.iac": "workspace:*",
-    "@notation/std.iac": "workspace:*",
+    "@notation/aws": "workspace:*",
+    "@notation/std": "workspace:*",
     "@pokit/core": "^1.0.1",
     "@pokit/terminal": "^1.0.1",
     "@types/node": "^22.20.5",

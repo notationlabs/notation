@@ -1,6 +1,6 @@
 import { expect, expectTypeOf, test } from "vitest";
 import type { EventBridgeEvent } from "aws-lambda";
-import { eventBridge as iac, lambda as iacLambda } from "@notation/aws.iac";
+import { eventBridge as iac, lambda as iacLambda } from "src/resources";
 import {
   collectResourceGraph,
   type ResourceGraph,

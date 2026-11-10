@@ -1,4 +1,5 @@
-import * as aws from "@notation/aws.iac";
+import * as aws from "src/resources";
+import { AwsResourceGroup } from "src/shared/resource-group";
 import { getActiveResourceCollection } from "@notation/resource";
 import type { EventBusSource, RuleOptions } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
@@ -25,7 +26,7 @@ export type EventBusAction = "PutEvents";
 
 /** An event bus from `eventBus()` or `defaultEventBus()`. */
 export abstract class EventBus<C extends Record<string, any> = {}>
-  extends aws.AwsResourceGroup<C>
+  extends AwsResourceGroup<C>
   implements EventBusSource
 {
   abstract readonly bus:
