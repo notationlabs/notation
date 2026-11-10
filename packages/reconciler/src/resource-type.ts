@@ -1,11 +1,8 @@
-import type { BaseResource } from "@notation/resource";
+import { hasTag, type BaseResource } from "@notation/resource";
 import type { StateNode } from "@notation/state";
 
 export class ResourceTypeChangedError extends Error {
   readonly _tag = "ResourceTypeChangedError" as const;
-  readonly resourceId: string;
-  readonly stateType: string;
-  readonly graphType: string;
 
   constructor(resourceId: string, stateType: string, graphType: string) {
     super(
@@ -15,17 +12,10 @@ export class ResourceTypeChangedError extends Error {
         `a new ID, so that the ${stateType} record is deleted as an orphan.`,
     );
     this.name = "ResourceTypeChangedError";
-    this.resourceId = resourceId;
-    this.stateType = stateType;
-    this.graphType = graphType;
   }
 
   static is(error: unknown): error is ResourceTypeChangedError {
-    return (
-      typeof error === "object" &&
-      error !== null &&
-      (error as { _tag?: unknown })._tag === "ResourceTypeChangedError"
-    );
+    return hasTag(error, "ResourceTypeChangedError");
   }
 }
 
