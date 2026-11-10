@@ -5,6 +5,7 @@ import {
   validateValues,
   ValueValidationError,
 } from "@notation/resource";
+import { decideDriftAction } from "@notation/reconciler";
 import { sqsClient } from "src/utils/aws-clients";
 import { Queue } from "src/resources/sqs/queue";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
@@ -161,11 +162,44 @@ describe("SQS queue", () => {
       DelaySeconds: 0,
       ReceiveMessageWaitTimeSeconds: 0,
       MaximumMessageSize: 1048576,
-      RedrivePolicy: undefined,
-      RedriveAllowPolicy: undefined,
+      RedrivePolicy: "",
+      RedriveAllowPolicy: "",
       ContentBasedDeduplication: undefined,
       DeduplicationScope: undefined,
       FifoThroughputLimit: undefined,
+    });
+  });
+
+  it("finds drift when the dead-letter queue was removed outside Notation", async () => {
+    const withDlq = new Queue("orders-with-dlq", {
+      config: {
+        QueueName: "orders",
+        RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 3 },
+      },
+    });
+    mockSend(() => ({
+      Attributes: {
+        QueueArn: "arn:aws:sqs:eu-west-2:123456789012:orders",
+        VisibilityTimeout: "30",
+        MessageRetentionPeriod: "345600",
+        DelaySeconds: "0",
+        ReceiveMessageWaitTimeSeconds: "0",
+        MaximumMessageSize: "1048576",
+      },
+    }));
+
+    const output = await withDlq.read!({ QueueUrl: url }, {} as any);
+    const action = decideDriftAction({
+      resource: withDlq,
+      params: await withDlq.getParams(),
+      driftRead: { kind: "present", output: output as any },
+    });
+
+    expect(action).toMatchObject({
+      decision: "drift-update",
+      patch: {
+        RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 3 },
+      },
     });
   });
 
