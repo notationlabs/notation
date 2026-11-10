@@ -39,6 +39,41 @@ export type QueueConfig<S extends StandardSchemaV1 = StandardSchemaV1> = {
   delaySeconds?: number;
   /** Seconds a receive call waits for a message to arrive. */
   receiveMessageWaitTime?: number;
+  /** The most bytes a message can hold, from 1,024 to 1,048,576. */
+  maximumMessageSize?: number;
+  /**
+   * The queue that SQS moves a message to after the message has been
+   * received `maxReceiveCount` times without being deleted. The dead-letter
+   * queue must be FIFO if this queue is, and standard if this queue is.
+   */
+  deadLetterQueue?: DeadLetterQueueConfig;
+  /**
+   * FIFO only. Deduplicates messages by a SHA-256 hash of the body, so a
+   * sender doesn't have to give a deduplication ID.
+   */
+  contentBasedDeduplication?: boolean;
+  /**
+   * FIFO only. Whether SQS deduplicates messages across the queue, or within
+   * each message group. Set it to `"messageGroup"`, with `fifoThroughputLimit:
+   * "perMessageGroupId"`, for high throughput.
+   */
+  deduplicationScope?: "queue" | "messageGroup";
+  /**
+   * FIFO only. Whether the throughput quota applies to the whole queue, or
+   * to each message group. `"perMessageGroupId"` needs `deduplicationScope:
+   * "messageGroup"`.
+   */
+  fifoThroughputLimit?: "perQueue" | "perMessageGroupId";
+};
+
+export type DeadLetterQueueConfig = {
+  /**
+   * The dead-letter queue: a queue from `queue()`, or the ARN of a queue that
+   * Notation doesn't manage, such as `arn:aws:sqs:eu-west-2:123456789012:dlq`.
+   */
+  queue: QueueGroup<any> | string;
+  /** The number of receives after which SQS moves a message, from 1 to 1,000. */
+  maxReceiveCount: number;
 };
 
 export type SqsAction =
@@ -63,6 +98,7 @@ export class QueueGroup<
   constructor({ schema, ...config }: QueueConfig<S>) {
     assertId("queue()", config.id);
     assertName("queue()", config.name);
+    assertQueueOptions(config);
     const name = config.name ?? config.id;
     const queueName = awsName("sqsQueue", config.fifo ? `${name}.fifo` : name);
     super("aws/sqs/queue", config.id, config);
@@ -81,6 +117,17 @@ export class QueueGroup<
           MessageRetentionPeriod: config.messageRetentionPeriod,
           DelaySeconds: config.delaySeconds,
           ReceiveMessageWaitTimeSeconds: config.receiveMessageWaitTime,
+          MaximumMessageSize: config.maximumMessageSize,
+          RedrivePolicy: config.deadLetterQueue && {
+            deadLetterTargetArn:
+              config.deadLetterQueue.queue instanceof QueueGroup
+                ? config.deadLetterQueue.queue.arn
+                : config.deadLetterQueue.queue,
+            maxReceiveCount: config.deadLetterQueue.maxReceiveCount,
+          },
+          ContentBasedDeduplication: config.contentBasedDeduplication,
+          DeduplicationScope: config.deduplicationScope,
+          FifoThroughputLimit: config.fifoThroughputLimit,
         },
       }),
     );
@@ -106,6 +153,7 @@ export class QueueGroup<
     if (this.resources.some((resource) => resource.id === id)) {
       throw new Error(`Queue ${this.id} already feeds ${lambdaGroup.id}`);
     }
+    assertBatchOptions(this.id, lambdaGroup.id, this.config.fifo, options);
 
     lambdaGroup.policy.contribute({
       PolicyDocument: {
@@ -120,10 +168,96 @@ export class QueueGroup<
           EventSourceArn: this.arn,
           FunctionName: lambdaGroup.fn.outputValue("FunctionName"),
           BatchSize: options.batchSize,
-          MaximumBatchingWindowInSeconds: options.maxBatchingWindow,
+          MaximumBatchingWindowInSeconds: options.maximumBatchingWindow,
+          FunctionResponseTypes: options.reportBatchItemFailures
+            ? ["ReportBatchItemFailures"]
+            : undefined,
+          ScalingConfig:
+            options.maximumConcurrency === undefined
+              ? undefined
+              : { MaximumConcurrency: options.maximumConcurrency },
+          Enabled: options.enabled,
         },
         dependencies: { policy: lambdaGroup.policy },
       }),
+    );
+  }
+}
+
+// SQS rejects these options only at deploy.
+function assertQueueOptions(config: Omit<QueueConfig, "schema">): void {
+  const fifo = config.fifo ?? false;
+  if (!fifo) {
+    const set = (
+      [
+        "contentBasedDeduplication",
+        "deduplicationScope",
+        "fifoThroughputLimit",
+      ] as const
+    ).filter((option) => config[option] !== undefined);
+    if (set.length > 0) {
+      throw new Error(
+        `queue() "${config.id}" sets ${set.join(", ")}, which only a FIFO queue has. Set fifo: true, or remove the options.`,
+      );
+    }
+  }
+  if (
+    config.fifoThroughputLimit === "perMessageGroupId" &&
+    config.deduplicationScope !== "messageGroup"
+  ) {
+    throw new Error(
+      `queue() "${config.id}" sets fifoThroughputLimit: "perMessageGroupId", which SQS allows only with deduplicationScope: "messageGroup".`,
+    );
+  }
+  assertDeadLetterQueueType(config.id, fifo, config.deadLetterQueue?.queue);
+}
+
+// Lambda rejects these options only at deploy. When maximumBatchingWindow is
+// removed, the mapping is updated with a window of 0, so a batchSize over 10
+// without a window also fails on update.
+function assertBatchOptions(
+  queueId: string,
+  lambdaId: string,
+  fifo: boolean | undefined,
+  options: SqsOptions,
+): void {
+  const { batchSize, maximumBatchingWindow } = options;
+  const mapping = `The mapping of the queue "${queueId}" to the Lambda "${lambdaId}"`;
+  if (fifo && maximumBatchingWindow) {
+    throw new Error(
+      `${mapping} sets maximumBatchingWindow: ${maximumBatchingWindow}, but Lambda doesn't support a batching window for a FIFO queue.`,
+    );
+  }
+  if (batchSize === undefined || batchSize <= 10) return;
+  if (fifo) {
+    throw new Error(
+      `${mapping} sets batchSize: ${batchSize}, but Lambda allows at most 10 for a FIFO queue.`,
+    );
+  }
+  if (!maximumBatchingWindow) {
+    throw new Error(
+      `${mapping} sets batchSize: ${batchSize} without maximumBatchingWindow. Lambda needs a batching window of at least 1 second when batchSize is over 10.`,
+    );
+  }
+}
+
+// The type of a queue from queue() is in its config. A FIFO queue's name ends
+// in .fifo, so the ARN of another queue tells its type. The ARN of a queue
+// from queue() is an output value, which is not known until deploy, so it is
+// not checked.
+function assertDeadLetterQueueType(
+  id: string,
+  fifo: boolean,
+  dlq: DeadLetterQueueConfig["queue"] | undefined,
+): void {
+  let dlqFifo: boolean;
+  if (dlq instanceof QueueGroup) dlqFifo = dlq.config.fifo ?? false;
+  else if (typeof dlq === "string") dlqFifo = dlq.endsWith(".fifo");
+  else return;
+  if (dlqFifo !== fifo) {
+    const dlqName = typeof dlq === "string" ? dlq : `"${dlq.id}"`;
+    throw new Error(
+      `queue() "${id}" is a ${fifo ? "FIFO" : "standard"} queue, but its dead-letter queue ${dlqName} is ${fifo ? "a standard" : "a FIFO"} queue. SQS needs both queues to be of the same type.`,
     );
   }
 }

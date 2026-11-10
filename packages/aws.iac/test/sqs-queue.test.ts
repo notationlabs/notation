@@ -5,11 +5,16 @@ import {
   validateValues,
   ValueValidationError,
 } from "@notation/resource";
+import { decideDriftAction } from "@notation/reconciler";
 import { sqsClient } from "src/utils/aws-clients";
 import { Queue } from "src/resources/sqs/queue";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
 
 const url = "https://sqs.eu-west-2.amazonaws.com/123456789012/orders";
+
+const dlqArn = "arn:aws:sqs:eu-west-2:123456789012:orders-dlq";
+
+const sourceArn = "arn:aws:sqs:eu-west-2:123456789012:orders";
 
 const queue = new Queue("orders-queue", { config: { QueueName: "orders" } });
 
@@ -45,6 +50,74 @@ describe("SQS queue", () => {
       QueueName: "orders",
       Attributes: { VisibilityTimeout: "60" },
       tags: { [CREATE_TOKEN_TAG]: createTokenTagValue("token") },
+    });
+  });
+
+  it("creates the redrive policy as JSON and the FIFO attributes as strings", async () => {
+    const send = mockSend((command) => {
+      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
+      return { QueueUrl: url };
+    });
+
+    await queue.create({
+      QueueName: "orders.fifo",
+      FifoQueue: true,
+      ContentBasedDeduplication: true,
+      DeduplicationScope: "messageGroup",
+      MaximumMessageSize: 2_048,
+      RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 3 },
+    });
+
+    const command = send.mock.calls[1]![0] as sdk.CreateQueueCommand;
+    expect(command.input.Attributes).toEqual({
+      FifoQueue: "true",
+      ContentBasedDeduplication: "true",
+      DeduplicationScope: "messageGroup",
+      MaximumMessageSize: "2048",
+      RedrivePolicy: JSON.stringify({
+        deadLetterTargetArn: dlqArn,
+        maxReceiveCount: 3,
+      }),
+    });
+  });
+
+  it("creates the queue without the empty redrive policies", async () => {
+    const send = mockSend((command) => {
+      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
+      return { QueueUrl: url };
+    });
+
+    await queue.create({
+      QueueName: "orders",
+      VisibilityTimeout: 60,
+      RedrivePolicy: "",
+      RedriveAllowPolicy: "",
+    });
+
+    const command = send.mock.calls[1]![0] as sdk.CreateQueueCommand;
+    expect(command.input.Attributes).toEqual({ VisibilityTimeout: "60" });
+  });
+
+  it("creates the redrive allow policy as JSON", async () => {
+    const send = mockSend((command) => {
+      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
+      return { QueueUrl: url };
+    });
+
+    await queue.create({
+      QueueName: "orders-dlq",
+      RedriveAllowPolicy: {
+        redrivePermission: "byQueue",
+        sourceQueueArns: [sourceArn],
+      },
+    });
+
+    const command = send.mock.calls[1]![0] as sdk.CreateQueueCommand;
+    expect(command.input.Attributes).toEqual({
+      RedriveAllowPolicy: JSON.stringify({
+        redrivePermission: "byQueue",
+        sourceQueueArns: [sourceArn],
+      }),
     });
   });
 
@@ -87,6 +160,7 @@ describe("SQS queue", () => {
         MessageRetentionPeriod: "345600",
         DelaySeconds: "0",
         ReceiveMessageWaitTimeSeconds: "0",
+        MaximumMessageSize: "1048576",
       },
     }));
 
@@ -104,6 +178,119 @@ describe("SQS queue", () => {
       MessageRetentionPeriod: 345600,
       DelaySeconds: 0,
       ReceiveMessageWaitTimeSeconds: 0,
+      MaximumMessageSize: 1048576,
+      RedrivePolicy: "",
+      RedriveAllowPolicy: "",
+      ContentBasedDeduplication: undefined,
+      DeduplicationScope: undefined,
+      FifoThroughputLimit: undefined,
+    });
+  });
+
+  it("finds drift when the dead-letter queue was removed outside Notation", async () => {
+    const withDlq = new Queue("orders-with-dlq", {
+      config: {
+        QueueName: "orders",
+        RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 3 },
+      },
+    });
+    mockSend(() => ({
+      Attributes: {
+        QueueArn: "arn:aws:sqs:eu-west-2:123456789012:orders",
+        VisibilityTimeout: "30",
+        MessageRetentionPeriod: "345600",
+        DelaySeconds: "0",
+        ReceiveMessageWaitTimeSeconds: "0",
+        MaximumMessageSize: "1048576",
+      },
+    }));
+
+    const output = await withDlq.read!({ QueueUrl: url }, {} as any);
+    const action = decideDriftAction({
+      resource: withDlq,
+      params: await withDlq.getParams(),
+      driftRead: { kind: "present", output: output as any },
+    });
+
+    expect(action).toMatchObject({
+      decision: "drift-update",
+      patch: {
+        RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 3 },
+      },
+    });
+  });
+
+  it("reads the redrive policy and the FIFO attributes", async () => {
+    mockSend(() => ({
+      Attributes: {
+        QueueArn: "arn:aws:sqs:eu-west-2:123456789012:orders.fifo",
+        FifoQueue: "true",
+        VisibilityTimeout: "30",
+        MessageRetentionPeriod: "345600",
+        DelaySeconds: "0",
+        ReceiveMessageWaitTimeSeconds: "0",
+        MaximumMessageSize: "1048576",
+        RedrivePolicy: `{"deadLetterTargetArn":"${dlqArn}","maxReceiveCount":"3"}`,
+        ContentBasedDeduplication: "false",
+        DeduplicationScope: "queue",
+        FifoThroughputLimit: "perQueue",
+      },
+    }));
+
+    const result = await queue.read!({ QueueUrl: url });
+
+    expect(() =>
+      validateValues(queue, queue.toResult(result), "read"),
+    ).not.toThrow();
+    expect(result).toMatchObject({
+      FifoQueue: true,
+      RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 3 },
+      ContentBasedDeduplication: false,
+      DeduplicationScope: "queue",
+      FifoThroughputLimit: "perQueue",
+    });
+  });
+
+  it("reads the redrive allow policy", async () => {
+    const attributes = {
+      QueueArn: dlqArn,
+      VisibilityTimeout: "30",
+      MessageRetentionPeriod: "345600",
+      DelaySeconds: "0",
+      ReceiveMessageWaitTimeSeconds: "0",
+      MaximumMessageSize: "1048576",
+    };
+    mockSend(() => ({
+      Attributes: {
+        ...attributes,
+        RedriveAllowPolicy: `{"redrivePermission":"byQueue","sourceQueueArns":["${sourceArn}"]}`,
+      },
+    }));
+
+    const byQueue = await queue.read!({ QueueUrl: url });
+
+    expect(() =>
+      validateValues(queue, queue.toResult(byQueue), "read"),
+    ).not.toThrow();
+    expect(byQueue).toMatchObject({
+      RedriveAllowPolicy: {
+        redrivePermission: "byQueue",
+        sourceQueueArns: [sourceArn],
+      },
+    });
+
+    vi.restoreAllMocks();
+    mockSend(() => ({
+      Attributes: {
+        ...attributes,
+        RedriveAllowPolicy: `{"redrivePermission":"denyAll"}`,
+      },
+    }));
+
+    const denyAll = await queue.read!({ QueueUrl: url });
+
+    expect(denyAll).toMatchObject({
+      RedriveAllowPolicy: { redrivePermission: "denyAll" },
     });
   });
 
@@ -131,6 +318,61 @@ describe("SQS queue", () => {
       QueueUrl: url,
       Attributes: { VisibilityTimeout: "30", DelaySeconds: "5" },
     });
+  });
+
+  it("removes removed redrive policies, and resets the FIFO attributes", async () => {
+    const send = mockSend(() => ({}));
+
+    await queue.update!(
+      { QueueUrl: url },
+      {
+        RedrivePolicy: undefined,
+        RedriveAllowPolicy: undefined,
+        MaximumMessageSize: undefined,
+        ContentBasedDeduplication: undefined,
+        DeduplicationScope: undefined,
+        FifoThroughputLimit: undefined,
+      } as any,
+      { QueueName: "orders" },
+      {} as any,
+    );
+
+    const command = send.mock.calls[0]![0] as sdk.SetQueueAttributesCommand;
+    expect(command.input.Attributes).toEqual({
+      RedrivePolicy: "",
+      RedriveAllowPolicy: "",
+      MaximumMessageSize: "1048576",
+      ContentBasedDeduplication: "false",
+      DeduplicationScope: "queue",
+      FifoThroughputLimit: "perQueue",
+    });
+  });
+
+  it("rejects a maxReceiveCount that SQS does not allow", () => {
+    expect(
+      () =>
+        new Queue("bad-queue", {
+          config: {
+            QueueName: "bad",
+            RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 0 },
+          },
+        }),
+    ).toThrow(ValueValidationError);
+  });
+
+  it("rejects a byQueue redrive allow policy without source queues", () => {
+    expect(
+      () =>
+        new Queue("bad-queue", {
+          config: {
+            QueueName: "bad",
+            RedriveAllowPolicy: {
+              redrivePermission: "byQueue",
+              sourceQueueArns: [],
+            },
+          },
+        }),
+    ).toThrow(ValueValidationError);
   });
 
   it("reports a missing queue as not found", async () => {

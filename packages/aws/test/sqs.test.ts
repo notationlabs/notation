@@ -77,7 +77,12 @@ test("eventSourceMapping grants the function access to the queue and maps the qu
   await collectResourceGraph(() => {
     fn = lambda({ id: "process", code });
     orders = queue({ id: "orders", schema: Unknown });
-    eventSourceMapping({ source: orders, target: fn, batchSize: 5 });
+    eventSourceMapping({
+      source: orders,
+      target: fn,
+      batchSize: 5,
+      maximumBatchingWindow: 2,
+    });
   });
   mapping = mappingOf(orders);
   deploy(orders);
@@ -92,6 +97,7 @@ test("eventSourceMapping grants the function access to the queue and maps the qu
     EventSourceArn: queueArn("orders"),
     FunctionName: "process",
     BatchSize: 5,
+    MaximumBatchingWindowInSeconds: 2,
   });
   expect(mapping.id).toBe("sqs-mapping:orders:process");
   expect(mapping.group).toEqual({ type: "aws/sqs/queue", id: "orders" });
@@ -334,6 +340,282 @@ test("a FIFO queue and a standard queue can share a name", async () => {
       queue({ id: "sales", name: "orders", fifo: true, schema: Unknown });
     }),
   ).resolves.toBeDefined();
+});
+
+test("a queue with a dead-letter queue depends on it and sets its redrive policy", async () => {
+  let orders!: ReturnType<typeof queue>;
+  let dlq!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    dlq = queue({ id: "orders-dlq", schema: Unknown });
+    orders = queue({
+      id: "orders",
+      schema: Unknown,
+      deadLetterQueue: { queue: dlq, maxReceiveCount: 3 },
+    });
+  });
+  deploy(dlq);
+
+  expect(orders.queue.getDependencies()).toContain(dlq.queue);
+  expect((await orders.queue.getParams()).RedrivePolicy).toEqual({
+    deadLetterTargetArn: queueArn("orders-dlq"),
+    maxReceiveCount: 3,
+  });
+});
+
+test("a FIFO queue with a standard dead-letter queue throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const dlq = queue({ id: "ledger-dlq", schema: Unknown });
+      queue({
+        id: "ledger",
+        fifo: true,
+        schema: Unknown,
+        deadLetterQueue: { queue: dlq, maxReceiveCount: 3 },
+      });
+    }),
+  ).rejects.toThrow(
+    'queue() "ledger" is a FIFO queue, but its dead-letter queue "ledger-dlq" is a standard queue.',
+  );
+});
+
+test("a dead-letter queue given as an ARN sets the redrive policy with no dependency", async () => {
+  const dlqArn = "arn:aws:sqs:eu-west-2:123456789012:shared-dlq";
+  let orders!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    orders = queue({
+      id: "orders",
+      schema: Unknown,
+      deadLetterQueue: { queue: dlqArn, maxReceiveCount: 3 },
+    });
+  });
+
+  expect(orders.queue.getDependencies()).toEqual([]);
+  expect((await orders.queue.getParams()).RedrivePolicy).toEqual({
+    deadLetterTargetArn: dlqArn,
+    maxReceiveCount: 3,
+  });
+});
+
+test("a FIFO queue accepts the ARN of a FIFO dead-letter queue", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      queue({
+        id: "ledger",
+        fifo: true,
+        schema: Unknown,
+        deadLetterQueue: {
+          queue:
+            "arn:aws-us-gov:sqs:us-gov-west-1:123456789012:ledger-dlq.fifo",
+          maxReceiveCount: 3,
+        },
+      });
+    }),
+  ).resolves.toBeDefined();
+});
+
+test("a FIFO queue with the ARN of a standard dead-letter queue throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      queue({
+        id: "ledger",
+        fifo: true,
+        schema: Unknown,
+        deadLetterQueue: {
+          queue: "arn:aws:sqs:eu-west-2:123456789012:ledger-dlq",
+          maxReceiveCount: 3,
+        },
+      });
+    }),
+  ).rejects.toThrow(
+    'queue() "ledger" is a FIFO queue, but its dead-letter queue arn:aws:sqs:eu-west-2:123456789012:ledger-dlq is a standard queue.',
+  );
+});
+
+test("a standard queue with the ARN of a FIFO dead-letter queue throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      queue({
+        id: "orders",
+        schema: Unknown,
+        deadLetterQueue: {
+          queue: "arn:aws:sqs:eu-west-2:123456789012:orders-dlq.fifo",
+          maxReceiveCount: 3,
+        },
+      });
+    }),
+  ).rejects.toThrow("is a standard queue, but its dead-letter queue");
+});
+
+test("a dead-letter queue given as the arn of a queue from queue() sets the redrive policy", async () => {
+  let orders!: ReturnType<typeof queue>;
+  let dlq!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    dlq = queue({ id: "orders-dlq", schema: Unknown });
+    orders = queue({
+      id: "orders",
+      schema: Unknown,
+      deadLetterQueue: { queue: dlq.arn, maxReceiveCount: 3 },
+    });
+  });
+  deploy(dlq);
+
+  expect(orders.queue.getDependencies()).toContain(dlq.queue);
+  expect((await orders.queue.getParams()).RedrivePolicy).toEqual({
+    deadLetterTargetArn: queueArn("orders-dlq"),
+    maxReceiveCount: 3,
+  });
+});
+
+test("a standard queue with a FIFO option throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      queue({ id: "orders", schema: Unknown, contentBasedDeduplication: true });
+    }),
+  ).rejects.toThrow(
+    'queue() "orders" sets contentBasedDeduplication, which only a FIFO queue has.',
+  );
+});
+
+test("a per-message-group throughput limit without per-message-group deduplication throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      queue({
+        id: "ledger",
+        fifo: true,
+        schema: Unknown,
+        fifoThroughputLimit: "perMessageGroupId",
+      });
+    }),
+  ).rejects.toThrow(
+    'queue() "ledger" sets fifoThroughputLimit: "perMessageGroupId", which SQS allows only with deduplicationScope: "messageGroup".',
+  );
+});
+
+test("a FIFO queue passes its FIFO options and message size to the queue", async () => {
+  let ledger!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    ledger = queue({
+      id: "ledger",
+      fifo: true,
+      schema: Unknown,
+      maximumMessageSize: 2_048,
+      contentBasedDeduplication: true,
+      deduplicationScope: "messageGroup",
+      fifoThroughputLimit: "perMessageGroupId",
+    });
+  });
+
+  expect(await ledger.queue.getParams()).toMatchObject({
+    QueueName: expect.stringMatching(/ledger\.fifo$/),
+    FifoQueue: true,
+    MaximumMessageSize: 2_048,
+    ContentBasedDeduplication: true,
+    DeduplicationScope: "messageGroup",
+    FifoThroughputLimit: "perMessageGroupId",
+  });
+});
+
+test("the mapping options set the response types, scaling config and state", async () => {
+  let fn!: LambdaGroup;
+  let orders!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    fn = lambda({ id: "process", code });
+    orders = queue({ id: "orders", schema: Unknown });
+    eventSourceMapping({
+      source: orders,
+      target: fn,
+      reportBatchItemFailures: true,
+      maximumConcurrency: 5,
+      enabled: false,
+    });
+  });
+  deploy(orders);
+  fn.fn.setOutput({ FunctionName: "process" } as any);
+
+  expect(await mappingOf(orders).getParams()).toMatchObject({
+    FunctionResponseTypes: ["ReportBatchItemFailures"],
+    ScalingConfig: { MaximumConcurrency: 5 },
+    Enabled: false,
+  });
+});
+
+test("a mapping without the options leaves them unset", async () => {
+  let fn!: LambdaGroup;
+  let orders!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    fn = lambda({ id: "process", code });
+    orders = queue({ id: "orders", schema: Unknown });
+    eventSourceMapping({ source: orders, target: fn });
+  });
+  deploy(orders);
+  fn.fn.setOutput({ FunctionName: "process" } as any);
+
+  const params = await mappingOf(orders).getParams();
+  expect(params.FunctionResponseTypes).toBeUndefined();
+  expect(params.ScalingConfig).toBeUndefined();
+  expect(params.Enabled).toBeUndefined();
+});
+
+test("a batchSize over 10 without maximumBatchingWindow throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const fn = lambda({ id: "process", code });
+      const orders = queue({ id: "orders", schema: Unknown });
+      eventSourceMapping({ source: orders, target: fn, batchSize: 20 });
+    }),
+  ).rejects.toThrow(
+    'The mapping of the queue "orders" to the Lambda "process" sets batchSize: 20 without maximumBatchingWindow.',
+  );
+});
+
+test("a batchSize over 10 with maximumBatchingWindow sets both", async () => {
+  let fn!: LambdaGroup;
+  let orders!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    fn = lambda({ id: "process", code });
+    orders = queue({ id: "orders", schema: Unknown });
+    eventSourceMapping({
+      source: orders,
+      target: fn,
+      batchSize: 100,
+      maximumBatchingWindow: 5,
+    });
+  });
+  deploy(orders);
+  fn.fn.setOutput({ FunctionName: "process" } as any);
+
+  expect(await mappingOf(orders).getParams()).toMatchObject({
+    BatchSize: 100,
+    MaximumBatchingWindowInSeconds: 5,
+  });
+});
+
+test("a batchSize over 10 on a FIFO queue throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const fn = lambda({ id: "process", code });
+      const ledger = queue({ id: "ledger", fifo: true, schema: Unknown });
+      eventSourceMapping({ source: ledger, target: fn, batchSize: 20 });
+    }),
+  ).rejects.toThrow(
+    'sets batchSize: 20, but Lambda allows at most 10 for a FIFO queue.',
+  );
+});
+
+test("a batching window on a FIFO queue throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const fn = lambda({ id: "process", code });
+      const ledger = queue({ id: "ledger", fifo: true, schema: Unknown });
+      eventSourceMapping({
+        source: ledger,
+        target: fn,
+        maximumBatchingWindow: 5,
+      });
+    }),
+  ).rejects.toThrow(
+    "sets maximumBatchingWindow: 5, but Lambda doesn't support a batching window for a FIFO queue.",
+  );
 });
 
 test("grant allows the actions on the queue", () => {

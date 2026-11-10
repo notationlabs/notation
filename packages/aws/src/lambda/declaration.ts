@@ -19,8 +19,15 @@ import type {
 // This module is part of both builds. In the runtime build it must not import
 // infra code, so it imports only types.
 
-/** The function receives SQS messages, which `decode()` validates with `schema`. */
-export type SqsEvent<S extends StandardSchemaV1 = StandardSchemaV1> = {
+/**
+ * The function receives SQS messages, which `decode()` validates with
+ * `schema`. `F` is the type of `reportBatchItemFailures`, which sets what the
+ * handler can return.
+ */
+export type SqsEvent<
+  S extends StandardSchemaV1 = StandardSchemaV1,
+  F extends boolean = boolean,
+> = {
   kind: "sqs";
   schema: S;
   /**
@@ -28,7 +35,9 @@ export type SqsEvent<S extends StandardSchemaV1 = StandardSchemaV1> = {
    * It is not set for `sqs.schema()`.
    */
   queue?: SqsSource<S>;
-  options?: SqsOptions;
+  options?: Omit<SqsOptions, "reportBatchItemFailures"> & {
+    reportBatchItemFailures?: F;
+  };
 };
 
 /**
@@ -44,13 +53,50 @@ export type SqsOptions = {
   /** The most messages the function receives in one invocation. */
   batchSize?: number;
   /** Seconds to wait to fill a batch before the function is invoked. */
-  maxBatchingWindow?: number;
+  maximumBatchingWindow?: number;
+  /**
+   * Lets the handler return `{ batchItemFailures }`, the messages that
+   * failed, so that Lambda deletes the others and only the failed messages
+   * return to the queue. Without it, Lambda ignores the result, and a batch
+   * succeeds or fails as a whole.
+   */
+  reportBatchItemFailures?: boolean;
+  /**
+   * The most instances of the function that the mapping invokes at once,
+   * from 2 to 1,000.
+   */
+  maximumConcurrency?: number;
+  /** `false` pauses the mapping, so Lambda stops reading the queue. */
+  enabled?: boolean;
 };
 
 export type LambdaEvent = SqsEvent | ApiGatewayEvent | EventBridgeScheduleEvent;
 
 /** The kind of a Lambda's event, or `none` for a Lambda declared without one. */
 export type LambdaEventKind = LambdaEvent["kind"] | "none";
+
+// The overloads type the handler's result from reportBatchItemFailures: `true`,
+// `false` or left out, or a `boolean`.
+function bindSqs<S extends StandardSchemaV1>(
+  queue: SqsSource<S>,
+  options: SqsOptions & { reportBatchItemFailures: true },
+): SqsEvent<S, true>;
+function bindSqs<S extends StandardSchemaV1>(
+  queue: SqsSource<S>,
+  options?: Omit<SqsOptions, "reportBatchItemFailures"> & {
+    reportBatchItemFailures?: false;
+  },
+): SqsEvent<S, false>;
+function bindSqs<S extends StandardSchemaV1>(
+  queue: SqsSource<S>,
+  options: SqsOptions,
+): SqsEvent<S>;
+function bindSqs<S extends StandardSchemaV1>(
+  queue: SqsSource<S>,
+  options?: SqsOptions,
+): SqsEvent<S> {
+  return { kind: "sqs", schema: queue.schema, queue, options };
+}
 
 /**
  * The function receives SQS messages: from a queue that the declaration maps,
@@ -64,12 +110,7 @@ export const sqs = {
    * with the queue's schema. In the runtime build, a queue from an infra
    * module is replaced with its runtime options, as `{ schema }`.
    */
-  bind<S extends StandardSchemaV1>(
-    queue: SqsSource<S>,
-    options?: SqsOptions,
-  ): SqsEvent<S> {
-    return { kind: "sqs", schema: queue.schema, queue, options };
-  },
+  bind: bindSqs,
   /**
    * The function receives SQS messages, from queues that infra maps to it
    * with `eventSourceMapping()`. `decode()` validates each message's JSON
@@ -381,21 +422,30 @@ type HttpHandler<Event> = (
   context: Context,
 ) => ApiGatewayResult | Promise<ApiGatewayResult>;
 
-type HandlerFor<E> = E extends SqsEvent
-  ? (
-      event: SQSEvent,
-      context: Context,
-    ) => SQSBatchResponse | void | Promise<SQSBatchResponse | void>
-  : E extends ApiGatewayEvent<any, any, "apiGateway-jwt">
-    ? HttpHandler<APIGatewayJWTProxyEventV2<JwtClaims>>
-    : E extends ApiGatewayEvent<any, any, "apiGateway">
-      ? HttpHandler<APIGatewayProxyEventV2>
-      : E extends EventBridgeScheduleEvent
-        ? (
-            event: EventBridgeEvent<"Scheduled Event", unknown>,
-            context: Context,
-          ) => void | Promise<void>
-        : (event: unknown, context: Context) => unknown;
+// A handler can return `{ batchItemFailures }` only when the mapping sets
+// reportBatchItemFailures. Without it, Lambda ignores the result and deletes
+// the failed messages. `undefined` is in the union so that a handler that
+// returns an object does not match it as it would match a bare `void`.
+type SqsResult<F> = [F] extends [false]
+  ? void | undefined
+  : SQSBatchResponse | void;
+
+type HandlerFor<E> =
+  E extends SqsEvent<any, infer F>
+    ? (
+        event: SQSEvent,
+        context: Context,
+      ) => SqsResult<F> | Promise<SqsResult<F>>
+    : E extends ApiGatewayEvent<any, any, "apiGateway-jwt">
+      ? HttpHandler<APIGatewayJWTProxyEventV2<JwtClaims>>
+      : E extends ApiGatewayEvent<any, any, "apiGateway">
+        ? HttpHandler<APIGatewayProxyEventV2>
+        : E extends EventBridgeScheduleEvent
+          ? (
+              event: EventBridgeEvent<"Scheduled Event", unknown>,
+              context: Context,
+            ) => void | Promise<void>
+          : (event: unknown, context: Context) => unknown;
 
 /**
  * The type of the `handler` export of a Lambda's module, from the

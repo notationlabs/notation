@@ -20,27 +20,77 @@ type QueueAttributeParams = {
   DelaySeconds?: number;
   /** Seconds a receive call waits for a message to arrive. */
   ReceiveMessageWaitTimeSeconds?: number;
+  /** The most bytes a message can hold. */
+  MaximumMessageSize?: number;
+  /**
+   * The queue that SQS moves a message to after it has been received
+   * `maxReceiveCount` times without being deleted. `""` means no dead-letter
+   * queue, as in the SQS API.
+   */
+  RedrivePolicy?: RedrivePolicy | "";
+  /**
+   * The source queues that can use this queue as their dead-letter queue.
+   * Without it, any queue in the account and region can. `""` means no
+   * policy, as in the SQS API.
+   */
+  RedriveAllowPolicy?: RedriveAllowPolicy | "";
+  /** FIFO only. Deduplicates messages by a hash of their body. */
+  ContentBasedDeduplication?: boolean;
+  /** FIFO only. Whether deduplication applies to the queue or to each message group. */
+  DeduplicationScope?: "queue" | "messageGroup";
+  /** FIFO only. Whether the throughput quota applies to the queue or to each message group. */
+  FifoThroughputLimit?: "perQueue" | "perMessageGroupId";
 };
+
+export type RedrivePolicy = {
+  deadLetterTargetArn: string;
+  maxReceiveCount: number;
+};
+
+export type RedriveAllowPolicy =
+  | { redrivePermission: "allowAll" | "denyAll" }
+  | {
+      redrivePermission: "byQueue";
+      /** The ARNs of the source queues, from 1 to 10. */
+      sourceQueueArns: string[];
+    };
 
 type QueueParams = QueueAttributeParams & {
   QueueName: string;
   FifoQueue?: boolean;
 };
 
+// SQS returns the FIFO attributes only for a FIFO queue.
+type OptionalReadAttributes =
+  | "ContentBasedDeduplication"
+  | "DeduplicationScope"
+  | "FifoThroughputLimit";
+
 export type QueueSchema = AwsSchema<{
   Key: { QueueUrl: string };
   CreateParams: QueueParams;
   UpdateParams: QueueAttributeParams;
-  ReadResult: Required<QueueParams> & { QueueUrl: string; QueueArn: string };
+  ReadResult: Required<Omit<QueueParams, OptionalReadAttributes>> &
+    Pick<QueueParams, OptionalReadAttributes> & {
+      QueueUrl: string;
+      QueueArn: string;
+    };
 }>;
 
 // SetQueueAttributes cannot unset an attribute, so a removed attribute is
-// set to the value SQS gives a new queue.
-const ATTRIBUTE_DEFAULTS: Required<QueueAttributeParams> = {
-  VisibilityTimeout: 30,
-  MessageRetentionPeriod: 345_600,
-  DelaySeconds: 0,
-  ReceiveMessageWaitTimeSeconds: 0,
+// set to the value SQS gives a new queue. An empty RedrivePolicy removes the
+// dead-letter queue, and an empty RedriveAllowPolicy removes the allow policy.
+const ATTRIBUTE_DEFAULTS: Record<keyof QueueAttributeParams, string> = {
+  VisibilityTimeout: "30",
+  MessageRetentionPeriod: "345600",
+  DelaySeconds: "0",
+  ReceiveMessageWaitTimeSeconds: "0",
+  MaximumMessageSize: "1048576",
+  RedrivePolicy: "",
+  RedriveAllowPolicy: "",
+  ContentBasedDeduplication: "false",
+  DeduplicationScope: "queue",
+  FifoThroughputLimit: "perQueue",
 };
 
 const ATTRIBUTE_NAMES = Object.keys(
@@ -102,6 +152,65 @@ const queueSchema = queue.defineSchema({
     propertyType: "param",
     presence: "optional",
     value: seconds(20),
+  },
+  MaximumMessageSize: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.pipe(
+      v.number(),
+      v.integer(),
+      v.minValue(1_024),
+      v.maxValue(1_048_576),
+    ),
+  },
+  RedrivePolicy: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.union([
+      v.literal(""),
+      v.object({
+        deadLetterTargetArn: v.string(),
+        maxReceiveCount: v.pipe(
+          v.number(),
+          v.integer(),
+          v.minValue(1),
+          v.maxValue(1_000),
+        ),
+      }),
+    ]),
+  },
+  RedriveAllowPolicy: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.union([
+      v.literal(""),
+      v.variant("redrivePermission", [
+        v.object({ redrivePermission: v.picklist(["allowAll", "denyAll"]) }),
+        v.object({
+          redrivePermission: v.literal("byQueue"),
+          sourceQueueArns: v.pipe(
+            v.array(v.string()),
+            v.minLength(1),
+            v.maxLength(10),
+          ),
+        }),
+      ]),
+    ]),
+  },
+  ContentBasedDeduplication: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.boolean(),
+  },
+  DeduplicationScope: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.picklist(["queue", "messageGroup"]),
+  },
+  FifoThroughputLimit: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.picklist(["perQueue", "perMessageGroupId"]),
   },
 } as const);
 
@@ -173,6 +282,22 @@ export const Queue = queueSchema.defineOperations({
         ReceiveMessageWaitTimeSeconds: Number(
           Attributes.ReceiveMessageWaitTimeSeconds,
         ),
+        MaximumMessageSize: Number(Attributes.MaximumMessageSize),
+        // SQS returns a redrive policy only when the queue has one. A missing
+        // policy is read as "", and not undefined, so that drift detection
+        // finds a policy that was removed outside Notation.
+        RedrivePolicy: parseRedrivePolicy(Attributes.RedrivePolicy),
+        RedriveAllowPolicy: Attributes.RedriveAllowPolicy
+          ? JSON.parse(Attributes.RedriveAllowPolicy)
+          : "",
+        ContentBasedDeduplication:
+          Attributes.ContentBasedDeduplication === undefined
+            ? undefined
+            : Attributes.ContentBasedDeduplication === "true",
+        DeduplicationScope: Attributes.DeduplicationScope as
+          QueueAttributeParams["DeduplicationScope"] | undefined,
+        FifoThroughputLimit: Attributes.FifoThroughputLimit as
+          QueueAttributeParams["FifoThroughputLimit"] | undefined,
       };
     } catch (error) {
       if (error instanceof sdk.QueueDoesNotExist) {
@@ -185,16 +310,18 @@ export const Queue = queueSchema.defineOperations({
   },
 
   update: async (key, patch) => {
-    const attributes: QueueAttributeParams = {};
+    const attributes: Record<string, string> = {};
     for (const name of ATTRIBUTE_NAMES) {
-      if (name in patch)
-        attributes[name] = patch[name] ?? ATTRIBUTE_DEFAULTS[name];
+      if (!(name in patch)) continue;
+      const value = patch[name];
+      attributes[name] =
+        value === undefined ? ATTRIBUTE_DEFAULTS[name] : encode(value);
     }
     if (Object.keys(attributes).length === 0) return;
     await sqsClient().send(
       new sdk.SetQueueAttributesCommand({
         QueueUrl: key.QueueUrl,
-        Attributes: toAttributes(attributes),
+        Attributes: attributes,
       }),
     );
   },
@@ -222,11 +349,25 @@ async function getQueueUrl(QueueName: string): Promise<string | undefined> {
   }
 }
 
+// An empty policy is left out, as a new queue has no policy, and SQS might
+// not accept "" in CreateQueue.
 function toAttributes(attributes: QueueAttributeParams) {
   const encoded: Record<string, string> = {};
   for (const name of ATTRIBUTE_NAMES) {
     const value = attributes[name];
-    if (value !== undefined) encoded[name] = String(value);
+    if (value !== undefined && value !== "") encoded[name] = encode(value);
   }
   return encoded;
+}
+
+// SQS takes every attribute as a string, and a policy as JSON.
+const encode = (value: string | number | boolean | object) =>
+  typeof value === "object" ? JSON.stringify(value) : String(value);
+
+// SQS returns the policy as a JSON string, in which maxReceiveCount can be a
+// number or a string, so the count is converted with Number().
+function parseRedrivePolicy(policy: string | undefined): RedrivePolicy | "" {
+  if (!policy) return "";
+  const { deadLetterTargetArn, maxReceiveCount } = JSON.parse(policy);
+  return { deadLetterTargetArn, maxReceiveCount: Number(maxReceiveCount) };
 }

@@ -98,7 +98,7 @@ The rule sends the EventBridge event to the function as it is.
 
 `id` keys the schedule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. In AWS, the EventBridge rule is named `<app>--<stage>--<id>`, such as `my-app--prod--log-every-minute`.
 
-`name` replaces the `id` in the rule's AWS name, so `name: "every-minute"` names the rule `my-app--prod--every-minute`. Changing `name` also replaces the rule. See [AWS names](../manual/project-config.md#aws-names).
+`name` replaces the `id` in the rule's AWS name, so `name: "every-minute"` names the rule `my-app--prod--every-minute`. Changing `name` also replaces the rule. See [AWS names](../../manual/project-config.md#aws-names).
 
 ## Schedule types
 

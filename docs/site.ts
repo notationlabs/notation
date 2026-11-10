@@ -2,11 +2,11 @@ import type { DocsSite } from "@notation/docs";
 
 const root = new URL(".", import.meta.url);
 
-export const compiler = {
-  slug: "compiler",
-  label: "Infra Compiler",
+export const deploy = {
+  slug: "deploy",
+  label: "Deploy",
   root,
-  defaultSlug: "manual/quickstart",
+  defaultSlug: "manual/introduction",
   version: { packageJson: "packages/core/package.json" },
   categories: [
     {
@@ -39,6 +39,11 @@ export const compiler = {
             { label: "End-to-End Types", slug: "manual/types" },
           ],
         },
+        {
+          heading: "Embedding",
+          icon: "layers",
+          links: [{ label: "Embedded Reconciler", slug: "manual/reconciler" }],
+        },
       ],
     },
     {
@@ -61,83 +66,41 @@ export const compiler = {
       ],
     },
     {
-      label: "Internals",
-      slug: "internals",
-      sections: [
-        {
-          heading: "Architecture",
-          icon: "layers",
-          links: [{ label: "Compiler", slug: "internals/compiler" }],
-        },
-      ],
-    },
-  ],
-} satisfies DocsSite;
-
-export const reconciler = {
-  slug: "reconciler",
-  label: "Infra Reconciler",
-  root,
-  version: { packageJson: "packages/reconciler/package.json" },
-  categories: [
-    {
-      label: "Guide",
-      slug: "guide",
-      sections: [
-        {
-          heading: "Getting Started",
-          icon: "rocket",
-          links: [{ label: "Reconciler", slug: "manual/reconciler" }],
-        },
-      ],
-    },
-    {
-      label: "Internals",
-      slug: "internals",
-      sections: [
-        {
-          heading: "Architecture",
-          icon: "layers",
-          links: [
-            { label: "Reconciler", slug: "internals/reconciler" },
-            { label: "State", slug: "internals/state" },
-          ],
-        },
-      ],
-    },
-  ],
-} satisfies DocsSite;
-
-export const providers = {
-  slug: "providers",
-  label: "Cloud Providers",
-  root,
-  version: { packageJson: "packages/aws/package.json" },
-  categories: [
-    {
-      label: "AWS",
-      slug: "aws",
-      sections: [
-        {
-          heading: "AWS",
-          icon: "cloud",
-          links: [
-            { label: "Lambda", slug: "resources/lambda" },
-            { label: "API Gateway", slug: "resources/api-gateway" },
-            { label: "EventBridge", slug: "resources/event-bridge" },
-            { label: "SQS", slug: "resources/sqs" },
-          ],
-        },
-      ],
-    },
-    {
-      label: "Resource SDK",
-      slug: "sdk",
+      label: "Reference",
+      slug: "reference",
       sections: [
         {
           heading: "Resource SDK",
           icon: "layers",
-          links: [{ label: "Resource", slug: "internals/resource" }],
+          links: [{ label: "Resource", slug: "reference/resource" }],
+        },
+      ],
+    },
+    {
+      label: "AWS",
+      slug: "aws",
+      divider: true,
+      sections: [
+        {
+          heading: "Resources",
+          icon: "cloud",
+          links: [
+            { label: "Lambda", slug: "providers/aws/lambda" },
+            { label: "API Gateway", slug: "providers/aws/api-gateway" },
+            { label: "EventBridge", slug: "providers/aws/event-bridge" },
+            { label: "SQS", slug: "providers/aws/sqs" },
+          ],
+        },
+      ],
+    },
+    {
+      label: "Cloudflare",
+      slug: "cloudflare",
+      sections: [
+        {
+          heading: "Resources",
+          icon: "cloud",
+          links: [{ label: "Coming Soon", slug: "providers/cloudflare/overview" }],
         },
       ],
     },

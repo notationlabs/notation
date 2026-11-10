@@ -31,12 +31,17 @@ type QueueConfig = {
   messageRetentionPeriod?: number;
   delaySeconds?: number;
   receiveMessageWaitTime?: number;
+  maximumMessageSize?: number;
+  deadLetterQueue?: { queue: QueueGroup | string; maxReceiveCount: number };
+  contentBasedDeduplication?: boolean;
+  deduplicationScope?: "queue" | "messageGroup";
+  fifoThroughputLimit?: "perQueue" | "perMessageGroupId";
 };
 ```
 
 `id` keys the queue in state, so changing it replaces the queue. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. In AWS, the queue is named `<app>--<stage>--<id>`, such as `my-app--prod--orders`.
 
-`name` replaces the `id` in the AWS name, so `queue({ id: "orders", name: "order-events" })` is named `my-app--prod--order-events`. Changing `name` also replaces the queue. See [AWS names](../manual/project-config.md#aws-names).
+`name` replaces the `id` in the AWS name, so `queue({ id: "orders", name: "order-events" })` is named `my-app--prod--order-events`. Changing `name` also replaces the queue. See [AWS names](../../manual/project-config.md#aws-names).
 
 `fifo: true` makes a FIFO queue. Notation adds `.fifo` to its AWS name, as SQS requires, so `queue({ id: "ledger", fifo: true })` is named `my-app--prod--ledger.fifo`. `fifo` can't change after the queue is created.
 
@@ -61,20 +66,85 @@ export const auditQueue = queue({ id: "audit", schema: AuditEvent });
 
 The other settings can change in place. When you remove one, Notation sets it back to the value SQS gives a new queue, because SQS can't unset a queue attribute:
 
-| Setting                  | SQS attribute                   | Default            |
-| ------------------------ | ------------------------------- | ------------------ |
-| `visibilityTimeout`      | `VisibilityTimeout`             | 30 seconds         |
-| `messageRetentionPeriod` | `MessageRetentionPeriod`        | 345,600 s (4 days) |
-| `delaySeconds`           | `DelaySeconds`                  | 0                  |
-| `receiveMessageWaitTime` | `ReceiveMessageWaitTimeSeconds` | 0                  |
+| Setting                  | SQS attribute                   | Default                 |
+| ------------------------ | ------------------------------- | ----------------------- |
+| `visibilityTimeout`      | `VisibilityTimeout`             | 30 seconds              |
+| `messageRetentionPeriod` | `MessageRetentionPeriod`        | 345,600 s (4 days)      |
+| `delaySeconds`           | `DelaySeconds`                  | 0                       |
+| `receiveMessageWaitTime` | `ReceiveMessageWaitTimeSeconds` | 0                       |
+| `maximumMessageSize`     | `MaximumMessageSize`            | 1,048,576 bytes (1 MiB) |
+| `deadLetterQueue`        | `RedrivePolicy`                 | No dead-letter queue    |
+
+A FIFO queue also takes these settings. `queue()` throws when a standard queue sets one of them.
+
+| Setting                     | SQS attribute               | Default      |
+| --------------------------- | --------------------------- | ------------ |
+| `contentBasedDeduplication` | `ContentBasedDeduplication` | `false`      |
+| `deduplicationScope`        | `DeduplicationScope`        | `"queue"`    |
+| `fifoThroughputLimit`       | `FifoThroughputLimit`       | `"perQueue"` |
+
+For high throughput, set `deduplicationScope: "messageGroup"` and `fifoThroughputLimit: "perMessageGroupId"`. SQS allows `"perMessageGroupId"` only with `"messageGroup"`, so `queue()` throws when `fifoThroughputLimit` is `"perMessageGroupId"` and `deduplicationScope` is not `"messageGroup"`. With `contentBasedDeduplication: true`, SQS deduplicates messages by a SHA-256 hash of the body, so a sender doesn't have to give a deduplication ID.
+
+SQS encrypts a new queue with keys that SQS owns (SSE-SQS). Notation doesn't set the encryption attributes, so a queue keeps this default.
 
 SQS doesn't let you reuse a deleted queue's name for 60 seconds, so a replacement waits and retries the create until SQS accepts the name.
 
+### Dead-letter queues
+
+`deadLetterQueue` names a second queue. SQS moves a message to it after the message has been received `maxReceiveCount` times without being deleted. A message is received again when the handler throws, when the function times out, or when the handler reports the message as failed with `reportBatchItemFailures`. See [Failed messages](#failed-messages).
+
+```ts [shared/schema.ts]
+import * as v from "valibot";
+
+export const DeadLetter = v.unknown();
+```
+
+```ts [infra/orders.ts]
+import { queue } from "@notation/aws/sqs";
+import { DeadLetter, Order } from "shared/schema";
+
+export const orderDeadLetterQueue = queue({
+  id: "orders-dlq",
+  schema: DeadLetter,
+});
+
+export const orderQueue = queue({
+  id: "orders",
+  schema: Order,
+  deadLetterQueue: { queue: orderDeadLetterQueue, maxReceiveCount: 3 },
+});
+```
+
+`maxReceiveCount` is from 1 to 1,000. The dead-letter queue is a queue like any other, so it has a schema. SQS moves the messages unchanged, so give it a schema that accepts the messages of each queue that uses it. Notation doesn't compare the schemas. A message often reaches the dead-letter queue because it failed validation, so `DeadLetter` above accepts any value.
+
+`queue` is a queue from `queue()`, or the ARN of a queue that Notation doesn't manage:
+
+```ts [infra/orders.ts]
+export const orderQueue = queue({
+  id: "orders",
+  schema: Order,
+  deadLetterQueue: {
+    queue: "arn:aws:sqs:eu-west-2:123456789012:shared-dlq",
+    maxReceiveCount: 3,
+  },
+});
+```
+
+Notation doesn't check the ARN or that the queue exists. SQS rejects a bad ARN at deploy. SQS requires the dead-letter queue to be in the same account and region as the queue.
+
+The queue's `RedrivePolicy` holds the ARN of the dead-letter queue. When the dead-letter queue comes from `queue()`, the queue depends on the dead-letter queue, which deploys first. When you remove `deadLetterQueue`, Notation removes the policy from the queue, and leaves the dead-letter queue and its messages.
+
+A FIFO queue needs a FIFO dead-letter queue, and a standard queue needs a standard one. `queue()` throws when the two queues are of different types. For an ARN, `queue()` reads the type from the end of the ARN, because SQS requires the name of a FIFO queue to end in `.fifo`. When `queue` is the `arn` output value of a queue from `queue()`, the ARN is not known until deploy, so `queue()` doesn't check the type, and SQS rejects a mismatch at deploy.
+
+For a standard queue, a moved message keeps the time it was first sent, and the dead-letter queue's `messageRetentionPeriod` counts from that time. So give the dead-letter queue a longer `messageRetentionPeriod` than the queue.
+
+To read the dead-letter queue, map it to a function as you would any other queue.
+
 ### `arn` and `url`
 
-`orderQueue.arn` and `orderQueue.url` are output values: they don't exist until AWS creates the queue, but you can place them in another resource's config now. Notation makes that resource depend on the queue and fills in the real value at deploy. See [Output values](../internals/resource.md#output-values).
+`orderQueue.arn` and `orderQueue.url` are output values: they don't exist until AWS creates the queue, but you can place them in another resource's config now. Notation makes that resource depend on the queue and fills in the real value at deploy. See [Output values](../../reference/resource.md#output-values).
 
-An output value can only be placed whole. Turning it into a string, for example in a template string, throws. To build a value from the queue's ARN, contribute a function that receives `orderQueue.queue` as a dep; see [Function contributions](../internals/resource.md#function-contributions).
+An output value can only be placed whole. Turning it into a string, for example in a template string, throws. To build a value from the queue's ARN, contribute a function that receives `orderQueue.queue` as a dep; see [Function contributions](../../reference/resource.md#function-contributions).
 
 ## `sqs.bind(queue, options)`
 
@@ -115,22 +185,70 @@ The infra module only declares the queue. When infra has finished loading, the d
 
 The mapping depends on the policy, even though it reads nothing from it. This matters because AWS checks the role's permissions when it creates the mapping, so the policy has to exist first. Notation retries the create while the new permissions propagate through IAM.
 
-The mapping doesn't turn on `ReportBatchItemFailures`. So if the handler returns `{ batchItemFailures }`, Lambda ignores it, and a batch either succeeds or fails as a whole.
-
 ### Options
 
 ```ts [@notation/aws/lambda]
 type SqsOptions = {
   batchSize?: number;
-  maxBatchingWindow?: number;
+  maximumBatchingWindow?: number;
+  reportBatchItemFailures?: boolean;
+  maximumConcurrency?: number;
+  enabled?: boolean;
 };
 ```
 
-When you remove `batchSize` or `maxBatchingWindow`, Notation sets the mapping back to the Lambda defaults: a batch size of 10 and a batching window of 0 seconds.
+| Option                    | Mapping field                    | Default when removed |
+| ------------------------- | -------------------------------- | -------------------- |
+| `batchSize`               | `BatchSize`                      | 10                   |
+| `maximumBatchingWindow`   | `MaximumBatchingWindowInSeconds` | 0 seconds            |
+| `reportBatchItemFailures` | `FunctionResponseTypes`          | Off                  |
+| `maximumConcurrency`      | `ScalingConfig`                  | No limit             |
+| `enabled`                 | `Enabled`                        | `true`               |
+
+When you remove an option, Notation sets the mapping back to the Lambda default.
+
+A `batchSize` over 10 needs a `maximumBatchingWindow` of at least 1 second. A FIFO queue allows a `batchSize` of at most 10, and no `maximumBatchingWindow`. Lambda would reject these at deploy, so the mapping throws when infra loads.
+
+`maximumConcurrency` is the most instances of the function that the mapping invokes at once, from 2 to 1,000. It limits this mapping only. The function's reserved concurrency limits the function as a whole.
+
+`enabled: false` pauses the mapping. Lambda stops reading the queue, and the messages stay in it.
+
+### Failed messages
+
+By default, a batch succeeds or fails as a whole. If the handler throws, every message in the batch returns to the queue, and Lambda receives them again after the visibility timeout. This includes the messages that the handler processed.
+
+With `reportBatchItemFailures: true`, the handler returns the IDs of the messages that failed. Lambda deletes the other messages, and only the failed ones return to the queue:
+
+```ts [runtime/orders.ts]
+import { $lambda, sqs, type LambdaHandler } from "@notation/aws/lambda";
+import { orderQueue } from "infra/orders";
+
+export const lambda = $lambda({
+  id: "orders",
+  event: () => sqs.bind(orderQueue, { reportBatchItemFailures: true }),
+});
+
+export const handler: LambdaHandler<typeof lambda> = async (event) => {
+  const batchItemFailures: { itemIdentifier: string }[] = [];
+  for (const record of event.Records) {
+    try {
+      const { body: order } = await lambda.decode(record);
+      console.log(order.orderId);
+    } catch {
+      batchItemFailures.push({ itemIdentifier: record.messageId });
+    }
+  }
+  return { batchItemFailures };
+};
+```
+
+Without the option, Lambda ignores the result and deletes every message in the batch, including the failed ones. So for a declaration with `sqs.bind()`, `LambdaHandler` lets the handler return `{ batchItemFailures }` only when `reportBatchItemFailures` is `true`. For a declaration with `sqs.schema()`, infra makes the mapping, so `LambdaHandler` allows either result, and you must set the option on `eventSourceMapping()`. A message that keeps failing returns to the queue until it expires, or until SQS moves it to the [dead-letter queue](#dead-letter-queues).
+
+The loop above continues after a failed message, which suits a standard queue. A handler of a FIFO queue must stop at the first failed message, and report it and every message after it in the batch. Otherwise Lambda deletes the later messages of the group before the failed one is processed, and the group's order is lost.
 
 ### Validating messages
 
-`lambda.decode(record)` parses the record's body as JSON, and validates it with the queue's `schema`. It returns the record with `body` in place of the JSON string, so `body` has the schema's output type. See [Validating bodies with `decode()`](../manual/functions.md#validating-bodies-with-decode).
+`lambda.decode(record)` parses the record's body as JSON, and validates it with the queue's `schema`. It returns the record with `body` in place of the JSON string, so `body` has the schema's output type. See [Validating bodies with `decode()`](../../manual/functions.md#validating-bodies-with-decode).
 
 Import the schema from a shared module, such as `shared/schema.ts` in `files.shared`, or from a package. A file with no kind also works, if it calls no resource function at its top level. **This matters because the function loads the schema, but not the infra module.** In the function's bundle, the runtime build replaces `orderQueue` with an object that holds only the schema:
 
@@ -139,13 +257,13 @@ import { Order as __notation_schema_0 } from "/path/to/my-app/shared/schema.ts";
 
 export const lambda = $lambda({
   id: "orders",
-  event: () => sqs.bind({ schema: __notation_schema_0 }, undefined),
+  event: () => sqs.bind({ schema: __notation_schema_0 }, { batchSize: 5 }),
 });
 ```
 
-The build imports the schema by its absolute path, from the file that infra imports it from. The `infra/orders` import is gone, and so is `batchSize`, which only infra reads.
+The build imports the schema by its absolute path, from the file that infra imports it from. The `infra/orders` import is gone. The options, such as `batchSize`, stay as they are. The function doesn't read them, but they must be values that the function can load: literals, or values from a shared module.
 
-A schema that the infra module defines itself fails the build. So does a schema written as `schemas.Order` or `Order.extend({ ... })`: export the value from the shared module, and import it by name. A queue that a helper function makes fails the build too: declare it with a call to `queue()`. See [Resource arguments](../internals/compiler.md#resource-arguments).
+A schema that the infra module defines itself fails the build. So does a schema written as `schemas.Order` or `Order.extend({ ... })`: export the value from the shared module, and import it by name. A queue that a helper function makes fails the build too: declare it with a call to `queue()`.
 
 Nothing checks the messages that a sender writes. To send messages, use `@aws-sdk/client-sqs` in your own code.
 

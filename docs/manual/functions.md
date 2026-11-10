@@ -63,7 +63,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 };
 ```
 
-`event.routeKey` holds the method and the path of the route, such as `GET /todos/count`. The top-level `await api.get(...)` runs once, when Lambda loads the module. It never runs at deploy time, because the infra build removes everything in the module except the declaration and the code that the declaration uses. See [Compiler](../internals/compiler.md#the-infra-build).
+`event.routeKey` holds the method and the path of the route, such as `GET /todos/count`. The top-level `await api.get(...)` runs once, when Lambda loads the module. It never runs at deploy time, because the infra build removes everything in the module except the declaration and the code that the declaration uses.
 
 ## Reading bound values with `env()`
 
@@ -86,7 +86,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 
 Deploy sets `ORDER_QUEUE_URL` as an environment variable of the function. In the function, `env()` reads each name that the declaration binds from `process.env`, and throws if one of them is not set. A name that the declaration doesn't bind, such as `lambda.env().QUEUE_URL`, is a type error.
 
-**The handler can't read `orderQueue.url` directly.** The runtime build leaves infra modules out of the function's bundle. If the handler uses `orderQueue`, the infra module stays in the bundle, and the build fails with the chain of imports that brought it in. See [Compiler](../internals/compiler.md#the-runtime-build).
+**The handler can't read `orderQueue.url` directly.** The runtime build leaves infra modules out of the function's bundle. If the handler uses `orderQueue`, the infra module stays in the bundle, and the build fails with the chain of imports that brought it in.
 
 ## Validating bodies with `decode()`
 
@@ -120,13 +120,13 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 ```
 
 - The infra module declares `orderQueue` with `queue({ id: "orders", schema: Order })`. `Order` is any [Standard Schema](https://standardschema.dev), such as a Zod or Valibot schema. `body` in the result of `decode()` has the schema's output type. The other fields of the record keep their types.
-- `Order` belongs in a shared module (`files.shared`), such as `shared/schema.ts`, because the function loads it. It can't be in an infra or runtime module. The runtime build replaces `orderQueue` with `{ schema: Order }`. See [Validating messages](../resources/sqs.md#validating-messages).
-- A function that infra maps queues to declares the schema itself, with `sqs.schema(Order)`. `eventSourceMapping()` checks that each queue it maps has the same schema. See [`eventSourceMapping(config)`](../resources/sqs.md#eventsourcemappingconfig).
-- Every queue has a schema, so `decode()` always validates a message. A queue that takes any JSON body declares a schema such as `v.unknown()`, and `body` is the parsed JSON as `unknown`. See [`queue(config)`](../resources/sqs.md#queueconfig).
+- `Order` belongs in a shared module (`files.shared`), such as `shared/schema.ts`, because the function loads it. It can't be in an infra or runtime module. The runtime build replaces `orderQueue` with `{ schema: Order }`. See [Validating messages](../providers/aws/sqs.md#validating-messages).
+- A function that infra maps queues to declares the schema itself, with `sqs.schema(Order)`. `eventSourceMapping()` checks that each queue it maps has the same schema. See [`eventSourceMapping(config)`](../providers/aws/sqs.md#eventsourcemappingconfig).
+- Every queue has a schema, so `decode()` always validates a message. A queue that takes any JSON body declares a schema such as `v.unknown()`, and `body` is the parsed JSON as `unknown`. See [`queue(config)`](../providers/aws/sqs.md#queueconfig).
 - An API Gateway Lambda always names its body schema. A body schema of `null`, as in `apiGateway.schema(null)` or `defineRoute({ ..., schema: null })`, means the requests have no body. `body` is `undefined`, and `decode()` throws a `DecodeError` for a request with a body.
 - With a body schema, a request with an empty body is validated as `undefined`, so the schema decides whether the body may be left out.
-- A request body is always JSON, and `decode()` throws a `DecodeError` for a body that is not. A route that takes text declares a string schema, such as `v.string()`, and the client sends the text as a JSON string, such as `"Buy milk"` with the quotes. Form bodies and binary bodies are not supported yet. See [Request bodies](../resources/api-gateway.md#request-bodies).
-- A request through a JWT authorizer, to a Lambda with `.authSchema()` or `defineRoute({ auth })`, also gets a top-level `claims` field. `decode()` validates the claims with the claims schema, if there is one, and throws a `DecodeError` for claims that the schema rejects. See [Claims in `decode()`](../resources/api-gateway.md#claims-in-decode).
+- A request body is always JSON, and `decode()` throws a `DecodeError` for a body that is not. A route that takes text declares a string schema, such as `v.string()`, and the client sends the text as a JSON string, such as `"Buy milk"` with the quotes. Form bodies and binary bodies are not supported yet. See [Request bodies](../providers/aws/api-gateway.md#request-bodies).
+- A request through a JWT authorizer, to a Lambda with `.authSchema()` or `defineRoute({ auth })`, also gets a top-level `claims` field. `decode()` validates the claims with the claims schema, if there is one, and throws a `DecodeError` for claims that the schema rejects. See [Claims in `decode()`](../providers/aws/api-gateway.md#claims-in-decode).
 - When the body is not valid, `decode()` throws a `DecodeError`. Its `issues` hold the schema's issues. Its `part` is `"body"` for an error in the body and `"claims"` for an error in the claims, so a handler can return 400 for one and 403 for the other.
 - A message that fails validation fails again on every retry, so the handler logs it and skips it. If the handler threw instead, Lambda would retry the whole batch until the queue's retention period ends.
 - An `eventBridge` Lambda, or a Lambda with no `event`, has no `decode()`. Calling it is a type error.

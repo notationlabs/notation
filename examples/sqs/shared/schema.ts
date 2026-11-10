@@ -9,3 +9,7 @@ export const Refund = v.object({
   orderId: v.string(),
   reason: v.string(),
 });
+
+// SQS moves an order that fails to decode to the dead-letter queue, so the
+// dead-letter queue's schema accepts any JSON value.
+export const DeadLetter = v.unknown();

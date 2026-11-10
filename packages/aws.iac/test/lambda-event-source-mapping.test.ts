@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-lambda";
-import { ResourceOperationPendingError } from "@notation/resource";
+import {
+  ResourceOperationPendingError,
+  ValueValidationError,
+} from "@notation/resource";
 import { lambdaClient } from "src/utils/aws-clients";
 import { LambdaEventSourceMapping } from "src/resources/lambda/lambda-event-source-mapping";
 
@@ -80,6 +83,69 @@ describe("LambdaEventSourceMapping", () => {
       BatchSize: 10,
       MaximumBatchingWindowInSeconds: 0,
     });
+  });
+
+  it("removes a removed response type and scaling config", async () => {
+    const send = mockSend(() => ({}));
+
+    await createMapping().update!(
+      { UUID: "uuid" },
+      { FunctionResponseTypes: undefined, ScalingConfig: undefined } as any,
+      { EventSourceArn: queueArn, FunctionName: "app" },
+      {} as any,
+    );
+
+    const command = send.mock
+      .calls[0]![0] as sdk.UpdateEventSourceMappingCommand;
+    expect(command.input).toEqual({
+      UUID: "uuid",
+      FunctionResponseTypes: [],
+      ScalingConfig: {},
+    });
+  });
+
+  it("reads a mapping with no response types or scaling config as empty", async () => {
+    mockSend(() => ({
+      UUID: "uuid",
+      EventSourceArn: queueArn,
+      FunctionArn: "arn:aws:lambda:eu-west-2:123456789012:function:app",
+      BatchSize: 10,
+      MaximumBatchingWindowInSeconds: 0,
+      State: "Enabled",
+    }));
+
+    const result = await createMapping().read!({ UUID: "uuid" });
+
+    expect(result).toMatchObject({
+      FunctionResponseTypes: [],
+      ScalingConfig: {},
+    });
+  });
+
+  it("rejects a maximum concurrency that Lambda does not allow", () => {
+    expect(
+      () =>
+        new LambdaEventSourceMapping("bad-mapping", {
+          config: {
+            EventSourceArn: queueArn,
+            FunctionName: "app",
+            ScalingConfig: { MaximumConcurrency: 1 },
+          },
+        }),
+    ).toThrow(ValueValidationError);
+  });
+
+  it.each([
+    { BatchSize: 0 },
+    { BatchSize: 10_001 },
+    { MaximumBatchingWindowInSeconds: 301 },
+  ])("rejects %o, which Lambda does not allow", (config) => {
+    expect(
+      () =>
+        new LambdaEventSourceMapping("bad-mapping", {
+          config: { EventSourceArn: queueArn, FunctionName: "app", ...config },
+        }),
+    ).toThrow(ValueValidationError);
   });
 
   it("sends only the fields that changed", async () => {

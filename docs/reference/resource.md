@@ -451,7 +451,7 @@ Contributions close when evaluation ends, and `contribute` and `dependOn` throw 
 
 ### Declared modules
 
-The infra build wraps each declaration, such as a `$lambda` call, in a call that records the declaration's module. `declaredIn(value, path, binding)` records the module's path, relative to the project root, and the local name of the binding on `value`, under `Symbol.for("@notation/declaredIn")`, and returns `value`. `getDeclaredIn(value)` returns the record, or `undefined`. `$lambda` reads the record to find the module, and so the path of the function's bundle. See [Compiler](./compiler.md#the-infra-strip).
+The infra build wraps each declaration, such as a `$lambda` call, in a call that records the declaration's module. `declaredIn(value, path, binding)` records the module's path, relative to the project root, and the local name of the binding on `value`, under `Symbol.for("@notation/declaredIn")`, and returns `value`. `getDeclaredIn(value)` returns the record, or `undefined`. `$lambda` reads the record to find the module, and so the path of the function's bundle.
 
 When you delete a `contribute` call, the collected value changes, and the resource updates on the next deploy. When the API cannot unset a removed field, the provider resets it to the API's default. When there is no default, mark the field `immutable`, so that removing it replaces the resource.
 
