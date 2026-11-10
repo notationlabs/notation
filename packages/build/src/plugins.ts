@@ -81,19 +81,16 @@ export function infraPlugin({
   // By importer directory and package name. Cleared on each build, so that
   // a package installed during watch is seen.
   const installed = new Map<string, boolean>();
-  const unloadable: { source: string; scheme: string; importer: string }[] = [];
   return {
     name: "notation-infra",
     buildStart() {
       installed.clear();
-      unloadable.length = 0;
     },
     resolveId(source, importer) {
-      // Reported in buildEnd, when the importers of each module are known.
-      const scheme = importer && unloadableScheme(source);
-      if (scheme) {
-        unloadable.push({ source, scheme, importer });
-        return { id: source, external: true };
+      if (importer && source.startsWith("cloudflare:")) {
+        throw new Error(
+          `${analyses.show(importer)} imports ${source}, which the infra build can't load, because it runs on Node. Pass the value that needs ${source}, such as a class, in a runtime: option, and move what the infra build uses, such as an ID, to a module that doesn't import ${source}.`,
+        );
       }
       if (
         !importer ||
@@ -127,13 +124,6 @@ export function infraPlugin({
     },
     buildEnd(error) {
       if (error) return;
-      const show = (file: string) => analyses.show(file);
-      for (const { source, scheme, importer } of unloadable) {
-        const chain = importerChain(this, importer).map(show);
-        this.error(
-          `${show(importer)} imports ${source}, which the infra build can't load: the infra build runs on Node, and Node can't import ${scheme}: modules. The infra build imports ${show(importer)} through ${chain.join(" → ")}. A declaration's infra copy leaves out the values of its runtime: options, and the code that only they use. Pass a value that needs ${source}, such as a class, in a runtime: option, and move what the infra build uses, such as an ID, to a module that doesn't import ${source}.`,
-        );
-      }
       for (const id of this.getModuleIds()) analyses.checkShared(id);
     },
     generateBundle() {
@@ -145,31 +135,6 @@ export function infraPlugin({
       onDeclarationModules(found);
     },
   };
-}
-
-// A one-letter scheme is a Windows drive, so the pattern needs two letters.
-function unloadableScheme(source: string): string | undefined {
-  const scheme = /^([A-Za-z][A-Za-z0-9+.-]+):/.exec(source)?.[1];
-  return scheme && !["node", "file", "data"].includes(scheme.toLowerCase())
-    ? scheme
-    : undefined;
-}
-
-// Stops before the generated entry, whose ID starts with \0.
-function importerChain(
-  graph: { getModuleInfo(id: string): { importers: readonly string[] } | null },
-  file: string,
-): string[] {
-  const chain = [file];
-  for (let id = file; ;) {
-    const importer = graph
-      .getModuleInfo(id)
-      ?.importers.find((next) => !chain.includes(next));
-    if (!importer || importer.startsWith("\0")) break;
-    chain.unshift(importer);
-    id = importer;
-  }
-  return chain;
 }
 
 // Fails if the infra copy of a module imports a name from a runtime module

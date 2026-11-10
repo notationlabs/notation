@@ -439,7 +439,7 @@ describe("an export of the Worker module that workerd doesn't start with", () =>
   }, 60_000);
 });
 
-it("fails the infra build on an import that Node can't load, and names the import chain", async () => {
+it("fails the infra build on a cloudflare: import, and names the importer", async () => {
   writeProject();
   write(
     "runtime/cls.ts",
@@ -457,13 +457,20 @@ it("fails the infra build on an import that Node can't load, and names the impor
       `export const counters = $durableObject({ id: NAME, class: Imported });`,
     ].join("\n"),
   );
-  const failure = compileInfra(path.join(root, "infra/main.ts"));
-  await expect(failure).rejects.toThrow(
+  await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
     "runtime/cls.ts imports cloudflare:workers, which the infra build can't load",
   );
-  await expect(failure).rejects.toThrow(
-    /through [^.]*runtime\/counter\.ts → runtime\/cls\.ts\./,
+});
+
+it("builds an infra module with an import of another scheme, such as bun:", async () => {
+  writeProject();
+  write(
+    "infra/main.ts",
+    `try { await import("bun:sqlite"); } catch {}\nexport {};`,
   );
+  await expect(
+    compileInfra(path.join(root, "infra/main.ts")),
+  ).resolves.toBeDefined();
 });
 
 it("fails with the user's file when the Worker re-exports a type without the type keyword", async () => {
