@@ -39,6 +39,10 @@ const defineQueue = (type: string, provider: string) =>
     });
 
 const Queue = defineQueue("test/acme/Queue", "@acme/queues");
+const SubpathQueue = defineQueue(
+  "test/acme/SubpathQueue",
+  "@acme/queues/resources",
+);
 
 const deployment = {
   app: "orders",
@@ -190,7 +194,8 @@ it("returns a package that exports no resource classes as a failure", async () =
   expect(failures).toEqual([
     expect.objectContaining({
       provider: "@acme/empty",
-      errorMessage: "@acme/empty exports no resource classes",
+      errorMessage:
+        "@acme/empty exports no resource classes that declare it as their provider",
     }),
   ]);
 });
@@ -222,12 +227,48 @@ it("registers the classes of a subpath that exports namespaces of resource class
       exports: { "./resources": { default: "./dist/resources.js" } },
     },
   );
+  (globalThis as any)["__notationTestClasses:@acme/queues"] = [SubpathQueue];
   const { registry, failures } = await loadProviderRegistry(
     ["@acme/queues/resources"],
     root,
   );
+  expect([...registry]).toEqual([[SubpathQueue.type, SubpathQueue]]);
+  expect(failures).toEqual([]);
+});
+
+it("registers the named exports of an ES module that also exports a default object", async () => {
+  writeQueuesModule(
+    "index.mjs",
+    `export const sqs = { Queue: ${queueGlobal} };\n` +
+      "export default { version: 1 };",
+  );
+  const { registry, failures } = await loadProviderRegistry(
+    ["@acme/queues"],
+    root,
+  );
   expect([...registry]).toEqual([[Queue.type, Queue]]);
   expect(failures).toEqual([]);
+});
+
+it("leaves out a class that declares another provider", async () => {
+  writeQueuesModule(
+    "index.mjs",
+    `export const sqs = { Queue: ${queueGlobal}, SubpathQueue: globalThis.__notationTestSubpathQueue };`,
+  );
+  (globalThis as any).__notationTestSubpathQueue = SubpathQueue;
+  try {
+    const { registry } = await loadProviderRegistry(["@acme/queues"], root);
+    expect([...registry]).toEqual([[Queue.type, Queue]]);
+  } finally {
+    delete (globalThis as any).__notationTestSubpathQueue;
+  }
+});
+
+it("does not import a builtin module", async () => {
+  const { failures } = await loadProviderRegistry(["fs"], root);
+  expect(failures.map((failure) => failure.errorMessage)).toEqual([
+    "fs is not an installed package",
+  ]);
 });
 
 it("ignores exports that are not resource classes", async () => {

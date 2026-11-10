@@ -91,6 +91,12 @@ export async function loadProviderRegistry(
       );
       continue;
     }
+    // A builtin such as fs resolves to its bare name, which would be imported
+    // as a file in the working directory.
+    if (!path.isAbsolute(entry)) {
+      fail(name, `${name} is not an installed package`);
+      continue;
+    }
     let found: ResourceClass<any, any, any>[];
     try {
       found = resourceClassesIn(await import(pathToFileURL(entry).href));
@@ -98,8 +104,14 @@ export async function loadProviderRegistry(
       fail(name, errorMessage(error));
       continue;
     }
+    // A class that another provider declares is left out, so that each type is
+    // loaded from the provider its state record names.
+    found = found.filter((Resource) => Resource.provider === name);
     if (found.length === 0) {
-      fail(name, `${name} exports no resource classes`);
+      fail(
+        name,
+        `${name} exports no resource classes that declare it as their provider`,
+      );
       continue;
     }
     classes.push(...found);
@@ -144,10 +156,11 @@ const packageSpecifier = new RegExp(`^@?${segment}(/${segment})*$`);
 
 // Reads the resource classes among the exports and among the values of each
 // exported namespace. import() of a CommonJS module puts its exports under
-// default.
+// default, so default is read as well as the module.
 function resourceClassesIn(module: Record<string, unknown>) {
-  const root = isObject(module.default) ? module.default : module;
-  return Object.values(root)
+  return [module, module.default]
+    .filter(isObject)
+    .flatMap((root) => Object.values(root))
     .flatMap((value) => (isObject(value) ? Object.values(value) : [value]))
     .filter(isResourceClass);
 }
