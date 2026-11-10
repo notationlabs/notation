@@ -55,9 +55,12 @@ export class RuleGroup extends aws.AwsResourceGroup<RuleOptions> {
       ),
     );
 
+    // Not `eventbridge-pattern-permission`, the ID that the
+    // LambdaEventBridgeRulePermission of a pattern rule had before this
+    // resource replaced it: a state record cannot change type.
     lambdaGroup.add(
       new aws.lambda.LambdaPermission(
-        resourceId("eventbridge-pattern-permission", config.id),
+        resourceId("eventbridge-pattern-invoke-permission", config.id),
         {
           config: {
             Action: "lambda:InvokeFunction",
