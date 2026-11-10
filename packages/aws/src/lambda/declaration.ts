@@ -341,7 +341,7 @@ export type ScheduleOptions = {
   schedule: Schedule;
 };
 
-export type RuleOptions<S extends StandardSchemaV1 = StandardSchemaV1> = {
+export type RuleOptions = {
   /**
    * Keys the rule in state. Changing the id replaces the rule, so keep it
    * stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
@@ -359,12 +359,6 @@ export type RuleOptions<S extends StandardSchemaV1 = StandardSchemaV1> = {
    * `{ source: ["shop"], "detail-type": ["OrderPlaced"] }`.
    */
   pattern: EventPattern;
-  /**
-   * Validates the detail of each event, in `decode()`. A rule that matches
-   * any detail declares a schema such as `v.unknown()`. Import it from a
-   * shared module, so the function can load it.
-   */
-  schema: S;
   /** `false` disables the rule, so it sends no events. Defaults to `true`. */
   enabled?: boolean;
   /** How EventBridge retries an event that the function fails to receive. */
@@ -402,13 +396,18 @@ export const eventBridge = {
        * literal; see `NameSafe`.
        */
       defineRule<S extends StandardSchemaV1, const Id extends string>(
-        options: Omit<RuleOptions<S>, "id"> & { id: NameSafe<Id> },
+        options: Omit<RuleOptions, "id"> & {
+          id: NameSafe<Id>;
+          /**
+           * Validates the detail of each event, in `decode()`. A rule that
+           * matches any detail declares a schema such as `v.unknown()`.
+           * Import it from a shared module, so the function can load it.
+           */
+          schema: S;
+        },
       ): EventBridgeRuleEvent<S> {
-        return {
-          kind: "eventBridge",
-          schema: options.schema,
-          rule: { bus, options },
-        };
+        const { schema, ...rule } = options;
+        return { kind: "eventBridge", schema, rule: { bus, options: rule } };
       },
     };
   },
@@ -423,8 +422,7 @@ export const eventBridge = {
   },
   /**
    * The function receives the events of rules that infra makes with
-   * `rule()`, and `decode()` validates each event's detail with `detail`.
-   * A rule that infra makes for the function must have this schema. For
+   * `rule()`, and `decode()` validates each event's detail with `detail`. For
    * schedules that infra makes with `schedule()`, `detail` is `null`, as a
    * scheduled event has no detail.
    */
@@ -610,16 +608,21 @@ export function createDecode(
   let event: LambdaEvent | undefined;
   return async (item) => {
     event ??= options.event?.();
-    if (!event || (event.kind === "eventBridge" && !event.schema)) {
+    if (event?.kind === "eventBridge" && event.schema) {
+      return {
+        ...item,
+        detail: await validate(
+          event.schema,
+          item?.detail,
+          "detail",
+          "event detail is",
+        ),
+      };
+    }
+    if (!event || event.kind === "eventBridge") {
       throw new Error(
         `decode() needs a Lambda declared with event: () => sqs.bind(queue), sqs.schema(schema), apiGateway.bind(api).defineRoute(options), apiGateway.schema(body), eventBridge.bind(bus).defineRule(options) or eventBridge.schema(schema). A scheduled event has no detail to decode.`,
       );
-    }
-    if (event.kind === "eventBridge") {
-      return {
-        ...item,
-        detail: await validateDetail(event.schema!, item?.detail),
-      };
     }
     if (event.kind === "sqs") {
       return {
@@ -649,7 +652,7 @@ export function createDecode(
     // schema decides whether that is valid.
     const body = raw
       ? await decodeBody(event.schema, raw, "request")
-      : await validateBody(event.schema, undefined, "request");
+      : await validate(event.schema, undefined, "body", "request body is");
     return { ...item, body, ...claims };
   };
 }
@@ -665,34 +668,22 @@ async function decodeBody(
   } catch {
     throw new DecodeError(`The ${name} body is not valid JSON.`, "body");
   }
-  return validateBody(schema, value, name);
+  return validate(schema, value, "body", `${name} body is`);
 }
 
-async function validateBody(
+async function validate(
   schema: StandardSchemaV1,
   value: unknown,
-  name: "message" | "request",
+  part: DecodeError["part"],
+  // Names the value at the start of the error, such as "request body is".
+  subject: string,
 ): Promise<unknown> {
   const result = await schema["~standard"].validate(value);
   if (result.issues) {
+    const issues = result.issues.map((issue) => issue.message).join("; ");
     throw new DecodeError(
-      `The ${name} body is not valid: ${details(result.issues)}`,
-      "body",
-      result.issues,
-    );
-  }
-  return result.value;
-}
-
-async function validateDetail(
-  schema: StandardSchemaV1,
-  detail: unknown,
-): Promise<unknown> {
-  const result = await schema["~standard"].validate(detail);
-  if (result.issues) {
-    throw new DecodeError(
-      `The event detail is not valid: ${details(result.issues)}`,
-      "detail",
+      `The ${subject} not valid: ${issues}`,
+      part,
       result.issues,
     );
   }
@@ -712,19 +703,8 @@ async function decodeClaims(
     );
   }
   if (!schema) return claims;
-  const result = await schema["~standard"].validate(claims);
-  if (result.issues) {
-    throw new DecodeError(
-      `The request's JWT claims are not valid: ${details(result.issues)}`,
-      "claims",
-      result.issues,
-    );
-  }
-  return result.value;
+  return validate(schema, claims, "claims", "request's JWT claims are");
 }
-
-const details = (issues: ReadonlyArray<StandardSchemaV1.Issue>) =>
-  issues.map((issue) => issue.message).join("; ");
 
 /**
  * Makes `env()` for the function. The runtime build keeps the names of the

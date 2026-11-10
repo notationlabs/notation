@@ -2,25 +2,28 @@ import type { StandardSchemaV1 } from "@notation/resource";
 import { resolveLambda, whenLoaded } from "src/lambda/lambda-declaration";
 import type { EventBridgeRuleEvent, RuleOptions } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
-import type { IdOption } from "src/id";
+import type { NameSafe } from "src/id";
 import type { EventBus } from "./event-bus";
+import { RuleGroup } from "./rule-group";
 
-export type RuleConfig<S extends StandardSchemaV1 = StandardSchemaV1> =
-  RuleOptions<S> & {
-    /** The bus that the rule matches events on, from `eventBus()` or `defaultEventBus()`. */
-    bus: EventBus<any>;
-    /**
-     * The Lambda that the rule sends the events to: a declaration from
-     * `$lambda`, passed as `() => lambda`, or a Lambda group from
-     * `lambda()`. A declaration must be declared with
-     * `event: () => eventBridge.schema(schema)`, with the rule's schema, or
-     * with no event.
-     */
-    target: RuleTarget<NoInfer<S>>;
-  };
+export type RuleConfig = RuleOptions & {
+  /** The bus that the rule matches events on, from `eventBus()` or `defaultEventBus()`. */
+  bus: EventBus<any>;
+  /**
+   * The Lambda that the rule sends the events to: a declaration from
+   * `$lambda`, passed as `() => lambda`, or a Lambda group from `lambda()`. A
+   * declaration must be declared with
+   * `event: () => eventBridge.schema(schema)`, or with no event.
+   */
+  target: RuleTarget;
+};
 
-/** A Lambda that can receive the events of a rule whose schema has the type `S`. */
-export type RuleTarget<S extends StandardSchemaV1> =
+/**
+ * A Lambda that can receive the events of a rule or a schedule. `S` is the
+ * schema of a declaration's `eventBridge.schema()`: a detail schema for the
+ * events of a rule, or `null` for scheduled events.
+ */
+export type RuleTarget<S extends StandardSchemaV1 | null = StandardSchemaV1> =
   | (() => {
       readonly "~lambda"?:
         | { kind: "none" }
@@ -35,18 +38,17 @@ export type RuleTarget<S extends StandardSchemaV1> =
  * a name-safe string literal; see `NameSafe`.
  * @resource
  */
-export function rule<
-  S extends StandardSchemaV1,
-  const Id extends string = never,
->(config: Omit<RuleConfig<S>, "id"> & { id: IdOption<Id> }): void {
+export function rule<const Id extends string>(
+  config: Omit<RuleConfig, "id"> & { id: NameSafe<Id> },
+): void {
   const { bus, target, ...options } = config;
   whenLoaded(() => {
     const { group, event } = resolveLambda(target, "rule()", "eventBridge");
-    if (event?.kind === "eventBridge" && event.schema !== options.schema) {
+    if (event?.kind === "eventBridge" && event.schema === null) {
       throw new Error(
-        `rule() sends the events of the rule "${options.id}" to the Lambda "${group.id}", but the Lambda's event: () => ${event.schema ? "eventBridge.schema(schema) has another schema than the rule" : "eventBridge.schema(null) receives scheduled events, which have no detail"}. Give rule() and eventBridge.schema() the same schema, imported from a shared module.`,
+        `rule() sends the events of a rule, but the Lambda "${group.id}" is declared with event: () => eventBridge.schema(null), which receives scheduled events. Declare it with event: () => eventBridge.schema(schema).`,
       );
     }
-    bus["~rule"](group, options, "rule()");
+    new RuleGroup(bus, options, group, "rule()");
   });
 }

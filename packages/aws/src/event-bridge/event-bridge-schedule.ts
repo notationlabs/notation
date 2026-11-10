@@ -1,10 +1,7 @@
 import { resolveLambda, whenLoaded } from "src/lambda/lambda-declaration";
-import type {
-  EventBridgeScheduleEvent,
-  ScheduleOptions,
-} from "src/lambda/declaration";
-import type { LambdaGroup } from "src/lambda/lambda";
+import type { ScheduleOptions } from "src/lambda/declaration";
 import type { NameSafe } from "src/id";
+import type { RuleTarget } from "./rule";
 import { ScheduleGroup } from "./schedule-group";
 
 export { ScheduleGroup };
@@ -20,13 +17,7 @@ export type ScheduleConfig = ScheduleOptions & {
 };
 
 /** A Lambda that can receive scheduled events. */
-export type ScheduleTarget =
-  | (() => {
-      readonly "~lambda"?:
-        | { kind: "none" }
-        | { kind: "eventBridge"; event: EventBridgeScheduleEvent };
-    })
-  | LambdaGroup;
+export type ScheduleTarget = RuleTarget<null>;
 
 /**
  * Invokes a Lambda on a schedule. The schedule's resources are made when

@@ -38,7 +38,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 | `eventSourceMapping({ source, target })`        | `sqs.schema()` of the queue's schema type, or no `event`                                                                           |
 | `router.get(path, target)`                      | `apiGateway.schema(body)`, or no `event`                                                                                           |
 | `router.withAuthorizer(auth).get(path, target)` | `apiGateway.schema(body).authSchema(claims)` of the authorizer's claims type, `.authSchema()` with no claims schema, or no `event` |
-| `rule({ schema, target })`                      | `eventBridge.schema()` of the rule's schema type, or no `event`                                                                    |
+| `rule({ target })`                              | `eventBridge.schema(detail)` with a detail schema, or no `event`                                                                   |
 | `schedule({ target })`                          | `eventBridge.schema(null)` or no `event`                                                                                           |
 
 The infra APIs also check the event when infra runs, so a mismatch that TypeScript misses, such as one behind an `any`, fails with an error that names the Lambda and its event.

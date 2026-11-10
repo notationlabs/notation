@@ -25,7 +25,6 @@ test("resources of declarations of different types with the same id have differe
       name: "todo-events",
       bus: eventBus({ id: "todos" }),
       pattern: { source: ["todos"] },
-      schema: Unknown,
       target: fn,
     });
   });

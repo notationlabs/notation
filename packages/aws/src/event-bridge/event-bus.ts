@@ -30,12 +30,21 @@ export abstract class EventBus<C extends Record<string, any> = {}>
 {
   abstract readonly bus:
     aws.eventBridge.EventBusInstance | aws.eventBridge.DefaultEventBusInstance;
+
   /** The bus's name in AWS. Rules on the bus name it in `EventBusName`. */
-  abstract readonly busName: string;
+  get busName(): string {
+    return this.bus.config.Name;
+  }
+
   /** The bus's ARN. It is an output value, filled in at deploy. */
-  abstract readonly arn: string;
+  get arn(): string {
+    return this.bus.outputValue("Arn");
+  }
+
   /** The bus's name. It is an output value, filled in at deploy. */
-  abstract readonly name: string;
+  get name(): string {
+    return this.bus.outputValue("Name");
+  }
 
   /** A policy statement that allows the actions on this bus. */
   grant(actions: EventBusAction[]): aws.lambda.PolicyStatement {
@@ -48,22 +57,20 @@ export abstract class EventBus<C extends Record<string, any> = {}>
 
   /**
    * Makes a rule on the bus that targets a Lambda, for
-   * `eventBridge.bind(bus).defineRule()` in a declaration and for `rule()`.
+   * `eventBridge.bind(bus).defineRule()` in a declaration.
    */
-  "~rule"(
-    lambdaGroup: LambdaGroup,
-    options: RuleOptions,
-    caller = "eventBridge.bind(bus).defineRule()",
-  ): void {
-    new RuleGroup(this, options, lambdaGroup, caller);
+  "~rule"(lambdaGroup: LambdaGroup, options: RuleOptions): void {
+    new RuleGroup(
+      this,
+      options,
+      lambdaGroup,
+      "eventBridge.bind(bus).defineRule()",
+    );
   }
 }
 
 export class EventBusGroup extends EventBus<EventBusConfig> {
   readonly bus: aws.eventBridge.EventBusInstance;
-  readonly busName: string;
-  readonly arn: string;
-  readonly name: string;
 
   constructor(config: EventBusConfig) {
     assertId("eventBus()", config.id);
@@ -75,22 +82,16 @@ export class EventBusGroup extends EventBus<EventBusConfig> {
       busName,
       describeDeclaration("eventBus()", config.id, config.name),
     );
-    this.busName = busName;
     this.bus = this.add(
       new aws.eventBridge.EventBus(resourceId("eventbridge-bus", config.id), {
         config: { Name: busName },
       }),
     );
-    this.arn = this.bus.outputValue("Arn");
-    this.name = this.bus.outputValue("Name");
   }
 }
 
 export class DefaultEventBusGroup extends EventBus {
   readonly bus: aws.eventBridge.DefaultEventBusInstance;
-  readonly busName = "default";
-  readonly arn: string;
-  readonly name: string;
 
   constructor() {
     super("aws/eventBridge/defaultEventBus", "default");
@@ -99,8 +100,6 @@ export class DefaultEventBusGroup extends EventBus {
         config: { Name: "default" },
       }),
     );
-    this.arn = this.bus.outputValue("Arn");
-    this.name = this.bus.outputValue("Name");
   }
 }
 

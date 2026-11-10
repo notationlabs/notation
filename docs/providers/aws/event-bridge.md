@@ -2,11 +2,11 @@
 
 `@notation/aws/event-bridge` creates event buses, rules that send the events on a bus to a Lambda function, and schedules that invoke a Lambda function. A function receives the events of a rule in one of two ways:
 
-| Function-led                                              | Infra-led                                                                                 |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `event: () => eventBridge.bind(bus).defineRule(options)`  | `event: () => eventBridge.schema(OrderShipped)`                                           |
-| The declaration makes the rule.                           | Infra makes rules with `rule({ id, bus, pattern, schema, target })`.                      |
-| `decode()` validates the detail with the `schema` option. | `decode()` validates the detail with `OrderShipped`. Each rule must have the same schema. |
+| Function-led                                              | Infra-led                                                    |
+| --------------------------------------------------------- | ------------------------------------------------------------ |
+| `event: () => eventBridge.bind(bus).defineRule(options)`  | `event: () => eventBridge.schema(OrderShipped)`              |
+| The declaration makes the rule.                           | Infra makes rules with `rule({ id, bus, pattern, target })`. |
+| `decode()` validates the detail with the `schema` option. | `decode()` validates the detail with `OrderShipped`.         |
 
 A function receives the events of a schedule in the same two ways:
 
@@ -40,7 +40,7 @@ type EventBusConfig = {
 
 Notation finds the class of a resource that is only in state from the resources in your code. If the deploy that renames a bus also removes the last EventBridge rule in your code, Notation does not know that the old rule must be deleted before the bus. The deploy tries to delete the bus, and AWS refuses because the bus still has the rule. Nothing has been deleted at that point. State still holds the old bus and the old rule, so the next deploy fails in the same way. To avoid this, rename the bus while a rule is still declared, then remove the rule in a later deploy. If the deploy has already failed, declare a rule again and deploy. [Issue #77](https://github.com/notationlabs/notation/issues/77) will remove this limit.
 
-A bus has no schema. One bus carries events of many types, and each rule on the bus has the schema of the events that it matches.
+A bus has no schema. One bus carries events of many types, and each function declares the schema of the events that it receives.
 
 ### `arn` and `name`
 
@@ -130,9 +130,13 @@ type RuleOptions = {
   id: string;
   name?: string;
   pattern: EventPattern;
-  schema: StandardSchemaV1;
   enabled?: boolean;
   retry?: RetryOptions;
+};
+
+// The options of defineRule()
+type DefineRuleOptions = RuleOptions & {
+  schema: StandardSchemaV1;
 };
 
 type RetryOptions = {
@@ -159,7 +163,7 @@ A pattern with no fields throws when infra runs. Notation sends the pattern to A
 
 `schema` is a [Standard Schema](https://standardschema.dev) for the detail of each event. `decode()` validates the detail with it; see [Validating events](#validating-events).
 
-**Every rule has a schema.** A rule whose events can have any detail declares a schema that accepts any value, such as valibot's `v.unknown()`.
+**`defineRule()` needs a schema.** A rule whose events can have any detail declares a schema that accepts any value, such as valibot's `v.unknown()`.
 
 `enabled: false` disables the rule, so it sends no events. The rule stays in AWS. When you remove `enabled`, the next deploy enables the rule again.
 
@@ -217,7 +221,6 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 ```ts [infra/orders.ts]
 import { eventBus, rule } from "@notation/aws/event-bridge";
 import { lambda as recordShipment } from "runtime/record-shipment";
-import { OrderShipped } from "shared/schema";
 
 export const ordersBus = eventBus({ id: "orders" });
 
@@ -225,33 +228,32 @@ rule({
   id: "order-shipped",
   bus: ordersBus,
   pattern: { source: ["shop"], "detail-type": ["OrderShipped"] },
-  schema: OrderShipped,
   target: () => recordShipment,
 });
 ```
 
-`runtime/record-shipment.ts` is the declaration with `eventBridge.schema(OrderShipped)` above. The rule and the declaration import the same `OrderShipped` from `shared/schema.ts`, so the schema is checked at both ends: infra checks that the two schemas are the same object, and the function validates each event's detail with it.
+`runtime/record-shipment.ts` is the declaration with `eventBridge.schema(OrderShipped)` above. `rule()` takes no schema: the function validates each event's detail with the schema of its declaration. Nothing checks that the events that the pattern matches have a detail that the schema accepts, so an event that does not fit fails in `decode()`.
 
 ```ts [@notation/aws/event-bridge]
-type RuleConfig<S> = RuleOptions & {
+type RuleConfig = RuleOptions & {
   bus: EventBus;
-  target: RuleTarget<S>;
+  target: RuleTarget;
 };
 ```
 
-The other options are the [options of `defineRule()`](#options). `bus` is a bus from `eventBus()` or `defaultEventBus()`.
+The other options are the [options of `defineRule()`](#options), without `schema`. `bus` is a bus from `eventBus()` or `defaultEventBus()`.
 
 `target` is a declaration, passed as a function such as `() => recordShipment`, or a Lambda group from [`lambda()`](lambda.md#lambdaconfig), passed as it is. See [Wiring a declaration](lambda.md#wiring-a-declaration). The target can be:
 
-| Target                                                  | Result                                          |
-| ------------------------------------------------------- | ----------------------------------------------- |
-| A declaration with `eventBridge.schema(OrderShipped)`   | Targeted if the rule's schema is `OrderShipped` |
-| A declaration with no `event`                           | Targeted                                        |
-| A Lambda group from `lambda()`                          | Targeted                                        |
-| A declaration with `eventBridge.schema(null)`           | Throws                                          |
-| A declaration with `defineRule()` or `defineSchedule()` | Throws                                          |
+| Target                                                  | Result   |
+| ------------------------------------------------------- | -------- |
+| A declaration with `eventBridge.schema(OrderShipped)`   | Targeted |
+| A declaration with no `event`                           | Targeted |
+| A Lambda group from `lambda()`                          | Targeted |
+| A declaration with `eventBridge.schema(null)`           | Throws   |
+| A declaration with `defineRule()` or `defineSchedule()` | Throws   |
 
-**The schema check compares objects, not types.** `rule()` throws when the rule's `schema` is another object than the one in `eventBridge.schema()`, even if the two schemas accept the same detail. TypeScript also checks the pairing: `RuleTarget<S>` only takes a declaration whose schema has the type of the rule's schema. A declaration with `eventBridge.schema(null)` receives scheduled events, so it is a type error too.
+A declaration with `eventBridge.schema(null)` receives scheduled events, so `rule()` throws for it, and it is a type error too.
 
 A declaration with `defineRule()` already makes its rule, so `rule()` throws for it. Make the rule in one place: remove the `rule()` call, or declare the function with `eventBridge.schema()`.
 
@@ -336,7 +338,7 @@ type ScheduleConfig = {
   id: string;
   name?: string;
   schedule: Schedule;
-  target: ScheduleTarget; // () => declaration, or a Lambda group
+  target: ScheduleTarget; // RuleTarget<null>: () => declaration, or a Lambda group
 };
 ```
 

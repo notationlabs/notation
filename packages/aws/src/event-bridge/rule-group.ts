@@ -5,14 +5,12 @@ import { assertId, assertName, resourceId } from "src/id";
 import { awsName, claimAwsName, describeDeclaration } from "src/naming";
 import type { EventBus } from "./event-bus";
 
-export class RuleGroup extends aws.AwsResourceGroup<
-  Omit<RuleOptions, "schema">
-> {
+export class RuleGroup extends aws.AwsResourceGroup<RuleOptions> {
   readonly rule: aws.eventBridge.EventBridgeRuleInstance;
 
   constructor(
     bus: EventBus<any>,
-    { schema: _, ...config }: RuleOptions,
+    config: RuleOptions,
     lambdaGroup: LambdaGroup,
     /** Names the function that declares the rule, in errors. */
     caller: string,
