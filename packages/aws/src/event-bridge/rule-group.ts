@@ -22,8 +22,9 @@ export class RuleGroup extends aws.AwsResourceGroup<RuleOptions> {
     const ruleName = awsName("eventBridgeRule", config.name ?? config.id);
     super("aws/eventBridge/rule", config.id, config);
     // AWS names rules uniquely on each bus, but the name is claimed across
-    // buses, so that a function's permission statement, which is named
-    // after the rule, is unique too. Schedules claim the same names.
+    // buses. Schedules claim the same names. The permission's StatementId
+    // comes from its resource ID, so it no longer needs this, and the claim
+    // could be limited to each bus.
     claimAwsName(
       "EventBridge rules",
       ruleName,
