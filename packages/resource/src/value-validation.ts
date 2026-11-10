@@ -344,7 +344,7 @@ export function assertRequiredOutputs(
   }
 }
 
-function hasTag<T extends string>(
+export function hasTag<T extends string>(
   error: unknown,
   tag: T,
 ): error is Error & { _tag: T } {

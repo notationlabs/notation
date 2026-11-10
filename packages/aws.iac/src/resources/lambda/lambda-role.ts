@@ -26,6 +26,7 @@ type LambdaIamRoleReadResult = Omit<
 
 const lambdaIamRole = resource<LambdaIamRoleSchema>({
   type: "aws/lambda/LambdaIamRole",
+  provider: "@notation/aws.iac",
 });
 
 const lambdaIamRoleSchema = lambdaIamRole.defineSchema({

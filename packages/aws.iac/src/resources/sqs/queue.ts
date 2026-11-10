@@ -99,6 +99,7 @@ const ATTRIBUTE_NAMES = Object.keys(
 
 const queue = resource<QueueSchema>({
   type: "aws/sqs/Queue",
+  provider: "@notation/aws.iac",
 });
 
 const seconds = (max: number) =>

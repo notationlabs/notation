@@ -7,6 +7,10 @@ import {
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
+import {
+  loadPlanProviderRegistry,
+  mergeResourceRegistries,
+} from "../resource-registry";
 import { withRuntime, type NodeDurableRuntime } from "../durable-runtime";
 
 export type { Plan, PlanNode, PlanDecision } from "@notation/reconciler";
@@ -37,14 +41,20 @@ export async function planApp({
   });
   return withRuntime(
     { deployment, runtime: suppliedRuntime, databasePath },
-    (runtime) =>
-      createPlan({
+    async (runtime) => {
+      const providerRegistry = await loadPlanProviderRegistry(
+        runtime.state,
+        graph.resources,
+        emit,
+      );
+      return createPlan({
         resources: graph.resources,
         state: runtime.state,
         driftDetection,
         emit,
         maxOperationAttempts,
-        registry,
-      }),
+        registry: mergeResourceRegistries(providerRegistry, registry),
+      });
+    },
   );
 }

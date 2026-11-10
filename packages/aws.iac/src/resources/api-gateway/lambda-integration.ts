@@ -21,6 +21,7 @@ export type LambdaIntegrationDependencies = {
 
 const integration = resource<LambdaIntegrationSchema>({
   type: "aws/apiGateway/LambdaIntegration",
+  provider: "@notation/aws.iac",
 });
 
 const integrationSchema = integration.defineSchema({

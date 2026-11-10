@@ -6,14 +6,14 @@ import {
   resolveResourceClass,
 } from "../src/resource-registry";
 
-const TestResourceA = resource({ type: "test/service/a" })
+const TestResourceA = resource({ type: "test/service/a", provider: "test" })
   .defineSchema({})
   .defineOperations({
     create: (async () => ({})) as any,
     delete: async () => undefined,
   });
 
-const TestResourceB = resource({ type: "test/service/b" })
+const TestResourceB = resource({ type: "test/service/b", provider: "test" })
   .defineSchema({})
   .defineOperations({
     create: (async () => ({})) as any,

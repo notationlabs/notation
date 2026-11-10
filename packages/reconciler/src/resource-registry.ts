@@ -33,6 +33,28 @@ export function createResourceRegistryFromResources(
   return registry;
 }
 
+/** Later registries override earlier ones. */
+export function mergeResourceRegistries(
+  ...registries: (ResourceRegistry | undefined)[]
+): ResourceRegistry {
+  const merged: ResourceRegistry = new Map();
+  for (const registry of registries) {
+    for (const [type, Resource] of registry ?? []) merged.set(type, Resource);
+  }
+  return merged;
+}
+
+/** The caller's registry merged with the classes in code. Classes in code win. */
+export function workflowRegistry(opts: {
+  resources: BaseResource[];
+  registry?: ResourceRegistry;
+}): ResourceRegistry {
+  return mergeResourceRegistries(
+    opts.registry,
+    createResourceRegistryFromResources(opts.resources),
+  );
+}
+
 export function resolveResourceClass(
   registry: ResourceRegistry,
   type: ResourceType,

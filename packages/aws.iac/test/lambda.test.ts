@@ -158,6 +158,7 @@ describe("Lambda code", () => {
           version: 1,
           id: "app",
           type: LambdaFunction.type,
+          provider: "test",
           config: lambda.config,
           params,
           output: params,

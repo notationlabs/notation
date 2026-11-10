@@ -112,6 +112,7 @@ export type ResourceGroupRef = { type: string; id: string };
 
 export interface BaseResource {
   readonly type: ResourceType;
+  readonly provider: string;
   readonly schema: Schema;
   readonly config: any;
   id: string;
@@ -200,6 +201,7 @@ export abstract class Resource<
   // would be missing from what was read, so `contribute` throws.
   #sealed = false;
   abstract type: ResourceType;
+  abstract provider: string;
   abstract schema: Schema;
   abstract create: (
     params: T["params"],
@@ -615,6 +617,12 @@ export type DefineResourceMeta = {
    * deploy updates it when its params change.
    */
   blocksDeleteOf?: ResourceType[];
+  /**
+   * The package that exports this class in `resourceClasses`, such as
+   * `@notation/aws.iac`. Stored in state, so the class can be loaded after
+   * its type is removed from code.
+   */
+  provider: string;
 };
 
 export type ResourceOperationsOptions<
@@ -690,6 +698,7 @@ export type ResourceClass<
   readonly type: ResourceType;
   /** See `DefineResourceMeta.blocksDeleteOf`. */
   readonly blocksDeleteOf: readonly ResourceType[];
+  readonly provider: string;
   requireDependencies: <
     Dependencies extends Record<string, BaseResource | void>,
   >() => ResourceDependenciesBuilder<T, IntrinsicParams, Dependencies>;
@@ -755,8 +764,10 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             >,
           > extends Resource<T, NoInfer<D>, NoInfer<C>> {
             static type = meta.type;
+            static provider = meta.provider;
             type = meta.type;
             static blocksDeleteOf = meta.blocksDeleteOf ?? [];
+            provider = meta.provider;
             schema = schema;
             create = opts.create;
             find = opts.find;
@@ -826,3 +837,25 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
 
 // Backwards-compatible alias (existing code uses `resource()`)
 export const resource = defineResource;
+
+/**
+ * Collects the resource classes exported by module namespaces, such as
+ * `import * as lambda from "./resources/lambda"`.
+ */
+export function resourceClassesIn(
+  ...namespaces: Record<string, unknown>[]
+): ResourceClass<any, any, any>[] {
+  return namespaces.flatMap((namespace) =>
+    Object.values(namespace).filter(isResourceClass),
+  );
+}
+
+export function isResourceClass(
+  value: unknown,
+): value is ResourceClass<any, any, any> {
+  return (
+    typeof value === "function" &&
+    typeof (value as { type?: unknown }).type === "string" &&
+    typeof (value as { provider?: unknown }).provider === "string"
+  );
+}

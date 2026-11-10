@@ -65,6 +65,7 @@ function assertNoFailedTargets(
 
 const eventBridgeRule = resource<EventBridgeRuleSchema>({
   type: "aws/eventBridge/rule",
+  provider: "@notation/aws.iac",
   // AWS refuses to delete a bus that has rules. The default bus is never
   // deleted, so it is not listed.
   blocksDeleteOf: [EventBus.type],

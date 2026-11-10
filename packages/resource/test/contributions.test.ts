@@ -18,7 +18,7 @@ const Queue = resource<{
   CreateParams: { QueueName: string };
   UpdateParams: {};
   ReadResult: { QueueArn: string; QueueUrl: string };
-}>({ type: "test/contributions/queue" })
+}>({ type: "test/contributions/queue", provider: "test" })
   .defineSchema({
     QueueUrl: {
       propertyType: "computed",
@@ -48,7 +48,7 @@ const Policy = resource<{
   CreateParams: { PolicyName: string; PolicyDocument: PolicyDocument };
   UpdateParams: { PolicyDocument: PolicyDocument };
   ReadResult: {};
-}>({ type: "test/contributions/policy" })
+}>({ type: "test/contributions/policy", provider: "test" })
   .defineSchema({
     PolicyName: {
       propertyType: "param",
@@ -86,7 +86,7 @@ const Fn = resource<{
   };
   UpdateParams: { Environment?: Environment; Role: string };
   ReadResult: { FunctionArn: string };
-}>({ type: "test/contributions/function" })
+}>({ type: "test/contributions/function", provider: "test" })
   .defineSchema({
     FunctionName: {
       propertyType: "param",
@@ -285,7 +285,10 @@ describe("output values", () => {
   });
 
   it("keeps an output value that is not a string whole", async () => {
-    const Counter = resource({ type: "test/contributions/counter" })
+    const Counter = resource({
+      type: "test/contributions/counter",
+      provider: "test",
+    })
       .defineSchema({
         size: { propertyType: "param", presence: "required", value: number() },
       } as any)
@@ -515,7 +518,7 @@ describe("plan params", () => {
     CreateParams: { logGroupName: string; retention?: number };
     UpdateParams: { retention?: number };
     ReadResult: {};
-  }>({ type: "test/contributions/log-group" })
+  }>({ type: "test/contributions/log-group", provider: "test" })
     .defineSchema({
       logGroupName: {
         propertyType: "param",

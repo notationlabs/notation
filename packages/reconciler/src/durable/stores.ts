@@ -23,6 +23,7 @@ const resourceRecordSchema = v.objectWithRest(
   {
     id: v.string(),
     type: v.string(),
+    provider: v.string(),
     // null for a resource that is in no group.
     group: v.nullable(v.object({ type: v.string(), id: v.string() })),
     config: durableRecord,

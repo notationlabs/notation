@@ -18,6 +18,7 @@ type StageDependencies = {
 
 const stage = resource<StageSchema>({
   type: "aws/apiGateway/Stage",
+  provider: "@notation/aws.iac",
 });
 
 const accessLogSettings = v.object({

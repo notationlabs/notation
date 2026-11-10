@@ -56,6 +56,6 @@ Retryable provider conditions and consistency reads suspend on durable SQLite ti
 
 5. **Detect drift** – unchanged resources are read from the provider and repaired when their remote state differs.
 
-6. **Delete orphans** – persisted resources absent from the graph are deleted when their resource type is registered.
+6. **Delete orphans** – persisted resources absent from the graph are deleted when their resource type is registered. A type is registered when a resource in the graph has it, or when the provider package named in its state record is installed and exports its class.
 
 State, step results, timers, queued tasks, and resource stores are persisted to `.notation/workflows.db`. Set `NOTATION_DATABASE_PATH` to choose another SQLite database path.

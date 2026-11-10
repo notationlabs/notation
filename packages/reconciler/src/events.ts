@@ -54,6 +54,10 @@ export type HoldWaitingEvent = {
   holderExecutionId: string;
 };
 
+/**
+ * A record was not deleted because its type has no class. In destroy, this
+ * includes a desired resource whose record has a different type.
+ */
 export type OrphanDeletionSkippedEvent = {
   level: "warn";
   event: "reconciler.orphan-deletion.skipped";
@@ -69,12 +73,21 @@ export type OrphanDeletionSkippedEvent = {
   keptDependencies: string[];
 };
 
+/** A provider package named in state could not be loaded. */
+export type ProviderLoadFailedEvent = {
+  level: "warn";
+  event: "reconciler.provider.load-failed";
+  provider: string;
+  errorMessage: string;
+};
+
 export type ReconcilerEvent =
   | OperationLifecycleEvent
   | DeployDecisionEvent
   | DriftDetectedEvent
   | HoldWaitingEvent
-  | OrphanDeletionSkippedEvent;
+  | OrphanDeletionSkippedEvent
+  | ProviderLoadFailedEvent;
 
 export type ReconcilerEventEmitter = (
   event: ReconcilerEvent,

@@ -85,12 +85,14 @@ export const testOperations = {
 
 export const TestResourceSchema = resource<TestSchema>({
   type: "provider/service/resource",
+  provider: "test",
 }).defineSchema(testSchema);
 
 export const TestResource = TestResourceSchema.defineOperations(testOperations);
 
 export const TestResource2 = resource<TestSchema>({
   type: "provider/service/resource-2",
+  provider: "test",
 })
   .defineSchema(testSchema)
   .defineOperations(testOperations);

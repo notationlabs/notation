@@ -14,12 +14,10 @@ import {
 } from "@notation/resource";
 import { VersionConflict, type StateNode } from "@notation/state";
 import { buildDepthLevels, collectDependents } from "../dependency-graph";
-import { cascadeRegistry, createBlocksDelete } from "../delete-cascade";
+import { createBlocksDelete } from "../delete-cascade";
 import type { OperationLifecycleEvent } from "../events";
-import {
-  createResourceRegistryFromResources,
-  resolveResourceClass,
-} from "../resource-registry";
+import { resolveResourceClass, workflowRegistry } from "../resource-registry";
+import { assertSameType } from "../resource-type";
 import {
   applyDriftDetection,
   createResourceOperation,
@@ -74,6 +72,9 @@ export async function* reconcileResource(
 
   const emit = durableEmitter(step, opts.emit);
   const session = yield* openStateSession(step, opts, resource);
+  // Repeats the notation:validate check, because validate ran before the
+  // hold and the record may have changed since.
+  assertSameType(resource, session.node);
   if (session.node) resource.setOutput(session.node.output);
 
   let action = decideAction({ resource, stateNode: session.node, params });
@@ -159,8 +160,12 @@ export async function* reconcileResource(
         yield* recoverOutputs(step, opts, session, shared);
         return;
       }
-      if (!opts.dryRun && !hasSameEdges(session.node, dependsOn)) {
-        yield* rewriteEdges(session, dependsOn);
+      if (
+        !opts.dryRun &&
+        (!hasSameEdges(session.node, dependsOn) ||
+          session.node.provider !== resource.provider)
+      ) {
+        yield* rewriteRecord(session, resource, dependsOn);
       }
       return;
   }
@@ -220,17 +225,18 @@ async function* recoverOutputs(
 }
 
 /**
- * Writes new edges to the record of a resource that is otherwise unchanged.
- * The rest of the record is written as it was read, and the provider is not
- * called.
+ * Updates `dependsOn` and `provider` in the record, without calling the
+ * resource's update operation.
  */
-async function* rewriteEdges(
+async function* rewriteRecord(
   session: Extract<ResourceStateSession, { node: StateNode }>,
+  resource: BaseResource,
   dependsOn: string[],
 ): AsyncGenerator<any, void, any> {
   const { version: _, ...record } = session.node;
   yield* session.persist({
     ...record,
+    provider: resource.provider,
     group: (record.group ?? null) as ResourceGroupRef | null,
     dependsOn,
   });
@@ -295,7 +301,7 @@ async function* deleteBlockingDependents(
   opts: DurableDeployOptions,
   resource: BaseResource,
 ): AsyncGenerator<any, void, any> {
-  const registry = cascadeRegistry(opts);
+  const registry = workflowRegistry(opts);
   // Skips listing state, which copies every record into the journal.
   const blockable = [...registry.values()].some((Class) =>
     Class.blocksDeleteOf.includes(resource.type),
@@ -334,16 +340,33 @@ async function* deleteBlockingDependents(
  * — or has already been deleted — and is skipped, which is also what makes
  * the sweep of a partly-deleted deployment idempotent. `step` must already be
  * scoped to the resource.
+ * If the record's type differs from `declared`'s type, the record's own class
+ * deletes it.
  */
 export async function* deleteResource(
   step: DurableStepRunner,
-  resource: BaseResource,
+  declared: BaseResource,
   opts: DurableWorkflowOptions,
   /** Added to the delete's lifecycle events. */
   cause: Pick<OperationLifecycleEvent, "reason" | "replacedDependency"> = {},
 ): AsyncGenerator<any, void, any> {
-  const session = yield* openStateSession(step, opts, resource);
+  const session = yield* openStateSession(step, opts, declared);
   if (!session.node) return;
+  let resource = declared;
+  if (session.node.type !== declared.type) {
+    const Resource = resolveResourceClass(
+      workflowRegistry(opts),
+      session.node.type as ResourceType,
+    );
+    if (!Resource) {
+      throw new Error(
+        `No class is registered for type ${session.node.type}, the type of ` +
+          `the state record of ${declared.id}. The orphan sweep keeps such a ` +
+          `record, so destroy should not reach it.`,
+      );
+    }
+    resource = await instantiateRecord(Resource, session.node);
+  }
   resource.setOutput(session.node.output);
 
   const emit = durableEmitter(step, opts.emit);
@@ -363,10 +386,10 @@ export async function* deleteResource(
  * A state node whose type has no registry entry is left in place and surfaced
  * as a warning, because deleting it would need a resource class we cannot
  * resolve. Every orphan it depends on is left in place too, and the warning
- * names them. In destroy, so is every desired resource it depends on.
+ * names them. In destroy, desired resources it depends on are kept too, and
+ * so is a desired resource whose record's type has no class.
  *
- * Returns the IDs of the resources kept for a skipped orphan, so that destroy
- * can leave the desired ones in place.
+ * Returns the IDs of all records left in place.
  */
 export async function* sweepOrphans(
   step: DurableStep,
@@ -378,8 +401,7 @@ export async function* sweepOrphans(
     opts.resources.map((resource) => [resource.id, resource]),
   );
   const persisted = yield* scope.run("list", () => opts.state.values());
-  const registry =
-    opts.registry ?? createResourceRegistryFromResources(opts.resources);
+  const registry = workflowRegistry(opts);
 
   const orphans = persisted.filter((node) => !resourceById.has(node.id));
   const edgesById = new Map(
@@ -395,6 +417,15 @@ export async function* sweepOrphans(
   }
   const kept = new Set<string>();
 
+  if (workflow === "destroy") {
+    for (const node of persisted) {
+      const resource = resourceById.get(node.id);
+      if (!resource || resource.type === node.type) continue;
+      if (resolveResourceClass(registry, node.type as ResourceType)) continue;
+      yield* skipUnregistered(scope, opts, node, edgesById, kept, workflow);
+    }
+  }
+
   for (const node of orderOrphanDeletes(orphans)) {
     const nodeScope = scope.scope(encodeURIComponent(node.id));
 
@@ -402,19 +433,7 @@ export async function* sweepOrphans(
     // An unregistered orphan warns even when another orphan already keeps
     // it, so that the warnings name every type the sweep could not delete.
     if (!Resource) {
-      const keptDependencies = collectDependencies(node, edgesById);
-      for (const id of keptDependencies) kept.add(id);
-
-      const emit = durableEmitter(nodeScope, opts.emit);
-      yield* emit({
-        level: "warn",
-        event: "reconciler.orphan-deletion.skipped",
-        reason: "resource-type-not-registered",
-        workflow,
-        resourceId: node.id,
-        resourceType: node.type as ResourceType,
-        keptDependencies,
-      });
+      yield* skipUnregistered(scope, opts, node, edgesById, kept, workflow);
       continue;
     }
     if (kept.has(node.id)) continue;
@@ -424,6 +443,33 @@ export async function* sweepOrphans(
   }
 
   return kept;
+}
+
+async function* skipUnregistered(
+  scope: DurableStepRunner,
+  opts: DurableWorkflowOptions,
+  node: StateNode,
+  edgesById: Map<string, string[]>,
+  kept: Set<string>,
+  workflow: "deploy" | "destroy",
+): AsyncGenerator<any, void, any> {
+  const keptDependencies = collectDependencies(node, edgesById);
+  kept.add(node.id);
+  for (const id of keptDependencies) kept.add(id);
+
+  const emit = durableEmitter(
+    scope.scope(encodeURIComponent(node.id)),
+    opts.emit,
+  );
+  yield* emit({
+    level: "warn",
+    event: "reconciler.orphan-deletion.skipped",
+    reason: "resource-type-not-registered",
+    workflow,
+    resourceId: node.id,
+    resourceType: node.type as ResourceType,
+    keptDependencies,
+  });
 }
 
 /**

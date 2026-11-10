@@ -75,6 +75,7 @@ const policyDocumentValue = v.object({
 
 const lambdaRolePolicy = resource<LambdaRolePolicySchema>({
   type: "aws/lambda/LambdaRolePolicy",
+  provider: "@notation/aws.iac",
 });
 
 const lambdaRolePolicySchema = lambdaRolePolicy.defineSchema({

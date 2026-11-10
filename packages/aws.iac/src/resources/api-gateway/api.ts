@@ -21,6 +21,7 @@ type ApiSdkSchema = AwsSchema<{
 
 const api = resource<ApiSdkSchema>({
   type: "aws/apiGateway/Api",
+  provider: "@notation/aws.iac",
 });
 
 const cors = v.object({

@@ -178,6 +178,7 @@ describe("API Gateway API drift", () => {
           version: 1,
           id: "api",
           type: Api.type,
+          provider: "test",
           config,
           params,
           output: { ...params, ApiId: "api-1" },

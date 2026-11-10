@@ -11,10 +11,14 @@ import {
 import { MemoryStateBackend } from "@notation/state";
 import { describe, expect, it } from "vitest";
 import { createPlan } from "../src/planner";
+import { ResourceTypeChangedError } from "../src/resource-type";
 
 describe("createPlan", () => {
   it("plans desired creates and persisted orphans without mutation execution", async () => {
-    const TestResource = resource({ type: "test/planner/resource" })
+    const TestResource = resource({
+      type: "test/planner/resource",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
@@ -25,6 +29,7 @@ describe("createPlan", () => {
         version: 1,
         id: "orphan",
         type: TestResource.type,
+        provider: "test",
         config: {},
         params: {},
         output: {},
@@ -50,8 +55,80 @@ describe("createPlan", () => {
     ]);
   });
 
+  it("fails when a resource has the ID of a state record of another type", async () => {
+    const NewResource = resource({ type: "test/planner/new", provider: "test" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+      });
+    const state = new MemoryStateBackend({
+      permission: {
+        version: 1,
+        id: "permission",
+        type: "test/planner/old",
+        provider: "test",
+        config: {},
+        params: {},
+        output: {},
+        lastOperation: "create",
+        lastOperationAt: "2026-07-22T00:00:00.000Z",
+      },
+    });
+
+    const plan = createPlan({
+      resources: [new NewResource("permission")],
+      state,
+      driftDetection: false,
+    });
+
+    await expect(plan).rejects.toSatisfy(ResourceTypeChangedError.is);
+    await expect(plan).rejects.toThrow(
+      "Resource permission has type test/planner/new in the graph, but its " +
+        "state record has type test/planner/old. A resource can't change " +
+        "type under the same ID. The provider must give the " +
+        "test/planner/new resource a new ID",
+    );
+  });
+
+  it("plans the record of an old type under another ID as an orphan", async () => {
+    const NewResource = resource({ type: "test/planner/new", provider: "test" })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+      });
+    const state = new MemoryStateBackend({
+      permission: {
+        version: 1,
+        id: "permission",
+        type: "test/planner/old",
+        provider: "test",
+        config: {},
+        params: {},
+        output: {},
+        lastOperation: "create",
+        lastOperationAt: "2026-07-22T00:00:00.000Z",
+      },
+    });
+
+    const plan = await createPlan({
+      resources: [new NewResource("invoke-permission")],
+      state,
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toMatchObject([
+      { id: "invoke-permission", decision: "create" },
+      { id: "permission", type: "test/planner/old", decision: "delete-orphan" },
+    ]);
+  });
+
   it("propagates unexpected read failures", async () => {
-    const TestResource = resource({ type: "test/planner/read-failure" })
+    const TestResource = resource({
+      type: "test/planner/read-failure",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
@@ -65,6 +142,7 @@ describe("createPlan", () => {
         version: 1,
         id: "existing",
         type: TestResource.type,
+        provider: "test",
         config: {},
         params: {},
         output: {},
@@ -82,7 +160,10 @@ describe("createPlan", () => {
   });
 
   it("plans recreation when the resource reports absence", async () => {
-    const TestResource = resource({ type: "test/planner/absent" })
+    const TestResource = resource({
+      type: "test/planner/absent",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
@@ -96,6 +177,7 @@ describe("createPlan", () => {
         version: 1,
         id: "existing",
         type: TestResource.type,
+        provider: "test",
         config: {},
         params: {},
         output: {},
@@ -117,7 +199,10 @@ describe("createPlan", () => {
 
   it("waits for a pending read before planning", async () => {
     let attempts = 0;
-    const TestResource = resource({ type: "test/planner/pending" })
+    const TestResource = resource({
+      type: "test/planner/pending",
+      provider: "test",
+    })
       .defineSchema({})
       .defineOperations({
         create: async () => undefined,
@@ -138,6 +223,7 @@ describe("createPlan", () => {
         version: 1,
         id: "existing",
         type: TestResource.type,
+        provider: "test",
         config: {},
         params: {},
         output: {},
@@ -161,7 +247,7 @@ describe("createPlan", () => {
   it("plans a replacement, and its cascade to dependents, from the schema", async () => {
     // Casts: a resource declared without API types constrains every schema
     // key to be a key of an `any` API schema, which no named key satisfies.
-    const Role = resource({ type: "test/planner/role" })
+    const Role = resource({ type: "test/planner/role", provider: "test" })
       .defineSchema({
         name: {
           presence: "required",
@@ -182,7 +268,10 @@ describe("createPlan", () => {
         delete: async () => undefined,
       });
     // No update: any change replaces it.
-    const Attachment = resource({ type: "test/planner/attachment" })
+    const Attachment = resource({
+      type: "test/planner/attachment",
+      provider: "test",
+    })
       .defineSchema({
         roleName: {
           presence: "required",
@@ -207,6 +296,7 @@ describe("createPlan", () => {
       version: 1,
       id,
       type,
+      provider: "test",
       config: {},
       params,
       output: params,
@@ -261,16 +351,19 @@ describe("createPlan", () => {
       update: async () => undefined,
       delete: async () => undefined,
     };
-    const Bus = resource({ type: "test/planner/bus" })
+    const Bus = resource({ type: "test/planner/bus", provider: "test" })
       // Cast: see above.
       .defineSchema({ name } as any)
       .defineOperations(operations);
     // A bus whose name comes from a zone, so that it is unknown while the
     // zone is replaced.
-    const Zone = resource({ type: "test/planner/zone" })
+    const Zone = resource({ type: "test/planner/zone", provider: "test" })
       .defineSchema({ name } as any)
       .defineOperations(operations);
-    const ZoneBus = resource({ type: "test/planner/zone-bus" })
+    const ZoneBus = resource({
+      type: "test/planner/zone-bus",
+      provider: "test",
+    })
       .defineSchema({ name } as any)
       .defineOperations(operations)
       .requireDependencies<{ zone: BaseResource }>()
@@ -283,7 +376,7 @@ describe("createPlan", () => {
       type: `${string}/${string}/${string}`,
       blocksDeleteOf?: `${string}/${string}/${string}`[],
     ) =>
-      resource({ type, blocksDeleteOf })
+      resource({ type, provider: "test", blocksDeleteOf })
         .defineSchema({
           name,
           parent: {
@@ -316,6 +409,7 @@ describe("createPlan", () => {
       version: 1,
       id,
       type,
+      provider: "test",
       config: {},
       params,
       output: params,
@@ -575,7 +669,10 @@ describe("createPlan", () => {
 
   describe("leaves alone fields it cannot compare", () => {
     // Cast: see above.
-    const Role = resource({ type: "test/planner/role-fields" })
+    const Role = resource({
+      type: "test/planner/role-fields",
+      provider: "test",
+    })
       .defineSchema({
         name: {
           presence: "required",
@@ -611,6 +708,7 @@ describe("createPlan", () => {
             version: 1,
             id: "role",
             type: Role.type,
+            provider: "test",
             config: {},
             params: { name: "app", boundary: "arn:boundary" },
             output: { name: "app", boundary: "arn:boundary" },
@@ -648,7 +746,7 @@ describe("createPlan", () => {
 
   it("plans an unknown output value at its own path, and records the implied edge", async () => {
     // Cast: see above.
-    const Queue = resource({ type: "test/planner/queue" })
+    const Queue = resource({ type: "test/planner/queue", provider: "test" })
       .defineSchema({
         name: {
           presence: "required",
@@ -666,7 +764,7 @@ describe("createPlan", () => {
         create: async () => undefined,
         delete: async () => undefined,
       });
-    const Fn = resource({ type: "test/planner/function" })
+    const Fn = resource({ type: "test/planner/function", provider: "test" })
       .defineSchema({
         name: {
           presence: "required",
@@ -698,6 +796,7 @@ describe("createPlan", () => {
           version: 1,
           id: "fn",
           type: Fn.type,
+          provider: "test",
           config: {},
           params: { name: "f", env: { KEEP: "k" } },
           output: { name: "f", env: { KEEP: "k" } },
@@ -730,7 +829,7 @@ describe("createPlan", () => {
       CreateParams: { name: string; memory: number };
       UpdateParams: { memory: number };
       ReadResult: {};
-    }>({ type: "test/planner/validated-fn" })
+    }>({ type: "test/planner/validated-fn", provider: "test" })
       .defineSchema({
         name: {
           presence: "required",
@@ -760,6 +859,7 @@ describe("createPlan", () => {
           version: 1,
           id: "fn",
           type: Fn.type,
+          provider: "test",
           config: {},
           params: { name: "fn", memory: 128 },
           output: { name: "fn", memory: 128 },
@@ -784,7 +884,10 @@ describe("createPlan", () => {
 
     it("rejects an invalid known value next to an unknown output value", async () => {
       // Cast: see above.
-      const Queue = resource({ type: "test/planner/validated-queue" })
+      const Queue = resource({
+        type: "test/planner/validated-queue",
+        provider: "test",
+      })
         .defineSchema({
           name: {
             presence: "required",
@@ -802,7 +905,10 @@ describe("createPlan", () => {
           create: async () => undefined,
           delete: async () => undefined,
         });
-      const Env = resource({ type: "test/planner/validated-env" })
+      const Env = resource({
+        type: "test/planner/validated-env",
+        provider: "test",
+      })
         .defineSchema({
           name: {
             presence: "required",

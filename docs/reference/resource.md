@@ -22,7 +22,7 @@ const LambdaFunction = defineResource<{
   };
   UpdateParams: { FunctionName: string };
   ReadResult: { FunctionArn: string };
-}>({ type: "aws/lambda/LambdaFunction" })
+}>({ type: "aws/lambda/LambdaFunction", provider: "@notation/aws.iac" })
   .defineSchema({
     // params – input properties
     FunctionName: {
@@ -83,10 +83,11 @@ const LambdaFunction = defineResource<{
 
 `meta` defines runtime values for state tracking, reconciliation, and display
 
-| Field            | Purpose                                                                                                                           |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `type`           | a `platform/service/ResourceName` string (e.g. `aws/lambda/LambdaFunction`).                                                      |
-| `blocksDeleteOf` | `ResourceType[]?`. The types that the provider refuses to delete while a resource of this type depends on them. Defaults to `[]`. |
+| Field            | Purpose                                                                                                                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`           | a `platform/service/ResourceName` string (e.g. `aws/lambda/LambdaFunction`).                                                                                                     |
+| `provider`       | the name of the package that exports the class in its `resourceClasses` (e.g. `@notation/aws.iac`). State records it with the type. See [Provider packages](#provider-packages). |
+| `blocksDeleteOf` | `ResourceType[]?`. The types that the provider refuses to delete while a resource of this type depends on them. Defaults to `[]`.                                                |
 
 When deploy replaces a resource of a listed type, it first deletes each resource of this type that depends on it, and creates it again after the new resource. AWS, for example, does not delete an EventBridge bus that has rules, so `aws/eventBridge/rule` lists the bus type:
 
@@ -99,11 +100,21 @@ const eventBridgeRule = resource<EventBridgeRuleSchema>({
 
 List a type only when the provider refuses the delete. A dependent of a type that does not list the type stays in place, and deploy updates it when its params change. Write the type as a string literal when importing the class would make an import cycle. Nothing checks that a listed type exists, so a mistyped type is ignored. The resource class exposes the list as `blocksDeleteOf`, as it exposes `type`.
 
-**2. `resource({ type })`** – `type` defines
+**2. `resource({ type, provider })`** – `type` defines
 
 **3. `defineSchema()`** – maps each field to a schema item. See [Schema items](#schema-items) below.
 
 **4. `defineOperations()`** – CRUD handlers and error-handling config. See [Operations](#operations) below.
+
+### Provider packages
+
+When a resource's type no longer appears in code, deploy and destroy load the class from the package that `provider` names, to delete the resource. `@notation/core` resolves the package with `require.resolve` from the project, and then imports it. The package must meet these conditions, or the record is left in place with a `reconciler.provider.load-failed` warning:
+
+- Its `exports` must have a `require` or `default` condition. A package with only an `import` condition can't be resolved.
+- Its entry must export `resourceClasses`, an array that holds every resource class of the package.
+- The project, or a package in the project's dependency tree, must depend on it.
+
+A class defined in the project itself can name the project's package, if the project's `package.json` has `exports` that meet the first two conditions, as Node resolves a package's own name through its `exports`. Otherwise, pass the class to deploy and destroy in `registry`, so that they can delete its resources.
 
 ## Schema items
 

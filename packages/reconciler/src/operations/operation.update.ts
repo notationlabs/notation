@@ -84,6 +84,7 @@ export async function* updateResourceOperation(
       id: params.resource.id,
       group: params.resource.group,
       type: params.resource.type,
+      provider: params.resource.provider,
       lastOperation: "update",
       lastOperationAt: new Date().toISOString(),
       // State records the real outputs in place of output values.

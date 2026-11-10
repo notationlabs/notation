@@ -8,6 +8,7 @@ export type StateNode = {
   version: number;
   id: string;
   type: string;
+  provider: string;
   config: DurableObject;
   params: DurableObject;
   output: DurableObject;
