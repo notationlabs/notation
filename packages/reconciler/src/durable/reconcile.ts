@@ -14,7 +14,11 @@ import {
 } from "@notation/resource";
 import { VersionConflict, type StateNode } from "@notation/state";
 import { buildDepthLevels, collectDependents } from "../dependency-graph";
-import { createBlocksDelete, createClassOf } from "../delete-cascade";
+import {
+  createBlocksDelete,
+  createClassOf,
+  isDeleteBlockable,
+} from "../delete-cascade";
 import type { OperationLifecycleEvent } from "../events";
 import {
   createResourceRegistryFromResources,
@@ -295,6 +299,16 @@ async function* deleteBlockingDependents(
   opts: DurableDeployOptions,
   resource: BaseResource,
 ): AsyncGenerator<any, void, any> {
+  // Skips listing state, which copies every record into the journal.
+  if (
+    !isDeleteBlockable({
+      type: resource.type,
+      resources: opts.resources,
+      registry: opts.registry,
+    })
+  ) {
+    return;
+  }
   const records = yield* step.run("list", () => opts.state.values());
   const resourceById = new Map(
     opts.resources.map((desired) => [desired.id, desired]),

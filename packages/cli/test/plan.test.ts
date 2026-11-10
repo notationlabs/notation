@@ -26,6 +26,14 @@ it("prints why a dependent of a replaced resource is replaced", async () => {
     createdAt: "",
     nodes: [
       {
+        id: "bus",
+        type: "test/plan/bus",
+        decision: "replace",
+        replaceFields: [{ name: "name", known: true }],
+        params: {},
+        dependsOn: [],
+      },
+      {
         id: "rule",
         type: "test/plan/rule",
         decision: "replace",
@@ -40,8 +48,41 @@ it("prints why a dependent of a replaced resource is replaced", async () => {
 
   await plan(deployment, { logger });
 
-  expect(lines.slice(1, 3)).toEqual([
+  expect(lines.slice(3, 5)).toEqual([
     "-/+ replace test/plan/rule rule",
     "    deleted before bus is replaced",
+  ]);
+});
+
+it("prints that a dependent is deleted only if an unknown field replaces its dependency", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "bus",
+        type: "test/plan/bus",
+        decision: "replace",
+        replaceFields: [{ name: "name", known: false }],
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "rule",
+        type: "test/plan/rule",
+        decision: "replace",
+        replacedDependency: "bus",
+        params: {},
+        dependsOn: ["bus"],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(3, 5)).toEqual([
+    "-/+ replace test/plan/rule rule",
+    "    deleted if bus is replaced",
   ]);
 });

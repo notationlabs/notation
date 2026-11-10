@@ -97,7 +97,7 @@ const eventBridgeRule = resource<EventBridgeRuleSchema>({
 });
 ```
 
-List a type only when the provider refuses the delete. A dependent of a type that does not list the type stays in place, and deploy updates it when its params change. Write the type as a string literal when importing the class would make an import cycle. The resource class exposes the list as `blocksDeleteOf`, as it exposes `type`.
+List a type only when the provider refuses the delete. A dependent of a type that does not list the type stays in place, and deploy updates it when its params change. Write the type as a string literal when importing the class would make an import cycle. Nothing checks that a listed type exists, so a mistyped type is ignored. The resource class exposes the list as `blocksDeleteOf`, as it exposes `type`.
 
 **2. `resource({ type })`** – `type` defines
 

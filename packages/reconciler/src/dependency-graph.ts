@@ -150,6 +150,8 @@ export function collectDependents(
     }
   }
 
+  // Filtered from the keys of `edgesById`, not taken from `found`, so that
+  // the order does not depend on the order of the search.
   const { levels, unordered } = buildDepthLevels(
     [...edgesById.keys()].filter((dependentId) => found.has(dependentId)),
     (dependentId) => dependentId,

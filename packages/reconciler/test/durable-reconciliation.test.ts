@@ -2370,6 +2370,43 @@ describe("replacement with dependents", () => {
     runtime.close();
   });
 
+  it("does not list state to replace a resource whose type no class lists in blocksDeleteOf", async () => {
+    const world = defineWorld();
+    // The rule lists the bus type, so a class in code blocks the delete of
+    // a bus, but none blocks the delete of a function.
+    const declareTree = (fnName: string) => {
+      const bus = new world.Bus("bus", { config: { name: "orders" } as any });
+      const fn = new world.Permission("fn", {
+        config: { name: fnName } as any,
+        dependencies: { parent: bus },
+      });
+      const mapping = new world.Mapping("mapping", {
+        config: { name: "mapping" } as any,
+        dependencies: { parent: fn },
+      });
+      const rule = new world.Rule("rule", {
+        config: { name: "rule" } as any,
+        dependencies: { parent: bus },
+      });
+      return [bus, fn, mapping, rule];
+    };
+    const resources = declareTree("fn");
+    const runtime = createRuntime(resources, "replace-skips-listing");
+
+    await runtime.run("deploy-1");
+    const values = vi.spyOn(runtime.state, "values");
+    await runtime.run("deploy-1b");
+    const callsWithoutReplacement = values.mock.calls.length;
+    values.mockClear();
+    resources.splice(0, resources.length, ...declareTree("fn-2"));
+    world.calls.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(world.calls).toEqual(["delete:fn", "create:fn-2", "update:mapping"]);
+    expect(values.mock.calls.length).toBe(callsWithoutReplacement);
+    runtime.close();
+  });
+
   it("in a dry run, deletes nothing", async () => {
     const world = defineWorld();
     const withOld = (bus: BaseResource) => [

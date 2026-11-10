@@ -51,3 +51,23 @@ export function createBlocksDelete(classOf: ClassOf) {
     return classOf(dependentId)?.blocksDeleteOf.includes(type) ?? false;
   };
 }
+
+/**
+ * Whether any class in code or in the registry lists `type` in
+ * `blocksDeleteOf`. When none does, no resource blocks the delete of a
+ * resource of that type.
+ */
+export function isDeleteBlockable(opts: {
+  type: ResourceType;
+  resources: BaseResource[];
+  registry?: ResourceRegistry;
+}): boolean {
+  const classes = [
+    ...opts.resources.map(
+      (resource) =>
+        resource.constructor as unknown as ResourceClass<any, any, any>,
+    ),
+    ...(opts.registry?.values() ?? []),
+  ];
+  return classes.some((Class) => Class.blocksDeleteOf.includes(opts.type));
+}

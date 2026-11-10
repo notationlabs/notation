@@ -38,9 +38,9 @@ const eventBridgeRule = resource<EventBridgeRuleSchema>({
 });
 ```
 
-Set `blocksDeleteOf` only when the provider refuses to delete a resource of the listed type while a resource of this type depends on it. Each dependent it applies to is deleted and created again, and is gone in between. When importing the class would make an import cycle, write the type as a string literal. The resource class exposes the list as `blocksDeleteOf`, as it exposes `type`. In `@notation/aws.iac`, only `EventBridgeRule` sets it. It does not list `DefaultEventBus`, which is never deleted.
+Set `blocksDeleteOf` only when the provider refuses to delete a resource of the listed type while a resource of this type depends on it. Each dependent it applies to is deleted and created again, and is gone in between. When importing the class would make an import cycle, write the type as a string literal. Nothing checks that a listed type exists, so a mistyped type is ignored. The resource class exposes the list as `blocksDeleteOf`, as it exposes `type`. In `@notation/aws.iac`, only `EventBridgeRule` sets it. It does not list `DefaultEventBus`, which is never deleted.
 
-A dependent blocks the delete of a resource when it depends on the resource, and its class lists the type of the resource in `blocksDeleteOf`. When deploy replaces a resource, it runs these steps:
+A dependent blocks the delete of a resource when it depends directly on the resource, and its class lists the type of the resource in `blocksDeleteOf`. A dependent that reaches the resource only through a resource that does not block its delete is not deleted. When deploy replaces a resource, it runs these steps:
 
 1. Deploy deletes each dependent that blocks the delete of the replaced resource. It does the same for each dependent that blocks the delete of a resource deleted in this step. It deletes them in reverse order of the [edges in state](#dependency-edges). Then it deletes the resource.
 2. Deploy creates the resource again.
@@ -48,9 +48,11 @@ A dependent blocks the delete of a resource when it depends on the resource, and
 
 Every other dependent stays in place, and goes through the normal decision when deploy reaches it. For example, when a bus is renamed, its rules are deleted in step 1. The Lambda permission of a rule does not block the delete of the rule, so it stays in place. When deploy reaches it, the rule exists again with a new ARN, so the permission is replaced because its `SourceArn` changed. A function whose `env` holds the bus's name is updated in place.
 
+When no class in code or in the registry lists the type of the replaced resource, deploy skips step 1, and does not list the state records.
+
 Step 1 lists the state records when the replacement starts. A resource that deploy has already reached in this run has the edges in code in its record. A resource that deploy has not reached yet still has the edges of the resource that exists in the provider. A record written before edges were recorded uses the edges in code.
 
-A resource in code is checked with its own class. An orphan is checked with the registered class of the type in its state record, so state holds nothing extra for this. An orphan that blocks the delete is deleted in step 1, before the sweep.
+A resource in code is checked with its own class. An orphan is checked with the registered class of the type in its state record, so state holds nothing extra for this. An orphan that blocks the delete is deleted in step 1, before the sweep. This is so even when an orphan with no registered class depends on it, which the sweep would keep. If the provider refuses that delete, the deploy fails.
 
 An orphan whose type has no registered class is treated as not blocking the delete. When no registry is passed, as on the CLI, the registry is built from the resources in code. Suppose the deploy that renames a bus also removes the last EventBridge rule in code. The old rule has no registered class, so deploy deletes the bus without deleting the rule first, and AWS refuses the delete. Deploy may already have deleted other dependents in step 1. The next deploy creates them again, and fails at the bus in the same way.
 
@@ -75,7 +77,7 @@ Plan finds the same dependents with the same code. It shows each dependent in co
     deleted before eventbridge-bus:orders is replaced
 ```
 
-When the replaced resource depends on a field that is unknown at plan, its own entry says "unknown, may force replacement", and its dependents are shown as **replace** in the same way.
+When the replaced resource depends on a field that is unknown at plan, its own entry says "unknown, may force replacement". Its dependents are shown as **replace** in the same way, and `notation plan` prints `deleted if eventbridge-bus:orders is replaced`, because deploy deletes them only if it replaces the resource.
 
 ## Dependency check
 
