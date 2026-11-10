@@ -54,8 +54,12 @@ let events: ReconcilerEvent[];
 
 // Each package reads its classes from a global, so that the test and the
 // package share one class.
-function installPackage(name: string, classes?: unknown[]) {
-  const packageDir = path.join(root, "node_modules", ...name.split("/"));
+function installPackage(
+  name: string,
+  classes?: unknown[],
+  nodeModules = path.join(root, "node_modules"),
+) {
+  const packageDir = path.join(nodeModules, ...name.split("/"));
   fs.mkdirSync(path.join(packageDir, "dist"), { recursive: true });
   fs.writeFileSync(
     path.join(packageDir, "package.json"),
@@ -153,12 +157,47 @@ it("names the provider of each record, and the fallback packages for a record wi
 it("registers the resource classes of the packages it resolves from the project root", async () => {
   installPackage("@acme/queues", [Queue]);
   installPackage("@acme/empty");
-  const registry = await loadProviderRegistry([
-    "@acme/queues",
-    "@acme/empty",
-    "@acme/missing",
-  ]);
+  const registry = await loadProviderRegistry(
+    ["@acme/queues", "@acme/empty"],
+    root,
+  );
   expect([...registry]).toEqual([[Queue.type, Queue]]);
+});
+
+it("warns with the name of a package that it can't resolve, and skips it", async () => {
+  const warn = vi.fn();
+  const registry = await loadProviderRegistry(["@acme/missing"], root, warn);
+  expect([...registry]).toEqual([]);
+  expect(warn).toHaveBeenCalledOnce();
+  expect(warn.mock.calls[0][0]).toContain("@acme/missing");
+});
+
+// pnpm links only the project's own dependencies into its node_modules. A
+// dependency's dependencies sit next to it in the store.
+it("resolves a package that the project depends on through another package, as pnpm installs it", async () => {
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ dependencies: { "@acme/sdk": "1.0.0" } }),
+  );
+  const store = path.join(
+    root,
+    "node_modules",
+    ".pnpm",
+    "acme+sdk",
+    "node_modules",
+  );
+  installPackage("@acme/sdk", undefined, store);
+  installPackage("@acme/queues", [Queue], store);
+  fs.mkdirSync(path.join(root, "node_modules", "@acme"), { recursive: true });
+  fs.symlinkSync(
+    path.join(store, "@acme", "sdk"),
+    path.join(root, "node_modules", "@acme", "sdk"),
+  );
+
+  const warn = vi.fn();
+  const registry = await loadProviderRegistry(["@acme/queues"], root, warn);
+  expect([...registry]).toEqual([[Queue.type, Queue]]);
+  expect(warn).not.toHaveBeenCalled();
 });
 
 it("resolves the workspace's own provider packages from the repository root", async () => {
