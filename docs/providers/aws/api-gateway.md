@@ -31,7 +31,7 @@ type ApiConfig = {
 
 `name` replaces the `id` in the AWS name, so `api({ id: "todo-api", name: "todos" })` is named `my-app--prod--todos`. See [AWS names](../../manual/project-config.md#aws-names).
 
-The routes, integrations and permissions of an API take their state keys from the IDs that they connect. A route is keyed `api-route:<api id>:<METHOD> <path>`, such as `api-route:todo-api:POST /todos`, and an integration `api-integration:<api id>:<lambda id>`. So a change of `name` leaves them as they are.
+The routes, integrations and permissions of an API take their state keys from the IDs that they connect. A route is keyed `api-route:<api id>:<METHOD> <path>`, such as `api-route:todo-api:POST /todos`, an integration `api-integration:<api id>:<lambda id>`, and a permission `api-permission:<api id>:<lambda id>`. So a change of `name` leaves them as they are.
 
 `api()` also makes the `$default` stage, which deploys each change.
 

@@ -7,6 +7,7 @@ import {
   createTokenTagValue,
   withoutCreateTokenTag,
 } from "src/utils/create-token";
+import { executeApiSourceArn } from "src/templates/arn";
 import { awsCreate } from "src/utils/errors";
 import { findInPages } from "src/utils/paginate";
 import { AwsSchema } from "src/utils/types";
@@ -15,7 +16,7 @@ type ApiSdkSchema = AwsSchema<{
   Key: sdk.DeleteApiRequest;
   CreateParams: sdk.CreateApiRequest;
   UpdateParams: sdk.UpdateApiRequest;
-  ReadResult: sdk.GetApiResponse;
+  ReadResult: sdk.GetApiResponse & { ExecuteApiSourceArn: string };
 }>;
 
 const api = resource<ApiSdkSchema>({
@@ -39,6 +40,13 @@ const apiSchema = api.defineSchema({
     value: v.string(),
   },
   ApiEndpoint: {
+    propertyType: "computed",
+    presence: "required",
+    value: v.string(),
+  },
+  // Built from the API ID, so that a Lambda permission can place it whole as
+  // its SourceArn. GetApi does not return it.
+  ExecuteApiSourceArn: {
     propertyType: "computed",
     presence: "required",
     value: v.string(),
@@ -154,6 +162,7 @@ export const Api = apiSchema.defineOperations({
         RouteKey: "",
         ...result,
         Tags: withoutCreateTokenTag(result.Tags),
+        ExecuteApiSourceArn: await executeApiSourceArn(key.ApiId!),
       };
     } catch (error) {
       if (error instanceof sdk.NotFoundException) {

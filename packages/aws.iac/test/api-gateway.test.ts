@@ -14,6 +14,10 @@ import { Route } from "src/resources/api-gateway/route";
 import { CREATE_TOKEN_TAG, createTokenTagValue } from "src/utils/create-token";
 import { awsCallMayHaveTakenEffect } from "src/utils/errors";
 
+vi.mock("src/context", () => ({
+  getAwsAccountId: async () => "123456789012",
+}));
+
 const TOKEN = "notation:create:execution-1:api:0";
 
 afterEach(() => {
@@ -137,6 +141,9 @@ describe("API Gateway API", () => {
     expect(() =>
       validateValues(api, api.toResult(result), "read"),
     ).not.toThrow();
+    expect(result.ExecuteApiSourceArn).toBe(
+      "arn:aws:execute-api:us-west-2:123456789012:api-1/*/*",
+    );
   });
 
   it("rejects a protocol type that API Gateway does not have", () => {

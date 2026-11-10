@@ -1,5 +1,5 @@
 import { test, expect } from "vitest";
-import { eventBridge as iac } from "@notation/aws.iac";
+import { lambda as iac } from "@notation/aws.iac";
 import {
   collectResourceGraph,
   type ResourceGraph,
@@ -33,13 +33,31 @@ test("each schedule on a lambda gets its own invoke permission", async () => {
     schedule({ id: "hourly", schedule: rate(1, "hour"), target: fn });
   });
 
-  const rules = fn.resources
-    .filter((r) => r instanceof iac.LambdaEventBridgeRulePermission)
-    .map((r) => r.dependencies.eventBridgeRule);
+  const permissions = fn.resources.filter(
+    (r) => r instanceof iac.LambdaPermission,
+  );
 
-  expect(rules).toEqual([
-    scheduleGroup(graph, "daily").rule,
-    scheduleGroup(graph, "hourly").rule,
+  fn.fn.setOutput({ FunctionName: "orders" } as any);
+  scheduleGroup(graph, "daily").rule.setOutput({ Arn: "arn:daily" } as any);
+  scheduleGroup(graph, "hourly").rule.setOutput({ Arn: "arn:hourly" } as any);
+
+  expect(
+    await Promise.all(permissions.map((p) => p.getParams())),
+  ).toMatchObject([
+    {
+      StatementId: "eventbridge-permission_daily-b896f9ae98c7",
+      Principal: "events.amazonaws.com",
+      SourceArn: "arn:daily",
+    },
+    {
+      StatementId: "eventbridge-permission_hourly-d9a7590acb61",
+      Principal: "events.amazonaws.com",
+      SourceArn: "arn:hourly",
+    },
+  ]);
+  expect(permissions.map((p) => p.getDependencies())).toEqual([
+    [fn.fn, scheduleGroup(graph, "daily").rule],
+    [fn.fn, scheduleGroup(graph, "hourly").rule],
   ]);
 });
 
@@ -210,9 +228,9 @@ test("eventBridge.defineSchedule() in a declaration makes the rule and the permi
   expect(nightly.rule.dependencies.lambda).toBe(fn.fn);
   expect(
     fn.resources
-      .filter((r) => r instanceof iac.LambdaEventBridgeRulePermission)
-      .map((r) => r.dependencies.eventBridgeRule),
-  ).toEqual([nightly.rule]);
+      .filter((r) => r instanceof iac.LambdaPermission)
+      .map((r) => r.getDependencies()),
+  ).toEqual([[fn.fn, nightly.rule]]);
 });
 
 test("schedule() of a declaration that makes its own schedule throws", async () => {

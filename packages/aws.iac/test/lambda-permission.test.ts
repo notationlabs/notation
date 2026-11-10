@@ -1,49 +1,198 @@
-import { expect, test, vi } from "vitest";
-import { LambdaApiGatewayV2Permission } from "src/resources/lambda/lambda-api-permission";
-import { LambdaEventBridgeRulePermission } from "src/resources/event-bridge/lambda-permission";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as sdk from "@aws-sdk/client-lambda";
+import {
+  collectResourceGraph,
+  ResourceCreationUnknownError,
+  ResourceNotFoundError,
+  SchemaStructureError,
+  validateParams,
+} from "@notation/resource";
+import { lambdaClient } from "src/utils/aws-clients";
+import { LambdaPermission } from "src/resources/lambda/lambda-permission";
+import { Api } from "src/resources/api-gateway/api";
 import { statementId } from "src/utils/statement-id";
 
 vi.mock("src/context", () => ({
   getAwsAccountId: async () => "123456789012",
 }));
 
-const fn = { output: { FunctionName: "app--prod--orders" } } as any;
+const fn = {
+  output: { FunctionName: "app--prod--orders" },
+  schema: {},
+} as any;
+const key = { FunctionName: "app--prod--orders", StatementId: "events-daily" };
 
-test("a function routed from two APIs gets a statement per API", async () => {
-  const statementOf = async (ApiId: string) =>
-    (
-      await new LambdaApiGatewayV2Permission("p", {
-        dependencies: { lambda: fn, api: { output: { ApiId } } as any },
-      }).getParams()
-    ).StatementId;
+const permission = (config: Record<string, unknown> = {}) =>
+  new LambdaPermission("eventbridge-permission:daily", {
+    config: {
+      Action: "lambda:InvokeFunction",
+      Principal: "events.amazonaws.com",
+      SourceArn: "arn:aws:events:us-west-2:123456789012:rule/daily",
+      ...config,
+    },
+    dependencies: { lambda: fn },
+  });
 
-  expect(await statementOf("a1b2c3d4e5")).toBe("apigateway-a1b2c3d4e5");
-  expect(await statementOf("f6g7h8i9j0")).toBe("apigateway-f6g7h8i9j0");
+function mockSend(respond: (command: unknown) => unknown) {
+  return vi
+    .spyOn(lambdaClient(), "send")
+    .mockImplementation(async (command) => respond(command));
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
-test("a function on two schedules gets a statement per rule", async () => {
-  const statementOf = async (Name: string) =>
-    (
-      await new LambdaEventBridgeRulePermission("p", {
-        dependencies: {
-          lambda: fn,
-          eventBridgeRule: { output: { Name, Arn: `arn:${Name}` } } as any,
+describe("LambdaPermission", () => {
+  it("takes the function name from the lambda and lets the service invoke it", async () => {
+    expect(await permission().getParams()).toEqual({
+      FunctionName: "app--prod--orders",
+      Action: "lambda:InvokeFunction",
+      StatementId: "eventbridge-permission_daily-b896f9ae98c7",
+      Principal: "events.amazonaws.com",
+      SourceArn: "arn:aws:events:us-west-2:123456789012:rule/daily",
+    });
+  });
+
+  it("takes the Action from config", async () => {
+    expect(
+      (await permission({ Action: "lambda:InvokeFunctionUrl" }).getParams())
+        .Action,
+    ).toBe("lambda:InvokeFunctionUrl");
+  });
+
+  it("requires an Action", async () => {
+    const resource = new LambdaPermission("p", {
+      config: { Principal: "events.amazonaws.com" } as any,
+      dependencies: { lambda: fn },
+    });
+    await expect(
+      validateParams(resource, await resource.getParams(), "deploy"),
+    ).rejects.toThrow(SchemaStructureError);
+  });
+
+  it("can be declared without a SourceArn", async () => {
+    const params = await new LambdaPermission("p", {
+      config: {
+        Action: "lambda:InvokeFunction",
+        Principal: "events.amazonaws.com",
+      },
+      dependencies: { lambda: fn },
+    }).getParams();
+    expect(params).not.toHaveProperty("SourceArn");
+  });
+
+  it("places the source's output value as its SourceArn", async () => {
+    let held!: InstanceType<typeof LambdaPermission>;
+    let api!: InstanceType<typeof Api>;
+    await collectResourceGraph(() => {
+      api = new Api("api", { config: { Name: "app", ProtocolType: "HTTP" } });
+      held = new LambdaPermission("p", {
+        config: {
+          Action: "lambda:InvokeFunction",
+          Principal: "apigateway.amazonaws.com",
+          SourceArn: api.outputValue("ExecuteApiSourceArn"),
         },
-      }).getParams()
-    ).StatementId;
+        dependencies: { lambda: fn },
+      });
+    });
+    expect(held.getDependencies()).toContain(api);
 
-  expect(await statementOf("app--prod--daily")).toBe("events-app--prod--daily");
-  expect(await statementOf("app--prod--hourly")).toBe(
-    "events-app--prod--hourly",
-  );
+    api.setOutput({
+      ExecuteApiSourceArn: "arn:aws:execute-api:us-west-2:1:abc/*/*",
+    } as any);
+    expect((await held.getParams()).SourceArn).toBe(
+      "arn:aws:execute-api:us-west-2:1:abc/*/*",
+    );
+  });
+
+  it("reads its statement from the function's policy", async () => {
+    mockSend(() => ({
+      Policy: JSON.stringify({
+        Statement: [
+          { Sid: "other", Action: "lambda:InvokeFunction" },
+          {
+            Sid: "events-daily",
+            Effect: "Allow",
+            Principal: { Service: "events.amazonaws.com" },
+            Action: "lambda:InvokeFunction",
+            Resource: "arn:aws:lambda:us-west-2:123456789012:function:orders",
+            Condition: {
+              ArnLike: {
+                "AWS:SourceArn":
+                  "arn:aws:events:us-west-2:123456789012:rule/daily",
+              },
+            },
+          },
+        ],
+      }),
+    }));
+
+    expect(await permission().read!(key)).toMatchObject({
+      Action: "lambda:InvokeFunction",
+      Principal: "events.amazonaws.com",
+      SourceArn: "arn:aws:events:us-west-2:123456789012:rule/daily",
+    });
+  });
+
+  it("reads a statement that is not in the policy as not found", async () => {
+    mockSend(() => ({ Policy: JSON.stringify({ Statement: [] }) }));
+    await expect(permission().read!(key)).rejects.toSatisfy(
+      ResourceNotFoundError.is,
+    );
+  });
+
+  it("reads a function with no policy as not found", async () => {
+    mockSend(() => {
+      throw new sdk.ResourceNotFoundException({
+        message: "The resource you requested does not exist.",
+        $metadata: {},
+      });
+    });
+    await expect(permission().read!(key)).rejects.toSatisfy(
+      ResourceNotFoundError.is,
+    );
+  });
+
+  it("deletes a statement that is already gone", async () => {
+    mockSend(() => {
+      throw new sdk.ResourceNotFoundException({ message: "", $metadata: {} });
+    });
+    await expect(permission().delete(key, {} as any)).resolves.toBeUndefined();
+  });
+
+  it("reports a create that gets a server error as unknown", async () => {
+    mockSend(() => {
+      throw { $metadata: { httpStatusCode: 503 } };
+    });
+    await expect(
+      permission().create(await permission().getParams()),
+    ).rejects.toSatisfy(ResourceCreationUnknownError.is);
+  });
 });
 
-test("a StatementId replaces characters that Lambda doesn't allow", () => {
-  expect(statementId("events", "my.rule")).toBe("events-my_rule");
-});
+describe("statementId", () => {
+  it("keeps an ID that Lambda accepts", () => {
+    expect(statementId("api-permission_todos")).toBe("api-permission_todos");
+  });
 
-test("a StatementId longer than 100 characters throws", () => {
-  expect(() => statementId("events", "a".repeat(94))).toThrow(
-    "longer than 100 characters",
-  );
+  it("replaces characters that Lambda doesn't allow, and ends the ID with a hash", () => {
+    expect(statementId("api-permission:todo-api:todos")).toBe(
+      "api-permission_todo-api_todos-54afaaeaf3ac",
+    );
+  });
+
+  it("gives different IDs to two IDs that differ only in a replaced character", () => {
+    expect(statementId("p:a.b")).not.toBe(statementId("p:a_b"));
+    expect(statementId("p:a_b")).not.toBe("p_a_b");
+  });
+
+  it("cuts an ID longer than 100 characters, and ends it with a hash", () => {
+    const long = `api-permission:${"a".repeat(64)}:${"b".repeat(64)}`;
+    const other = `api-permission:${"a".repeat(64)}:${"c".repeat(64)}`;
+
+    expect(statementId(long)).toHaveLength(100);
+    expect(statementId(long)).toMatch(/^[0-9A-Za-z_-]+$/);
+    expect(statementId(long)).not.toBe(statementId(other));
+  });
 });
