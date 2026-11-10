@@ -446,29 +446,25 @@ test("a standard queue with the ARN of a FIFO dead-letter queue throws", async (
   ).rejects.toThrow("is a standard queue, but its dead-letter queue");
 });
 
-test.each([
-  "orders-dlq",
-  "arn:aws:sns:eu-west-2:123456789012:orders-dlq",
-  "arn:aws:sqs:eu-west-2:orders-dlq",
-  "https://sqs.eu-west-2.amazonaws.com/123456789012/orders-dlq",
-  `arn:aws:sqs:eu-west-2:123456789012:${"a".repeat(81)}`,
-  `arn:aws:sqs:eu-west-2:123456789012:${"a".repeat(76)}.fifo`,
-])(
-  "a dead-letter queue string that is not an SQS ARN throws: %s",
-  async (arn) => {
-    await expect(
-      collectResourceGraph(() => {
-        queue({
-          id: "orders",
-          schema: Unknown,
-          deadLetterQueue: { queue: arn, maxReceiveCount: 3 },
-        });
-      }),
-    ).rejects.toThrow(
-      `queue() "orders" has a dead-letter queue "${arn}", which is not the ARN of an SQS queue.`,
-    );
-  },
-);
+test("a dead-letter queue given as the arn of a queue from queue() sets the redrive policy", async () => {
+  let orders!: ReturnType<typeof queue>;
+  let dlq!: ReturnType<typeof queue>;
+  await collectResourceGraph(() => {
+    dlq = queue({ id: "orders-dlq", schema: Unknown });
+    orders = queue({
+      id: "orders",
+      schema: Unknown,
+      deadLetterQueue: { queue: dlq.arn, maxReceiveCount: 3 },
+    });
+  });
+  deploy(dlq);
+
+  expect(orders.queue.getDependencies()).toContain(dlq.queue);
+  expect((await orders.queue.getParams()).RedrivePolicy).toEqual({
+    deadLetterTargetArn: queueArn("orders-dlq"),
+    maxReceiveCount: 3,
+  });
+});
 
 test("a standard queue with a FIFO option throws", async () => {
   await expect(

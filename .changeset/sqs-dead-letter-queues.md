@@ -23,7 +23,7 @@ export const lambda = $lambda({
 });
 ```
 
-- `deadLetterQueue: { queue, maxReceiveCount }` sets the queue's `RedrivePolicy`. `queue` is a queue from `queue()`, which then deploys first, or the ARN of a queue that Notation doesn't manage. `queue()` throws when a string is not an SQS ARN, and when one queue is FIFO and the other is standard. Removing `deadLetterQueue` removes the policy.
+- `deadLetterQueue: { queue, maxReceiveCount }` sets the queue's `RedrivePolicy`. `queue` is a queue from `queue()`, which then deploys first, or the ARN of a queue that Notation doesn't manage. `queue()` throws when one queue is FIFO and the other is standard. Removing `deadLetterQueue` removes the policy.
 - `maximumMessageSize` sets `MaximumMessageSize`. Removing it sets the queue back to 1,048,576 bytes.
 - `contentBasedDeduplication`, `deduplicationScope` and `fifoThroughputLimit` set the FIFO attributes of the same names. `queue()` throws when a standard queue sets one of them, and when `fifoThroughputLimit: "perMessageGroupId"` comes without `deduplicationScope: "messageGroup"`. Removing one sets it back to the SQS default.
 - **Breaking:** the mapping option `maxBatchingWindow` is now `maximumBatchingWindow`, to follow the AWS name `MaximumBatchingWindowInSeconds`. Rename it in each `sqs.bind()` and `eventSourceMapping()` call.

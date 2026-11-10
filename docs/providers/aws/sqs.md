@@ -130,11 +130,11 @@ export const orderQueue = queue({
 });
 ```
 
-`queue()` throws when the string doesn't have the form of an SQS ARN, `arn:<partition>:sqs:<region>:<account>:<name>`. Notation doesn't check that the queue exists. SQS requires the dead-letter queue to be in the same account and region as the queue.
+Notation doesn't check the ARN or that the queue exists. SQS rejects a bad ARN at deploy. SQS requires the dead-letter queue to be in the same account and region as the queue.
 
 The queue's `RedrivePolicy` holds the ARN of the dead-letter queue. When the dead-letter queue comes from `queue()`, the queue depends on the dead-letter queue, which deploys first. When you remove `deadLetterQueue`, Notation removes the policy from the queue, and leaves the dead-letter queue and its messages.
 
-A FIFO queue needs a FIFO dead-letter queue, and a standard queue needs a standard one. `queue()` throws when the two queues are of different types. For an ARN, `queue()` reads the type from the queue's name, the last part of the ARN: SQS requires the name of a FIFO queue to end in `.fifo`.
+A FIFO queue needs a FIFO dead-letter queue, and a standard queue needs a standard one. `queue()` throws when the two queues are of different types. For an ARN, `queue()` reads the type from the end of the ARN, because SQS requires the name of a FIFO queue to end in `.fifo`. When `queue` is the `arn` output value of a queue from `queue()`, the ARN is not known until deploy, so `queue()` doesn't check the type, and SQS rejects a mismatch at deploy.
 
 For a standard queue, a moved message keeps the time it was first sent, and the dead-letter queue's `messageRetentionPeriod` counts from that time. So give the dead-letter queue a longer `messageRetentionPeriod` than the queue.
 

@@ -98,7 +98,7 @@ export class QueueGroup<
   constructor({ schema, ...config }: QueueConfig<S>) {
     assertId("queue()", config.id);
     assertName("queue()", config.name);
-    assertFifoOptions(config);
+    assertQueueOptions(config);
     const name = config.name ?? config.id;
     const queueName = awsName("sqsQueue", config.fifo ? `${name}.fifo` : name);
     super("aws/sqs/queue", config.id, config);
@@ -120,9 +120,9 @@ export class QueueGroup<
           MaximumMessageSize: config.maximumMessageSize,
           RedrivePolicy: config.deadLetterQueue && {
             deadLetterTargetArn:
-              typeof config.deadLetterQueue.queue === "string"
-                ? config.deadLetterQueue.queue
-                : config.deadLetterQueue.queue.arn,
+              config.deadLetterQueue.queue instanceof QueueGroup
+                ? config.deadLetterQueue.queue.arn
+                : config.deadLetterQueue.queue,
             maxReceiveCount: config.deadLetterQueue.maxReceiveCount,
           },
           ContentBasedDeduplication: config.contentBasedDeduplication,
@@ -183,10 +183,8 @@ export class QueueGroup<
   }
 }
 
-// SQS rejects the FIFO attributes on a standard queue, a per-message-group
-// throughput limit without per-message-group deduplication, and a
-// dead-letter queue of the other type, but only at deploy.
-function assertFifoOptions(config: Omit<QueueConfig, "schema">): void {
+// SQS rejects these options only at deploy.
+function assertQueueOptions(config: Omit<QueueConfig, "schema">): void {
   const fifo = config.fifo ?? false;
   if (!fifo) {
     const set = (
@@ -198,7 +196,7 @@ function assertFifoOptions(config: Omit<QueueConfig, "schema">): void {
     ).filter((option) => config[option] !== undefined);
     if (set.length > 0) {
       throw new Error(
-        `queue() "${config.id}" sets ${set.join(", ")}, which only a FIFO queue has. Set fifo: true, or remove ${set.length > 1 ? "them" : "it"}.`,
+        `queue() "${config.id}" sets ${set.join(", ")}, which only a FIFO queue has. Set fifo: true, or remove the options.`,
       );
     }
   }
@@ -210,31 +208,26 @@ function assertFifoOptions(config: Omit<QueueConfig, "schema">): void {
       `queue() "${config.id}" sets fifoThroughputLimit: "perMessageGroupId", which SQS allows only with deduplicationScope: "messageGroup".`,
     );
   }
-  const dlq = config.deadLetterQueue?.queue;
-  if (dlq === undefined) return;
-  if (typeof dlq === "string") assertQueueArn(config.id, dlq);
-  const dlqName = typeof dlq === "string" ? dlq : `"${dlq.id}"`;
-  // SQS requires a FIFO queue's name to end in .fifo, so the name of an ARN
-  // tells its type.
-  const dlqFifo =
-    typeof dlq === "string"
-      ? dlq.split(":").pop()!.endsWith(".fifo")
-      : (dlq.config.fifo ?? false);
-  if (dlqFifo !== fifo) {
-    throw new Error(
-      `queue() "${config.id}" is a ${fifo ? "FIFO" : "standard"} queue, but its dead-letter queue ${dlqName} is ${fifo ? "a standard" : "a FIFO"} queue. SQS needs both queues to be of the same type.`,
-    );
-  }
+  assertDeadLetterQueueType(config.id, fifo, config.deadLetterQueue?.queue);
 }
 
-// A queue name has at most 80 characters, including the .fifo suffix.
-const SQS_ARN =
-  /^arn:[a-z-]+:sqs:[a-z0-9-]+:\d{12}:(?:[A-Za-z0-9_-]{1,80}|[A-Za-z0-9_-]{1,75}\.fifo)$/;
-
-function assertQueueArn(id: string, arn: string): void {
-  if (!SQS_ARN.test(arn)) {
+// The type of a queue from queue() is in its config. A FIFO queue's name ends
+// in .fifo, so the ARN of another queue tells its type. The ARN of a queue
+// from queue() is an output value, which is not known until deploy, so it is
+// not checked.
+function assertDeadLetterQueueType(
+  id: string,
+  fifo: boolean,
+  dlq: DeadLetterQueueConfig["queue"] | undefined,
+): void {
+  let dlqFifo: boolean;
+  if (dlq instanceof QueueGroup) dlqFifo = dlq.config.fifo ?? false;
+  else if (typeof dlq === "string") dlqFifo = dlq.endsWith(".fifo");
+  else return;
+  if (dlqFifo !== fifo) {
+    const dlqName = typeof dlq === "string" ? dlq : `"${dlq.id}"`;
     throw new Error(
-      `queue() "${id}" has a dead-letter queue "${arn}", which is not the ARN of an SQS queue. An SQS ARN has the form arn:<partition>:sqs:<region>:<account>:<name>.`,
+      `queue() "${id}" is a ${fifo ? "FIFO" : "standard"} queue, but its dead-letter queue ${dlqName} is ${fifo ? "a standard" : "a FIFO"} queue. SQS needs both queues to be of the same type.`,
     );
   }
 }
