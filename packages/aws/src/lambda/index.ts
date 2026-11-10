@@ -16,3 +16,4 @@ export {
   type LambdaConfig,
 } from "./lambda";
 export { ID_MAX_LENGTH, isNameSafe, type NameSafe } from "src/id";
+export type * from "./handler";

@@ -1,5 +1,5 @@
 import * as aws from "src/resources";
-import { AwsResourceGroup } from "src/shared/resource-group";
+import { AwsResourceGroup } from "src/resource-group";
 import type { StandardSchemaV1 } from "@notation/resource";
 import { resolveLambda, whenLoaded } from "src/lambda/lambda-declaration";
 import type { LambdaGroup } from "src/lambda/lambda";

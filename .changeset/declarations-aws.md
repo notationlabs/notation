@@ -40,7 +40,7 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 - Wiring a declaration whose event doesn't match fails: a queue needs an `sqs` Lambda, a route an `apiGateway` Lambda, and a schedule an `eventBridge` Lambda. A Lambda without `event` can be wired to any of them.
 - `eventSourceMapping()` fails for a declaration that maps a queue itself with `sqs.bind(queue)`, and for a declaration with `sqs.schema(schema)` when the queue's schema is another object than `schema`. `eventSourceMapping()` also takes a declaration with `sqs.schema()` only if its schema has the type of the queue's schema, so a mismatch is a type error. A declaration with no `event`, and a Lambda group from `lambda()`, can read any queue.
 - `schedule()` takes `target` in place of `handler`, and the rule sends the EventBridge event unchanged.
-- `APIGatewayJWTProxyEventV2<Claims>` in `@notation/aws/shared` keeps the whole request context, and `TypedClaimsOverride` is removed.
+- `APIGatewayJWTProxyEventV2<Claims>` in `@notation/aws/lambda` keeps the whole request context, and `TypedClaimsOverride` is removed.
 - The runtime build resolves `@notation/aws/lambda` to an entry without infra code, through the `notation-runtime` export condition.
 - Lambda IDs are 1 to 64 letters, digits, hyphens or underscores. `lambda()` takes `timeout` and `memory`, and `handler` defaults to `"handler"`.
 - `@notation/aws` recognises a Lambda group by a symbol, not by `instanceof`, so a group from another installed copy of the package passes its checks.

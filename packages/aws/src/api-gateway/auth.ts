@@ -1,5 +1,5 @@
 import * as aws from "src/resources";
-import { AwsResourceGroup } from "src/shared/resource-group";
+import { AwsResourceGroup } from "src/resource-group";
 import type { StandardSchemaV1 } from "@notation/resource";
 import type { AuthorizerSource } from "src/lambda/declaration";
 import { assertId, assertName, resourceId, type IdOption } from "src/id";

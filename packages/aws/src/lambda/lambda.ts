@@ -1,5 +1,5 @@
 import * as aws from "src/resources";
-import { AwsResourceGroup } from "src/shared/resource-group";
+import { AwsResourceGroup } from "src/resource-group";
 import * as std from "@notation/std/resources";
 import { getActiveResourceCollection } from "@notation/resource";
 import path from "path";

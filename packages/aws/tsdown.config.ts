@@ -8,7 +8,6 @@ export default defineConfig({
     "src/lambda/runtime.ts",
     "src/resources/index.ts",
     "src/sqs/index.ts",
-    "src/shared/index.ts",
   ],
   format: "esm",
   platform: "node",

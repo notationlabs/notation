@@ -1,5 +1,5 @@
 import * as aws from "src/resources";
-import { AwsResourceGroup } from "src/shared/resource-group";
+import { AwsResourceGroup } from "src/resource-group";
 import type { ApiGatewayRoute, ApiSource } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import { assertId, assertName, resourceId, type NameSafe } from "src/id";
