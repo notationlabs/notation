@@ -207,7 +207,7 @@ type SqsOptions = {
 
 When you remove an option, Notation sets the mapping back to the Lambda default.
 
-A `batchSize` over 10 needs a `maximumBatchingWindow` of at least 1 second, and a FIFO queue allows a `batchSize` of at most 10. Lambda would reject either at deploy, so the mapping throws when infra loads.
+A `batchSize` over 10 needs a `maximumBatchingWindow` of at least 1 second. A FIFO queue allows a `batchSize` of at most 10, and no `maximumBatchingWindow`. Lambda would reject these at deploy, so the mapping throws when infra loads.
 
 `maximumConcurrency` is the most instances of the function that the mapping invokes at once, from 2 to 1,000. It limits this mapping only. The function's reserved concurrency limits the function as a whole.
 
@@ -243,6 +243,8 @@ export const handler: LambdaHandler<typeof lambda> = async (event) => {
 ```
 
 Without the option, Lambda ignores the result and deletes every message in the batch, including the failed ones. So for a declaration with `sqs.bind()`, `LambdaHandler` lets the handler return `{ batchItemFailures }` only when `reportBatchItemFailures` is `true`. For a declaration with `sqs.schema()`, infra makes the mapping, so `LambdaHandler` allows either result, and you must set the option on `eventSourceMapping()`. A message that keeps failing returns to the queue until it expires, or until SQS moves it to the [dead-letter queue](#dead-letter-queues).
+
+The loop above continues after a failed message, which suits a standard queue. A handler of a FIFO queue must stop at the first failed message, and report it and every message after it in the batch. Otherwise Lambda deletes the later messages of the group before the failed one is processed, and the group's order is lost.
 
 ### Validating messages
 
