@@ -40,19 +40,6 @@ export type SqsEvent<
   };
 };
 
-// `true` or `false` when the options set reportBatchItemFailures to a
-// literal or leave it out, and `boolean` when they set it to a boolean.
-// The key is checked first: `{ batchSize: 5 }` does not extend
-// `{ reportBatchItemFailures?: false }`, as the two types share no property.
-type ReportsFailures<O extends SqsOptions> =
-  "reportBatchItemFailures" extends keyof O
-    ? O["reportBatchItemFailures"] extends true
-      ? true
-      : O["reportBatchItemFailures"] extends false | undefined
-        ? false
-        : boolean
-    : false;
-
 /**
  * A queue that `sqs.bind()` reads, from `queue()`. In the function it holds only
  * the queue's schema, as the runtime build replaces the queue with it.
@@ -88,6 +75,29 @@ export type LambdaEvent = SqsEvent | ApiGatewayEvent | EventBridgeScheduleEvent;
 /** The kind of a Lambda's event, or `none` for a Lambda declared without one. */
 export type LambdaEventKind = LambdaEvent["kind"] | "none";
 
+// The overloads type the handler's result from reportBatchItemFailures: `true`,
+// `false` or left out, or a `boolean`.
+function bindSqs<S extends StandardSchemaV1>(
+  queue: SqsSource<S>,
+  options: SqsOptions & { reportBatchItemFailures: true },
+): SqsEvent<S, true>;
+function bindSqs<S extends StandardSchemaV1>(
+  queue: SqsSource<S>,
+  options?: Omit<SqsOptions, "reportBatchItemFailures"> & {
+    reportBatchItemFailures?: false;
+  },
+): SqsEvent<S, false>;
+function bindSqs<S extends StandardSchemaV1>(
+  queue: SqsSource<S>,
+  options: SqsOptions,
+): SqsEvent<S>;
+function bindSqs<S extends StandardSchemaV1>(
+  queue: SqsSource<S>,
+  options?: SqsOptions,
+): SqsEvent<S> {
+  return { kind: "sqs", schema: queue.schema, queue, options };
+}
+
 /**
  * The function receives SQS messages: from a queue that the declaration maps,
  * with `sqs.bind(queue)`, or from queues that infra maps to it, with
@@ -100,16 +110,7 @@ export const sqs = {
    * with the queue's schema. In the runtime build, a queue from an infra
    * module is replaced with its runtime options, as `{ schema }`.
    */
-  bind<S extends StandardSchemaV1, const O extends SqsOptions = {}>(
-    queue: SqsSource<S>,
-    // The mapped type rejects unknown option names. TypeScript doesn't check
-    // a generic argument for excess properties.
-    options?: O & { [K in Exclude<keyof O, keyof SqsOptions>]: never },
-  ): SqsEvent<S, ReportsFailures<O>> {
-    // TypeScript can't relate O to ReportsFailures<O>.
-    const typed = options as SqsEvent<S, ReportsFailures<O>>["options"];
-    return { kind: "sqs", schema: queue.schema, queue, options: typed };
-  },
+  bind: bindSqs,
   /**
    * The function receives SQS messages, from queues that infra maps to it
    * with `eventSourceMapping()`. `decode()` validates each message's JSON
