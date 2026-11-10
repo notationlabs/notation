@@ -222,8 +222,13 @@ function assertBatchOptions(
   options: SqsOptions,
 ): void {
   const { batchSize, maximumBatchingWindow } = options;
-  if (batchSize === undefined || batchSize <= 10) return;
   const mapping = `The mapping of the queue "${queueId}" to the Lambda "${lambdaId}"`;
+  if (fifo && maximumBatchingWindow) {
+    throw new Error(
+      `${mapping} sets maximumBatchingWindow: ${maximumBatchingWindow}, but Lambda doesn't support a batching window for a FIFO queue.`,
+    );
+  }
+  if (batchSize === undefined || batchSize <= 10) return;
   if (fifo) {
     throw new Error(
       `${mapping} sets batchSize: ${batchSize}, but Lambda allows at most 10 for a FIFO queue.`,

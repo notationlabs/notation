@@ -595,15 +595,26 @@ test("a batchSize over 10 on a FIFO queue throws", async () => {
     collectResourceGraph(() => {
       const fn = lambda({ id: "process", code });
       const ledger = queue({ id: "ledger", fifo: true, schema: Unknown });
+      eventSourceMapping({ source: ledger, target: fn, batchSize: 20 });
+    }),
+  ).rejects.toThrow(
+    'sets batchSize: 20, but Lambda allows at most 10 for a FIFO queue.',
+  );
+});
+
+test("a batching window on a FIFO queue throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const fn = lambda({ id: "process", code });
+      const ledger = queue({ id: "ledger", fifo: true, schema: Unknown });
       eventSourceMapping({
         source: ledger,
         target: fn,
-        batchSize: 20,
         maximumBatchingWindow: 5,
       });
     }),
   ).rejects.toThrow(
-    'sets batchSize: 20, but Lambda allows at most 10 for a FIFO queue.',
+    "sets maximumBatchingWindow: 5, but Lambda doesn't support a batching window for a FIFO queue.",
   );
 });
 
