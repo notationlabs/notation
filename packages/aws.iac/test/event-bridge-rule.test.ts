@@ -198,6 +198,19 @@ test("read returns the event pattern in compact form", async () => {
   });
 });
 
+test("a pattern in config is sent in compact form", async () => {
+  const pretty = new EventBridgeRule("pretty", {
+    config: {
+      ...key,
+      EventPattern: '{\n  "source": ["shop"]\n}',
+      Targets: [{ Id: "fn", Arn: "arn:fn" }],
+    },
+    dependencies: { lambda: {} as any },
+  });
+
+  expect((await pretty.getParams()).EventPattern).toBe('{"source":["shop"]}');
+});
+
 test("update sends the rule's state and event pattern to PutRule", async () => {
   mockExistingTargets(["fn"]);
   const params = {

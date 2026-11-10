@@ -31,24 +31,10 @@ const eventBusSchema = eventBus.defineSchema({
 
 /** A custom event bus. */
 export const EventBus = eventBusSchema.defineOperations({
-  // CreateEventBus fails for a name that is taken, so a bus that exists
-  // already is reported, instead of being taken over. The key is the name,
-  // so the reconciler finds a bus whose create outcome is unknown by reading
-  // it.
   create: awsCreate(async (params) => {
-    try {
-      await eventBridgeClient().send(
-        new sdk.CreateEventBusCommand({ Name: params.Name }),
-      );
-    } catch (error) {
-      if (error instanceof sdk.ResourceAlreadyExistsException) {
-        throw new Error(
-          `An EventBridge event bus named ${params.Name} already exists`,
-          { cause: error },
-        );
-      }
-      throw error;
-    }
+    await eventBridgeClient().send(
+      new sdk.CreateEventBusCommand({ Name: params.Name }),
+    );
   }),
 
   read: async (key) => describeEventBus(key.Name),

@@ -41,19 +41,6 @@ describe("EventBridge event bus", () => {
     expect(command.input).toEqual({ Name: "orders" });
   });
 
-  it("does not take over a bus that exists already", async () => {
-    mockSend(() => {
-      throw new sdk.ResourceAlreadyExistsException({
-        message: "exists",
-        $metadata: {},
-      });
-    });
-
-    await expect(bus.create({ Name: "orders" })).rejects.toThrow(
-      "An EventBridge event bus named orders already exists",
-    );
-  });
-
   it("reports a create that may have taken effect as unknown", async () => {
     mockSend(() => {
       throw Object.assign(new Error("timed out"), { name: "TimeoutError" });

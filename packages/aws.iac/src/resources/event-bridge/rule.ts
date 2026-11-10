@@ -251,11 +251,7 @@ export const EventBridgeRule = eventBridgeRuleSchema
         const { EventPattern } = ruleDescriptionResult;
         return {
           ...ruleDescriptionResult,
-          // The pattern is compared as a string, so it is read in the
-          // compact form that JSON.stringify writes.
-          EventPattern: EventPattern
-            ? JSON.stringify(JSON.parse(EventPattern))
-            : undefined,
+          EventPattern: EventPattern && compactJson(EventPattern),
           ...listRuleTargetsResult,
         };
       } catch (error) {
@@ -367,6 +363,25 @@ export const EventBridgeRule = eventBridgeRuleSchema
     },
   })
   .requireDependencies<EventBridgeRuleDependencies>()
-  .deriveParams(() => ({}));
+  .deriveParams(({ config }) => {
+    // Typed as `{}`, because a param that deriveParams returns is removed
+    // from the config type, and the pattern is set in config.
+    const derived: {} =
+      config.EventPattern === undefined
+        ? {}
+        : { EventPattern: compactJson(config.EventPattern) };
+    return derived;
+  });
+
+// The pattern is compared as a string, so the configured pattern and the
+// pattern that is read are both put in the compact form that JSON.stringify
+// writes. A pattern that is not JSON is left for AWS to reject.
+function compactJson(json: string): string {
+  try {
+    return JSON.stringify(JSON.parse(json));
+  } catch {
+    return json;
+  }
+}
 
 export type EventBridgeRuleInstance = InstanceType<typeof EventBridgeRule>;
