@@ -31,29 +31,15 @@ export type PlanNode = {
   diff?: PlanDiff;
   replaceFields?: ReplaceField[];
   /**
-   * Set when deploy deletes this resource before a resource it depends on
-   * is replaced, because this resource blocks that delete. Deploy then
-   * creates it again, so it is replaced too. Lists the resources in code
-   * that it depends on, directly, blocks the delete of, and that are
-   * replaced.
+   * Set when deploy deletes this resource before it replaces a resource this
+   * one depends on, directly or through other deleted resources, because
+   * this resource blocks that delete. Deploy then creates it again, so it is
+   * replaced too. The ID of the replaced resource, as in the delete event's
+   * `replacedDependency`.
    */
-  replacedDependencies?: DependencyChange[];
-  /**
-   * As `replacedDependencies`, for the dependencies that are orphans. Deploy
-   * deletes them with this resource, before the replaced resource.
-   */
-  deletedDependencies?: DependencyChange[];
+  replacedDependency?: string;
   params: Record<string, unknown>;
   dependsOn: string[];
-};
-
-export type DependencyChange = {
-  id: string;
-  /**
-   * False when the change happens only if a field that is unknown until
-   * deploy forces a replacement.
-   */
-  known: boolean;
 };
 
 export type Plan = {

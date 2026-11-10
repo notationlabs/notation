@@ -13,11 +13,8 @@ import {
   type ResourceType,
 } from "@notation/resource";
 import { VersionConflict, type StateNode } from "@notation/state";
-import { buildDepthLevels } from "../dependency-graph";
-import {
-  collectBlockingDependents,
-  createDeleteBlocks,
-} from "../delete-cascade";
+import { buildDepthLevels, collectDependents } from "../dependency-graph";
+import { createBlocksDelete, createClassOf } from "../delete-cascade";
 import type { OperationLifecycleEvent } from "../events";
 import {
   createResourceRegistryFromResources,
@@ -286,7 +283,8 @@ async function* replaceResource(
  * edges in state. Each of them that is still declared has no record
  * afterwards, so deploy creates it again when it reaches it, after
  * `resource` has been created again. Each orphan among them is gone before
- * the sweep reaches it. Every other dependent stays in place.
+ * the sweep reaches it. Every other dependent stays in place, including one
+ * with no class.
  *
  * Records are listed when the replacement starts. Deploy has written the
  * edges in code for every resource it has reached by then, and a resource it
@@ -297,10 +295,7 @@ async function* deleteBlockingDependents(
   opts: DurableDeployOptions,
   resource: BaseResource,
 ): AsyncGenerator<any, void, any> {
-  const removed = removedInDryRun.get(opts);
-  const records = (yield* step.run("list", () => opts.state.values())).filter(
-    (node) => !removed?.has(node.id),
-  );
+  const records = yield* step.run("list", () => opts.state.values());
   const resourceById = new Map(
     opts.resources.map((desired) => [desired.id, desired]),
   );
@@ -308,34 +303,24 @@ async function* deleteBlockingDependents(
   const edgesById = new Map(
     records.map((node) => [node.id, recordedEdges(node, resourceById)]),
   );
-  const deleteBlocks = createDeleteBlocks({
+  const classOf = createClassOf({
     records,
     resources: opts.resources,
     registry: opts.registry,
   });
-
-  // Every dependent is checked before the first delete, so that a dependent
-  // with no class that may block the delete fails the replacement before it
-  // changes anything.
-  const dependents = collectBlockingDependents(
+  const dependents = collectDependents(
     resource.id,
     edgesById,
-    deleteBlocks,
-  ).map((id) => ({
-    node: recordById.get(id)!,
-    Resource: deleteBlocks.classOf(id)!,
-  }));
+    createBlocksDelete(classOf),
+  );
 
-  for (const { node, Resource } of dependents) {
+  for (const id of dependents) {
     yield* deleteResource(
-      step.scope(encodeURIComponent(node.id)),
-      await instantiateRecord(Resource, node),
+      step.scope(encodeURIComponent(id)),
+      await instantiateRecord(classOf(id)!, recordById.get(id)!),
       opts,
       { reason: "dependency-replaced", replacedDependency: resource.id },
     );
-    // A dry run keeps the record. The rest of the run treats the resource as
-    // deleted, as a deploy would, so that it decides create for it.
-    removed?.add(node.id);
   }
 }
 
@@ -496,26 +481,6 @@ function collectDependencies(
 }
 
 /**
- * The IDs of the resources that a dry run of deploy has deleted so far, for
- * each run. A dry run does not remove their records, so its reads skip them.
- */
-const removedInDryRun = new WeakMap<DurableWorkflowOptions, Set<string>>();
-
-/**
- * Starts tracking the resources that a dry run deletes. Returns the options
- * that the run must pass on: the tracking is keyed by the object, so that
- * each run tracks its own.
- */
-export function trackDryRunDeletes<T extends DurableWorkflowOptions>(
-  opts: T,
-): T {
-  if (!opts.dryRun) return opts;
-  const runOpts = { ...opts };
-  removedInDryRun.set(runOpts, new Set());
-  return runOpts;
-}
-
-/**
  * Reads the persisted record once and binds the writes conditional on it.
  *
  * The snapshot is the precondition: it names the exact store instance and
@@ -532,9 +497,7 @@ async function* openStateSession(
   );
   const persist = persistResourceState(step, opts, resource, snapshot);
   const node = toStateNode(snapshot);
-  if (!node || removedInDryRun.get(opts)?.has(resource.id)) {
-    return { node: undefined, persist };
-  }
+  if (!node) return { node: undefined, persist };
 
   return {
     node,

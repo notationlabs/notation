@@ -126,11 +126,8 @@ export function buildDepthLevels<T>(
 export function collectDependents(
   id: string,
   edgesById: Map<string, string[]>,
-  /**
-   * Whether the edge from `dependentId` to `dependencyId` is followed. By
-   * default every edge is.
-   */
-  follows: (dependentId: string, dependencyId: string) => boolean = () => true,
+  /** Whether the edge from `dependentId` to `dependencyId` is followed. */
+  follows: (dependentId: string, dependencyId: string) => boolean,
 ): string[] {
   const dependentsById = new Map<string, string[]>();
   for (const [dependentId, edges] of edgesById) {

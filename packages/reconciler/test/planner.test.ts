@@ -11,7 +11,6 @@ import {
 import { MemoryStateBackend } from "@notation/state";
 import { describe, expect, it } from "vitest";
 import { createPlan } from "../src/planner";
-import { createResourceRegistry } from "../src/resource-registry";
 
 describe("createPlan", () => {
   it("plans desired creates and persisted orphans without mutation execution", async () => {
@@ -282,7 +281,7 @@ describe("createPlan", () => {
     // that it is replaced only because deploy deletes it before its parent.
     const defineChild = (
       type: `${string}/${string}/${string}`,
-      blocksDeleteOf?: () => { type: any }[],
+      blocksDeleteOf?: `${string}/${string}/${string}`[],
     ) =>
       resource({ type, blocksDeleteOf })
         .defineSchema({
@@ -299,15 +298,15 @@ describe("createPlan", () => {
           parent: (deps.parent.output as any).name,
         }));
     // A rule blocks the delete of its bus, as on AWS.
-    const Rule = defineChild("test/planner/rule", () => [Bus, ZoneBus]);
+    const Rule = defineChild("test/planner/rule", [Bus.type, ZoneBus.type]);
     // A target blocks the delete of its rule.
-    const Target = defineChild("test/planner/target", () => [Rule]);
+    const Target = defineChild("test/planner/target", [Rule.type]);
     // A permission, or a function with the bus name in its env, does not
     // block the delete of what it depends on.
     const Permission = defineChild("test/planner/permission");
     // A rule of a type that no resource in code has, so that plan has no
     // class for it unless it is registered.
-    const Stray = defineChild("test/planner/stray", () => [Bus, ZoneBus]);
+    const Stray = defineChild("test/planner/stray", [Bus.type, ZoneBus.type]);
     const record = (
       id: string,
       type: string,
@@ -330,7 +329,7 @@ describe("createPlan", () => {
         dependencies: { parent },
       });
 
-    it("directly and transitively, naming the replaced dependency", async () => {
+    it("directly and transitively, naming the replaced resource", async () => {
       const state = new MemoryStateBackend({
         bus: record("bus", Bus.type, { name: "orders" }, []),
         rule: record("rule", Rule.type, { name: "rule", parent: "orders" }, [
@@ -376,22 +375,23 @@ describe("createPlan", () => {
         expect.objectContaining({
           id: "rule",
           decision: "replace",
-          replacedDependencies: [{ id: "bus", known: true }],
+          replacedDependency: "bus",
         }),
         // The bus's name is unknown until it is created again.
         expect.objectContaining({ id: "fn", decision: "update" }),
         expect.objectContaining({
           id: "target",
           decision: "replace",
-          replacedDependencies: [{ id: "rule", known: true }],
+          replacedDependency: "bus",
         }),
         expect.objectContaining({ id: "permission", decision: "update" }),
       ]);
       for (const id of ["bus", "other", "fn", "permission"]) {
         const node = plan.nodes.find((node) => node.id === id);
-        expect(node).not.toHaveProperty("replacedDependencies");
-        expect(node).not.toHaveProperty("deletedDependencies");
+        expect(node).not.toHaveProperty("replacedDependency");
       }
+      // The rule is created again, so the diff of its parent does not apply.
+      expect(plan.nodes[2]).not.toHaveProperty("diff");
     });
 
     it("by the edges in state, for a dependent that moves to another resource", async () => {
@@ -417,7 +417,7 @@ describe("createPlan", () => {
       expect(plan.nodes[2]).toMatchObject({
         id: "rule",
         decision: "replace",
-        replacedDependencies: [{ id: "orders", known: true }],
+        replacedDependency: "orders",
       });
     });
 
@@ -446,15 +446,10 @@ describe("createPlan", () => {
         "replace",
         "replace",
       ]);
-      expect(plan.nodes[2]).toMatchObject({
-        replacedDependencies: [
-          { id: "a", known: true },
-          { id: "b", known: true },
-        ],
-      });
+      expect(plan.nodes[2]).toMatchObject({ replacedDependency: "a" });
     });
 
-    it("says that a dependency may be replaced when an unknown field may force it", async () => {
+    it("when an unknown field may force the replacement", async () => {
       const state = new MemoryStateBackend({
         zone: record("zone", Zone.type, { name: "eu" }, []),
         bus: record("bus", ZoneBus.type, { name: "eu" }, ["zone"]),
@@ -482,12 +477,12 @@ describe("createPlan", () => {
         expect.objectContaining({
           id: "rule",
           decision: "replace",
-          replacedDependencies: [{ id: "bus", known: false }],
+          replacedDependency: "bus",
         }),
       ]);
     });
 
-    it("names an orphan in the cascade as deleted, not replaced", async () => {
+    it("through an orphan in the cascade", async () => {
       const state = new MemoryStateBackend({
         bus: record("bus", Bus.type, { name: "orders" }, []),
         "old-rule": record(
@@ -519,14 +514,13 @@ describe("createPlan", () => {
         expect.objectContaining({
           id: "target",
           decision: "replace",
-          deletedDependencies: [{ id: "old-rule", known: true }],
+          replacedDependency: "bus",
         }),
         expect.objectContaining({ id: "old-rule", decision: "delete-orphan" }),
       ]);
-      expect(plan.nodes[2]).not.toHaveProperty("replacedDependencies");
     });
 
-    it("fails when an orphan with no class depends on the replaced resource, and a known class lists its type", async () => {
+    it("treats an orphan with no registered class as not blocking the delete", async () => {
       const state = new MemoryStateBackend({
         bus: record("bus", Bus.type, { name: "orders" }, []),
         "old-rule": record(
@@ -537,90 +531,17 @@ describe("createPlan", () => {
         ),
       });
       const bus = new Bus("bus", { config: { name: "shop" } as any });
-      const message =
-        "Cannot replace bus: old-rule depends on it in state, and no registered class has its type test/planner/stray";
-
-      // Rule lists Bus, as a class of a resource in code.
-      await expect(
-        createPlan({
-          resources: [bus, child(Rule, "rule", bus)],
-          state,
-          driftDetection: false,
-        }),
-      ).rejects.toThrow(message);
-      // Rule lists Bus, as a registered class.
-      await expect(
-        createPlan({
-          resources: [bus],
-          state,
-          driftDetection: false,
-          registry: createResourceRegistry([Bus, Rule]),
-        }),
-      ).rejects.toThrow(message);
 
       const plan = await createPlan({
-        resources: [bus],
-        state,
-        driftDetection: false,
-        registry: createResourceRegistry([Bus, Rule, Stray]),
-      });
-      expect(plan.nodes.map(({ id, decision }) => ({ id, decision }))).toEqual([
-        { id: "bus", decision: "replace" },
-        { id: "old-rule", decision: "delete-orphan" },
-      ]);
-    });
-
-    it("replaces a resource whose type no known class lists, when an orphan with no class depends on it", async () => {
-      const state = new MemoryStateBackend({
-        bus: record("bus", Bus.type, { name: "orders" }, []),
-        "old-rule": record(
-          "old-rule",
-          Rule.type,
-          { name: "old-rule", parent: "orders" },
-          ["bus"],
-        ),
-      });
-      const bus = new Bus("bus", { config: { name: "shop" } as any });
-
-      const plan = await createPlan({
-        resources: [bus, child(Permission, "fn", bus)],
+        resources: [bus, child(Rule, "rule", bus)],
         state,
         driftDetection: false,
       });
 
       expect(plan.nodes.map(({ id, decision }) => ({ id, decision }))).toEqual([
         { id: "bus", decision: "replace" },
-        { id: "fn", decision: "create" },
+        { id: "rule", decision: "create" },
         { id: "old-rule", decision: "delete-orphan" },
-      ]);
-    });
-
-    it("does not fail for an orphan with no class when the replacement is not certain", async () => {
-      const state = new MemoryStateBackend({
-        zone: record("zone", Zone.type, { name: "eu" }, []),
-        bus: record("bus", ZoneBus.type, { name: "eu" }, ["zone"]),
-        "old-rule": record(
-          "old-rule",
-          Stray.type,
-          { name: "old-rule", parent: "eu" },
-          ["bus"],
-        ),
-      });
-      const zone = new Zone("zone", { config: { name: "us" } as any });
-      const bus = new ZoneBus("bus", { dependencies: { zone } } as any);
-
-      // Rule lists ZoneBus, so the orphan may block the delete of the bus.
-      const plan = await createPlan({
-        resources: [zone, bus, child(Rule, "rule", bus)],
-        state,
-        driftDetection: false,
-      });
-
-      expect(plan.nodes.map((node) => node.decision)).toEqual([
-        "replace",
-        "replace",
-        "create",
-        "delete-orphan",
       ]);
     });
   });

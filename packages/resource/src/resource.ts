@@ -112,8 +112,6 @@ export type ResourceGroupRef = { type: string; id: string };
 
 export interface BaseResource {
   readonly type: ResourceType;
-  /** See `DefineResourceMeta.blocksDeleteOf`. */
-  readonly blocksDeleteOf: readonly ResourceTypeRef[];
   readonly schema: Schema;
   readonly config: any;
   id: string;
@@ -202,10 +200,6 @@ export abstract class Resource<
   // would be missing from what was read, so `contribute` throws.
   #sealed = false;
   abstract type: ResourceType;
-  /** See `DefineResourceMeta.blocksDeleteOf`. */
-  get blocksDeleteOf(): readonly ResourceTypeRef[] {
-    return [];
-  }
   abstract schema: Schema;
   abstract create: (
     params: T["params"],
@@ -607,26 +601,20 @@ function withoutUndefined(
   return defined;
 }
 
-/** A resource class, as `blocksDeleteOf` names it. */
-export type ResourceTypeRef = { readonly type: ResourceType };
-
 export type DefineResourceMeta = {
   type: ResourceType;
   /**
-   * The resource classes that the provider refuses to delete while a
-   * resource of this type depends on them. For example, AWS does not delete
-   * an EventBridge bus that has rules, so the rule type lists `EventBus`.
+   * The types that the provider refuses to delete while a resource of this
+   * type depends on them. For example, AWS does not delete an EventBridge bus
+   * that has rules, so the rule type lists `EventBus.type`.
    *
-   * When deploy replaces a resource of a listed class, it first deletes each
+   * When deploy replaces a resource of a listed type, it first deletes each
    * resource of this type that depends on it in state. It then deletes the
    * resource, creates it again, and creates the dependents again. A
-   * dependent of a type that does not list the class stays in place, and
+   * dependent of a type that does not list the type stays in place, and
    * deploy updates it when its params change.
-   *
-   * Pass a function that returns the classes when a class cannot be
-   * imported as a value without an import cycle.
    */
-  blocksDeleteOf?: ResourceTypeRef[] | (() => ResourceTypeRef[]);
+  blocksDeleteOf?: ResourceType[];
 };
 
 export type ResourceOperationsOptions<
@@ -701,7 +689,7 @@ export type ResourceClass<
   new (id: string, ...args: ResourceArgs<C, D>): Resource<T, D, C>;
   readonly type: ResourceType;
   /** See `DefineResourceMeta.blocksDeleteOf`. */
-  readonly blocksDeleteOf: readonly ResourceTypeRef[];
+  readonly blocksDeleteOf: readonly ResourceType[];
   requireDependencies: <
     Dependencies extends Record<string, BaseResource | void>,
   >() => ResourceDependenciesBuilder<T, IntrinsicParams, Dependencies>;
@@ -731,17 +719,6 @@ export type ResourceBuilder<ApiSchema extends DefineResourceApiSchema> = {
     schema: S,
   ) => ResourceSchemaBuilder<InferResourceTypes<ResolveSchema<S>>>;
 };
-
-// Resolved when read, not when the class is defined, so that a function
-// passed to `blocksDeleteOf` can name a class that is defined later.
-function resolveBlocksDeleteOf(
-  meta: DefineResourceMeta,
-): readonly ResourceTypeRef[] {
-  const { blocksDeleteOf = [] } = meta;
-  return typeof blocksDeleteOf === "function"
-    ? blocksDeleteOf()
-    : blocksDeleteOf;
-}
 
 export function defineResource<ApiSchema extends DefineResourceApiSchema>(
   meta: DefineResourceMeta,
@@ -779,12 +756,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
           > extends Resource<T, NoInfer<D>, NoInfer<C>> {
             static type = meta.type;
             type = meta.type;
-            static get blocksDeleteOf() {
-              return resolveBlocksDeleteOf(meta);
-            }
-            get blocksDeleteOf() {
-              return resolveBlocksDeleteOf(meta);
-            }
+            static blocksDeleteOf = meta.blocksDeleteOf ?? [];
             schema = schema;
             create = opts.create;
             find = opts.find;

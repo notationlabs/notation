@@ -1890,7 +1890,7 @@ describe("replacement with dependents", () => {
     // deletes it before its parent.
     const defineChild = (
       type: `${string}/${string}/${string}`,
-      blocksDeleteOf?: () => { type: any }[],
+      blocksDeleteOf?: `${string}/${string}/${string}`[],
     ) =>
       resource({ type, blocksDeleteOf })
         .defineSchema({
@@ -1906,12 +1906,12 @@ describe("replacement with dependents", () => {
         .deriveParams(({ deps }) => ({
           parent: (deps.parent.output as any).name,
         }));
-    const Rule = defineChild("test/durable/world-rule", () => [Bus]);
-    const Target = defineChild("test/durable/world-target", () => [Rule]);
+    const Rule = defineChild("test/durable/world-rule", [Bus.type]);
+    const Target = defineChild("test/durable/world-target", [Rule.type]);
     const Permission = defineChild("test/durable/world-permission");
     // A rule of a type that only an orphan has, so that deploy has no class
     // for it.
-    const Stray = defineChild("test/durable/world-stray", () => [Bus]);
+    const Stray = defineChild("test/durable/world-stray", [Bus.type]);
     // A mapping on a function, which does not block the delete of the
     // function.
     const Mapping = defineChild("test/durable/world-mapping");
@@ -2132,7 +2132,7 @@ describe("replacement with dependents", () => {
     runtime.close();
   });
 
-  it("deletes nothing when a dependent has no registered class and a known class lists the type it depends on", async () => {
+  it("treats a dependent with no registered class as not blocking the delete, so the provider refuses the delete", async () => {
     const world = defineWorld();
     const withStray = (bus: BaseResource) => [
       new world.Stray("stray", {
@@ -2144,18 +2144,15 @@ describe("replacement with dependents", () => {
     const runtime = createRuntime(resources, "replace-unregistered-dependent");
 
     await runtime.run("deploy-1");
-    // The rule in code lists the bus type, so the stray may block the delete
-    // of the bus.
     resources.splice(0, resources.length, ...declare(world, "shop"));
     world.calls.length = 0;
     await expect(runtime.run("deploy-2")).rejects.toThrow(
-      "Cannot replace bus: stray depends on it in state, and no registered class has its type test/durable/world-stray, so deploy cannot tell whether stray must be deleted first. " +
-        "This happens when the last resource of a type is removed in the same deploy that replaces a resource it depends on. " +
-        "Declare a resource of type test/durable/world-stray again, or deploy the change that replaces bus before you remove the last resource of that type.",
+      "orders can't be deleted since it is in use",
     );
 
-    expect(world.calls).toEqual([]);
-    for (const id of ["bus", "rule", "permission", "stray"]) {
+    expect(world.calls).toEqual(["delete:rule"]);
+    expect(await runtime.state.get("rule")).toBeUndefined();
+    for (const id of ["bus", "permission", "stray"]) {
       expect(await runtime.state.get(id)).toBeDefined();
     }
     runtime.close();
@@ -2373,7 +2370,7 @@ describe("replacement with dependents", () => {
     runtime.close();
   });
 
-  it("in a dry run, deletes nothing, and decides create for the dependents it would delete", async () => {
+  it("in a dry run, deletes nothing", async () => {
     const world = defineWorld();
     const withOld = (bus: BaseResource) => [
       new world.Rule("old-rule", {
@@ -2406,16 +2403,15 @@ describe("replacement with dependents", () => {
     await runtime.run("dry-run");
 
     expect(world.calls).toEqual([]);
-    // A dry run does not create the new bus, so the function reads the old
-    // bus's name.
+    // A dry run keeps the records it would delete, and does not create the
+    // new bus, so the rule and the function read the old bus's name.
     expect(decisions(events)).toEqual({
       bus: "replace",
-      rule: "create",
+      rule: "noop",
       permission: "noop",
       fn: "noop",
     });
-    // Each dependent is deleted once: the sweep does not delete the orphan
-    // again.
+    // The sweep reports the delete of the orphan a second time.
     expect(
       events
         .filter(
@@ -2426,18 +2422,7 @@ describe("replacement with dependents", () => {
         )
         .map((event: any) => event.resourceId)
         .sort(),
-    ).toEqual(["bus", "old-rule", "rule"]);
-    expect(
-      events.filter(
-        (event) =>
-          event.event === "reconciler.operation.lifecycle" &&
-          event.operation === "create" &&
-          event.status === "dry-run",
-      ),
-    ).toEqual([
-      expect.objectContaining({ resourceId: "bus" }),
-      expect.objectContaining({ resourceId: "rule" }),
-    ]);
+    ).toEqual(["bus", "old-rule", "old-rule", "rule"]);
     expect(await runtime.state.get("rule")).toMatchObject({
       params: { name: "rule", parent: "orders" },
     });

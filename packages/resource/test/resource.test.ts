@@ -23,35 +23,15 @@ describe("resource basics", () => {
   });
 
   test("blocksDeleteOf", () => {
-    const Parent = resource({ type: "provider/service/parent" })
-      .defineSchema({})
-      .defineOperations({} as any);
     const Child = resource({
       type: "provider/service/child",
-      blocksDeleteOf: [Parent],
+      blocksDeleteOf: ["provider/service/parent"],
     })
       .defineSchema({})
       .defineOperations({} as any);
 
     expect(TestResource.blocksDeleteOf).toEqual([]);
-    expect(testResource.blocksDeleteOf).toEqual([]);
-    expect(Child.blocksDeleteOf).toEqual([Parent]);
-    expect(new Child("0").blocksDeleteOf).toEqual([Parent]);
-  });
-
-  test("blocksDeleteOf with a function, which is called when it is read", () => {
-    const Child = resource({
-      type: "provider/service/child",
-      blocksDeleteOf: () => [Parent],
-    })
-      .defineSchema({})
-      .defineOperations({} as any);
-    const Parent = resource({ type: "provider/service/parent" })
-      .defineSchema({})
-      .defineOperations({} as any);
-
-    expect(Child.blocksDeleteOf).toEqual([Parent]);
-    expect(new Child("0").blocksDeleteOf).toEqual([Parent]);
+    expect(Child.blocksDeleteOf).toEqual(["provider/service/parent"]);
   });
 
   test("setOutput", () => {

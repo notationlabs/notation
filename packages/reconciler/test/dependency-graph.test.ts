@@ -156,6 +156,7 @@ describe("collectDependents", () => {
           fn: [],
           target: ["permission"],
         }),
+        () => true,
       ),
     ).toEqual(["target", "permission", "rule"]);
   });
@@ -165,6 +166,7 @@ describe("collectDependents", () => {
       collectDependents(
         "bus",
         edges({ bus: [], a: ["bus"], b: ["bus"], shared: ["a", "b"] }),
+        () => true,
       ),
     ).toEqual(["shared", "a", "b"]);
   });
@@ -174,6 +176,7 @@ describe("collectDependents", () => {
       collectDependents(
         "bus",
         edges({ bus: ["x"], rule: ["bus"], x: ["y"], y: ["x", "bus"] }),
+        () => true,
       ),
     ).toEqual(["x", "y", "rule"]);
   });
@@ -196,6 +199,8 @@ describe("collectDependents", () => {
   });
 
   it("returns nothing for a resource with no dependents", () => {
-    expect(collectDependents("bus", edges({ bus: [], rule: [] }))).toEqual([]);
+    expect(
+      collectDependents("bus", edges({ bus: [], rule: [] }), () => true),
+    ).toEqual([]);
   });
 });

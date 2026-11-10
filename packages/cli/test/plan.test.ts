@@ -29,13 +29,9 @@ it("prints why a dependent of a replaced resource is replaced", async () => {
         id: "rule",
         type: "test/plan/rule",
         decision: "replace",
-        replacedDependencies: [
-          { id: "bus", known: true },
-          { id: "other-bus", known: false },
-        ],
-        deletedDependencies: [{ id: "old-bus", known: true }],
+        replacedDependency: "bus",
         params: {},
-        dependsOn: ["bus", "other-bus"],
+        dependsOn: ["bus"],
       },
     ],
   });
@@ -44,10 +40,8 @@ it("prints why a dependent of a replaced resource is replaced", async () => {
 
   await plan(deployment, { logger });
 
-  expect(lines.slice(1, 5)).toEqual([
+  expect(lines.slice(1, 3)).toEqual([
     "-/+ replace test/plan/rule rule",
-    "    depends on bus, which is replaced",
-    "    depends on other-bus, which may be replaced",
-    "    depends on old-bus, which is deleted",
+    "    deleted before bus is replaced",
   ]);
 });
