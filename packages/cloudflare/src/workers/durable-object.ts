@@ -1,4 +1,4 @@
-import { getDeclaredIn } from "@notation/resource";
+import { getActiveResourceCollection, getDeclaredIn } from "@notation/resource";
 import { assertNamespaceId, perCollection } from "src/id";
 import type {
   DurableObjectClass,
@@ -37,10 +37,7 @@ export function registeredNamespace(value: unknown): Registered | undefined {
     : undefined;
 }
 
-const declaredIds = perCollection(
-  "namespaceIds",
-  () => new Map<string, string>(),
-);
+const declaredIds = perCollection("namespaceIds", () => new Set<string>());
 
 /**
  * Declares a Durable Object namespace. A Worker binds it in its `bindings`,
@@ -65,13 +62,15 @@ export function $durableObject<
       `$durableObject({ id: "${config.id}" }) expects class to name a class that its module declares or imports, such as \`class: Counter\`. Cloudflare finds the class by the name that the Worker exports it under.`,
     );
   }
-  const ids = declaredIds();
-  if (ids.has(config.id)) {
-    throw new Error(
-      `Duplicate $durableObject id "${config.id}": another namespace in this deployment already uses it. Give each namespace a unique id.`,
-    );
+  if (getActiveResourceCollection()) {
+    const ids = declaredIds();
+    if (ids.has(config.id)) {
+      throw new Error(
+        `Duplicate $durableObject id "${config.id}": another namespace in this deployment already uses it. Give each namespace a unique id.`,
+      );
+    }
+    ids.add(config.id);
   }
-  ids.set(config.id, className);
   const declaration = { id: config.id } as DurableObjectDeclaration<C>;
   Object.defineProperty(declaration, registration, {
     value: { className } satisfies Registered,

@@ -14,10 +14,6 @@ import type { WorkerDeclarationConfig } from "./worker";
 
 export type * from "./declaration";
 
-// The same values as in `worker.ts`, which the runtime build can't import.
-export const DEFAULT_COMPATIBILITY_DATE = "2026-10-12";
-export const DEFAULT_COMPATIBILITY_FLAGS = ["nodejs_compat"];
-
 /** The Worker's view of its declaration. Its code reads bindings from `env`. */
 export function $worker<const Id extends string, B extends Bindings = {}>(
   config: WorkerDeclarationConfig<Id, B>,

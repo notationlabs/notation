@@ -158,6 +158,15 @@ describe("WorkerScript", () => {
     );
   });
 
+  it("fails, and doesn't report the create as unknown, when the check for an existing Worker fails", async () => {
+    mockFetch(() => fail(502, 0, "bad gateway"));
+
+    const error = await script.create(params).catch((e) => e);
+    expect(error).not.toBeInstanceOf(ResourceCreationUnknownError);
+    expect(error.message).toContain("failed with status 502");
+    expect(calls).toHaveLength(1);
+  });
+
   it("waits and tries again when the API is rate limited", async () => {
     mockFetch(
       () => new Response("", { status: 429, headers: { "Retry-After": "2" } }),
@@ -250,14 +259,28 @@ describe("WorkerScript", () => {
 });
 
 describe("durableObjectExports", () => {
-  it("keeps a class that another namespace now uses live", () => {
-    expect(
-      durableObjectExports(
-        [{ id: "b", className: "Counter" }],
-        [{ id: "a", className: "Counter" }],
-      ),
-    ).toEqual({ Counter: { type: "durable-object", storage: "sqlite" } });
-  });
+  it.each([
+    [
+      "whose namespace was removed",
+      [{ id: "b", className: "Counter" }],
+      [{ id: "a", className: "Counter" }],
+    ],
+    [
+      "whose namespace now has another class",
+      [
+        { id: "a", className: "Counter2" },
+        { id: "b", className: "Counter" },
+      ],
+      [{ id: "a", className: "Counter" }],
+    ],
+  ])(
+    "fails when a new namespace takes a class %s",
+    (_, hosted, previous) => {
+      expect(() => durableObjectExports(hosted, previous)).toThrow(
+        `The Durable Object namespace "b" has the class Counter, which the namespace "a" had before.`,
+      );
+    },
+  );
 });
 
 describe("WorkerSubdomain", () => {

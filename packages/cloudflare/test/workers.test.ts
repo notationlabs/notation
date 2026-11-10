@@ -235,6 +235,63 @@ describe("$worker", () => {
     );
   });
 
+  it("fails for two Workers that bind each other", async () => {
+    await expect(
+      collect(() => {
+        const api: unknown = inWorker(
+          $worker({ id: "api", bindings: () => ({ REPORTS: reports }) }),
+          "runtime/api.ts",
+        );
+        const reports = inWorker(
+          $worker({ id: "reports", bindings: () => ({ API: api as any }) }),
+          "runtime/reports.ts",
+        );
+      }),
+    ).rejects.toThrow(
+      `The Workers "api" → "reports" → "api" bind each other in a cycle.`,
+    );
+  });
+
+  it("fails when the host of a namespace binds a Worker that binds the namespace on it", async () => {
+    await expect(
+      collect(() => {
+        const counters = inModule(
+          $durableObject({ id: "counters", class: Counter }),
+          "runtime/counter.ts",
+        );
+        const api: unknown = inWorker(
+          $worker({
+            id: "api",
+            bindings: () => ({ COUNTERS: counters, REPORTS: reports }),
+          }),
+          "runtime/api.ts",
+          ["Counter"],
+        );
+        const reports = inWorker(
+          $worker({
+            id: "reports",
+            bindings: () => ({ COUNTERS: counters, API: api as any }),
+          }),
+          "runtime/reports.ts",
+        );
+      }),
+    ).rejects.toThrow(
+      `The Workers "api" → "reports" → "api" bind each other in a cycle.`,
+    );
+  });
+
+  it("builds a Worker that binds itself", async () => {
+    const graph = await collect(() => {
+      const api: unknown = inWorker(
+        $worker({ id: "api", bindings: () => ({ SELF: api as any }) }),
+        "runtime/api.ts",
+      );
+    });
+    expect(group(graph, "api").script.config.Bindings).toEqual([
+      { type: "service", name: "SELF", service: "shop--dev--api" },
+    ]);
+  });
+
   it("fails for a binding that a Worker can't bind", async () => {
     await expect(
       collect(() => {

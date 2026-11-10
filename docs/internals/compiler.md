@@ -17,11 +17,10 @@ type DeclarationModule = {
   binding: string; // local name of the declaration, such as "lambda"
   entry?: string; // the export that the platform calls, such as "handler". Without it, there is no runtime bundle
   platform?: PlatformName; // the mark's platform, such as "workerd"
-  exports?: string[]; // the other exports that the bundle re-exports, for a platform that reads them
 };
 ```
 
-`platform` is absent for the default platform, `node`, in both the mark and the `DeclarationModule`. It is copied from the mark as it is, also for a declaration with no entry. `exports` is the list that the infra build saw. The runtime build reads the module's exports from disk instead, for the reason in [The entry](#the-entry), and both use `runtimeExports` and `otherExports` in `packages/build/src/exports.ts`. In watch mode, a change to `exports` restarts the runtime watcher, as a change to any other field does.
+`platform` is absent for the default platform, `node`, in both the mark and the `DeclarationModule`. It is copied from the mark as it is, also for a declaration with no entry. The record has no exports: the runtime build reads the module's exports from disk, for the reason in [The entry](#the-entry). So in watch mode, a change to a module's exports rebuilds its runtime bundle, but doesn't restart the runtime watcher. The runtime build and the `declaredIn` record both use `runtimeExports` and `otherExports` in `packages/build/src/exports.ts`.
 
 ### Platforms
 

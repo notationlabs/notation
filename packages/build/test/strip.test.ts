@@ -63,6 +63,10 @@ function infra(source?: string, extra: Record<string, string> = {}) {
   return stripForInfra(analyzeModule(marks.table(file)!, marks), marks, root);
 }
 
+// The `exports` of the declaredIn record that the infra copy writes.
+const recordedExports = (code: string): string[] =>
+  JSON.parse(code.match(/, (\{"exports":.*\})\)/)![1]!).exports;
+
 describe("stripForInfra", () => {
   it("keeps only the declaration and the statements that it uses", () => {
     const { code, declaration } = infra();
@@ -255,8 +259,8 @@ describe("stripForInfra", () => {
       binding: "worker",
       entry: "default",
       platform: "workerd",
-      exports: ["Counter"],
     });
+    expect(recordedExports(infra(source, extra).code)).toEqual(["Counter"]);
   });
 
   it("leaves type-only exports out of a workerd module's other exports", () => {
@@ -273,7 +277,7 @@ describe("stripForInfra", () => {
       export default { fetch() {} };
     `;
     const extra = { "runtime/counter.ts": "export class Counter {}" };
-    expect(infra(source, extra).declaration.exports).toEqual(["Counter"]);
+    expect(recordedExports(infra(source, extra).code)).toEqual(["Counter"]);
   });
 
   it("leaves types exported without the type keyword out of a workerd module's other exports", () => {
@@ -296,7 +300,7 @@ describe("stripForInfra", () => {
         "export class Counter {}\nexport type Options = {};",
       "runtime/env.ts": "export type Env = {};",
     };
-    expect(infra(source, extra).declaration.exports).toEqual([
+    expect(recordedExports(infra(source, extra).code)).toEqual([
       "Counter",
       "Merged",
     ]);

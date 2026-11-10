@@ -5,7 +5,7 @@ import {
 
 // A Worker's name is a DNS label on workers.dev, so it is at most 63
 // characters, of lowercase letters, digits and hyphens.
-export const WORKER_NAME_MAX_LENGTH = 63;
+const WORKER_NAME_MAX_LENGTH = 63;
 
 const WORKER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const WORKER_ID_RULE = `1 to ${WORKER_NAME_MAX_LENGTH} lowercase letters, digits or hyphens, not starting or ending with a hyphen`;
@@ -59,17 +59,21 @@ export function workerName(name: string): string {
 
 /**
  * Keeps values per resource collection, so two deployments collected in one
- * process don't see each other's declarations. Two installed copies of this
+ * process don't see each other's declarations. The returned function must
+ * be called while a graph is being collected. Two installed copies of this
  * package share the map, through `Symbol.for`.
  */
 export function perCollection<T>(key: string, create: () => T): () => T {
   const maps: WeakMap<object, T> = ((globalThis as any)[
     Symbol.for(`@notation/cloudflare/${key}`)
   ] ??= new WeakMap());
-  const detached = create();
   return () => {
     const collection = getActiveResourceCollection();
-    if (!collection) return detached;
+    if (!collection) {
+      throw new Error(
+        `@notation/cloudflare read its ${key} while no resource graph is being collected.`,
+      );
+    }
     let value = maps.get(collection);
     if (value === undefined) {
       value = create();

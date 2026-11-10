@@ -141,15 +141,17 @@ type Settings = {
 export const WorkerScript = workerScriptSchema
   .defineOperations({
     // An upload replaces a Worker of the same name, so a Worker that exists
-    // already is reported, instead of being taken over.
-    create: cloudflareCreate(async (params) => {
+    // already is reported, instead of being taken over. Only the upload is
+    // wrapped: if the check fails, nothing was created, and the reconciler
+    // must not read the existing Worker as this one.
+    create: async (params) => {
       if (await readSettings(params.AccountId, params.ScriptName)) {
         throw new Error(
           `A Worker named ${params.ScriptName} already exists in the Cloudflare account ${params.AccountId}`,
         );
       }
-      await upload(params, []);
-    }),
+      await cloudflareCreate(upload)(params, []);
+    },
 
     read: async (key) => {
       const settings = await readSettings(key.AccountId, key.ScriptName);
@@ -250,6 +252,10 @@ export type DurableObjectExport =
  * 2. A namespace whose declaration has the same ID and another class is
  *    renamed, which keeps its objects.
  * 3. A namespace whose declaration is gone is deleted, with its objects.
+ *
+ * Cloudflare keys a namespace by its class name, so a class that another
+ * namespace held before would give that namespace's objects to the new one.
+ * This throws instead, before the upload.
  */
 export function durableObjectExports(
   hosted: HostedNamespace[],
@@ -264,6 +270,14 @@ export function durableObjectExports(
     };
   }
   for (const before of previous) {
+    const taker = hosted.find(
+      (namespace) => namespace.className === before.className,
+    );
+    if (taker && taker.id !== before.id) {
+      throw new Error(
+        `The Durable Object namespace "${taker.id}" has the class ${before.className}, which the namespace "${before.id}" had before. Cloudflare keys a namespace by its class name, so "${taker.id}" would get the objects of "${before.id}". Deploy the change to "${before.id}" first, then give the class to "${taker.id}" in a later deploy, or give "${taker.id}" another class.`,
+      );
+    }
     if (live.has(before.className)) continue;
     const now = hosted.find((namespace) => namespace.id === before.id);
     exports[before.className] = now

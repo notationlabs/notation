@@ -5,8 +5,6 @@ export {
 } from "./durable-object";
 export {
   $worker,
-  DEFAULT_COMPATIBILITY_DATE,
-  DEFAULT_COMPATIBILITY_FLAGS,
   isWorkerGroup,
   WorkerGroup,
   type WorkerDeclarationConfig,

@@ -113,6 +113,8 @@ A new namespace uses SQLite storage. Deploy uploads Cloudflare's declarative `ex
 
 - When a namespace's `class` changes and its `id` stays the same, deploy renames the class, and the namespace keeps its objects.
 - When a namespace's declaration is removed, or its `id` changes, deploy deletes the namespace with all its objects. This can't be undone.
+- When the class export moves to the module of another Worker that binds the namespace, that Worker becomes the host. Deploy deletes the namespace on the old host, with all its objects, and the new host gets an empty namespace.
+- Cloudflare keys a namespace by its class name. So a deploy fails, before the upload, if a namespace takes a class that another namespace had on the same Worker before, as the new namespace would get the old one's objects. Rename or remove the old namespace in one deploy, and give its class to the new namespace in a later deploy.
 
 ## Credentials
 

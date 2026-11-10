@@ -46,13 +46,6 @@ export type DeclarationModule = {
   entry?: string;
   /** The mark's `platform`. Absent for the default platform, Node. */
   platform?: PlatformName;
-  /**
-   * The other exports that the runtime bundle re-exports, besides `entry`,
-   * for a platform that reads named exports, such as Durable Object classes
-   * on workerd. Absent when there is no entry, or the platform only reads
-   * the entry.
-   */
-  exports?: string[];
 };
 
 // The statements that the infra copy of a declaration module keeps: the
@@ -212,7 +205,6 @@ export function stripForInfra(
       binding: declaration.binding,
       ...(entry && { entry }),
       ...(platform && { platform }),
-      ...(exports && { exports }),
     },
   };
 }

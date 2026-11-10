@@ -6,7 +6,7 @@ import {
 const API_URL = "https://api.cloudflare.com/client/v4";
 
 /** The code of Cloudflare's error for a Worker that doesn't exist. */
-export const WORKER_NOT_FOUND = 10007;
+const WORKER_NOT_FOUND = 10007;
 
 export type CloudflareErrorItem = { code: number; message: string };
 
@@ -132,7 +132,7 @@ export async function cloudflare<T>(
  * response reaching the caller: the request failed on the network, or the
  * API answered with a server error.
  */
-export function callMayHaveTakenEffect(error: unknown): boolean {
+function callMayHaveTakenEffect(error: unknown): boolean {
   if (error instanceof CloudflareApiError) return error.status >= 500;
   return error instanceof TypeError;
 }

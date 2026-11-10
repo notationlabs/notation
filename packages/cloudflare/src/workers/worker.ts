@@ -23,14 +23,14 @@ import { describeNamespace, registeredNamespace } from "./durable-object";
  * this package can move it, which changes the behaviour of Workers that
  * rely on it, so set `compatibilityDate` to keep a Worker on one date.
  */
-export const DEFAULT_COMPATIBILITY_DATE = "2026-10-12";
+const COMPATIBILITY_DATE = "2026-10-12";
 
 /**
  * The compatibility flags of a Worker that doesn't set them. The build
  * imports Node's built-in modules as `node:` modules, which workerd
  * provides under `nodejs_compat`.
  */
-export const DEFAULT_COMPATIBILITY_FLAGS = ["nodejs_compat"];
+const COMPATIBILITY_FLAGS = ["nodejs_compat"];
 
 export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
   /**
@@ -128,7 +128,8 @@ type Entry = {
   scriptName: string;
   record: () => DeclaredIn;
   bindings: () => Bindings;
-  build: () => WorkerGroup;
+  /** `chain` holds the Workers whose builds are building this one. */
+  build: (chain?: Entry[]) => WorkerGroup;
 };
 
 const workerRegistration = Symbol.for("@notation/cloudflare/WorkerDeclaration");
@@ -173,7 +174,6 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
   const declaration = { id: config.id } as Worker<B>;
   let bindings: Bindings | undefined;
   let group: WorkerGroup | undefined;
-  let failed: { error: unknown } | undefined;
 
   const entry: Entry = {
     declaration,
@@ -191,47 +191,48 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
     // The bindings are read once, when infra has finished loading, as the
     // modules that they refer to may still be loading when $worker is called.
     bindings: () => (bindings ??= config.bindings?.() ?? {}),
-    // The group is kept as soon as it is made, before the Worker depends on
-    // the Workers that it binds, so two Workers that bind each other each
-    // find the other's group. A build that throws throws the same error on
-    // each later call.
-    build: () => {
-      if (failed) throw failed.error;
+    // A Worker is built after the Workers that it is uploaded after, so a
+    // Worker that is already in `chain` closes a cycle of bindings.
+    build: (chain = []) => {
       if (group) return group;
-      try {
-        const resolved = resolveBindings(entry, describe);
-        const record = entry.record();
-        claimName(scriptName, describe());
-        group = new WorkerGroup({
-          id: config.id,
-          scriptName,
-          codePath: toProjectRoot(
-            filePaths.dist.runtime.index(fromProjectRoot(record.path)),
-          ),
-          compatibilityDate:
-            config.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE,
-          compatibilityFlags:
-            config.compatibilityFlags ?? DEFAULT_COMPATIBILITY_FLAGS,
-          bindings: resolved.bindings,
-          namespaces: resolved.namespaces,
-          url: config.url ?? true,
-        });
-        for (const other of resolved.dependsOn) {
-          group.script.dependOn(other.build().script);
-        }
-        return group;
-      } catch (error) {
-        failed = { error };
-        throw error;
+      if (chain.includes(entry)) {
+        throw bindingCycleError([...chain.slice(chain.indexOf(entry)), entry]);
       }
+      const resolved = resolveBindings(entry, describe);
+      const record = entry.record();
+      const after = resolved.dependsOn.map(
+        (other) => other.build([...chain, entry]).script,
+      );
+      claimName(scriptName, describe());
+      group = new WorkerGroup({
+        id: config.id,
+        scriptName,
+        codePath: toProjectRoot(
+          filePaths.dist.runtime.index(fromProjectRoot(record.path)),
+        ),
+        compatibilityDate: config.compatibilityDate ?? COMPATIBILITY_DATE,
+        compatibilityFlags: config.compatibilityFlags ?? COMPATIBILITY_FLAGS,
+        bindings: resolved.bindings,
+        namespaces: resolved.namespaces,
+        url: config.url ?? true,
+      });
+      for (const script of after) group.script.dependOn(script);
+      return group;
     },
   };
   Object.defineProperty(declaration, workerRegistration, { value: entry });
   if (getActiveResourceCollection()) {
     declaredWorkers().push(entry);
-    onEvaluationEnd(entry.build);
+    onEvaluationEnd(() => entry.build());
   }
   return declaration;
+}
+
+function bindingCycleError(cycle: Entry[]): Error {
+  const path = cycle.map((entry) => `"${entry.id}"`).join(" → ");
+  return new Error(
+    `The Workers ${path} bind each other in a cycle. Each Worker is uploaded after the Workers that it binds, and after the hosts of the namespaces that it binds, so none of these Workers can be uploaded first. Remove one of the bindings.`,
+  );
 }
 
 function claimName(scriptName: string, declaration: string) {

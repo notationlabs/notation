@@ -161,6 +161,9 @@ async function build() {
 
 const apiBundle = "dist/runtime/api/index.mjs";
 
+const recordedExports = () =>
+  runInfra(`worker[Symbol.for("@notation/declaredIn")].exports`);
+
 it("records the namespace with no entry, and the worker with its other exports", async () => {
   writeProject();
   expect(await build()).toEqual([
@@ -169,7 +172,6 @@ it("records the namespace with no entry, and the worker with its other exports",
       binding: "worker",
       entry: "default",
       platform: "workerd",
-      exports: ["Counter"],
     },
     { path: path.join(root, "runtime/counter.ts"), binding: "counters" },
   ]);
@@ -312,7 +314,8 @@ it("re-exports a name that is not an identifier", async () => {
 
 it("builds a worker that exports a type without the type keyword", async () => {
   writeProject(`${reexport}\ninterface Local {}\nexport { Local };`);
-  expect((await build())[0]!.exports).toEqual(["Counter"]);
+  await build();
+    expect(recordedExports()).toEqual(["Counter"]);
   expect(read(apiBundle)).not.toContain("Local");
 });
 
@@ -431,12 +434,14 @@ describe("an export of the Worker module that workerd doesn't start with", () =>
 
   it("builds a Worker that assigns an exported variable after its declaration", async () => {
     writeProject(`${reexport}\nexport let later;\nlater = { region: "eu" };`);
-    expect((await build())[0]!.exports).toEqual(["Counter", "later"]);
+    await build();
+    expect(recordedExports()).toEqual(["Counter", "later"]);
   });
 
   it("builds and starts a Worker that exports an object", async () => {
     writeProject(`${reexport}\nexport const settings = { region: "eu" };`);
-    expect((await build())[0]!.exports).toEqual(["Counter", "settings"]);
+    await build();
+    expect(recordedExports()).toEqual(["Counter", "settings"]);
     expect(await serve(path.join(root, apiBundle))).toBe(
       "api COUNTERS count=1",
     );
