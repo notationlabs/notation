@@ -83,21 +83,21 @@ const LambdaFunction = defineResource<{
 
 `meta` defines runtime values for state tracking, reconciliation, and display
 
-| Field            | Purpose                                                                                                                                                             |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `type`           | a `platform/service/ResourceName` string (e.g. `aws/lambda/LambdaFunction`).                                                                                        |
-| `blocksDeleteOf` | `ResourceClass[]?`, or a function that returns it. The classes that the provider refuses to delete while a resource of this type depends on them. Defaults to `[]`. |
+| Field            | Purpose                                                                                                                           |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `type`           | a `platform/service/ResourceName` string (e.g. `aws/lambda/LambdaFunction`).                                                      |
+| `blocksDeleteOf` | `ResourceType[]?`. The types that the provider refuses to delete while a resource of this type depends on them. Defaults to `[]`. |
 
-When deploy replaces a resource of a listed class, it first deletes each resource of this type that depends on it, and creates it again after the new resource. AWS, for example, does not delete an EventBridge bus that has rules, so `aws/eventBridge/rule` lists `EventBus`:
+When deploy replaces a resource of a listed type, it first deletes each resource of this type that depends on it, and creates it again after the new resource. AWS, for example, does not delete an EventBridge bus that has rules, so `aws/eventBridge/rule` lists the bus type:
 
 ```ts
 const eventBridgeRule = resource<EventBridgeRuleSchema>({
   type: "aws/eventBridge/rule",
-  blocksDeleteOf: [EventBus],
+  blocksDeleteOf: [EventBus.type],
 });
 ```
 
-List a class only when the provider refuses the delete. A dependent of a type that does not list the class stays in place, and deploy updates it when its params change. Pass a function, such as `() => [EventBus]`, when importing the class as a value would make an import cycle. The resource class and each instance expose the list as `blocksDeleteOf`, as they expose `type`.
+List a type only when the provider refuses the delete. A dependent of a type that does not list the type stays in place, and deploy updates it when its params change. Write the type as a string literal when importing the class would make an import cycle. The resource class exposes the list as `blocksDeleteOf`, as it exposes `type`.
 
 **2. `resource({ type })`** – `type` defines
 

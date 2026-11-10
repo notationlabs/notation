@@ -29,18 +29,18 @@ An unknown immutable or key param plans **replace** with the field marked "unkno
 
 ### Dependents of a replaced resource
 
-A provider can refuse to delete a resource while other resources use it. For example, AWS does not delete an EventBridge bus that has rules. The type of the dependent names the classes it blocks the delete of, in its definition:
+A provider can refuse to delete a resource while other resources use it. For example, AWS does not delete an EventBridge bus that has rules. The type of the dependent lists the types it blocks the delete of, in its definition:
 
 ```ts
 const eventBridgeRule = resource<EventBridgeRuleSchema>({
   type: "aws/eventBridge/rule",
-  blocksDeleteOf: [EventBus],
+  blocksDeleteOf: [EventBus.type],
 });
 ```
 
-Set `blocksDeleteOf` only when the provider refuses to delete a resource of the listed class while a resource of this type depends on it. Each dependent it applies to is deleted and created again, and is gone in between. When the class cannot be imported as a value without an import cycle, pass a function that returns the list, such as `blocksDeleteOf: () => [EventBus]`. The resource class and each instance expose the list as `blocksDeleteOf`, as they expose `type`. In `@notation/aws.iac`, only `EventBridgeRule` sets it. It does not list `DefaultEventBus`, which is never deleted.
+Set `blocksDeleteOf` only when the provider refuses to delete a resource of the listed type while a resource of this type depends on it. Each dependent it applies to is deleted and created again, and is gone in between. When importing the class would make an import cycle, write the type as a string literal. The resource class exposes the list as `blocksDeleteOf`, as it exposes `type`. In `@notation/aws.iac`, only `EventBridgeRule` sets it. It does not list `DefaultEventBus`, which is never deleted.
 
-A dependent blocks the delete of a resource when it depends on the resource, and its type lists the class of the resource in `blocksDeleteOf`. The classes are compared by their `type`. When deploy replaces a resource, it runs these steps:
+A dependent blocks the delete of a resource when it depends on the resource, and its class lists the type of the resource in `blocksDeleteOf`. When deploy replaces a resource, it runs these steps:
 
 1. Deploy deletes each dependent that blocks the delete of the replaced resource. It does the same for each dependent that blocks the delete of a resource deleted in this step. It deletes them in reverse order of the [edges in state](#dependency-edges). Then it deletes the resource.
 2. Deploy creates the resource again.
@@ -52,14 +52,9 @@ Step 1 lists the state records when the replacement starts. A resource that depl
 
 A resource in code is checked with its own class. An orphan is checked with the registered class of the type in its state record, so state holds nothing extra for this. An orphan that blocks the delete is deleted in step 1, before the sweep.
 
-When an orphan dependent's type has no registered class, deploy checks whether a known class lists the type of the resource the orphan depends on in `blocksDeleteOf`. The known classes are the registered classes and the classes of the resources in code. Plan makes the same check.
+An orphan whose type has no registered class is treated as not blocking the delete. When no registry is passed, as on the CLI, the registry is built from the resources in code. Suppose the deploy that renames a bus also removes the last EventBridge rule in code. The old rule has no registered class, so deploy deletes the bus without deleting the rule first, and AWS refuses the delete. Deploy may already have deleted other dependents in step 1. The next deploy creates them again, and fails at the bus in the same way.
 
-- If a known class lists the type, the orphan may block the delete. Every dependent is checked before the first delete, so the deploy fails before it deletes anything. The error starts with `Cannot replace <id>`.
-- If no known class lists the type, the orphan is treated as not blocking the delete. The replacement goes ahead, and the sweep warns about the orphan, as for any orphan with no registered class.
-
-When no registry is passed, as on the CLI, the registry is built from the resources in code. Suppose the deploy that renames a bus also removes the last EventBridge rule in code. No known class lists `EventBus`, so deploy deletes the bus without deleting the old rule first, and AWS refuses the delete. Nothing has been deleted at that point. The records of the bus and the rule are unchanged, so the next deploy fails in the same way.
-
-In both cases, declare a resource of the orphan's type again, or deploy the replacement before you remove the last resource of that type. For a bus, rename the bus while a rule is still declared, then remove the rule. Deploying the removal first does not help. The sweep skips the orphan because its type has no registered class, and keeps its record, so the replacement fails again. [Issue #77](https://github.com/notationlabs/notation/issues/77) proposes recording provider packages in state and merging their registries, which will remove this limit.
+To avoid this, deploy the replacement before you remove the last resource of that type. For a bus, rename the bus while a rule is still declared, then remove the rule. Deploying the removal first does not help. The sweep skips the orphan because its type has no registered class, and keeps its record. [Issue #77](https://github.com/notationlabs/notation/issues/77) proposes recording provider packages in state and merging their registries, which will remove this limit.
 
 Some cases:
 
@@ -67,20 +62,20 @@ Some cases:
 - A dependent of several replaced resources is deleted with the first of them. The later replacements find no record for it, so they skip it. It is created once, after all of them.
 - A dependent that is created in this deploy has nothing to delete.
 - **drift-recreate** finds the resource gone from the provider, so it deletes nothing, and its dependents are not deleted.
-- A dry run emits **dry-run** for each delete and changes nothing. It treats the deleted dependents as having no record for the rest of the run, so it decides **create** for each of them, and the sweep does not delete an orphan among them again.
+- A dry run emits **dry-run** for each delete and changes nothing. It keeps the records, so the rest of the run decides for each deleted dependent as if it still exists, and the sweep emits the delete of an orphan among them a second time.
 
 The delete events of the dependents carry `reason: "dependency-replaced"` and `replacedDependency`, the ID of the replaced resource.
 
 Each delete is durable and removes the dependent's record, so state stays consistent if the deploy stops part way. A crash resumes where it stopped. If the deploy fails, the next deploy finds no record for each deleted dependent, and plans **create** for it. The replaced resource still has its old record if its own delete has not finished, so the next deploy plans **replace** again and deletes the dependents that remain.
 
-Plan finds the same dependents with the same code. It shows each dependent in code as **replace**. `replacedDependencies` lists the resources in code that the dependent depends on, blocks the delete of, and that are replaced. `deletedDependencies` lists the orphans of this kind, which deploy deletes in step 1. Each entry has an `id`, and `known: false` when the change happens only if a field that is unknown at plan forces a replacement. `notation plan` prints a line for each entry:
+Plan finds the same dependents with the same code. It shows each dependent in code as **replace**, with `replacedDependency` set to the ID of the replaced resource, as in the delete events. `notation plan` prints a line under it:
 
 ```
 -/+ replace aws/eventBridge/rule eventbridge-pattern-rule:order-placed
-    depends on eventbridge-bus:orders, which is replaced
+    deleted before eventbridge-bus:orders is replaced
 ```
 
-The line says `which may be replaced` when `known` is false, and `which is deleted` or `which may be deleted` for an orphan. When a replacement is not certain, a dependent with no registered class does not fail the plan.
+When the replaced resource depends on a field that is unknown at plan, its own entry says "unknown, may force replacement", and its dependents are shown as **replace** in the same way.
 
 ## Dependency check
 
