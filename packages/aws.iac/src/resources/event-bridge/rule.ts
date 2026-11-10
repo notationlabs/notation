@@ -4,6 +4,11 @@ import { AwsSchema } from "src/utils/types";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/utils/aws-clients";
 import { LambdaFunctionInstance } from "../lambda";
+import {
+  EventBus,
+  type DefaultEventBusInstance,
+  type EventBusInstance,
+} from "./event-bus";
 
 export type EventBridgeRuleSchema = AwsSchema<{
   Key: sdk.DescribeRuleCommandInput;
@@ -20,6 +25,9 @@ export type EventBridgeRuleSchema = AwsSchema<{
 
 export type EventBridgeRuleDependencies = {
   lambda: LambdaFunctionInstance;
+  // The rule's bus, so that the bus is made before the rule and deleted
+  // after it. `EventBusName` holds the bus's name.
+  eventBus?: EventBusInstance | DefaultEventBusInstance;
 };
 
 type TargetsResult = {
@@ -57,6 +65,9 @@ function assertNoFailedTargets(
 
 const eventBridgeRule = resource<EventBridgeRuleSchema>({
   type: "aws/eventBridge/rule",
+  // AWS refuses to delete a bus that has rules. The default bus is never
+  // deleted, so it is not listed.
+  blocksDeleteOf: [EventBus.type],
 });
 
 const keyValue = v.object({ Key: v.string(), Value: v.string() });
@@ -204,6 +215,11 @@ const eventBridgeRuleSchema = eventBridgeRule.defineSchema({
     propertyType: "param",
     value: v.string(),
   },
+  State: {
+    presence: "optional",
+    propertyType: "param",
+    value: v.enum(sdk.RuleState),
+  },
   Targets: {
     presence: "required",
     propertyType: "param",
@@ -232,8 +248,10 @@ export const EventBridgeRule = eventBridgeRuleSchema
             eventBridgeClient().send(listRuleTargetsCommand),
           ]);
 
+        const { EventPattern } = ruleDescriptionResult;
         return {
           ...ruleDescriptionResult,
+          EventPattern: EventPattern && compactJson(EventPattern),
           ...listRuleTargetsResult,
         };
       } catch (error) {
@@ -345,6 +363,25 @@ export const EventBridgeRule = eventBridgeRuleSchema
     },
   })
   .requireDependencies<EventBridgeRuleDependencies>()
-  .deriveParams(() => ({}));
+  .deriveParams(({ config }) => {
+    // Typed as `{}`, because a param that deriveParams returns is removed
+    // from the config type, and the pattern is set in config.
+    const derived: {} =
+      config.EventPattern === undefined
+        ? {}
+        : { EventPattern: compactJson(config.EventPattern) };
+    return derived;
+  });
+
+// The pattern is compared as a string, so the configured pattern and the
+// pattern that is read are both put in the compact form that JSON.stringify
+// writes. A pattern that is not JSON is left for AWS to reject.
+function compactJson(json: string): string {
+  try {
+    return JSON.stringify(JSON.parse(json));
+  } catch {
+    return json;
+  }
+}
 
 export type EventBridgeRuleInstance = InstanceType<typeof EventBridgeRule>;

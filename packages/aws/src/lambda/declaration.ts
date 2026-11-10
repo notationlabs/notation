@@ -9,6 +9,7 @@ import type {
   SQSRecord,
 } from "aws-lambda";
 import type { Schedule } from "src/event-bridge/schedule";
+import type { EventPattern } from "src/event-bridge/pattern";
 import type { LambdaGroup } from "./lambda";
 import type { NameSafe } from "src/id";
 import type {
@@ -70,7 +71,7 @@ export type SqsOptions = {
   enabled?: boolean;
 };
 
-export type LambdaEvent = SqsEvent | ApiGatewayEvent | EventBridgeScheduleEvent;
+export type LambdaEvent = SqsEvent | ApiGatewayEvent | EventBridgeRuleEvent;
 
 /** The kind of a Lambda's event, or `none` for a Lambda declared without one. */
 export type LambdaEventKind = LambdaEvent["kind"] | "none";
@@ -283,15 +284,44 @@ export const apiGateway = {
   },
 };
 
-/** The function receives EventBridge scheduled events. */
-export type EventBridgeScheduleEvent = {
+/**
+ * The function receives the events of EventBridge rules. A `schema` of
+ * `null` means scheduled events, which have no detail. Otherwise `decode()`
+ * validates each event's detail with `schema`.
+ */
+export type EventBridgeRuleEvent<
+  S extends StandardSchemaV1 | null = StandardSchemaV1 | null,
+> = {
   kind: "eventBridge";
+  schema: S;
   /**
    * The schedule that the infra build makes, from
-   * `eventBridge.defineSchedule()`. It is not set for
-   * `eventBridge.schema(null)`.
+   * `eventBridge.defineSchedule()`.
    */
   schedule?: ScheduleOptions;
+  /**
+   * The rule that the infra build makes, from
+   * `eventBridge.bind(bus).defineRule()`.
+   */
+  rule?: EventBridgeRule;
+};
+
+/** The event of `eventBridge.defineSchedule()` and `eventBridge.schema(null)`. */
+export type EventBridgeScheduleEvent = EventBridgeRuleEvent<null>;
+
+/** A rule that a declaration makes, on a bus that infra declares. */
+export type EventBridgeRule = {
+  bus: EventBusSource;
+  options: RuleOptions;
+};
+
+/**
+ * An event bus that `eventBridge.bind()` makes rules on, from `eventBus()` or
+ * `defaultEventBus()`. In the function it is `{}`, as the runtime build
+ * replaces the bus with it.
+ */
+export type EventBusSource = {
+  "~rule"(group: LambdaGroup, options: RuleOptions): void;
 };
 
 export type ScheduleOptions = {
@@ -311,13 +341,76 @@ export type ScheduleOptions = {
   schedule: Schedule;
 };
 
+export type RuleOptions = {
+  /**
+   * Keys the rule in state. Changing the id replaces the rule, so keep it
+   * stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
+   * underscores.
+   */
+  id: string;
+  /**
+   * The rule's name in AWS, in place of the id. The rule is named
+   * `<app>--<stage>--<name>`. Changing the name replaces the rule. Must be
+   * name-safe.
+   */
+  name?: string;
+  /**
+   * The events that the rule sends to the function, such as
+   * `{ source: ["shop"], "detail-type": ["OrderPlaced"] }`.
+   */
+  pattern: EventPattern;
+  /** `false` disables the rule, so it sends no events. Defaults to `true`. */
+  enabled?: boolean;
+  /** How EventBridge retries an event that the function fails to receive. */
+  retry?: RetryOptions;
+};
+
+export type RetryOptions = {
+  /** Times to retry an event, from 0 to 185. EventBridge's default is 185. */
+  maxAttempts?: number;
+  /**
+   * Seconds to keep retrying an event, from 60 to 86,400. EventBridge's
+   * default is 86,400 (24 hours).
+   */
+  maxEventAge?: number;
+};
+
 /**
- * The function receives EventBridge scheduled events: from a schedule that
- * the declaration makes, with `eventBridge.defineSchedule(options)`, or from
- * schedules that infra makes with `schedule()`, with
- * `eventBridge.schema(null)`.
+ * The function receives EventBridge events: from a rule or a schedule that
+ * the declaration makes, with `eventBridge.bind(bus).defineRule(options)` or
+ * `eventBridge.defineSchedule(options)`, or from rules and schedules that
+ * infra makes, with `eventBridge.schema(detail)`.
  */
 export const eventBridge = {
+  /**
+   * Binds the function to `bus`, an event bus that infra declares. Call
+   * `defineRule()` on the result. In the runtime build, a bus from an infra
+   * module is replaced with `{}`.
+   */
+  bind(bus: EventBusSource) {
+    return {
+      /**
+       * The function receives the events that match `pattern` on the bus.
+       * The infra build makes the rule, and `decode()` validates each
+       * event's detail with `schema`. `id` must be a name-safe string
+       * literal; see `NameSafe`.
+       */
+      defineRule<S extends StandardSchemaV1, const Id extends string>(
+        options: Omit<RuleOptions, "id"> & {
+          id: NameSafe<Id>;
+          /**
+           * Validates the detail of each event, in `decode()`. A rule that
+           * matches any detail declares a schema such as `v.unknown()`.
+           * Import it from a shared module, so the function can load it.
+           */
+          schema: S;
+        },
+      ): EventBridgeRuleEvent<S> {
+        const { schema, ...rule } = options;
+        return { kind: "eventBridge", schema, rule: { bus, options: rule } };
+      },
+    };
+  },
   /**
    * The function receives the events of a schedule, whose rule the infra
    * build makes. `id` must be a name-safe string literal; see `NameSafe`.
@@ -325,14 +418,18 @@ export const eventBridge = {
   defineSchedule<const Id extends string>(
     options: Omit<ScheduleOptions, "id"> & { id: NameSafe<Id> },
   ): EventBridgeScheduleEvent {
-    return { kind: "eventBridge", schedule: options };
+    return { kind: "eventBridge", schema: null, schedule: options };
   },
   /**
-   * The function receives the events of schedules that infra makes. A
-   * scheduled event has no detail to validate, so `detail` must be `null`.
+   * The function receives the events of rules that infra makes with
+   * `rule()`, and `decode()` validates each event's detail with `detail`. For
+   * schedules that infra makes with `schedule()`, `detail` is `null`, as a
+   * scheduled event has no detail.
    */
-  schema(detail: null): EventBridgeScheduleEvent {
-    return { kind: "eventBridge" };
+  schema<S extends StandardSchemaV1 | null>(
+    detail: S,
+  ): EventBridgeRuleEvent<S> {
+    return { kind: "eventBridge", schema: detail };
   },
 };
 
@@ -380,7 +477,15 @@ type DecodeFor<E> =
         ) => Promise<
           Replace<R, { body: DecodedRequestBody<S> } & DecodedClaims<C, K>>
         >
-      : never;
+      : E extends EventBridgeRuleEvent<infer S>
+        ? S extends StandardSchemaV1
+          ? <R extends { detail: unknown }>(
+              event: R,
+            ) => Promise<
+              Replace<R, { detail: StandardSchemaV1.InferOutput<S> }>
+            >
+          : never
+        : never;
 
 /**
  * A Lambda function, as `$lambda` declares it. Infra wires it, and the
@@ -410,7 +515,9 @@ export interface Lambda<
    * is validated as `undefined`. With a body schema of `null`, `body` is
    * `undefined`, and a request with a body is not valid. A request through a
    * JWT authorizer also gets `claims`: the JWT claims, validated with the
-   * event's claims schema if it has one. Throws a `DecodeError` when the item is not valid.
+   * event's claims schema if it has one. For EventBridge the item is the
+   * event, and `detail` is validated with the event's schema. Throws a
+   * `DecodeError` when the item is not valid.
    */
   decode: DecodeFor<E>;
 }
@@ -440,9 +547,11 @@ type HandlerFor<E> =
       ? HttpHandler<APIGatewayJWTProxyEventV2<JwtClaims>>
       : E extends ApiGatewayEvent<any, any, "apiGateway">
         ? HttpHandler<APIGatewayProxyEventV2>
-        : E extends EventBridgeScheduleEvent
+        : E extends EventBridgeRuleEvent<infer S>
           ? (
-              event: EventBridgeEvent<"Scheduled Event", unknown>,
+              event: [S] extends [null]
+                ? EventBridgeEvent<"Scheduled Event", unknown>
+                : EventBridgeEvent<string, unknown>,
               context: Context,
             ) => void | Promise<void>
           : (event: unknown, context: Context) => unknown;
@@ -463,14 +572,15 @@ export type LambdaEnv<L extends { readonly "~lambda"?: { env: EnvVars } }> =
 export class DecodeError extends Error {
   /**
    * The part of the item that is not valid: the body of a message or a
-   * request, or the JWT claims of a request.
+   * request, the JWT claims of a request, or the detail of an EventBridge
+   * event.
    */
-  readonly part: "body" | "claims";
+  readonly part: "body" | "claims" | "detail";
   readonly issues: ReadonlyArray<StandardSchemaV1.Issue>;
 
   constructor(
     message: string,
-    part: "body" | "claims",
+    part: "body" | "claims" | "detail",
     issues: ReadonlyArray<StandardSchemaV1.Issue> = [],
   ) {
     super(message);
@@ -498,9 +608,20 @@ export function createDecode(
   let event: LambdaEvent | undefined;
   return async (item) => {
     event ??= options.event?.();
+    if (event?.kind === "eventBridge" && event.schema) {
+      return {
+        ...item,
+        detail: await validate(
+          event.schema,
+          item?.detail,
+          "detail",
+          "event detail is",
+        ),
+      };
+    }
     if (!event || event.kind === "eventBridge") {
       throw new Error(
-        `decode() needs a Lambda declared with event: () => sqs.bind(queue), sqs.schema(schema), apiGateway.bind(api).defineRoute(options) or apiGateway.schema(body).`,
+        `decode() needs a Lambda declared with event: () => sqs.bind(queue), sqs.schema(schema), apiGateway.bind(api).defineRoute(options), apiGateway.schema(body), eventBridge.bind(bus).defineRule(options) or eventBridge.schema(schema). A scheduled event has no detail to decode.`,
       );
     }
     if (event.kind === "sqs") {
@@ -531,7 +652,7 @@ export function createDecode(
     // schema decides whether that is valid.
     const body = raw
       ? await decodeBody(event.schema, raw, "request")
-      : await validateBody(event.schema, undefined, "request");
+      : await validate(event.schema, undefined, "body", "request body is");
     return { ...item, body, ...claims };
   };
 }
@@ -547,19 +668,22 @@ async function decodeBody(
   } catch {
     throw new DecodeError(`The ${name} body is not valid JSON.`, "body");
   }
-  return validateBody(schema, value, name);
+  return validate(schema, value, "body", `${name} body is`);
 }
 
-async function validateBody(
+async function validate(
   schema: StandardSchemaV1,
   value: unknown,
-  name: "message" | "request",
+  part: DecodeError["part"],
+  // Names the value at the start of the error, such as "request body is".
+  subject: string,
 ): Promise<unknown> {
   const result = await schema["~standard"].validate(value);
   if (result.issues) {
+    const issues = result.issues.map((issue) => issue.message).join("; ");
     throw new DecodeError(
-      `The ${name} body is not valid: ${details(result.issues)}`,
-      "body",
+      `The ${subject} not valid: ${issues}`,
+      part,
       result.issues,
     );
   }
@@ -579,19 +703,8 @@ async function decodeClaims(
     );
   }
   if (!schema) return claims;
-  const result = await schema["~standard"].validate(claims);
-  if (result.issues) {
-    throw new DecodeError(
-      `The request's JWT claims are not valid: ${details(result.issues)}`,
-      "claims",
-      result.issues,
-    );
-  }
-  return result.value;
+  return validate(schema, claims, "claims", "request's JWT claims are");
 }
-
-const details = (issues: ReadonlyArray<StandardSchemaV1.Issue>) =>
-  issues.map((issue) => issue.message).join("; ");
 
 /**
  * Makes `env()` for the function. The runtime build keeps the names of the

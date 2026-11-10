@@ -111,16 +111,39 @@ test("a schedule invokes a $lambda declaration with eventBridge.schema(null)", a
   expect(scheduleGroup(graph, "daily").rule.dependencies.lambda).toBe(fn.fn);
 });
 
-test("eventBridge.schema() takes only null", () => {
+test("eventBridge.schema() takes null or a schema", () => {
   // Only type-checked.
   const typeOnly = () => {
-    // @ts-expect-error eventBridge.schema() needs null
+    // @ts-expect-error eventBridge.schema() needs null or a schema
     eventBridge.schema();
-    // @ts-expect-error eventBridge.schema() doesn't take a schema yet
-    eventBridge.schema(Anything);
   };
   void typeOnly;
-  expect(eventBridge.schema(null)).toEqual({ kind: "eventBridge" });
+  expect(eventBridge.schema(null)).toEqual({
+    kind: "eventBridge",
+    schema: null,
+  });
+  expect(eventBridge.schema(Anything)).toEqual({
+    kind: "eventBridge",
+    schema: Anything,
+  });
+});
+
+test("a schedule of a declaration with a detail schema throws", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const fn = inModule(
+        $lambda({ id: "orders", event: () => eventBridge.schema(Anything) }),
+      );
+      schedule({
+        id: "daily",
+        schedule: rate(1, "day"),
+        // @ts-expect-error a schedule sends events with no detail
+        target: () => fn,
+      });
+    }),
+  ).rejects.toThrow(
+    'schedule() sends scheduled events, which have no detail, but the Lambda "orders" is declared with event: () => eventBridge.schema(schema). Declare it with event: () => eventBridge.schema(null).',
+  );
 });
 
 test("a schedule of a declaration with an sqs event throws", async () => {
@@ -215,6 +238,7 @@ test("schedule() of a declaration that makes its own schedule throws", async () 
 test("eventBridge.defineSchedule() takes undefined, as the runtime build passes", () => {
   expect(runtime.eventBridge.defineSchedule(undefined as any)).toEqual({
     kind: "eventBridge",
+    schema: null,
     schedule: undefined,
   });
 });

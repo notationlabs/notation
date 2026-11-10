@@ -1,10 +1,7 @@
-import {
-  resolveLambda,
-  whenLoaded,
-  type LambdaTarget,
-} from "src/lambda/lambda-declaration";
+import { resolveLambda, whenLoaded } from "src/lambda/lambda-declaration";
 import type { ScheduleOptions } from "src/lambda/declaration";
 import type { NameSafe } from "src/id";
+import type { RuleTarget } from "./rule";
 import { ScheduleGroup } from "./schedule-group";
 
 export { ScheduleGroup };
@@ -16,8 +13,11 @@ export type ScheduleConfig = ScheduleOptions & {
    * declaration must be declared with `event: () => eventBridge.schema(null)`,
    * or with no event.
    */
-  target: LambdaTarget<"eventBridge" | "none">;
+  target: ScheduleTarget;
 };
+
+/** A Lambda that can receive scheduled events. */
+export type ScheduleTarget = RuleTarget<null>;
 
 /**
  * Invokes a Lambda on a schedule. The schedule's resources are made when
@@ -31,11 +31,16 @@ export function schedule<const Id extends string>(
 ): void {
   const { target, id, ...options } = config;
   whenLoaded(() => {
-    const { group: lambdaGroup } = resolveLambda(
+    const { group: lambdaGroup, event } = resolveLambda(
       target,
       "schedule()",
       "eventBridge",
     );
+    if (event?.kind === "eventBridge" && event.schema !== null) {
+      throw new Error(
+        `schedule() sends scheduled events, which have no detail, but the Lambda "${lambdaGroup.id}" is declared with event: () => eventBridge.schema(schema). Declare it with event: () => eventBridge.schema(null).`,
+      );
+    }
     new ScheduleGroup({ id, ...options }, lambdaGroup);
   });
 }

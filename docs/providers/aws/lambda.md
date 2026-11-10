@@ -52,13 +52,14 @@ Infra APIs take the declaration as a function that returns it, such as `() => to
 | [`eventSourceMapping`](sqs.md#eventsourcemappingconfig)     | A declaration with `sqs.schema()` or no `event`                                |
 | [`router.get`](api-gateway.md#routerapi), `.post`, ...      | A declaration with `apiGateway.schema(body)` or no `event`                     |
 | [`withAuthorizer`](api-gateway.md#jwt-authorization) routes | A declaration with `apiGateway.schema(body).authSchema(claims?)` or no `event` |
+| [`rule`](event-bridge.md#ruleconfig)                        | A declaration with `eventBridge.schema(detail)` or no `event`                  |
 | [`schedule`](event-bridge.md#scheduleconfig)                | A declaration with `eventBridge.schema(null)` or no `event`                    |
 
 Each API also takes a Lambda group from [`lambda()`](#lambdaconfig), as it is, with no function around it.
 
 A declaration whose event doesn't match is a type error. If TypeScript doesn't catch it, the infra API throws when infra runs, for example `route() sends apiGateway events, but the Lambda "orders" is declared with event: () => sqs.schema(schema).`
 
-A declaration can also make its own resources, with `sqs.bind(queue)`, `apiGateway.bind(api).defineRoute(options)` or `eventBridge.defineSchedule(options)`. The infra APIs throw for such a declaration, so that a queue, route or schedule is wired in one place.
+A declaration can also make its own resources, with `sqs.bind(queue)`, `apiGateway.bind(api).defineRoute(options)`, `eventBridge.bind(bus).defineRule(options)` or `eventBridge.defineSchedule(options)`. The infra APIs throw for such a declaration, so that a queue, route, rule or schedule is wired in one place.
 
 ### One handler for each function
 

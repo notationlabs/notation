@@ -919,6 +919,61 @@ describe("stripForRuntime", () => {
     });
   });
 
+  describe("a rule that a declaration binds to an event bus", () => {
+    const strip = (event: string, infraLines: string[], importLine: string) => {
+      const handler = handlerModule
+        .replace(
+          `event: () => apiGateway.schema(Order),`,
+          `event: () => ${event},`,
+        )
+        .replace(
+          `import { ordersQueue, unused } from "../infra/orders";`,
+          importLine,
+        )
+        .replace(
+          `import { $lambda, apiGateway, sqs, type LambdaHandler }`,
+          `import { $lambda, apiGateway, eventBridge, sqs, type LambdaHandler }`,
+        )
+        .replace(/  policy: .*\n  env: .*\n/, "");
+      const marks = virtualMarks(
+        {
+          ...files,
+          "runtime/handler.ts": handler,
+          "infra/bus.ts": [
+            `import { eventBus, defaultEventBus } from "@notation/aws/event-bridge";`,
+            ...infraLines,
+          ].join("\n"),
+        },
+        packages,
+      );
+      const analysis = analyzeModule(marks.table(file)!, marks);
+      return stripForRuntime(analysis, new ModuleAnalyses({ marks, root }))!
+        .code;
+    };
+
+    it("replaces a bus from eventBus() with {}", () => {
+      const code = strip(
+        `eventBridge.bind(ordersBus).defineRule({ id: "order-placed", pattern: { source: ["shop"] }, schema: Order })`,
+        [`export const ordersBus = eventBus({ id: "orders" });`],
+        `import { ordersBus } from "../infra/bus";`,
+      );
+      expect(code).toContain(
+        `event: () => eventBridge.bind({}).defineRule({ id: "order-placed", pattern: { source: ["shop"] }, schema: Order }),`,
+      );
+      expect(code).not.toContain("../infra/bus");
+    });
+
+    it("replaces the default bus with {}", () => {
+      const code = strip(
+        `eventBridge.bind(defaultBus).defineRule({ id: "uploads", pattern: { source: ["aws.s3"] }, schema: Order })`,
+        [`export const defaultBus = defaultEventBus();`],
+        `import { defaultBus } from "../infra/bus";`,
+      );
+      expect(code).toContain(`eventBridge.bind({}).defineRule(`);
+      expect(code).not.toContain("../infra/bus");
+    });
+  });
+
   it("fails for a keys option that isn't an object literal", () => {
     const source = handlerModule.replace(
       `env: () => ({ QUEUE_URL: ordersQueue.url, LOG_LEVEL: "info" })`,
