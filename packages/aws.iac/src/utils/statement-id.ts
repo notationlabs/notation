@@ -19,17 +19,3 @@ export function statementId(id: string): string {
     .slice(0, HASH_LENGTH);
   return `${safe.slice(0, MAX_LENGTH - HASH_LENGTH - 1)}-${hash}`;
 }
-
-/**
- * Makes a StatementId in the format of the deprecated permission resources:
- * a prefix and the source that the permission lets invoke the function.
- */
-export function prefixedStatementId(prefix: string, source: string): string {
-  const id = `${prefix}-${source}`.replace(/[^0-9A-Za-z_-]/g, "_");
-  if (id.length > MAX_LENGTH) {
-    throw new Error(
-      `The StatementId "${id}" is longer than ${MAX_LENGTH} characters.`,
-    );
-  }
-  return id;
-}

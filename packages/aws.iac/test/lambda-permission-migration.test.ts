@@ -52,6 +52,40 @@ const Rule = resource({ type: "test/migration/Rule", provider: "test" })
     delete: async () => undefined,
   });
 
+// Writes the state record that the removed permission resource wrote, with
+// the key that the deprecated class deletes through.
+const OldPermission = resource({
+  type: LambdaEventBridgeRulePermission.type,
+  provider: "@notation/aws.iac",
+})
+  .defineSchema({
+    FunctionName: {
+      presence: "required",
+      propertyType: "param",
+      primaryKey: true,
+      value: v.string(),
+    },
+    StatementId: {
+      presence: "required",
+      propertyType: "param",
+      secondaryKey: true,
+      value: v.string(),
+    },
+  } as any)
+  .defineOperations({
+    create: async (params: any) => {
+      await lambdaClient().send(
+        new sdk.AddPermissionCommand({
+          ...params,
+          Action: "lambda:InvokeFunction",
+          Principal: "events.amazonaws.com",
+          SourceArn: RULE_ARN,
+        }),
+      );
+    },
+    delete: async () => undefined,
+  });
+
 let calls: string[];
 let directory: string;
 let runtime: NodeDurableRuntime;
@@ -131,9 +165,12 @@ it("deploy creates a group's new permission before it deletes the old one as an 
   await deploy(
     "deploy-1",
     await declare(
-      (fn, rule) =>
-        new LambdaEventBridgeRulePermission("eventbridge-permission:daily", {
-          dependencies: { lambda: fn, eventBridgeRule: rule },
+      () =>
+        new OldPermission("eventbridge-permission:daily", {
+          config: {
+            FunctionName: "app--prod--orders",
+            StatementId: "events-app--prod--daily",
+          } as any,
         }),
     ),
   );
