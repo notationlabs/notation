@@ -18,7 +18,10 @@ vi.mock("src/context", () => ({
   getAwsAccountId: async () => "123456789012",
 }));
 
-const fn = { output: { FunctionName: "app--prod--orders" } } as any;
+const fn = {
+  output: { FunctionName: "app--prod--orders" },
+  schema: {},
+} as any;
 const key = { FunctionName: "app--prod--orders", StatementId: "events-daily" };
 
 const permission = (config: Record<string, unknown> = {}) =>
