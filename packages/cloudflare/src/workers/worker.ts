@@ -236,6 +236,17 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
   return declaration;
 }
 
+// A Worker is built from onEvaluationEnd, so a graph is always being
+// collected while it is built.
+function whileCollecting<T>(value: T | undefined): T {
+  if (value === undefined) {
+    throw new Error(
+      "@notation/cloudflare built a Worker while no resource graph is being collected.",
+    );
+  }
+  return value;
+}
+
 function bindingCycleError(cycle: Entry[]): Error {
   const path = cycle.map((entry) => `"${entry.id}"`).join(" → ");
   return new Error(
@@ -244,8 +255,7 @@ function bindingCycleError(cycle: Entry[]): Error {
 }
 
 function claimName(scriptName: string, declaration: string) {
-  const claimed = claimedNames();
-  if (!claimed) return;
+  const claimed = whileCollecting(claimedNames());
   const previous = claimed.get(scriptName);
   if (previous) {
     throw new Error(
@@ -339,7 +349,7 @@ function hostOf(
   className: string,
   bindingName: string,
 ): Entry {
-  const hosts = (declaredWorkers() ?? []).filter(
+  const hosts = whileCollecting(declaredWorkers()).filter(
     (entry) =>
       Object.values(entry.bindings()).includes(namespace) &&
       exportsOf(entry).includes(className),

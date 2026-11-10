@@ -128,11 +128,11 @@ function isPrimitive(expression: Node): boolean {
   }
 }
 
+const cloudflareModules = /^cloudflare:/;
+
 // The conditions and the NODE_ENV defines are the ones that wrangler uses.
 // workerd provides the `cloudflare:` and `node:` modules, so the bundle
 // leaves them external.
-const cloudflareModules = /^cloudflare:/;
-
 const workerd: Platform = {
   build: () => {
     // Like wrangler on deploy, unless NODE_ENV is set.
