@@ -1,5 +1,5 @@
 import {
-  getActiveResourceCollection,
+  perCollection,
   scopedPhysicalName,
   type PhysicalNameRule,
 } from "@notation/resource";
@@ -49,11 +49,11 @@ export function describeDeclaration(
 }
 
 // The declarations that gave each AWS name in a collection, keyed by kind and
-// name. Two installed copies of this package share the map, through
-// `Symbol.for`, as they share the declaration registry.
-const claims: WeakMap<object, Map<string, string>> = ((globalThis as any)[
-  Symbol.for("@notation/aws/awsNameClaims")
-] ??= new WeakMap());
+// name.
+const claims = perCollection(
+  "@notation/aws/awsNameClaims",
+  () => new Map<string, string>(),
+);
 
 /**
  * Records that `declaration` gives one of `kinds` the AWS name `name`.
@@ -69,13 +69,8 @@ export function claimAwsName(
   name: string,
   declaration: string,
 ): void {
-  const collection = getActiveResourceCollection();
-  if (!collection) return;
-  let claimed = claims.get(collection);
-  if (!claimed) {
-    claimed = new Map();
-    claims.set(collection, claimed);
-  }
+  const claimed = claims();
+  if (!claimed) return;
   // A newline can't appear in a kind.
   const key = `${kinds}\n${name}`;
   const previous = claimed.get(key);

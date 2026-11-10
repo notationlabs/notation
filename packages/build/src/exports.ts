@@ -4,13 +4,15 @@ import { platformOf } from "./platforms";
 
 /**
  * The exports that the runtime entry of a declaration module re-exports:
- * the declaration's entry, and the module's `otherExports`. Empty when the
- * declaration has no entry.
+ * the declaration's entry, and the module's `otherExports`. Undefined when
+ * the declaration has no entry.
  */
-export function runtimeExports(analysis: ModuleAnalysis): string[] {
+export function runtimeExports(
+  analysis: ModuleAnalysis,
+): { entry: string; others: string[] } | undefined {
   const entry = analysis.declaration?.mark.entry;
-  if (!entry) return [];
-  return [entry, ...(otherExports(analysis) ?? [])];
+  if (!entry) return undefined;
+  return { entry, others: otherExports(analysis) ?? [] };
 }
 
 /**
@@ -42,9 +44,9 @@ export function otherExports(analysis: ModuleAnalysis): string[] | undefined {
 }
 
 // The local names of a module that only name a type: interfaces, type
-// aliases, `declare` statements and type imports. `export { Local }` of such a name has no value to re-export. A
-// name that also has a value, such as an interface merged with a class, is
-// left out.
+// aliases, `declare` statements and type imports. `export { Local }` of such
+// a name has no value to re-export. A name that also has a value, such as an
+// interface merged with a class, is left out.
 function typeOnlyNames(analysis: ModuleAnalysis): Set<string> {
   const types = new Set<string>();
   const values = new Set<string>(analysis.table.imports.keys());

@@ -12,6 +12,7 @@ export {
   collectResourceGraph,
   getActiveResourceCollection,
   onEvaluationEnd,
+  perCollection,
   type CollectOptions,
   type ResourceGraph,
 } from "./resource-collection";

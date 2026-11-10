@@ -13,22 +13,39 @@ import {
   scriptPath,
 } from "src/resources/api";
 
-export type WorkerBinding =
-  | { type: "plain_text"; name: string; text: string }
-  | {
-      type: "durable_object_namespace";
-      name: string;
-      class_name: string;
-      /** The Worker that hosts the namespace, when it is another Worker. */
-      script_name?: string;
-    }
-  | { type: "service"; name: string; service: string };
+const bindingSchema = v.variant("type", [
+  v.object({
+    type: v.literal("plain_text"),
+    name: v.string(),
+    text: v.string(),
+  }),
+  v.object({
+    type: v.literal("durable_object_namespace"),
+    name: v.string(),
+    class_name: v.string(),
+    /** The Worker that hosts the namespace, when it is another Worker. */
+    script_name: v.optional(v.string()),
+  }),
+  v.object({
+    type: v.literal("service"),
+    name: v.string(),
+    service: v.string(),
+  }),
+]);
 
-/**
- * A Durable Object namespace that the Worker hosts. `id` is the ID of the
- * namespace's declaration, which stays the same when its class is renamed.
- */
-export type HostedNamespace = { id: string; className: string };
+export type WorkerBinding = v.InferOutput<typeof bindingSchema>;
+
+const hostedNamespaceSchema = v.object({
+  /**
+   * The ID of the namespace's declaration, which stays the same when its
+   * class is renamed.
+   */
+  id: v.string(),
+  className: v.string(),
+});
+
+/** A Durable Object namespace that the Worker hosts. */
+export type HostedNamespace = v.InferOutput<typeof hostedNamespaceSchema>;
 
 type WorkerScriptParams = {
   AccountId: string;
@@ -60,25 +77,6 @@ const workerScript = resource<WorkerScriptSchema>({
   type: "cloudflare/workers/WorkerScript",
   provider: "@notation/cloudflare/resources",
 });
-
-const bindingSchema = v.variant("type", [
-  v.object({
-    type: v.literal("plain_text"),
-    name: v.string(),
-    text: v.string(),
-  }),
-  v.object({
-    type: v.literal("durable_object_namespace"),
-    name: v.string(),
-    class_name: v.string(),
-    script_name: v.optional(v.string()),
-  }),
-  v.object({
-    type: v.literal("service"),
-    name: v.string(),
-    service: v.string(),
-  }),
-]);
 
 const workerScriptSchema = workerScript.defineSchema({
   AccountId: {
@@ -129,7 +127,7 @@ const workerScriptSchema = workerScript.defineSchema({
   DurableObjectNamespaces: {
     propertyType: "param",
     presence: "optional",
-    value: v.array(v.object({ id: v.string(), className: v.string() })),
+    value: v.array(hostedNamespaceSchema),
   },
 } as const);
 

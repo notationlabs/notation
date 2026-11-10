@@ -1,7 +1,4 @@
-import {
-  getActiveResourceCollection,
-  scopedPhysicalName,
-} from "@notation/resource";
+import { scopedPhysicalName } from "@notation/resource";
 
 // A Worker's name is a DNS label on workers.dev, so it is at most 63
 // characters, of lowercase letters, digits and hyphens.
@@ -55,30 +52,4 @@ export function assertNamespaceId(
  */
 export function workerName(name: string): string {
   return scopedPhysicalName(name, { maxLength: WORKER_NAME_MAX_LENGTH });
-}
-
-/**
- * Keeps values per resource collection, so two deployments collected in one
- * process don't see each other's declarations. The returned function must
- * be called while a graph is being collected. Two installed copies of this
- * package share the map, through `Symbol.for`.
- */
-export function perCollection<T>(key: string, create: () => T): () => T {
-  const maps: WeakMap<object, T> = ((globalThis as any)[
-    Symbol.for(`@notation/cloudflare/${key}`)
-  ] ??= new WeakMap());
-  return () => {
-    const collection = getActiveResourceCollection();
-    if (!collection) {
-      throw new Error(
-        `@notation/cloudflare read its ${key} while no resource graph is being collected.`,
-      );
-    }
-    let value = maps.get(collection);
-    if (value === undefined) {
-      value = create();
-      maps.set(collection, value);
-    }
-    return value;
-  };
 }

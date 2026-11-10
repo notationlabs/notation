@@ -482,7 +482,7 @@ it("fails the infra build on a cloudflare: import, and names the importer", asyn
     ].join("\n"),
   );
   await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
-    "runtime/cls.ts imports cloudflare:workers, which the infra build can't load",
+    "runtime/cls.ts imports cloudflare:workers, which the infra build can't load, because only workerd provides it",
   );
 });
 

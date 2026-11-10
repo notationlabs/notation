@@ -22,6 +22,12 @@ export type Platform = {
    * re-exports, whose value the platform doesn't start with.
    */
   checkExports?: (analysis: ModuleAnalysis, names: string[]) => void;
+  /**
+   * The modules that only the platform provides, such as `cloudflare:`
+   * modules on workerd. The runtime bundle leaves them external, and the
+   * infra build, which runs on Node, fails for a module that imports one.
+   */
+  providedModules?: RegExp;
 };
 
 const node: Platform = {
@@ -125,6 +131,8 @@ function isPrimitive(expression: Node): boolean {
 // The conditions and the NODE_ENV defines are the ones that wrangler uses.
 // workerd provides the `cloudflare:` and `node:` modules, so the bundle
 // leaves them external.
+const cloudflareModules = /^cloudflare:/;
+
 const workerd: Platform = {
   build: () => {
     // Like wrangler on deploy, unless NODE_ENV is set.
@@ -142,7 +150,7 @@ const workerd: Platform = {
         ],
         mainFields: ["browser", "module", "main"],
       },
-      external: [/^cloudflare:/],
+      external: [cloudflareModules],
       transform: {
         define: {
           "process.env.NODE_ENV": nodeEnv,
@@ -155,6 +163,7 @@ const workerd: Platform = {
   },
   reexportsModule: true,
   checkExports,
+  providedModules: cloudflareModules,
 };
 
 const platforms = { node, workerd };
@@ -165,6 +174,10 @@ export const platformNames = Object.keys(platforms) as PlatformName[];
 
 export const isPlatformName = (name: string): name is PlatformName =>
   Object.hasOwn(platforms, name);
+
+/** The name of the platform that alone provides the module `source`. */
+export const providerOfModule = (source: string): PlatformName | undefined =>
+  platformNames.find((name) => platforms[name].providedModules?.test(source));
 
 /** The platform of a mark's `platform:` clause, or Node when it has none. */
 export const platformOf = (name: PlatformName = "node"): Platform =>

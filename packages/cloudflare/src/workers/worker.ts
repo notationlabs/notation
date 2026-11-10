@@ -1,8 +1,8 @@
 import { filePaths, fromProjectRoot, toProjectRoot } from "@notation/core";
 import {
-  getActiveResourceCollection,
   getDeclaredIn,
   onEvaluationEnd,
+  perCollection,
   ResourceGroup,
   type DeclaredIn,
 } from "@notation/resource";
@@ -13,7 +13,7 @@ import {
   type HostedNamespace,
   type WorkerBinding,
 } from "src/resources/workers/worker-script";
-import { assertWorkerId, perCollection, workerName } from "src/id";
+import { assertWorkerId, workerName } from "src/id";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
 import { describeNamespace, registeredNamespace } from "./durable-object";
 
@@ -136,9 +136,12 @@ const registeredWorker = (value: unknown): Entry | undefined =>
     ? (value as { [workerRegistration]: Entry })[workerRegistration]
     : undefined;
 
-const declaredWorkers = perCollection("workers", () => [] as Entry[]);
+const declaredWorkers = perCollection(
+  "@notation/cloudflare/workers",
+  () => [] as Entry[],
+);
 const claimedNames = perCollection(
-  "workerNames",
+  "@notation/cloudflare/workerNames",
   () => new Map<string, string>(),
 );
 
@@ -225,8 +228,9 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
     },
   };
   Object.defineProperty(declaration, workerRegistration, { value: entry });
-  if (getActiveResourceCollection()) {
-    declaredWorkers().push(entry);
+  const workers = declaredWorkers();
+  if (workers) {
+    workers.push(entry);
     onEvaluationEnd(() => entry.build());
   }
   return declaration;
@@ -241,6 +245,7 @@ function bindingCycleError(cycle: Entry[]): Error {
 
 function claimName(scriptName: string, declaration: string) {
   const claimed = claimedNames();
+  if (!claimed) return;
   const previous = claimed.get(scriptName);
   if (previous) {
     throw new Error(
@@ -334,7 +339,7 @@ function hostOf(
   className: string,
   bindingName: string,
 ): Entry {
-  const hosts = declaredWorkers().filter(
+  const hosts = (declaredWorkers() ?? []).filter(
     (entry) =>
       Object.values(entry.bindings()).includes(namespace) &&
       exportsOf(entry).includes(className),

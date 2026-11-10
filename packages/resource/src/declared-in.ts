@@ -1,5 +1,6 @@
 // The build writes its own copy of `declaredIn` into each declaration module,
-// with this key, so the two must stay the same.
+// with this key, so the two must stay the same. A test in @notation/build
+// checks that they do.
 const declaredInKey = Symbol.for("@notation/declaredIn");
 
 /**

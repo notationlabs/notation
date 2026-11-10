@@ -17,16 +17,21 @@ export const declaredInHelper = "__notation_declaredIn";
 
 const unnamedHelper = "__notation_unnamed";
 
-// The same key as `declaredIn` in @notation/resource, which reads the record.
-// The helper is written into the module, so the user's project doesn't have
-// to resolve a notation package from the module's directory.
-const helper = `
+/**
+ * A copy of `declaredIn` from @notation/resource, which reads the record,
+ * with the same key. It is written into each declaration module, so the
+ * user's project doesn't have to resolve a notation package from the
+ * module's directory. A test checks that the two copies record the same.
+ */
+export const declaredInSource = `
 function ${declaredInHelper}(value, path, binding, moduleExports) {
   if ((typeof value === "object" && value !== null) || typeof value === "function") {
     Object.defineProperty(value, Symbol.for("@notation/declaredIn"), { value: { path, binding, ...moduleExports } });
   }
   return value;
-}
+}`;
+
+const helper = `${declaredInSource}
 function ${unnamedHelper}(message) {
   return () => { throw new Error(message); };
 }

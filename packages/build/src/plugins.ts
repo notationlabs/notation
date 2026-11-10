@@ -12,6 +12,7 @@ import {
 } from "./infra-strip";
 import type { ImportBinding, Mark } from "./marks";
 import { isProjectModule, type ModuleAnalyses } from "./modules";
+import { providerOfModule } from "./platforms";
 import { stripForRuntime } from "./runtime-strip";
 
 const isBareSpecifier = (source: string) =>
@@ -87,9 +88,10 @@ export function infraPlugin({
       installed.clear();
     },
     resolveId(source, importer) {
-      if (importer && source.startsWith("cloudflare:")) {
+      const platform = providerOfModule(source);
+      if (importer && platform) {
         throw new Error(
-          `${analyses.show(importer)} imports ${source}, which the infra build can't load, because it runs on Node. Pass the value that needs ${source}, such as a class, in a runtime: option, and move what the infra build uses, such as an ID, to a module that doesn't import ${source}.`,
+          `${analyses.show(importer)} imports ${source}, which the infra build can't load, because only ${platform} provides it and the infra build runs on Node. Pass the value that needs ${source}, such as a class, in a runtime: option, and move what the infra build uses, such as an ID, to a module that doesn't import ${source}.`,
         );
       }
       if (
@@ -229,13 +231,14 @@ export function runtimePlugin({
       // the infra rebuild replaces the watcher, so the entry reads the
       // module from disk, as it is now.
       const analysis = analyses.fromDisk(module.path);
-      const names = analysis ? runtimeExports(analysis) : [];
-      if (
-        names.length === 0 ||
-        !analyses.marks.hasExport(module.path, names[0]!)
-      )
+      const exports = analysis && runtimeExports(analysis);
+      if (!exports || !analyses.marks.hasExport(module.path, exports.entry)) {
         return "export {};\n";
-      return createRuntimeEntry(module.path, names);
+      }
+      return createRuntimeEntry(module.path, [
+        exports.entry,
+        ...exports.others,
+      ]);
     },
     transform: {
       filter: { id: { include: scriptFile, exclude: nodeModules } },

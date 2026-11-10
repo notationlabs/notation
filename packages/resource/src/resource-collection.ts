@@ -20,6 +20,8 @@ export type ResourceCollection = {
   // The app and stage that resource packages put in physical names. Unset
   // when the graph is collected without a deployment, as `notation viz` does.
   scope?: NameScope;
+  // The values of `perCollection` stores, by key.
+  stores: Map<string, unknown>;
 };
 
 export type CollectOptions = {
@@ -77,6 +79,7 @@ export async function collectResourceGraph(
     pendingValidations: [],
     declarationChecks: opts.declarationChecks ?? true,
     scope: opts.scope,
+    stores: new Map(),
   };
 
   activeCollection = collection;
@@ -97,6 +100,27 @@ export async function collectResourceGraph(
 
 export function getActiveResourceCollection(): ResourceCollection | undefined {
   return activeCollection;
+}
+
+/**
+ * Makes a store that holds one value for each resource collection, so that
+ * two graphs collected in one process don't see each other's declarations.
+ * The returned function gives the value of the graph that is being
+ * collected, which `create` makes on first use, or undefined when no graph
+ * is being collected. This package is loaded once, so two installed copies
+ * of a provider package that pass the same key share the value.
+ * @param key Names the store, such as `@notation/cloudflare/workers`.
+ */
+export function perCollection<T>(
+  key: string,
+  create: () => T,
+): () => T | undefined {
+  return () => {
+    const stores = activeCollection?.stores;
+    if (!stores) return undefined;
+    if (!stores.has(key)) stores.set(key, create());
+    return stores.get(key) as T;
+  };
 }
 
 /**

@@ -1,6 +1,6 @@
 import * as aws from "src/resources";
 import { AwsResourceGroup } from "src/resource-group";
-import { getActiveResourceCollection } from "@notation/resource";
+import { perCollection } from "@notation/resource";
 import type { EventBusSource, RuleOptions } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import { assertId, assertName, resourceId, type NameSafe } from "src/id";
@@ -112,7 +112,10 @@ export function eventBus<const Id extends string>(
 
 // The default bus of each collection, so that each call returns the same
 // group.
-const defaultBuses = new WeakMap<object, DefaultEventBusGroup>();
+const defaultBus = perCollection(
+  "@notation/aws/defaultEventBus",
+  () => new DefaultEventBusGroup(),
+);
 
 /**
  * The account's default event bus, which receives the events of AWS
@@ -121,12 +124,5 @@ const defaultBuses = new WeakMap<object, DefaultEventBusGroup>();
  * @resource runtime:
  */
 export function defaultEventBus(): DefaultEventBusGroup {
-  const collection = getActiveResourceCollection();
-  if (!collection) return new DefaultEventBusGroup();
-  let bus = defaultBuses.get(collection);
-  if (!bus) {
-    bus = new DefaultEventBusGroup();
-    defaultBuses.set(collection, bus);
-  }
-  return bus;
+  return defaultBus() ?? new DefaultEventBusGroup();
 }
