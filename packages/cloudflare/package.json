@@ -1,0 +1,35 @@
+{
+  "type": "module",
+  "name": "@notation/cloudflare",
+  "version": "0.16.0",
+  "sideEffects": false,
+  "exports": {
+    "./workers": {
+      "types": "./dist/workers/index.d.ts",
+      "notation-runtime": "./dist/workers/runtime.js",
+      "import": "./dist/workers/index.js"
+    },
+    "./resources": {
+      "types": "./dist/resources/index.d.ts",
+      "default": "./dist/resources/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "5.20261012.1",
+    "@notation/core": "workspace:*",
+    "@notation/resource": "workspace:*",
+    "@notation/std": "workspace:*",
+    "valibot": "^1.5.0"
+  },
+  "devDependencies": {
+    "@notation/reconciler": "workspace:*"
+  }
+}
