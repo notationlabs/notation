@@ -33,10 +33,7 @@ export function createResourceRegistryFromResources(
   return registry;
 }
 
-/**
- * Where two registries have a class for the same type, the later one's class
- * is kept.
- */
+/** Later registries override earlier ones. */
 export function mergeResourceRegistries(
   ...registries: (ResourceRegistry | undefined)[]
 ): ResourceRegistry {
@@ -47,11 +44,7 @@ export function mergeResourceRegistries(
   return merged;
 }
 
-/**
- * The classes that a workflow can find a record's class in: those that the
- * caller registers, and the classes of the resources in code. A class in code
- * is kept over a registered class of the same type.
- */
+/** The caller's registry merged with the classes in code. Classes in code win. */
 export function workflowRegistry(opts: {
   resources: BaseResource[];
   registry?: ResourceRegistry;

@@ -134,7 +134,8 @@ export async function createPlan({
 
 /**
  * Loads the resource's outputs from state, then returns and checks the
- * params that plan knows. A state record of another type fails. Outputs in
+ * params that plan knows. Throws if the state record has a different type.
+ * Outputs in
  * state stand in for the outputs of dependencies, so the dependencies must be
  * loaded first.
  */

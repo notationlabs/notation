@@ -72,9 +72,8 @@ export async function* reconcileResource(
 
   const emit = durableEmitter(step, opts.emit);
   const session = yield* openStateSession(step, opts, resource);
-  // notation:validate made this check before the hold. It is made again
-  // against the record read under the hold, which another execution may
-  // have written since.
+  // Repeats the notation:validate check, because validate ran before the
+  // hold and the record may have changed since.
   assertSameType(resource, session.node);
   if (session.node) resource.setOutput(session.node.output);
 
@@ -226,10 +225,8 @@ async function* recoverOutputs(
 }
 
 /**
- * Writes new edges and provider package to the record of a resource that is
- * otherwise unchanged. A provider package that is out of date would be
- * loaded when the type later leaves code. The rest of the record is written
- * as it was read, and the provider is not called.
+ * Updates `dependsOn` and `provider` in the record, without calling the
+ * resource's update operation.
  */
 async function* rewriteRecord(
   session: Extract<ResourceStateSession, { node: StateNode }>,
@@ -343,8 +340,8 @@ async function* deleteBlockingDependents(
  * — or has already been deleted — and is skipped, which is also what makes
  * the sweep of a partly-deleted deployment idempotent. `step` must already be
  * scoped to the resource.
- * A record of another type than the resource is deleted through the class of
- * the record's type, so that destroy does not need code to agree with state.
+ * If the record's type differs from `declared`'s type, the record's own class
+ * deletes it.
  */
 export async function* deleteResource(
   step: DurableStepRunner,
@@ -389,11 +386,10 @@ export async function* deleteResource(
  * A state node whose type has no registry entry is left in place and surfaced
  * as a warning, because deleting it would need a resource class we cannot
  * resolve. Every orphan it depends on is left in place too, and the warning
- * names them. In destroy, so is every desired resource it depends on, and so
- * is a desired resource whose record has another type with no registry entry.
+ * names them. In destroy, desired resources it depends on are kept too, and
+ * so is a desired resource whose record's type has no class.
  *
- * Returns the IDs of the skipped records and of the resources kept for them,
- * so that destroy can leave the desired ones in place.
+ * Returns the IDs of all records left in place.
  */
 export async function* sweepOrphans(
   step: DurableStep,
@@ -421,9 +417,6 @@ export async function* sweepOrphans(
   }
   const kept = new Set<string>();
 
-  // Destroy deletes a desired resource whose record has another type through
-  // the class of the record's type. When that class is not registered, the
-  // record is kept, and so is every resource it depends on.
   if (workflow === "destroy") {
     for (const node of persisted) {
       const resource = resourceById.get(node.id);
@@ -452,10 +445,6 @@ export async function* sweepOrphans(
   return kept;
 }
 
-/**
- * Keeps a record whose type has no class, and every resource it depends on,
- * and warns with their IDs.
- */
 async function* skipUnregistered(
   scope: DurableStepRunner,
   opts: DurableWorkflowOptions,

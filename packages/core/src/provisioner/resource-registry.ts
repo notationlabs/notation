@@ -30,13 +30,8 @@ export function createResourceRegistryFromGraph(
   return createResourceRegistryFromResources(resources);
 }
 
-/**
- * The provider packages of the records whose type has no class in code,
- * sorted. Only such a record needs a class from its package: deploy and
- * destroy delete it as an orphan, and plan finds its delete cascades.
- * A record with no provider package fails, as earlier versions wrote such
- * records and their state is not supported.
- */
+// Records whose type is in code use the class from code, so only the other
+// records need their package loaded.
 export function stateProviderPackages(
   nodes: Pick<StateNode, "id" | "type" | "provider">[],
   resources: Pick<BaseResource, "type">[] = [],
@@ -57,15 +52,10 @@ export function stateProviderPackages(
   return [...packages].sort();
 }
 
-/**
- * Core does not depend on the providers, which depend on core, so each
- * package is resolved from the project. The project usually depends on a
- * provider package such as `@notation/aws` and not on the provider package it
- * uses, such as `@notation/aws.iac`. pnpm does not link such a transitive
- * package into the project's `node_modules`, so a package that the project
- * root can't resolve is resolved from each package in the project's
- * dependency tree, as Node resolves it when that package imports it.
- */
+// Packages are resolved from the project, because core does not depend on
+// them. Under pnpm, a package such as @notation/aws.iac is usually a
+// dependency of a dependency and is not linked into the project's
+// node_modules, so the dependency tree is searched as well.
 export async function loadProviderRegistry(
   packages: string[],
   root: string = projectRoot(),
@@ -85,8 +75,7 @@ export async function loadProviderRegistry(
       errorMessage,
     });
   for (const name of packages) {
-    // A record names a package. A path or a subpath in its place would
-    // import a file.
+    // Paths and subpaths are rejected, so that state can't import any file.
     if (!packageName.test(name)) {
       fail(name, `${name} is not a package name`);
       continue;
@@ -109,7 +98,7 @@ export async function loadProviderRegistry(
       fail(name, errorMessage(error));
       continue;
     }
-    // A CommonJS build imported from ESM can put its exports under default.
+    // import() of a CommonJS module can put its exports under default.
     const resourceClasses =
       provider.resourceClasses ??
       (provider.default as { resourceClasses?: unknown } | undefined)
@@ -131,11 +120,9 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// A package that is found but can't be resolved, such as one with no export
-// for the require conditions, fails with the error of the directory it was
-// found from. A package found nowhere fails with the project root's error.
-// The dependency tree is walked only when the root can't resolve the package,
-// and the walk stops at the first directory that can.
+// Tries the project root, then the dependency tree. MODULE_NOT_FOUND means
+// try the next directory. Any other error means the package was found but
+// can't be loaded, so it is thrown.
 function resolvePackage(
   require: NodeJS.Require,
   name: string,
@@ -160,8 +147,7 @@ function resolvePackage(
 
 const packageName = /^(@[^/@.][^/]*\/)?[^/@.][^/]*$/;
 
-// The tree is walked at most once for all the packages of one load, and
-// only as far as a package needs.
+// Shares one walk of the tree between the packages of one load.
 function cachedDependencyDirs(root: string): () => Iterable<string> {
   const found: string[] = [];
   const walk = dependencyDirs(root);
@@ -178,10 +164,9 @@ function isNotFound(error: unknown): boolean {
   return (error as { code?: string }).code === "MODULE_NOT_FOUND";
 }
 
-// The real directory of each package in the project's dependency tree,
-// breadth first. A symlink is followed, as Node follows it, so that pnpm's
-// links resolve each package's own dependencies. The project's dev
-// dependencies are included, and those of other packages are not.
+// Real paths are used because pnpm puts a package's dependencies next to its
+// real path, not next to its symlink. Dev dependencies are followed for the
+// project only.
 function* dependencyDirs(root: string): Generator<string> {
   const project = manifestDir(root);
   if (!project) return;
@@ -214,8 +199,8 @@ function dependencyNames(dir: string, includeDev: boolean): string[] {
   });
 }
 
-// The project root is the directory of notation.config.ts, and the project's
-// package.json can be in a directory above it.
+// The project root is where notation.config.ts is. The package.json can be in
+// a parent directory.
 function manifestDir(root: string): string | undefined {
   for (let dir = root; ; dir = path.dirname(dir)) {
     if (fs.existsSync(path.join(dir, "package.json"))) return dir;
@@ -223,8 +208,6 @@ function manifestDir(root: string): string | undefined {
   }
 }
 
-// Looks in the node_modules of `from` and of each directory above it, as Node
-// does.
 function findPackageDir(from: string, name: string): string | undefined {
   for (let dir = from; ; dir = path.dirname(dir)) {
     try {
@@ -255,13 +238,13 @@ export async function* loadStateProviderRegistry(
   resources: BaseResource[],
   emit: ReconcilerEventEmitter,
 ): AsyncGenerator<any, ResourceRegistry, any> {
-  // A step, so that a resumed execution loads the packages of the records it
-  // read the first time, including those of records it has deleted since.
+  // A step, so that a resumed execution loads the same packages after it has
+  // deleted some of the records.
   const packages = yield* step.run("notation:providers", async () =>
     stateProviderPackages(await state.values(), resources),
   );
-  // Classes can't be journaled, so a resumed execution imports the packages
-  // again. The warnings are steps, so that a resume does not repeat them.
+  // Classes can't be journaled, so a resume imports the packages again. The
+  // warnings are steps, so a resume does not repeat them.
   const { registry, failures } = await loadProviderRegistry(packages);
   for (const failure of failures) {
     yield* step.run(

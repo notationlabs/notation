@@ -618,9 +618,9 @@ export type DefineResourceMeta = {
    */
   blocksDeleteOf?: ResourceType[];
   /**
-   * The name of the package that exports the class in its `resourceClasses`,
-   * such as `@notation/aws.iac`. State records it, so that deploy and destroy
-   * can load the class of a record whose type has left the graph.
+   * The package that exports this class in `resourceClasses`, such as
+   * `@notation/aws.iac`. Stored in state, so the class can be loaded after
+   * its type is removed from code.
    */
   provider: string;
 };
@@ -839,9 +839,8 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
 export const resource = defineResource;
 
 /**
- * The resource classes among the exports of each module namespace, such as
- * `import * as lambda from "./resources/lambda"`. A provider package exports
- * them as `resourceClasses`.
+ * Collects the resource classes exported by module namespaces, such as
+ * `import * as lambda from "./resources/lambda"`.
  */
 export function resourceClassesIn(
   ...namespaces: Record<string, unknown>[]

@@ -42,8 +42,6 @@ export async function planApp({
   return withRuntime(
     { deployment, runtime: suppliedRuntime, databasePath },
     async (runtime) => {
-      // Deploy loads the same packages, so plan finds the same blocking
-      // dependents as deploy.
       const providerRegistry = await loadPlanProviderRegistry(
         runtime.state,
         graph.resources,

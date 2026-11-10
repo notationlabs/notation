@@ -55,8 +55,8 @@ export type HoldWaitingEvent = {
 };
 
 /**
- * A record whose type has no class was left in place. In destroy, this is
- * also emitted for a desired resource whose record has another type.
+ * A record was not deleted because its type has no class. In destroy, this
+ * includes a desired resource whose record has a different type.
  */
 export type OrphanDeletionSkippedEvent = {
   level: "warn";
@@ -73,10 +73,7 @@ export type OrphanDeletionSkippedEvent = {
   keptDependencies: string[];
 };
 
-/**
- * A provider package that a state record names could not be loaded, so the
- * records of its types that are absent from code can't be deleted.
- */
+/** A provider package named in state could not be loaded. */
 export type ProviderLoadFailedEvent = {
   level: "warn";
   event: "reconciler.provider.load-failed";
