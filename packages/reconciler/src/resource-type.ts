@@ -1,12 +1,6 @@
 import type { BaseResource } from "@notation/resource";
 import type { StateNode } from "@notation/state";
 
-/**
- * A resource in the graph has the ID of a state record of another type. The
- * reconciler can't turn one type into another: the class of the graph
- * resource would read, update or delete the old resource with the wrong
- * operations.
- */
 export class ResourceTypeChangedError extends Error {
   readonly _tag = "ResourceTypeChangedError" as const;
   readonly resourceId: string;
