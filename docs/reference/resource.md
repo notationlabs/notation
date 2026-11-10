@@ -83,9 +83,21 @@ const LambdaFunction = defineResource<{
 
 `meta` defines runtime values for state tracking, reconciliation, and display
 
-| Field  | Purpose                                                                      |
-| ------ | ---------------------------------------------------------------------------- |
-| `type` | a `platform/service/ResourceName` string (e.g. `aws/lambda/LambdaFunction`). |
+| Field            | Purpose                                                                                                                           |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `type`           | a `platform/service/ResourceName` string (e.g. `aws/lambda/LambdaFunction`).                                                      |
+| `blocksDeleteOf` | `ResourceType[]?`. The types that the provider refuses to delete while a resource of this type depends on them. Defaults to `[]`. |
+
+When deploy replaces a resource of a listed type, it first deletes each resource of this type that depends on it, and creates it again after the new resource. AWS, for example, does not delete an EventBridge bus that has rules, so `aws/eventBridge/rule` lists the bus type:
+
+```ts
+const eventBridgeRule = resource<EventBridgeRuleSchema>({
+  type: "aws/eventBridge/rule",
+  blocksDeleteOf: [EventBus.type],
+});
+```
+
+List a type only when the provider refuses the delete. A dependent of a type that does not list the type stays in place, and deploy updates it when its params change. Write the type as a string literal when importing the class would make an import cycle. Nothing checks that a listed type exists, so a mistyped type is ignored. The resource class exposes the list as `blocksDeleteOf`, as it exposes `type`.
 
 **2. `resource({ type })`** – `type` defines
 

@@ -3,6 +3,7 @@ import {
   createPlan,
   type Plan,
   type ReconcilerEventEmitter,
+  type ResourceRegistry,
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
@@ -14,6 +15,7 @@ export type PlanAppOptions = {
   deployment: Deployment;
   driftDetection?: boolean;
   maxOperationAttempts?: number;
+  registry?: ResourceRegistry;
   runtime?: NodeDurableRuntime;
   databasePath?: string;
   emit?: ReconcilerEventEmitter;
@@ -24,6 +26,7 @@ export async function planApp({
   // Defaulted in one place: the reconciler's drift gate treats absent as on.
   driftDetection,
   maxOperationAttempts,
+  registry,
   runtime: suppliedRuntime,
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
@@ -41,6 +44,7 @@ export async function planApp({
         driftDetection,
         emit,
         maxOperationAttempts,
+        registry,
       }),
   );
 }

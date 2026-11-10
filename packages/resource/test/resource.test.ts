@@ -22,6 +22,18 @@ describe("resource basics", () => {
     expect(testResource.type).toBe("provider/service/resource");
   });
 
+  test("blocksDeleteOf", () => {
+    const Child = resource({
+      type: "provider/service/child",
+      blocksDeleteOf: ["provider/service/parent"],
+    })
+      .defineSchema({})
+      .defineOperations({} as any);
+
+    expect(TestResource.blocksDeleteOf).toEqual([]);
+    expect(Child.blocksDeleteOf).toEqual(["provider/service/parent"]);
+  });
+
   test("setOutput", () => {
     testResource.setOutput({ a: 1 });
     expect(testResource.output).toEqual({ a: 1 });

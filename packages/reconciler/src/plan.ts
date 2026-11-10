@@ -30,6 +30,14 @@ export type PlanNode = {
   decision: PlanDecision;
   diff?: PlanDiff;
   replaceFields?: ReplaceField[];
+  /**
+   * Set when deploy deletes this resource before it replaces a resource this
+   * one depends on, directly or through other deleted resources, because
+   * this resource blocks that delete. Deploy then creates it again, so it is
+   * replaced too. The ID of the replaced resource, as in the delete event's
+   * `replacedDependency`.
+   */
+  replacedDependency?: string;
   params: Record<string, unknown>;
   dependsOn: string[];
 };
@@ -149,6 +157,19 @@ function pick(
 export function getDependencyIds(resource: BaseResource): string[] {
   const ids = resource.getDependencies().map((dependency) => dependency.id);
   return [...new Set(ids)].sort();
+}
+
+/**
+ * The edges a state record holds. A record written before edges were
+ * recorded has none, and takes the edges in code when it is still declared.
+ */
+export function recordedEdges(
+  node: StateNode,
+  resourceById: Map<string, BaseResource>,
+): string[] {
+  if (node.dependsOn) return node.dependsOn;
+  const resource = resourceById.get(node.id);
+  return resource ? getDependencyIds(resource) : [];
 }
 
 export function hasSameEdges(

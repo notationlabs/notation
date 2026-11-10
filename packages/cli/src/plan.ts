@@ -65,6 +65,18 @@ function printPlanSummary(result: Plan, logger: Logger) {
           : `    ${field.name} unknown, may force replacement`,
       );
     }
+    if (node.replacedDependency) {
+      const replaced = result.nodes.find(
+        ({ id }) => id === node.replacedDependency,
+      );
+      // Deploy deletes the dependent only if it replaces the dependency.
+      const certain = replaced?.replaceFields?.some((field) => field.known);
+      logger.info(
+        certain
+          ? `    deleted before ${node.replacedDependency} is replaced`
+          : `    deleted if ${node.replacedDependency} is replaced`,
+      );
+    }
   }
 
   const count = (decision: PlanNode["decision"]) =>

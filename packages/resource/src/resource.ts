@@ -601,7 +601,21 @@ function withoutUndefined(
   return defined;
 }
 
-export type DefineResourceMeta = { type: ResourceType };
+export type DefineResourceMeta = {
+  type: ResourceType;
+  /**
+   * The types that the provider refuses to delete while a resource of this
+   * type depends on them. For example, AWS does not delete an EventBridge bus
+   * that has rules, so the rule type lists `EventBus.type`.
+   *
+   * When deploy replaces a resource of a listed type, it first deletes each
+   * resource of this type that depends on it in state. It then deletes the
+   * resource, creates it again, and creates the dependents again. A
+   * dependent of a type that does not list the type stays in place, and
+   * deploy updates it when its params change.
+   */
+  blocksDeleteOf?: ResourceType[];
+};
 
 export type ResourceOperationsOptions<
   T extends ResourceTypes,
@@ -674,6 +688,8 @@ export type ResourceClass<
 > = {
   new (id: string, ...args: ResourceArgs<C, D>): Resource<T, D, C>;
   readonly type: ResourceType;
+  /** See `DefineResourceMeta.blocksDeleteOf`. */
+  readonly blocksDeleteOf: readonly ResourceType[];
   requireDependencies: <
     Dependencies extends Record<string, BaseResource | void>,
   >() => ResourceDependenciesBuilder<T, IntrinsicParams, Dependencies>;
@@ -740,6 +756,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
           > extends Resource<T, NoInfer<D>, NoInfer<C>> {
             static type = meta.type;
             type = meta.type;
+            static blocksDeleteOf = meta.blocksDeleteOf ?? [];
             schema = schema;
             create = opts.create;
             find = opts.find;

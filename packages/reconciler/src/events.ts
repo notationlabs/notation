@@ -13,6 +13,11 @@ export type OperationLifecycleEvent = {
   resourceId: string;
   resourceType: ResourceType;
   reason?: string;
+  /**
+   * With the reason `dependency-replaced`: the resource whose replacement
+   * deletes this one first. Plan names it in `PlanNode.replacedDependency`.
+   */
+  replacedDependency?: string;
   errorName?: string;
   errorMessage?: string;
 };
