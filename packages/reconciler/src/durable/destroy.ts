@@ -13,7 +13,8 @@ export async function* destroy(
   yield* withDeploymentHold(step, opts, async function* () {
     // Orphans go first: an orphan can depend on a resource in the desired
     // set, but no resource in the desired set depends on an orphan. The sweep
-    // returns the desired resources that a skipped orphan still depends on.
+    // returns the desired resources that it could not delete or that a
+    // skipped record still depends on.
     const kept = yield* sweepOrphans(step, opts, "destroy");
 
     // Delete in reverse dependency order, so dependents are gone before the

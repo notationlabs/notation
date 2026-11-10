@@ -1114,25 +1114,79 @@ describe("a resource whose state record has another type", () => {
     runtime.close();
   });
 
-  it("fails destroy before any change", async () => {
+  it("destroys the record through the class of its type, in dependency order", async () => {
     const calls: string[] = [];
     const Old = defineTyped("test/durable/old", calls);
     const New = defineTyped("test/durable/new", calls);
-    const resources: BaseResource[] = [new Old("permission")];
+    const Role = defineTyped("test/durable/role", calls);
+    const Fn = defineTyped("test/durable/fn", calls);
+    const role = new Role("role");
+    const resources: BaseResource[] = [
+      role,
+      new Old("permission", { dependencies: { role } }),
+    ];
     const runtime = createRuntime(resources, "type-changed-destroy", {
       registry: createResourceRegistry([Old]),
     });
     await runtime.run("deploy-1");
 
-    resources[0] = new New("permission");
-
-    await expect(runtime.destroy("destroy-1")).rejects.toSatisfy(
-      ResourceTypeChangedError.is,
+    const permission = new New("permission", { dependencies: { role } });
+    resources.splice(
+      1,
+      1,
+      permission,
+      new Fn("fn", { dependencies: { permission } }),
     );
-    expect(calls).toEqual(["create test/durable/old"]);
-    expect(await runtime.state.get("permission")).toMatchObject({
-      type: "test/durable/old",
+    calls.length = 0;
+    await runtime.destroy("destroy-1");
+
+    expect(calls).toEqual([
+      "delete test/durable/old",
+      "delete test/durable/role",
+    ]);
+    expect(await runtime.state.values()).toEqual([]);
+    runtime.close();
+  });
+
+  it("keeps the record and its dependencies in destroy when the class of its type is not registered", async () => {
+    const calls: string[] = [];
+    const events: ReconcilerEvent[] = [];
+    const Old = defineTyped("test/durable/old", calls);
+    const New = defineTyped("test/durable/new", calls);
+    const Role = defineTyped("test/durable/role", calls);
+    const Other = defineTyped("test/durable/other", calls);
+    const role = new Role("role");
+    const resources: BaseResource[] = [
+      role,
+      new Old("permission", { dependencies: { role } }),
+      new Other("other"),
+    ];
+    const runtime = createRuntime(resources, "type-changed-unregistered", {
+      registry: createResourceRegistry([]),
+      emit: (event) => void events.push(event),
     });
+    await runtime.run("deploy-1");
+
+    resources[1] = new New("permission", { dependencies: { role } });
+    calls.length = 0;
+    await runtime.destroy("destroy-1");
+
+    expect(calls).toEqual(["delete test/durable/other"]);
+    expect(
+      events.filter(
+        (event) => event.event === "reconciler.orphan-deletion.skipped",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        workflow: "destroy",
+        resourceId: "permission",
+        resourceType: "test/durable/old",
+        keptDependencies: ["role"],
+      }),
+    ]);
+    expect(
+      (await runtime.state.values()).map((node) => node.id).sort(),
+    ).toEqual(["permission", "role"]);
     runtime.close();
   });
 });
@@ -1196,6 +1250,31 @@ describe("dependency edges in state", () => {
       ...before,
       version: before!.version + 1,
       dependsOn: ["second"],
+    });
+    runtime.close();
+  });
+
+  it("rewrites the provider package of a resource whose class moved package", async () => {
+    const updateSpy = vi.fn(async () => undefined);
+    const define = (provider: string) =>
+      resource({ type: "test/durable/moved", provider })
+        .defineSchema({})
+        .defineOperations({
+          create: async () => undefined,
+          update: updateSpy,
+          delete: async () => undefined,
+        });
+    const resources: BaseResource[] = [new (define("@acme/old"))("moved")];
+    const runtime = createRuntime(resources, "provider-rewritten");
+
+    await runtime.run("deploy-1");
+    resources[0] = new (define("@acme/new"))("moved");
+    await runtime.run("deploy-2");
+
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(await runtime.state.get("moved")).toMatchObject({
+      provider: "@acme/new",
+      version: 2,
     });
     runtime.close();
   });

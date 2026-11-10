@@ -54,6 +54,10 @@ export type HoldWaitingEvent = {
   holderExecutionId: string;
 };
 
+/**
+ * A record whose type has no class was left in place. In destroy, this is
+ * also emitted for a desired resource whose record has another type.
+ */
 export type OrphanDeletionSkippedEvent = {
   level: "warn";
   event: "reconciler.orphan-deletion.skipped";
