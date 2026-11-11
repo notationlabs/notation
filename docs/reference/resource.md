@@ -247,6 +247,7 @@ new ResourceNotFoundError(message: string, options?: { cause?: unknown });
 new ResourceOperationPendingError(message: string, {
   retryAfterMs: number;
   callbackContext?: Readonly<DurableObject>;
+  throttled?: boolean;
   cause?: unknown;
 });
 
@@ -269,6 +270,7 @@ new ResourceCreationUnknownError(message: string, options?: { cause?: unknown })
 | ----------------- | ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `retryAfterMs`    | `number`                  | yes      | Milliseconds to wait. It must be zero or greater.                                                                                                                        |
 | `callbackContext` | `Readonly<DurableObject>` | no       | Data for the next attempt. The reconciler records it with the error. If it holds a value that is not durable, such as a `Buffer`, the next attempt receives `undefined`. |
+| `throttled`       | `boolean`                 | no       | Set to `true` when the provider refused the request because of a rate limit. A throttled `read` then doesn't report that the resource exists. The default is `false`.    |
 | `cause`           | `unknown`                 | no       | The provider error that caused this result.                                                                                                                              |
 
 The default limit is 30 attempts. Set `maxOperationAttempts` in the deploy, plan, or destroy options to change it. Reaching the limit fails the operation.
@@ -300,7 +302,7 @@ read: async (key, context) => {
 The outcome of a create attempt is unknown when the process stops after `create` returns and before the reconciler records the result, or when `create` throws `ResourceCreationUnknownError`. The reconciler then looks the resource up before it calls `create` again:
 
 1. A resource with `find` is found by the attempt's token. `create` must record the token on the remote resource, for example as a tag, so that `find` can search for it.
-2. A resource with `read`, whose key is made of params, is read by the key it would have.
+2. A resource with `read`, whose key is made of params, is read by the key it would have. A read that throws `ResourceOperationPendingError` finds the resource, because a pending read means that the resource exists. A read that throws a throttled `ResourceOperationPendingError` doesn't.
 3. Any other resource cannot be found. The reconciler calls `create` again after a stopped process, and fails the deployment on a `ResourceCreationUnknownError`.
 
 When a lookup finds the resource, the reconciler uses what it found as the result of `create`. When it throws, the reconciler looks again after one second. When the outcome is still unknown after 10 attempts, or after `maxOperationAttempts` when it is lower, the deployment fails with a `WorkflowEffectError` with code `EFFECT_OUTCOME_UNKNOWN`.

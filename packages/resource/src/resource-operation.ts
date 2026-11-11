@@ -37,17 +37,25 @@ export class ResourceOperationPendingError extends Error {
   /** Plain data passed to the next attempt of the same operation. */
   readonly callbackContext?: ResourceOperationContext;
 
+  /**
+   * True when the provider refused the request because of a rate limit. A
+   * throttled `read` says nothing about whether the resource exists.
+   */
+  readonly throttled: boolean;
+
   constructor(
     message: string,
     options: ErrorOptions & {
       retryAfterMs: number;
       callbackContext?: ResourceOperationContext;
+      throttled?: boolean;
     },
   ) {
     super(message, options);
     this.name = "ResourceOperationPendingError";
     this.retryAfterMs = options.retryAfterMs;
     this.callbackContext = options.callbackContext;
+    this.throttled = options.throttled ?? false;
 
     if (!Number.isFinite(options.retryAfterMs) || options.retryAfterMs < 0) {
       throw new RangeError("retryAfterMs must be a non-negative number");
