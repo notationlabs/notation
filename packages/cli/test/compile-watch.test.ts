@@ -275,18 +275,14 @@ it("checks a shared module again when a module that it imports changes", async (
   );
 });
 
-it("strips a module again when a module that it imports starts to import cloudflare:workers", async () => {
+it("strips a runtime module again when infra starts to use another of its exports", async () => {
   write(
-    "watch-p/cls.ts",
-    `export class Imported {}\nexport const NAME = "n";\n`,
-  );
-  write(
-    "watch-p/registry.ts",
-    `import { Imported } from "./cls";\nglobalThis.seen = [Imported];\n`,
+    "runtime/cls.ts",
+    `export class Imported {}\nexport const NAME = "n";\nglobalThis.loaded = true;\n`,
   );
   write(
     "watch-p/main.ts",
-    `import "./registry";\nimport { NAME } from "./cls";\nconsole.log(NAME);\n`,
+    `import { NAME } from "../runtime/cls";\nconsole.log(NAME);\n`,
   );
   const bundle = path.join(root, "dist/watch-p/main.mjs");
   const errors: unknown[] = [];
@@ -297,18 +293,18 @@ it("strips a module again when a module that it imports starts to import cloudfl
     onBuildFailed: (error) => errors.push(error),
   });
   onTestFinished(infra.close);
-  expect(readFileSync(bundle, "utf8")).toContain("globalThis.seen");
+  expect(readFileSync(bundle, "utf8")).not.toContain("Imported");
 
   const before = builds;
   write(
-    "watch-p/cls.ts",
-    `import { DurableObject } from "cloudflare:workers";\nexport class Imported extends DurableObject {}\nexport const NAME = "n";\n`,
+    "watch-p/main.ts",
+    `import { NAME, Imported } from "../runtime/cls";\nconsole.log(NAME, Imported.name);\n`,
   );
   await waitFor(() => expect(builds).toBeGreaterThan(before));
   expect(errors).toEqual([]);
   const code = readFileSync(bundle, "utf8");
-  expect(code).not.toContain("globalThis.seen");
-  expect(code).not.toContain("cloudflare:");
+  expect(code).toMatch(/Imported = class/);
+  expect(code).not.toContain("globalThis.loaded");
 });
 
 it("fails each build that includes a broken shared module, and writes no bundle", async () => {

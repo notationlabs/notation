@@ -14,7 +14,6 @@ import {
   type KindMatch,
 } from "./files";
 import { Marks } from "./marks";
-import { describeProvided } from "./platforms";
 
 // The modules that the strips read: JS and TS files outside node_modules.
 // These include files of workspace packages, which resolve to their real
@@ -178,31 +177,6 @@ export class ModuleAnalyses {
         : "Neither build strips a shared module, so it can't hold a declaration.";
     throw new Error(
       `${name}:${location(analysis.table.module.source, declaration.call.start)}: ${describeKind(name, match)}, declares a function with ${declaration.name}. ${why} Move the declaration to a runtime module.`,
-    );
-  }
-
-  /**
-   * Fails if a shared module uses a module that only one platform provides,
-   * such as `cloudflare:workers`. A shared module also runs at deploy.
-   */
-  checkSharedPlatformUse(
-    file: string,
-    /** The identifiers that the infra build would remove from the module. */
-    removed: { names: Map<string, { module: string; file: string }> },
-  ) {
-    const match = this.kindOf(file);
-    if (match?.kind !== "shared") return;
-    const [first] = removed.names;
-    if (!first) return;
-    const [name, reason] = first;
-    const shared = describeKind(this.show(file), match);
-    const provided = describeProvided(reason.module);
-    const how =
-      reason.file === file
-        ? `imports ${provided}`
-        : `uses ${name}, which depends on ${provided} (${this.show(reason.file)} imports it)`;
-    throw new Error(
-      `${shared}, ${how}. A shared module also runs at deploy, so it can't use ${reason.module}. Move the code that needs ${reason.module} to a runtime module.`,
     );
   }
 

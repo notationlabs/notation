@@ -20,8 +20,8 @@ export type Platform = {
   checkExports?: (analysis: ModuleAnalysis, names: string[]) => void;
   /**
    * Modules that only this platform provides, such as `cloudflare:` modules.
-   * The infra build removes imports of them and the code that uses the
-   * imports. It fails if the infra declaration uses that code.
+   * Node can't load them at deploy. The infra build fails if code that runs
+   * at deploy uses one.
    */
   provided?: {
     modules: RegExp;

@@ -5,12 +5,12 @@ import type { ModuleAnalysis } from "./analyze";
 import { location, parseModule } from "./ast";
 import { nodeModules, scriptFile } from "./files";
 import { runtimeExports } from "./exports";
+import { infraRoots } from "./infra-entry";
 import {
-  checkProvidedUses,
   infraInterface,
-  ProvidedRemovals,
+  RuntimeStrips,
   stripForInfra,
-  stripProvided,
+  stripRuntimeForInfra,
   type DeclarationModule,
 } from "./infra-strip";
 import type { ImportBinding, Mark } from "./marks";
@@ -65,6 +65,8 @@ const mayHoldMarks = (code: string) =>
 
 export type InfraPluginOptions = {
   analyses: ModuleAnalyses;
+  /** The infra entry, the same as `infraEntryPlugin`'s. */
+  entryPoint: string;
   /**
    * Called after each build that produces output, with the declaration
    * modules in the build, sorted by path.
@@ -73,16 +75,19 @@ export type InfraPluginOptions = {
 };
 
 /**
- * The infra build's plugin. Replaces each declaration module with its
- * stripped copy, and leaves packages external, so that the infra bundle
- * imports them from the project's node_modules.
+ * The infra build's plugin. Replaces each declaration module and each other
+ * runtime module with its stripped copy, and leaves packages external, so
+ * that the infra bundle imports them from the project's node_modules.
  */
 export function infraPlugin({
   analyses,
+  entryPoint,
   onDeclarationModules,
 }: InfraPluginOptions): Plugin {
   const declarations = new Map<string, DeclarationModule>();
-  const removals = new ProvidedRemovals(analyses);
+  const strips = new RuntimeStrips(analyses, () =>
+    infraRoots(analyses, entryPoint),
+  );
   // By importer directory and package name. Cleared on each build, so that
   // a package installed during watch is seen.
   const installed = new Map<string, boolean>();
@@ -90,12 +95,12 @@ export function infraPlugin({
     name: "notation-infra",
     buildStart() {
       installed.clear();
-      removals.clear();
+      strips.clear();
     },
     resolveId(source, importer) {
       // `source` is a module that only another platform provides. The
-      // transform removes static imports of it. A dynamic import or
-      // `export * from` stays, and is marked external here.
+      // strip removes the imports of it that runtime modules have. Another
+      // import, such as a dynamic import, stays, and is external.
       if (importer && providerOfModule(source)) {
         return { id: source, external: true, moduleSideEffects: false };
       }
@@ -112,18 +117,19 @@ export function infraPlugin({
       handler(code, id) {
         if (!isProjectModule(id)) return null;
         declarations.delete(id);
-        if (!mayHoldMarks(code)) return null;
+        const runtime = analyses.files.kindOf(id)?.kind === "runtime";
+        if (!runtime && !mayHoldMarks(code)) return null;
         const analysis = analyses.fromSource(id, code);
         analyses.checkDeclaration(id, analysis);
         checkRuntimeImports(analysis, analyses);
-        const removal = removals.of(id);
-        if (removal) analyses.checkSharedPlatformUse(id, removal);
         if (!analysis.declaration) {
-          return (removal && stripProvided(analysis, removal)) ?? null;
+          return runtime
+            ? stripRuntimeForInfra(analysis, strips.of(analysis))
+            : null;
         }
-        if (removal) {
-          checkProvidedUses(analysis, removal, (file) => analyses.show(file));
-        }
+        // Fails the build if the declaration needs a module that only
+        // another platform provides.
+        strips.solve();
         const stripped = stripForInfra(
           analysis,
           analyses.marks,
@@ -135,7 +141,7 @@ export function infraPlugin({
     },
     watchChange(id) {
       analyses.invalidate(id);
-      removals.clear();
+      strips.clear();
     },
     buildEnd(error) {
       if (error) return;

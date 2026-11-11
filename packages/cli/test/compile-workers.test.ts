@@ -540,7 +540,7 @@ describe("a class that extends a cloudflare:workers class in a module without a 
   );
 });
 
-it("leaves out what another module builds from a removed class, also in modules that import each other", async () => {
+it("keeps only what infra uses of runtime modules that import each other, and doesn't run their side effects", async () => {
   writeProject();
   write(
     "runtime/cls.ts",
@@ -579,7 +579,7 @@ it("leaves out what another module builds from a removed class, also in modules 
     runInfra(
       `[namespace.id, namespace.className, globalThis.registered, globalThis.seen ?? null, globalThis.viaNamespace ?? null]`,
     ),
-  ).toEqual(["counters", "Imported", true, null, null]);
+  ).toEqual(["counters", "Imported", null, null, null]);
 });
 
 it("drops a removed class from an export list and a default export, and keeps the other exports", async () => {
@@ -616,7 +616,7 @@ it("drops a removed class from an export list and a default export, and keeps th
   ]);
 });
 
-it("removes an infra statement that uses a cloudflare:workers class, also when it has side effects", async () => {
+it("fails the infra build for an infra module that uses a cloudflare:workers class", async () => {
   writeProject();
   write(
     "infra/registry.ts",
@@ -631,12 +631,42 @@ it("removes an infra statement that uses a cloudflare:workers class, also when i
     [
       `import { classes, registry } from "./registry";`,
       `for (const c of classes) registry.add(c);`,
-      `globalThis.size = registry.size;`,
+    ].join("\n"),
+  );
+  await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
+    "infra/registry.ts imports cloudflare:workers, which is only available in a Worker, and code that runs at deploy uses it.",
+  );
+});
+
+it("keeps a runtime export that infra uses through a namespace member, export * and export default", async () => {
+  writeProject();
+  write(
+    "runtime/base.ts",
+    [
+      `import { DurableObject } from "cloudflare:workers";`,
+      `export class Imported extends DurableObject {}`,
+      `export const PREFIX = "count";`,
+      `export default "ers";`,
+    ].join("\n"),
+  );
+  write(
+    "runtime/names.ts",
+    `export * from "./base";\nexport { default as SUFFIX } from "./base";\nglobalThis.loaded = true;`,
+  );
+  write(
+    "runtime/counter.ts",
+    [
+      `import { $durableObject } from "@notation/cloudflare/workers";`,
+      `import * as names from "./names";`,
+      `export const counters = $durableObject({ id: names.PREFIX + names.SUFFIX, class: names.Imported });`,
     ].join("\n"),
   );
   await compileInfra(path.join(root, "infra/main.ts"));
-  expect(read("dist/infra/main.mjs")).not.toContain("cloudflare:");
-  expect(runInfra("globalThis.size")).toBe(0);
+  expect(read("dist/infra/main.mjs")).not.toMatch(/cloudflare:|loaded/);
+  expect(runInfra(`[namespace.id, namespace.className]`)).toEqual([
+    "counters",
+    "",
+  ]);
 });
 
 it("fails the infra build on a static cloudflare: import that the strip doesn't remove, and names the importer", async () => {
@@ -673,7 +703,22 @@ it("builds an infra module with an import of another scheme, such as bun:", asyn
   ).resolves.toBeDefined();
 });
 
-it("fails the infra build for a shared module that imports cloudflare:workers", async () => {
+it("fails the infra build when an infra module uses a runtime value that needs cloudflare:workers", async () => {
+  writeProject();
+  write(
+    "runtime/kv.ts",
+    `import { env } from "cloudflare:workers";\nexport const kv = env.KV;`,
+  );
+  write(
+    "infra/main.ts",
+    `import { kv } from "../runtime/kv";\nconsole.log(kv);`,
+  );
+  await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
+    "infra/main.ts:1:10: kv can't be used at deploy, because it depends on cloudflare:workers, which is only available in a Worker (runtime/kv.ts imports it). Move the value that you need to a file that doesn't import cloudflare:workers.",
+  );
+});
+
+it("doesn't check a shared module that imports cloudflare:workers", async () => {
   writeProject();
   write(
     "shared/names.ts",
@@ -687,9 +732,8 @@ it("fails the infra build for a shared module that imports cloudflare:workers", 
     "infra/main.ts",
     `import { NAME } from "../shared/names";\nconsole.log(NAME);`,
   );
-  await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
-    /shared\/names\.ts, a shared module \(.*\), imports cloudflare:workers, which is only available in a Worker\. A shared module also runs at deploy, so it can't use cloudflare:workers\. Move the code that needs cloudflare:workers to a runtime module\./,
-  );
+  await compileInfra(path.join(root, "infra/main.ts"));
+  expect(read("dist/infra/main.mjs")).not.toContain("cloudflare:");
 });
 
 describe("a declaration that uses a class that the infra build leaves out", () => {

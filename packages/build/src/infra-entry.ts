@@ -51,6 +51,21 @@ function globBases(root: string, globs: string[]): string[] {
 }
 
 /**
+ * Returns the modules that the infra build runs first: the infra entry, and
+ * each file that `files.runtime` matches and that calls a declaration
+ * function.
+ */
+export function infraRoots(
+  analyses: ModuleAnalyses,
+  entryPoint: string,
+): string[] {
+  const runtime = analyses.files
+    .list("runtime")
+    .filter((file) => analyse(analyses, file)?.declaration);
+  return [entryPoint, ...runtime];
+}
+
+/**
  * Generates the infra build's entry. It imports the infra entry first, then
  * each file that `files.runtime` matches and that calls a declaration
  * function, such as `$lambda`, so that a function is deployed even if infra
@@ -86,10 +101,7 @@ export function infraEntryPlugin(options: {
         }
       }
       files.checkOverlaps();
-      const runtime = files
-        .list("runtime")
-        .filter((file) => analyse(analyses, file)?.declaration);
-      return [entryPoint, ...runtime]
+      return infraRoots(analyses, entryPoint)
         .map((file) => `import ${JSON.stringify(file)};\n`)
         .join("");
     },

@@ -106,6 +106,8 @@ A shared module, such as `shared/routes.ts`, holds code that both infra and runt
 
 **The runtime module's code doesn't run at deploy time.** The infra build runs a stripped copy of `runtime/todos.ts`. The copy keeps the declaration and the top-level statements that the declaration uses. Everything else is removed, so the `api.get("/todos")` call above runs only in the Lambda function.
 
+The same holds for each other runtime module that the infra build includes, such as `runtime/config.ts` when the declaration imports a constant from it. Its copy keeps the exports that code that runs at deploy uses, and the statements that they need. Its other code, such as a top-level `console.log` or an import that is only there for its side effects, doesn't run at deploy.
+
 An effect that the declaration doesn't refer to by name is also removed. For example, if a side-effect import such as a `.env` loader sets a value that an option reads, the infra build doesn't run the import, and the option reads the value without it. `notation plan` shows the function's settings, so you can check them.
 
 ### Runtime modules that infra doesn't import
@@ -192,7 +194,6 @@ export const Order = v.object({ id: v.string() });
 - declares a function, such as with `$lambda`,
 - imports a resource function, such as `queue` from `@notation/aws/sqs`,
 - imports an infra or runtime module, directly or through modules that aren't infra or runtime,
-- imports a platform module, such as `cloudflare:workers`, or uses a class from another file that needs one.
 
 The error names the chain of imports, with the position of each import:
 

@@ -150,6 +150,7 @@ export async function compileInfra(
       infraEntryPlugin({ analyses, entryPoint }),
       infraPlugin({
         analyses,
+        entryPoint,
         onDeclarationModules: (modules) => {
           found = modules;
         },
