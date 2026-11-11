@@ -84,6 +84,8 @@ const workerScriptSchema = workerScript.defineSchema({
     presence: "required",
     immutable: true,
     secondaryKey: true,
+    rejectReplace: (previous, desired) =>
+      `CLOUDFLARE_ACCOUNT_ID is ${desired}, but this Worker was deployed to the account ${previous}. A Worker can't move to another account, and replacing it would delete the objects of the Durable Object namespaces that it hosts. Set CLOUDFLARE_ACCOUNT_ID back to ${previous}. To deploy to the other account, first run \`notation destroy\` with the old account, or deploy to another stage.`,
     value: v.string(),
   },
   ScriptName: {

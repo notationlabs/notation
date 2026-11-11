@@ -128,6 +128,6 @@ Deploy reads two environment variables:
 - `CLOUDFLARE_API_TOKEN`: an API token with the **Workers Scripts: Edit** permission.
 - `CLOUDFLARE_ACCOUNT_ID`: the account to deploy to. It is stored in state, so a later deploy updates or deletes each Worker in the account it was made in.
 
-A Worker can't move to another account. If `CLOUDFLARE_ACCOUNT_ID` changes, the plan replaces every Worker: it creates each one in the new account, and deletes each one in the old account, with the objects of the namespaces that it hosts. The token must still have access to the old account. If the old account answers that the Worker doesn't exist, the delete counts as done, and the Worker is left in that account.
+A Worker can't move to another account. If `CLOUDFLARE_ACCOUNT_ID` changes, plan and deploy fail, because replacing each Worker would delete the objects of the namespaces that it hosts. To deploy to another account, first run `notation destroy` with the old account, or deploy to another stage.
 
 A Worker that exists already in the account, with the same name, is not taken over. The create fails.

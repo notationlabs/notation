@@ -307,6 +307,15 @@ describe("WorkerScript", () => {
       }),
     ).rejects.toThrow("Set CLOUDFLARE_ACCOUNT_ID");
   });
+
+  it("rejects a replacement when the account changes", () => {
+    const { AccountId } = script.schema;
+    if (AccountId.propertyType !== "param") throw new Error("not a param");
+
+    expect(AccountId.rejectReplace?.("old", "new")).toMatch(
+      /CLOUDFLARE_ACCOUNT_ID is new, but this Worker was deployed to the account old/,
+    );
+  });
 });
 
 describe("durableObjectExports", () => {

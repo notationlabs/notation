@@ -91,6 +91,7 @@ export function decideAction(opts: {
   );
 
   if (replaceFields.length > 0) {
+    assertReplaceAllowed(resource, stateNode.params, params, replaceFields);
     return { decision: "replace", patch, diff, replaceFields };
   }
   if (Object.keys(patch).length > 0) {
@@ -98,6 +99,28 @@ export function decideAction(opts: {
   }
 
   return { decision: "noop" };
+}
+
+/**
+ * Throws when a changed param has `rejectReplace` in the schema. A value
+ * that is unknown until apply is skipped: deploy decides again with the real
+ * value.
+ */
+function assertReplaceAllowed(
+  resource: BaseResource,
+  previous: Record<string, unknown>,
+  desired: Record<string, unknown>,
+  replaceFields: ReplaceField[],
+): void {
+  for (const { name, known } of replaceFields) {
+    const item = resource.schema[name];
+    if (!known || item?.propertyType !== "param" || !item.rejectReplace) {
+      continue;
+    }
+    throw new Error(
+      `${resource.id}: ${item.rejectReplace(previous[name], desired[name])}`,
+    );
+  }
 }
 
 /**
