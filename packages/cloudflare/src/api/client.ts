@@ -5,9 +5,6 @@ import {
 
 const API_URL = "https://api.cloudflare.com/client/v4";
 
-/** Cloudflare's error code for a Worker that doesn't exist. */
-const WORKER_NOT_FOUND = 10007;
-
 // Some errors have no code, such as a 403 for a token without access.
 export type CloudflareErrorItem = { code?: number; message: string };
 
@@ -53,10 +50,6 @@ export class CloudflareNetworkError extends Error {
     this.name = "CloudflareNetworkError";
   }
 }
-
-export const isNotFound = (error: unknown): boolean =>
-  error instanceof CloudflareApiError &&
-  (error.status === 404 || error.hasCode(WORKER_NOT_FOUND));
 
 /**
  * Reads `CLOUDFLARE_ACCOUNT_ID`. Each resource stores the id in state, so an
@@ -193,6 +186,3 @@ export function cloudflareCreate<Args extends unknown[], Result>(
     }
   };
 }
-
-export const scriptPath = (account: string, scriptName: string) =>
-  `/accounts/${encodeURIComponent(account)}/workers/scripts/${encodeURIComponent(scriptName)}`;

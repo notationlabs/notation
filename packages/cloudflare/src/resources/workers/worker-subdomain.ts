@@ -1,6 +1,11 @@
 import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
-import { cloudflare, isNotFound, scriptPath } from "src/resources/api";
+import {
+  getAccountSubdomain,
+  getScriptSubdomain,
+  isNotFound,
+  setScriptSubdomain,
+} from "src/api/workers";
 import type { WorkerScriptInstance } from "./worker-script";
 
 export type WorkerSubdomainSchema = {
@@ -41,13 +46,6 @@ const workerSubdomainSchema = workerSubdomain.defineSchema({
   },
 } as const);
 
-// `previews_enabled` is omitted, so the preview URL setting from the
-// dashboard is kept.
-const setEnabled = (account: string, scriptName: string, enabled: boolean) =>
-  cloudflare("POST", `${scriptPath(account, scriptName)}/subdomain`, {
-    enabled,
-  });
-
 /**
  * Serves a Worker at `https://<script>.<account subdomain>.workers.dev`. The
  * account needs a workers.dev subdomain.
@@ -56,37 +54,26 @@ export const WorkerSubdomain = workerSubdomainSchema
   .defineOperations({
     // Enabling is idempotent, so a failed create is safe to retry.
     create: async (params) => {
-      await setEnabled(params.AccountId, params.ScriptName, true);
+      await setScriptSubdomain(params.AccountId, params.ScriptName, true);
     },
 
     read: async (key) => {
-      let enabled: boolean | undefined;
-      try {
-        ({ enabled } = await cloudflare<{ enabled: boolean }>(
-          "GET",
-          `${scriptPath(key.AccountId, key.ScriptName)}/subdomain`,
-        ));
-      } catch (error) {
-        if (!isNotFound(error)) throw error;
-      }
-      if (!enabled) {
+      const subdomain = await getScriptSubdomain(key.AccountId, key.ScriptName);
+      if (!subdomain?.enabled) {
         throw new ResourceNotFoundError(
           "The Worker is not served on workers.dev",
         );
       }
-      const { subdomain } = await cloudflare<{ subdomain: string }>(
-        "GET",
-        `/accounts/${encodeURIComponent(key.AccountId)}/workers/subdomain`,
-      );
+      const accountSubdomain = await getAccountSubdomain(key.AccountId);
       return {
         ...key,
-        Url: `https://${key.ScriptName}.${subdomain}.workers.dev`,
+        Url: `https://${key.ScriptName}.${accountSubdomain}.workers.dev`,
       };
     },
 
     delete: async (key) => {
       try {
-        await setEnabled(key.AccountId, key.ScriptName, false);
+        await setScriptSubdomain(key.AccountId, key.ScriptName, false);
       } catch (error) {
         if (!isNotFound(error)) throw error;
       }

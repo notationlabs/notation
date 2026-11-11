@@ -5,13 +5,16 @@ import path from "node:path";
 import { fromProjectRoot } from "@notation/core/paths";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import type { fs } from "@notation/std/resources";
+import { accountId, cloudflareCreate } from "src/api/client";
 import {
-  accountId,
-  cloudflare,
-  cloudflareCreate,
+  deleteScript,
+  getScriptSettings,
   isNotFound,
-  scriptPath,
-} from "src/resources/api";
+  putScript,
+  type DurableObjectExport,
+} from "src/api/workers";
+
+export type { DurableObjectExport };
 
 const bindingSchema = v.variant("type", [
   v.object({
@@ -130,17 +133,12 @@ const workerScriptSchema = workerScript.defineSchema({
   },
 } as const);
 
-type Settings = {
-  compatibility_date?: string;
-  compatibility_flags?: string[];
-};
-
 export const WorkerScript = workerScriptSchema
   .defineOperations({
     // An upload replaces a Worker with the same name, so check first. The
     // check is outside `cloudflareCreate`: if it throws, nothing was created.
     create: async (params) => {
-      if (await readSettings(params.AccountId, params.ScriptName)) {
+      if (await getScriptSettings(params.AccountId, params.ScriptName)) {
         throw new Error(
           `A Worker named ${params.ScriptName} already exists in the Cloudflare account ${params.AccountId}`,
         );
@@ -149,7 +147,7 @@ export const WorkerScript = workerScriptSchema
     },
 
     read: async (key) => {
-      const settings = await readSettings(key.AccountId, key.ScriptName);
+      const settings = await getScriptSettings(key.AccountId, key.ScriptName);
       if (!settings) {
         throw new ResourceNotFoundError("Worker was not found");
       }
@@ -172,7 +170,7 @@ export const WorkerScript = workerScriptSchema
 
     delete: async (key) => {
       try {
-        await cloudflare("DELETE", scriptPath(key.AccountId, key.ScriptName));
+        await deleteScript(key.AccountId, key.ScriptName);
       } catch (error) {
         if (!isNotFound(error)) throw error;
       }
@@ -196,21 +194,6 @@ export function sortedFlags(flags: string[]): string[] {
   return [...new Set(flags)].sort();
 }
 
-async function readSettings(
-  account: string,
-  scriptName: string,
-): Promise<Settings | undefined> {
-  try {
-    return await cloudflare<Settings>(
-      "GET",
-      `${scriptPath(account, scriptName)}/settings`,
-    );
-  } catch (error) {
-    if (isNotFound(error)) return undefined;
-    throw error;
-  }
-}
-
 async function upload(
   params: WorkerScriptParams,
   previous: HostedNamespace[],
@@ -220,32 +203,15 @@ async function upload(
     params.DurableObjectNamespaces ?? [],
     previous,
   );
-  const metadata = {
-    main_module: params.MainModule,
-    compatibility_date: params.CompatibilityDate,
-    compatibility_flags: params.CompatibilityFlags ?? [],
+  await putScript(params.AccountId, params.ScriptName, {
+    mainModule: params.MainModule,
+    code,
+    compatibilityDate: params.CompatibilityDate,
+    compatibilityFlags: params.CompatibilityFlags ?? [],
     bindings: params.Bindings ?? [],
-    ...(Object.keys(exports).length > 0 ? { exports } : {}),
-  };
-  const form = new FormData();
-  form.set("metadata", JSON.stringify(metadata));
-  form.set(
-    params.MainModule,
-    new File([code], params.MainModule, {
-      type: "application/javascript+module",
-    }),
-  );
-  await cloudflare(
-    "PUT",
-    scriptPath(params.AccountId, params.ScriptName),
-    form,
-  );
+    exports,
+  });
 }
-
-export type DurableObjectExport =
-  | { type: "durable-object"; storage: "sqlite" }
-  | { type: "durable-object"; state: "deleted" }
-  | { type: "durable-object"; state: "renamed"; renamed_to: string };
 
 /**
  * Makes the Durable Object `exports` map of the upload. Cloudflare fails an
