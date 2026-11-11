@@ -12,45 +12,29 @@ import { assertWorkerId, workerName } from "src/id";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
 import { describeNamespace, registeredNamespace } from "./durable-object";
 
-// The build imports Node's built-in modules as `node:` modules, which
-// workerd provides under this flag, so every Worker gets it.
+// Always set: the build imports Node's built-in modules as `node:` modules,
+// which workerd only provides under this flag.
 const NODEJS_COMPAT = "nodejs_compat";
 
 export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
   /**
-   * Names the Worker, and keys it in state. The Worker is named
-   * `<app>--<stage>--<id>` in Cloudflare. Changing the id replaces the
-   * Worker, so keep it stable. Use 1 to 63 lowercase letters, digits or
-   * hyphens.
+   * The Worker's name in Cloudflare is `<app>--<stage>--<id>`. Changing the
+   * id replaces the Worker.
    */
   id: Id;
-  /**
-   * The Worker's name in Cloudflare, in place of the id. The Worker is named
-   * `<app>--<stage>--<name>`. Changing the name replaces the Worker.
-   */
+  /** Replaces the id in the Worker's name. Changing it replaces the Worker. */
   name?: string;
   /**
-   * The values that the Worker's code reads from `env`, by name, such as
-   * `() => ({ COUNTERS: counters, GREETING: "hello" })`. A Durable Object
-   * namespace from `$durableObject` is bound as a namespace, another Worker
-   * as a service binding, and a string as plain text. Return an object
-   * literal with no spread or computed keys.
+   * The values that the Worker reads from `env`: a `$durableObject`
+   * namespace, another Worker or a string. Return an object literal with no
+   * spread or computed keys.
    */
   bindings?: () => B;
-  /**
-   * The Worker's compatibility date, such as `"2026-10-12"`. Cloudflare
-   * runs the Worker with the behaviour of the runtime on that date.
-   */
+  /** Such as `"2026-10-12"`. */
   compatibilityDate: string;
-  /**
-   * The Worker's compatibility flags. `nodejs_compat` is always added, as
-   * the build imports Node's built-in modules as `node:` modules.
-   */
+  /** `nodejs_compat` is always added. */
   compatibilityFlags?: string[];
-  /**
-   * Serves the Worker on its workers.dev URL. Defaults to `true`, as in
-   * wrangler.
-   */
+  /** Serves the Worker on its workers.dev URL. Defaults to `true`, as in wrangler. */
   url?: boolean;
 };
 
@@ -116,11 +100,11 @@ type Entry = {
   declaration: Worker<any>;
   id: string;
   scriptName: string;
-  /** Describes the Worker in errors, with its module when it is known. */
+  /** Names the Worker in errors, with its module if known. */
   describe: () => string;
   record: () => DeclaredIn;
   bindings: () => Bindings;
-  /** `chain` holds the Workers whose builds are building this one. */
+  /** `chain` is the Workers whose builds led to this one. */
   build: (chain?: Entry[]) => WorkerGroup;
 };
 
@@ -141,12 +125,9 @@ const claimedNames = perCollection(
 );
 
 /**
- * Declares the Cloudflare Worker that its module deploys as. The module has
- * a default export, which Cloudflare calls with each request or event, and
- * exports the class of each Durable Object namespace that the Worker hosts.
- *
- * The Worker's resources are made when infra has finished loading, so the
- * bindings can refer to modules that import this one.
+ * Declares a Cloudflare Worker. The module's default export is the handler.
+ * Bindings are read after all infra has loaded, so they can refer to
+ * modules that import this one.
  * @declaration shared: id, bindings; keys: bindings; entry: default; platform: workerd
  */
 export function $worker<const Id extends string, B extends Bindings = {}>(
@@ -187,11 +168,9 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
       }
       return record;
     },
-    // The bindings are read once, when infra has finished loading, as the
-    // modules that they refer to may still be loading when $worker is called.
+    // Read once, after all infra has loaded.
     bindings: () => (bindings ??= config.bindings?.() ?? {}),
-    // A Worker is built after the Workers that it is uploaded after, so a
-    // Worker that is already in `chain` closes a cycle of bindings.
+    // A Worker that is already in `chain` means the bindings form a cycle.
     build: (chain = []) => {
       if (group) return group;
       if (chain.includes(entry)) {
@@ -231,8 +210,8 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
   return declaration;
 }
 
-// A Worker is built from onEvaluationEnd, so a graph is always being
-// collected while it is built.
+// Workers are built from onEvaluationEnd, when a collection is always
+// active, so a missing store is a bug.
 function active<T>(store: () => T | undefined, name: string): T {
   const value = store();
   if (value === undefined) {
@@ -268,10 +247,8 @@ type ResolvedBindings = {
 };
 
 /**
- * Turns a Worker's bindings into the bindings of its upload. A Durable
- * Object namespace is hosted by the Worker that binds it and exports its
- * class. Each other Worker that binds the namespace binds it on that
- * Worker, and is uploaded after it.
+ * The Worker that binds a namespace and exports its class hosts it. Other
+ * Workers that bind the namespace are uploaded after the host.
  */
 function resolveBindings(self: Entry): ResolvedBindings {
   const resolved: ResolvedBindings = {
@@ -367,7 +344,7 @@ function hostOf(
   );
 }
 
-// Another Worker without a record fails its own build, so it is read here as
-// exporting nothing.
+// A Worker with no recorded module fails in its own build, so this returns
+// no exports for it instead of throwing.
 const exportsOf = (entry: Entry): string[] =>
   getDeclaredIn(entry.declaration)?.exports ?? [];

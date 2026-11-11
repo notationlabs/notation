@@ -102,9 +102,8 @@ export function decideAction(opts: {
 }
 
 /**
- * Throws when a changed param has `rejectReplace` in the schema. A value
- * that is unknown until apply is skipped: deploy decides again with the real
- * value.
+ * Throws if a changed param has `rejectReplace`. A value that is unknown
+ * until apply is skipped, and checked again at deploy with the real value.
  */
 function assertReplaceAllowed(
   resource: BaseResource,

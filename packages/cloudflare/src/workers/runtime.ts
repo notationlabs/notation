@@ -8,20 +8,18 @@ import type { DurableObjectDeclarationConfig } from "./durable-object";
 import type { WorkerDeclarationConfig } from "./worker";
 
 // The runtime build resolves `@notation/cloudflare/workers` to this module,
-// through the `notation-runtime` export condition. It has the same exports
-// as `index.ts`, so the same imports link in both builds, but none of the
-// infra code. The types come from `index.ts` in both builds.
+// so it exports the same names as `index.ts`.
 
 export type * from "./declaration";
 
-/** The Worker's view of its declaration. Its code reads bindings from `env`. */
+/** Declares nothing at runtime. The Worker reads its bindings from `env`. */
 export function $worker<const Id extends string, B extends Bindings = {}>(
   config: WorkerDeclarationConfig<Id, B>,
 ): Worker<B> {
   return { id: config.id } as unknown as Worker<B>;
 }
 
-/** The Worker's view of a namespace declaration. */
+/** Declares nothing at runtime. */
 export function $durableObject<
   const Id extends string,
   C extends DurableObjectClass,

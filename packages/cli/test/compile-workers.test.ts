@@ -41,10 +41,7 @@ const write = (file: string, contents: string) => {
 
 const read = (file: string) => readFileSync(path.join(root, file), "utf8");
 
-// Stands in for a Cloudflare provider package. The infra side records each
-// declaration on globalThis. `worker.check()` does what the provider's plan
-// would do with the Worker's exports in its declaredIn record. The runtime
-// side, through the notation-runtime condition, has no marks.
+// A stand-in for the Cloudflare provider package.
 function writeCloudflarePackage() {
   write(
     "node_modules/@notation/cloudflare/package.json",

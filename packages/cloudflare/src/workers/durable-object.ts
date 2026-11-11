@@ -10,25 +10,21 @@ export type DurableObjectDeclarationConfig<
   C extends DurableObjectClass,
 > = {
   /**
-   * Keys the namespace. Its class can be renamed while the id stays the
-   * same, and the namespace keeps its objects. Changing the id and the class
-   * together deletes the namespace and its objects, and makes a new one.
-   * Changing the id alone fails the deploy, as Cloudflare keys a namespace
-   * by its class name. Keep the id stable.
+   * Keep it stable. Renaming the class keeps the namespace's objects.
+   * Changing the id and the class deletes them. Changing only the id fails
+   * the deploy.
    */
   id: Id;
   /**
-   * The namespace's class, by name, such as `class: Counter`. Export the
-   * class from the module of each Worker that hosts the namespace, under the
-   * name written here, as Cloudflare finds the class by its export name.
+   * Pass the class by name, such as `class: Counter`. Each Worker that hosts
+   * the namespace must export the class under that name.
    */
   class: C;
 };
 
 type Registered = { className: string };
 
-// Two installed copies of this package each have their own module state, so
-// the mark is a `Symbol.for` symbol, which both copies share.
+// `Symbol.for`, so two installed copies of this package share it.
 const registration = Symbol.for(
   "@notation/cloudflare/DurableObjectDeclaration",
 );
@@ -45,11 +41,8 @@ const declaredIds = perCollection(
 );
 
 /**
- * Declares a Durable Object namespace. A Worker binds it in its `bindings`,
- * and hosts it when the Worker's module exports the class.
- *
- * The module of the namespace holds only this declaration. Import the class
- * from it in each Worker that hosts the namespace, and export it again.
+ * Declares a Durable Object namespace. A Worker that binds it also hosts it
+ * if the Worker's module exports the class.
  * @declaration shared: id; runtime: class
  */
 export function $durableObject<
@@ -57,10 +50,9 @@ export function $durableObject<
   C extends DurableObjectClass,
 >(config: DurableObjectDeclarationConfig<Id, C>): DurableObjectDeclaration<C> {
   assertNamespaceId("$durableObject", config.id);
-  // The infra build replaces the class with a function of the same name, as
-  // the class may import modules, such as cloudflare:workers, that infra
-  // can't load. A value that is not a name, such as `ns.Counter`, gets a
-  // function with no name.
+  // The infra build replaces the class with a function of the same name. A
+  // value that is not a name, such as `ns.Counter`, becomes a function with
+  // an empty name.
   const className = (config.class as { name?: unknown } | undefined)?.name;
   if (typeof className !== "string" || className === "") {
     throw new Error(
@@ -83,7 +75,7 @@ export function $durableObject<
   return declaration;
 }
 
-/** Describes a namespace in errors, with its module when it is known. */
+/** Names a namespace in errors, with its module if known. */
 export function describeNamespace(namespace: DurableObjectDeclaration): string {
   const where = getDeclaredIn(namespace)?.path;
   const call = `$durableObject({ id: "${namespace.id}" })`;

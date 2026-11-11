@@ -1,12 +1,11 @@
 // The build writes its own copy of `declaredIn` into each declaration module,
-// with this key, so the two must stay the same. A test in @notation/build
-// checks that they do.
+// with this key. A test in @notation/build checks that the two copies match.
 const declaredInKey = Symbol.for("@notation/declaredIn");
 
 /**
- * The module of a declaration, as the infra build records it. `exports` and
- * `starExports` are set together, for a module whose platform reads named
- * exports, such as a Worker module that exports its Durable Object classes.
+ * The module that a declaration is in. `exports` and `starExports` are only
+ * recorded for a platform that needs the module's exports in the function's
+ * bundle, such as workerd.
  */
 export type DeclaredIn = {
   /** The path of the module, relative to the project root, with `/` separators. */
@@ -15,19 +14,15 @@ export type DeclaredIn = {
   binding: string;
 } & Partial<DeclaredExports>;
 
-/**
- * The exports of a module whose platform reads named exports. The infra
- * build records them for a declaration marked `platform: workerd`.
- */
 export type DeclaredExports = {
   /**
-   * The value exports of the module that its bundle re-exports, other than
-   * the entry and the declaration.
+   * The values that the module exports by name, without its handler and its
+   * infra declaration.
    */
   exports: string[];
   /**
-   * The specifiers of the module's `export * from` statements. The bundle
-   * doesn't re-export their names.
+   * The files that the module re-exports with `export * from`. The names
+   * that they export are not in `exports`.
    */
   starExports: string[];
 };

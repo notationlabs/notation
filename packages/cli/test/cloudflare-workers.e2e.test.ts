@@ -14,8 +14,8 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { setConfigFile } from "@notation/core";
 import { compileInfra, compileRuntimeModules } from "../src/compile";
 
-// Inside this package, so the project's imports of @notation/cloudflare
-// resolve from the package's node_modules, to the built package.
+// Inside this package, so that the project's imports of @notation/cloudflare
+// resolve to the built package.
 const tmpDir = fileURLToPath(new URL("../tmp", import.meta.url));
 
 let root: string;

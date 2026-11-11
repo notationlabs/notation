@@ -31,7 +31,7 @@ export type DeclarationMark = {
   keys: string[];
   /** The export of the module that the platform calls, such as `handler`. */
   entry?: string;
-  /** The platform that runs the runtime bundle. Absent means `node`. */
+  /** The platform that runs the function. Defaults to `node`. */
   platform?: PlatformName;
 };
 

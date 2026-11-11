@@ -207,10 +207,8 @@ export type CompileRuntimeOptions = {
 };
 
 /**
- * Bundles each declaration module that has an entry to
- * `dist/<module path>/index.mjs`, as one file. The bundle's entry is
- * generated: it re-exports the module's entry, such as `handler`, and the
- * module's other exports if the platform reads them. Returns a function that stops watching.
+ * Bundles each module that deploys a function into one file,
+ * `dist/<module path>/index.mjs`. Returns a function that stops watching.
  */
 export async function compileRuntimeModules(
   modules: DeclarationModule[],

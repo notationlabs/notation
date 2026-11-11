@@ -43,9 +43,8 @@ export type SchemaItem<T = any> = {
       primaryKey?: true;
       secondaryKey?: true;
       /**
-       * Fails the plan, and deploy, when a change to the param would replace
-       * the resource. Returns the message of the error. For a param that the
-       * user can change by accident, on a resource whose delete loses data.
+       * Fails plan and deploy if a change to the param would replace the
+       * resource. Returns the error message.
        */
       rejectReplace?: (previous: T, desired: T) => string;
       /**

@@ -3,9 +3,9 @@ import { declaredBy } from "./ast";
 import { platformOf } from "./platforms";
 
 /**
- * The exports that the runtime entry of a declaration module re-exports:
- * the declaration's entry, and the module's `otherExports`. Undefined when
- * the declaration has no entry.
+ * Lists the names that a function's bundle exports: the handler, and the
+ * names from `otherExports` if the platform needs them. Undefined for a
+ * module that deploys no function.
  */
 export function runtimeExports(
   analysis: ModuleAnalysis,
@@ -16,11 +16,12 @@ export function runtimeExports(
 }
 
 /**
- * The value exports of a declaration module, besides the entry and the
- * declaration, that the runtime entry re-exports because the platform reads
- * them. Undefined when the declaration has no entry, or the platform only
- * reads the entry. Names from `export * from` are missing, as the module's
- * table doesn't hold them.
+ * Returns a list of export names, excluding:
+ * - the infra declaration, e.g. `export const lambda = $lambda(...)`
+ * - exports that satisfy the runtime platform's contract, e.g. `handler`
+ *   for AWS Lambda and `default` for a Cloudflare Worker
+ *
+ * Returns undefined for platforms that only need contract exports.
  */
 export function otherExports(analysis: ModuleAnalysis): string[] | undefined {
   const declaration = analysis.declaration;
@@ -43,10 +44,8 @@ export function otherExports(analysis: ModuleAnalysis): string[] | undefined {
     .sort();
 }
 
-// The local names of a module that only name a type: interfaces, type
-// aliases, `declare` statements and type imports. `export { Local }` of such
-// a name has no value to re-export. A name that also has a value, such as an
-// interface merged with a class, is left out.
+// Local names that are only types. A name that also has a value, such as an
+// interface merged with a class, is not included.
 function typeOnlyNames(analysis: ModuleAnalysis): Set<string> {
   const types = new Set<string>();
   const values = new Set<string>(analysis.table.imports.keys());

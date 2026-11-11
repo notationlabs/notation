@@ -69,9 +69,8 @@ export class ModuleAnalyses {
   }
 
   /**
-   * Analyses a module from its source on disk now, which can be newer than
-   * the analysis that `fromFile` keeps until the watcher reports a change.
-   * Undefined if the file can't be read.
+   * Analyses a module from disk. `fromFile` can be stale until the watcher
+   * reports the change.
    */
   fromDisk(file: string): ModuleAnalysis | undefined {
     const source = readSource(file);
@@ -176,14 +175,12 @@ export class ModuleAnalyses {
   }
 
   /**
-   * Fails if a module that `files.shared` matches uses a module that only
-   * one platform provides, such as `cloudflare:workers`, directly or through
-   * a name from another module. `removed` holds the names that the infra
-   * strip would leave out of the module. Neither build strips a shared
-   * module, and code that runs at deploy can't use the provided module.
+   * Fails if a shared module uses a module that only one platform provides,
+   * such as `cloudflare:workers`. A shared module also runs at deploy.
    */
   checkSharedPlatformUse(
     file: string,
+    /** The names that the infra build would remove from the module. */
     removed: { names: Map<string, { module: string; file: string }> },
   ) {
     const match = this.kindOf(file);

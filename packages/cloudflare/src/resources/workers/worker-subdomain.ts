@@ -41,7 +41,7 @@ const workerSubdomainSchema = workerSubdomain.defineSchema({
   },
 } as const);
 
-// `previews_enabled` is left out, so a preview URL setting made in the
+// `previews_enabled` is omitted, so the preview URL setting from the
 // dashboard is kept.
 const setEnabled = (account: string, scriptName: string, enabled: boolean) =>
   cloudflare("POST", `${scriptPath(account, scriptName)}/subdomain`, {
@@ -49,15 +49,12 @@ const setEnabled = (account: string, scriptName: string, enabled: boolean) =>
   });
 
 /**
- * Serves a Worker on its workers.dev URL,
- * `https://<script>.<account subdomain>.workers.dev`. The account must have
- * a workers.dev subdomain, which the dashboard sets up the first time it
- * opens Workers & Pages.
+ * Serves a Worker at `https://<script>.<account subdomain>.workers.dev`. The
+ * account needs a workers.dev subdomain.
  */
 export const WorkerSubdomain = workerSubdomainSchema
   .defineOperations({
-    // Enabling the route is idempotent, so a create that failed is safe to
-    // repeat, and needs no check of whether it took effect.
+    // Enabling is idempotent, so a failed create is safe to retry.
     create: async (params) => {
       await setEnabled(params.AccountId, params.ScriptName, true);
     },

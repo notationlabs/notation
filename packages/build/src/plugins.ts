@@ -93,11 +93,9 @@ export function infraPlugin({
       removals.clear();
     },
     resolveId(source, importer) {
-      // A module that only another platform provides can't load on Node.
-      // The transform removes the static imports of project modules. What
-      // is left, such as a dynamic import or `export * from`, stays
-      // external, and generateBundle fails on a static import that the
-      // bundle keeps.
+      // `source` is a module that only another platform provides. The
+      // transform removes static imports of it. A dynamic import or
+      // `export * from` stays, and is marked external here.
       if (importer && providerOfModule(source)) {
         return { id: source, external: true, moduleSideEffects: false };
       }
@@ -165,10 +163,9 @@ export function infraPlugin({
   };
 }
 
-// The first static import, in a chunk's code, of a module that only another
-// platform provides. Read from the code, as `chunk.imports` also lists the
-// imports that tree shaking removed. A dynamic import fails only if it runs,
-// so it is left in.
+// Finds a static import of a module that only another platform provides.
+// Parses the code, because `chunk.imports` also lists imports that tree
+// shaking removed. A dynamic import only fails if it runs, so it is allowed.
 function keptStaticImport(file: string, code: string): string | undefined {
   for (const node of parseModule(file, code).body) {
     if (node.type !== "ImportDeclaration") continue;
@@ -221,11 +218,8 @@ const resolvedEntryId = `\0${entryId}`;
 export const runtimeEntry = entryId;
 
 /**
- * The entry of a runtime bundle. It re-exports `names` from the module at
- * `file`: the native entry, such as `handler`, and the module's other
- * exports if the platform reads them, such as Durable Object classes on
- * workerd. The declaration is not an export of the bundle, so the bundler
- * can drop it. Exported for tests.
+ * Returns the source of the entry file of a function's bundle, such as
+ * `export { handler } from "/project/runtime/todos.ts"`. Exported for tests.
  */
 export function createRuntimeEntry(file: string, names: string[]): string {
   const show = (name: string) =>
@@ -266,9 +260,8 @@ export function runtimePlugin({
     },
     load(id) {
       if (id !== resolvedEntryId) return null;
-      // In watch mode, a change to the module rebuilds this bundle before
-      // the infra rebuild replaces the watcher, so the entry reads the
-      // module from disk, as it is now.
+      // Reads the module from disk. In watch mode this runs before the infra
+      // rebuild, so the cached analysis can be stale.
       const analysis = analyses.fromDisk(module.path);
       const exports = analysis && runtimeExports(analysis);
       if (!exports || !analyses.marks.hasExport(module.path, exports.entry)) {
@@ -299,10 +292,9 @@ export function runtimePlugin({
       for (const id of this.getModuleIds()) analyses.checkShared(id);
     },
     generateBundle(_, bundle) {
-      // An entry that exports nothing means that the module has lost its
-      // declaration, its entry or its entry export. The build writes
-      // nothing, and the last bundle stays: the infra build either fails or
-      // no longer bundles the module.
+      // An entry with no exports means that the module no longer declares a
+      // function. The build writes nothing, and the infra build either fails
+      // or stops bundling the module.
       const entry = Object.values(bundle).find(
         (output) => output.type === "chunk" && output.isEntry,
       );

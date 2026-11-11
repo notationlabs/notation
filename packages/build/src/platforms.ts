@@ -3,34 +3,25 @@ import type { InputOptions, Plugin } from "rolldown";
 import type { ModuleAnalysis } from "./analyze";
 import { location, unwrap, type Node } from "./ast";
 
-/** A platform that runs the runtime bundle of a declaration module. */
+/** Where a deployed function runs: Node for a Lambda, workerd for a Worker. */
 export type Platform = {
-  /**
-   * The Rolldown input options of the runtime bundle, such as `platform`,
-   * `resolve` and `plugins`. Called for each build, so that options that
-   * read the environment, such as `NODE_ENV`, read it as it is then.
-   */
+  /** Called for each build, so that `NODE_ENV` is read at build time. */
   build: () => InputOptions;
   /**
-   * Whether the runtime entry also re-exports the module's other value
-   * exports, besides the declaration's entry, for a platform that reads
-   * named exports, such as Durable Object classes.
+   * Whether the function's bundle exports every value that the module
+   * exports by name, not only the handler. True for workerd, which finds a
+   * Durable Object class by its export name.
    */
   reexportsModule: boolean;
-  /**
-   * Fails for one of `names`, the other exports that the runtime entry
-   * re-exports, whose value the platform doesn't start with.
-   */
+  /** Fails if the platform can't start a module with the exports `names`. */
   checkExports?: (analysis: ModuleAnalysis, names: string[]) => void;
   /**
-   * The modules that exist only where the platform runs the function, such
-   * as `cloudflare:` modules on workerd. The runtime bundle leaves them
-   * external. Code that runs at deploy can't use them, so the infra build
-   * removes them, with the code that uses them, and fails where it can't.
+   * Modules that only this platform provides, such as `cloudflare:` modules.
+   * The infra build removes them and the code that uses them, or fails.
    */
   provided?: {
     modules: RegExp;
-    /** Where the modules exist, as an error names it, such as "a Worker". */
+    /** Used in errors: "only available in a Worker". */
     availableIn: string;
   };
 };
@@ -45,13 +36,9 @@ const node: Platform = {
   reexportsModule: false,
 };
 
-// workerd provides Node's built-in modules as `node:` modules, under the
-// nodejs_compat flag. A bare name, such as `events`, is imported as its
-// `node:` module, even when an installed package, such as a polyfill, has
-// the same name. A name with a trailing slash, such as `events/`, is left
-// to resolve as a package. workerd has no `require`, so a `require()` of a
-// built-in, as in a CommonJS package, gets a module that imports it, as
-// wrangler does.
+// Resolves a Node built-in to its `node:` module, which workerd provides
+// under nodejs_compat, even if a package has the same name. workerd has no
+// `require`, so a `require()` of a built-in gets a module that imports it.
 const requiredBuiltin = "\0notation-required-builtin:";
 const nodeBuiltinsPlugin: Plugin = {
   name: "notation-workerd-builtins",
@@ -72,8 +59,7 @@ const nodeBuiltinsPlugin: Plugin = {
 };
 
 // workerd only starts a module whose exports are functions, classes or
-// objects whose prototype chain ends in Object.prototype. This check covers
-// the values that the build can see.
+// plain objects. This catches the cases that are visible in the source.
 function checkExports(analysis: ModuleAnalysis, names: string[]) {
   const { module } = analysis.table;
   const fail = (node: Node, name: string, value: string) => {
@@ -87,8 +73,8 @@ function checkExports(analysis: ModuleAnalysis, names: string[]) {
       statement.type === "ExportNamedDeclaration"
         ? statement.declaration
         : statement;
-    // A `let` or `var` can be assigned an object later, so only a `const`
-    // is checked.
+    // Only `const` is checked, because a `let` or `var` can be assigned an
+    // object later.
     if (node?.type !== "VariableDeclaration" || node.kind !== "const") continue;
     for (const declarator of node.declarations) {
       if (declarator.id.type === "Identifier") {
@@ -135,12 +121,10 @@ function isPrimitive(expression: Node): boolean {
 
 const cloudflareModules = /^cloudflare:/;
 
-// The conditions and the NODE_ENV defines are the ones that wrangler uses.
-// workerd provides the `cloudflare:` and `node:` modules, so the bundle
-// leaves them external.
+// The conditions and the NODE_ENV defines match wrangler's.
 const workerd: Platform = {
   build: () => {
-    // Like wrangler on deploy, unless NODE_ENV is set.
+    // wrangler also defaults to production on deploy.
     const nodeEnv = JSON.stringify(process.env.NODE_ENV || "production");
     return {
       platform: "neutral",
@@ -180,14 +164,13 @@ export const platformNames = Object.keys(platforms) as PlatformName[];
 export const isPlatformName = (name: string): name is PlatformName =>
   Object.hasOwn(platforms, name);
 
-/** The name of the platform that alone provides the module `source`. */
+/** The platform that alone provides the module `source`, if any. */
 export const providerOfModule = (source: string): PlatformName | undefined =>
   platformNames.find((name) => platforms[name].provided?.modules.test(source));
 
 /**
- * Why code that runs at deploy can't use the module `source`, which only a
- * platform provides, such as "cloudflare:workers, which is only available
- * in a Worker".
+ * Returns text for an error, such as "cloudflare:workers, which is only
+ * available in a Worker".
  */
 export function describeProvided(source: string): string {
   const platform = providerOfModule(source);
@@ -195,6 +178,6 @@ export function describeProvided(source: string): string {
   return where ? `${source}, which is only available in ${where}` : source;
 }
 
-/** The platform of a mark's `platform:` clause, or Node when it has none. */
+/** Defaults to Node. */
 export const platformOf = (name: PlatformName = "node"): Platform =>
   platforms[name];

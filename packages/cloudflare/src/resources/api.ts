@@ -5,11 +5,10 @@ import {
 
 const API_URL = "https://api.cloudflare.com/client/v4";
 
-/** The code of Cloudflare's error for a Worker that doesn't exist. */
+/** Cloudflare's error code for a Worker that doesn't exist. */
 const WORKER_NOT_FOUND = 10007;
 
-// Cloudflare leaves the code out of some errors, such as a 403 for a token
-// without access.
+// Some errors have no code, such as a 403 for a token without access.
 export type CloudflareErrorItem = { code?: number; message: string };
 
 export class CloudflareApiError extends Error {
@@ -41,12 +40,12 @@ export class CloudflareApiError extends Error {
   }
 }
 
-// Long enough for the upload of a Worker at Cloudflare's size limit.
+// Long enough to upload a Worker at Cloudflare's size limit.
 const REQUEST_TIMEOUT_MS = 120_000;
 
 /**
- * A Cloudflare call that failed on the network, or got no whole response
- * within the timeout. The request may have reached Cloudflare.
+ * The request failed on the network or timed out. It may still have reached
+ * Cloudflare.
  */
 export class CloudflareNetworkError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -60,9 +59,8 @@ export const isNotFound = (error: unknown): boolean =>
   (error.status === 404 || error.hasCode(WORKER_NOT_FOUND));
 
 /**
- * The account that resources are deployed to, from `CLOUDFLARE_ACCOUNT_ID`.
- * It is read when params are derived, and stored in state, so a resource
- * that is later updated or deleted uses the account it was made in.
+ * Reads `CLOUDFLARE_ACCOUNT_ID`. Each resource stores the id in state, so an
+ * update or a delete uses the account that the resource was created in.
  */
 export function accountId(): string {
   const id = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -91,13 +89,12 @@ type Envelope<T> = {
 };
 
 /**
- * Calls the Cloudflare API and returns `result` from the response.
- * Cloudflare's rate limit, status 429, is thrown as
- * `ResourceOperationPendingError`, so the reconciler waits and tries again.
- * @param path The path after `/client/v4`, such as `/accounts/<id>/workers/scripts`.
+ * Returns the response's `result`. Throws `ResourceOperationPendingError`
+ * on a 429, so the reconciler retries.
  */
 export async function cloudflare<T>(
   method: "GET" | "PUT" | "POST" | "DELETE",
+  /** The path after `/client/v4`, such as `/accounts/<id>/workers/scripts`. */
   path: string,
   body?: FormData | object,
 ): Promise<T> {
@@ -112,8 +109,8 @@ export async function cloudflare<T>(
     headers["Content-Type"] = "application/json";
     payload = JSON.stringify(body);
   }
-  // The timeout also applies to reading the body, so the body is read in
-  // the same try. fetch throws a TypeError when the network fails.
+  // The timeout also covers reading the body, so the body is read inside
+  // the try.
   let response: Response;
   let text: string;
   try {
@@ -155,8 +152,8 @@ export async function cloudflare<T>(
   try {
     envelope = text ? JSON.parse(text) : {};
   } catch {
-    // A response that is not JSON, such as an HTML error page, has no
-    // error items. The status is reported alone.
+    // The response is not JSON, such as an HTML error page. The error then
+    // has only the status.
   }
   if (!response.ok || envelope.success === false) {
     throw new CloudflareApiError(
@@ -169,9 +166,8 @@ export async function cloudflare<T>(
 }
 
 /**
- * Returns true when a Cloudflare call may have taken effect without a
- * response reaching the caller: the request failed on the network or timed
- * out, or the API answered with a server error.
+ * True for a network failure, a timeout or a server error. In each case the
+ * request may have reached Cloudflare.
  */
 function callMayHaveTakenEffect(error: unknown): boolean {
   if (error instanceof CloudflareApiError) return error.status >= 500;
@@ -179,8 +175,8 @@ function callMayHaveTakenEffect(error: unknown): boolean {
 }
 
 /**
- * Wraps a `create` so that an error from a call that may have taken effect
- * is thrown as `ResourceCreationUnknownError`.
+ * Wraps a `create` so that it throws `ResourceCreationUnknownError` when the
+ * call may have taken effect.
  */
 export function cloudflareCreate<Args extends unknown[], Result>(
   create: (...args: Args) => Promise<Result>,

@@ -23,7 +23,7 @@ const bindingSchema = v.variant("type", [
     type: v.literal("durable_object_namespace"),
     name: v.string(),
     class_name: v.string(),
-    /** The Worker that hosts the namespace, when it is another Worker. */
+    /** The Worker that hosts the namespace, if it is another Worker. */
     script_name: v.optional(v.string()),
   }),
   v.object({
@@ -36,10 +36,7 @@ const bindingSchema = v.variant("type", [
 export type WorkerBinding = v.InferOutput<typeof bindingSchema>;
 
 const hostedNamespaceSchema = v.object({
-  /**
-   * The ID of the namespace's declaration, which stays the same when its
-   * class is renamed.
-   */
+  /** The `$durableObject` id. Stable when the class is renamed. */
   id: v.string(),
   className: v.string(),
 });
@@ -50,7 +47,7 @@ export type HostedNamespace = v.InferOutput<typeof hostedNamespaceSchema>;
 type WorkerScriptParams = {
   AccountId: string;
   ScriptName: string;
-  /** The file name of the main module, as uploaded. */
+  /** The uploaded file name of the main module. */
   MainModule: string;
   /** The bundle to upload, relative to the project root. */
   CodeFilePath: string;
@@ -140,10 +137,8 @@ type Settings = {
 
 export const WorkerScript = workerScriptSchema
   .defineOperations({
-    // An upload replaces a Worker of the same name, so a Worker that exists
-    // already is reported, instead of being taken over. Only the upload is
-    // wrapped: if the check fails, nothing was created, and the reconciler
-    // must not read the existing Worker as this one.
+    // An upload replaces a Worker with the same name, so check first. The
+    // check is outside `cloudflareCreate`: if it throws, nothing was created.
     create: async (params) => {
       if (await readSettings(params.AccountId, params.ScriptName)) {
         throw new Error(
@@ -168,9 +163,9 @@ export const WorkerScript = workerScriptSchema
       };
     },
 
-    // An upload sets the whole Worker, so each update uploads all the
-    // params. The namespaces in state are the ones that the Worker hosted
-    // before, which the upload renames or deletes.
+    // An upload sets the whole Worker, so the patch is not used. The upload
+    // compares the namespaces in state with the new ones, to rename or
+    // delete those that changed.
     update: async (_key, _patch, params, state) => {
       await upload(params, state.DurableObjectNamespaces ?? []);
     },
@@ -194,9 +189,8 @@ export const WorkerScript = workerScriptSchema
 export type WorkerScriptInstance = InstanceType<typeof WorkerScript>;
 
 /**
- * Sorts the flags, without duplicates. A Worker's declaration sorts its
- * flags, and the read sorts them too, so the order that Cloudflare
- * returns them in is not read as a change.
+ * Sorts the flags, so that the order that Cloudflare returns them in is not
+ * seen as a change.
  */
 export function sortedFlags(flags: string[]): string[] {
   return [...new Set(flags)].sort();
@@ -254,19 +248,12 @@ export type DurableObjectExport =
   | { type: "durable-object"; state: "renamed"; renamed_to: string };
 
 /**
- * Makes the Worker's declarative Durable Object `exports` map. Cloudflare
- * doesn't keep a namespace that the map leaves out, and fails the upload
- * instead, so each namespace that the Worker hosted before is listed too:
+ * Makes the Durable Object `exports` map of the upload. Cloudflare fails an
+ * upload that omits a previous namespace, so each one is listed as renamed
+ * (same id, new class) or deleted (no longer declared).
  *
- * 1. A namespace that the Worker hosts is live. A new one uses SQLite
- *    storage, as Cloudflare makes every new namespace with it.
- * 2. A namespace whose declaration has the same ID and another class is
- *    renamed, which keeps its objects.
- * 3. A namespace whose declaration is gone is deleted, with its objects.
- *
- * Cloudflare keys a namespace by its class name, so a class that another
- * namespace held before would give that namespace's objects to the new one.
- * This throws instead, before the upload.
+ * Throws if a namespace takes the class of another previous namespace:
+ * Cloudflare keys a namespace by class name, so it would get those objects.
  */
 export function durableObjectExports(
   hosted: HostedNamespace[],
@@ -299,9 +286,8 @@ export function durableObjectExports(
 }
 
 /**
- * Reads the bundle to upload. A resumed deploy reuses the params of the
- * original run, and the file may have changed since then, so the bytes must
- * still match the recorded hash.
+ * Checks the hash because a resumed deploy reuses the original params, and
+ * the file may have changed since.
  */
 async function readCode(filePath: string, expectedSha256: string) {
   const code = await nodeFs.readFile(fromProjectRoot(filePath));
