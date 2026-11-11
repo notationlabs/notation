@@ -225,6 +225,61 @@ describe("durable execution and replay", () => {
     runtime.close();
   });
 
+  it("looks a create with an unknown outcome up again when the read is throttled", async () => {
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ResourceCreationUnknownError("socket timed out"),
+      )
+      .mockResolvedValue(undefined);
+    const read = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ResourceOperationPendingError("rate limited", {
+          retryAfterMs: RETRY_AFTER_MS,
+          throttled: true,
+        }),
+      )
+      .mockRejectedValueOnce(new ResourceNotFoundError("not found"))
+      .mockResolvedValue({ name: "app" });
+    const TestResource = resource({
+      type: "test/durable/effect-throttled-read",
+      provider: "test",
+    })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({ create, read, delete: async () => undefined });
+    const runtime = createRuntime(
+      [new TestResource("throttled", { config: { name: "app" } as any })],
+      "effect-throttled-read",
+    );
+
+    await expect(runtime.run("throttled-execution")).resolves.toMatchObject({
+      status: "suspended",
+    });
+    runtime.advance(1_000);
+    await expect(runtime.run("throttled-execution")).resolves.toMatchObject({
+      status: "suspended",
+    });
+    runtime.advance(1_000);
+    await runtime.run("throttled-execution");
+
+    // The throttled read didn't count as finding the resource, so the
+    // lookup ran again, found nothing, and the create ran a second time.
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(await runtime.state.get("throttled")).toMatchObject({
+      output: { name: "app" },
+      version: 1,
+    });
+    runtime.close();
+  });
+
   it("fails a create with an unknown outcome when the resource cannot be looked up", async () => {
     const create = vi.fn(async () => {
       throw new ResourceCreationUnknownError("socket timed out");

@@ -188,7 +188,10 @@ function getLookupFunction(
         await read(resource.keyOf(resourceParams));
       } catch (error) {
         // A pending read reports a resource that exists and has not finished.
-        if (!ResourceOperationPendingError.is(error)) throw error;
+        // A throttled read doesn't, so the lookup throws and runs again later.
+        if (!ResourceOperationPendingError.is(error) || error.throttled) {
+          throw error;
+        }
       }
       return undefined;
     });
