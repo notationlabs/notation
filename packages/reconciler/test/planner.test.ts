@@ -1117,3 +1117,105 @@ describe("createPlan", () => {
     });
   });
 });
+
+describe("dependency cycles", () => {
+  const Worker = resource({ type: "test/planner/worker", provider: "test" })
+    .defineSchema({
+      name: {
+        propertyType: "param",
+        presence: "required",
+        primaryKey: true,
+        value: v.string(),
+      },
+      bindings: {
+        propertyType: "param",
+        presence: "optional",
+        value: v.array(v.string()),
+        collect: (items: string[][]) => items.flat(),
+      },
+    } as any)
+    .defineOperations({
+      create: async () => undefined,
+      update: async () => undefined,
+      delete: async () => undefined,
+    });
+
+  const pair = () => {
+    const a = new Worker("a", { config: { name: "a" } as any });
+    const b = new Worker("b", { config: { name: "b" } as any });
+    a.contribute({ bindings: [b.outputValue("name")] } as any);
+    b.contribute({ bindings: [a.outputValue("name")] } as any);
+    return [a, b];
+  };
+
+  const record = (name: string, bindings: string[]) => ({
+    version: 1,
+    id: name,
+    type: Worker.type,
+    provider: "test",
+    config: { name },
+    params: { name, bindings },
+    output: { name, bindings },
+    dependsOn: [name === "a" ? "b" : "a"],
+    lastOperation: "update" as const,
+    lastOperationAt: "2026-07-22T00:00:00.000Z",
+  });
+
+  it("plans a new cycle as creates, with the placeholder marked and peer outputs unknown", async () => {
+    const plan = await createPlan({
+      resources: pair(),
+      state: new MemoryStateBackend(),
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({
+        id: "a",
+        decision: "create",
+        placeholder: true,
+        cycle: ["b"],
+        params: { name: "a", bindings: [UNKNOWN_AFTER_APPLY] },
+      }),
+      expect.objectContaining({
+        id: "b",
+        decision: "create",
+        cycle: ["a"],
+        params: { name: "b", bindings: [UNKNOWN_AFTER_APPLY] },
+      }),
+    ]);
+    expect(plan.nodes[1]).not.toHaveProperty("placeholder");
+  });
+
+  it("plans a deployed cycle with the outputs of every member from state", async () => {
+    const plan = await createPlan({
+      resources: pair(),
+      state: new MemoryStateBackend({
+        a: record("a", ["b"]),
+        b: record("b", ["a"]),
+      }),
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({ id: "a", decision: "noop", cycle: ["b"] }),
+      expect.objectContaining({ id: "b", decision: "noop", cycle: ["a"] }),
+    ]);
+    expect(plan.nodes[0]).not.toHaveProperty("placeholder");
+  });
+
+  it("names the members that a replacement reverts", async () => {
+    const [a, b] = pair();
+    (b as any).config.name = "b2";
+    const plan = await createPlan({
+      resources: [a!, b!],
+      state: new MemoryStateBackend({
+        a: record("a", ["b"]),
+        b: record("b", ["a"]),
+      }),
+    });
+
+    expect(plan.nodes[1]).toMatchObject({
+      id: "b",
+      decision: "replace",
+      revertedPeers: ["a"],
+    });
+  });
+});

@@ -3566,6 +3566,225 @@ describe("value validation at deploy", () => {
   });
 });
 
+describe("dependency cycles", () => {
+  /**
+   * Workers that bind each other by name, as Cloudflare Workers do through
+   * service bindings. The fake provider refuses an upload that binds a
+   * Worker that doesn't exist, and the delete of a Worker that another
+   * Worker binds. With `versioned`, each create and update makes a new
+   * version, and bindings are not checked.
+   */
+  function defineWorkers(opts: { versioned?: boolean } = {}) {
+    const remote = new Map<string, string[]>();
+    const calls: string[] = [];
+    const failCreate = new Set<string>();
+    let version = 0;
+    const put = (verb: string, params: any) => {
+      const bindings: string[] = params.bindings ?? [];
+      for (const bound of bindings) {
+        if (opts.versioned || bound === params.name || remote.has(bound)) {
+          continue;
+        }
+        throw new Error(`${params.name} binds ${bound}, which does not exist`);
+      }
+      remote.set(params.name, bindings);
+      calls.push(`${verb} ${params.name} [${bindings.join(", ")}]`);
+    };
+    const Worker = resource({
+      type: "test/durable/cycle-worker",
+      provider: "test",
+    })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          primaryKey: true,
+          value: v.string(),
+        },
+        bindings: {
+          propertyType: "param",
+          presence: "optional",
+          value: v.array(v.string()),
+          collect: (items: string[][]) => items.flat(),
+        },
+        version: {
+          propertyType: "computed",
+          presence: "optional",
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          if (failCreate.delete(params.name)) {
+            throw new Error(`create ${params.name} failed`);
+          }
+          put("create", params);
+        },
+        read: opts.versioned
+          ? async () => ({ version: `v${(version += 1)}` }) as any
+          : undefined,
+        update: async (_key: any, _patch: any, params: any) =>
+          put("update", params),
+        delete: async (key: any) => {
+          for (const [other, bindings] of remote) {
+            if (other !== key.name && bindings.includes(key.name)) {
+              throw new Error(`${other} still binds ${key.name}`);
+            }
+          }
+          remote.delete(key.name);
+          calls.push(`delete ${key.name}`);
+        },
+      });
+    const worker = (id: string, name = id): BaseResource =>
+      new Worker(id, { config: { name } as any });
+    const bind = (from: BaseResource, to: BaseResource, output = "name") =>
+      from.contribute({ bindings: [to.outputValue(output)] } as any);
+    return { worker, bind, remote, calls, failCreate };
+  }
+
+  it("creates one member as a placeholder, and updates it once the other exists", async () => {
+    const { worker, bind, remote, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime([a, b], "cycle-create", {
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("cycle-create-1");
+
+    expect(calls).toEqual(["create a []", "create b [a]", "update a [b]"]);
+    expect(remote).toEqual(
+      new Map([
+        ["a", ["b"]],
+        ["b", ["a"]],
+      ]),
+    );
+    expect(await runtime.state.get("a")).toMatchObject({
+      params: { name: "a", bindings: ["b"] },
+      dependsOn: ["b"],
+    });
+    expect(
+      events
+        .filter((event) => event.event === "reconciler.deploy.decision")
+        .map(({ resourceId, decision, placeholder }: any) => ({
+          resourceId,
+          decision,
+          ...(placeholder ? { placeholder } : {}),
+        })),
+    ).toEqual([
+      { resourceId: "a", decision: "create", placeholder: true },
+      { resourceId: "b", decision: "create" },
+      { resourceId: "a", decision: "update" },
+    ]);
+
+    calls.length = 0;
+    await runtime.run("cycle-create-2");
+    expect(calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("updates a placeholder that a failed deploy left", async () => {
+    const { worker, bind, calls, failCreate } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const runtime = createRuntime([a, b], "cycle-resume");
+    failCreate.add("b");
+
+    await expect(runtime.run("cycle-resume-1")).rejects.toThrow(
+      "create b failed",
+    );
+    expect(calls).toEqual(["create a []"]);
+    expect(await runtime.state.get("a")).toMatchObject({
+      params: { name: "a" },
+    });
+
+    calls.length = 0;
+    await runtime.run("cycle-resume-2");
+    expect(calls).toEqual(["create b [a]", "update a [b]"]);
+    runtime.close();
+  });
+
+  it("fails when an output that a member takes changes on every update", async () => {
+    const { worker, bind } = defineWorkers({ versioned: true });
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b, "version");
+    bind(b, a, "version");
+    const runtime = createRuntime([a, b], "cycle-unsettled");
+
+    const run = runtime.run("cycle-unsettled-1");
+    await expect(run).rejects.toThrow(
+      "The cycle of a and b did not settle after 3 passes.",
+    );
+    await expect(run).rejects.toThrow("a.version");
+    runtime.close();
+  });
+
+  it("reverts the placeholder before it deletes the cycle in destroy", async () => {
+    const { worker, bind, remote, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const runtime = createRuntime([a, b], "cycle-destroy");
+    await runtime.run("cycle-destroy-1");
+    calls.length = 0;
+
+    await runtime.destroy("cycle-destroy-2");
+
+    expect(calls).toEqual(["update a []", "delete b", "delete a"]);
+    expect(remote.size).toBe(0);
+    expect(await runtime.state.values()).toHaveLength(0);
+    runtime.close();
+  });
+
+  it("reverts the members that refer to a replaced member before it is deleted", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [a, b];
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "cycle-replace", {
+      emit: (event) => void events.push(event),
+    });
+    await runtime.run("cycle-replace-1");
+    calls.length = 0;
+    events.length = 0;
+
+    const nextA = worker("a");
+    const nextB = worker("b", "b2");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    resources.splice(0, 2, nextA, nextB);
+    await runtime.run("cycle-replace-2");
+
+    expect(calls).toEqual([
+      "update a []",
+      "delete b",
+      "create b2 [a]",
+      "update a [b2]",
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: "reconciler.operation.lifecycle",
+        operation: "update",
+        status: "success",
+        resourceId: "a",
+        reason: "cycle-revert",
+        replacedDependency: "b",
+      }),
+    );
+    runtime.close();
+  });
+});
+
 function createRuntime(
   resources: BaseResource[],
   deploymentId: string,

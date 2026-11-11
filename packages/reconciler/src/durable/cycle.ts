@@ -5,7 +5,7 @@ import {
 } from "@notation/resource";
 import {
   ResourceCycleError,
-  placeholderParamsBlocker,
+  revertedPeers,
   type ResourceCycle,
 } from "../cycles";
 import type { OperationLifecycleEvent } from "../events";
@@ -160,10 +160,8 @@ async function* createPlaceholder(
 }
 
 /**
- * Reverts each member of the cycle that refers to `replaced` through its
- * contributions, so that the provider does not refuse to delete `replaced`.
- * A member whose params can't go back to its placeholder params with an
- * update keeps them.
+ * Reverts the peers of `replaced` that refer to it, so that the provider
+ * does not refuse to delete it. See `revertedPeers`.
  */
 async function* revertPeers(
   step: DurableStepRunner,
@@ -171,11 +169,7 @@ async function* revertPeers(
   replaced: BaseResource,
   opts: DurableDeployOptions,
 ): AsyncGenerator<any, void, any> {
-  for (const peer of cycle.members) {
-    if (peer === replaced) continue;
-    if (!peer.getDependencies().includes(replaced)) continue;
-    if (peer.getFixedDependencies().includes(replaced)) continue;
-    if (placeholderParamsBlocker(peer)) continue;
+  for (const peer of revertedPeers(cycle, replaced)) {
     yield* revertToPlaceholder(
       step.scope(encodeURIComponent(peer.id)),
       peer,

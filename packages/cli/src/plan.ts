@@ -77,6 +77,19 @@ function printPlanSummary(result: Plan, logger: Logger) {
           : `    deleted if ${node.replacedDependency} is replaced`,
       );
     }
+    if (node.placeholder) {
+      logger.info(
+        `    created first without its contributions, in a cycle with ${(node.cycle ?? []).join(", ")}`,
+      );
+    }
+    if (node.revertedPeers) {
+      const peers = node.revertedPeers;
+      logger.info(
+        peers.length === 1
+          ? `    ${peers[0]} is reverted to its placeholder first, and ${node.id} is unavailable until the cycle settles`
+          : `    ${peers.join(", ")} are reverted to their placeholders first, and ${node.id} is unavailable until the cycle settles`,
+      );
+    }
   }
 
   const count = (decision: PlanNode["decision"]) =>

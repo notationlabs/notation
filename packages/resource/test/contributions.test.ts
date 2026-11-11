@@ -896,3 +896,83 @@ describe("plan params", () => {
     });
   });
 });
+
+describe("placeholder params", () => {
+  it("leave out every contribution, and keep the config", async () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    queue.setOutput({ QueueUrl: "url", QueueName: "orders", QueueArn: "arn" });
+    const fn = new Fn("fn", {
+      config: {
+        FunctionName: "f",
+        Role: "role",
+        Environment: { Variables: { STAGE: "dev" } },
+      },
+    });
+    fn.contribute({
+      Environment: { Variables: { QUEUE: queue.outputValue("QueueArn") } },
+    });
+
+    expect(await fn.getPlaceholderParams()).toEqual({
+      FunctionName: "f",
+      Role: "role",
+      Environment: { Variables: { STAGE: "dev" } },
+    });
+    expect((await fn.getParams()).Environment).toEqual({
+      Variables: { STAGE: "dev", QUEUE: "arn" },
+    });
+  });
+
+  it("leave a collected param unset when only contributions set it", async () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    const fn = new Fn("fn", { config: { FunctionName: "f", Role: "role" } });
+    fn.contribute({
+      Environment: { Variables: { QUEUE: queue.outputValue("QueueArn") } },
+    });
+
+    expect(await fn.getPlaceholderParams()).toEqual({
+      FunctionName: "f",
+      Role: "role",
+    });
+  });
+});
+
+describe("dependencies by source", () => {
+  it("separate fixed dependencies from those that only contributions add", () => {
+    const role = new Queue("role", { config: { QueueName: "role" } });
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    const other = new Queue("other", { config: { QueueName: "other" } });
+    const fn = new Fn("fn", {
+      config: { FunctionName: "f", Role: role.outputValue("QueueArn") },
+    });
+    fn.dependOn(other);
+    fn.contribute({
+      Environment: { Variables: { QUEUE: queue.outputValue("QueueArn") } },
+    });
+
+    expect(fn.getFixedDependencies()).toEqual([other, role]);
+    expect(fn.getDependencies()).toEqual([other, role, queue]);
+  });
+
+  it("list the collected params that contributions set", () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    const policy = new Policy("policy", { config: { PolicyName: "p" } });
+    const plain = new Fn("plain", {
+      config: { FunctionName: "p", Role: "role" },
+    });
+    expect(plain.getContributedParams()).toEqual([]);
+
+    const fn = new Fn("fn", { config: { FunctionName: "f", Role: "role" } });
+    fn.contribute({ Environment: { Variables: { A: "a" } } });
+    expect(fn.getContributedParams()).toEqual(["Environment"]);
+
+    policy.contribute(
+      ({ deps }) => ({
+        PolicyDocument: {
+          Statement: [grant(deps.queue.output.QueueArn)],
+        },
+      }),
+      { deps: { queue } },
+    );
+    expect(policy.getContributedParams()).toEqual(["PolicyDocument"]);
+  });
+});

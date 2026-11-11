@@ -8,7 +8,7 @@ import {
   assertDependenciesPresent,
   collectDependents,
 } from "./dependency-graph";
-import { orderDeployUnits, type DeployUnit } from "./cycles";
+import { orderDeployUnits, revertedPeers, type DeployUnit } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
@@ -112,6 +112,10 @@ export async function createPlan({
       const cascadeOnly = replacedDependency && !replaceFields;
       const placeholder =
         cycle?.placeholders.includes(resource) && action.decision === "create";
+      const reverted =
+        cycle && replaceFields
+          ? revertedPeers(cycle, resource).map((peer) => peer.id)
+          : [];
       nodes.push({
         id: resource.id,
         type: resource.type,
@@ -127,6 +131,7 @@ export async function createPlan({
             }
           : {}),
         ...(placeholder ? { placeholder: true as const } : {}),
+        ...(reverted.length > 0 ? { revertedPeers: reverted } : {}),
         params,
         dependsOn,
       });

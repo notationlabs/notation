@@ -158,12 +158,28 @@ function placeholderBlocker(
 }
 
 /**
+ * The members of `cycle` that deploy reverts to their placeholder params
+ * before it replaces `replaced`: each refers to `replaced` only through its
+ * contributions, and can go back to its placeholder params with an update.
+ */
+export function revertedPeers(
+  cycle: ResourceCycle,
+  replaced: BaseResource,
+): BaseResource[] {
+  return cycle.members.filter(
+    (peer) =>
+      peer !== replaced &&
+      peer.getDependencies().includes(replaced) &&
+      !peer.getFixedDependencies().includes(replaced) &&
+      !placeholderParamsBlocker(peer),
+  );
+}
+
+/**
  * Why `resource` can't go between its placeholder params and its full
  * params with an update, or undefined when it can.
  */
-export function placeholderParamsBlocker(
-  resource: BaseResource,
-): string | undefined {
+function placeholderParamsBlocker(resource: BaseResource): string | undefined {
   if (!resource.update) {
     return `${resource.type} has no update operation, so ${resource.id} can't be updated after it is created`;
   }
