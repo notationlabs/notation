@@ -6,8 +6,11 @@ import { location, parseModule } from "./ast";
 import { nodeModules, scriptFile } from "./files";
 import { runtimeExports } from "./exports";
 import {
+  checkProvidedUses,
   infraInterface,
+  ProvidedRemovals,
   stripForInfra,
+  stripProvided,
   type DeclarationModule,
 } from "./infra-strip";
 import type { ImportBinding, Mark } from "./marks";
@@ -79,6 +82,7 @@ export function infraPlugin({
   onDeclarationModules,
 }: InfraPluginOptions): Plugin {
   const declarations = new Map<string, DeclarationModule>();
+  const removals = new ProvidedRemovals(analyses);
   // By importer directory and package name. Cleared on each build, so that
   // a package installed during watch is seen.
   const installed = new Map<string, boolean>();
@@ -86,12 +90,14 @@ export function infraPlugin({
     name: "notation-infra",
     buildStart() {
       installed.clear();
+      removals.clear();
     },
     resolveId(source, importer) {
       // A module that only another platform provides can't load on Node.
-      // It has no side effects, so the import is dropped when the infra
-      // bundle uses none of its names. generateBundle fails on one that
-      // stays.
+      // The transform removes the static imports of project modules. What
+      // is left, such as a dynamic import or `export * from`, stays
+      // external, and generateBundle fails on a static import that the
+      // bundle keeps.
       if (importer && providerOfModule(source)) {
         return { id: source, external: true, moduleSideEffects: false };
       }
@@ -112,7 +118,13 @@ export function infraPlugin({
         const analysis = analyses.fromSource(id, code);
         analyses.checkDeclaration(id, analysis);
         checkRuntimeImports(analysis, analyses);
-        if (!analysis.declaration) return null;
+        const removal = removals.of(id);
+        if (!analysis.declaration) {
+          return (removal && stripProvided(analysis, removal)) ?? null;
+        }
+        if (removal) {
+          checkProvidedUses(analysis, removal, (file) => analyses.show(file));
+        }
         const stripped = stripForInfra(
           analysis,
           analyses.marks,
@@ -124,6 +136,7 @@ export function infraPlugin({
     },
     watchChange(id) {
       analyses.invalidate(id);
+      removals.clear();
     },
     buildEnd(error) {
       if (error) return;

@@ -487,18 +487,165 @@ it("drops a cloudflare: import that the infra build doesn't use", async () => {
   expect(infra).not.toContain("cloudflare:");
 });
 
-it("fails the infra build on a cloudflare: import that it uses, and names the importer", async () => {
+describe("a class that extends a cloudflare:workers class in a module without a declaration", () => {
+  // Tree shaking keeps each of these classes, as it may have side effects.
+  it.each([
+    [
+      "a static field",
+      `export class Imported extends DurableObject { static tag = label("x"); }\nfunction label(x) { return x; }`,
+      /Imported = class extends DurableObject \{\s*static tag = label\("x"\);/,
+    ],
+    [
+      "an assignment after the class",
+      `export class Imported extends DurableObject {}\nImported.prototype.extra = 1;`,
+      /Imported\.prototype\.extra = 1;/,
+    ],
+    [
+      "a mixin",
+      `export class Imported extends mixin(DurableObject) {}\nfunction mixin(base) { return base; }`,
+      /Imported = class extends mixin\(DurableObject\)/,
+    ],
+  ])(
+    "leaves the class out of the infra build when it has %s, and keeps it in the Worker",
+    async (_, cls, inWorker) => {
+      writeProject(`${reexport}\nexport { Imported } from "./cls";`);
+      write(
+        "runtime/cls.ts",
+        [
+          `import { DurableObject } from "cloudflare:workers";`,
+          cls,
+          `export const NAME = "counters";`,
+        ].join("\n"),
+      );
+      write(
+        "runtime/counter.ts",
+        counterModule
+          .replace(
+            "export const counters",
+            `import { Imported, NAME } from "./cls";\nexport const counters`,
+          )
+          .replace(`id: "counters"`, "id: NAME"),
+      );
+      await build();
+      const infra = read("dist/infra/main.mjs");
+      expect(infra).toContain(`id: "counters"`);
+      expect(infra).not.toContain("cloudflare:");
+      expect(infra).not.toMatch(
+        /class Imported|DurableObject|extra|mixin|label\(/,
+      );
+      const runtime = read(apiBundle);
+      expect(runtime).toMatch(
+        /import \{ DurableObject \} from "cloudflare:workers"/,
+      );
+      expect(runtime).toMatch(inWorker);
+      expect(runtime).toMatch(/export \{[^}]*\bImported\b[^}]*\}/);
+    },
+  );
+});
+
+it("leaves out what another module builds from a removed class, also in modules that import each other", async () => {
+  writeProject();
+  write(
+    "runtime/cls.ts",
+    [
+      `import { DurableObject } from "cloudflare:workers";`,
+      `import { tag } from "./registry";`,
+      `export class Imported extends DurableObject {}`,
+      `export const tagged = tag(Imported);`,
+      `export const NAME = tag("counters");`,
+    ].join("\n"),
+  );
+  write(
+    "runtime/registry.ts",
+    [
+      `import { Imported, tagged } from "./cls";`,
+      `export function tag(value) { return value; }`,
+      `globalThis.seen = [Imported, tagged];`,
+      `globalThis.registered = true;`,
+    ].join("\n"),
+  );
+  write(
+    "runtime/counter.ts",
+    [
+      `import { $durableObject } from "@notation/cloudflare/workers";`,
+      `import { Imported, NAME } from "./cls";`,
+      `export const counters = $durableObject({ id: NAME, class: Imported });`,
+    ].join("\n"),
+  );
+  await compileInfra(path.join(root, "infra/main.ts"));
+  const infra = read("dist/infra/main.mjs");
+  expect(infra).not.toContain("cloudflare:");
+  expect(infra).not.toContain("tagged");
+  expect(
+    runInfra(
+      `[namespace.id, namespace.className, globalThis.registered, globalThis.seen ?? null]`,
+    ),
+  ).toEqual(["counters", "Imported", true, null]);
+});
+
+it("drops a removed class from an export list and a default export, and keeps the other exports", async () => {
+  writeProject();
+  write(
+    "runtime/cls.ts",
+    [
+      `import { DurableObject } from "cloudflare:workers";`,
+      `class Imported extends DurableObject { static tag = label("x"); }`,
+      `function label(x) { return x; }`,
+      `const NAME = "counters";`,
+      `export { Imported, NAME };`,
+      `export default Imported;`,
+    ].join("\n"),
+  );
+  write(
+    "runtime/classes.ts",
+    `export { Imported as Counter, NAME } from "./cls";\nexport { default } from "./cls";`,
+  );
+  write(
+    "runtime/counter.ts",
+    [
+      `import { $durableObject } from "@notation/cloudflare/workers";`,
+      `import Imported, { Counter, NAME } from "./classes";`,
+      `export const one = [Counter, Imported];`,
+      `export const counters = $durableObject({ id: NAME, class: Counter });`,
+    ].join("\n"),
+  );
+  await compileInfra(path.join(root, "infra/main.ts"));
+  expect(read("dist/infra/main.mjs")).not.toContain("cloudflare:");
+  expect(runInfra(`[namespace.id, namespace.className]`)).toEqual([
+    "counters",
+    "Counter",
+  ]);
+});
+
+it("removes an infra statement that uses a cloudflare:workers class, also when it has side effects", async () => {
   writeProject();
   write(
     "infra/registry.ts",
     [
       `import { DurableObject } from "cloudflare:workers";`,
       `export const classes = [class extends DurableObject {}];`,
+      `export const registry = new Set();`,
     ].join("\n"),
   );
   write(
     "infra/main.ts",
-    `import { classes } from "./registry";\nconsole.log(classes);`,
+    [
+      `import { classes, registry } from "./registry";`,
+      `for (const c of classes) registry.add(c);`,
+      `globalThis.size = registry.size;`,
+    ].join("\n"),
+  );
+  await compileInfra(path.join(root, "infra/main.ts"));
+  expect(read("dist/infra/main.mjs")).not.toContain("cloudflare:");
+  expect(runInfra("globalThis.size")).toBe(0);
+});
+
+it("fails the infra build on a static cloudflare: import that the strip doesn't remove, and names the importer", async () => {
+  writeProject();
+  write("infra/registry.ts", `export * from "cloudflare:workers";`);
+  write(
+    "infra/main.ts",
+    `import { DurableObject } from "./registry";\nglobalThis.base = DurableObject;`,
   );
   await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
     "infra/registry.ts imports cloudflare:workers, and the infra build uses the import. The infra build can't load cloudflare:workers, because only workerd provides it",
@@ -527,16 +674,47 @@ it("builds an infra module with an import of another scheme, such as bun:", asyn
   ).resolves.toBeDefined();
 });
 
-it("fails the infra build when a declaration keeps a class that imports cloudflare:workers", async () => {
-  writeProject();
-  write(
-    "runtime/counter.ts",
-    counterModule.replace(
-      "class: Counter",
-      "class: make(Counter), label: Counter.name",
-    ) + `\nfunction make(c) { return c; }\n`,
-  );
-  await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
-    "runtime/counter.ts imports cloudflare:workers, and the infra build uses the import",
-  );
+describe("a declaration that uses a class that the infra build leaves out", () => {
+  it("fails the infra build for a use outside a runtime: option", async () => {
+    writeProject();
+    write(
+      "runtime/counter.ts",
+      counterModule.replace(
+        "class: Counter",
+        "class: make(Counter), label: Counter.name",
+      ) + `\nfunction make(c) { return c; }\n`,
+    );
+    await expect(
+      compileInfra(path.join(root, "infra/main.ts")),
+    ).rejects.toThrow(
+      "runtime/counter.ts:13:87: the declaration counters uses Counter outside a runtime: option. Counter is not in the infra build, because it uses cloudflare:workers, which only workerd provides, and the infra build runs on Node. Pass Counter only in a runtime: option, such as class: Counter, or move what the infra build needs to a module that doesn't import cloudflare:workers, directly or through other modules.",
+    );
+  });
+
+  it("names the module that imports cloudflare:workers", async () => {
+    writeProject();
+    write(
+      "runtime/cls.ts",
+      [
+        `import { DurableObject } from "cloudflare:workers";`,
+        `export class Imported extends DurableObject {}`,
+        `const CLASS_NAME = Imported.name;`,
+        `export { CLASS_NAME };`,
+      ].join("\n"),
+    );
+    write(
+      "runtime/counter.ts",
+      [
+        `import { $durableObject } from "@notation/cloudflare/workers";`,
+        `import { Imported, CLASS_NAME } from "./cls";`,
+        `const label = CLASS_NAME;`,
+        `export const counters = $durableObject({ id: label, class: Imported });`,
+      ].join("\n"),
+    );
+    await expect(
+      compileInfra(path.join(root, "infra/main.ts")),
+    ).rejects.toThrow(
+      "runtime/counter.ts:4:46: the declaration counters uses label outside a runtime: option. label is not in the infra build, because it uses cloudflare:workers, through runtime/cls.ts,",
+    );
+  });
 });

@@ -275,6 +275,42 @@ it("checks a shared module again when a module that it imports changes", async (
   );
 });
 
+it("strips a module again when a module that it imports starts to import cloudflare:workers", async () => {
+  write(
+    "watch-p/cls.ts",
+    `export class Imported {}\nexport const NAME = "n";\n`,
+  );
+  write(
+    "watch-p/registry.ts",
+    `import { Imported } from "./cls";\nglobalThis.seen = [Imported];\n`,
+  );
+  write(
+    "watch-p/main.ts",
+    `import "./registry";\nimport { NAME } from "./cls";\nconsole.log(NAME);\n`,
+  );
+  const bundle = path.join(root, "dist/watch-p/main.mjs");
+  const errors: unknown[] = [];
+  let builds = 0;
+  const infra = await compileInfra(path.join(root, "watch-p/main.ts"), {
+    watch: true,
+    onDeclarationModules: () => builds++,
+    onBuildFailed: (error) => errors.push(error),
+  });
+  onTestFinished(infra.close);
+  expect(readFileSync(bundle, "utf8")).toContain("globalThis.seen");
+
+  const before = builds;
+  write(
+    "watch-p/cls.ts",
+    `import { DurableObject } from "cloudflare:workers";\nexport class Imported extends DurableObject {}\nexport const NAME = "n";\n`,
+  );
+  await waitFor(() => expect(builds).toBeGreaterThan(before));
+  expect(errors).toEqual([]);
+  const code = readFileSync(bundle, "utf8");
+  expect(code).not.toContain("globalThis.seen");
+  expect(code).not.toContain("cloudflare:");
+});
+
 it("fails each build that includes a broken shared module, and writes no bundle", async () => {
   write("watch-j/infra/orders.ts", `export const orders = { url: "u" };\n`);
   write("watch-j/lib/util.ts", `export const util = () => "util";\n`);
