@@ -7,36 +7,18 @@ import { resource, ResourceNotFoundError } from "@notation/resource";
 import type { fs } from "@notation/std/resources";
 import { accountId, cloudflareCreate } from "src/api/client";
 import {
+  bindingSchema,
   deleteScript,
   getScriptSettings,
   isNotFound,
   putScript,
   type DurableObjectExport,
+  type ScriptBinding,
 } from "src/api/workers";
 
 export type { DurableObjectExport };
 
-const bindingSchema = v.variant("type", [
-  v.object({
-    type: v.literal("plain_text"),
-    name: v.string(),
-    text: v.string(),
-  }),
-  v.object({
-    type: v.literal("durable_object_namespace"),
-    name: v.string(),
-    class_name: v.string(),
-    /** The Worker that hosts the namespace, if it is another Worker. */
-    script_name: v.optional(v.string()),
-  }),
-  v.object({
-    type: v.literal("service"),
-    name: v.string(),
-    service: v.string(),
-  }),
-]);
-
-export type WorkerBinding = v.InferOutput<typeof bindingSchema>;
+export type WorkerBinding = ScriptBinding;
 
 const hostedNamespaceSchema = v.object({
   /** The `$durableObject` id. Stable when the class is renamed. */

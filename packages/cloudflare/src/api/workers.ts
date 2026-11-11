@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { CloudflareApiError, cloudflare } from "./client";
 
 /** Cloudflare's error code for a Worker that doesn't exist. */
@@ -10,15 +11,27 @@ export const isNotFound = (error: unknown): boolean =>
 const scriptPath = (account: string, scriptName: string) =>
   `/accounts/${encodeURIComponent(account)}/workers/scripts/${encodeURIComponent(scriptName)}`;
 
-export type ScriptBinding =
-  | { type: "plain_text"; name: string; text: string }
-  | {
-      type: "durable_object_namespace";
-      name: string;
-      class_name: string;
-      script_name?: string;
-    }
-  | { type: "service"; name: string; service: string };
+export const bindingSchema = v.variant("type", [
+  v.object({
+    type: v.literal("plain_text"),
+    name: v.string(),
+    text: v.string(),
+  }),
+  v.object({
+    type: v.literal("durable_object_namespace"),
+    name: v.string(),
+    class_name: v.string(),
+    /** The Worker that hosts the namespace, if it is another Worker. */
+    script_name: v.optional(v.string()),
+  }),
+  v.object({
+    type: v.literal("service"),
+    name: v.string(),
+    service: v.string(),
+  }),
+]);
+
+export type ScriptBinding = v.InferOutput<typeof bindingSchema>;
 
 export type DurableObjectExport =
   | { type: "durable-object"; storage: "sqlite" }
