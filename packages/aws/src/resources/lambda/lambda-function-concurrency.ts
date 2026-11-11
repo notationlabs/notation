@@ -49,8 +49,9 @@ const lambdaFunctionConcurrencySchema = lambdaFunctionConcurrency.defineSchema({
  */
 export const LambdaFunctionConcurrency = lambdaFunctionConcurrencySchema
   .defineOperations({
-    // PutFunctionConcurrency sets the value whether or not one is set, so a
-    // create whose outcome is unknown can run again.
+    // After a create whose outcome is unknown, the reconciler looks the
+    // reservation up with read. A reservation of another value counts as
+    // found, and drift detection corrects it on a later deploy.
     create: async (params) => {
       await lambdaClient().send(new sdk.PutFunctionConcurrencyCommand(params));
     },
