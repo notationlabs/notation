@@ -63,25 +63,26 @@ export async function watch(
 
     isDeploying = true;
 
-    // The child logs the execution ID itself.
-    const executionId = randomUUID();
-    // A fresh process per deploy: importing the rebuilt infra in this
-    // long-lived process would leak a copy of the bundle every time.
-    deployInChild({ deployment, executionId, logger })
-      .then(() => {
-        isDeploying = false;
-        if (stopping) {
-          void close();
-        } else if (deployQueued) {
-          deployQueued = false;
-          triggerDeploy();
-        }
-      })
-      .catch((err) => {
+    async function run() {
+      try {
+        // The child logs the execution ID itself.
+        const executionId = randomUUID();
+        // A fresh process per deploy: importing the rebuilt infra in this
+        // long-lived process would leak a copy of the bundle every time.
+        await deployInChild({ deployment, executionId, logger });
+      } catch (err) {
         logger.error(err);
-        isDeploying = false;
-        if (stopping) void close();
-      });
+      }
+      isDeploying = false;
+      if (stopping) {
+        await close();
+      } else if (deployQueued) {
+        deployQueued = false;
+        triggerDeploy();
+      }
+    }
+
+    void run().catch(logger.error);
   }
 
   function stop() {
