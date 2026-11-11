@@ -152,7 +152,7 @@ export function infraPlugin({
           this.getModuleInfo(id)?.importedIds.includes(source),
         );
         throw new Error(
-          `${importer ? analyses.show(importer) : chunk.fileName} imports ${source}, and code that deploy runs on Node uses the import. Node can't load ${source}. Move the code that deploy runs to a file that doesn't import ${source}.`,
+          `${importer ? analyses.show(importer) : chunk.fileName} imports ${source}, which is not allowed in code that runs at deploy. Move the code that runs at deploy to a file that doesn't import ${source}.`,
         );
       }
       if (!onDeclarationModules) return;

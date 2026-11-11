@@ -196,7 +196,7 @@ export class ModuleAnalyses {
         ? `imports ${reason.module}`
         : `uses ${name}, which depends on ${reason.module} (${this.show(reason.file)} imports it)`;
     throw new Error(
-      `${shared}, ${how}. A shared module runs on Node at deploy as well as in the function, and Node can't load ${reason.module}. Move the code that needs ${reason.module} to a runtime module.`,
+      `${shared}, ${how}. This is not allowed in a shared module. Move the code that needs ${reason.module} to a runtime module.`,
     );
   }
 

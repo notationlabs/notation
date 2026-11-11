@@ -600,8 +600,8 @@ export function checkProvidedUses(
       : `${node.name}.${parent!.property.name}`;
     const why =
       imports.get(node.name)?.source === reason.module
-        ? `${name} is imported from ${reason.module}`
-        : `${name} depends on ${reason.module}${reason.file === module.file ? "" : `, which ${show(reason.file)} imports`}`;
+        ? `it is imported from ${reason.module}`
+        : `it depends on ${reason.module}${reason.file === module.file ? "" : `, which ${show(reason.file)} imports`}`;
     const options = declaration.mark.runtime.map(
       (option) => `\`${option}: ${name}\``,
     );
@@ -610,7 +610,7 @@ export function checkProvidedUses(
         ? `Pass ${name} only as ${options.join(" or ")}, or move the value that you need to a file that doesn't import ${reason.module}.`
         : `Move the value that you need to a file that doesn't import ${reason.module}.`;
     throw new Error(
-      `${show(module.file)}:${location(module.source, node.start)}: ${name} can't be used here. Deploy runs ${declaration.name}() on Node to read its options, and ${why}. Node can't load ${reason.module}. ${fix}`,
+      `${show(module.file)}:${location(module.source, node.start)}: ${name} can't be used in a ${declaration.name}() call, because ${why}. ${fix}`,
     );
   }
 }

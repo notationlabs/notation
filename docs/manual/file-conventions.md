@@ -192,7 +192,7 @@ export const Order = v.object({ id: v.string() });
 - declares a function, such as with `$lambda`,
 - imports a resource function, such as `queue` from `@notation/aws/sqs`,
 - imports an infra or runtime module, directly or through modules that aren't infra or runtime,
-- imports a module that Node can't load, such as `cloudflare:workers`, or uses a class from another file that needs one. This fails the infra build, which runs on Node.
+- imports a platform module, such as `cloudflare:workers`, or uses a class from another file that needs one.
 
 The error names the chain of imports, with the position of each import:
 
