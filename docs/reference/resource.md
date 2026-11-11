@@ -146,6 +146,7 @@ All schema items carry these fields:
 **`param`**
 
 - `immutable` – cannot change after creation (forces replacement).
+- `rejectReplace` – a function `(previous, desired) => string`. When a change to the param would replace the resource, plan and deploy fail with the returned message. Use it for a param that the user can change by accident, on a resource whose delete loses data.
 - `primaryKey` / `secondaryKey` – together form the compound key used for read/update/delete.
 - `collect` – makes the param collected, and combines what is contributed to it. See [Contributions](#contributions).
 
@@ -472,9 +473,11 @@ Contributions close when evaluation ends, and `contribute` and `dependOn` throw 
 
 `onEvaluationEnd(callback)` registers a callback that runs after evaluation and before the close, for code whose values do not exist while modules are still being evaluated. It throws when no resource graph is being collected. In `@notation/aws`, `$lambda` uses it to build a Lambda's resources and the resources that its event makes: the mapping of `sqs.bind(queue)`, the route of `apiGateway.bind(api).defineRoute()`, and the rules of `eventBridge.bind(bus).defineRule()` and `eventBridge.defineSchedule()`. `eventSourceMapping()`, `route()`, `rule()` and `schedule()` use it to wire a declaration. A runtime module and the infra module that wires it often import each other, so a declaration can be read safely only after every module has loaded. It is an engine mechanism, not user-facing API.
 
+`perCollection(key, create)` returns a function that gives one value for each resource graph that is being collected. The first call in a graph makes the value with `create`. The function returns `undefined` when no graph is being collected. A provider package keeps its declarations in such a store, so that two graphs collected in one process don't see each other's declarations. `@notation/resource` is loaded once, so two installed copies of a provider package that pass the same `key` share the value. `@notation/aws` keeps its claimed AWS names and the default event bus this way, and `@notation/cloudflare` keeps its Workers, their names and the namespace ids.
+
 ### Declared modules
 
-The infra build wraps each declaration, such as a `$lambda` call, in a call that records the declaration's module. `declaredIn(value, path, binding)` records the module's path, relative to the project root, and the local name of the binding on `value`, under `Symbol.for("@notation/declaredIn")`, and returns `value`. `getDeclaredIn(value)` returns the record, or `undefined`. `$lambda` reads the record to find the module, and so the path of the function's bundle.
+The infra build wraps each declaration, such as a `$lambda` call, in a call that records the declaration's module. `declaredIn(value, path, binding, moduleExports?)` records the module's path, relative to the project root, and the local name of the binding on `value`, under `Symbol.for("@notation/declaredIn")`, and returns `value`. For a declaration marked `platform: workerd`, `moduleExports` is `{ exports, starExports }`: the names that the runtime bundle re-exports besides the entry, and the specifiers of the module's `export * from` statements, whose names the bundle doesn't re-export. `getDeclaredIn(value)` returns the record, or `undefined`. `$lambda` reads the record to find the module, and so the path of the function's bundle.
 
 When you delete a `contribute` call, the collected value changes, and the resource updates on the next deploy. When the API cannot unset a removed field, the provider resets it to the API's default. When there is no default, mark the field `immutable`, so that removing it replaces the resource.
 

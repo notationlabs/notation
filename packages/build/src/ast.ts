@@ -164,6 +164,45 @@ export function patternNames(pattern: Node | null | undefined): string[] {
   }
 }
 
+/**
+ * Returns the identifiers that a top-level statement declares, e.g. `a` and
+ * `b` for `export const a = 1, b = 2`.
+ */
+export function declaredBy(statement: Node): string[] {
+  const node =
+    statement.type === "ExportNamedDeclaration"
+      ? statement.declaration
+      : statement;
+  if (!node) return [];
+  if (node.type === "VariableDeclaration") {
+    return node.declarations.flatMap((declarator: Node) =>
+      patternNames(declarator.id),
+    );
+  }
+  if (
+    node.type === "FunctionDeclaration" ||
+    node.type === "ClassDeclaration" ||
+    node.type === "TSEnumDeclaration" ||
+    node.type === "TSModuleDeclaration"
+  ) {
+    return node.id?.type === "Identifier" ? [node.id.name] : [];
+  }
+  return [];
+}
+
+/** Whether a statement only declares, imports or exports types. */
+export const isTypeOnly = (statement: Node): boolean =>
+  statement.type === "TSTypeAliasDeclaration" ||
+  statement.type === "TSInterfaceDeclaration" ||
+  (statement.type === "ImportDeclaration" && statement.importKind === "type") ||
+  ((statement.type === "ExportNamedDeclaration" ||
+    statement.type === "ExportAllDeclaration") &&
+    statement.exportKind === "type") ||
+  (statement.type === "ExportNamedDeclaration" &&
+    statement.declaration &&
+    isTypeOnly(statement.declaration)) ||
+  statement.declare === true;
+
 // The function-scoped names of a function: its parameters, its own name if
 // it is a function expression, and the `var` declarations in its body,
 // without those of nested functions.

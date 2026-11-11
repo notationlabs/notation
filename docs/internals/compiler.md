@@ -15,9 +15,16 @@ Source: `@notation/build` (plugins and source transforms), `@notation/cli` (`pac
 type DeclarationModule = {
   path: string; // absolute path of the module
   binding: string; // local name of the declaration, such as "lambda"
-  entry: string; // the export that the platform calls, such as "handler"
+  entry?: string; // the export that the platform calls, such as "handler". Without it, there is no runtime bundle
+  platform?: PlatformName; // the mark's platform, such as "workerd"
 };
 ```
+
+`platform` is absent for the default platform, `node`, in both the mark and the `DeclarationModule`. It is copied from the mark as it is, also for a declaration with no entry. The record has no exports: the runtime build reads the module's exports from disk, for the reason in [The entry](#the-entry). So in watch mode, a change to a module's exports rebuilds its runtime bundle, but doesn't restart the runtime watcher. The runtime build and the `declaredIn` record both use `runtimeExports` and `otherExports` in `packages/build/src/exports.ts`.
+
+### Platforms
+
+Each platform has one definition in `packages/build/src/platforms.ts`, of the type `Platform`. A definition holds the Rolldown input options of the runtime bundle, with its plugins, whether the runtime entry also re-exports the module's other exports (`reexportsModule`), and an optional `checkExports` that fails the infra build for an export value that the platform doesn't start with. `platformOf(name)` returns the definition for a mark's `platform`, or for `node` when it is absent. The infra strip, the runtime plugin and `compileRuntimeModules` read the definition. None of them tests for a platform's name.
 
 Only the infra pass decides which modules are declaration modules. The runtime pass bundles the list that the infra pass returns and no others, so the two passes can't disagree.
 
@@ -114,10 +121,10 @@ export function api(config) {
 }
 ```
 
-| Mark           | Marks                                        | Clauses                                                                                                                                                                                                                                                                                                                                |
-| -------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@declaration` | A function that declares a function resource | `shared:` options that both builds keep. `runtime:` options that only run in the function. `keys:` kept options whose value returns an object literal, of which the runtime build keeps only the keys. `entry:` the export that the platform calls.                                                                                    |
-| `@resource`    | A function that declares a resource          | `runtime:` options of the resource that a function reads when a kept option of a declaration names the resource, such as `schema` in `sqs.bind(orderQueue)`. `runtime:` with no options means the resource becomes `{}`, as `api()` does. A bare `@resource` can't be read in a function. See [The runtime strip](#the-runtime-strip). |
+| Mark           | Marks                                        | Clauses                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@declaration` | A function that declares a function resource | `shared:` options that both builds keep. `runtime:` options that only run in the function. `keys:` kept options whose value returns an object literal, of which the runtime build keeps only the keys. `entry:` the export that the platform calls. A declaration with no `entry:`, such as a Durable Object namespace, has no runtime bundle. An empty `entry:` fails the build. `platform:` `node`, the default, or `workerd`. |
+| `@resource`    | A function that declares a resource          | `runtime:` options of the resource that a function reads when a kept option of a declaration names the resource, such as `schema` in `sqs.bind(orderQueue)`. `runtime:` with no options means the resource becomes `{}`, as `api()` does. A bare `@resource` can't be read in a function. See [The runtime strip](#the-runtime-strip).                                                                                           |
 
 The tags are in JSDoc because Rolldown and tsdown keep JSDoc comments in a package's `dist`, and drop other block comments.
 
@@ -136,10 +143,11 @@ A reference inside a function that is itself marked `@declaration` in the same m
 
 ## The infra build
 
-`infraPlugin` does two things:
+`infraPlugin` does three things:
 
 - It leaves installed packages external, so the infra bundle imports them from the project's `node_modules`. A bare specifier that names no installed package, such as a tsconfig path alias like `runtime/todos`, is bundled.
 - It replaces each declaration module with the output of `stripForInfra`.
+- It replaces each other runtime module with the part that code that runs at deploy uses. See [Runtime modules without a declaration](#runtime-modules-without-a-declaration). It fails the build if that code uses a module that only another platform provides, such as `cloudflare:workers`. See [Platform modules](#platform-modules).
 
 ### The infra strip
 
@@ -179,13 +187,13 @@ export const lambda = __notation_declaredIn(
   "lambda",
 );
 
-function __notation_declaredIn(value, path, binding) {
+function __notation_declaredIn(value, path, binding, moduleExports) {
   if (
     (typeof value === "object" && value !== null) ||
     typeof value === "function"
   ) {
     Object.defineProperty(value, Symbol.for("@notation/declaredIn"), {
-      value: { path, binding },
+      value: { path, binding, ...moduleExports },
     });
   }
   return value;
@@ -195,14 +203,45 @@ function __notation_declaredIn(value, path, binding) {
 ::
 
 1. `Sentry.init()` and the `handler` are removed, so neither runs at deploy.
-2. The declaration is wrapped in `__notation_declaredIn`, which records the module's path and the binding's name on the declaration's value, under `Symbol.for("@notation/declaredIn")`. `getDeclaredIn` in `@notation/resource` reads the same key. The helper is written into the module, so the user's project doesn't need to resolve `@notation/resource`. The path is relative to the project root, so the infra bundle is the same on every machine. The name `__notation_declaredIn` is reserved: a module that declares it fails the build.
-3. Each option that the mark lists under `runtime:` is replaced with a function that throws. `$lambda` lists none.
+2. The declaration is wrapped in `__notation_declaredIn`, which records the module's path and the binding's name on the declaration's value, under `Symbol.for("@notation/declaredIn")`. `getDeclaredIn` in `@notation/resource` reads the same key. The helper is written into the module, so the user's project doesn't need to resolve `@notation/resource`. The path is relative to the project root, so the infra bundle is the same on every machine. The name `__notation_declaredIn` is reserved: a module that declares it fails the build. For a declaration marked `platform: workerd` that has an entry, the record also holds `exports`, the exports that the runtime bundle re-exports besides the entry, and `starExports`, the specifiers of the module's `export * from` statements. The framework doesn't check these names. They are there so that a provider's `$worker` can check at plan time that the Worker exports each bound Durable Object class under the name that the namespace records. workerd doesn't check this at startup: it logs a warning, and each call to the namespace fails.
+3. Each option that the mark lists under `runtime:` is replaced with a function that throws. `$lambda` lists none. The strip doesn't follow the names in `runtime:` options, so a class that an option names, and the class's imports, such as `cloudflare:workers`, are removed. The function's name depends on the option's value:
+   - A name that the module declares or imports, such as `class: Counter`, gives a function with that name, so the declaration can read `config.class.name`. The name is the local name at the call site: after `import { Counter as C }`, `class: C` gives `"C"`, and after `const Counter = class Foo {}`, `class: Counter` gives `"Counter"`. So a Worker must export the class under the name that is written in the option.
+   - Any other value, such as `ns.Counter`, `make()`, a class expression, a method such as `class() {}`, or a global such as `undefined`, gives a function whose name is `""`. The function comes from a second helper that the strip writes into the module, `__notation_unnamed`, which returns an arrow function. Rolldown removes a comma or `void` in front of an arrow function in an object literal, so `(0, () => {})` would take the option's key as its name in the infra bundle. The framework doesn't know which options need a name, so a provider rejects an empty name itself. The name `__notation_unnamed` is reserved, like `__notation_declaredIn`.
+
+   A name that is the value of a `runtime:` option can still be used elsewhere in the code that the infra copy keeps, such as `label: Counter.name`. The infra copy then keeps the class. If the class uses `cloudflare:workers`, the infra build fails. See [Platform modules](#platform-modules).
 
 The strip fails the build if the module doesn't export the mark's `entry`, such as `handler`. An entry that comes through `export * from` counts: `Marks.hasExport` follows the star exports to the module that declares it.
 
-The plugin also fails the build if a module imports a name from a declaration module that the stripped copy doesn't export. For each named import and `export { x } from` of a project module, it resolves the specifier with `Marks`, and asks `infraInterface` for the exports that the target's stripped copy keeps. In a declaration module, only the imports that the stripped copy keeps are checked. Without this check, Rolldown reports a missing export, which doesn't say why the export is missing. A namespace import, such as `import * as orders`, isn't checked. In watch mode, only the modules that changed are transformed again. If a change to a declaration module removes an export that another module imports, the error comes from Rolldown.
+The plugin also fails the build if a module imports a name from a declaration module that the stripped copy doesn't export. For each named import and `export { x } from` of a project module, it resolves the specifier with `Marks`, and asks `infraInterface` for the exports that the target's stripped copy keeps. In a declaration module, only the imports that the stripped copy keeps are checked. Without this check, Rolldown reports a missing export, which doesn't say why the export is missing. A namespace import, such as `import * as orders`, isn't checked. In watch mode, Rolldown 1.3 transforms every module again on each rebuild, so the check also runs for a module that didn't change.
 
 **An effect that the declaration doesn't name is lost.** A side-effect import, a mutation such as `settings.memory = 2048`, or a `.env` loader doesn't run in the infra build, even when an option reads the value that it sets.
+
+### Runtime modules without a declaration
+
+Runtime code doesn't run at deploy. The infra build strips each module that `files.runtime` matches and that has no declaration, such as `runtime/cls.ts` when a declaration imports a constant from it. The copy keeps the exports that code that runs at deploy uses, and the top-level statements that those exports need. Everything else is removed, including side-effect imports and statements with side effects, such as `globalThis.registered = true` or `Counter.prototype.extra = 1`. Tree shaking alone would keep such statements. Marking the module free of side effects doesn't help either: Rolldown 1.3 then only leaves out a module that no kept code imports, and keeps the statements of a module that it includes.
+
+What a module keeps depends on the modules that import it, so `RuntimeStrips` in `packages/build/src/infra-strip.ts` solves the whole infra build at once, from its roots: the infra entry and the declaration modules, which `infraRoots` lists, as for the generated entry.
+
+1. A declaration module uses the names that its declaration refers to, except in `runtime:` options, and the names that the statements it keeps refer to.
+2. A module that isn't a runtime module, such as an infra, shared or unmatched module, runs whole. It uses every name that it imports and re-exports, and each module that it imports runs.
+3. In a stripped module, each used export keeps the statement that declares it, and the statements that those refer to. A name that a kept statement imports is used in turn. A re-export passes the use on, also through `export *`. A member of a namespace import, such as `names.PREFIX`, uses that export. Any other use of a namespace uses every export.
+
+A module's kept statements only grow, so the solve ends, also for modules that import each other. The plugin keeps the solve until the next build, or until the watcher reports a change. A module that kept code doesn't import keeps nothing, such as a runtime module that infra imports only for its side effects. A dynamic `import()` isn't followed, so a runtime module that is only imported dynamically is also empty. Measured on a generated project with 5,000 runtime modules, the solve takes about 30 ms once the modules are parsed, against about 1.6 s for the whole infra build.
+
+A statement is kept or removed whole. `export const a = 1, b = env.KV` keeps `b` when `a` is used.
+
+### Platform modules
+
+Some modules exist only where a platform runs the function, so code that runs at deploy can't use them. Each platform's definition lists these modules in `provided.modules`, and says where they exist in `provided.availableIn`, which the errors quote. On workerd, they are the `cloudflare:` modules, such as `cloudflare:workers`, which are available in "a Worker". The infra build runs on Node, which can't load them.
+
+The strip removes an import of a provided module unless kept code uses it. The solve fails the build when kept code in a declaration module or a stripped module uses a name from a provided module. The error names the code that runs at deploy and first needed the name, and the module that imports the provided module if that is another module:
+
+- In a declaration module, the reference in the declaration, such as `label can't be used in a $durableObject() call, which runs at deploy, because it depends on cloudflare:workers, which is only available in a Worker (runtime/cls.ts imports it)`. It says to pass the name only in a `runtime:` option, or to move what the infra build needs to a module that doesn't import the provided module.
+- In a module that runs whole, the import or re-export, such as `infra/main.ts:1:10: kv can't be used at deploy, because it depends on cloudflare:workers, which is only available in a Worker (runtime/kv.ts imports it)`.
+
+A module that runs whole isn't checked. If it uses a provided module, the bundle check below fails the build. If kept code doesn't use the import, tree shaking drops it, because the plugin resolves provided modules as external and free of side effects.
+
+A dynamic `import()` of a provided module isn't changed. The plugin resolves it as external, and it fails only if it runs, such as `await import("cloudflare:workers")` in a `try` block. As a backstop, the plugin fails the build, in `generateBundle`, when a static import of a provided module is still in the bundle's code, and names the importing file, such as an infra module with `export * from "cloudflare:workers"`. Without this check, the infra bundle fails with `ERR_UNSUPPORTED_ESM_URL_SCHEME` when deploy imports it. The plugin reads the bundle's code, because Rolldown's `chunk.imports` also lists the imports that tree shaking removed. Imports with other schemes, such as `bun:sqlite`, or a tsconfig path alias with a colon, such as `app:db`, resolve as before.
 
 ### Recording the declaration modules
 
@@ -210,11 +249,17 @@ The plugin records a `DeclarationModule` for each module that it strips. In `gen
 
 ## The runtime build
 
-`compileRuntimeModules` builds one bundle for each declaration module, to `dist/<module path>/index.mjs`, as one file with no code splitting. The build resolves packages with the conditions `notation-runtime`, `node`, `import` and `default`. Through `notation-runtime`, `@notation/aws/lambda` resolves to `dist/lambda/runtime.js`, which has the same exports as the infra entry and none of the infra code. Its `$lambda` returns a declaration with `env()` and `decode()`, and builds no resources.
+`compileRuntimeModules` builds one bundle for each declaration module that has an entry, to `dist/<module path>/index.mjs`, as one file with no code splitting. The build takes its input options from the platform's definition. On `node`, the build resolves packages with the conditions `notation-runtime`, `node`, `import` and `default`. On `workerd`, it uses Rolldown's `neutral` platform, the conditions `notation-runtime`, `workerd`, `worker`, `browser`, `import` and `default`, and leaves `cloudflare:` and `node:` imports external. A bare Node built-in, such as `events`, becomes an external import of its `node:` module, which workerd provides under the `nodejs_compat` flag. This holds even when an installed package, such as a polyfill, has the same name. workerd has no `require`, so a `require()` of a built-in, such as `require("events")` in a CommonJS package, is resolved to a generated module that imports the `node:` module's default export and assigns it to `module.exports`, as wrangler does. `process.env.NODE_ENV`, with the `global.` and `globalThis.` forms, is replaced with the build's `NODE_ENV`, or `"production"` when it isn't set, as wrangler does on deploy. Through `notation-runtime`, `@notation/aws/lambda` resolves to `dist/lambda/runtime.js`, which has the same exports as the infra entry and none of the infra code. Its `$lambda` returns a declaration with `env()` and `decode()`, and builds no resources.
 
 ### The entry
 
-The bundle's entry is generated by `createRuntimeEntry`. It re-exports only the module's entry:
+The bundle's entry is generated by `createRuntimeEntry`. It re-exports the module's entry. On `workerd`, it also re-exports the module's other value exports, except the declaration, because Cloudflare reads named exports such as Durable Object classes. The module is then the Worker's main module. Measured under miniflare 5.20261012.0-beta, workerd starts a main module whose exports, besides the default handler, are functions, classes or objects whose prototype chain ends in `Object.prototype`. That includes `{}`, arrays, `Date`, `Map`, `Promise`, class instances, frozen objects and TypeScript enums, and objects whose `fetch` or `queue` field has the wrong type. It fails to start for a number, string, boolean, bigint or symbol ("Incorrect type for map entry ... not of type 'function or ExportedHandler'"), for `null` or `undefined`, including `export let x;` ("Cannot initialize ... from an undefined or null value"), and for an object with a null prototype, such as a module namespace object ("prototype chain does not end in Object").
+
+The infra strip fails the build through workerd's `checkExports`, with the file and line, for the cases that it can see in the module: an exported `const` whose initialiser is always primitive, such as a literal, a template literal, a unary or binary expression, or `undefined`, and `export * as ns from`. It doesn't skip such an export, because wrangler would reject the same module. A `let` or `var`, such as `export let later;` or `export let count = 0;`, isn't checked, because the module can assign it later. A value that comes from another module, such as `export { version } from "./meta"`, or from another name, such as `const v = "1"; export const version = v;`, isn't checked, and neither is a namespace import that the module exports, such as `import * as ns from "./x"; export { ns };`. workerd then fails to start the Worker.
+
+Types exported without the `type` keyword, such as `export { Env }` of an interface or of a type import, are not re-exported. A type re-exported from another project module, such as `export { Env } from "./types"`, or a namespace that holds only types, is re-exported, and Rolldown fails the runtime build with a missing export that names the file and the name, such as `"Env" is not exported by "runtime/types.ts"`. Write `export type` for these. A name from `export * from` is not re-exported. A name that is not an identifier, such as `"my-class"`, is quoted.
+
+In watch mode, the entry reads the module from disk when the bundle builds, not when the infra build found the module. A change to the module rebuilds the runtime bundle before the infra rebuild replaces the runtime watcher, so the bundle has the module's current exports. If the module no longer has a declaration with an entry, or no longer exports the entry, the generated entry exports nothing. `generateBundle` removes the output of a bundle whose entry exports nothing, so the build writes nothing and the last bundle stays in `dist`. The infra build then either fails, and keeps its last bundle too, or no longer bundles the module. `notation watch` deploys on any change under `dist`, so an empty bundle would deploy with the old infra bundle.
 
 ```ts [generated runtime entry]
 export { handler } from "/path/to/my-app/runtime/orders.ts";
@@ -242,7 +287,7 @@ export const lambda = $lambda({
 ```ts [runtime build]
 import { Order as __notation_schema_0 } from "/path/to/my-app/shared/schema.ts";
 
-export const lambda = $lambda({
+export const lambda = /*#__PURE__*/ $lambda({
   id: "orders",
   event: () => sqs.bind({ schema: __notation_schema_0 }, { batchSize: 5 }),
   env: () => ({ ORDER_QUEUE_URL: undefined }),
@@ -264,6 +309,7 @@ export const refundQueue = queue({ id: "refunds", schema: Refund });
 3. In a kept option, a resource from an infra module is replaced with the resource's runtime options, wherever it appears. See [Resource arguments](#resource-arguments).
 4. An import whose uses the strip removed is removed too. For example, the import of `orderQueue` and `refundQueue` goes once their uses in `event`, `policy` and `env` are gone. An import that had no uses to begin with stays, because it may be there for its side effects, such as a polyfill.
 5. The binding and its export stay, so an infra module that imports `lambda` still links.
+6. The call is marked `/*#__PURE__*/`, so the bundler drops a declaration that the bundle doesn't use. A Worker that re-exports a Durable Object class imports the class's module, and the namespace's declaration in that module is dropped. So the runtime half of a declaration function, such as `$lambda` from `dist/lambda/runtime.js`, must have no side effects. This includes a wrapper that a project marks `@declaration` itself: the wrapper has no runtime half, so its body runs in the function, and a call whose binding the function doesn't use is dropped with its side effects.
 
 The strip then checks the kept options. A reference to an import from an infra module, or a call to a resource function, fails the build with its file and line. So does a reference to an import from a file with no kind outside `node_modules/` that calls a resource function at its top level, such as `dlq` in `event: () => sqs.bind(dlq)`. This includes a file of a workspace package or a package folder. The function can't load that file, and adding it to `files.infra` gives the error for an infra module. So both errors say to move a plain value that a kept option uses to a shared module, or to a file with no kind.
 

@@ -338,6 +338,58 @@ describe("createPlan", () => {
       }),
     ]);
   });
+
+  it("fails when a changed param rejects replacement", async () => {
+    const Store = resource({ type: "test/planner/store", provider: "test" })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+        account: {
+          presence: "required",
+          propertyType: "param",
+          immutable: true,
+          rejectReplace: (previous: string, desired: string) =>
+            `the account changed from ${previous} to ${desired}`,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const plan = (config: Record<string, unknown>) =>
+      createPlan({
+        resources: [new Store("store", { config: config as any })],
+        state: new MemoryStateBackend({
+          store: {
+            version: 1,
+            id: "store",
+            type: Store.type,
+            provider: "test",
+            config: {},
+            params: { name: "app", account: "one" },
+            output: { name: "app", account: "one" },
+            lastOperation: "create",
+            lastOperationAt: "2026-07-22T00:00:00.000Z",
+          },
+        }),
+        driftDetection: false,
+      });
+
+    await expect(plan({ name: "app", account: "two" })).rejects.toThrow(
+      "store: the account changed from one to two",
+    );
+    // Another param still replaces the resource.
+    expect(
+      (await plan({ name: "other", account: "one" })).nodes[0],
+    ).toMatchObject({ decision: "replace" });
+  });
+
   describe("replaces the dependents that block the delete of a replaced resource", () => {
     // A bus whose name is its key, as AWS names an event bus.
     const name = {

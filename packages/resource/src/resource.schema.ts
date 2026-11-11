@@ -43,6 +43,11 @@ export type SchemaItem<T = any> = {
       primaryKey?: true;
       secondaryKey?: true;
       /**
+       * If set, plan and deploy fail when a change to the param would replace
+       * the resource. The function returns the error message.
+       */
+      rejectReplace?: (previous: T, desired: T) => string;
+      /**
        * Makes the param collected: any code can add to it with the
        * resource's `contribute`, and this rule combines what was added. The
        * items are the value set in config, if any, followed by every

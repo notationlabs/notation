@@ -120,6 +120,11 @@ export function stripForRuntime(
 
   removeEmptiedImports(module.body, analysis.references, removed, s);
 
+  // The pure mark lets the bundler drop an infra declaration whose result is
+  // unused. A declaration function, e.g. `$worker`, must therefore have no
+  // side effects at runtime.
+  s.prependLeft(declaration.call.start, "/*#__PURE__*/ ");
+
   return {
     code: s.toString(),
     map: s.generateMap({

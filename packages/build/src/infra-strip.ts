@@ -1,101 +1,84 @@
 import path from "node:path";
 import MagicString from "magic-string";
-import { freeReferences, type Node } from "./ast";
-import type { Declaration, ModuleAnalysis } from "./analyze";
+import type { ModuleAnalysis } from "./analyze";
+import {
+  declaredBy,
+  freeReferences,
+  isTypeOnly,
+  location,
+  unwrap,
+  type Node,
+  type Reference,
+} from "./ast";
+import { otherExports } from "./exports";
 import type { Marks } from "./marks";
+import type { ModuleAnalyses } from "./modules";
+import {
+  describeProvided,
+  platformOf,
+  providerOfModule,
+  type PlatformName,
+} from "./platforms";
 
 /** The name of the helper that records the module of a declaration. */
 export const declaredInHelper = "__notation_declaredIn";
 
-// The same key as `declaredIn` in @notation/resource, which reads the record.
-// The helper is written into the module, so the user's project doesn't have
-// to resolve a notation package from the module's directory.
-const helper = `
-function ${declaredInHelper}(value, path, binding) {
+const unnamedHelper = "__notation_unnamed";
+
+/**
+ * A copy of `declaredIn` from @notation/resource. The build appends it to
+ * the user's module, so the module doesn't have to import a notation
+ * package. A test checks that the two copies behave the same.
+ */
+export const declaredInSource = `
+function ${declaredInHelper}(value, path, binding, moduleExports) {
   if ((typeof value === "object" && value !== null) || typeof value === "function") {
-    Object.defineProperty(value, Symbol.for("@notation/declaredIn"), { value: { path, binding } });
+    Object.defineProperty(value, Symbol.for("@notation/declaredIn"), { value: { path, binding, ...moduleExports } });
   }
   return value;
+}`;
+
+const helper = `${declaredInSource}
+function ${unnamedHelper}(message) {
+  return () => { throw new Error(message); };
 }
 `;
 
-/** A declaration module, as the infra build records it. */
+/**
+ * A module with an infra declaration, e.g.
+ * `export const worker = $worker(...)`.
+ */
 export type DeclarationModule = {
   /** The absolute path of the module. */
   path: string;
   /** The local name of the binding that holds the declaration. */
   binding: string;
   /** The export that the platform calls, such as `handler`. */
-  entry: string;
+  entry?: string;
+  /** The runtime platform. Defaults to Node. */
+  platform?: PlatformName;
 };
 
-const isTypeOnly = (statement: Node): boolean =>
-  statement.type === "TSTypeAliasDeclaration" ||
-  statement.type === "TSInterfaceDeclaration" ||
-  (statement.type === "ImportDeclaration" && statement.importKind === "type") ||
-  ((statement.type === "ExportNamedDeclaration" ||
-    statement.type === "ExportAllDeclaration") &&
-    statement.exportKind === "type") ||
-  (statement.type === "ExportNamedDeclaration" &&
-    statement.declaration &&
-    isTypeOnly(statement.declaration)) ||
-  statement.declare === true;
-
-function declaredBy(statement: Node): string[] {
-  const node =
-    statement.type === "ExportNamedDeclaration"
-      ? statement.declaration
-      : statement;
-  if (!node) return [];
-  if (node.type === "VariableDeclaration") {
-    return node.declarations.flatMap((declarator: Node) =>
-      namesOf(declarator.id),
-    );
-  }
-  if (
-    node.type === "FunctionDeclaration" ||
-    node.type === "ClassDeclaration" ||
-    node.type === "TSEnumDeclaration" ||
-    node.type === "TSModuleDeclaration"
-  ) {
-    return node.id?.type === "Identifier" ? [node.id.name] : [];
-  }
-  return [];
-}
-
-function namesOf(pattern: Node): string[] {
-  const names: string[] = [];
-  const visit = (node: Node | null) => {
-    if (!node) return;
-    if (node.type === "Identifier") names.push(node.name);
-    else if (node.type === "ObjectPattern")
-      node.properties.forEach((p: Node) =>
-        visit(p.type === "RestElement" ? p.argument : p.value),
-      );
-    else if (node.type === "ArrayPattern") node.elements.forEach(visit);
-    else if (node.type === "RestElement") visit(node.argument);
-    else if (node.type === "AssignmentPattern") visit(node.left);
-  };
-  visit(pattern);
-  return names;
-}
-
-// The statements that the infra copy of a declaration module keeps: the
-// declaration and the top-level statements that it uses, and the imports
-// that those statements use.
+// Returns the top-level statements that the infra build keeps:
+// - the infra declaration
+// - the statements that the infra declaration uses, and their imports
+//
+// A use inside an option that the `@declaration` tag lists under `runtime`,
+// e.g. `class: Counter`, is ignored.
 function keptStatements(analysis: ModuleAnalysis) {
+  const declaration = analysis.declaration!;
   const { module } = analysis.table;
   const owners = new Map<string, Node>();
   for (const statement of module.body) {
     for (const name of declaredBy(statement)) owners.set(name, statement);
   }
 
-  const kept = new Set<Node>([analysis.declaration!.statement]);
+  const kept = new Set<Node>([declaration.statement]);
   const usedImports = new Set<string>();
-  const queue: Node[] = [analysis.declaration!.statement];
+  const queue: Node[] = [declaration.statement];
   while (queue.length > 0) {
     const statement = queue.pop()!;
-    for (const { node } of freeReferences(statement)) {
+    for (const { node } of statementReferences(analysis, statement)) {
       const owner = owners.get(node.name);
       if (owner && !kept.has(owner)) {
         kept.add(owner);
@@ -153,13 +136,15 @@ export function stripForInfra(
       `${module.file}: the module declares a function with ${declaration.name}, so it must export \`${entry}\`, the entry that the platform calls.`,
     );
   }
-  if (
-    analysis.table.marks.has(declaredInHelper) ||
-    module.source.includes(`function ${declaredInHelper}(`)
-  ) {
-    throw new Error(
-      `${module.file}: the name ${declaredInHelper} is reserved for the build.`,
-    );
+  for (const name of [declaredInHelper, unnamedHelper]) {
+    if (
+      analysis.table.marks.has(name) ||
+      module.source.includes(`function ${name}(`)
+    ) {
+      throw new Error(
+        `${module.file}: the name ${name} is reserved for the build.`,
+      );
+    }
   }
 
   const { owners, kept, usedImports } = keptStatements(analysis);
@@ -195,11 +180,19 @@ export function stripForInfra(
     s.remove(statement.start, statement.end);
   }
 
-  replaceRuntimeOptions(s, declaration);
+  const platform = declaration.mark.platform;
+  const exports = otherExports(analysis);
+  if (exports) platformOf(platform).checkExports?.(analysis, exports);
+  const record = [
+    path.relative(root, module.file).split(path.sep).join("/"),
+    declaration.binding,
+    ...(exports ? [{ exports, starExports: analysis.table.stars }] : []),
+  ];
+  replaceRuntimeOptions(s, analysis, owners);
   s.prependLeft(declaration.call.start, `${declaredInHelper}(`);
   s.appendRight(
     declaration.call.end,
-    `, ${JSON.stringify(path.relative(root, module.file).split(path.sep).join("/"))}, ${JSON.stringify(declaration.binding)})`,
+    `, ${record.map((arg) => JSON.stringify(arg)).join(", ")})`,
   );
   s.append(helper);
 
@@ -213,7 +206,8 @@ export function stripForInfra(
     declaration: {
       path: module.file,
       binding: declaration.binding,
-      entry: entry ?? "handler",
+      ...(entry && { entry }),
+      ...(platform && { platform }),
     },
   };
 }
@@ -258,16 +252,501 @@ function keptImport(
   return `import ${parts.join(", ")} from ${from};`;
 }
 
-function replaceRuntimeOptions(s: MagicString, declaration: Declaration) {
+// Replaces the value of each `runtime` option in the infra declaration with
+// a function that throws. `class: Counter` becomes
+// `class: function Counter() { throw ... }`, so `config.class.name` is still
+// "Counter". A value that isn't an identifier, e.g. a class expression,
+// becomes a function whose name is "".
+function replaceRuntimeOptions(
+  s: MagicString,
+  analysis: ModuleAnalysis,
+  owners: Map<string, Node>,
+) {
+  const declaration = analysis.declaration!;
+  const { module, imports } = analysis.table;
   for (const option of declaration.mark.runtime) {
     const property = declaration.properties.get(option);
     if (!property) continue;
-    const message = `${option} only runs in the function, not in the infra build.`;
-    const thrower = `() => { throw new Error(${JSON.stringify(message)}); }`;
-    if (property.shorthand) {
-      s.overwrite(property.start, property.end, `${option}: ${thrower}`);
+    const message = JSON.stringify(
+      `${option} only runs in the function, not in the infra build.`,
+    );
+    const value = unwrap(property.value);
+    const name =
+      !property.method &&
+      value.type === "Identifier" &&
+      (owners.has(value.name) || imports.has(value.name))
+        ? (value.name as string)
+        : undefined;
+    // In `{ class: () => {} }` JavaScript names the function "class". A
+    // function that a helper call returns keeps the name "".
+    const thrower = name
+      ? `function ${name}() { throw new Error(${message}); }`
+      : `${unnamedHelper}(${message})`;
+    if (property.shorthand || property.method) {
+      const key = module.source.slice(property.key.start, property.key.end);
+      s.overwrite(property.start, property.end, `${key}: ${thrower}`);
     } else {
       s.overwrite(property.value.start, property.value.end, thrower);
     }
   }
+}
+
+const nameOf = (node: Node): string =>
+  node.type === "Identifier" ? node.name : String(node.value);
+
+function runtimeOptionNodes(analysis: ModuleAnalysis): Set<Node> {
+  const skip = new Set<Node>();
+  const declaration = analysis.declaration;
+  if (!declaration) return skip;
+  for (const option of declaration.mark.runtime) {
+    const property = declaration.properties.get(option);
+    if (property) skip.add(property);
+  }
+  return skip;
+}
+
+function statementReferences(analysis: ModuleAnalysis, statement: Node) {
+  const declaration = analysis.declaration;
+  return statement === declaration?.statement
+    ? freeReferences(statement, runtimeOptionNodes(analysis))
+    : freeReferences(statement);
+}
+
+// The code that runs at deploy that first needed a value: a reference in
+// an infra declaration, or an import or re-export in a module that the
+// infra build keeps whole.
+type Origin = {
+  file: string;
+  /** The reference as written, such as `Counter` or `ns.Counter`. */
+  name: string;
+  node: Node;
+};
+
+/**
+ * What the infra build keeps of a runtime module that has no declaration:
+ * the exports that kept code imports, and the top-level statements that
+ * they need.
+ */
+export type RuntimeStrip = {
+  statements: Set<Node>;
+  /** The local names of the imports that kept statements use. */
+  imports: Set<string>;
+  exports: Set<string>;
+  /** True if kept code uses every export, e.g. through a namespace import. */
+  all: boolean;
+  /** True if a used export comes through `export * from`. */
+  stars: boolean;
+};
+
+type StripState = RuntimeStrip & { owners: Map<string, Node> };
+
+// The local name that a top-level statement gives to its default export,
+// when the export has no name of its own.
+const defaultLocal = "*default*";
+
+function ownersOf(analysis: ModuleAnalysis): Map<string, Node> {
+  const owners = new Map<string, Node>();
+  for (const statement of analysis.table.module.body) {
+    if (statement.type === "ExportDefaultDeclaration") {
+      owners.set(defaultLocal, statement);
+      const id = statement.declaration.id;
+      if (id) owners.set(id.name, statement);
+      continue;
+    }
+    for (const name of declaredBy(statement)) owners.set(name, statement);
+  }
+  return owners;
+}
+
+/**
+ * Finds what the infra build keeps of each runtime module that has no
+ * declaration. Runtime code doesn't run at deploy, so the build keeps only
+ * what code that runs at deploy uses.
+ *
+ * 1. The roots are the infra entry and the declaration modules.
+ * 2. A declaration module uses what its declaration refers to, except in
+ *    `runtime:` options, and the statements that those names need.
+ * 3. A module that isn't a runtime module, such as an infra or shared
+ *    module, runs whole, so it uses every name that it imports.
+ * 4. In a runtime module without a declaration, each used export keeps the
+ *    statements that it needs. Their imports are used in turn.
+ *
+ * A module's kept statements only grow, so the work ends. The solve fails
+ * the build when kept code in a declaration module or a stripped module
+ * uses a name from a module that only another platform provides, such as
+ * `cloudflare:workers`.
+ */
+export class RuntimeStrips {
+  #analyses: ModuleAnalyses;
+  #roots: () => string[];
+  #solved:
+    | { strips: Map<string, StripState>; analyses: Map<string, ModuleAnalysis> }
+    | undefined;
+
+  /** @param roots Returns the infra entry and the declaration modules. */
+  constructor(analyses: ModuleAnalyses, roots: () => string[]) {
+    this.#analyses = analyses;
+    this.#roots = roots;
+  }
+
+  clear() {
+    this.#solved = undefined;
+  }
+
+  /**
+   * Returns what the infra build keeps of `analysis`, a runtime module
+   * without a declaration. A module that kept code doesn't import keeps
+   * nothing.
+   */
+  of(analysis: ModuleAnalysis): RuntimeStrip {
+    const file = analysis.table.module.file;
+    let solved = this.solve();
+    // A module that changed since the solve has other nodes.
+    const used = solved.analyses.get(file);
+    if (used && used !== analysis) {
+      this.clear();
+      solved = this.solve();
+    }
+    return (
+      solved.strips.get(file) ?? {
+        statements: new Set(),
+        imports: new Set(),
+        exports: new Set(),
+        all: false,
+        stars: false,
+      }
+    );
+  }
+
+  solve() {
+    if (this.#solved) return this.#solved;
+    const analyses = this.#analyses;
+    const strips = new Map<string, StripState>();
+    const used = new Map<string, ModuleAnalysis>();
+    const visited = new Set<string>();
+    const work: { file: string; name?: string; origin?: Origin }[] = [];
+    const whole = (file: string, name: string, node: Node): Origin => ({
+      file,
+      name,
+      node,
+    });
+    // The `export ... from` statement of `source` in a module.
+    const reexport = (analysis: ModuleAnalysis, source: string): Node =>
+      analysis.table.module.body.find(
+        (statement: Node) =>
+          (statement.type === "ExportNamedDeclaration" ||
+            statement.type === "ExportAllDeclaration") &&
+          statement.source?.value === source,
+      )!;
+
+    const analysisOf = (file: string) => {
+      const analysis = analyses.fromFile(file);
+      if (analysis) used.set(file, analysis);
+      return analysis;
+    };
+    const resolve = (source: string, importer: string) =>
+      providerOfModule(source)
+        ? undefined
+        : analyses.marks.resolve(source, importer);
+    const isStripped = (file: string, analysis: ModuleAnalysis) =>
+      !analysis.declaration && analyses.files.kindOf(file)?.kind === "runtime";
+
+    // Records a use of the import `local` in `file`. `reference` is the use,
+    // for a member of a namespace import such as `ns.Counter`.
+    const useImport = (
+      file: string,
+      local: string,
+      origin: Origin,
+      reference?: Reference,
+    ) => {
+      const binding = analysisOf(file)!.table.imports.get(local)!;
+      if (providerOfModule(binding.source)) {
+        this.#fail(origin, binding.source, file);
+      }
+      const target = resolve(binding.source, file);
+      if (!target) return;
+      let name = binding.imported;
+      const parent = reference?.ancestors.at(-1);
+      if (
+        name === "*" &&
+        parent?.type === "MemberExpression" &&
+        !parent.computed &&
+        parent.object === reference!.node
+      ) {
+        name = parent.property.name;
+      }
+      work.push({ file: target, name, origin });
+    };
+
+    // Keeps the statement that declares `local`, and the statements that it
+    // needs, in a declaration module or a stripped module.
+    const keep = (
+      file: string,
+      state: Pick<StripState, "owners" | "statements" | "imports">,
+      local: string,
+      origin: Origin,
+    ) => {
+      const analysis = analysisOf(file)!;
+      if (analysis.table.imports.has(local)) {
+        state.imports.add(local);
+        useImport(file, local, origin);
+        return;
+      }
+      const start = state.owners.get(local);
+      if (!start || state.statements.has(start)) return;
+      state.statements.add(start);
+      const queue = [start];
+      while (queue.length > 0) {
+        const statement = queue.pop()!;
+        for (const reference of statementReferences(analysis, statement)) {
+          const name: string = reference.node.name;
+          if (analysis.table.imports.has(name)) {
+            state.imports.add(name);
+            useImport(file, name, origin, reference);
+            continue;
+          }
+          const owner = state.owners.get(name);
+          if (owner && !state.statements.has(owner)) {
+            state.statements.add(owner);
+            queue.push(owner);
+          }
+        }
+      }
+    };
+
+    const visit = (file: string) => {
+      if (visited.has(file)) return;
+      visited.add(file);
+      const analysis = analysisOf(file);
+      if (!analysis) return;
+      const { table } = analysis;
+      const declaration = analysis.declaration;
+      if (declaration) {
+        const state = {
+          owners: ownersOf(analysis),
+          statements: new Set<Node>([declaration.statement]),
+          imports: new Set<string>(),
+        };
+        for (const reference of statementReferences(
+          analysis,
+          declaration.statement,
+        )) {
+          const { node, ancestors } = reference;
+          const binding = table.imports.get(node.name);
+          const parent = ancestors.at(-1);
+          const member =
+            binding?.imported === "*" &&
+            parent?.type === "MemberExpression" &&
+            !parent.computed &&
+            parent.object === node;
+          const origin = {
+            file,
+            name: member ? `${node.name}.${parent.property.name}` : node.name,
+            node,
+          };
+          if (binding) {
+            state.imports.add(node.name);
+            useImport(file, node.name, origin, reference);
+          } else {
+            keep(file, state, node.name, origin);
+          }
+        }
+        return;
+      }
+      // The module runs whole, so each module that it imports runs, and
+      // each name that it imports is used.
+      for (const statement of table.module.body) {
+        if (!statement.source || isTypeOnly(statement)) continue;
+        const target = resolve(statement.source.value, file);
+        if (target) work.push({ file: target });
+      }
+      // An import from a module that only another platform provides isn't
+      // followed. Node fails on it, and the bundle check names the module.
+      for (const [local, binding] of table.imports) {
+        if (providerOfModule(binding.source)) continue;
+        useImport(file, local, whole(file, local, binding.specifier));
+      }
+      for (const [name, target] of table.exports) {
+        if (!("source" in target)) continue;
+        const resolved = resolve(target.source, file);
+        if (resolved)
+          work.push({
+            file: resolved,
+            name: target.imported,
+            origin: whole(file, name, reexport(analysis, target.source)),
+          });
+      }
+      for (const star of table.stars) {
+        const resolved = resolve(star, file);
+        if (resolved)
+          work.push({
+            file: resolved,
+            name: "*",
+            origin: whole(file, "*", reexport(analysis, star)),
+          });
+      }
+    };
+
+    const demand = (file: string, name: string, origin: Origin) => {
+      const analysis = analysisOf(file);
+      if (!analysis) return;
+      if (!isStripped(file, analysis)) return visit(file);
+      let state = strips.get(file);
+      if (!state) {
+        state = {
+          owners: ownersOf(analysis),
+          statements: new Set(),
+          imports: new Set(),
+          exports: new Set(),
+          all: false,
+          stars: false,
+        };
+        strips.set(file, state);
+      }
+      const { table } = analysis;
+      if (name === "*") {
+        if (state.all) return;
+        state.all = true;
+        for (const exported of table.exports.keys())
+          work.push({ file, name: exported, origin });
+        for (const star of table.stars) {
+          const resolved = resolve(star, file);
+          if (resolved) work.push({ file: resolved, name: "*", origin });
+        }
+        return;
+      }
+      if (state.exports.has(name)) return;
+      state.exports.add(name);
+      const target = table.exports.get(name);
+      if (!target) {
+        if (name === "default") return;
+        state.stars = true;
+        for (const star of table.stars) {
+          const resolved = resolve(star, file);
+          if (resolved) work.push({ file: resolved, name, origin });
+        }
+        return;
+      }
+      if (!("source" in target)) {
+        keep(file, state, target.local, origin);
+        return;
+      }
+      if (providerOfModule(target.source)) {
+        this.#fail(origin, target.source, file);
+      }
+      const resolved = resolve(target.source, file);
+      if (resolved)
+        work.push({ file: resolved, name: target.imported, origin });
+    };
+
+    for (const root of this.#roots()) visit(root);
+    while (work.length > 0) {
+      const { file, name, origin } = work.pop()!;
+      if (name === undefined) visit(file);
+      else demand(file, name, origin!);
+    }
+    this.#solved = { strips, analyses: used };
+    return this.#solved;
+  }
+
+  #fail(origin: Origin, source: string, importer: string): never {
+    const analyses = this.#analyses;
+    const analysis = analyses.fromFile(origin.file)!;
+    const { module, imports } = analysis.table;
+    const at = `${analyses.show(origin.file)}:${location(module.source, origin.node.start)}`;
+    const why =
+      importer === origin.file && imports.get(origin.name)?.source === source
+        ? `it is imported from ${describeProvided(source)}`
+        : `it depends on ${describeProvided(source)}${importer === origin.file ? "" : ` (${analyses.show(importer)} imports it)`}`;
+    const move = `the value that you need to a file that doesn't import ${source}.`;
+    const declaration = analysis.declaration;
+    if (!declaration) {
+      throw new Error(
+        `${at}: ${origin.name} can't be used at deploy, because ${why}. Move ${move}`,
+      );
+    }
+    const options = declaration.mark.runtime.map(
+      (option) => `\`${option}: ${origin.name}\``,
+    );
+    const fix =
+      options.length > 0
+        ? `Pass ${origin.name} only as ${options.join(" or ")}, or move ${move}`
+        : `Move ${move}`;
+    throw new Error(
+      `${at}: ${origin.name} can't be used in a ${declaration.name}() call, which runs at deploy, because ${why}. ${fix}`,
+    );
+  }
+}
+
+/**
+ * The copy of a runtime module without a declaration that the infra build
+ * runs. It keeps what `strip` lists and removes everything else, including
+ * side-effect imports and statements with side effects.
+ */
+export function stripRuntimeForInfra(
+  analysis: ModuleAnalysis,
+  strip: RuntimeStrip,
+): { code: string; map: ReturnType<MagicString["generateMap"]> } {
+  const { module } = analysis.table;
+  const { source } = module;
+  const text = (node: Node) => source.slice(node.start, node.end);
+  const exported = (name: string) => strip.all || strip.exports.has(name);
+  const s = new MagicString(source);
+  for (const statement of module.body) {
+    if (isTypeOnly(statement)) continue;
+    switch (statement.type) {
+      case "ImportDeclaration": {
+        const kept = keptImport(statement, strip.imports, source);
+        if (kept === undefined) s.remove(statement.start, statement.end);
+        else s.overwrite(statement.start, statement.end, kept);
+        break;
+      }
+      case "ExportNamedDeclaration": {
+        if (statement.declaration) {
+          if (!strip.statements.has(statement))
+            s.remove(statement.start, statement.end);
+          break;
+        }
+        const specifiers = statement.specifiers.filter(
+          (specifier: Node) =>
+            specifier.exportKind === "type" ||
+            exported(nameOf(specifier.exported)),
+        );
+        if (specifiers.length === 0) {
+          s.remove(statement.start, statement.end);
+        } else if (specifiers.length < statement.specifiers.length) {
+          const from = statement.source
+            ? ` from ${text(statement.source)}`
+            : "";
+          s.overwrite(
+            statement.start,
+            statement.end,
+            `export { ${specifiers.map(text).join(", ")} }${from};`,
+          );
+        }
+        break;
+      }
+      case "ExportAllDeclaration": {
+        const used = statement.exported
+          ? exported(nameOf(statement.exported))
+          : strip.all || strip.stars;
+        if (!used) s.remove(statement.start, statement.end);
+        break;
+      }
+      case "ExportDefaultDeclaration":
+        if (!exported("default")) s.remove(statement.start, statement.end);
+        break;
+      default:
+        if (!strip.statements.has(statement))
+          s.remove(statement.start, statement.end);
+    }
+  }
+  return {
+    code: s.toString(),
+    map: s.generateMap({
+      hires: true,
+      source: module.file,
+      includeContent: true,
+    }),
+  };
 }

@@ -12,6 +12,7 @@ import {
   infraWatchExclude,
   ModuleAnalyses,
   runtimeEntry,
+  platformOf,
   runtimePlugin,
   type DeclarationModule,
 } from "@notation/build";
@@ -149,6 +150,7 @@ export async function compileInfra(
       infraEntryPlugin({ analyses, entryPoint }),
       infraPlugin({
         analyses,
+        entryPoint,
         onDeclarationModules: (modules) => {
           found = modules;
         },
@@ -206,42 +208,42 @@ export type CompileRuntimeOptions = {
 };
 
 /**
- * Bundles each declaration module to `dist/<module path>/index.mjs`, as one
- * file. The bundle's entry is generated: it re-exports the module's entry,
- * such as `handler`. Returns a function that stops watching.
+ * Bundles each module that deploys a function into one file,
+ * `dist/<module path>/index.mjs`. Returns a function that stops watching.
  */
 export async function compileRuntimeModules(
   modules: DeclarationModule[],
   opts: CompileRuntimeOptions = {},
 ): Promise<() => Promise<void>> {
-  if (modules.length === 0) return async () => {};
+  const bundled = modules.filter((module) => module.entry);
+  if (bundled.length === 0) return async () => {};
   const analyses = opts.analyses ?? new ModuleAnalyses();
   const distDir = filePaths.dist.dir();
-  const configs = modules.map((module) => ({
-    input: {
+  const configs = bundled.map((module) => {
+    const { plugins, ...platform } = platformOf(module.platform).build();
+    return {
       input: {
-        [path
-          .relative(distDir, filePaths.dist.runtime.index(module.path))
-          .replace(/\.mjs$/, "")]: runtimeEntry,
-      },
-      cwd: projectRoot(),
-      platform: "node",
-      tsconfig: true,
-      resolve: {
-        conditionNames: ["notation-runtime", "node", "import", "default"],
-      },
-      // Inlining would copy a short constant from an infra module into the
-      // function, and the infra module would render nothing, so the bundle
-      // check wouldn't see the use.
-      optimization: { inlineConst: false },
-      plugins: [runtimePlugin({ analyses, module })],
-    } satisfies InputOptions,
-    output: {
-      ...outputOptions,
-      dir: distDir,
-      codeSplitting: false,
-    } satisfies OutputOptions,
-  }));
+        input: {
+          [path
+            .relative(distDir, filePaths.dist.runtime.index(module.path))
+            .replace(/\.mjs$/, "")]: runtimeEntry,
+        },
+        cwd: projectRoot(),
+        tsconfig: true,
+        ...platform,
+        // Off, so that the runtime plugin can detect a function that uses a
+        // constant from an infra module. The plugin checks whether the bundle
+        // has code from an infra module, and an inlined constant leaves none.
+        optimization: { inlineConst: false },
+        plugins: [plugins, runtimePlugin({ analyses, module })],
+      } satisfies InputOptions,
+      output: {
+        ...outputOptions,
+        dir: distDir,
+        codeSplitting: false,
+      } satisfies OutputOptions,
+    };
+  });
 
   if (!opts.watch) {
     await Promise.all(

@@ -275,6 +275,38 @@ it("checks a shared module again when a module that it imports changes", async (
   );
 });
 
+it("strips a runtime module again when infra starts to use another of its exports", async () => {
+  write(
+    "runtime/cls.ts",
+    `export class Imported {}\nexport const NAME = "n";\nglobalThis.loaded = true;\n`,
+  );
+  write(
+    "watch-p/main.ts",
+    `import { NAME } from "../runtime/cls";\nconsole.log(NAME);\n`,
+  );
+  const bundle = path.join(root, "dist/watch-p/main.mjs");
+  const errors: unknown[] = [];
+  let builds = 0;
+  const infra = await compileInfra(path.join(root, "watch-p/main.ts"), {
+    watch: true,
+    onDeclarationModules: () => builds++,
+    onBuildFailed: (error) => errors.push(error),
+  });
+  onTestFinished(infra.close);
+  expect(readFileSync(bundle, "utf8")).not.toContain("Imported");
+
+  const before = builds;
+  write(
+    "watch-p/main.ts",
+    `import { NAME, Imported } from "../runtime/cls";\nconsole.log(NAME, Imported.name);\n`,
+  );
+  await waitFor(() => expect(builds).toBeGreaterThan(before));
+  expect(errors).toEqual([]);
+  const code = readFileSync(bundle, "utf8");
+  expect(code).toMatch(/Imported = class/);
+  expect(code).not.toContain("globalThis.loaded");
+});
+
 it("fails each build that includes a broken shared module, and writes no bundle", async () => {
   write("watch-j/infra/orders.ts", `export const orders = { url: "u" };\n`);
   write("watch-j/lib/util.ts", `export const util = () => "util";\n`);
@@ -350,4 +382,161 @@ it("bundles a file that is added under runtime/ with the default globs", async (
   await new Promise((resolve) => setTimeout(resolve, 500));
   write("runtime/added.ts", runtimeModule("added"));
   await waitFor(() => expect(existsSync(bundle)).toBe(true));
+});
+
+it("bundles a module when a rebuild gives its declaration an entry", async () => {
+  const module = (clause: string) =>
+    [
+      `/** @declaration ${clause} */`,
+      `function declare(config) { return config; }`,
+      `export const fn = declare({ id: "counters" });`,
+      `export const handler = () => "counters";`,
+      ``,
+    ].join("\n");
+  write("watch-entry/counters.ts", module("shared: id"));
+  write(
+    "watch-entry/main.ts",
+    `import { fn } from "./counters";\nconsole.log(fn);\n`,
+  );
+  const bundle = path.join(root, "dist/watch-entry/counters/index.mjs");
+
+  onTestFinished(
+    await compile(build("watch-entry/main.ts"), { watch: true, logger }),
+  );
+  expect(existsSync(bundle)).toBe(false);
+
+  write("watch-entry/counters.ts", module("shared: id; entry: handler"));
+  await waitFor(() => expect(existsSync(bundle)).toBe(true));
+});
+
+it("rebuilds a Worker module that removes an export without an error", async () => {
+  const module = (classExport: string) =>
+    [
+      `/** @declaration shared: id; entry: default; platform: workerd */`,
+      `function declare(config) { return config; }`,
+      `class Counter {}`,
+      classExport,
+      `export const worker = declare({ id: "api" });`,
+      `export default { fetch: () => new Response("api") };`,
+      ``,
+    ].join("\n");
+  write("watch-exports/api.ts", module("export { Counter };"));
+  write(
+    "watch-exports/main.ts",
+    `import { worker } from "./api";\nconsole.log(worker);\n`,
+  );
+  const bundle = path.join(root, "dist/watch-exports/api/index.mjs");
+  const error = vi.fn();
+  const watchLogger = { info: () => {}, error } as unknown as Logger;
+
+  onTestFinished(
+    await compile(build("watch-exports/main.ts"), {
+      watch: true,
+      logger: watchLogger,
+    }),
+  );
+  await waitFor(() =>
+    expect(readFileSync(bundle, "utf8")).toContain("Counter"),
+  );
+
+  write("watch-exports/api.ts", module(""));
+  await waitFor(() =>
+    expect(readFileSync(bundle, "utf8")).not.toContain("Counter"),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  expect(error).not.toHaveBeenCalled();
+});
+
+it("doesn't log an error when a rebuild takes a module's entry away", async () => {
+  const withEntry = runtimeModule("jobs");
+  const withoutEntry = [
+    `/** @declaration shared: id */`,
+    `function declare(config) { return config; }`,
+    `export const fn = declare({ id: "jobs" });`,
+    ``,
+  ].join("\n");
+  write("watch-entry-loss/jobs.ts", withEntry);
+  write(
+    "watch-entry-loss/main.ts",
+    `import { fn } from "./jobs";\nconsole.log(fn);\n`,
+  );
+  const bundle = path.join(root, "dist/watch-entry-loss/jobs/index.mjs");
+  const error = vi.fn();
+  const info = vi.fn();
+  const watchLogger = { info, error } as unknown as Logger;
+
+  onTestFinished(
+    await compile(build("watch-entry-loss/main.ts"), {
+      watch: true,
+      logger: watchLogger,
+    }),
+  );
+  await waitFor(() => expect(existsSync(bundle)).toBe(true));
+
+  write("watch-entry-loss/jobs.ts", withoutEntry);
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  expect(error).not.toHaveBeenCalled();
+});
+
+it("keeps the last bundle when a rebuild removes the declaration and the infra build fails", async () => {
+  write("watch-decl-loss/jobs.ts", runtimeModule("jobs"));
+  write(
+    "watch-decl-loss/main.ts",
+    `import { fn } from "./jobs";\nconsole.log(fn);\n`,
+  );
+  const bundle = path.join(root, "dist/watch-decl-loss/jobs/index.mjs");
+  const error = vi.fn();
+  const watchLogger = { info: () => {}, error } as unknown as Logger;
+
+  onTestFinished(
+    await compile(build("watch-decl-loss/main.ts"), {
+      watch: true,
+      logger: watchLogger,
+    }),
+  );
+  await waitFor(() => expect(existsSync(bundle)).toBe(true));
+  const before = readFileSync(bundle, "utf8");
+  expect(before).toContain(`"jobs"`);
+
+  write(
+    "watch-decl-loss/jobs.ts",
+    runtimeModule("jobs").replace("export const fn", "// export const fn"),
+  );
+  await waitFor(() => expect(error).toHaveBeenCalled());
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  expect(readFileSync(bundle, "utf8")).toBe(before);
+});
+
+it("keeps the last bundle, and logs only the infra error, when a rebuild removes the entry export", async () => {
+  write("watch-handler-loss/jobs.ts", runtimeModule("jobs"));
+  write(
+    "watch-handler-loss/main.ts",
+    `import { fn } from "./jobs";\nconsole.log(fn);\n`,
+  );
+  const bundle = path.join(root, "dist/watch-handler-loss/jobs/index.mjs");
+  const error = vi.fn();
+  const watchLogger = { info: () => {}, error } as unknown as Logger;
+
+  onTestFinished(
+    await compile(build("watch-handler-loss/main.ts"), {
+      watch: true,
+      logger: watchLogger,
+    }),
+  );
+  await waitFor(() => expect(existsSync(bundle)).toBe(true));
+  const before = readFileSync(bundle, "utf8");
+
+  write(
+    "watch-handler-loss/jobs.ts",
+    runtimeModule("jobs").replace("export const handler", "const handler"),
+  );
+  await waitFor(() => expect(error).toHaveBeenCalled());
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  expect(readFileSync(bundle, "utf8")).toBe(before);
+  // The infra watcher can rebuild twice for one write, and log its error
+  // twice.
+  for (const call of error.mock.calls.map(String)) {
+    expect(call).not.toContain("MISSING_EXPORT");
+    expect(call).toContain("it must export `handler`");
+  }
 });

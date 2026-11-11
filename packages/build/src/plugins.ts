@@ -2,15 +2,20 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Plugin } from "rolldown";
 import type { ModuleAnalysis } from "./analyze";
-import { location } from "./ast";
+import { location, parseModule } from "./ast";
 import { nodeModules, scriptFile } from "./files";
+import { runtimeExports } from "./exports";
+import { infraRoots } from "./infra-entry";
 import {
   infraInterface,
+  RuntimeStrips,
   stripForInfra,
+  stripRuntimeForInfra,
   type DeclarationModule,
 } from "./infra-strip";
 import type { ImportBinding, Mark } from "./marks";
 import { isProjectModule, type ModuleAnalyses } from "./modules";
+import { describeProvided, providerOfModule } from "./platforms";
 import { stripForRuntime } from "./runtime-strip";
 
 const isBareSpecifier = (source: string) =>
@@ -60,6 +65,8 @@ const mayHoldMarks = (code: string) =>
 
 export type InfraPluginOptions = {
   analyses: ModuleAnalyses;
+  /** The infra entry, the same as `infraEntryPlugin`'s. */
+  entryPoint: string;
   /**
    * Called after each build that produces output, with the declaration
    * modules in the build, sorted by path.
@@ -68,15 +75,19 @@ export type InfraPluginOptions = {
 };
 
 /**
- * The infra build's plugin. Replaces each declaration module with its
- * stripped copy, and leaves packages external, so that the infra bundle
- * imports them from the project's node_modules.
+ * The infra build's plugin. Replaces each declaration module and each other
+ * runtime module with its stripped copy, and leaves packages external, so
+ * that the infra bundle imports them from the project's node_modules.
  */
 export function infraPlugin({
   analyses,
+  entryPoint,
   onDeclarationModules,
 }: InfraPluginOptions): Plugin {
   const declarations = new Map<string, DeclarationModule>();
+  const strips = new RuntimeStrips(analyses, () =>
+    infraRoots(analyses, entryPoint),
+  );
   // By importer directory and package name. Cleared on each build, so that
   // a package installed during watch is seen.
   const installed = new Map<string, boolean>();
@@ -84,8 +95,15 @@ export function infraPlugin({
     name: "notation-infra",
     buildStart() {
       installed.clear();
+      strips.clear();
     },
     resolveId(source, importer) {
+      // `source` is a module that only another platform provides. The
+      // strip removes the imports of it that runtime modules have. Another
+      // import, such as a dynamic import, stays, and is external.
+      if (importer && providerOfModule(source)) {
+        return { id: source, external: true, moduleSideEffects: false };
+      }
       if (
         !importer ||
         !isBareSpecifier(source) ||
@@ -99,11 +117,19 @@ export function infraPlugin({
       handler(code, id) {
         if (!isProjectModule(id)) return null;
         declarations.delete(id);
-        if (!mayHoldMarks(code)) return null;
+        const runtime = analyses.files.kindOf(id)?.kind === "runtime";
+        if (!runtime && !mayHoldMarks(code)) return null;
         const analysis = analyses.fromSource(id, code);
         analyses.checkDeclaration(id, analysis);
         checkRuntimeImports(analysis, analyses);
-        if (!analysis.declaration) return null;
+        if (!analysis.declaration) {
+          return runtime
+            ? stripRuntimeForInfra(analysis, strips.of(analysis))
+            : null;
+        }
+        // Fails the build if the declaration needs a module that only
+        // another platform provides.
+        strips.solve();
         const stripped = stripForInfra(
           analysis,
           analyses.marks,
@@ -115,12 +141,24 @@ export function infraPlugin({
     },
     watchChange(id) {
       analyses.invalidate(id);
+      strips.clear();
     },
     buildEnd(error) {
       if (error) return;
       for (const id of this.getModuleIds()) analyses.checkShared(id);
     },
-    generateBundle() {
+    generateBundle(_options, bundle) {
+      for (const chunk of Object.values(bundle)) {
+        if (chunk.type !== "chunk") continue;
+        const source = keptStaticImport(chunk.fileName, chunk.code);
+        if (!source) continue;
+        const importer = Object.keys(chunk.modules).find((id) =>
+          this.getModuleInfo(id)?.importedIds.includes(source),
+        );
+        throw new Error(
+          `${importer ? analyses.show(importer) : chunk.fileName} imports ${describeProvided(source)}, and code that runs at deploy uses it. Move the code that runs at deploy to a file that doesn't import ${source}.`,
+        );
+      }
       if (!onDeclarationModules) return;
       const ids = new Set(this.getModuleIds());
       const found = [...declarations.values()]
@@ -129,6 +167,19 @@ export function infraPlugin({
       onDeclarationModules(found);
     },
   };
+}
+
+// Returns the first static import, in the bundled `code`, of a module that
+// only another platform provides. It parses `code` because `chunk.imports`
+// also lists imports that tree shaking removed. Dynamic imports are allowed,
+// because they only fail if they run.
+function keptStaticImport(file: string, code: string): string | undefined {
+  for (const node of parseModule(file, code).body) {
+    if (node.type !== "ImportDeclaration") continue;
+    const source: string = node.source.value;
+    if (providerOfModule(source)) return source;
+  }
+  return undefined;
 }
 
 // Fails if the infra copy of a module imports a name from a runtime module
@@ -174,15 +225,13 @@ const resolvedEntryId = `\0${entryId}`;
 export const runtimeEntry = entryId;
 
 /**
- * The entry of a runtime bundle. It re-exports only the native entry, such as
- * `handler`, so the declaration is not an export of the bundle, and the
- * bundler can drop it.
+ * Returns the source of the entry file of a function's bundle, such as
+ * `export { handler } from "/project/runtime/todos.ts"`. Exported for tests.
  */
-export function createRuntimeEntry(module: DeclarationModule): string {
-  const from = JSON.stringify(module.path);
-  return module.entry === "default"
-    ? `export { default } from ${from};\n`
-    : `export { ${module.entry} } from ${from};\n`;
+export function createRuntimeEntry(file: string, names: string[]): string {
+  const show = (name: string) =>
+    /^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name);
+  return `export { ${names.map(show).join(", ")} } from ${JSON.stringify(file)};\n`;
 }
 
 export type RuntimePluginOptions = {
@@ -217,7 +266,18 @@ export function runtimePlugin({
       return source === entryId ? resolvedEntryId : null;
     },
     load(id) {
-      return id === resolvedEntryId ? createRuntimeEntry(module) : null;
+      if (id !== resolvedEntryId) return null;
+      // Reads the module from disk. In watch mode this runs before the infra
+      // rebuild, so the cached analysis can be stale.
+      const analysis = analyses.fromDisk(module.path);
+      const exports = analysis && runtimeExports(analysis);
+      if (!exports || !analyses.marks.hasExport(module.path, exports.entry)) {
+        return "export {};\n";
+      }
+      return createRuntimeEntry(module.path, [
+        exports.entry,
+        ...exports.others,
+      ]);
     },
     transform: {
       filter: { id: { include: scriptFile, exclude: nodeModules } },
@@ -239,6 +299,15 @@ export function runtimePlugin({
       for (const id of this.getModuleIds()) analyses.checkShared(id);
     },
     generateBundle(_, bundle) {
+      // The entry file is `export {}` when the module no longer deploys a
+      // function. The build then writes no files.
+      const entry = Object.values(bundle).find(
+        (output) => output.type === "chunk" && output.isEntry,
+      );
+      if (entry?.type === "chunk" && entry.exports.length === 0) {
+        for (const fileName of Object.keys(bundle)) delete bundle[fileName];
+        return;
+      }
       const show = (file: string) => analyses.show(file);
       for (const output of Object.values(bundle)) {
         if (output.type !== "chunk") continue;

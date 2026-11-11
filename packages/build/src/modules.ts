@@ -45,8 +45,15 @@ export class ModuleAnalyses {
   #sharedPassed = new Set<string>();
 
   constructor(options: ModuleAnalysesOptions = {}) {
-    this.marks = options.marks ?? new Marks();
     this.files = new FileKinds(options.files, options.root);
+    this.marks =
+      options.marks ??
+      new Marks({
+        locate: (file) => ({
+          file: this.files.show(file),
+          provider: this.files.providerOf(file),
+        }),
+      });
   }
 
   /**
@@ -65,6 +72,15 @@ export class ModuleAnalyses {
     );
     this.#analyses.set(file, analysis);
     return analysis;
+  }
+
+  /**
+   * Analyses the module's current source on disk. `fromFile` returns a
+   * cached analysis, which can be stale until the watcher reports the change.
+   */
+  fromDisk(file: string): ModuleAnalysis | undefined {
+    const source = readSource(file);
+    return source === undefined ? undefined : this.fromSource(file, source);
   }
 
   /** Analyses a module from the file system. */

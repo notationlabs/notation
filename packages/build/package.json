@@ -16,5 +16,8 @@
     "@notation/core": "workspace:*",
     "magic-string": "^0.30.21",
     "rolldown": "^1.3.0"
+  },
+  "devDependencies": {
+    "@notation/resource": "workspace:*"
   }
 }

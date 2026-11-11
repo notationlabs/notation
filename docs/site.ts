@@ -100,7 +100,10 @@ export const deploy = {
         {
           heading: "Resources",
           icon: "cloud",
-          links: [{ label: "Coming Soon", slug: "providers/cloudflare/overview" }],
+          links: [
+            { label: "Overview", slug: "providers/cloudflare/overview" },
+            { label: "Workers", slug: "providers/cloudflare/workers" },
+          ],
         },
       ],
     },
