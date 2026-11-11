@@ -51,8 +51,8 @@ export function $durableObject<
 >(config: DurableObjectDeclarationConfig<Id, C>): DurableObjectDeclaration<C> {
   assertNamespaceId("$durableObject", config.id);
   // The infra build replaces the class with a function of the same name. A
-  // value that is not a name, such as `ns.Counter`, becomes a function with
-  // an empty name.
+  // value that is not an identifier, e.g. `ns.Counter`, becomes a function
+  // with an empty name.
   const className = (config.class as { name?: unknown } | undefined)?.name;
   if (typeof className !== "string" || className === "") {
     throw new Error(

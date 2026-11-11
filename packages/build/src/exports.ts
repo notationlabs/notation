@@ -3,9 +3,11 @@ import { declaredBy } from "./ast";
 import { platformOf } from "./platforms";
 
 /**
- * Lists the names that a function's bundle exports: the handler, and the
- * names from `otherExports` if the platform needs them. Undefined for a
- * module that deploys no function.
+ * Returns the export names of a function's bundle:
+ * - `entry`: the export that satisfies the runtime platform's contract
+ * - `others`: the export names from `otherExports`
+ *
+ * Returns undefined for modules that deploy no function.
  */
 export function runtimeExports(
   analysis: ModuleAnalysis,
@@ -44,8 +46,9 @@ export function otherExports(analysis: ModuleAnalysis): string[] | undefined {
     .sort();
 }
 
-// Local names that are only types. A name that also has a value, such as an
-// interface merged with a class, is not included.
+// Returns the identifiers that a module declares or imports only as types,
+// e.g. `Foo` from `interface Foo {}` or `import type { Foo }`. Excludes an
+// identifier that is also a value, e.g. `Foo` from `class Foo {}`.
 function typeOnlyNames(analysis: ModuleAnalysis): Set<string> {
   const types = new Set<string>();
   const values = new Set<string>(analysis.table.imports.keys());

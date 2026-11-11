@@ -230,9 +230,9 @@ export async function compileRuntimeModules(
         cwd: projectRoot(),
         tsconfig: true,
         ...platform,
-        // Inlining would copy a short constant from an infra module into the
-        // function, and the infra module would render nothing, so the bundle
-        // check wouldn't see the use.
+        // Off, so that the runtime plugin can detect a function that uses a
+        // constant from an infra module. The plugin checks whether the bundle
+        // has code from an infra module, and an inlined constant leaves none.
         optimization: { inlineConst: false },
         plugins: [plugins, runtimePlugin({ analyses, module })],
       } satisfies InputOptions,

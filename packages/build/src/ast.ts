@@ -164,7 +164,10 @@ export function patternNames(pattern: Node | null | undefined): string[] {
   }
 }
 
-/** The names that a top-level statement declares, exported or not. */
+/**
+ * Returns the identifiers that a top-level statement declares, e.g. `a` and
+ * `b` for `export const a = 1, b = 2`.
+ */
 export function declaredBy(statement: Node): string[] {
   const node =
     statement.type === "ExportNamedDeclaration"

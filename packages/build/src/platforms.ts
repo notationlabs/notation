@@ -5,19 +5,23 @@ import { location, unwrap, type Node } from "./ast";
 
 /** Where a deployed function runs: Node for a Lambda, workerd for a Worker. */
 export type Platform = {
-  /** Called for each build, so that `NODE_ENV` is read at build time. */
+  /**
+   * Returns the platform's Rolldown options. It is called for each build, so
+   * that `NODE_ENV` is read when the build starts.
+   */
   build: () => InputOptions;
   /**
-   * Whether the function's bundle exports every value that the module
-   * exports by name, not only the handler. True for workerd, which finds a
-   * Durable Object class by its export name.
+   * Whether a function's bundle also exports the names from `otherExports`,
+   * not only the export that satisfies the platform's contract. True for
+   * workerd, which finds a Durable Object class by its export name.
    */
   reexportsModule: boolean;
-  /** Fails if the platform can't start a module with the exports `names`. */
+  /** Throws if the platform can't start a module that exports `names`. */
   checkExports?: (analysis: ModuleAnalysis, names: string[]) => void;
   /**
    * Modules that only this platform provides, such as `cloudflare:` modules.
-   * The infra build removes them and the code that uses them, or fails.
+   * The infra build removes imports of them and the code that uses the
+   * imports. It fails if the infra declaration uses that code.
    */
   provided?: {
     modules: RegExp;
@@ -36,9 +40,10 @@ const node: Platform = {
   reexportsModule: false,
 };
 
-// Resolves a Node built-in to its `node:` module, which workerd provides
-// under nodejs_compat, even if a package has the same name. workerd has no
-// `require`, so a `require()` of a built-in gets a module that imports it.
+// Resolves an import of a Node built-in, e.g. `fs`, to `node:fs`, even if an
+// installed package has the same name. workerd provides `node:` modules
+// under the `nodejs_compat` flag. workerd has no `require`, so
+// `require("fs")` resolves to a generated module that imports `node:fs`.
 const requiredBuiltin = "\0notation-required-builtin:";
 const nodeBuiltinsPlugin: Plugin = {
   name: "notation-workerd-builtins",
@@ -59,7 +64,8 @@ const nodeBuiltinsPlugin: Plugin = {
 };
 
 // workerd only starts a module whose exports are functions, classes or
-// plain objects. This catches the cases that are visible in the source.
+// plain objects. Throws for an export that the source shows to be something
+// else, e.g. `export const NAME = "x"`.
 function checkExports(analysis: ModuleAnalysis, names: string[]) {
   const { module } = analysis.table;
   const fail = (node: Node, name: string, value: string) => {
@@ -164,7 +170,10 @@ export const platformNames = Object.keys(platforms) as PlatformName[];
 export const isPlatformName = (name: string): name is PlatformName =>
   Object.hasOwn(platforms, name);
 
-/** The platform that alone provides the module `source`, if any. */
+/**
+ * Returns the only platform that provides the module `source`, e.g. workerd
+ * for `cloudflare:workers`.
+ */
 export const providerOfModule = (source: string): PlatformName | undefined =>
   platformNames.find((name) => platforms[name].provided?.modules.test(source));
 

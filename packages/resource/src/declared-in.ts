@@ -3,9 +3,9 @@
 const declaredInKey = Symbol.for("@notation/declaredIn");
 
 /**
- * The module that a declaration is in. `exports` and `starExports` are only
- * recorded for a platform that needs the module's exports in the function's
- * bundle, such as workerd.
+ * The module that an infra declaration is in. `exports` and `starExports`
+ * are only recorded for a platform that needs the module's exports in the
+ * function's bundle, such as workerd.
  */
 export type DeclaredIn = {
   /** The path of the module, relative to the project root, with `/` separators. */
@@ -16,13 +16,13 @@ export type DeclaredIn = {
 
 export type DeclaredExports = {
   /**
-   * The values that the module exports by name, without its handler and its
-   * infra declaration.
+   * The module's export names, excluding the infra declaration and the
+   * exports that satisfy the runtime platform's contract.
    */
   exports: string[];
   /**
-   * The files that the module re-exports with `export * from`. The names
-   * that they export are not in `exports`.
+   * The sources of the module's `export * from` statements, e.g.
+   * `"./counter"`.
    */
   starExports: string[];
 };

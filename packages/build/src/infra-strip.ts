@@ -55,13 +55,16 @@ export type DeclarationModule = {
   binding: string;
   /** The export that the platform calls, such as `handler`. */
   entry?: string;
-  /** Absent for Node. */
+  /** The runtime platform. Defaults to Node. */
   platform?: PlatformName;
 };
 
-// The statements that the infra build keeps: the infra declaration, the
-// top-level statements that it uses, and their imports. Options that only
-// run in the function, such as `class: Counter`, don't count as uses.
+// Returns the top-level statements that the infra build keeps:
+// - the infra declaration
+// - the statements that the infra declaration uses, and their imports
+//
+// A use inside an option that the `@declaration` tag lists under `runtime`,
+// e.g. `class: Counter`, is ignored.
 function keptStatements(analysis: ModuleAnalysis) {
   const declaration = analysis.declaration!;
   const { module } = analysis.table;
@@ -249,10 +252,11 @@ function keptImport(
   return `import ${parts.join(", ")} from ${from};`;
 }
 
-// Replaces each option that only runs in the function with a function that
-// throws. For `class: Counter` the function is named `Counter`, so the
-// infra build can read `config.class.name`. For a value that is not a name,
-// such as a class expression, the function's name is "".
+// Replaces the value of each `runtime` option in the infra declaration with
+// a function that throws. `class: Counter` becomes
+// `class: function Counter() { throw ... }`, so `config.class.name` is still
+// "Counter". A value that isn't an identifier, e.g. a class expression,
+// becomes a function whose name is "".
 function replaceRuntimeOptions(
   s: MagicString,
   analysis: ModuleAnalysis,
@@ -273,8 +277,8 @@ function replaceRuntimeOptions(
       (owners.has(value.name) || imports.has(value.name))
         ? (value.name as string)
         : undefined;
-    // An inline arrow function would take the option's key as its name, so
-    // the unnamed function comes from a helper call.
+    // In `{ class: () => {} }` JavaScript names the function "class". A
+    // function that a helper call returns keeps the name "".
     const thrower = name
       ? `function ${name}() { throw new Error(${message}); }`
       : `${unnamedHelper}(${message})`;
@@ -287,7 +291,7 @@ function replaceRuntimeOptions(
   }
 }
 
-/** Why the infra build removes a name. */
+/** The import that causes the infra build to remove an identifier. */
 export type ProvidedReason = {
   /** The module that only another platform provides, such as `cloudflare:workers`. */
   module: string;
@@ -296,14 +300,15 @@ export type ProvidedReason = {
 };
 
 /**
- * What the infra build removes from a module that needs a module that only
- * another platform provides, such as `cloudflare:workers`.
+ * The identifiers, exports and statements that the infra build removes from
+ * a project module, because they depend on a module that only another
+ * platform provides, e.g. `cloudflare:workers`.
  */
 export type ProvidedRemoval = {
   names: Map<string, ProvidedReason>;
   exports: Map<string, ProvidedReason>;
   statements: Set<Node>;
-  /** Why a reference's name is removed, if it is. */
+  /** Returns a reason if the infra build removes the referenced identifier. */
   reasonFor: (reference: Reference) => ProvidedReason | undefined;
 };
 
@@ -333,20 +338,23 @@ function statementReferences(analysis: ModuleAnalysis, statement: Node) {
     : freeReferences(statement);
 }
 
-// Import and export statements. The infra build removes single names from
-// them, never the whole statement.
+// True for an import statement, and for an export statement that declares
+// nothing, e.g. `export { a }`. The infra build removes specifiers from
+// these statements, and never the whole statement.
 const isModuleSyntax = (statement: Node) =>
   statement.type === "ImportDeclaration" ||
   statement.type === "ExportAllDeclaration" ||
   (statement.type === "ExportNamedDeclaration" && !statement.declaration);
 
 // Finds what the infra build removes from one module:
-// 1. Each name imported from a module that only another platform provides,
-//    such as `DurableObject` from `cloudflare:workers`.
-// 2. Each imported name that its own module removes. `lookup` answers that.
-// 3. Each top-level statement that uses a removed name, with the names that
-//    the statement declares. This repeats until no statement is added.
-// 4. Each export of a removed name.
+// 1. Each identifier imported from a module that only another platform
+//    provides, e.g. `DurableObject` from `cloudflare:workers`.
+// 2. Each identifier imported from a project module that removes that
+//    export. `lookup` returns the reason if it does.
+// 3. Each top-level statement that uses a removed identifier, and the
+//    identifiers that the statement declares. Step 3 repeats until it adds
+//    no statement.
+// 4. Each export of a removed identifier.
 function providedRemoval(
   analysis: ModuleAnalysis,
   lookup: ExportLookup,
@@ -456,7 +464,7 @@ export class ProvidedRemovals {
     this.#results.clear();
   }
 
-  /** Undefined if the module can't be analysed. */
+  /** Returns undefined if the module can't be analysed. */
   of(file: string): ProvidedRemoval | undefined {
     const analysis = this.#analyses.fromFile(file);
     if (!analysis) return undefined;
@@ -468,8 +476,8 @@ export class ProvidedRemovals {
     return this.#results.get(file)?.removal;
   }
 
-  // A module is analysed again each time a module that it imports removes
-  // more exports. Nothing is ever un-removed, so the loop ends.
+  // Computes a module's removal again each time a module that it imports
+  // removes another export. A removal only grows, so the loop ends.
   #solve(start: string) {
     const analyses = this.#analyses;
     const pending = new Map<string, ModuleAnalysis>();
@@ -510,7 +518,9 @@ export class ProvidedRemovals {
       state.get(file) ?? this.#results.get(file)?.removal;
     const analysisOf = (file: string) =>
       pending.get(file) ?? this.#results.get(file)?.analysis;
-    // A name that isn't in a module's exports can come from `export * from`.
+    // Returns the reason if `file` removes its export `name`. If `file`
+    // doesn't list the export, it checks the files that `file` re-exports
+    // with `export * from`.
     const exportReason = (
       file: string,
       name: string,
@@ -558,8 +568,9 @@ export class ProvidedRemovals {
 }
 
 /**
- * Fails if the infra declaration uses a name that the infra build removes,
- * such as `label: Counter.name` when `Counter` extends `DurableObject`.
+ * Fails if the infra declaration uses an identifier that the infra build
+ * removes, e.g. `label: Counter.name` when `Counter` extends
+ * `DurableObject`.
  */
 export function checkProvidedUses(
   analysis: ModuleAnalysis,
@@ -598,8 +609,8 @@ export function checkProvidedUses(
 
 /**
  * Removes from a module's source what `removal` lists. An import that loses
- * all its names becomes a side-effect import, so the imported module still
- * runs. Returns undefined if nothing changes.
+ * all its specifiers becomes a side-effect import, so the imported module
+ * still runs. Returns undefined if nothing changes.
  */
 export function stripProvided(
   analysis: ModuleAnalysis,

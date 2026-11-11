@@ -43,8 +43,8 @@ export type SchemaItem<T = any> = {
       primaryKey?: true;
       secondaryKey?: true;
       /**
-       * Fails plan and deploy if a change to the param would replace the
-       * resource. Returns the error message.
+       * If set, plan and deploy fail when a change to the param would replace
+       * the resource. The function returns the error message.
        */
       rejectReplace?: (previous: T, desired: T) => string;
       /**

@@ -163,9 +163,10 @@ export function infraPlugin({
   };
 }
 
-// Finds a static import of a module that only another platform provides.
-// Parses the code, because `chunk.imports` also lists imports that tree
-// shaking removed. A dynamic import only fails if it runs, so it is allowed.
+// Returns the first static import, in the bundled `code`, of a module that
+// only another platform provides. It parses `code` because `chunk.imports`
+// also lists imports that tree shaking removed. Dynamic imports are allowed,
+// because they only fail if they run.
 function keptStaticImport(file: string, code: string): string | undefined {
   for (const node of parseModule(file, code).body) {
     if (node.type !== "ImportDeclaration") continue;
@@ -292,9 +293,8 @@ export function runtimePlugin({
       for (const id of this.getModuleIds()) analyses.checkShared(id);
     },
     generateBundle(_, bundle) {
-      // An entry with no exports means that the module no longer declares a
-      // function. The build writes nothing, and the infra build either fails
-      // or stops bundling the module.
+      // The entry file is `export {}` when the module no longer deploys a
+      // function. The build then writes no files.
       const entry = Object.values(bundle).find(
         (output) => output.type === "chunk" && output.isEntry,
       );

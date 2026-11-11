@@ -69,8 +69,8 @@ export class ModuleAnalyses {
   }
 
   /**
-   * Analyses a module from disk. `fromFile` can be stale until the watcher
-   * reports the change.
+   * Analyses the module's current source on disk. `fromFile` returns a
+   * cached analysis, which can be stale until the watcher reports the change.
    */
   fromDisk(file: string): ModuleAnalysis | undefined {
     const source = readSource(file);
@@ -180,7 +180,7 @@ export class ModuleAnalyses {
    */
   checkSharedPlatformUse(
     file: string,
-    /** The names that the infra build would remove from the module. */
+    /** The identifiers that the infra build would remove from the module. */
     removed: { names: Map<string, { module: string; file: string }> },
   ) {
     const match = this.kindOf(file);

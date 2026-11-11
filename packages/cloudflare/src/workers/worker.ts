@@ -104,7 +104,7 @@ type Entry = {
   describe: () => string;
   record: () => DeclaredIn;
   bindings: () => Bindings;
-  /** `chain` is the Workers whose builds led to this one. */
+  /** `chain` lists the Workers being built whose bindings led to this one. */
   build: (chain?: Entry[]) => WorkerGroup;
 };
 
@@ -126,8 +126,8 @@ const claimedNames = perCollection(
 
 /**
  * Declares a Cloudflare Worker. The module's default export is the handler.
- * Bindings are read after all infra has loaded, so they can refer to
- * modules that import this one.
+ * `bindings` is called after all infra modules have loaded, so it can refer
+ * to a Worker whose module imports this one.
  * @declaration shared: id, bindings; keys: bindings; entry: default; platform: workerd
  */
 export function $worker<const Id extends string, B extends Bindings = {}>(
@@ -168,7 +168,7 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
       }
       return record;
     },
-    // Read once, after all infra has loaded.
+    // Called once, after all infra modules have loaded.
     bindings: () => (bindings ??= config.bindings?.() ?? {}),
     // A Worker that is already in `chain` means the bindings form a cycle.
     build: (chain = []) => {

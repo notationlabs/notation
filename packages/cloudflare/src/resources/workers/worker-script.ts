@@ -252,8 +252,9 @@ export type DurableObjectExport =
  * upload that omits a previous namespace, so each one is listed as renamed
  * (same id, new class) or deleted (no longer declared).
  *
- * Throws if a namespace takes the class of another previous namespace:
- * Cloudflare keys a namespace by class name, so it would get those objects.
+ * Throws if a namespace has the class name that another namespace had in
+ * the previous upload. Cloudflare identifies a namespace by its class name,
+ * so the namespace would get the other namespace's objects.
  */
 export function durableObjectExports(
   hosted: HostedNamespace[],
@@ -286,8 +287,9 @@ export function durableObjectExports(
 }
 
 /**
- * Checks the hash because a resumed deploy reuses the original params, and
- * the file may have changed since.
+ * Reads the Worker's bundle and throws if its hash is not `expectedSha256`.
+ * A resumed deploy reuses the params of the first attempt, and the file may
+ * have changed since.
  */
 async function readCode(filePath: string, expectedSha256: string) {
   const code = await nodeFs.readFile(fromProjectRoot(filePath));
