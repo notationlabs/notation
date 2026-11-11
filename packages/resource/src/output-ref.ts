@@ -268,6 +268,10 @@ export function createPlanViews() {
         views.readPending = true;
         return Reflect.ownKeys(target);
       },
+      getOwnPropertyDescriptor(target, key) {
+        views.readPending = true;
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
     });
     return Object.create(dep, { output: { get: () => viewedOutput } });
   };

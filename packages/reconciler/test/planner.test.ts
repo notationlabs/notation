@@ -954,6 +954,26 @@ describe("createPlan", () => {
         fields: ["arn"],
       });
     });
+
+    it("fails when a resource with no read and no dependents lacks a required output in state", async () => {
+      const QueueWithoutRead = defineQueue();
+      const queue = new QueueWithoutRead("queue", {
+        config: { name: "orders" } as any,
+      });
+
+      const error = await createPlan({
+        resources: [queue],
+        state: new MemoryStateBackend({
+          queue: record("queue", QueueWithoutRead.type, { name: "orders" }),
+        }),
+        driftDetection: false,
+      }).catch((e) => e);
+
+      expect(error).toMatchObject({
+        name: "SchemaStructureError",
+        fields: ["arn"],
+      });
+    });
   });
 
   describe("value validation", () => {
