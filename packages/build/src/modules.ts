@@ -173,10 +173,10 @@ export class ModuleAnalyses {
     const name = this.show(file);
     const why =
       match.kind === "infra"
-        ? "The runtime build leaves infra modules out, so it can't bundle the function."
-        : "Neither build strips a shared module, so it can't hold a declaration.";
+        ? "because an infra module only runs at deploy, and the function's code also has to run in the function"
+        : "because a shared module runs as written both at deploy and in the function, and only a runtime module can hold a declaration: at deploy, only the declaration of a runtime module runs";
     throw new Error(
-      `${name}:${location(analysis.table.module.source, declaration.call.start)}: ${describeKind(name, match)}, declares a function with ${declaration.name}. ${why} Move the declaration to a runtime module.`,
+      `${name}:${location(analysis.table.module.source, declaration.call.start)}: ${declaration.name}() can't be used in ${describeKind(name, match)}, ${why}. Move the declaration to a runtime module.`,
     );
   }
 
@@ -208,7 +208,7 @@ export class ModuleAnalyses {
     const resource = resourceImport(analysis, this.marks);
     if (resource) {
       throw new Error(
-        `${at({ file, start: resource.start })}: ${shared}, imports the resource function ${resource.name} from ${resource.source}. A shared module runs in the runtime build, where a resource function can't run. Move the code that uses ${resource.name} to an infra module.`,
+        `${at({ file, start: resource.start })}: ${resource.name} from ${resource.source} can't be used in ${shared}, because a shared module also runs in the function, and ${resource.name}() only runs at deploy. Move the code that uses ${resource.name} to an infra module.`,
       );
     }
 
@@ -222,12 +222,15 @@ export class ModuleAnalyses {
     const through = steps[1]
       ? `, or stop importing it through ${this.show(steps[1].file)}`
       : "";
-    const advice =
-      found.match.kind === "infra"
-        ? `Move the code that needs ${target} out of the shared module${through}.`
-        : "Move the code that the shared module needs from the runtime module to a shared module.";
+    const infra = found.match.kind === "infra";
+    const why = infra
+      ? "a shared module also runs in the function, and an infra module only runs at deploy"
+      : "a shared module runs as written both at deploy and in the function, and a runtime module doesn't run as written at deploy";
+    const advice = infra
+      ? `Move the code that needs ${target} out of the shared module${through}.`
+      : "Move the code that the shared module needs from the runtime module to a shared module.";
     throw new Error(
-      `${shared}, imports ${describeKind(target, found.match)}, through ${chain}. Neither build strips a shared module, so it can't import an infra or runtime module, directly or through other modules. ${advice}`,
+      `${describeKind(target, found.match)}, can't be used in ${shared}, because ${why}. The shared module imports it through ${chain}. ${advice}`,
     );
   }
 

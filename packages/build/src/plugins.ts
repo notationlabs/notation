@@ -213,7 +213,7 @@ function checkRuntimeImports(
     if (!target?.declaration) continue;
     if (infraInterface(target).exports.has(name)) continue;
     throw new Error(
-      `Illegal import: ${analyses.show(file)} imports ${name} from a runtime module, ${analyses.show(resolved)}. Move ${name} to a shared module.`,
+      `${name} can't be used in ${analyses.show(file)}, which runs at deploy, because it comes from ${analyses.show(resolved)}, a runtime module. At deploy, a runtime module provides only its declaration and the values that the declaration uses. Move ${name} to a shared module (files.shared).`,
     );
   }
 }
@@ -322,7 +322,7 @@ export function runtimePlugin({
           );
           const chain = importChain(this, id).map(show);
           this.error(
-            `The function in ${show(module.path)} uses ${analyses.describeInfra(id)}${listUses(uses)}. It imports ${show(id)} through ${chain.join(" → ")}. The runtime build leaves infra out, so runtime code can't use it. Read infra values through the declaration's env(). Move a plain value that the function needs, such as a constant, to a shared module (files.shared).`,
+            `${analyses.describeInfra(id)}, can't be used in the function in ${show(module.path)}, because an infra module only runs at deploy. The function ${listUses(uses)}imports ${show(id)} through ${chain.join(" → ")}. Read infra values in the function through the declaration's env(). Move a plain value that the function needs, such as a constant, to a shared module (files.shared).`,
           );
         }
         // Infra functions from packages, such as queue() from
@@ -349,7 +349,7 @@ export function runtimePlugin({
               .map((file) => analyses.resourceCallAdvice(file))
               .find(Boolean);
             this.error(
-              `The function in ${show(module.path)} uses ${name} from ${show(id)}, a function that declares infrastructure${listUses(uses)}. It imports ${show(id)} through ${chain.map(show).join(" → ")}. Infra functions can't run in a runtime module.${unmatched ? ` ${unmatched}` : ""}`,
+              `${name} from ${show(id)} can't be used in the function in ${show(module.path)}, because ${name}() declares infrastructure, so it only runs at deploy. The function ${listUses(uses)}imports ${show(id)} through ${chain.map(show).join(" → ")}.${unmatched ? ` ${unmatched}` : ""}`,
             );
           }
         }
@@ -414,10 +414,11 @@ function usesOfImports(
   return uses;
 }
 
-// The uses that the bundle check names, as `: name at file:line:column, ...`.
+// The uses that the bundle check names, as `uses name at file:line:column,
+// ..., and `, to go before the import chain.
 function listUses(uses: ImportUse[]): string {
   if (uses.length === 0) return "";
-  return `: ${uses.map(({ at, name }) => `${name} at ${at}`).join(", ")}`;
+  return `uses ${uses.map(({ at, name }) => `${name} at ${at}`).join(", ")}, and `;
 }
 
 type ModuleGraph = {
