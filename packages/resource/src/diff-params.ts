@@ -124,11 +124,19 @@ function isComparable(item: SchemaItem): boolean {
 }
 
 /** A different key names a different resource, so it is never updated. */
-function forcesReplacement(item: SchemaItem): boolean {
+export function forcesReplacement(item: SchemaItem): boolean {
   return (
     item.propertyType === "param" &&
     Boolean(item.immutable || item.primaryKey || item.secondaryKey)
   );
+}
+
+/** The top-level keys whose values differ between `before` and `after`, sorted. */
+export function changedKeys(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): string[] {
+  return Object.keys(diff(before, after)).sort();
 }
 
 function toDisplayDiff(diffResult: {

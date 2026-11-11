@@ -1,4 +1,8 @@
-import { hasTag, type BaseResource } from "@notation/resource";
+import {
+  forcesReplacement,
+  hasTag,
+  type BaseResource,
+} from "@notation/resource";
 import { buildDepthLevels } from "./dependency-graph";
 
 /**
@@ -39,12 +43,8 @@ export class ResourceCycleError extends Error {
  * a cycle has no member that can be created as a placeholder.
  */
 export function orderDeployUnits(resources: BaseResource[]): DeployUnit[] {
-  const ids = new Set<string>();
-  for (const resource of resources) {
-    if (ids.has(resource.id)) {
-      throw new Error(`Duplicate resource id: ${resource.id}`);
-    }
-    ids.add(resource.id);
+  if (new Set(resources.map(({ id }) => id)).size !== resources.length) {
+    throw new Error("Duplicate resource id");
   }
   const position = new Map(
     resources.map((resource, index) => [resource, index]),
@@ -85,13 +85,6 @@ export function orderDeployUnits(resources: BaseResource[]): DeployUnit[] {
   });
 }
 
-/** The resources of `units`, in order. */
-export function unitResources(units: DeployUnit[]): BaseResource[] {
-  return units.flatMap((unit) =>
-    unit.kind === "resource" ? [unit.resource] : unit.cycle.members,
-  );
-}
-
 /**
  * Picks the placeholders of a cycle. While the members still form a loop,
  * the first member of the loop, in input order, that can be a placeholder
@@ -113,11 +106,11 @@ function resolveCycle(members: BaseResource[]): ResourceCycle {
     );
     if (loops.length === 0) break;
     for (const loop of loops) {
-      const chosen = loop.find(
-        (member) =>
-          !placeholders.has(member) && !placeholderBlocker(member, loop),
+      const candidates = loop.filter((member) => !placeholders.has(member));
+      const chosen = candidates.find(
+        (member) => !placeholderBlocker(member, loop),
       );
-      if (!chosen) throw unresolvableCycleError(loop);
+      if (!chosen) throw unresolvableCycleError(loop, candidates);
       placeholders.add(chosen);
     }
   }
@@ -150,9 +143,8 @@ function placeholderBlocker(
   if (contributed.length === 0) {
     const peers = member
       .getDependencies()
-      .filter((dependency) => inLoop.has(dependency))
-      .map((dependency) => dependency.id);
-    return `${member.id} depends on ${list(peers)} through its config, its dependencies or dependOn, not through contributions`;
+      .filter((dependency) => inLoop.has(dependency));
+    return `${member.id} depends on ${listIds(peers)} through its config, its dependencies or dependOn, not through contributions`;
   }
   return placeholderParamsBlocker(member);
 }
@@ -160,19 +152,28 @@ function placeholderBlocker(
 /**
  * The members of `cycle` that deploy reverts to their placeholder params
  * before it replaces `replaced`: each refers to `replaced` only through its
- * contributions, and can go back to its placeholder params with an update.
+ * contributions. Throws `ResourceCycleError` when one of them can't go back
+ * to its placeholder params with an update.
  */
 export function revertedPeers(
   cycle: ResourceCycle,
   replaced: BaseResource,
 ): BaseResource[] {
-  return cycle.members.filter(
+  const peers = cycle.members.filter(
     (peer) =>
       peer !== replaced &&
       peer.getDependencies().includes(replaced) &&
-      !peer.getFixedDependencies().includes(replaced) &&
-      !placeholderParamsBlocker(peer),
+      !peer.getFixedDependencies().includes(replaced),
   );
+  for (const peer of peers) {
+    const blocker = placeholderParamsBlocker(peer);
+    if (blocker) {
+      throw new ResourceCycleError(
+        `${replaced.id} must be replaced, so deploy must first update ${peer.id} without its contributions, so that ${peer.id} no longer refers to ${replaced.id}. It can't: ${blocker}.`,
+      );
+    }
+  }
+  return peers;
 }
 
 /**
@@ -188,30 +189,36 @@ function placeholderParamsBlocker(resource: BaseResource): string | undefined {
     if (item?.presence === "required") {
       return `${resource.id} takes ${param} from contributions, and ${param} is required`;
     }
-    if (
-      item?.propertyType === "param" &&
-      (item.immutable || item.primaryKey || item.secondaryKey)
-    ) {
+    if (item && forcesReplacement(item)) {
       return `${resource.id} takes ${param} from contributions, and a change to ${param} replaces it`;
     }
   }
   return undefined;
 }
 
-function unresolvableCycleError(loop: BaseResource[]): ResourceCycleError {
-  const reasons = loop
+/**
+ * `blocked` are the members of `loop` that are not placeholders yet. Each of
+ * them gets a line that says why it can't be one.
+ */
+function unresolvableCycleError(
+  loop: BaseResource[],
+  blocked: BaseResource[],
+): ResourceCycleError {
+  const reasons = blocked
     .map((member) => `- ${placeholderBlocker(member, loop)}.`)
     .join("\n");
   return new ResourceCycleError(
-    `The resources ${list(loop.map((member) => member.id))} depend on each other, and none of them can be created first. ` +
+    `The resources ${listIds(loop)} depend on each other, and none of them can be created first. ` +
       `Deploy can create a member of a cycle first without its contributions, and update it once the others exist. ` +
       `This needs a member whose dependencies on the others come only from contributions, whose contributed params are optional and don't force a replacement, and whose type has an update operation.\n${reasons}`,
   );
 }
 
-function list(items: string[]): string {
-  if (items.length <= 1) return items.join("");
-  return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+/** The IDs of `resources`, as "a, b and c". */
+export function listIds(resources: BaseResource[]): string {
+  const ids = resources.map(({ id }) => id);
+  if (ids.length <= 1) return ids.join("");
+  return `${ids.slice(0, -1).join(", ")} and ${ids.at(-1)}`;
 }
 
 /**

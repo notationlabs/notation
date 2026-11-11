@@ -144,7 +144,12 @@ export interface BaseResource {
     state: any,
     context?: ResourceOperationContext,
   ) => Promise<void>;
-  getParams(): Promise<DurableObject>;
+  /**
+   * The params the resource deploys with. With `contributions: false`, the
+   * params leave out every contribution. Deploy creates the first member of a
+   * dependency cycle with those, before the others exist.
+   */
+  getParams(options?: { contributions?: boolean }): Promise<DurableObject>;
   toState(output: {}): {};
   toResult(result: {}): DurableObject;
   toComparable(output: {}): {};
@@ -187,11 +192,6 @@ export interface BaseResource {
    * of them.
    */
   getContributedParams(): string[];
-  /**
-   * The params without any contribution. Deploy creates the first member of
-   * a dependency cycle with them, before the others exist.
-   */
-  getPlaceholderParams(): Promise<DurableObject>;
   /**
    * The params as a plan shows them. A value that holds an output not yet
    * deployed is `UNKNOWN_AFTER_APPLY` at its own path.
@@ -427,28 +427,17 @@ export abstract class Resource<
     return [...params].sort();
   }
 
-  async getPlaceholderParams(): Promise<T["params"]> {
+  async getParams({ contributions = true } = {}): Promise<T["params"]> {
     this.#sealed = true;
     const derivedParams = await this.deriveParams({
       id: this.id,
       config: this.config,
       deps: this.dependencies,
     });
-    return (await this.#combineParams(
-      derivedParams,
-      false,
-      false,
-    )) as T["params"];
-  }
-
-  async getParams(): Promise<T["params"]> {
-    this.#sealed = true;
-    const derivedParams = await this.deriveParams({
-      id: this.id,
-      config: this.config,
-      deps: this.dependencies,
-    });
-    return (await this.#combineParams(derivedParams, false)) as T["params"];
+    return (await this.#combineParams(derivedParams, {
+      plan: false,
+      contributions,
+    })) as T["params"];
   }
 
   /**
@@ -473,7 +462,10 @@ export abstract class Resource<
       }),
     );
     if (derivedParams === undefined) return this.#cautiousPlanParams();
-    const params = await this.#combineParams(derivedParams, true);
+    const params = await this.#combineParams(derivedParams, {
+      plan: true,
+      contributions: true,
+    });
     return markUnknownOutputRefs(withoutUndefined(params)) as Record<
       string,
       unknown
@@ -499,14 +491,14 @@ export abstract class Resource<
 
   async #combineParams(
     derivedParams: Record<string, unknown>,
-    plan: boolean,
-    withContributions = true,
+    options: { plan: boolean; contributions: boolean },
   ): Promise<Record<string, unknown>> {
+    const { plan } = options;
     const params: Record<string, unknown> = {
       ...this.config,
       ...derivedParams,
     };
-    const contributions: EvaluatedContributions = withContributions
+    const contributions: EvaluatedContributions = options.contributions
       ? await this.#evaluateContributions(plan)
       : { items: [], unknown: false };
     for (const [key, item] of Object.entries(this.schema)) {

@@ -5,6 +5,7 @@ import {
   ResourceCycleError,
   findStronglyConnected,
   orderDeployUnits,
+  revertedPeers,
   type DeployUnit,
 } from "../src/cycles";
 
@@ -178,9 +179,63 @@ describe("orderDeployUnits", () => {
     );
   });
 
+  it("fails when a loop remains through a placeholder, and gives a reason only for the other members", () => {
+    const a = worker("a");
+    const b = worker("b");
+    const c = worker("c");
+    // a becomes the placeholder for its contribution from b, but its
+    // dependOn on c keeps the loop a → c → b → a.
+    bind(a, b);
+    a.dependOn(c);
+    b.dependOn(a);
+    c.dependOn(b);
+
+    let message = "";
+    try {
+      orderDeployUnits([a, b, c]);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain(
+      "- b depends on a through its config, its dependencies or dependOn, not through contributions.",
+    );
+    expect(message).toContain(
+      "- c depends on b through its config, its dependencies or dependOn, not through contributions.",
+    );
+    expect(message).not.toContain("undefined");
+    expect(message).not.toContain("- a ");
+  });
+
   it("fails on a duplicate ID", () => {
     expect(() => orderDeployUnits([worker("a"), worker("a")])).toThrow(
-      "Duplicate resource id: a",
+      "Duplicate resource id",
+    );
+  });
+});
+
+describe("revertedPeers", () => {
+  it("returns the members that refer to the replaced member through contributions", () => {
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const [unit] = orderDeployUnits([a, b]);
+    if (unit?.kind !== "cycle") throw new Error("expected a cycle");
+
+    expect(revertedPeers(unit.cycle, a).map((peer) => peer.id)).toEqual(["b"]);
+  });
+
+  it("fails and names a peer that can't be reverted", () => {
+    const a = worker("a");
+    const b = worker("b", NoUpdate);
+    bind(a, b);
+    bind(b, a);
+    const [unit] = orderDeployUnits([a, b]);
+    if (unit?.kind !== "cycle") throw new Error("expected a cycle");
+
+    expect(() => revertedPeers(unit.cycle, a)).toThrow(ResourceCycleError);
+    expect(() => revertedPeers(unit.cycle, a)).toThrow(
+      "test/cycles/no-update has no update operation, so b can't be updated after it is created",
     );
   });
 });

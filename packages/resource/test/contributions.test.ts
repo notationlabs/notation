@@ -912,7 +912,7 @@ describe("placeholder params", () => {
       Environment: { Variables: { QUEUE: queue.outputValue("QueueArn") } },
     });
 
-    expect(await fn.getPlaceholderParams()).toEqual({
+    expect(await fn.getParams({ contributions: false })).toEqual({
       FunctionName: "f",
       Role: "role",
       Environment: { Variables: { STAGE: "dev" } },
@@ -929,7 +929,7 @@ describe("placeholder params", () => {
       Environment: { Variables: { QUEUE: queue.outputValue("QueueArn") } },
     });
 
-    expect(await fn.getPlaceholderParams()).toEqual({
+    expect(await fn.getParams({ contributions: false })).toEqual({
       FunctionName: "f",
       Role: "role",
     });

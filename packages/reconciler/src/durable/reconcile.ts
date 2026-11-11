@@ -65,24 +65,32 @@ export type ReconcileOptions = {
   onDecision?: (decision: ResourceAction["decision"]) => void;
   /** Runs before a replacement deletes the resource. */
   beforeReplace?: () => AsyncGenerator<any, void, any>;
+  /**
+   * Reconciles the resource as the placeholder of a cycle: a resource with no
+   * record is created with its params without contributions. A resource with
+   * a record is left as it is, and only its output is loaded.
+   */
+  placeholder?: true;
 };
 
 /**
  * Reconciles one resource: load the persisted record, decide, read the
  * remote when the decision needs it, announce the decision, then act. `step`
- * must already be scoped to the resource. Returns the decision.
+ * must already be scoped to the resource.
  */
 export async function* reconcileResource(
   step: DurableStepRunner,
   resource: BaseResource,
   opts: DurableDeployOptions,
   options: ReconcileOptions = {},
-): AsyncGenerator<any, ResourceAction["decision"], any> {
+): AsyncGenerator<any, void, any> {
   // Resolved once and then carried: deriveParams is user code and need not be
   // deterministic, so an operation resolving them again could persist params
   // other than the ones the decision was taken against. The step also pins
   // the answer across a replay.
-  const params = yield* step.run("params", () => resource.getParams());
+  const params = yield* step.run("params", () =>
+    resource.getParams({ contributions: !options.placeholder }),
+  );
   await validateParams(resource, params, "deploy");
   const dependsOn = getDependencyIds(resource);
 
@@ -97,6 +105,7 @@ export async function* reconcileResource(
   // hold and the record may have changed since.
   assertSameType(resource, session.node);
   if (session.node) resource.setOutput(session.node.output);
+  if (session.node && options.placeholder) return;
 
   let action = decideAction({ resource, stateNode: session.node, params });
 
@@ -139,6 +148,7 @@ export async function* reconcileResource(
       ...("replaceFields" in action
         ? { replaceFields: action.replaceFields }
         : {}),
+      ...(options.placeholder ? { placeholder: true as const } : {}),
     });
   }
 
@@ -160,7 +170,7 @@ export async function* reconcileResource(
         ...shared,
         persist: session.persist,
       });
-      return action.decision;
+      return;
     case "update":
     case "drift-update":
       yield* updateResourceOperation(step, {
@@ -168,7 +178,7 @@ export async function* reconcileResource(
         patch: action.patch,
         persist: session.persist,
       });
-      return action.decision;
+      return;
     case "replace":
     case "drift-replace":
       if (!session.node) {
@@ -178,12 +188,12 @@ export async function* reconcileResource(
       }
       if (options.beforeReplace) yield* options.beforeReplace();
       yield* replaceResource(step, opts, session, shared, options.writeKey);
-      return action.decision;
+      return;
     case "noop":
-      if (!session.node) return action.decision;
+      if (!session.node) return;
       if (findMissingOutputs(resource, session.node.output)) {
         yield* recoverOutputs(step, opts, session, shared);
-        return action.decision;
+        return;
       }
       if (
         !opts.dryRun &&
@@ -192,7 +202,7 @@ export async function* reconcileResource(
       ) {
         yield* rewriteRecord(session, resource, dependsOn);
       }
-      return action.decision;
+      return;
   }
 }
 

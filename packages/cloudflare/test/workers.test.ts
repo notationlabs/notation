@@ -82,7 +82,7 @@ async function deployParams(
       } as any);
     }
     return placeholder
-      ? await worker.script.getPlaceholderParams()
+      ? await worker.script.getParams({ contributions: false })
       : await worker.script.getParams();
   } finally {
     vi.unstubAllEnvs();

@@ -198,24 +198,19 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
         url: config.url ?? true,
       });
       for (const script of after) group.script.dependOn(script);
-      const built = group;
-      // Added once every Worker is built, as the bound Worker may bind this
-      // one back. Each is a contribution, so that deploy can create one of
-      // two Workers that bind each other first, without its binding.
-      if (resolved.services.length > 0) {
-        onEvaluationEnd(() => {
-          for (const { name, worker } of resolved.services) {
-            const service = worker.build().script;
-            built.script.contribute({
-              Bindings: [
-                {
-                  type: "service",
-                  name,
-                  service: service.outputValue("ScriptName"),
-                },
-              ],
-            });
-          }
+      // Built after `group` is set, so that a Worker that binds this one back
+      // gets it rather than a cycle error. Each binding is a contribution, so
+      // that deploy can create one of two Workers that bind each other first,
+      // without its binding.
+      for (const { name, worker } of resolved.services) {
+        group.script.contribute({
+          Bindings: [
+            {
+              type: "service",
+              name,
+              service: worker.build().script.outputValue("ScriptName"),
+            },
+          ],
         });
       }
       return group;

@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   assertDependenciesPresent,
   buildDepthLevels,
-  buildResourceDepthLevels,
   collectDependents,
 } from "../src/dependency-graph";
 
@@ -70,25 +69,6 @@ describe("buildDepthLevels", () => {
         { id: "fn", dependsOn: [] },
       ]),
     ).toThrow("Duplicate resource id: fn");
-  });
-});
-
-describe("buildResourceDepthLevels", () => {
-  it("throws on a cycle", () => {
-    const Node = resource({ type: "test/graph/node", provider: "test" })
-      .defineSchema({})
-      .defineOperations({
-        create: async () => undefined,
-        delete: async () => undefined,
-      });
-    const aDependencies: Record<string, BaseResource> = {};
-    const a = new Node("a", { dependencies: aDependencies });
-    const b = new Node("b", { dependencies: { a } });
-    aDependencies.b = b;
-
-    expect(() => buildResourceDepthLevels([a, b])).toThrow(
-      "Resource dependency cycle detected",
-    );
   });
 });
 

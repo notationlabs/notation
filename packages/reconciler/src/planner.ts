@@ -162,12 +162,22 @@ export async function loadUnit(
   state: { get(id: string): Promise<StateNode | undefined> },
 ): Promise<BaseResource[]> {
   if (unit.kind === "resource") return [unit.resource];
-  for (const member of unit.cycle.members) {
-    const stateNode = await state.get(member.id);
-    assertSameType(member, stateNode);
-    if (stateNode) member.setOutput(stateNode.output);
-  }
+  for (const member of unit.cycle.members) await loadOutput(member, state);
   return unit.cycle.members;
+}
+
+/**
+ * Loads the resource's output from its state record, and returns the
+ * record. Throws if the record has a different type.
+ */
+async function loadOutput(
+  resource: BaseResource,
+  state: { get(id: string): Promise<StateNode | undefined> },
+): Promise<StateNode | undefined> {
+  const stateNode = await state.get(resource.id);
+  assertSameType(resource, stateNode);
+  if (stateNode) resource.setOutput(stateNode.output);
+  return stateNode;
 }
 
 /**
@@ -185,9 +195,7 @@ export async function planKnownParams(
   stateNode: StateNode | undefined;
   params: Record<string, unknown>;
 }> {
-  const stateNode = await state.get(resource.id);
-  assertSameType(resource, stateNode);
-  if (stateNode) resource.setOutput(stateNode.output);
+  const stateNode = await loadOutput(resource, state);
   // Plan treats a required output missing from a resource's state as unknown,
   // because deploy reads the resource again to fill it in. A resource with no
   // `read` cannot be read again. Update can't fill in an output either,

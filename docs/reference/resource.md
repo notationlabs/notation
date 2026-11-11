@@ -516,7 +516,7 @@ A member can be the placeholder when:
 
 In each loop, the first member in the order of the resources that can be the placeholder becomes one. When no member of a loop can, plan and deploy fail with `ResourceCycleError`, which names the members of the loop and says why each of them can't be the placeholder.
 
-Three methods give the engine what it needs: `getFixedDependencies()` returns the dependencies that don't come from contributions, `getContributedParams()` returns the collected params that contributions set, and `getPlaceholderParams()` returns the params without any contribution. See [Dependency cycles](../internals/reconciler.md#dependency-cycles) for how deploy, destroy and plan handle a cycle.
+Three methods give the engine what it needs: `getFixedDependencies()` returns the dependencies that don't come from contributions, `getContributedParams()` returns the collected params that contributions set, and `getParams({ contributions: false })` returns the params without any contribution. See [Dependency cycles](../internals/reconciler.md#dependency-cycles) for how deploy, destroy and plan handle a cycle.
 
 ## Resource groups
 

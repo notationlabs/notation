@@ -106,7 +106,7 @@ A pass after the first must not create or replace a member that this deploy has 
 
 A provider may refuse to delete a resource that another resource refers to. Cloudflare, for example, does not delete a Worker that another Worker binds. So before deploy deletes a member that it replaces, it reverts the other members that refer to it:
 
-1. Each member that depends on the replaced member only through its contributions, and could be a placeholder, is updated with its placeholder params. The update's lifecycle events have `reason: "cycle-revert"` and `replacedDependency` set to the replaced member.
+1. Each member that depends on the replaced member only through its contributions is updated with its placeholder params. The update's lifecycle events have `reason: "cycle-revert"` and `replacedDependency` set to the replaced member. When such a member can't go back to its placeholder params with an update, for the reasons that stop a member from being a placeholder, plan and deploy fail with `ResourceCycleError`, which names the member.
 2. Deploy replaces the member as usual: it deletes the dependents that block the delete, deletes the member, and creates it again.
 3. The later passes update the reverted members with their full params.
 
@@ -122,7 +122,7 @@ Notation has no names that let the old and the new resource exist side by side, 
 
 ### Destroying a cycle
 
-Destroy reverts each placeholder that has a record to its placeholder params, with `reason: "cycle-revert"`. Then no member refers to another through its contributions, and destroy deletes the members in reverse order. To compute the placeholder params, destroy reads the outputs of the placeholder's other dependencies from state. When one of them has no record, destroy skips the revert, and deletes the members in the same order.
+Destroy reverts only the placeholders. It updates each placeholder that has a record to its placeholder params, with `reason: "cycle-revert"`. Then the members are ordered by their remaining edges, and destroy deletes them in the reverse of that order, so each member is deleted before the members it still refers to. The other members are not reverted, as they are deleted before the members they refer to. To compute the placeholder params, destroy reads the outputs of the placeholder's other dependencies from state. When one of them has no record, destroy skips the revert, and deletes the members in the same order.
 
 The orphan sweep does not revert orphans that form a cycle. An orphan is made from its state record, and state does not hold its contributions, or its hidden params, so the sweep can't compute its placeholder params. The sweep deletes the cycle in storage order, as before, so a provider that refuses one of the deletes fails the deploy. Remove the contributions that close the cycle in one deploy, and the resources in a later deploy.
 

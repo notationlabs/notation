@@ -1,20 +1,18 @@
 import {
+  changedKeys,
   diffParams,
   validateParams,
   type BaseResource,
 } from "@notation/resource";
 import {
   ResourceCycleError,
+  listIds,
   revertedPeers,
   type ResourceCycle,
 } from "../cycles";
 import type { OperationLifecycleEvent } from "../events";
-import {
-  createResourceOperation,
-  updateResourceOperation,
-} from "../operations";
+import { updateResourceOperation } from "../operations";
 import { getDependencyIds, type ResourceAction } from "../plan";
-import { assertSameType } from "../resource-type";
 import {
   openStateSession,
   reconcileResource,
@@ -61,7 +59,7 @@ export async function* reconcileCycle(
       if (!CREATING_DECISIONS.includes(decision)) return;
       if (created.has(resource)) {
         throw new ResourceCycleError(
-          `${resource.id} would be ${decision === "replace" || decision === "drift-replace" ? "replaced" : "created"} while its cycle with ${otherIds(cycle, resource)} settles, after this deploy created it. A param of ${resource.id} that forces a replacement takes a value from an output of another member of the cycle, and that output changed when the member was updated with its contributions. Take the param from an output that stays the same, such as a name.`,
+          `${resource.id} would be ${decision === "replace" || decision === "drift-replace" ? "replaced" : "created"} while its cycle with ${listIds(others(cycle, resource))} settles, after this deploy created it. A param of ${resource.id} that forces a replacement takes a value from an output of another member of the cycle, and that output changed when the member was updated with its contributions. Take the param from an output that stays the same, such as a name.`,
         );
       }
       created.add(resource);
@@ -71,20 +69,14 @@ export async function* reconcileCycle(
   });
 
   for (const resource of cycle.members) {
-    if (cycle.placeholders.includes(resource)) {
-      const placed = yield* createPlaceholder(
-        scope(resource, "placeholder"),
-        resource,
-        opts,
-      );
-      if (placed) created.add(resource);
-      continue;
-    }
+    const placeholder = cycle.placeholders.includes(resource);
     yield* reconcileResource(
-      scope(resource),
+      scope(resource, placeholder ? "placeholder" : undefined),
       resource,
       opts,
-      options(resource),
+      placeholder
+        ? { ...options(resource), placeholder: true }
+        : options(resource),
     );
   }
 
@@ -113,51 +105,8 @@ export async function* reconcileCycle(
   }
 
   throw new ResourceCycleError(
-    `The cycle of ${otherIds(cycle)} did not settle after ${cycle.members.length + 1} passes. These outputs changed in the last pass: ${changed.join(", ")}. When a member takes an output of another member, take a value that stays the same across updates, such as a name, in place of one that changes on every update, such as a version ID.`,
+    `The cycle of ${listIds(cycle.members)} did not settle after ${cycle.members.length + 1} passes. These outputs changed in the last pass: ${changed.join(", ")}. When a member takes an output of another member, take a value that stays the same across updates, such as a name, in place of one that changes on every update, such as a version ID.`,
   );
-}
-
-/**
- * Creates a placeholder with no record. Returns whether it created one. A
- * placeholder with a record keeps it, and its output is loaded for the
- * members that follow it.
- */
-async function* createPlaceholder(
-  step: DurableStepRunner,
-  resource: BaseResource,
-  opts: DurableDeployOptions,
-): AsyncGenerator<any, boolean, any> {
-  const session = yield* openStateSession(step, opts, resource);
-  assertSameType(resource, session.node);
-  if (session.node) {
-    resource.setOutput(session.node.output);
-    return false;
-  }
-
-  const params = yield* step.run("params", () =>
-    resource.getPlaceholderParams(),
-  );
-  await validateParams(resource, params, "deploy");
-  const emit = durableEmitter(step, opts.emit);
-  yield* emit({
-    level: "info",
-    event: "reconciler.deploy.decision",
-    resourceId: resource.id,
-    resourceType: resource.type,
-    decision: "create",
-    placeholder: true,
-  });
-  yield* createResourceOperation(step, {
-    executionId: opts.executionId,
-    resource,
-    resourceParams: params,
-    dependsOn: getDependencyIds(resource),
-    dryRun: opts.dryRun,
-    emit,
-    maxOperationAttempts: opts.maxOperationAttempts,
-    persist: session.persist,
-  });
-  return true;
 }
 
 /**
@@ -202,22 +151,18 @@ export async function* revertToPlaceholder(
 
   const missing = resource
     .getFixedDependencies()
-    .filter((dependency) => dependency.output == null)
-    .map((dependency) => dependency.id);
+    .filter((dependency) => dependency.output == null);
   const records = yield* step.run("dependency-outputs", () =>
-    Promise.all(missing.map((id) => opts.state.get(id))),
+    Promise.all(missing.map((dependency) => opts.state.get(dependency.id))),
   );
-  for (const [index, id] of missing.entries()) {
+  for (const [index, dependency] of missing.entries()) {
     const record = records[index];
     if (!record) return;
-    resource
-      .getFixedDependencies()
-      .find((dependency) => dependency.id === id)!
-      .setOutput(record.output);
+    dependency.setOutput(record.output);
   }
 
   const params = yield* step.run("params", () =>
-    resource.getPlaceholderParams(),
+    resource.getParams({ contributions: false }),
   );
   await validateParams(resource, params, "deploy");
   const { patch } = diffParams(resource.schema, session.node.params, params, {
@@ -239,12 +184,8 @@ export async function* revertToPlaceholder(
   });
 }
 
-function otherIds(cycle: ResourceCycle, except?: BaseResource): string {
-  const ids = cycle.members
-    .filter((member) => member !== except)
-    .map((member) => member.id);
-  if (ids.length <= 1) return ids.join("");
-  return `${ids.slice(0, -1).join(", ")} and ${ids.at(-1)}`;
+function others(cycle: ResourceCycle, except: BaseResource): BaseResource[] {
+  return cycle.members.filter((member) => member !== except);
 }
 
 /**
@@ -254,29 +195,10 @@ function otherIds(cycle: ResourceCycle, except?: BaseResource): string {
  */
 function changedOutputs(
   resource: BaseResource,
-  previous: Record<string, unknown> | null,
+  before: Record<string, unknown> | null,
 ): string[] {
-  const before: Record<string, unknown> = previous
-    ? resource.toState(previous)
-    : {};
-  const after: Record<string, unknown> = resource.output
-    ? resource.toState(resource.output)
-    : {};
-  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
-  return [...keys]
-    .filter((key) => canonical(before[key]) !== canonical(after[key]))
-    .sort()
-    .map((key) => `${resource.id}.${key}`);
-}
-
-function canonical(value: unknown): string {
-  return (
-    JSON.stringify(value, (_key, entry) =>
-      entry && typeof entry === "object" && !Array.isArray(entry)
-        ? Object.fromEntries(
-            Object.entries(entry).sort(([a], [b]) => (a < b ? -1 : 1)),
-          )
-        : entry,
-    ) ?? "undefined"
-  );
+  return changedKeys(
+    before ? resource.toState(before) : {},
+    resource.output ? resource.toState(resource.output) : {},
+  ).map((key) => `${resource.id}.${key}`);
 }
