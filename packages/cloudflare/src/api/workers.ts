@@ -4,9 +4,18 @@ import { CloudflareApiError, cloudflare } from "./client";
 /** Cloudflare's error code for a Worker that doesn't exist. */
 const WORKER_NOT_FOUND = 10007;
 
+/**
+ * True for a Worker or a workers.dev setting that doesn't exist. Cloudflare
+ * also returns a 404 for a Worker with no versions, but that Worker exists.
+ */
 export const isNotFound = (error: unknown): boolean =>
   error instanceof CloudflareApiError &&
-  (error.status === 404 || error.hasCode(WORKER_NOT_FOUND));
+  (error.hasCode(WORKER_NOT_FOUND) ||
+    (error.status === 404 && !hasNoVersions(error)));
+
+// A Worker made without code, such as in the dashboard, has no versions.
+const hasNoVersions = (error: CloudflareApiError): boolean =>
+  error.status === 404 && error.hasMessage(/has no versions/i);
 
 const scriptPath = (account: string, scriptName: string) =>
   `/accounts/${encodeURIComponent(account)}/workers/scripts/${encodeURIComponent(scriptName)}`;
@@ -53,7 +62,10 @@ export type ScriptUpload = {
   exports: Record<string, DurableObjectExport>;
 };
 
-/** Returns `undefined` if the Worker doesn't exist. */
+/**
+ * Returns `undefined` if the Worker doesn't exist, and no settings for a
+ * Worker with no versions.
+ */
 export async function getScriptSettings(
   account: string,
   scriptName: string,
@@ -65,6 +77,7 @@ export async function getScriptSettings(
     );
   } catch (error) {
     if (isNotFound(error)) return undefined;
+    if (error instanceof CloudflareApiError && hasNoVersions(error)) return {};
     throw error;
   }
 }

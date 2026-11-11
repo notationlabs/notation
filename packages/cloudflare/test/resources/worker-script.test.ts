@@ -231,6 +231,46 @@ describe("WorkerScript", () => {
     expect(error.retryAfterMs).toBe(2_000);
   });
 
+  it("waits and tries again when Cloudflare reports a rate limit with status 200", async () => {
+    mockFetch(() =>
+      Response.json({
+        success: false,
+        errors: [
+          {
+            code: 971,
+            message: "Please wait and consider throttling your request speed",
+          },
+        ],
+      }),
+    );
+
+    await expect(
+      script.read!({ AccountId: "acc", ScriptName: "app--dev--api" }),
+    ).rejects.toBeInstanceOf(ResourceOperationPendingError);
+  });
+
+  it("doesn't take over a Worker that has no versions", async () => {
+    mockFetch(() => fail(404, 0, "Worker app--dev--api has no versions"));
+
+    await expect(script.create(params)).rejects.toThrow(
+      "A Worker named app--dev--api already exists",
+    );
+    expect(calls).toHaveLength(1);
+  });
+
+  it("reads a Worker that has no versions as existing, without settings", async () => {
+    mockFetch(() => fail(404, 0, "Worker app--dev--api has no versions"));
+
+    await expect(
+      script.read!({ AccountId: "acc", ScriptName: "app--dev--api" }),
+    ).resolves.toEqual({
+      AccountId: "acc",
+      ScriptName: "app--dev--api",
+      CompatibilityDate: undefined,
+      CompatibilityFlags: undefined,
+    });
+  });
+
   it("renames a namespace whose class changed, and deletes one whose declaration is gone", async () => {
     mockFetch(() => ok({}));
 

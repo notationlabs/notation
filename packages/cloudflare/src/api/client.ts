@@ -35,6 +35,10 @@ export class CloudflareApiError extends Error {
   hasCode(code: number): boolean {
     return this.errors.some((error) => error.code === code);
   }
+
+  hasMessage(pattern: RegExp): boolean {
+    return this.errors.some((error) => pattern.test(error.message));
+  }
 }
 
 // Long enough to upload a Worker at Cloudflare's size limit.
@@ -81,9 +85,24 @@ type Envelope<T> = {
   result?: T;
 };
 
+// Cloudflare's code for "Please wait and consider throttling your request
+// speed".
+const THROTTLED = 971;
+
+// Cloudflare can report a rate limit with another status than 429, even 200.
+function isRateLimited(errors: CloudflareErrorItem[]): boolean {
+  return errors.some(
+    (error) =>
+      error.code === THROTTLED ||
+      /\b(rate ?limit(ed|ing)?|throttl(ed|ing) your request)\b/i.test(
+        error.message,
+      ),
+  );
+}
+
 /**
  * Returns the response's `result`. Throws `ResourceOperationPendingError`
- * on a 429, so the reconciler retries.
+ * when the request is rate limited, so the reconciler retries.
  */
 export async function cloudflare<T>(
   method: "GET" | "PUT" | "POST" | "DELETE",
@@ -129,7 +148,16 @@ export async function cloudflare<T>(
     }
     throw error;
   }
-  if (response.status === 429) {
+  let envelope: Envelope<T> = {};
+  try {
+    envelope = text ? JSON.parse(text) : {};
+  } catch {
+    // The response is not JSON, such as an HTML error page. The error then
+    // has only the status.
+  }
+  const errors = envelope.errors ?? [];
+  const failed = !response.ok || envelope.success === false;
+  if (response.status === 429 || (failed && isRateLimited(errors))) {
     const retryAfter = Number(response.headers.get("Retry-After"));
     throw new ResourceOperationPendingError(
       `Cloudflare API ${request} is rate limited`,
@@ -141,19 +169,8 @@ export async function cloudflare<T>(
       },
     );
   }
-  let envelope: Envelope<T> = {};
-  try {
-    envelope = text ? JSON.parse(text) : {};
-  } catch {
-    // The response is not JSON, such as an HTML error page. The error then
-    // has only the status.
-  }
-  if (!response.ok || envelope.success === false) {
-    throw new CloudflareApiError(
-      request,
-      response.status,
-      envelope.errors ?? [],
-    );
+  if (failed) {
+    throw new CloudflareApiError(request, response.status, errors);
   }
   return envelope.result as T;
 }
