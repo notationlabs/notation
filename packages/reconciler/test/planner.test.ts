@@ -796,7 +796,7 @@ describe("createPlan", () => {
     });
   });
 
-  it("plans an unknown output ref at its own path, and records the implied edge", async () => {
+  describe("output refs", () => {
     // Cast: see above.
     const Queue = resource({ type: "test/planner/queue", provider: "test" })
       .defineSchema({
@@ -830,81 +830,8 @@ describe("createPlan", () => {
           propertyType: "param",
           collect: mergeContributions,
         },
-      } as any)
-      .defineOperations({
-        create: async () => undefined,
-        update: async () => undefined,
-        delete: async () => undefined,
-      });
-    const queue = new Queue("queue", { config: { name: "orders" } as any });
-    const fn = new Fn("fn", { config: { name: "f" } as any });
-    fn.contribute({ env: { KEEP: "k" } } as any);
-    fn.contribute({ env: { QUEUE: (queue as any).outputRef("arn") } } as any);
-
-    const plan = await createPlan({
-      resources: [fn, queue],
-      state: new MemoryStateBackend({
-        fn: {
-          version: 1,
-          id: "fn",
-          type: Fn.type,
-          provider: "test",
-          config: {},
-          params: { name: "f", env: { KEEP: "k" } },
-          output: { name: "f", env: { KEEP: "k" } },
-          lastOperation: "create",
-          lastOperationAt: "2026-07-22T00:00:00.000Z",
-        },
-      }),
-      driftDetection: false,
-    });
-
-    expect(plan.nodes).toEqual([
-      expect.objectContaining({ id: "queue", decision: "create" }),
-      expect.objectContaining({
-        id: "fn",
-        decision: "update",
-        params: { name: "f", env: { KEEP: "k", QUEUE: UNKNOWN_AFTER_APPLY } },
-        diff: {
-          added: { env: { QUEUE: UNKNOWN_AFTER_APPLY } },
-          deleted: {},
-          updated: {},
-        },
-        dependsOn: ["queue"],
-      }),
-    ]);
-  });
-
-  it("plans a required output missing from a dependency's state as unknown", async () => {
-    // Cast: see above.
-    const Queue = resource({ type: "test/planner/queue", provider: "test" })
-      .defineSchema({
-        name: {
-          presence: "required",
-          propertyType: "param",
-          primaryKey: true,
-          value: v.string(),
-        },
-        arn: {
-          presence: "required",
-          propertyType: "computed",
-          value: v.string(),
-        },
-      } as any)
-      .defineOperations({
-        create: async () => undefined,
-        delete: async () => undefined,
-      });
-    const Fn = resource({ type: "test/planner/function", provider: "test" })
-      .defineSchema({
-        name: {
-          presence: "required",
-          propertyType: "param",
-          primaryKey: true,
-          value: v.string(),
-        },
         queueArn: {
-          presence: "required",
+          presence: "optional",
           propertyType: "param",
           value: v.string(),
         },
@@ -914,39 +841,88 @@ describe("createPlan", () => {
         update: async () => undefined,
         delete: async () => undefined,
       });
-    const queue = new Queue("queue", { config: { name: "orders" } as any });
-    const fn = new Fn("fn", {
-      config: { name: "f", queueArn: (queue as any).outputRef("arn") } as any,
-    });
-    const record = (id: string, type: string, params: DurableObject) => ({
-      version: 1,
-      id,
-      type,
-      provider: "test",
-      config: {},
-      params,
-      output: params,
-      lastOperation: "create" as const,
-      lastOperationAt: "2026-07-22T00:00:00.000Z",
+
+    it("plans an unknown output ref at its own path, and records the implied edge", async () => {
+      const queue = new Queue("queue", { config: { name: "orders" } as any });
+      const fn = new Fn("fn", { config: { name: "f" } as any });
+      fn.contribute({ env: { KEEP: "k" } } as any);
+      fn.contribute({
+        env: { QUEUE: (queue as any).outputRef("arn") },
+      } as any);
+
+      const plan = await createPlan({
+        resources: [fn, queue],
+        state: new MemoryStateBackend({
+          fn: {
+            version: 1,
+            id: "fn",
+            type: Fn.type,
+            provider: "test",
+            config: {},
+            params: { name: "f", env: { KEEP: "k" } },
+            output: { name: "f", env: { KEEP: "k" } },
+            lastOperation: "create",
+            lastOperationAt: "2026-07-22T00:00:00.000Z",
+          },
+        }),
+        driftDetection: false,
+      });
+
+      expect(plan.nodes).toEqual([
+        expect.objectContaining({ id: "queue", decision: "create" }),
+        expect.objectContaining({
+          id: "fn",
+          decision: "update",
+          params: { name: "f", env: { KEEP: "k", QUEUE: UNKNOWN_AFTER_APPLY } },
+          diff: {
+            added: { env: { QUEUE: UNKNOWN_AFTER_APPLY } },
+            deleted: {},
+            updated: {},
+          },
+          dependsOn: ["queue"],
+        }),
+      ]);
     });
 
-    const plan = await createPlan({
-      resources: [queue, fn],
-      state: new MemoryStateBackend({
-        queue: record("queue", Queue.type, { name: "orders" }),
-        fn: record("fn", Fn.type, { name: "f", queueArn: "arn:q" }),
-      }),
-      driftDetection: false,
-    });
+    it("plans a required output missing from a dependency's state as unknown", async () => {
+      const queue = new Queue("queue", { config: { name: "orders" } as any });
+      const fn = new Fn("fn", {
+        config: {
+          name: "f",
+          queueArn: (queue as any).outputRef("arn"),
+        } as any,
+      });
+      const record = (id: string, type: string, params: DurableObject) => ({
+        version: 1,
+        id,
+        type,
+        provider: "test",
+        config: {},
+        params,
+        output: params,
+        lastOperation: "create" as const,
+        lastOperationAt: "2026-07-22T00:00:00.000Z",
+      });
 
-    expect(plan.nodes).toMatchObject([
-      { id: "queue", decision: "noop" },
-      {
-        id: "fn",
-        params: { name: "f", queueArn: UNKNOWN_AFTER_APPLY },
-        dependsOn: ["queue"],
-      },
-    ]);
+      const plan = await createPlan({
+        resources: [queue, fn],
+        state: new MemoryStateBackend({
+          queue: record("queue", Queue.type, { name: "orders" }),
+          fn: record("fn", Fn.type, { name: "f", queueArn: "arn:q" }),
+        }),
+        driftDetection: false,
+      });
+
+      expect(plan.nodes).toMatchObject([
+        { id: "queue", decision: "noop" },
+        {
+          id: "fn",
+          decision: "update",
+          params: { name: "f", queueArn: UNKNOWN_AFTER_APPLY },
+          dependsOn: ["queue"],
+        },
+      ]);
+    });
   });
 
   describe("value validation", () => {

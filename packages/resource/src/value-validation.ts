@@ -1,7 +1,7 @@
 import type { Schema } from "./resource.schema";
 import type { StandardSchemaV1 } from "./standard-schema";
 import { isUnknownAfterApply } from "./diff-params";
-import { isPlainObject } from "./output-ref";
+import { isPlainObject, missingRequiredOutputs } from "./output-ref";
 
 /**
  * Where the engine validated a value:
@@ -327,14 +327,7 @@ export function assertRequiredOutputs(
   subject: ValidationSubject,
   output: Record<string, unknown>,
 ): void {
-  const missing = Object.entries(subject.schema)
-    .filter(
-      ([field, item]) =>
-        item.propertyType === "computed" &&
-        item.presence === "required" &&
-        output[field] === undefined,
-    )
-    .map(([field]) => field);
+  const missing = missingRequiredOutputs(subject, output);
   if (missing.length > 0) {
     throw new SchemaStructureError(
       subject,

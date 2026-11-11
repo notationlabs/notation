@@ -1,4 +1,5 @@
 import type { BaseResource } from "./resource";
+import type { Schema } from "./resource.schema";
 import { UNKNOWN_AFTER_APPLY } from "./diff-params";
 
 export class OutputRefStringError extends Error {
@@ -137,27 +138,29 @@ export const planLookup: OutputLookup = (token) => {
   const output = token.resource.output as Record<string, unknown> | null;
   if (output == null) return { known: false };
   const [key] = token.path;
-  if (key !== undefined && isMissingOutput(token.resource, key)) {
+  if (missingRequiredOutputs(token.resource, output).includes(key)) {
     return { known: false };
   }
   return { known: true, value: readPath(output, token.path) };
 };
 
 /**
- * Whether the resource has an output that lacks `key`, and its schema
- * requires `key` as an output. A state record written before an output was
- * added to the resource's type lacks it, and deploy reads the resource again
- * to fill it in.
+ * The outputs that the resource's schema requires and `output` lacks. A state
+ * record written before an output was added to the resource's type lacks it,
+ * and deploy reads the resource again to fill it in.
  */
-export function isMissingOutput(resource: BaseResource, key: string): boolean {
-  const output = resource.output as Record<string, unknown> | null;
-  const item = resource.schema[key];
-  return (
-    output != null &&
-    item?.propertyType === "computed" &&
-    item.presence === "required" &&
-    output[key] === undefined
-  );
+export function missingRequiredOutputs(
+  resource: { schema: Schema },
+  output: Record<string, unknown>,
+): string[] {
+  return Object.entries(resource.schema)
+    .filter(
+      ([key, item]) =>
+        item.propertyType === "computed" &&
+        item.presence === "required" &&
+        output[key] === undefined,
+    )
+    .map(([key]) => key);
 }
 
 /**
@@ -165,10 +168,8 @@ export function isMissingOutput(resource: BaseResource, key: string): boolean {
  * yet, or its output lacks a required output.
  */
 export function hasPendingOutput(resource: BaseResource): boolean {
-  if (resource.output == null) return true;
-  return Object.keys(resource.schema).some((key) =>
-    isMissingOutput(resource, key),
-  );
+  const output = resource.output as Record<string, unknown> | null;
+  return output == null || missingRequiredOutputs(resource, output).length > 0;
 }
 
 function readPath(output: unknown, path: readonly string[]): unknown {
@@ -207,15 +208,8 @@ function describeOutputRef(token: OutputRef): string {
  * that is missing from the dependency's output.
  */
 export class PendingOutput extends Error {
-  constructor(
-    readonly resource: BaseResource,
-    readonly key?: string,
-  ) {
-    super(
-      key === undefined
-        ? `The output of ${resource.id} is not known until it is deployed`
-        : `Output ${resource.id}.${key} is missing from state, and is not known until deploy reads ${resource.id} again`,
-    );
+  constructor(readonly resource: BaseResource) {
+    super(`The output of ${resource.id} is not known until it is deployed`);
     this.name = "PendingOutput";
   }
 }
@@ -225,7 +219,8 @@ export class PendingOutput extends Error {
  * dependency with no output throws `PendingOutput` when its output is read.
  * A view of a dependency whose output lacks a required output throws it when
  * that output is read. `readPending` is set by such a read, so a plan still
- * knows of it when the code catches the error.
+ * knows of it when the code catches the error. Only property reads are
+ * checked: spreading the output, `Object.keys` and `in` don't throw.
  */
 export function createPlanViews() {
   const views = {
@@ -239,28 +234,32 @@ export function createPlanViews() {
     },
   };
 
-  const readPending = (dep: BaseResource, key?: string): never => {
+  const readPending = (dep: BaseResource): never => {
     views.readPending = true;
-    throw new PendingOutput(dep, key);
+    throw new PendingOutput(dep);
   };
 
-  const pendingView = (dep: BaseResource): BaseResource =>
-    Object.create(dep, {
+  const pendingView = (dep: BaseResource): BaseResource => {
+    const output = dep.output as Record<string, unknown> | null;
+    const missing = output && missingRequiredOutputs(dep, output);
+    const viewedOutput =
+      output &&
+      new Proxy(output, {
+        get(target, key, receiver) {
+          if (typeof key === "string" && missing!.includes(key)) {
+            return readPending(dep);
+          }
+          return Reflect.get(target, key, receiver);
+        },
+      });
+    return Object.create(dep, {
       output: {
         get() {
-          const output = dep.output as Record<string, unknown> | null;
-          if (output == null) return readPending(dep);
-          return new Proxy(output, {
-            get(target, key, receiver) {
-              if (typeof key === "string" && isMissingOutput(dep, key)) {
-                return readPending(dep, key);
-              }
-              return Reflect.get(target, key, receiver);
-            },
-          });
+          return viewedOutput ?? readPending(dep);
         },
       },
     });
+  };
 
   return views;
 }
