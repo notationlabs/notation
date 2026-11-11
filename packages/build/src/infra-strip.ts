@@ -13,7 +13,12 @@ import {
 import { otherExports } from "./exports";
 import type { Marks } from "./marks";
 import type { ModuleAnalyses } from "./modules";
-import { platformOf, providerOfModule, type PlatformName } from "./platforms";
+import {
+  describeProvided,
+  platformOf,
+  providerOfModule,
+  type PlatformName,
+} from "./platforms";
 
 /** The name of the helper that records the module of a declaration. */
 export const declaredInHelper = "__notation_declaredIn";
@@ -600,8 +605,8 @@ export function checkProvidedUses(
       : `${node.name}.${parent!.property.name}`;
     const why =
       imports.get(node.name)?.source === reason.module
-        ? `it is imported from ${reason.module}`
-        : `it depends on ${reason.module}${reason.file === module.file ? "" : `, which ${show(reason.file)} imports`}`;
+        ? `it is imported from ${describeProvided(reason.module)}`
+        : `it depends on ${describeProvided(reason.module)}${reason.file === module.file ? "" : ` (${show(reason.file)} imports it)`}`;
     const options = declaration.mark.runtime.map(
       (option) => `\`${option}: ${name}\``,
     );
@@ -610,7 +615,7 @@ export function checkProvidedUses(
         ? `Pass ${name} only as ${options.join(" or ")}, or move the value that you need to a file that doesn't import ${reason.module}.`
         : `Move the value that you need to a file that doesn't import ${reason.module}.`;
     throw new Error(
-      `${show(module.file)}:${location(module.source, node.start)}: ${name} can't be used in a ${declaration.name}() call, because ${why}. ${fix}`,
+      `${show(module.file)}:${location(module.source, node.start)}: ${name} can't be used in a ${declaration.name}() call, which runs at deploy, because ${why}. ${fix}`,
     );
   }
 }

@@ -23,11 +23,16 @@ export type Platform = {
    */
   checkExports?: (analysis: ModuleAnalysis, names: string[]) => void;
   /**
-   * The modules that only the platform provides, such as `cloudflare:`
-   * modules on workerd. The runtime bundle leaves them external, and the
-   * infra build, which runs on Node, fails for a module that imports one.
+   * The modules that exist only where the platform runs the function, such
+   * as `cloudflare:` modules on workerd. The runtime bundle leaves them
+   * external. Code that runs at deploy can't use them, so the infra build
+   * removes them, with the code that uses them, and fails where it can't.
    */
-  providedModules?: RegExp;
+  provided?: {
+    modules: RegExp;
+    /** Where the modules exist, as an error names it, such as "a Worker". */
+    availableIn: string;
+  };
 };
 
 const node: Platform = {
@@ -163,7 +168,7 @@ const workerd: Platform = {
   },
   reexportsModule: true,
   checkExports,
-  providedModules: cloudflareModules,
+  provided: { modules: cloudflareModules, availableIn: "a Worker" },
 };
 
 const platforms = { node, workerd };
@@ -177,7 +182,18 @@ export const isPlatformName = (name: string): name is PlatformName =>
 
 /** The name of the platform that alone provides the module `source`. */
 export const providerOfModule = (source: string): PlatformName | undefined =>
-  platformNames.find((name) => platforms[name].providedModules?.test(source));
+  platformNames.find((name) => platforms[name].provided?.modules.test(source));
+
+/**
+ * Why code that runs at deploy can't use the module `source`, which only a
+ * platform provides, such as "cloudflare:workers, which is only available
+ * in a Worker".
+ */
+export function describeProvided(source: string): string {
+  const platform = providerOfModule(source);
+  const where = platform && platforms[platform].provided?.availableIn;
+  return where ? `${source}, which is only available in ${where}` : source;
+}
 
 /** The platform of a mark's `platform:` clause, or Node when it has none. */
 export const platformOf = (name: PlatformName = "node"): Platform =>

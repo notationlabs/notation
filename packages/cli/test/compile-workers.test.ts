@@ -650,7 +650,7 @@ it("fails the infra build on a static cloudflare: import that the strip doesn't 
     `import { DurableObject } from "./registry";\nglobalThis.base = DurableObject;`,
   );
   await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
-    "infra/registry.ts imports cloudflare:workers, which is not allowed in code that runs at deploy. Move the code that runs at deploy to a file that doesn't import cloudflare:workers.",
+    "infra/registry.ts imports cloudflare:workers, which is only available in a Worker, and code that runs at deploy uses it. Move the code that runs at deploy to a file that doesn't import cloudflare:workers.",
   );
 });
 
@@ -691,7 +691,7 @@ it("fails the infra build for a shared module that imports cloudflare:workers", 
     `import { NAME } from "../shared/names";\nconsole.log(NAME);`,
   );
   await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
-    /shared\/names\.ts, a shared module \(.*\), imports cloudflare:workers\. This is not allowed in a shared module\. Move the code that needs cloudflare:workers to a runtime module\./,
+    /shared\/names\.ts, a shared module \(.*\), imports cloudflare:workers, which is only available in a Worker\. A shared module also runs at deploy, so it can't use cloudflare:workers\. Move the code that needs cloudflare:workers to a runtime module\./,
   );
 });
 
@@ -708,7 +708,7 @@ describe("a declaration that uses a class that the infra build leaves out", () =
     await expect(
       compileInfra(path.join(root, "infra/main.ts")),
     ).rejects.toThrow(
-      "runtime/counter.ts:13:87: Counter can't be used in a $durableObject() call, because it depends on cloudflare:workers. Pass Counter only as `class: Counter`, or move the value that you need to a file that doesn't import cloudflare:workers.",
+      "runtime/counter.ts:13:87: Counter can't be used in a $durableObject() call, which runs at deploy, because it depends on cloudflare:workers, which is only available in a Worker. Pass Counter only as `class: Counter`, or move the value that you need to a file that doesn't import cloudflare:workers.",
     );
   });
 
@@ -735,7 +735,7 @@ describe("a declaration that uses a class that the infra build leaves out", () =
     await expect(
       compileInfra(path.join(root, "infra/main.ts")),
     ).rejects.toThrow(
-      "runtime/counter.ts:4:46: label can't be used in a $durableObject() call, because it depends on cloudflare:workers, which runtime/cls.ts imports.",
+      "runtime/counter.ts:4:46: label can't be used in a $durableObject() call, which runs at deploy, because it depends on cloudflare:workers, which is only available in a Worker (runtime/cls.ts imports it).",
     );
   });
 });

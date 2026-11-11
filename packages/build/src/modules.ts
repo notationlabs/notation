@@ -14,6 +14,7 @@ import {
   type KindMatch,
 } from "./files";
 import { Marks } from "./marks";
+import { describeProvided } from "./platforms";
 
 // The modules that the strips read: JS and TS files outside node_modules.
 // These include files of workspace packages, which resolve to their real
@@ -179,7 +180,7 @@ export class ModuleAnalyses {
    * one platform provides, such as `cloudflare:workers`, directly or through
    * a name from another module. `removed` holds the names that the infra
    * strip would leave out of the module. Neither build strips a shared
-   * module, and Node can't load the provided module.
+   * module, and code that runs at deploy can't use the provided module.
    */
   checkSharedPlatformUse(
     file: string,
@@ -191,12 +192,13 @@ export class ModuleAnalyses {
     if (!first) return;
     const [name, reason] = first;
     const shared = describeKind(this.show(file), match);
+    const provided = describeProvided(reason.module);
     const how =
       reason.file === file
-        ? `imports ${reason.module}`
-        : `uses ${name}, which depends on ${reason.module} (${this.show(reason.file)} imports it)`;
+        ? `imports ${provided}`
+        : `uses ${name}, which depends on ${provided} (${this.show(reason.file)} imports it)`;
     throw new Error(
-      `${shared}, ${how}. This is not allowed in a shared module. Move the code that needs ${reason.module} to a runtime module.`,
+      `${shared}, ${how}. A shared module also runs at deploy, so it can't use ${reason.module}. Move the code that needs ${reason.module} to a runtime module.`,
     );
   }
 

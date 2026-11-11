@@ -15,7 +15,7 @@ import {
 } from "./infra-strip";
 import type { ImportBinding, Mark } from "./marks";
 import { isProjectModule, type ModuleAnalyses } from "./modules";
-import { providerOfModule } from "./platforms";
+import { describeProvided, providerOfModule } from "./platforms";
 import { stripForRuntime } from "./runtime-strip";
 
 const isBareSpecifier = (source: string) =>
@@ -152,7 +152,7 @@ export function infraPlugin({
           this.getModuleInfo(id)?.importedIds.includes(source),
         );
         throw new Error(
-          `${importer ? analyses.show(importer) : chunk.fileName} imports ${source}, which is not allowed in code that runs at deploy. Move the code that runs at deploy to a file that doesn't import ${source}.`,
+          `${importer ? analyses.show(importer) : chunk.fileName} imports ${describeProvided(source)}, and code that runs at deploy uses it. Move the code that runs at deploy to a file that doesn't import ${source}.`,
         );
       }
       if (!onDeclarationModules) return;
