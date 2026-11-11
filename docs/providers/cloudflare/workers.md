@@ -52,6 +52,16 @@ The declaration adds the Worker even when nothing imports it.
 
 `WorkerEnv<typeof worker>` is the type of `env`, and `WorkerHandler<typeof worker>` is the type of the default export. A Worker that binds another Worker is uploaded after it.
 
+Two Workers can bind each other as services. Each service binding is a [contribution](../../reference/resource.md#cycles) to the Worker's script, so deploy can break the cycle:
+
+1. Deploy uploads one of the Workers without its service bindings.
+2. It uploads the other Worker, which binds the first.
+3. It uploads the first Worker again, with its service bindings.
+
+Between steps 1 and 3, the first Worker's `env` has no service bindings, so a request that calls the other Worker fails. Destroy uploads the first Worker without its service bindings again before it deletes the Workers, because Cloudflare doesn't delete a Worker that another Worker binds.
+
+Namespaces can't close a cycle. When two Workers each bind a namespace that the other hosts, plan fails, as each Worker is uploaded after the host of each namespace that it binds.
+
 ## `$durableObject(config)`
 
 A runtime module calls `$durableObject` to declare a Durable Object namespace. The module holds only this declaration and the class. A Worker hosts the namespace when it binds the namespace and its module exports the class:

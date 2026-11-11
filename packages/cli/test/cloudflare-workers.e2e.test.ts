@@ -67,8 +67,14 @@ function workerParams(): Record<string, ScriptParams> {
       scope: { app: "shop", stage: "dev" },
     });
     const params = {};
-    for (const resource of graph.resources) {
-      if (resource.type !== "cloudflare/workers/WorkerScript") continue;
+    const scripts = graph.resources.filter(
+      (resource) => resource.type === "cloudflare/workers/WorkerScript",
+    );
+    // A service binding takes the name of the bound Worker from its output.
+    for (const resource of scripts) {
+      resource.setOutput({ ScriptName: resource.config.ScriptName });
+    }
+    for (const resource of scripts) {
       const code = resource.dependencies.code;
       code.setOutput({ ...code.config, sourceSha256: "hex", fileSha256: "sha" });
       params[resource.id] = await resource.getParams();

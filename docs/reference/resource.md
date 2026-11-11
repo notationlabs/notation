@@ -483,6 +483,41 @@ The infra build wraps each declaration, such as a `$lambda` call, in a call that
 
 When you delete a `contribute` call, the collected value changes, and the resource updates on the next deploy. When the API cannot unset a removed field, the provider resets it to the API's default. When there is no default, mark the field `immutable`, so that removing it replaces the resource.
 
+### Cycles
+
+A resource in `config` or `dependencies` must already be constructed, so two resources can only depend on each other through `contribute` or `dependOn`. For example, two Workers that call each other each contribute a service binding to the other:
+
+```ts
+const a = new WorkerScript("a", { config: { ScriptName: "a" } });
+const b = new WorkerScript("b", { config: { ScriptName: "b" } });
+a.contribute({
+  Bindings: [
+    { type: "service", name: "B", service: b.outputValue("ScriptName") },
+  ],
+});
+b.contribute({
+  Bindings: [
+    { type: "service", name: "A", service: a.outputValue("ScriptName") },
+  ],
+});
+```
+
+Deploy breaks the cycle at a placeholder. It creates the placeholder first, with its params without any contribution. It creates the other members, and then updates the placeholder with its full params:
+
+```
+create a (no bindings) → create b (binds a) → update a (binds b)
+```
+
+A member can be the placeholder when:
+
+- it depends on the other members of the loop only through its contributions, not through its config, its `dependencies` or `dependOn`,
+- each param that its contributions set is optional, and is not `immutable`, `primaryKey` or `secondaryKey`. A function contribution can set any collected param, so then this applies to every collected param,
+- its type has `update`.
+
+In each loop, the first member in the order of the resources that can be the placeholder becomes one. When no member of a loop can, plan and deploy fail with `ResourceCycleError`, which names the members of the loop and says why each of them can't be the placeholder.
+
+Three methods give the engine what it needs: `getFixedDependencies()` returns the dependencies that don't come from contributions, `getContributedParams()` returns the collected params that contributions set, and `getPlaceholderParams()` returns the params without any contribution. See [Dependency cycles](../internals/reconciler.md#dependency-cycles) for how deploy, destroy and plan handle a cycle.
+
 ## Resource groups
 
 A `ResourceGroup` bundles the low-level resources that make up a single logical construct. A Lambda group, for example, contains a Lambda function, an IAM role, a CloudWatch log group, and a zip package.

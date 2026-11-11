@@ -107,6 +107,7 @@ const workerScriptSchema = workerScript.defineSchema({
     propertyType: "param",
     presence: "optional",
     value: v.array(bindingSchema),
+    collect: (items: unknown[]) => items.flat() as WorkerBinding[],
   },
   DurableObjectNamespaces: {
     propertyType: "param",

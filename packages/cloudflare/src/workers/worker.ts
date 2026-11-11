@@ -198,6 +198,26 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
         url: config.url ?? true,
       });
       for (const script of after) group.script.dependOn(script);
+      const built = group;
+      // Added once every Worker is built, as the bound Worker may bind this
+      // one back. Each is a contribution, so that deploy can create one of
+      // two Workers that bind each other first, without its binding.
+      if (resolved.services.length > 0) {
+        onEvaluationEnd(() => {
+          for (const { name, worker } of resolved.services) {
+            const service = worker.build().script;
+            built.script.contribute({
+              Bindings: [
+                {
+                  type: "service",
+                  name,
+                  service: service.outputValue("ScriptName"),
+                },
+              ],
+            });
+          }
+        });
+      }
       return group;
     },
   };
@@ -225,7 +245,7 @@ function active<T>(store: () => T | undefined, name: string): T {
 function bindingCycleError(cycle: Entry[]): Error {
   const path = cycle.map((entry) => `"${entry.id}"`).join(" → ");
   return new Error(
-    `The Workers ${path} bind each other in a cycle. Each Worker is uploaded after the Workers that it binds, and after the hosts of the namespaces that it binds, so none of these Workers can be uploaded first. Remove one of the bindings.`,
+    `The Workers ${path} bind each other's Durable Object namespaces in a cycle. Each Worker is uploaded after the hosts of the namespaces that it binds, so none of these Workers can be uploaded first. Move one of the namespaces to another Worker.`,
   );
 }
 
@@ -243,7 +263,10 @@ function claimName(scriptName: string, declaration: string) {
 type ResolvedBindings = {
   bindings: cloudflare.workers.WorkerBinding[];
   namespaces: cloudflare.workers.HostedNamespace[];
+  /** The hosts of the namespaces that the Worker binds on another Worker. */
   dependsOn: Entry[];
+  /** The other Workers that the Worker binds as services. */
+  services: { name: string; worker: Entry }[];
 };
 
 /**
@@ -255,6 +278,7 @@ function resolveBindings(self: Entry): ResolvedBindings {
     bindings: [],
     namespaces: [],
     dependsOn: [],
+    services: [],
   };
   for (const [name, value] of Object.entries(self.bindings())) {
     if (typeof value === "string") {
@@ -284,13 +308,16 @@ function resolveBindings(self: Entry): ResolvedBindings {
       continue;
     }
     const worker = registeredWorker(value);
+    if (worker && worker !== self) {
+      resolved.services.push({ name, worker });
+      continue;
+    }
     if (worker) {
       resolved.bindings.push({
         type: "service",
         name,
         service: worker.scriptName,
       });
-      if (worker !== self) resolved.dependsOn.push(worker);
       continue;
     }
     throw new Error(

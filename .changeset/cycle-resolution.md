@@ -1,0 +1,15 @@
+---
+"@notation/resource": minor
+"@notation/reconciler": minor
+"@notation/cli": minor
+"@notation/cloudflare": minor
+---
+
+Deploy resources that depend on each other through contributions, as RFC 0011 describes. Before, plan and deploy failed on any dependency cycle.
+
+- In each loop, deploy picks a placeholder: a member that depends on the others only through its contributions, whose contributed params are optional and don't force a replacement, and whose type has `update`. Deploy creates it with its params without contributions, creates the other members, and then updates it with its full params.
+- Deploy then applies every member again until no output changes, for at most one pass per member. If an output still changes, deploy fails with `ResourceCycleError`, naming the outputs that changed. When no member of a loop can be the placeholder, plan and deploy fail with `ResourceCycleError`, which says why for each member.
+- Destroy reverts each placeholder to its params without contributions before it deletes the cycle. Before deploy replaces a member, it reverts the members that refer to it through contributions, and the later passes update them again. The reverts emit update events with `reason: "cycle-revert"`.
+- Plan nodes have `cycle`, `placeholder` and `revertedPeers`, and `notation plan` prints a line for a placeholder and for a replacement that reverts other members.
+- Resources have `getFixedDependencies()`, `getContributedParams()` and `getPlaceholderParams()`.
+- `@notation/cloudflare`: a Worker's service binding to another Worker is a contribution to its script's `Bindings`, which is now a collected param. Two Workers can bind each other as services. Workers that each bind a namespace that the other hosts still fail plan. The service bindings now come after the bindings in config, so a Worker whose service bindings came before other bindings is updated once on the next deploy.

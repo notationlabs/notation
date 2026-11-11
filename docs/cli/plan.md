@@ -18,6 +18,18 @@ notation plan --stage prod
 The plan reads remote resources when drift detection applies. It does not perform create,
 update, or delete operations.
 
+For resources that depend on each other, the plan prints a line under the resource that deploy creates first, without its contributions, and under a resource that is replaced while other resources in its cycle refer to it:
+
+```
++ create cloudflare/workers/WorkerScript worker:api
+    created first without its contributions, in a cycle with worker:reports
+-/+ replace cloudflare/workers/WorkerScript worker:reports
+    ScriptName forces replacement
+    worker:api is reverted to its placeholder first, and worker:reports is unavailable until the cycle settles
+```
+
+See [Dependency cycles](../internals/reconciler.md#dependency-cycles).
+
 ## JSON output
 
 `--json` writes the complete plan to stdout. Build output and diagnostics move to stderr.
