@@ -559,8 +559,10 @@ it("leaves out what another module builds from a removed class, also in modules 
     "runtime/registry.ts",
     [
       `import { Imported, tagged } from "./cls";`,
+      `import * as all from "./cls";`,
       `export function tag(value) { return value; }`,
       `globalThis.seen = [Imported, tagged];`,
+      `globalThis.viaNamespace = all.tagged;`,
       `globalThis.registered = true;`,
     ].join("\n"),
   );
@@ -578,9 +580,9 @@ it("leaves out what another module builds from a removed class, also in modules 
   expect(infra).not.toContain("tagged");
   expect(
     runInfra(
-      `[namespace.id, namespace.className, globalThis.registered, globalThis.seen ?? null]`,
+      `[namespace.id, namespace.className, globalThis.registered, globalThis.seen ?? null, globalThis.viaNamespace ?? null]`,
     ),
-  ).toEqual(["counters", "Imported", true, null]);
+  ).toEqual(["counters", "Imported", true, null, null]);
 });
 
 it("drops a removed class from an export list and a default export, and keeps the other exports", async () => {
