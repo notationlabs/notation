@@ -38,6 +38,16 @@ export type PlanNode = {
    * `replacedDependency`.
    */
   replacedDependency?: string;
+  /**
+   * Set when the resource is in a dependency cycle: the IDs of the other
+   * resources in the cycle.
+   */
+  cycle?: string[];
+  /**
+   * Set when deploy creates the resource first without its contributions,
+   * and updates it with them once the rest of its cycle exists.
+   */
+  placeholder?: true;
   params: Record<string, unknown>;
   dependsOn: string[];
 };

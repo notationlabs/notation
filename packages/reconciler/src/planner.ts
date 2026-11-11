@@ -6,9 +6,9 @@ import {
 import type { StateBackend, StateNode } from "@notation/state";
 import {
   assertDependenciesPresent,
-  buildResourceDepthLevels,
   collectDependents,
 } from "./dependency-graph";
+import { orderDeployUnits, type DeployUnit } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
@@ -63,8 +63,9 @@ export async function createPlan({
   // the ID of the replaced resource.
   const cascaded = new Map<string, string>();
 
-  for (const level of buildResourceDepthLevels(resources)) {
-    for (const resource of level) {
+  for (const unit of orderDeployUnits(resources)) {
+    const cycle = unit.kind === "cycle" ? unit.cycle : undefined;
+    for (const resource of await loadUnit(unit, state)) {
       const { stateNode, params } = await planKnownParams(
         resource,
         state,
@@ -109,6 +110,8 @@ export async function createPlan({
       // A resource deleted in a cascade is created again, so a diff of an
       // update does not apply to it.
       const cascadeOnly = replacedDependency && !replaceFields;
+      const placeholder =
+        cycle?.placeholders.includes(resource) && action.decision === "create";
       nodes.push({
         id: resource.id,
         type: resource.type,
@@ -116,6 +119,14 @@ export async function createPlan({
         ...("diff" in action && !cascadeOnly ? { diff: action.diff } : {}),
         ...(replaceFields ? { replaceFields } : {}),
         ...(replacedDependency ? { replacedDependency } : {}),
+        ...(cycle
+          ? {
+              cycle: cycle.members
+                .filter((member) => member !== resource)
+                .map((member) => member.id),
+            }
+          : {}),
+        ...(placeholder ? { placeholder: true as const } : {}),
         params,
         dependsOn,
       });
@@ -134,6 +145,24 @@ export async function createPlan({
   }
 
   return { createdAt: new Date().toISOString(), nodes };
+}
+
+/**
+ * Returns the resources of a unit in order. For a cycle, it first loads the
+ * output of every member from state, as a member can depend on a member
+ * that comes after it.
+ */
+export async function loadUnit(
+  unit: DeployUnit,
+  state: { get(id: string): Promise<StateNode | undefined> },
+): Promise<BaseResource[]> {
+  if (unit.kind === "resource") return [unit.resource];
+  for (const member of unit.cycle.members) {
+    const stateNode = await state.get(member.id);
+    assertSameType(member, stateNode);
+    if (stateNode) member.setOutput(stateNode.output);
+  }
+  return unit.cycle.members;
 }
 
 /**

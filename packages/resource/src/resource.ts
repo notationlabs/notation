@@ -176,6 +176,23 @@ export interface BaseResource {
    */
   getDependencies(): BaseResource[];
   /**
+   * The dependencies that do not come from contributions: the declared
+   * dependencies, those added with `dependOn`, and the resources whose
+   * output values the config holds.
+   */
+  getFixedDependencies(): BaseResource[];
+  /**
+   * The collected params that contributions set, sorted. A function
+   * contribution can set any collected param, so it counts as setting all
+   * of them.
+   */
+  getContributedParams(): string[];
+  /**
+   * The params without any contribution. Deploy creates the first member of
+   * a dependency cycle with them, before the others exist.
+   */
+  getPlaceholderParams(): Promise<DurableObject>;
+  /**
    * The params as a plan shows them. A value that holds an output not yet
    * deployed is `UNKNOWN_AFTER_APPLY` at its own path.
    */
@@ -368,14 +385,8 @@ export abstract class Resource<
   }
 
   getDependencies(): BaseResource[] {
-    this.#sealed = true;
-    const found = new Set<BaseResource>();
-    for (const dependency of Object.values(this.dependencies)) {
-      if (dependency) found.add(dependency as BaseResource);
-    }
-    for (const dependency of this.#addedDependencies) found.add(dependency);
-    const addToken = (token: OutputRef) => found.add(token.resource);
-    forEachOutputRef(this.config, addToken);
+    const found = new Set(this.getFixedDependencies());
+    const addToken = (token: OutputValue) => found.add(token.resource);
     for (const contribution of this.#contributions) {
       if ("compute" in contribution) {
         for (const dependency of Object.values(contribution.deps)) {
@@ -386,6 +397,48 @@ export abstract class Resource<
       }
     }
     return [...found];
+  }
+
+  getFixedDependencies(): BaseResource[] {
+    this.#sealed = true;
+    const found = new Set<BaseResource>();
+    for (const dependency of Object.values(this.dependencies)) {
+      if (dependency) found.add(dependency as BaseResource);
+    }
+    for (const dependency of this.#addedDependencies) found.add(dependency);
+    forEachOutputValue(this.config, (token) => found.add(token.resource));
+    return [...found];
+  }
+
+  getContributedParams(): string[] {
+    this.#sealed = true;
+    const params = new Set<string>();
+    for (const contribution of this.#contributions) {
+      const keys =
+        "compute" in contribution
+          ? Object.keys(this.schema).filter(
+              (key) =>
+                this.schema[key]?.propertyType === "param" &&
+                Boolean(this.schema[key].collect),
+            )
+          : Object.keys(contribution.values);
+      for (const key of keys) params.add(key);
+    }
+    return [...params].sort();
+  }
+
+  async getPlaceholderParams(): Promise<T["params"]> {
+    this.#sealed = true;
+    const derivedParams = await this.deriveParams({
+      id: this.id,
+      config: this.config,
+      deps: this.dependencies,
+    });
+    return (await this.#combineParams(
+      derivedParams,
+      false,
+      false,
+    )) as T["params"];
   }
 
   async getParams(): Promise<T["params"]> {
@@ -447,12 +500,15 @@ export abstract class Resource<
   async #combineParams(
     derivedParams: Record<string, unknown>,
     plan: boolean,
+    withContributions = true,
   ): Promise<Record<string, unknown>> {
     const params: Record<string, unknown> = {
       ...this.config,
       ...derivedParams,
     };
-    const contributions = await this.#evaluateContributions(plan);
+    const contributions: EvaluatedContributions = withContributions
+      ? await this.#evaluateContributions(plan)
+      : { items: [], unknown: false };
     for (const [key, item] of Object.entries(this.schema)) {
       if (item.propertyType !== "param" || !item.collect) continue;
       params[key] = this.#collect(

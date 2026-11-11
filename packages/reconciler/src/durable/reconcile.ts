@@ -33,6 +33,7 @@ import {
   getDependencyIds,
   hasSameEdges,
   recordedEdges,
+  type ResourceAction,
 } from "../plan";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
@@ -48,20 +49,35 @@ import type { DurableStep } from "./sdk";
  * conditional on that exact read. `remove` exists only alongside a `node`:
  * a record that was never read cannot be removed safely.
  */
-type ResourceStateSession =
+export type ResourceStateSession =
   | { node: undefined; persist: PersistState; remove?: never }
   | { node: StateNode; persist: PersistState; remove: RemoveState };
+
+export type ReconcileOptions = {
+  /**
+   * Added to the keys of the state writes. Deploy writes a member of a cycle
+   * more than once, and each write needs its own key.
+   */
+  writeKey?: string;
+  /** Leaves out the decision event when the decision is noop. */
+  quietNoop?: boolean;
+  /** Called with the decision before deploy acts on it. Throws to stop. */
+  onDecision?: (decision: ResourceAction["decision"]) => void;
+  /** Runs before a replacement deletes the resource. */
+  beforeReplace?: () => AsyncGenerator<any, void, any>;
+};
 
 /**
  * Reconciles one resource: load the persisted record, decide, read the
  * remote when the decision needs it, announce the decision, then act. `step`
- * must already be scoped to the resource.
+ * must already be scoped to the resource. Returns the decision.
  */
 export async function* reconcileResource(
   step: DurableStepRunner,
   resource: BaseResource,
   opts: DurableDeployOptions,
-): AsyncGenerator<any, void, any> {
+  options: ReconcileOptions = {},
+): AsyncGenerator<any, ResourceAction["decision"], any> {
   // Resolved once and then carried: deriveParams is user code and need not be
   // deterministic, so an operation resolving them again could persist params
   // other than the ones the decision was taken against. The step also pins
@@ -71,7 +87,12 @@ export async function* reconcileResource(
   const dependsOn = getDependencyIds(resource);
 
   const emit = durableEmitter(step, opts.emit);
-  const session = yield* openStateSession(step, opts, resource);
+  const session = yield* openStateSession(
+    step,
+    opts,
+    resource,
+    options.writeKey,
+  );
   // Repeats the notation:validate check, because validate ran before the
   // hold and the record may have changed since.
   assertSameType(resource, session.node);
@@ -107,16 +128,19 @@ export async function* reconcileResource(
     });
   }
 
-  yield* emit({
-    level: "info",
-    event: "reconciler.deploy.decision",
-    resourceId: resource.id,
-    resourceType: resource.type,
-    decision: action.decision,
-    ...("replaceFields" in action
-      ? { replaceFields: action.replaceFields }
-      : {}),
-  });
+  options.onDecision?.(action.decision);
+  if (action.decision !== "noop" || !options.quietNoop) {
+    yield* emit({
+      level: "info",
+      event: "reconciler.deploy.decision",
+      resourceId: resource.id,
+      resourceType: resource.type,
+      decision: action.decision,
+      ...("replaceFields" in action
+        ? { replaceFields: action.replaceFields }
+        : {}),
+    });
+  }
 
   const shared = {
     executionId: opts.executionId,
@@ -136,7 +160,7 @@ export async function* reconcileResource(
         ...shared,
         persist: session.persist,
       });
-      return;
+      return action.decision;
     case "update":
     case "drift-update":
       yield* updateResourceOperation(step, {
@@ -144,7 +168,7 @@ export async function* reconcileResource(
         patch: action.patch,
         persist: session.persist,
       });
-      return;
+      return action.decision;
     case "replace":
     case "drift-replace":
       if (!session.node) {
@@ -152,13 +176,14 @@ export async function* reconcileResource(
           `Cannot replace ${resource.id}: it has no state record`,
         );
       }
-      yield* replaceResource(step, opts, session, shared);
-      return;
+      if (options.beforeReplace) yield* options.beforeReplace();
+      yield* replaceResource(step, opts, session, shared, options.writeKey);
+      return action.decision;
     case "noop":
-      if (!session.node) return;
+      if (!session.node) return action.decision;
       if (findMissingOutputs(resource, session.node.output)) {
         yield* recoverOutputs(step, opts, session, shared);
-        return;
+        return action.decision;
       }
       if (
         !opts.dryRun &&
@@ -167,7 +192,7 @@ export async function* reconcileResource(
       ) {
         yield* rewriteRecord(session, resource, dependsOn);
       }
-      return;
+      return action.decision;
   }
 }
 
@@ -256,6 +281,7 @@ async function* replaceResource(
   opts: DurableDeployOptions,
   session: Extract<ResourceStateSession, { node: StateNode }>,
   shared: Omit<CreateResourceParams, "persist">,
+  writeKey: string | undefined,
 ): AsyncGenerator<any, void, any> {
   yield* deleteBlockingDependents(
     step.scope("replace:dependents"),
@@ -278,7 +304,7 @@ async function* replaceResource(
     emit: durableEmitter(createStep, opts.emit),
     // The persisted output describes the resource that was just deleted.
     persistedOutput: undefined,
-    persist: createResourceState(createStep, opts, shared.resource),
+    persist: createResourceState(createStep, opts, shared.resource, writeKey),
   });
 }
 
@@ -538,23 +564,35 @@ function collectDependencies(
  * version the record was read at, so a write made against it cannot land on a
  * record another writer has moved on.
  */
-async function* openStateSession(
+export async function* openStateSession(
   step: DurableStepRunner,
   opts: DurableWorkflowOptions,
   resource: BaseResource,
+  /** See `ReconcileOptions.writeKey`. */
+  writeKey?: string,
 ): AsyncGenerator<any, ResourceStateSession, any> {
   const snapshot = yield* step.run("persisted-record", () =>
     opts.state.snapshot(resource.id),
   );
-  const persist = persistResourceState(step, opts, resource, snapshot);
+  const persist = persistResourceState(
+    step,
+    opts,
+    resource,
+    snapshot,
+    writeKey,
+  );
   const node = toStateNode(snapshot);
   if (!node) return { node: undefined, persist };
 
   return {
     node,
     persist,
-    remove: removeResourceState(step, opts, resource, snapshot),
+    remove: removeResourceState(step, opts, resource, snapshot, writeKey),
   };
+}
+
+function stateKey(name: string, resource: BaseResource, writeKey?: string) {
+  return `state:${name}:${resource.id}${writeKey ? `:${writeKey}` : ""}`;
 }
 
 /**
@@ -572,13 +610,14 @@ function persistResourceState(
   opts: DurableWorkflowOptions,
   resource: BaseResource,
   snapshot: ResourceSnapshot,
+  writeKey: string | undefined,
 ): PersistState {
   return async function* (next) {
     const store = step.store(resourceStateStore, {
       id: opts.state.storeId(resource.id),
     });
     const result = yield* store.updateFrom(
-      `state:persist:${resource.id}`,
+      stateKey("persist", resource, writeKey),
       snapshot,
       () => next,
     );
@@ -601,12 +640,13 @@ function createResourceState(
   step: DurableStepRunner,
   opts: DurableWorkflowOptions,
   resource: BaseResource,
+  writeKey: string | undefined,
 ): PersistState {
   return async function* (next) {
     const store = step.store(resourceStateStore, {
       id: opts.state.storeId(resource.id),
     });
-    yield* store.update(`state:create:${resource.id}`, () => next);
+    yield* store.update(stateKey("create", resource, writeKey), () => next);
   };
 }
 
@@ -615,13 +655,14 @@ function removeResourceState(
   opts: DurableWorkflowOptions,
   resource: BaseResource,
   snapshot: ResourceSnapshot,
+  writeKey: string | undefined,
 ): RemoveState {
   return async function* () {
     const store = step.store(resourceStateStore, {
       id: opts.state.storeId(resource.id),
     });
     const result = yield* store.deleteFrom(
-      `state:delete:${resource.id}`,
+      stateKey("delete", resource, writeKey),
       snapshot,
     );
     if (!result.deleted) {

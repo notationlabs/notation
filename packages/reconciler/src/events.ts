@@ -12,10 +12,17 @@ export type OperationLifecycleEvent = {
   status: OperationLifecycleStatus;
   resourceId: string;
   resourceType: ResourceType;
+  /**
+   * `dependency-replaced`: the delete of a dependent that blocks the delete
+   * of a replaced resource. `cycle-revert`: the update that takes a member
+   * of a dependency cycle back to its placeholder params, before deploy
+   * replaces another member or destroy deletes the cycle.
+   */
   reason?: string;
   /**
    * With the reason `dependency-replaced`: the resource whose replacement
    * deletes this one first. Plan names it in `PlanNode.replacedDependency`.
+   * With the reason `cycle-revert` in deploy: the member being replaced.
    */
   replacedDependency?: string;
   errorName?: string;
@@ -36,6 +43,12 @@ export type DeployDecisionEvent = {
     | "drift-recreate"
     | "noop";
   replaceFields?: ReplaceField[];
+  /**
+   * Set when deploy creates the resource without its contributions, as the
+   * first member of a dependency cycle. A later decision for the same
+   * resource applies its full params.
+   */
+  placeholder?: true;
 };
 
 export type DriftDetectedEvent = {

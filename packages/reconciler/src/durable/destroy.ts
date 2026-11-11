@@ -1,4 +1,5 @@
-import { buildResourceDepthLevels } from "../dependency-graph";
+import { orderDeployUnits } from "../cycles";
+import { revertToPlaceholder } from "./cycle";
 import { withDeploymentHold } from "./deployment-hold";
 import { deleteResource, sweepOrphans } from "./reconcile";
 import { scopeStep } from "./step";
@@ -17,19 +18,29 @@ export async function* destroy(
     const kept = yield* sweepOrphans(step, opts, "destroy");
 
     // Delete in reverse dependency order, so dependents are gone before the
-    // resources they depend on.
-    const levels = buildResourceDepthLevels(opts.resources);
-    for (let index = levels.length - 1; index >= 0; index -= 1) {
-      for (const resource of levels[index]!) {
+    // resources they depend on. The placeholders of a cycle are reverted
+    // first, so that the members that remain can be deleted in reverse order
+    // too.
+    for (const unit of orderDeployUnits(opts.resources).reverse()) {
+      const scope = (id: string) =>
+        scopeStep(step, `notation:destroy:${encodeURIComponent(id)}`);
+      if (unit.kind === "cycle") {
+        for (const placeholder of unit.cycle.placeholders) {
+          if (kept.has(placeholder.id)) continue;
+          yield* revertToPlaceholder(
+            scope(placeholder.id).scope("revert"),
+            placeholder,
+            opts,
+            "revert",
+            { reason: "cycle-revert" },
+          );
+        }
+      }
+      const members =
+        unit.kind === "cycle" ? unit.cycle.members : [unit.resource];
+      for (const resource of [...members].reverse()) {
         if (kept.has(resource.id)) continue;
-        yield* deleteResource(
-          scopeStep(
-            step,
-            `notation:destroy:${encodeURIComponent(resource.id)}`,
-          ),
-          resource,
-          opts,
-        );
+        yield* deleteResource(scope(resource.id), resource, opts);
       }
     }
   });
