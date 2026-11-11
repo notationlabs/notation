@@ -23,12 +23,10 @@ import { LambdaIamRoleInstance } from "./";
 export type LambdaFunctionSchema = AwsSchema<{
   Key: Omit<sdk.GetFunctionRequest, "Qualifier">;
   CreateParams: Omit<sdk.CreateFunctionRequest, "Code" | "Environment"> &
-    ReservedConcurrencyParams &
     LambdaCodeParams &
     LambdaEnvironmentParams;
   UpdateParams: Omit<sdk.UpdateFunctionCodeRequest, "ZipFile"> &
     Omit<sdk.UpdateFunctionConfigurationRequest, "Environment"> &
-    ReservedConcurrencyParams &
     sdk.PutFunctionCodeSigningConfigRequest &
     LambdaCodeParams &
     LambdaEnvironmentParams;
@@ -37,7 +35,6 @@ export type LambdaFunctionSchema = AwsSchema<{
     "Environment"
   > &
     NonNullable<sdk.GetFunctionResponse["Code"]> &
-    NonNullable<sdk.GetFunctionResponse["Concurrency"]> &
     LambdaEnvironmentParams;
 }>;
 
@@ -50,14 +47,6 @@ export type LambdaEnvironment = {
 };
 
 type LambdaEnvironmentParams = { Environment?: LambdaEnvironment };
-
-/**
- * Without `ReservedConcurrentExecutions`, the function draws on the account's
- * unreserved concurrency.
- */
-type ReservedConcurrencyParams = Partial<
-  Pick<sdk.PutFunctionConcurrencyRequest, "ReservedConcurrentExecutions">
->;
 
 /**
  * The code is uploaded from a file. The params hold the path and hash of the
@@ -204,11 +193,6 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
     presence: "optional",
     value: v.boolean(),
   },
-  ReservedConcurrentExecutions: {
-    propertyType: "param",
-    presence: "optional",
-    value: v.pipe(v.number(), v.integer(), v.minValue(0)),
-  },
   RevisionId: {
     propertyType: "computed",
     presence: "required",
@@ -282,12 +266,7 @@ export const LambdaFunction = lambdaFunctionSchema
     // The create attempt is recorded as a tag, so `find` can tell this
     // deploy's function from another with the same name.
     create: awsCreate(async (params, _context, token) => {
-      const {
-        CodeFilePath,
-        Environment,
-        ReservedConcurrentExecutions,
-        ...functionParams
-      } = params;
+      const { CodeFilePath, Environment, ...functionParams } = params;
       const command = new sdk.CreateFunctionCommand({
         ...functionParams,
         Environment: encodeEnvironment(params.FunctionName, Environment),
@@ -298,16 +277,6 @@ export const LambdaFunction = lambdaFunctionSchema
       });
 
       await runLambdaMutation(() => lambdaClient().send(command));
-
-      // CreateFunction has no concurrency field, so it is set by a second call.
-      if (ReservedConcurrentExecutions !== undefined) {
-        await lambdaClient().send(
-          new sdk.PutFunctionConcurrencyCommand({
-            FunctionName: params.FunctionName,
-            ReservedConcurrentExecutions,
-          }),
-        );
-      }
     }),
 
     // A function without the token was not made by the attempt. Reporting it
@@ -329,8 +298,7 @@ export const LambdaFunction = lambdaFunctionSchema
     read: async (key) => {
       try {
         const command = new sdk.GetFunctionCommand(key);
-        const { Configuration, Concurrency } =
-          await lambdaClient().send(command);
+        const { Configuration } = await lambdaClient().send(command);
 
         if (Configuration?.State !== "Active") {
           throw new ResourceOperationPendingError(
@@ -356,7 +324,6 @@ export const LambdaFunction = lambdaFunctionSchema
           Layers: Configuration.Layers?.map((layer) => layer.Arn),
           VpcConfig: Configuration.VpcConfig ? vpcConfig : undefined,
           SnapStart: Configuration.SnapStart ? snapStart : undefined,
-          ...Concurrency,
         };
       } catch (error) {
         if (error instanceof sdk.ResourceNotFoundException) {
@@ -369,13 +336,7 @@ export const LambdaFunction = lambdaFunctionSchema
     },
 
     update: async (key, patch, params) => {
-      const {
-        CodeFilePath,
-        CodeSha256,
-        Environment,
-        ReservedConcurrentExecutions,
-        ...rest
-      } = patch;
+      const { CodeFilePath, CodeSha256, Environment, ...rest } = patch;
       const conf: Omit<sdk.UpdateFunctionConfigurationRequest, "FunctionName"> =
         rest;
       // An omitted Environment leaves the variables as they were.
@@ -403,22 +364,6 @@ export const LambdaFunction = lambdaFunctionSchema
           ZipFile: await readCode(params.CodeFilePath, params.CodeSha256),
         });
         await runLambdaMutation(() => lambdaClient().send(codeCommand));
-      }
-
-      // A param removed from config is in the patch as undefined. Deleting the
-      // reserved concurrency returns the function to the unreserved pool.
-      if (!("ReservedConcurrentExecutions" in patch)) return;
-      if (ReservedConcurrentExecutions === undefined) {
-        await lambdaClient().send(
-          new sdk.DeleteFunctionConcurrencyCommand(key),
-        );
-      } else {
-        await lambdaClient().send(
-          new sdk.PutFunctionConcurrencyCommand({
-            ...key,
-            ReservedConcurrentExecutions,
-          }),
-        );
       }
     },
 

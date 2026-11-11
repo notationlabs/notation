@@ -189,7 +189,6 @@ const build = (
         Runtime: runtime,
         Timeout: config.timeout,
         MemorySize: config.memory,
-        ReservedConcurrentExecutions: config.concurrency,
       },
       dependencies: {
         role,
@@ -204,6 +203,18 @@ const build = (
       dependencies: { lambda: lambdaResource },
     }),
   );
+
+  if (config.concurrency !== undefined) {
+    functionGroup.add(
+      new aws.lambda.LambdaFunctionConcurrency(
+        resourceId("lambda", lambdaId, "concurrency"),
+        {
+          config: { ReservedConcurrentExecutions: config.concurrency },
+          dependencies: { lambda: lambdaResource },
+        },
+      ),
+    );
+  }
 
   return { fn: lambdaResource, role };
 };

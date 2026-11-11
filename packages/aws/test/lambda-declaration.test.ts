@@ -66,13 +66,16 @@ test("runtime, timeout, memory and concurrency are applied to the function", asy
       }),
     );
   });
+  const group = lambdaGroup(graph, "orders");
 
-  expect(lambdaGroup(graph, "orders").fn.config).toMatchObject({
+  expect(group.fn.config).toMatchObject({
     Runtime: "nodejs20.x",
     Timeout: 5,
     MemorySize: 256,
-    ReservedConcurrentExecutions: 10,
   });
+  expect(
+    group.resources.find((r) => r.id === "lambda:orders:concurrency")?.config,
+  ).toEqual({ ReservedConcurrentExecutions: 10 });
 });
 
 test("name overrides the function's AWS name, and the id stays its state key", async () => {

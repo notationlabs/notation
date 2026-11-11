@@ -39,7 +39,8 @@ When infra has finished loading, the declaration adds a Lambda group with:
 - the **Lambda function** `todos`, which runs the bundle `dist/runtime/todos/index.mjs` and calls `index.handler`,
 - the **IAM execution role** `todos-role`,
 - the **CloudWatch log group** `todos-log-group`, with 30-day retention,
-- the **zip package** `todos-zip` of the bundle.
+- the **zip package** `todos-zip` of the bundle,
+- the **reserved concurrency** of the function, only when `concurrency` is set.
 
 The declaration adds the function even when nothing wires it. The options are listed in [Lambda Declaration](../../manual/function-config.md).
 
@@ -67,7 +68,7 @@ The function has one entry point, `handler`, and Notation doesn't route events t
 
 ## IDs
 
-Every Lambda function has an ID. It keys the function and the resources that support it in state, as `lambda:<id>`, `lambda:<id>:role`, `lambda:<id>:zip`, `lambda:<id>:policy-attachment`, `lambda:<id>:role-policy` and `lambda:<id>:log-group`. Changing an ID replaces the function.
+Every Lambda function has an ID. It keys the function and the resources that support it in state, as `lambda:<id>`, `lambda:<id>:role`, `lambda:<id>:zip`, `lambda:<id>:policy-attachment`, `lambda:<id>:role-policy`, `lambda:<id>:log-group` and, when `concurrency` is set, `lambda:<id>:concurrency`. Changing an ID replaces the function.
 
 In a runtime module, the ID is the declaration's `id`. The ID doesn't come from the module's path, so you can move or rename the module and keep its function.
 
@@ -184,5 +185,3 @@ Lambda limits a function's environment variables to 4 KB in total. If the variab
 | Timeout       | 3 seconds         |
 | Concurrency   | None (unreserved) |
 | Log retention | 30 days           |
-
-`concurrency` sets the function's reserved concurrency: the most instances of the function that run at once. Lambda sets this many aside from the account's concurrency limit. Without it, the function uses the account's unreserved concurrency, which it shares with the other functions in the account. Removing `concurrency` removes the reservation on the next deploy.

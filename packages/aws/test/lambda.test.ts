@@ -31,14 +31,20 @@ test("timeout and memory are applied to the function", () => {
   expect(group.fn.config).toMatchObject({ Timeout: 5, MemorySize: 256 });
 });
 
-test("concurrency sets the function's reserved concurrency", () => {
-  const group = lambda({ id: "todos", code, concurrency: 10 });
-  expect(group.fn.config.ReservedConcurrentExecutions).toBe(10);
+test("concurrency adds a reserved concurrency that depends on the function", () => {
+  const group = lambda({ id: "todos", code, concurrency: 0 });
+  const concurrency = group.resources.find(
+    (r) => r.id === "lambda:todos:concurrency",
+  );
+  expect(concurrency?.config).toEqual({ ReservedConcurrentExecutions: 0 });
+  expect(concurrency?.dependencies).toEqual({ lambda: group.fn });
 });
 
-test("a function without concurrency reserves none", () => {
+test("a function without concurrency has no reserved concurrency", () => {
   const group = lambda({ id: "todos", code });
-  expect(group.fn.config.ReservedConcurrentExecutions).toBeUndefined();
+  expect(
+    group.resources.find((r) => r.id === "lambda:todos:concurrency"),
+  ).toBeUndefined();
 });
 
 test("the policy's role name is known at plan before the role is deployed", async () => {
