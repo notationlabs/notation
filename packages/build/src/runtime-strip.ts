@@ -9,6 +9,7 @@ import {
 } from "./ast";
 import type { Declaration, ModuleAnalysis } from "./analyze";
 import type { ImportBinding, Mark } from "./marks";
+import { describeKind } from "./files";
 import type { ModuleAnalyses } from "./modules";
 
 /**
@@ -82,9 +83,8 @@ export function stripForRuntime(
     }
   }
 
-  const keptProperties = properties
-    .filter(([key]) => keptOptions.has(key))
-    .map(([, p]) => p);
+  const kept = properties.filter(([key]) => keptOptions.has(key));
+  const keptProperties = kept.map(([, p]) => p);
   const added: string[] = [];
   for (const property of keptProperties) {
     const free = new Set(
@@ -112,9 +112,15 @@ export function stripForRuntime(
     else s.prepend(added.join(""));
   }
 
-  for (const property of keptProperties) {
+  for (const [key, property] of kept) {
     for (const reference of freeReferences(property.value, removed)) {
-      checkReference(reference.node, declaration, analysis, analyses);
+      checkReference(
+        reference.node,
+        key,
+        declaration,
+        analysis,
+        analyses,
+      );
     }
   }
 
@@ -276,16 +282,21 @@ function runtimeOptions(
         `${where(property)}: the build can't resolve "${imported.source}", where the ${option} of ${text} is imported from. The function in ${analyses.show(file)} reads it.`,
       );
     }
-    const kind = analyses.kindOf(from)?.kind;
-    if (kind === "infra" || kind === "runtime") {
+    const match = analyses.kindOf(from);
+    if (match?.kind === "infra" || match?.kind === "runtime") {
+      const source = describeKind(analyses.show(from), match);
+      const problem =
+        match.kind === "infra"
+          ? `can't be used in the function in ${analyses.show(file)}, because it comes from ${source}, and an infra module only runs at deploy`
+          : `is used both at deploy and in the function in ${analyses.show(file)}, so it can't come from ${source}, which doesn't run as written at deploy`;
       throw new Error(
-        `${where(property)}: the ${option} of ${text} must be imported from a shared module (files.shared), because the function in ${analyses.show(file)} reads it.`,
+        `${where(property)}: the ${option} of ${text} ${problem}. Import the ${option} from a shared module (files.shared).`,
       );
     }
     const fromCall = analyses.unmatchedResourceCall(from);
     if (fromCall) {
       throw new Error(
-        `${where(property)}: the ${option} of ${text} is imported from ${analyses.show(from)}, which calls ${fromCall.name} at its top level, so the function in ${analyses.show(file)} can't load it. Move the ${option} to a shared module (files.shared).`,
+        `${where(property)}: the ${option} of ${text} can't be used in the function in ${analyses.show(file)}, because it comes from ${analyses.show(from)}, and loading ${analyses.show(from)} calls ${fromCall.name}(), which only runs at deploy. Move the ${option} to a shared module (files.shared).`,
       );
     }
     // The import is written in the function's module, so a relative path or
@@ -510,6 +521,8 @@ function markOfCallee(
 
 function checkReference(
   node: Node,
+  // The key of the option that holds the reference.
+  option: string,
   declaration: Declaration,
   analysis: ModuleAnalysis,
   analyses: ModuleAnalyses,
@@ -519,30 +532,30 @@ function checkReference(
   const { file, source } = table.module;
   const binding = table.imports.get(node.name);
   if (!binding) return;
-  const at = `${analyses.show(file)}:${location(source, node.start)}`;
+  const used = `${analyses.show(file)}:${location(source, node.start)}: ${node.name} can't be used in the \`${option}\` option of ${declaration.name}(), which the function uses`;
   const advice =
-    "The runtime build removes infra. Read infra values in the function through the declaration's env().";
+    "Read infra values in the function through the declaration's env().";
   const plainValue =
-    "Move a plain value that a kept option uses to a shared module (files.shared), or to a file that no glob matches.";
+    "Move a plain value that the option needs to a shared module (files.shared), or to a file that no glob matches and that doesn't call a resource function.";
   const resolved = marks.resolve(binding.source, file);
   const infra = resolved && analyses.describeInfra(resolved);
   if (infra) {
     throw new Error(
-      `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from ${infra}. ${advice} ${plainValue}`,
+      `${used}, because it comes from ${infra}, and an infra module only runs at deploy. ${advice} ${plainValue}`,
     );
   }
   const call = resolved && analyses.unmatchedResourceCall(resolved);
   if (call) {
     const name = analyses.show(resolved);
     throw new Error(
-      `${at}: an option of ${declaration.name} that the function keeps refers to ${node.name}, from ${name}. ${name} calls ${call.name} at its top level, so the function can't load it. ${advice} ${plainValue}`,
+      `${used}, because it comes from ${name}, and loading ${name} calls ${call.name}(), which only runs at deploy. ${advice} ${plainValue}`,
     );
   }
   const mark =
     binding.imported === "*" ? undefined : marks.importMark(file, binding);
   if (mark?.kind === "resource") {
     throw new Error(
-      `${at}: an option of ${declaration.name} that the function keeps uses the resource function ${node.name}. ${advice}`,
+      `${used}, because ${node.name}() only runs at deploy. ${advice}`,
     );
   }
 }

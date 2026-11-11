@@ -157,7 +157,7 @@ describe("checkShared", () => {
         "shared/schema.ts": `import { $lambda } from "@notation/aws/lambda";\nexport const lambda = $lambda({ id: "fn" });`,
       }),
     ).toThrow(
-      'shared/schema.ts:2:23: shared/schema.ts, a shared module (files.shared: "shared/**", the default), declares a function with $lambda. Neither build strips a shared module, so it can\'t hold a declaration. Move the declaration to a runtime module.',
+      'shared/schema.ts:2:23: $lambda() can\'t be used in shared/schema.ts, a shared module (files.shared: "shared/**", the default), because a shared module runs as written both at deploy and in the function, and only a runtime module can hold a declaration: at deploy, only the declaration of a runtime module runs. Move the declaration to a runtime module.',
     );
   });
 
@@ -183,7 +183,7 @@ describe("checkShared", () => {
     ["export *", `export * from "@notation/aws/sqs";`, "1:1", "createQueue"],
   ])("fails for a resource function imported by %s", (_, source, at, name) => {
     expect(check({ "shared/schema.ts": source })).toThrow(
-      `shared/schema.ts:${at}: shared/schema.ts, a shared module (files.shared: "shared/**", the default), imports the resource function ${name} from @notation/aws/sqs.`,
+      `shared/schema.ts:${at}: ${name} from @notation/aws/sqs can't be used in shared/schema.ts, a shared module (files.shared: "shared/**", the default), because a shared module also runs in the function, and ${name}() only runs at deploy. Move the code that uses ${name} to an infra module.`,
     );
   });
 
@@ -194,7 +194,7 @@ describe("checkShared", () => {
         "infra/orders.ts": orders,
       }),
     ).toThrow(
-      'shared/schema.ts, a shared module (files.shared: "shared/**", the default), imports infra/orders.ts, an infra module (files.infra: "infra/**", the default), through shared/schema.ts:2:1 → infra/orders.ts. Neither build strips a shared module, so it can\'t import an infra or runtime module, directly or through other modules. Move the code that needs infra/orders.ts out of the shared module.',
+      'infra/orders.ts, an infra module (files.infra: "infra/**", the default), can\'t be used in shared/schema.ts, a shared module (files.shared: "shared/**", the default), because a shared module also runs in the function, and an infra module only runs at deploy. The shared module imports it through shared/schema.ts:2:1 → infra/orders.ts. Move the code that needs infra/orders.ts out of the shared module.',
     );
   });
 
@@ -205,7 +205,7 @@ describe("checkShared", () => {
         "runtime/fn.ts": `export const NAME = "fn";`,
       }),
     ).toThrow(
-      'imports runtime/fn.ts, a runtime module (files.runtime: "runtime/**", the default), through shared/schema.ts:1:1 → runtime/fn.ts.',
+      'runtime/fn.ts, a runtime module (files.runtime: "runtime/**", the default), can\'t be used in shared/schema.ts, a shared module (files.shared: "shared/**", the default), because a shared module runs as written both at deploy and in the function, and a runtime module doesn\'t run as written at deploy. The shared module imports it through shared/schema.ts:1:1 → runtime/fn.ts.',
     );
   });
 
@@ -219,7 +219,7 @@ describe("checkShared", () => {
         "infra/orders.ts": orders,
       }),
     ).toThrow(
-      "through shared/schema.ts:1:1 → shared/other.ts:1:1 → lib/a.ts:3:1 → lib/b.ts:1:1 → infra/orders.ts. Neither build strips a shared module, so it can't import an infra or runtime module, directly or through other modules. Move the code that needs infra/orders.ts out of the shared module, or stop importing it through shared/other.ts.",
+      "imports it through shared/schema.ts:1:1 → shared/other.ts:1:1 → lib/a.ts:3:1 → lib/b.ts:1:1 → infra/orders.ts. Move the code that needs infra/orders.ts out of the shared module, or stop importing it through shared/other.ts.",
     );
   });
 
@@ -284,7 +284,7 @@ describe("checkShared", () => {
     };
     const globs = { shared: ["lib/**"], infra: ["aws/**"] };
     expect(check(files, "lib/schema.ts", globs)).toThrow(
-      'lib/schema.ts, a shared module (files.shared: "lib/**"), imports aws/orders.ts, an infra module (files.infra: "aws/**"),',
+      'aws/orders.ts, an infra module (files.infra: "aws/**"), can\'t be used in lib/schema.ts, a shared module (files.shared: "lib/**"),',
     );
     expect(check(files, "lib/schema.ts", { infra: ["aws/**"] })).not.toThrow();
   });
