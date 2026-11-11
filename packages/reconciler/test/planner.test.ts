@@ -918,11 +918,7 @@ describe("createPlan", () => {
     const fn = new Fn("fn", {
       config: { name: "f", queueArn: (queue as any).outputRef("arn") } as any,
     });
-    const record = (
-      id: string,
-      type: string,
-      params: Record<string, unknown>,
-    ) => ({
+    const record = (id: string, type: string, params: DurableObject) => ({
       version: 1,
       id,
       type,
