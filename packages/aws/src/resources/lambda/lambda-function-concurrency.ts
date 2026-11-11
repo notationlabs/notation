@@ -3,7 +3,7 @@ import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-lambda";
 import { lambdaClient } from "src/resources/utils/aws-clients";
 import { AwsSchema } from "src/resources/utils/types";
-import type { LambdaFunctionInstance } from "./lambda";
+import { LambdaFunction, type LambdaFunctionInstance } from "./lambda";
 
 type LambdaFunctionConcurrencyParams = {
   FunctionName: string;
@@ -11,7 +11,7 @@ type LambdaFunctionConcurrencyParams = {
 };
 
 export type LambdaFunctionConcurrencySchema = AwsSchema<{
-  Key: sdk.DeleteFunctionConcurrencyRequest;
+  Key: Pick<LambdaFunctionConcurrencyParams, "FunctionName">;
   CreateParams: LambdaFunctionConcurrencyParams;
   ReadResult: LambdaFunctionConcurrencyParams;
 }>;
@@ -23,6 +23,9 @@ export type LambdaFunctionConcurrencyDependencies = {
 const lambdaFunctionConcurrency = resource<LambdaFunctionConcurrencySchema>({
   type: "aws/lambda/LambdaFunctionConcurrency",
   provider: "@notation/aws/resources",
+  // A function replaced under the same name has no reservation, so deploy
+  // deletes this resource first and creates it again after the function.
+  blocksDeleteOf: [LambdaFunction.type],
 });
 
 const lambdaFunctionConcurrencySchema = lambdaFunctionConcurrency.defineSchema({
@@ -49,7 +52,7 @@ export const LambdaFunctionConcurrency = lambdaFunctionConcurrencySchema
     // PutFunctionConcurrency sets the value whether or not one is set, so a
     // create whose outcome is unknown can run again.
     create: async (params) => {
-      await putFunctionConcurrency(params);
+      await lambdaClient().send(new sdk.PutFunctionConcurrencyCommand(params));
     },
     read: async (key) => {
       try {
@@ -73,7 +76,9 @@ export const LambdaFunctionConcurrency = lambdaFunctionConcurrencySchema
       }
     },
     update: async (key, _patch, params) => {
-      await putFunctionConcurrency({ ...params, ...key });
+      await lambdaClient().send(
+        new sdk.PutFunctionConcurrencyCommand({ ...params, ...key }),
+      );
     },
     delete: async (key) => {
       try {
@@ -93,7 +98,3 @@ export const LambdaFunctionConcurrency = lambdaFunctionConcurrencySchema
 export type LambdaFunctionConcurrencyInstance = InstanceType<
   typeof LambdaFunctionConcurrency
 >;
-
-async function putFunctionConcurrency(params: LambdaFunctionConcurrencyParams) {
-  await lambdaClient().send(new sdk.PutFunctionConcurrencyCommand(params));
-}

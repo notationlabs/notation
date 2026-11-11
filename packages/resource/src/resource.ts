@@ -606,9 +606,18 @@ function withoutUndefined(
 export type DefineResourceMeta = {
   type: ResourceType;
   /**
-   * The types that the provider refuses to delete while a resource of this
-   * type depends on them. For example, AWS does not delete an EventBridge bus
-   * that has rules, so the rule type lists `EventBus.type`.
+   * The types of dependency that a resource of this type must be deleted
+   * before, and created again after, when deploy replaces the dependency.
+   * A type is listed in two cases:
+   *
+   * 1. The provider refuses to delete the dependency while the resource
+   *    depends on it. For example, AWS does not delete an EventBridge bus
+   *    that has rules, so the rule type lists `EventBus.type`.
+   * 2. The provider removes the resource with the dependency, and creating
+   *    the dependency again does not restore it. For example, a Lambda
+   *    function's reserved concurrency is lost when the function is
+   *    replaced under the same name, so `LambdaFunctionConcurrency` lists
+   *    `LambdaFunction.type`.
    *
    * When deploy replaces a resource of a listed type, it first deletes each
    * resource of this type that depends on it in state. It then deletes the

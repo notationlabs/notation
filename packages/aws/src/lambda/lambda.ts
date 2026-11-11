@@ -39,7 +39,9 @@ export type LambdaConfig = {
   /**
    * The function's reserved concurrency: the most instances that may run at
    * once, set aside from the account's limit. Without it, the function uses
-   * the account's unreserved concurrency.
+   * the account's unreserved concurrency. `0` stops all invocations. AWS
+   * rejects a reservation that would leave the account below its minimum
+   * unreserved concurrency, and the deploy fails.
    */
   concurrency?: number;
 };
