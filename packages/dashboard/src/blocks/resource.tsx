@@ -37,7 +37,10 @@ const getSubHeading = (resource: BaseResource) => {
 
 const getConsoleUrl = (resource: BaseResource & { output: any }) => {
   if (resource.type.includes("/apiGateway/")) {
-    return `https://us-west-2.console.aws.amazon.com/apigateway/main/develop/routes?api=${resource.output.ApiId}&region=us-west-2`;
+    // The ARN is arn:aws:execute-api:<region>:<account>:<api id>/*/*.
+    const region = resource.output.ExecuteApiSourceArn?.split(":")[3];
+    if (!region) return "";
+    return `https://${region}.console.aws.amazon.com/apigateway/main/develop/routes?api=${resource.output.ApiId}&region=${region}`;
   }
   return "";
 };
