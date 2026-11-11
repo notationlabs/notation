@@ -600,10 +600,17 @@ export function checkProvidedUses(
       : `${node.name}.${parent!.property.name}`;
     const why =
       imports.get(node.name)?.source === reason.module
-        ? `${name} is an import of ${reason.module}`
-        : `${name} is not in the infra build, because it uses ${reason.module}${reason.file === module.file ? "" : `, through ${show(reason.file)}`}`;
+        ? `${name} is imported from ${reason.module}`
+        : `${name} depends on ${reason.module}${reason.file === module.file ? "" : `, which ${show(reason.file)} imports`}`;
+    const options = declaration.mark.runtime.map(
+      (option) => `\`${option}: ${name}\``,
+    );
+    const fix =
+      options.length > 0
+        ? `Pass ${name} only as ${options.join(" or ")}, or move the value that you need to a file that doesn't import ${reason.module}.`
+        : `Move the value that you need to a file that doesn't import ${reason.module}.`;
     throw new Error(
-      `${show(module.file)}:${location(module.source, node.start)}: the declaration ${declaration.binding} uses ${name} outside a runtime: option. ${why}, which only ${providerOfModule(reason.module)} provides, and the infra build runs on Node. Pass ${name} only in a runtime: option, such as class: ${name}, or move what the infra build needs to a module that doesn't import ${reason.module}, directly or through other modules.`,
+      `${show(module.file)}:${location(module.source, node.start)}: ${name} can't be used here. Deploy runs ${declaration.name}() on Node to read its options, and ${why}. Node can't load ${reason.module}. ${fix}`,
     );
   }
 }

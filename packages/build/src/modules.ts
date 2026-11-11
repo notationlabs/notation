@@ -175,6 +175,32 @@ export class ModuleAnalyses {
   }
 
   /**
+   * Fails if a module that `files.shared` matches uses a module that only
+   * one platform provides, such as `cloudflare:workers`, directly or through
+   * a name from another module. `removed` holds the names that the infra
+   * strip would leave out of the module. Neither build strips a shared
+   * module, and Node can't load the provided module.
+   */
+  checkSharedPlatformUse(
+    file: string,
+    removed: { names: Map<string, { module: string; file: string }> },
+  ) {
+    const match = this.kindOf(file);
+    if (match?.kind !== "shared") return;
+    const [first] = removed.names;
+    if (!first) return;
+    const [name, reason] = first;
+    const shared = describeKind(this.show(file), match);
+    const how =
+      reason.file === file
+        ? `imports ${reason.module}`
+        : `uses ${name}, which depends on ${reason.module} (${this.show(reason.file)} imports it)`;
+    throw new Error(
+      `${shared}, ${how}. A shared module runs on Node at deploy as well as in the function, and Node can't load ${reason.module}. Move the code that needs ${reason.module} to a runtime module.`,
+    );
+  }
+
+  /**
    * Fails if a module that `files.shared` matches holds a declaration,
    * imports a resource function, or imports an infra or runtime module. The
    * last is checked through the value imports of the modules that it

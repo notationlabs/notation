@@ -650,7 +650,7 @@ it("fails the infra build on a static cloudflare: import that the strip doesn't 
     `import { DurableObject } from "./registry";\nglobalThis.base = DurableObject;`,
   );
   await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
-    "infra/registry.ts imports cloudflare:workers, and the infra build uses the import. The infra build can't load cloudflare:workers, because only workerd provides it",
+    "infra/registry.ts imports cloudflare:workers, and code that deploy runs on Node uses the import. Node can't load cloudflare:workers.",
   );
 });
 
@@ -676,6 +676,25 @@ it("builds an infra module with an import of another scheme, such as bun:", asyn
   ).resolves.toBeDefined();
 });
 
+it("fails the infra build for a shared module that imports cloudflare:workers", async () => {
+  writeProject();
+  write(
+    "shared/names.ts",
+    [
+      `import { DurableObject } from "cloudflare:workers";`,
+      `export class Base extends DurableObject {}`,
+      `export const NAME = "counters";`,
+    ].join("\n"),
+  );
+  write(
+    "infra/main.ts",
+    `import { NAME } from "../shared/names";\nconsole.log(NAME);`,
+  );
+  await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
+    /shared\/names\.ts, a shared module \(.*\), imports cloudflare:workers\. A shared module runs on Node at deploy as well as in the function, and Node can't load cloudflare:workers\. Move the code that needs cloudflare:workers to a runtime module\./,
+  );
+});
+
 describe("a declaration that uses a class that the infra build leaves out", () => {
   it("fails the infra build for a use outside a runtime: option", async () => {
     writeProject();
@@ -689,7 +708,7 @@ describe("a declaration that uses a class that the infra build leaves out", () =
     await expect(
       compileInfra(path.join(root, "infra/main.ts")),
     ).rejects.toThrow(
-      "runtime/counter.ts:13:87: the declaration counters uses Counter outside a runtime: option. Counter is not in the infra build, because it uses cloudflare:workers, which only workerd provides, and the infra build runs on Node. Pass Counter only in a runtime: option, such as class: Counter, or move what the infra build needs to a module that doesn't import cloudflare:workers, directly or through other modules.",
+      "runtime/counter.ts:13:87: Counter can't be used here. Deploy runs $durableObject() on Node to read its options, and Counter depends on cloudflare:workers. Node can't load cloudflare:workers. Pass Counter only as `class: Counter`, or move the value that you need to a file that doesn't import cloudflare:workers.",
     );
   });
 
@@ -716,7 +735,7 @@ describe("a declaration that uses a class that the infra build leaves out", () =
     await expect(
       compileInfra(path.join(root, "infra/main.ts")),
     ).rejects.toThrow(
-      "runtime/counter.ts:4:46: the declaration counters uses label outside a runtime: option. label is not in the infra build, because it uses cloudflare:workers, through runtime/cls.ts,",
+      "runtime/counter.ts:4:46: label can't be used here. Deploy runs $durableObject() on Node to read its options, and label depends on cloudflare:workers, which runtime/cls.ts imports. Node can't load cloudflare:workers.",
     );
   });
 });

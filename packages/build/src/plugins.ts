@@ -119,6 +119,7 @@ export function infraPlugin({
         analyses.checkDeclaration(id, analysis);
         checkRuntimeImports(analysis, analyses);
         const removal = removals.of(id);
+        if (removal) analyses.checkSharedPlatformUse(id, removal);
         if (!analysis.declaration) {
           return (removal && stripProvided(analysis, removal)) ?? null;
         }
@@ -151,7 +152,7 @@ export function infraPlugin({
           this.getModuleInfo(id)?.importedIds.includes(source),
         );
         throw new Error(
-          `${importer ? analyses.show(importer) : chunk.fileName} imports ${source}, and the infra build uses the import. The infra build can't load ${source}, because only ${providerOfModule(source)} provides it and the infra build runs on Node. Pass the value that needs ${source}, such as a class, in a runtime: option, or move what the infra build uses to a module that doesn't import ${source}.`,
+          `${importer ? analyses.show(importer) : chunk.fileName} imports ${source}, and code that deploy runs on Node uses the import. Node can't load ${source}. Move the code that deploy runs to a file that doesn't import ${source}.`,
         );
       }
       if (!onDeclarationModules) return;
