@@ -467,6 +467,18 @@ describe("WorkerScript", () => {
     });
   });
 
+  it("fails, and doesn't read the Worker as missing, on a 404 without Cloudflare's not-found code", async () => {
+    mockFetch(() => fail(404, 7003, "Could not route"));
+    const key = { AccountId: "acc", ScriptName: "app--dev--api" };
+
+    const read = await script.read!(key).catch((e) => e);
+    expect(read).not.toBeInstanceOf(ResourceNotFoundError);
+    expect(read.message).toContain("failed with status 404");
+    await expect(script.delete(key, {} as any)).rejects.toThrow(
+      "failed with status 404",
+    );
+  });
+
   it("names the account variable when it is not set", async () => {
     vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "");
 

@@ -5,13 +5,12 @@ import { CloudflareApiError, cloudflare } from "./client";
 const WORKER_NOT_FOUND = 10007;
 
 /**
- * True for a Worker or a workers.dev setting that doesn't exist. Cloudflare
- * also returns a 404 for a Worker with no versions, but that Worker exists.
+ * True for a Worker that doesn't exist. Any other 404 is not treated as
+ * not found: reading a Worker as gone when it exists would make a delete
+ * drop it from state and leave it running.
  */
 export const isNotFound = (error: unknown): boolean =>
-  error instanceof CloudflareApiError &&
-  (error.hasCode(WORKER_NOT_FOUND) ||
-    (error.status === 404 && !hasNoVersions(error)));
+  error instanceof CloudflareApiError && error.hasCode(WORKER_NOT_FOUND);
 
 // A Worker made without code, such as in the dashboard, has no versions.
 const hasNoVersions = (error: CloudflareApiError): boolean =>
