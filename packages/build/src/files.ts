@@ -206,6 +206,16 @@ export class FileKinds {
     return false;
   }
 
+  /** The name of the package that holds a package file, such as `@notation/aws`. */
+  providerOf(file: string): string | undefined {
+    if (!this.isPackageFile(file)) return undefined;
+    for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
+      const name = this.packageName(dir);
+      if (name !== undefined) return name;
+      if (dir === path.dirname(dir)) return undefined;
+    }
+  }
+
   /** The `name` in the `package.json` of a folder, if it has one. */
   packageName(dir: string): string | undefined {
     if (this.#packageNames.has(dir)) return this.#packageNames.get(dir);

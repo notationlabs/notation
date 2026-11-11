@@ -46,8 +46,15 @@ export class ModuleAnalyses {
   #sharedPassed = new Set<string>();
 
   constructor(options: ModuleAnalysesOptions = {}) {
-    this.marks = options.marks ?? new Marks();
     this.files = new FileKinds(options.files, options.root);
+    this.marks =
+      options.marks ??
+      new Marks({
+        locate: (file) => ({
+          file: this.files.show(file),
+          provider: this.files.providerOf(file),
+        }),
+      });
   }
 
   /**

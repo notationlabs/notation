@@ -70,10 +70,28 @@ export type ModuleTable = {
   stars: string[];
 };
 
+/** The file of a mark, for an error message. */
+export type MarkSource = {
+  file: string;
+  /** The package that holds the file. Unset for a file of the project. */
+  provider?: string;
+};
+
 const tags = ["declaration", "resource"] as const;
 
-/** Reads the mark in a JSDoc comment, if it has one. */
-export function parseMark(jsDoc: string, where: string): Mark | undefined {
+/**
+ * Reads the mark in a JSDoc comment, if it has one. An error for a mark in a
+ * provider says what the provider should change, because the user can't
+ * change it.
+ */
+export function parseMark(
+  jsDoc: string,
+  { file: where, provider }: MarkSource,
+): Mark | undefined {
+  const fix = (action: string) =>
+    provider
+      ? `The provider ${provider} should ${action}`
+      : action[0]!.toUpperCase() + action.slice(1);
   const text = jsDoc
     .split("\n")
     .map((line) => line.replace(/^\s*\*?\s?/, ""))
@@ -86,7 +104,7 @@ export function parseMark(jsDoc: string, where: string): Mark | undefined {
       const runtime = /^runtime:(.*)$/.exec(body);
       if (body && !runtime) {
         throw new Error(
-          `${where}: unknown clause "${body}" in the @resource mark. Use runtime.`,
+          `${where}: unknown clause "${body}" in the @resource mark. ${fix("use runtime.")}`,
         );
       }
       return runtime
@@ -109,20 +127,20 @@ export function parseMark(jsDoc: string, where: string): Mark | undefined {
       } else if (name === "entry") {
         if (!value) {
           throw new Error(
-            `${where}: the entry clause of the @declaration mark has no export name. Write entry: handler, or leave the clause out for a declaration with no runtime bundle.`,
+            `${where}: the entry clause of the @declaration mark has no export name. ${fix("write entry: handler, or leave the clause out for a declaration with no runtime bundle.")}`,
           );
         }
         mark.entry = value;
       } else if (name === "platform") {
         if (!isPlatformName(value)) {
           throw new Error(
-            `${where}: unknown platform "${value}" in the @declaration mark. Use ${platformNames.join(" or ")}.`,
+            `${where}: unknown platform "${value}" in the @declaration mark. ${fix(`use ${platformNames.join(" or ")}.`)}`,
           );
         }
         mark.platform = value;
       } else {
         throw new Error(
-          `${where}: unknown clause "${name}" in the @declaration mark. Use shared, runtime, keys, entry or platform.`,
+          `${where}: unknown clause "${name}" in the @declaration mark. ${fix("use shared, runtime, keys, entry or platform.")}`,
         );
       }
     }
@@ -145,8 +163,8 @@ function markOfDeclaration(
   node: Node,
   commentStart: number,
   marks: Map<string, Mark>,
+  where: MarkSource,
 ) {
-  const where = `${module.file}`;
   if (node.type === "FunctionDeclaration" && node.id) {
     const jsDoc = leadingJsDoc(module, commentStart);
     const mark = jsDoc && parseMark(jsDoc, where);
@@ -173,7 +191,10 @@ function declaredNames(node: Node): string[] {
 }
 
 /** Reads the imports, exports and marks of a parsed module. */
-export function readModuleTable(module: ParsedModule): ModuleTable {
+export function readModuleTable(
+  module: ParsedModule,
+  where: MarkSource = { file: module.file },
+): ModuleTable {
   const table: ModuleTable = {
     module,
     marks: new Map(),
@@ -204,7 +225,13 @@ export function readModuleTable(module: ParsedModule): ModuleTable {
       }
       case "FunctionDeclaration":
       case "VariableDeclaration":
-        markOfDeclaration(module, statement, statement.start, table.marks);
+        markOfDeclaration(
+          module,
+          statement,
+          statement.start,
+          table.marks,
+          where,
+        );
         break;
       case "ExportNamedDeclaration": {
         if (statement.exportKind === "type") break;
@@ -214,6 +241,7 @@ export function readModuleTable(module: ParsedModule): ModuleTable {
             statement.declaration,
             statement.start,
             table.marks,
+            where,
           );
           for (const name of declaredNames(statement.declaration)) {
             table.exports.set(name, { local: name });
@@ -242,6 +270,7 @@ export function readModuleTable(module: ParsedModule): ModuleTable {
               declaration,
               statement.start,
               table.marks,
+              where,
             );
             table.exports.set("default", { local: declaration.id.name });
           }
@@ -343,12 +372,19 @@ export class Marks {
   #tables = new Map<string, ModuleTable | null>();
   #resolve: Resolve;
   #readFile: (file: string) => string;
+  #locate: (file: string) => MarkSource;
 
   constructor(
-    opts: { resolve?: Resolve; readFile?: (file: string) => string } = {},
+    opts: {
+      resolve?: Resolve;
+      readFile?: (file: string) => string;
+      /** Names a file and its provider in the errors for its marks. */
+      locate?: (file: string) => MarkSource;
+    } = {},
   ) {
     this.#resolve = opts.resolve ?? createResolve();
     this.#readFile = opts.readFile ?? ((file) => fs.readFileSync(file, "utf8"));
+    this.#locate = opts.locate ?? ((file) => ({ file }));
   }
 
   resolve(specifier: string, importer: string): string | undefined {
@@ -360,7 +396,10 @@ export class Marks {
     let table = this.#tables.get(file);
     if (table === undefined) {
       table = /\.[cm]?[jt]sx?$/.test(file)
-        ? readModuleTable(parseModule(file, this.#readFile(file)))
+        ? readModuleTable(
+            parseModule(file, this.#readFile(file)),
+            this.#locate(file),
+          )
         : null;
       this.#tables.set(file, table);
     }
@@ -369,7 +408,10 @@ export class Marks {
 
   /** Uses `source` as the contents of `file`, as a plugin's transform sees it. */
   setSource(file: string, source: string): ModuleTable {
-    const table = readModuleTable(parseModule(file, source));
+    const table = readModuleTable(
+      parseModule(file, source),
+      this.#locate(file),
+    );
     this.#tables.set(file, table);
     return table;
   }

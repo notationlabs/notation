@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import { parseMark } from "src/index";
 import { root, virtualMarks } from "./virtual";
 
+const f = { file: "f" };
+
 describe("parseMark", () => {
   it("reads a declaration mark", () => {
     expect(
       parseMark(
         "* @declaration shared: event, env; keys: env; entry: handler ",
-        "f",
+        f,
       ),
     ).toEqual({
       kind: "declaration",
@@ -22,7 +24,7 @@ describe("parseMark", () => {
   it("reads a declaration mark among other JSDoc", () => {
     const jsDoc =
       "*\n * Declares a namespace.\n * @declaration runtime: class\n * @param config the options\n ";
-    expect(parseMark(jsDoc, "f")).toEqual({
+    expect(parseMark(jsDoc, f)).toEqual({
       kind: "declaration",
       shared: [],
       runtime: ["class"],
@@ -34,7 +36,7 @@ describe("parseMark", () => {
     expect(
       parseMark(
         "* @declaration shared: id; entry: default; platform: workerd ",
-        "f",
+        f,
       ),
     ).toEqual({
       kind: "declaration",
@@ -48,38 +50,49 @@ describe("parseMark", () => {
 
   it("fails for an unknown platform", () => {
     expect(() =>
-      parseMark("* @declaration entry: default; platform: deno ", "f"),
+      parseMark("* @declaration entry: default; platform: deno ", f),
     ).toThrow(
       'f: unknown platform "deno" in the @declaration mark. Use node or workerd.',
     );
   });
 
+  it("says what the provider should change for a mark in a provider", () => {
+    expect(() =>
+      parseMark("* @declaration entry: default; platform: deno ", {
+        file: "@notation/cloudflare/dist/workers/index.js",
+        provider: "@notation/cloudflare",
+      }),
+    ).toThrow(
+      '@notation/cloudflare/dist/workers/index.js: unknown platform "deno" in the @declaration mark. The provider @notation/cloudflare should use node or workerd.',
+    );
+  });
+
   it("fails for an entry clause with no export name", () => {
-    expect(() => parseMark("* @declaration shared: id; entry: ", "f")).toThrow(
+    expect(() => parseMark("* @declaration shared: id; entry: ", f)).toThrow(
       "f: the entry clause of the @declaration mark has no export name.",
     );
   });
 
   it("reads a resource mark", () => {
-    expect(parseMark("* @resource ", "f")).toEqual({ kind: "resource" });
+    expect(parseMark("* @resource ", f)).toEqual({ kind: "resource" });
   });
 
   it("reads a resource mark with an empty runtime list", () => {
-    expect(parseMark("* @resource runtime: ", "f")).toEqual({
+    expect(parseMark("* @resource runtime: ", f)).toEqual({
       kind: "resource",
       runtime: [],
     });
   });
 
   it("reads the runtime options of a resource mark", () => {
-    expect(parseMark("* @resource runtime: schema ", "f")).toEqual({
+    expect(parseMark("* @resource runtime: schema ", f)).toEqual({
       kind: "resource",
       runtime: ["schema"],
     });
   });
 
   it("ignores JSDoc without a mark", () => {
-    expect(parseMark("* Declares a queue. ", "f")).toBeUndefined();
+    expect(parseMark("* Declares a queue. ", f)).toBeUndefined();
   });
 });
 
