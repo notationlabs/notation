@@ -692,6 +692,24 @@ describe("plan params", () => {
     });
   });
 
+  it("plans cautiously when deriveParams lists the keys of an output that lacks a required output", async () => {
+    const Derived = LogGroup.requireDependencies<{
+      fn: InstanceType<typeof Fn>;
+    }>().deriveParams(({ deps }) => ({
+      logGroupName: `/aws/lambda/${Object.keys(deps.fn.output).join()}`,
+    }));
+    const fn = fnWith();
+    fn.setOutput({ FunctionName: "f", Role: "r" } as any);
+    const logGroup = new Derived("logs", {
+      config: { retention: 7 },
+      dependencies: { fn },
+    });
+    expect(await logGroup.planParams()).toEqual({
+      logGroupName: UNKNOWN_AFTER_APPLY,
+      retention: 7,
+    });
+  });
+
   it("plans exactly when deriveParams reads only outputs that are in state", async () => {
     const Derived = LogGroup.requireDependencies<{
       fn: InstanceType<typeof Fn>;

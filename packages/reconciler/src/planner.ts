@@ -1,4 +1,8 @@
-import { validateParams, type BaseResource } from "@notation/resource";
+import {
+  assertRequiredOutputs,
+  validateParams,
+  type BaseResource,
+} from "@notation/resource";
 import type { StateBackend, StateNode } from "@notation/state";
 import {
   assertDependenciesPresent,
@@ -138,6 +142,10 @@ export async function createPlan({
  * Outputs in
  * state stand in for the outputs of dependencies, so the dependencies must be
  * loaded first.
+ * Plan treats a required output missing from a dependency's state as
+ * unknown, because deploy reads the dependency again to fill it in. A
+ * dependency with no `read` cannot be read again, so every deploy fails on
+ * it, and this throws the same error.
  */
 export async function planKnownParams(
   resource: BaseResource,
@@ -150,6 +158,9 @@ export async function planKnownParams(
   const stateNode = await state.get(resource.id);
   assertSameType(resource, stateNode);
   if (stateNode) resource.setOutput(stateNode.output);
+  for (const dep of resource.getDependencies()) {
+    if (dep.output != null && !dep.read) assertRequiredOutputs(dep, dep.output);
+  }
   const params = await resource.planParams();
   await validateParams(resource, params, point);
   return { stateNode, params };

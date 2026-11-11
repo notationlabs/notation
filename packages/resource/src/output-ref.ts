@@ -137,8 +137,7 @@ export const deployLookup: OutputLookup = (token) => {
 export const planLookup: OutputLookup = (token) => {
   const output = token.resource.output as Record<string, unknown> | null;
   if (output == null) return { known: false };
-  const [key] = token.path;
-  if (missingRequiredOutputs(token.resource, output).includes(key)) {
+  if (isMissingRequiredOutput(token.resource.schema, output, token.path[0])) {
     return { known: false };
   }
   return { known: true, value: readPath(output, token.path) };
@@ -153,14 +152,22 @@ export function missingRequiredOutputs(
   resource: { schema: Schema },
   output: Record<string, unknown>,
 ): string[] {
-  return Object.entries(resource.schema)
-    .filter(
-      ([key, item]) =>
-        item.propertyType === "computed" &&
-        item.presence === "required" &&
-        output[key] === undefined,
-    )
-    .map(([key]) => key);
+  return Object.keys(resource.schema).filter((key) =>
+    isMissingRequiredOutput(resource.schema, output, key),
+  );
+}
+
+function isMissingRequiredOutput(
+  schema: Schema,
+  output: Record<string, unknown>,
+  key: string,
+): boolean {
+  const item = schema[key];
+  return (
+    item?.propertyType === "computed" &&
+    item.presence === "required" &&
+    output[key] === undefined
+  );
 }
 
 /**
@@ -219,8 +226,9 @@ export class PendingOutput extends Error {
  * dependency with no output throws `PendingOutput` when its output is read.
  * A view of a dependency whose output lacks a required output throws it when
  * that output is read. `readPending` is set by such a read, so a plan still
- * knows of it when the code catches the error. Only property reads are
- * checked: spreading the output, `Object.keys` and `in` don't throw.
+ * knows of it when the code catches the error. Code that lists the keys of
+ * such an output, such as a spread or `Object.keys`, or that tests a key with
+ * `in`, does not throw, but sets `readPending` too.
  */
 export function createPlanViews() {
   const views = {
@@ -234,31 +242,34 @@ export function createPlanViews() {
     },
   };
 
-  const readPending = (dep: BaseResource): never => {
+  const throwPending = (dep: BaseResource): never => {
     views.readPending = true;
     throw new PendingOutput(dep);
   };
 
   const pendingView = (dep: BaseResource): BaseResource => {
     const output = dep.output as Record<string, unknown> | null;
-    const missing = output && missingRequiredOutputs(dep, output);
-    const viewedOutput =
-      output &&
-      new Proxy(output, {
-        get(target, key, receiver) {
-          if (typeof key === "string" && missing!.includes(key)) {
-            return readPending(dep);
-          }
-          return Reflect.get(target, key, receiver);
-        },
-      });
-    return Object.create(dep, {
-      output: {
-        get() {
-          return viewedOutput ?? readPending(dep);
-        },
+    if (output == null) {
+      return Object.create(dep, { output: { get: () => throwPending(dep) } });
+    }
+    const missing = missingRequiredOutputs(dep, output);
+    const viewedOutput = new Proxy(output, {
+      get(target, key, receiver) {
+        if (typeof key === "string" && missing.includes(key)) {
+          return throwPending(dep);
+        }
+        return Reflect.get(target, key, receiver);
+      },
+      has(target, key) {
+        views.readPending = true;
+        return Reflect.has(target, key);
+      },
+      ownKeys(target) {
+        views.readPending = true;
+        return Reflect.ownKeys(target);
       },
     });
+    return Object.create(dep, { output: { get: () => viewedOutput } });
   };
 
   return views;

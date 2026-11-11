@@ -798,24 +798,27 @@ describe("createPlan", () => {
 
   describe("output refs", () => {
     // Cast: see above.
-    const Queue = resource({ type: "test/planner/queue", provider: "test" })
-      .defineSchema({
-        name: {
-          presence: "required",
-          propertyType: "param",
-          primaryKey: true,
-          value: v.string(),
-        },
-        arn: {
-          presence: "required",
-          propertyType: "computed",
-          value: v.string(),
-        },
-      } as any)
-      .defineOperations({
-        create: async () => undefined,
-        delete: async () => undefined,
-      });
+    const defineQueue = (read?: () => Promise<{}>) =>
+      resource({ type: "test/planner/queue", provider: "test" })
+        .defineSchema({
+          name: {
+            presence: "required",
+            propertyType: "param",
+            primaryKey: true,
+            value: v.string(),
+          },
+          arn: {
+            presence: "required",
+            propertyType: "computed",
+            value: v.string(),
+          },
+        } as any)
+        .defineOperations({
+          create: async () => undefined,
+          ...(read ? { read } : {}),
+          delete: async () => undefined,
+        });
+    const Queue = defineQueue(async () => ({}));
     const Fn = resource({ type: "test/planner/function", provider: "test" })
       .defineSchema({
         name: {
@@ -884,6 +887,18 @@ describe("createPlan", () => {
       ]);
     });
 
+    const record = (id: string, type: string, params: DurableObject) => ({
+      version: 1,
+      id,
+      type,
+      provider: "test",
+      config: {},
+      params,
+      output: params,
+      lastOperation: "create" as const,
+      lastOperationAt: "2026-07-22T00:00:00.000Z",
+    });
+
     it("plans a required output missing from a dependency's state as unknown", async () => {
       const queue = new Queue("queue", { config: { name: "orders" } as any });
       const fn = new Fn("fn", {
@@ -891,17 +906,6 @@ describe("createPlan", () => {
           name: "f",
           queueArn: (queue as any).outputRef("arn"),
         } as any,
-      });
-      const record = (id: string, type: string, params: DurableObject) => ({
-        version: 1,
-        id,
-        type,
-        provider: "test",
-        config: {},
-        params,
-        output: params,
-        lastOperation: "create" as const,
-        lastOperationAt: "2026-07-22T00:00:00.000Z",
       });
 
       const plan = await createPlan({
@@ -922,6 +926,33 @@ describe("createPlan", () => {
           dependsOn: ["queue"],
         },
       ]);
+    });
+
+    it("fails when a dependency with no read lacks a required output in state", async () => {
+      const QueueWithoutRead = defineQueue();
+      const queue = new QueueWithoutRead("queue", {
+        config: { name: "orders" } as any,
+      });
+      const fn = new Fn("fn", {
+        config: {
+          name: "f",
+          queueArn: (queue as any).outputRef("arn"),
+        } as any,
+      });
+
+      const error = await createPlan({
+        resources: [queue, fn],
+        state: new MemoryStateBackend({
+          queue: record("queue", QueueWithoutRead.type, { name: "orders" }),
+          fn: record("fn", Fn.type, { name: "f", queueArn: "arn:q" }),
+        }),
+        driftDetection: false,
+      }).catch((e) => e);
+
+      expect(error).toMatchObject({
+        name: "SchemaStructureError",
+        fields: ["arn"],
+      });
     });
   });
 

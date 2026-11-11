@@ -2990,6 +2990,7 @@ describe("value validation at deploy", () => {
     create: () => Promise<void>,
     memory: () => number,
     roleValue: v.GenericSchema<string> = v.string(),
+    update?: () => Promise<void>,
   ) {
     return resource<FnApi>({
       type: "test/durable/validated-fn",
@@ -3016,6 +3017,7 @@ describe("value validation at deploy", () => {
       })
       .defineOperations({
         create,
+        ...(update ? { update } : {}),
         delete: async () => undefined,
       })
       .requireDependencies<{ role: BaseResource }>()
@@ -3426,7 +3428,11 @@ describe("value validation at deploy", () => {
       dependencies: { role },
     });
     const runtime = createRuntime([role, fn], "dependent-outputs");
-    await runtime.run("dependent-outputs-1").catch(() => {});
+    const error = await runtime.run("dependent-outputs-1").catch((e) => e);
+    expect(error).toMatchObject({
+      name: "SchemaStructureError",
+      fields: ["arn"],
+    });
     expect(await runtime.state.get("role")).toMatchObject({ id: "role" });
     expect(createFn).not.toHaveBeenCalled();
 
@@ -3434,6 +3440,70 @@ describe("value validation at deploy", () => {
     await runtime.run("dependent-outputs-2");
 
     expect(await runtime.state.get("fn")).toMatchObject({
+      params: { name: "fn", memory: 128, role: "arn:role" },
+    });
+    runtime.close();
+  });
+
+  it("leaves a dependent unchanged once a missing output is filled in with the value it already has", async () => {
+    // The role's type had no `arn` output when the first deploy ran.
+    const OldRole = resource<{
+      Key: { name: string };
+      CreateParams: { name: string };
+      UpdateParams: {};
+      ReadResult: {};
+    }>({
+      type: "test/durable/validated-role",
+      provider: "test",
+    })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          primaryKey: true,
+          immutable: true,
+        },
+      })
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+      });
+    const createFn = vi.fn(async () => undefined);
+    const updateFn = vi.fn(async () => undefined);
+    const Fn = defineFn(createFn, () => 128, v.string(), updateFn);
+    const oldRole = new OldRole("role", { config: { name: "role" } });
+    const resources: BaseResource[] = [
+      oldRole,
+      new Fn("fn", {
+        config: { name: "fn", role: "arn:role" },
+        dependencies: { role: oldRole },
+      }),
+    ];
+    const runtime = createRuntime(resources, "recovered-dependent");
+    await runtime.run("recovered-dependent-1");
+    expect((await runtime.state.get("role"))?.output).not.toHaveProperty("arn");
+
+    const Role = defineRole({ read: async () => ({ arn: "arn:role" }) });
+    const role = new Role("role", { config: { name: "role" } });
+    resources.splice(
+      0,
+      2,
+      role,
+      new Fn("fn", {
+        config: { name: "fn", role: role.outputRef("arn") },
+        dependencies: { role },
+      }),
+    );
+    await runtime.run("recovered-dependent-2");
+
+    expect(await runtime.state.get("role")).toMatchObject({
+      output: { arn: "arn:role" },
+    });
+    expect(createFn).toHaveBeenCalledOnce();
+    expect(updateFn).not.toHaveBeenCalled();
+    expect(await runtime.state.get("fn")).toMatchObject({
+      lastOperation: "create",
       params: { name: "fn", memory: 128, role: "arn:role" },
     });
     runtime.close();
