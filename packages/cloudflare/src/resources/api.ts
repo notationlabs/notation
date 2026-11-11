@@ -8,7 +8,9 @@ const API_URL = "https://api.cloudflare.com/client/v4";
 /** The code of Cloudflare's error for a Worker that doesn't exist. */
 const WORKER_NOT_FOUND = 10007;
 
-export type CloudflareErrorItem = { code: number; message: string };
+// Cloudflare leaves the code out of some errors, such as a 403 for a token
+// without access.
+export type CloudflareErrorItem = { code?: number; message: string };
 
 export class CloudflareApiError extends Error {
   readonly status: number;
@@ -20,7 +22,11 @@ export class CloudflareApiError extends Error {
     errors: CloudflareErrorItem[],
     options?: ErrorOptions,
   ) {
-    const details = errors.map((e) => `${e.message} (${e.code})`).join("; ");
+    const details = errors
+      .map((e) =>
+        e.code === undefined ? e.message : `${e.message} (${e.code})`,
+      )
+      .join("; ");
     super(
       `Cloudflare API ${request} failed with status ${status}${details ? `: ${details}` : ""}`,
       options,

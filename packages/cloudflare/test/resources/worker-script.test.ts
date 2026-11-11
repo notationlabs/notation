@@ -308,6 +308,24 @@ describe("WorkerScript", () => {
     ).rejects.toThrow("Set CLOUDFLARE_ACCOUNT_ID");
   });
 
+  it("shows an API error that has no code without one", async () => {
+    mockFetch(() =>
+      Response.json(
+        {
+          success: false,
+          errors: [{ message: "No access to the specified resource." }],
+        },
+        { status: 403 },
+      ),
+    );
+
+    await expect(
+      script.read!({ AccountId: "acc", ScriptName: "app--dev--api" }),
+    ).rejects.toThrow(
+      /failed with status 403: No access to the specified resource\.$/,
+    );
+  });
+
   it("rejects a replacement when the account changes", () => {
     const { AccountId } = script.schema;
     if (AccountId.propertyType !== "param") throw new Error("not a param");
