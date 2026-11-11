@@ -567,6 +567,30 @@ describe("WorkerSubdomain", () => {
     });
   });
 
+  it("explains that the account has no workers.dev subdomain", async () => {
+    mockFetch((call) =>
+      call.url.endsWith("/workers/subdomain")
+        ? fail(404, 10000, "not found")
+        : ok({ enabled: true, previews_enabled: false }),
+    );
+
+    await expect(subdomain.read!(key)).rejects.toThrow(
+      "The account acc has no workers.dev subdomain.",
+    );
+  });
+
+  it("fails with the API error for a 404 that Cloudflare can't route", async () => {
+    mockFetch((call) =>
+      call.url.endsWith("/workers/subdomain")
+        ? fail(404, 7003, "Could not route")
+        : ok({ enabled: true, previews_enabled: false }),
+    );
+
+    await expect(subdomain.read!(key)).rejects.toThrow(
+      "failed with status 404",
+    );
+  });
+
   it("reads a Worker that is not on workers.dev as not found", async () => {
     mockFetch(() => ok({ enabled: false, previews_enabled: false }));
 

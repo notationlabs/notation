@@ -211,11 +211,30 @@ export async function setScriptSubdomain(
   });
 }
 
+// Cloudflare's error code for a path it can't route, such as one with an
+// account that doesn't exist.
+const INVALID_ROUTE = 7003;
+
 /** Returns the account's workers.dev subdomain. */
 export async function getAccountSubdomain(account: string): Promise<string> {
-  const { subdomain } = await cloudflare<{ subdomain: string }>(
-    "GET",
-    `/accounts/${encodeURIComponent(account)}/workers/subdomain`,
-  );
-  return subdomain;
+  try {
+    const { subdomain } = await cloudflare<{ subdomain: string }>(
+      "GET",
+      `/accounts/${encodeURIComponent(account)}/workers/subdomain`,
+    );
+    return subdomain;
+  } catch (error) {
+    // Any other 404 means that the account has no workers.dev subdomain.
+    if (
+      error instanceof CloudflareApiError &&
+      error.status === 404 &&
+      !error.hasCode(INVALID_ROUTE)
+    ) {
+      throw new Error(
+        `The account ${account} has no workers.dev subdomain. Set one up on the dashboard's Workers & Pages page, then deploy again.`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
