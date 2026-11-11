@@ -114,13 +114,7 @@ export function stripForRuntime(
 
   for (const [key, property] of kept) {
     for (const reference of freeReferences(property.value, removed)) {
-      checkReference(
-        reference.node,
-        key,
-        declaration,
-        analysis,
-        analyses,
-      );
+      checkReference(reference.node, key, declaration, analysis, analyses);
     }
   }
 

@@ -372,7 +372,7 @@ describe("declaration modules", () => {
     );
     const { modules } = await compileInfra(path.join(root, "infra/orders.ts"));
     await expect(compileRuntimeModules(modules)).rejects.toThrow(
-      'The function uses orders at runtime/queue-url.ts:2:31, and imports infra/orders.ts through runtime/process-orders.ts → runtime/queue-url.ts → infra/orders.ts.',
+      "The function uses orders at runtime/queue-url.ts:2:31, and imports infra/orders.ts through runtime/process-orders.ts → runtime/queue-url.ts → infra/orders.ts.",
     );
   });
 
@@ -1328,7 +1328,7 @@ describe("files config", () => {
     await expect(
       compileInfra(path.join(root, "infra/main.ts")),
     ).rejects.toThrow(
-      'infra/fn.ts:2:23: $lambda() can\'t be used in infra/fn.ts, an infra module (files.infra: "infra/**", the default), because an infra module only runs at deploy, and the function\'s code also has to run in the function. Move the declaration to a runtime module.',
+      "infra/fn.ts:2:23: $lambda() can't be used in infra/fn.ts, an infra module (files.infra: \"infra/**\", the default), because an infra module only runs at deploy, and the function's code also has to run in the function. Move the declaration to a runtime module.",
     );
   });
 

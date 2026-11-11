@@ -934,22 +934,25 @@ describe("stripForRuntime", () => {
       [
         "a runtime module",
         "runtime/schema.ts",
-        'is used both at deploy and in the function in runtime/handler.ts, so it can\'t come from runtime/schema.ts, a runtime module (files.runtime: "runtime/**", the default), which doesn\'t run as written at deploy.',
+        "is used both at deploy and in the function in runtime/handler.ts, so it can't come from runtime/schema.ts, a runtime module (files.runtime: \"runtime/**\", the default), which doesn't run as written at deploy.",
       ],
-    ])("fails when the schema is imported from %s", (_, schemaFile, problem) => {
-      expect(() =>
-        strip({
-          "infra/orders.ts": [
-            `import { createQueue } from "@notation/aws/sqs";`,
-            `import { Order } from "../${schemaFile.replace(".ts", "")}";`,
-            `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
-          ].join("\n"),
-          "infra/schema.ts": `export const Order = {};`,
-        }),
-      ).toThrow(
-        `infra/orders.ts:3:56: the schema of ordersQueue ${problem} Import the schema from a shared module (files.shared).`,
-      );
-    });
+    ])(
+      "fails when the schema is imported from %s",
+      (_, schemaFile, problem) => {
+        expect(() =>
+          strip({
+            "infra/orders.ts": [
+              `import { createQueue } from "@notation/aws/sqs";`,
+              `import { Order } from "../${schemaFile.replace(".ts", "")}";`,
+              `export const ordersQueue = createQueue({ id: "orders", schema: Order });`,
+            ].join("\n"),
+            "infra/schema.ts": `export const Order = {};`,
+          }),
+        ).toThrow(
+          `infra/orders.ts:3:56: the schema of ordersQueue ${problem} Import the schema from a shared module (files.shared).`,
+        );
+      },
+    );
 
     it("imports a schema from a file that no glob matches by its absolute path", () => {
       const { code } = strip({
