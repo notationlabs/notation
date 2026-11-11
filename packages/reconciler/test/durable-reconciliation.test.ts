@@ -3415,6 +3415,30 @@ describe("value validation at deploy", () => {
     runtime.close();
   });
 
+  it("fills in a required output missing from state before a dependent uses it", async () => {
+    let arn: string | undefined;
+    const createFn = vi.fn(async () => undefined);
+    const Role = defineRole({ read: async () => ({ arn }) });
+    const Fn = defineFn(createFn, () => 128);
+    const role = new Role("role", { config: { name: "role" } });
+    const fn = new Fn("fn", {
+      config: { name: "fn", role: role.outputRef("arn") },
+      dependencies: { role },
+    });
+    const runtime = createRuntime([role, fn], "dependent-outputs");
+    await runtime.run("dependent-outputs-1").catch(() => {});
+    expect(await runtime.state.get("role")).toMatchObject({ id: "role" });
+    expect(createFn).not.toHaveBeenCalled();
+
+    arn = "arn:role";
+    await runtime.run("dependent-outputs-2");
+
+    expect(await runtime.state.get("fn")).toMatchObject({
+      params: { name: "fn", memory: 128, role: "arn:role" },
+    });
+    runtime.close();
+  });
+
   it("fails every deploy while a resource with no read lacks a required output", async () => {
     const Role = defineRole();
     const runtime = createRuntime(

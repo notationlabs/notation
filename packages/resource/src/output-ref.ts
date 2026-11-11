@@ -130,13 +130,46 @@ export const deployLookup: OutputLookup = (token) => {
 
 /**
  * Finds output refs in the resource's output when it has one, such as the
- * output a plan reads from state, and leaves the rest unknown.
+ * output a plan reads from state, and leaves the rest unknown. A required
+ * output that the output lacks is unknown too.
  */
 export const planLookup: OutputLookup = (token) => {
   const output = token.resource.output as Record<string, unknown> | null;
   if (output == null) return { known: false };
+  const [key] = token.path;
+  if (key !== undefined && isMissingOutput(token.resource, key)) {
+    return { known: false };
+  }
   return { known: true, value: readPath(output, token.path) };
 };
+
+/**
+ * Whether the resource has an output that lacks `key`, and its schema
+ * requires `key` as an output. A state record written before an output was
+ * added to the resource's type lacks it, and deploy reads the resource again
+ * to fill it in.
+ */
+export function isMissingOutput(resource: BaseResource, key: string): boolean {
+  const output = resource.output as Record<string, unknown> | null;
+  const item = resource.schema[key];
+  return (
+    output != null &&
+    item?.propertyType === "computed" &&
+    item.presence === "required" &&
+    output[key] === undefined
+  );
+}
+
+/**
+ * Whether plan does not know some of the resource's outputs: it has no output
+ * yet, or its output lacks a required output.
+ */
+export function hasPendingOutput(resource: BaseResource): boolean {
+  if (resource.output == null) return true;
+  return Object.keys(resource.schema).some((key) =>
+    isMissingOutput(resource, key),
+  );
+}
 
 function readPath(output: unknown, path: readonly string[]): unknown {
   let value = output;
@@ -169,12 +202,20 @@ function describeOutputRef(token: OutputRef): string {
 }
 
 /**
- * Thrown by a plan view of a dependency whose output does not exist yet, when
- * code reads the output.
+ * Thrown by a plan view of a dependency when code reads an output that is not
+ * known yet: the output of a dependency that has none, or a required output
+ * that is missing from the dependency's output.
  */
 export class PendingOutput extends Error {
-  constructor(readonly resource: BaseResource) {
-    super(`The output of ${resource.id} is not known until it is deployed`);
+  constructor(
+    readonly resource: BaseResource,
+    readonly key?: string,
+  ) {
+    super(
+      key === undefined
+        ? `The output of ${resource.id} is not known until it is deployed`
+        : `Output ${resource.id}.${key} is missing from state, and is not known until deploy reads ${resource.id} again`,
+    );
     this.name = "PendingOutput";
   }
 }
@@ -182,8 +223,9 @@ export class PendingOutput extends Error {
 /**
  * Gives views of dependencies for code that runs at plan. A view of a
  * dependency with no output throws `PendingOutput` when its output is read.
- * `readPending` is set by such a read, so a plan still knows of it when the
- * code catches the error.
+ * A view of a dependency whose output lacks a required output throws it when
+ * that output is read. `readPending` is set by such a read, so a plan still
+ * knows of it when the code catches the error.
  */
 export function createPlanViews() {
   const views = {
@@ -191,18 +233,31 @@ export function createPlanViews() {
     of<Deps extends Record<string, BaseResource | void>>(deps: Deps): Deps {
       const viewed: Record<string, BaseResource | void> = {};
       for (const [name, dep] of Object.entries(deps)) {
-        viewed[name] = dep && dep.output == null ? pendingView(dep) : dep;
+        viewed[name] = dep && hasPendingOutput(dep) ? pendingView(dep) : dep;
       }
       return viewed as Deps;
     },
+  };
+
+  const readPending = (dep: BaseResource, key?: string): never => {
+    views.readPending = true;
+    throw new PendingOutput(dep, key);
   };
 
   const pendingView = (dep: BaseResource): BaseResource =>
     Object.create(dep, {
       output: {
         get() {
-          views.readPending = true;
-          throw new PendingOutput(dep);
+          const output = dep.output as Record<string, unknown> | null;
+          if (output == null) return readPending(dep);
+          return new Proxy(output, {
+            get(target, key, receiver) {
+              if (typeof key === "string" && isMissingOutput(dep, key)) {
+                return readPending(dep, key);
+              }
+              return Reflect.get(target, key, receiver);
+            },
+          });
         },
       },
     });

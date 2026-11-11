@@ -875,6 +875,84 @@ describe("createPlan", () => {
     ]);
   });
 
+  it("plans a required output missing from a dependency's state as unknown", async () => {
+    // Cast: see above.
+    const Queue = resource({ type: "test/planner/queue", provider: "test" })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+        arn: {
+          presence: "required",
+          propertyType: "computed",
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+      });
+    const Fn = resource({ type: "test/planner/function", provider: "test" })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+        queueArn: {
+          presence: "required",
+          propertyType: "param",
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const queue = new Queue("queue", { config: { name: "orders" } as any });
+    const fn = new Fn("fn", {
+      config: { name: "f", queueArn: (queue as any).outputRef("arn") } as any,
+    });
+    const record = (
+      id: string,
+      type: string,
+      params: Record<string, unknown>,
+    ) => ({
+      version: 1,
+      id,
+      type,
+      provider: "test",
+      config: {},
+      params,
+      output: params,
+      lastOperation: "create" as const,
+      lastOperationAt: "2026-07-22T00:00:00.000Z",
+    });
+
+    const plan = await createPlan({
+      resources: [queue, fn],
+      state: new MemoryStateBackend({
+        queue: record("queue", Queue.type, { name: "orders" }),
+        fn: record("fn", Fn.type, { name: "f", queueArn: "arn:q" }),
+      }),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toMatchObject([
+      { id: "queue", decision: "noop" },
+      {
+        id: "fn",
+        params: { name: "f", queueArn: UNKNOWN_AFTER_APPLY },
+        dependsOn: ["queue"],
+      },
+    ]);
+  });
+
   describe("value validation", () => {
     const Fn = resource<{
       Key: { name: string };
