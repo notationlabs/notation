@@ -92,8 +92,9 @@ export async function* reconcileCycle(
   for (let pass = 1; pass <= cycle.members.length; pass += 1) {
     changed = [];
     for (const resource of cycle.members) {
-      // The first pass is the first time deploy reaches a placeholder with
-      // its full params, so it is checked for drift and its noop announced.
+      // This loop's first pass is the first time that deploy reconciles a
+      // placeholder with its full params, so the placeholder is checked for
+      // drift then, and its noop is announced.
       const first = pass === 1 && cycle.placeholders.includes(resource);
       const before = resource.output as Record<string, unknown> | null;
       yield* reconcileResource(
@@ -112,7 +113,7 @@ export async function* reconcileCycle(
   }
 
   throw new ResourceCycleError(
-    `The cycle of ${otherIds(cycle)} did not settle after ${cycle.members.length + 1} passes. Each update changed an output that another member of the cycle takes: ${changed.join(", ")}. Take a value that stays the same across updates, such as a name, in place of one that changes on every update, such as a version ID.`,
+    `The cycle of ${otherIds(cycle)} did not settle after ${cycle.members.length + 1} passes. These outputs changed in the last pass: ${changed.join(", ")}. When a member takes an output of another member, take a value that stays the same across updates, such as a name, in place of one that changes on every update, such as a version ID.`,
   );
 }
 
