@@ -31,6 +31,16 @@ test("timeout and memory are applied to the function", () => {
   expect(group.fn.config).toMatchObject({ Timeout: 5, MemorySize: 256 });
 });
 
+test("concurrency sets the function's reserved concurrency", () => {
+  const group = lambda({ id: "todos", code, concurrency: 10 });
+  expect(group.fn.config.ReservedConcurrentExecutions).toBe(10);
+});
+
+test("a function without concurrency reserves none", () => {
+  const group = lambda({ id: "todos", code });
+  expect(group.fn.config.ReservedConcurrentExecutions).toBeUndefined();
+});
+
 test("the policy's role name is known at plan before the role is deployed", async () => {
   const group = lambda({ id: "get-todos", code });
   group.policy.contribute({

@@ -66,7 +66,6 @@ describe("Lambda config values", () => {
       new LambdaFunction("app", {
         config: {
           FunctionName: "app",
-          ReservedConcurrentExecutions: 1,
           ...config,
         } as any,
         dependencies: {} as any,
@@ -90,6 +89,12 @@ describe("Lambda config values", () => {
   it("rejects a code signing policy other than Warn or Enforce", () => {
     expect(declare({ CodeSigningPolicy: "Audit" })).toThrow(
       /CodeSigningPolicy/,
+    );
+  });
+
+  it("rejects a reserved concurrency that is not a whole number", () => {
+    expect(declare({ ReservedConcurrentExecutions: 1.5 })).toThrow(
+      /ReservedConcurrentExecutions/,
     );
   });
 
@@ -119,7 +124,7 @@ describe("Lambda code", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
-  async function createLambda() {
+  async function createLambda(ReservedConcurrentExecutions?: number) {
     const zipFile = new fs.File("zip", { config: { filePath } });
     zipFile.setOutput({
       filePath,
@@ -129,7 +134,7 @@ describe("Lambda code", () => {
     const role = new LambdaIamRole("role", { config: { RoleName: "app" } });
     role.setOutput({ Arn: "arn:aws:iam::123456789012:role/app" } as any);
     return new LambdaFunction("app", {
-      config: { FunctionName: "app", ReservedConcurrentExecutions: 1 },
+      config: { FunctionName: "app", ReservedConcurrentExecutions },
       dependencies: { role, zipFile },
     });
   }
@@ -144,7 +149,6 @@ describe("Lambda code", () => {
         Role: "arn:aws:iam::123456789012:role/app",
         CodeSha256,
       },
-      Concurrency: { ReservedConcurrentExecutions: 1 },
     };
     vi.spyOn(lambdaClient(), "send").mockImplementation(async (command) => {
       if (command instanceof sdk.GetFunctionCommand) return response;
@@ -220,6 +224,36 @@ describe("Lambda code", () => {
     const command = send.mock.calls[0]![0] as sdk.CreateFunctionCommand;
     expect(command.input.Environment).toEqual({
       Variables: { ORDERS: "arn:orders" },
+    });
+  });
+
+  it("creates the function without reserved concurrency when none is set", async () => {
+    const lambda = await createLambda();
+    const send = vi
+      .spyOn(lambdaClient(), "send")
+      .mockImplementation(async () => ({}));
+
+    await lambda.create(await lambda.getParams());
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]![0]).toBeInstanceOf(sdk.CreateFunctionCommand);
+  });
+
+  it("sets the reserved concurrency after creating the function", async () => {
+    const lambda = await createLambda(10);
+    const send = vi
+      .spyOn(lambdaClient(), "send")
+      .mockImplementation(async () => ({}));
+
+    await lambda.create(await lambda.getParams());
+
+    const [create, concurrency] = send.mock.calls.map(([command]) => command);
+    expect(create).toBeInstanceOf(sdk.CreateFunctionCommand);
+    expect(create!.input).not.toHaveProperty("ReservedConcurrentExecutions");
+    expect(concurrency).toBeInstanceOf(sdk.PutFunctionConcurrencyCommand);
+    expect(concurrency!.input).toEqual({
+      FunctionName: "app",
+      ReservedConcurrentExecutions: 10,
     });
   });
 
@@ -313,7 +347,6 @@ describe("Lambda environment", () => {
     const lambda = new LambdaFunction("app", {
       config: {
         FunctionName: "app",
-        ReservedConcurrentExecutions: 1,
         Environment,
       },
       dependencies: {} as any,
@@ -467,5 +500,106 @@ describe("Lambda environment", () => {
     const command = send.mock
       .calls[0]![0] as sdk.UpdateFunctionConfigurationCommand;
     expect(command.input.Environment).toEqual({ Variables: {} });
+  });
+});
+
+describe("Lambda reserved concurrency", () => {
+  function createLambda(ReservedConcurrentExecutions?: number) {
+    const lambda = new LambdaFunction("app", {
+      config: { FunctionName: "app", ReservedConcurrentExecutions },
+      dependencies: {} as any,
+    });
+    lambda.deriveParams = async () => ({});
+    return lambda;
+  }
+
+  function mockSend() {
+    return vi
+      .spyOn(lambdaClient(), "send")
+      .mockImplementation(async () => ({}));
+  }
+
+  it("sets the reserved concurrency on update", async () => {
+    const send = mockSend();
+
+    await createLambda(5).update!(
+      { FunctionName: "app" },
+      { ReservedConcurrentExecutions: 5 } as any,
+      { FunctionName: "app" } as any,
+      {} as any,
+    );
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const command = send.mock.calls[0]![0];
+    expect(command).toBeInstanceOf(sdk.PutFunctionConcurrencyCommand);
+    expect(command.input).toEqual({
+      FunctionName: "app",
+      ReservedConcurrentExecutions: 5,
+    });
+  });
+
+  it("removes the reserved concurrency when it is removed from config", async () => {
+    const send = mockSend();
+
+    await createLambda().update!(
+      { FunctionName: "app" },
+      { ReservedConcurrentExecutions: undefined } as any,
+      { FunctionName: "app" } as any,
+      {} as any,
+    );
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const command = send.mock.calls[0]![0];
+    expect(command).toBeInstanceOf(sdk.DeleteFunctionConcurrencyCommand);
+    expect(command.input).toEqual({ FunctionName: "app" });
+  });
+
+  it("leaves the reserved concurrency alone when it is not in the patch", async () => {
+    const send = mockSend();
+
+    await createLambda().update!(
+      { FunctionName: "app" },
+      { Timeout: 10 } as any,
+      { FunctionName: "app" } as any,
+      {} as any,
+    );
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]![0]).toBeInstanceOf(
+      sdk.UpdateFunctionConfigurationCommand,
+    );
+  });
+
+  it("reports no drift for a function with no reserved concurrency", async () => {
+    const lambda = createLambda();
+    vi.spyOn(lambdaClient(), "send").mockImplementation(async () => ({
+      Configuration: { FunctionName: "app", State: "Active", RevisionId: "1" },
+    }));
+    const output = await lambda.read!({ FunctionName: "app" }, {} as any);
+
+    expect(
+      decideDriftAction({
+        resource: lambda,
+        params: await lambda.getParams(),
+        driftRead: { kind: "present", output: output as any },
+      }).decision,
+    ).toBe("noop");
+  });
+
+  it("reports drift when AWS reports a different reserved concurrency", async () => {
+    const lambda = createLambda(5);
+    vi.spyOn(lambdaClient(), "send").mockImplementation(async () => ({
+      Configuration: { FunctionName: "app", State: "Active", RevisionId: "1" },
+      Concurrency: { ReservedConcurrentExecutions: 1 },
+    }));
+    const output = await lambda.read!({ FunctionName: "app" }, {} as any);
+
+    expect(
+      decideDriftAction({
+        resource: lambda,
+        params: await lambda.getParams(),
+        driftRead: { kind: "present", output: output as any },
+      }).decision,
+    ).toBe("drift-update");
   });
 });

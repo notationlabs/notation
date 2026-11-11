@@ -99,6 +99,7 @@ type LambdaConfig = {
   runtime?: string; // default "nodejs22.x"
   timeout?: number;
   memory?: number;
+  concurrency?: number; // reserved concurrency
 };
 ```
 
@@ -176,10 +177,12 @@ Lambda limits a function's environment variables to 4 KB in total. If the variab
 
 ## Runtime defaults
 
-| Setting       | Default      |
-| ------------- | ------------ |
-| Runtime       | Node.js 22.x |
-| Memory        | 128 MB       |
-| Timeout       | 3 seconds    |
-| Concurrency   | 1 (reserved) |
-| Log retention | 30 days      |
+| Setting       | Default           |
+| ------------- | ----------------- |
+| Runtime       | Node.js 22.x      |
+| Memory        | 128 MB            |
+| Timeout       | 3 seconds         |
+| Concurrency   | None (unreserved) |
+| Log retention | 30 days           |
+
+`concurrency` sets the function's reserved concurrency: the most instances of the function that run at once. Lambda sets this many aside from the account's concurrency limit. Without it, the function uses the account's unreserved concurrency, which it shares with the other functions in the account. Removing `concurrency` removes the reservation on the next deploy.

@@ -23,12 +23,12 @@ import { LambdaIamRoleInstance } from "./";
 export type LambdaFunctionSchema = AwsSchema<{
   Key: Omit<sdk.GetFunctionRequest, "Qualifier">;
   CreateParams: Omit<sdk.CreateFunctionRequest, "Code" | "Environment"> &
-    sdk.PutFunctionConcurrencyRequest &
+    ReservedConcurrencyParams &
     LambdaCodeParams &
     LambdaEnvironmentParams;
   UpdateParams: Omit<sdk.UpdateFunctionCodeRequest, "ZipFile"> &
     Omit<sdk.UpdateFunctionConfigurationRequest, "Environment"> &
-    sdk.PutFunctionConcurrencyRequest &
+    ReservedConcurrencyParams &
     sdk.PutFunctionCodeSigningConfigRequest &
     LambdaCodeParams &
     LambdaEnvironmentParams;
@@ -50,6 +50,14 @@ export type LambdaEnvironment = {
 };
 
 type LambdaEnvironmentParams = { Environment?: LambdaEnvironment };
+
+/**
+ * Without `ReservedConcurrentExecutions`, the function draws on the account's
+ * unreserved concurrency.
+ */
+type ReservedConcurrencyParams = Partial<
+  Pick<sdk.PutFunctionConcurrencyRequest, "ReservedConcurrentExecutions">
+>;
 
 /**
  * The code is uploaded from a file. The params hold the path and hash of the
@@ -198,8 +206,8 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
   },
   ReservedConcurrentExecutions: {
     propertyType: "param",
-    presence: "required",
-    value: v.number(),
+    presence: "optional",
+    value: v.pipe(v.number(), v.integer(), v.minValue(0)),
   },
   RevisionId: {
     propertyType: "computed",
@@ -274,7 +282,12 @@ export const LambdaFunction = lambdaFunctionSchema
     // The create attempt is recorded as a tag, so `find` can tell this
     // deploy's function from another with the same name.
     create: awsCreate(async (params, _context, token) => {
-      const { CodeFilePath, Environment, ...functionParams } = params;
+      const {
+        CodeFilePath,
+        Environment,
+        ReservedConcurrentExecutions,
+        ...functionParams
+      } = params;
       const command = new sdk.CreateFunctionCommand({
         ...functionParams,
         Environment: encodeEnvironment(params.FunctionName, Environment),
@@ -286,13 +299,15 @@ export const LambdaFunction = lambdaFunctionSchema
 
       await runLambdaMutation(() => lambdaClient().send(command));
 
-      // if (params.ReservedConcurrentExecutions) {
-      //   const concurrencyCommand = new sdk.PutFunctionConcurrencyCommand({
-      //     FunctionName: params.FunctionName,
-      //     ReservedConcurrentExecutions: params.ReservedConcurrentExecutions,
-      //   });
-      //   await lambdaClient().send(concurrencyCommand);
-      // }
+      // CreateFunction has no concurrency field, so it is set by a second call.
+      if (ReservedConcurrentExecutions !== undefined) {
+        await lambdaClient().send(
+          new sdk.PutFunctionConcurrencyCommand({
+            FunctionName: params.FunctionName,
+            ReservedConcurrentExecutions,
+          }),
+        );
+      }
     }),
 
     // A function without the token was not made by the attempt. Reporting it
@@ -354,7 +369,13 @@ export const LambdaFunction = lambdaFunctionSchema
     },
 
     update: async (key, patch, params) => {
-      const { CodeFilePath, CodeSha256, Environment, ...rest } = patch;
+      const {
+        CodeFilePath,
+        CodeSha256,
+        Environment,
+        ReservedConcurrentExecutions,
+        ...rest
+      } = patch;
       const conf: Omit<sdk.UpdateFunctionConfigurationRequest, "FunctionName"> =
         rest;
       // An omitted Environment leaves the variables as they were.
@@ -382,6 +403,22 @@ export const LambdaFunction = lambdaFunctionSchema
           ZipFile: await readCode(params.CodeFilePath, params.CodeSha256),
         });
         await runLambdaMutation(() => lambdaClient().send(codeCommand));
+      }
+
+      // A param removed from config is in the patch as undefined. Deleting the
+      // reserved concurrency returns the function to the unreserved pool.
+      if (!("ReservedConcurrentExecutions" in patch)) return;
+      if (ReservedConcurrentExecutions === undefined) {
+        await lambdaClient().send(
+          new sdk.DeleteFunctionConcurrencyCommand(key),
+        );
+      } else {
+        await lambdaClient().send(
+          new sdk.PutFunctionConcurrencyCommand({
+            ...key,
+            ReservedConcurrentExecutions,
+          }),
+        );
       }
     },
 

@@ -36,6 +36,12 @@ export type LambdaConfig = {
   timeout?: number;
   /** Megabytes of memory for the function. Lambda's default is 128. */
   memory?: number;
+  /**
+   * The function's reserved concurrency: the most instances that may run at
+   * once, set aside from the account's limit. Without it, the function uses
+   * the account's unreserved concurrency.
+   */
+  concurrency?: number;
 };
 
 // Marks a LambdaGroup. Two installed copies of this package have different
@@ -183,8 +189,7 @@ const build = (
         Runtime: runtime,
         Timeout: config.timeout,
         MemorySize: config.memory,
-        // todo: make this configurable and remove it as a default
-        ReservedConcurrentExecutions: 1,
+        ReservedConcurrentExecutions: config.concurrency,
       },
       dependencies: {
         role,

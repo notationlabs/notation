@@ -51,6 +51,12 @@ export type LambdaDeclarationConfig<
   timeout?: number;
   /** Megabytes of memory for the function. Lambda's default is 128. */
   memory?: number;
+  /**
+   * The function's reserved concurrency: the most instances that may run at
+   * once, set aside from the account's limit. Without it, the function uses
+   * the account's unreserved concurrency.
+   */
+  concurrency?: number;
 };
 
 type Registered = {
@@ -142,6 +148,7 @@ function buildGroup(
       runtime: config.runtime,
       timeout: config.timeout,
       memory: config.memory,
+      concurrency: config.concurrency,
     },
     { caller: "$lambda", where: record.path },
   );
