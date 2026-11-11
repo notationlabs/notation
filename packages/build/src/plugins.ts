@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Plugin } from "rolldown";
 import type { ModuleAnalysis } from "./analyze";
-import { location } from "./ast";
+import { location, parseModule } from "./ast";
 import { nodeModules, scriptFile } from "./files";
 import { runtimeExports } from "./exports";
 import {
@@ -88,11 +88,12 @@ export function infraPlugin({
       installed.clear();
     },
     resolveId(source, importer) {
-      const platform = providerOfModule(source);
-      if (importer && platform) {
-        throw new Error(
-          `${analyses.show(importer)} imports ${source}, which the infra build can't load, because only ${platform} provides it and the infra build runs on Node. Pass the value that needs ${source}, such as a class, in a runtime: option, and move what the infra build uses, such as an ID, to a module that doesn't import ${source}.`,
-        );
+      // A module that only another platform provides can't load on Node.
+      // It has no side effects, so the import is dropped when the infra
+      // bundle uses none of its names. generateBundle fails on one that
+      // stays.
+      if (importer && providerOfModule(source)) {
+        return { id: source, external: true, moduleSideEffects: false };
       }
       if (
         !importer ||
@@ -128,7 +129,18 @@ export function infraPlugin({
       if (error) return;
       for (const id of this.getModuleIds()) analyses.checkShared(id);
     },
-    generateBundle() {
+    generateBundle(_options, bundle) {
+      for (const chunk of Object.values(bundle)) {
+        if (chunk.type !== "chunk") continue;
+        const source = keptStaticImport(chunk.fileName, chunk.code);
+        if (!source) continue;
+        const importer = Object.keys(chunk.modules).find((id) =>
+          this.getModuleInfo(id)?.importedIds.includes(source),
+        );
+        throw new Error(
+          `${importer ? analyses.show(importer) : chunk.fileName} imports ${source}, and the infra build uses the import. The infra build can't load ${source}, because only ${providerOfModule(source)} provides it and the infra build runs on Node. Pass the value that needs ${source}, such as a class, in a runtime: option, or move what the infra build uses to a module that doesn't import ${source}.`,
+        );
+      }
       if (!onDeclarationModules) return;
       const ids = new Set(this.getModuleIds());
       const found = [...declarations.values()]
@@ -137,6 +149,19 @@ export function infraPlugin({
       onDeclarationModules(found);
     },
   };
+}
+
+// The first static import, in a chunk's code, of a module that only another
+// platform provides. Read from the code, as `chunk.imports` also lists the
+// imports that tree shaking removed. A dynamic import fails only if it runs,
+// so it is left in.
+function keptStaticImport(file: string, code: string): string | undefined {
+  for (const node of parseModule(file, code).body) {
+    if (node.type !== "ImportDeclaration") continue;
+    const source: string = node.source.value;
+    if (providerOfModule(source)) return source;
+  }
+  return undefined;
 }
 
 // Fails if the infra copy of a module imports a name from a runtime module

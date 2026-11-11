@@ -463,7 +463,7 @@ describe("an export of the Worker module that workerd doesn't start with", () =>
   }, 60_000);
 });
 
-it("fails the infra build on a cloudflare: import, and names the importer", async () => {
+it("drops a cloudflare: import that the infra build doesn't use", async () => {
   writeProject();
   write(
     "runtime/cls.ts",
@@ -481,9 +481,39 @@ it("fails the infra build on a cloudflare: import, and names the importer", asyn
       `export const counters = $durableObject({ id: NAME, class: Imported });`,
     ].join("\n"),
   );
-  await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
-    "runtime/cls.ts imports cloudflare:workers, which the infra build can't load, because only workerd provides it",
+  await compileInfra(path.join(root, "infra/main.ts"));
+  const infra = read("dist/infra/main.mjs");
+  expect(infra).toContain(`id: "counters"`);
+  expect(infra).not.toContain("cloudflare:");
+});
+
+it("fails the infra build on a cloudflare: import that it uses, and names the importer", async () => {
+  writeProject();
+  write(
+    "infra/registry.ts",
+    [
+      `import { DurableObject } from "cloudflare:workers";`,
+      `export const classes = [class extends DurableObject {}];`,
+    ].join("\n"),
   );
+  write(
+    "infra/main.ts",
+    `import { classes } from "./registry";\nconsole.log(classes);`,
+  );
+  await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
+    "infra/registry.ts imports cloudflare:workers, and the infra build uses the import. The infra build can't load cloudflare:workers, because only workerd provides it",
+  );
+});
+
+it("builds an infra module with a dynamic cloudflare: import", async () => {
+  writeProject();
+  write(
+    "infra/main.ts",
+    `try { await import("cloudflare:workers"); } catch {}\nexport {};`,
+  );
+  await expect(
+    compileInfra(path.join(root, "infra/main.ts")),
+  ).resolves.toBeDefined();
 });
 
 it("builds an infra module with an import of another scheme, such as bun:", async () => {
@@ -507,6 +537,6 @@ it("fails the infra build when a declaration keeps a class that imports cloudfla
     ) + `\nfunction make(c) { return c; }\n`,
   );
   await expect(compileInfra(path.join(root, "infra/main.ts"))).rejects.toThrow(
-    "runtime/counter.ts imports cloudflare:workers, which the infra build can't load",
+    "runtime/counter.ts imports cloudflare:workers, and the infra build uses the import",
   );
 });
