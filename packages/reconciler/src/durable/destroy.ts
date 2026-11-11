@@ -33,6 +33,7 @@ export async function* destroy(
             opts,
             "revert",
             { reason: "cycle-revert" },
+            new Set(unit.cycle.members),
           );
         }
       }

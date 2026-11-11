@@ -106,6 +106,12 @@ type Entry = {
   bindings: () => Bindings;
   /** `chain` lists the Workers being built whose bindings led to this one. */
   build: (chain?: Entry[]) => WorkerGroup;
+  /**
+   * Calls `callback` with the Worker's group once it is built. The Worker
+   * may be in the middle of its own build, as it can bind the namespaces of
+   * the Worker that binds it.
+   */
+  whenBuilt: (callback: (group: WorkerGroup) => void) => void;
 };
 
 const workerRegistration = Symbol.for("@notation/cloudflare/WorkerDeclaration");
@@ -146,6 +152,8 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
   const declaration = { id: config.id } as unknown as Worker<B>;
   let bindings: Bindings | undefined;
   let group: WorkerGroup | undefined;
+  let building = false;
+  const waiting: ((group: WorkerGroup) => void)[] = [];
 
   const entry: Entry = {
     declaration,
@@ -176,6 +184,7 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
       if (chain.includes(entry)) {
         throw bindingCycleError([...chain.slice(chain.indexOf(entry)), entry]);
       }
+      building = true;
       const resolved = resolveBindings(entry);
       const record = entry.record();
       const after = resolved.dependsOn.map(
@@ -198,22 +207,29 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
         url: config.url ?? true,
       });
       for (const script of after) group.script.dependOn(script);
-      // Built after `group` is set, so that a Worker that binds this one back
-      // gets it rather than a cycle error. Each binding is a contribution, so
-      // that deploy can create one of two Workers that bind each other first,
-      // without its binding.
+      // Each binding is a contribution, so that deploy can create one of two
+      // Workers that bind each other first, without its binding.
+      const script = group.script;
       for (const { name, worker } of resolved.services) {
-        group.script.contribute({
-          Bindings: [
-            {
-              type: "service",
-              name,
-              service: worker.build().script.outputValue("ScriptName"),
-            },
-          ],
-        });
+        worker.whenBuilt((bound) =>
+          script.contribute({
+            Bindings: [
+              {
+                type: "service",
+                name,
+                service: bound.script.outputValue("ScriptName"),
+              },
+            ],
+          }),
+        );
       }
+      for (const callback of waiting.splice(0)) callback(group);
       return group;
+    },
+    whenBuilt: (callback) => {
+      if (!group && !building) entry.build();
+      if (group) callback(group);
+      else waiting.push(callback);
     },
   };
   Object.defineProperty(declaration, workerRegistration, { value: entry });

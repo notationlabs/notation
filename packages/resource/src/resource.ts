@@ -145,11 +145,14 @@ export interface BaseResource {
     context?: ResourceOperationContext,
   ) => Promise<void>;
   /**
-   * The params the resource deploys with. With `contributions: false`, the
-   * params leave out every contribution. Deploy creates the first member of a
-   * dependency cycle with those, before the others exist.
+   * The params the resource deploys with. Deploy creates the placeholder of
+   * a dependency cycle before the other members exist, so it leaves out the
+   * contributions that depend on them.
    */
-  getParams(options?: { contributions?: boolean }): Promise<DurableObject>;
+  getParams(options?: {
+    /** Leaves out each contribution that depends on one of these. */
+    excludeContributionsFrom?: ReadonlySet<BaseResource>;
+  }): Promise<DurableObject>;
   toState(output: {}): {};
   toResult(result: {}): DurableObject;
   toComparable(output: {}): {};
@@ -191,7 +194,10 @@ export interface BaseResource {
    * contribution can set any collected param, so it counts as setting all
    * of them.
    */
-  getContributedParams(): string[];
+  getContributedParams(options?: {
+    /** Counts only the contributions that depend on one of these. */
+    from?: ReadonlySet<BaseResource>;
+  }): string[];
   /**
    * The params as a plan shows them. A value that holds an output not yet
    * deployed is `UNKNOWN_AFTER_APPLY` at its own path.
@@ -386,14 +392,9 @@ export abstract class Resource<
 
   getDependencies(): BaseResource[] {
     const found = new Set(this.getFixedDependencies());
-    const addToken = (token: OutputValue) => found.add(token.resource);
     for (const contribution of this.#contributions) {
-      if ("compute" in contribution) {
-        for (const dependency of Object.values(contribution.deps)) {
-          found.add(dependency);
-        }
-      } else {
-        forEachOutputRef(contribution.values, addToken);
+      for (const dependency of contributionDependencies(contribution)) {
+        found.add(dependency);
       }
     }
     return [...found];
@@ -410,10 +411,13 @@ export abstract class Resource<
     return [...found];
   }
 
-  getContributedParams(): string[] {
+  getContributedParams({
+    from,
+  }: { from?: ReadonlySet<BaseResource> } = {}): string[] {
     this.#sealed = true;
     const params = new Set<string>();
     for (const contribution of this.#contributions) {
+      if (from && !dependsOnAny(contribution, from)) continue;
       const keys =
         "compute" in contribution
           ? Object.keys(this.schema).filter(
@@ -427,7 +431,11 @@ export abstract class Resource<
     return [...params].sort();
   }
 
-  async getParams({ contributions = true } = {}): Promise<T["params"]> {
+  async getParams({
+    excludeContributionsFrom,
+  }: { excludeContributionsFrom?: ReadonlySet<BaseResource> } = {}): Promise<
+    T["params"]
+  > {
     this.#sealed = true;
     const derivedParams = await this.deriveParams({
       id: this.id,
@@ -436,7 +444,7 @@ export abstract class Resource<
     });
     return (await this.#combineParams(derivedParams, {
       plan: false,
-      contributions,
+      excludeContributionsFrom,
     })) as T["params"];
   }
 
@@ -462,10 +470,7 @@ export abstract class Resource<
       }),
     );
     if (derivedParams === undefined) return this.#cautiousPlanParams();
-    const params = await this.#combineParams(derivedParams, {
-      plan: true,
-      contributions: true,
-    });
+    const params = await this.#combineParams(derivedParams, { plan: true });
     return markUnknownOutputRefs(withoutUndefined(params)) as Record<
       string,
       unknown
@@ -491,16 +496,20 @@ export abstract class Resource<
 
   async #combineParams(
     derivedParams: Record<string, unknown>,
-    options: { plan: boolean; contributions: boolean },
+    options: {
+      plan: boolean;
+      excludeContributionsFrom?: ReadonlySet<BaseResource>;
+    },
   ): Promise<Record<string, unknown>> {
-    const { plan } = options;
+    const { plan, excludeContributionsFrom } = options;
     const params: Record<string, unknown> = {
       ...this.config,
       ...derivedParams,
     };
-    const contributions: EvaluatedContributions = options.contributions
-      ? await this.#evaluateContributions(plan)
-      : { items: [], unknown: false };
+    const contributions = await this.#evaluateContributions(
+      plan,
+      excludeContributionsFrom,
+    );
     for (const [key, item] of Object.entries(this.schema)) {
       if (item.propertyType !== "param" || !item.collect) continue;
       params[key] = this.#collect(
@@ -523,9 +532,13 @@ export abstract class Resource<
    * does not exist yet, plan cannot tell which params it would set, so
    * `unknown` is set and `#collect` marks every collected param unknown.
    */
-  async #evaluateContributions(plan: boolean): Promise<EvaluatedContributions> {
+  async #evaluateContributions(
+    plan: boolean,
+    exclude?: ReadonlySet<BaseResource>,
+  ): Promise<EvaluatedContributions> {
     const evaluated: EvaluatedContributions = { items: [], unknown: false };
     for (const contribution of this.#contributions) {
+      if (exclude && dependsOnAny(contribution, exclude)) continue;
       if (!("compute" in contribution)) {
         evaluated.items.push(contribution);
         continue;
@@ -619,6 +632,28 @@ export abstract class Resource<
       `Cannot ${action} ${this.id}: ${reason}. Contributions are accepted only while infra is being evaluated.`,
     );
   }
+}
+
+/**
+ * The deps of a function contribution, or the resources whose output values
+ * a contribution of values holds.
+ */
+function contributionDependencies(contribution: Contribution): BaseResource[] {
+  if ("compute" in contribution) return Object.values(contribution.deps);
+  const found: BaseResource[] = [];
+  forEachOutputValue(contribution.values, (token) =>
+    found.push(token.resource),
+  );
+  return found;
+}
+
+function dependsOnAny(
+  contribution: Contribution,
+  resources: ReadonlySet<BaseResource>,
+): boolean {
+  return contributionDependencies(contribution).some((dependency) =>
+    resources.has(dependency),
+  );
 }
 
 type EvaluatedContributions = {

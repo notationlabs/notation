@@ -18,11 +18,11 @@ notation plan --stage prod
 The plan reads remote resources when drift detection applies. It does not perform create,
 update, or delete operations.
 
-For resources that depend on each other, the plan prints a line under the resource that deploy creates first, without its contributions, and under a resource that is replaced while other resources in its cycle refer to it:
+For resources that depend on each other, the plan prints a line under the resource that deploy creates first, without the contributions that refer to the others, and under a resource that is replaced while other resources in its cycle refer to it:
 
 ```
 + create cloudflare/workers/WorkerScript worker:api
-    created first without its contributions, in a cycle with worker:reports
+    created first without the contributions that refer to worker:reports, the other members of its cycle
 -/+ replace cloudflare/workers/WorkerScript worker:reports
     ScriptName forces replacement
     worker:api is reverted to its placeholder first, and worker:reports is unavailable until the cycle settles

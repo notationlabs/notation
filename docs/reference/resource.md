@@ -502,7 +502,7 @@ b.contribute({
 });
 ```
 
-Deploy breaks the cycle at a placeholder. It creates the placeholder first, with its params without any contribution. It creates the other members, and then updates the placeholder with its full params:
+Deploy breaks the cycle at a placeholder. It creates the placeholder first, without the contributions that refer to the other members of the cycle. It creates the other members, and then updates the placeholder with its full params:
 
 ```
 create a (no bindings) → create b (binds a) → update a (binds b)
@@ -511,12 +511,12 @@ create a (no bindings) → create b (binds a) → update a (binds b)
 A member can be the placeholder when:
 
 - it depends on the other members of the loop only through its contributions, not through its config, its `dependencies` or `dependOn`,
-- each param that its contributions set is optional, and is not `immutable`, `primaryKey` or `secondaryKey`. A function contribution can set any collected param, so then this applies to every collected param,
+- each param that its contributions that refer to other members set is optional, and is not `immutable`, `primaryKey` or `secondaryKey`. A function contribution can set any collected param, so then this applies to every collected param,
 - its type has `update`.
 
 In each loop, the first member in the order of the resources that can be the placeholder becomes one. When no member of a loop can, plan and deploy fail with `ResourceCycleError`, which names the members of the loop and says why each of them can't be the placeholder.
 
-Three methods give the engine what it needs: `getFixedDependencies()` returns the dependencies that don't come from contributions, `getContributedParams()` returns the collected params that contributions set, and `getParams({ contributions: false })` returns the params without any contribution. See [Dependency cycles](../internals/reconciler.md#dependency-cycles) for how deploy, destroy and plan handle a cycle.
+Three methods give the engine what it needs: `getFixedDependencies()` returns the dependencies that don't come from contributions, `getContributedParams({ from })` returns the collected params that the contributions that depend on a resource in `from` set, and `getParams({ excludeContributionsFrom })` returns the params without the contributions that depend on a resource in `excludeContributionsFrom`. A contribution depends on the resources in the `deps` of a function contribution, or on the resources whose output values it holds. See [Dependency cycles](../internals/reconciler.md#dependency-cycles) for how deploy, destroy and plan handle a cycle.
 
 ## Resource groups
 

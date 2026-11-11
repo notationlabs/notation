@@ -30,6 +30,7 @@ import {
   type ResourceRegistry,
 } from "../src/resource-registry";
 import { ResourceTypeChangedError } from "../src/resource-type";
+import { ResourceCycleError } from "../src/cycles";
 
 const logger = pino({ level: "silent" });
 
@@ -2324,6 +2325,34 @@ describe("replacement with dependents", () => {
     runtime.close();
   });
 
+  it("resumes after a crash that follows the removal of a dependent's record", async () => {
+    const world = defineWorld();
+    const resources = declare(world, "orders");
+    const runtime = createRuntime(resources, "replace-dependents-crash", {
+      // The key names the replaced resource, so that two replacements that
+      // delete the same dependent don't share it.
+      crashAfterStep: "state:delete:rule:replace:bus",
+    });
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declare(world, "shop"));
+    world.calls.length = 0;
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "simulated process crash",
+    );
+    expect(world.calls).toEqual(["delete:rule"]);
+
+    await runtime.run("deploy-2");
+    expect(world.calls).toEqual([
+      "delete:rule",
+      "delete:orders",
+      "create:shop",
+      "create:rule",
+      "update:fn",
+    ]);
+    runtime.close();
+  });
+
   it("deletes a dependent whose record has no edges, by the edges in code", async () => {
     const world = defineWorld();
     const resources = declare(world, "orders");
@@ -3572,9 +3601,13 @@ describe("dependency cycles", () => {
    * service bindings. The fake provider refuses an upload that binds a
    * Worker that doesn't exist, and the delete of a Worker that another
    * Worker binds. With `versioned`, each create and update makes a new
-   * version, and bindings are not checked.
+   * version, and bindings are not checked. With `blocksDelete`, a Worker
+   * blocks the delete of the Workers it depends on, so a replacement deletes
+   * them first, and bindings are not checked.
    */
-  function defineWorkers(opts: { versioned?: boolean } = {}) {
+  function defineWorkers(
+    opts: { versioned?: boolean; blocksDelete?: boolean } = {},
+  ) {
     const remote = new Map<string, string[]>();
     const calls: string[] = [];
     const failCreate = new Set<string>();
@@ -3582,7 +3615,12 @@ describe("dependency cycles", () => {
     const put = (verb: string, params: any) => {
       const bindings: string[] = params.bindings ?? [];
       for (const bound of bindings) {
-        if (opts.versioned || bound === params.name || remote.has(bound)) {
+        if (
+          opts.versioned ||
+          opts.blocksDelete ||
+          bound === params.name ||
+          remote.has(bound)
+        ) {
           continue;
         }
         throw new Error(`${params.name} binds ${bound}, which does not exist`);
@@ -3590,9 +3628,11 @@ describe("dependency cycles", () => {
       remote.set(params.name, bindings);
       calls.push(`${verb} ${params.name} [${bindings.join(", ")}]`);
     };
+    const type = "test/durable/cycle-worker" as const;
     const Worker = resource({
-      type: "test/durable/cycle-worker",
+      type,
       provider: "test",
+      ...(opts.blocksDelete ? { blocksDeleteOf: [type] } : {}),
     })
       .defineSchema({
         name: {
@@ -3627,6 +3667,7 @@ describe("dependency cycles", () => {
           put("update", params),
         delete: async (key: any) => {
           for (const [other, bindings] of remote) {
+            if (opts.blocksDelete) break;
             if (other !== key.name && bindings.includes(key.name)) {
               throw new Error(`${other} still binds ${key.name}`);
             }
@@ -3740,6 +3781,198 @@ describe("dependency cycles", () => {
     expect(calls).toEqual(["update a []", "delete b", "delete a"]);
     expect(remote.size).toBe(0);
     expect(await runtime.state.values()).toHaveLength(0);
+    runtime.close();
+  });
+
+  it("reverts a member from its record, so that a change to its config is not part of the revert", async () => {
+    const { worker, bind, calls, remote } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [a, b];
+    const runtime = createRuntime(resources, "cycle-rename-both");
+    await runtime.run("cycle-rename-both-1");
+    calls.length = 0;
+
+    const nextA = worker("a", "a2");
+    const nextB = worker("b", "b2");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    resources.splice(0, 2, nextA, nextB);
+    await runtime.run("cycle-rename-both-2");
+
+    expect(calls).toEqual([
+      "update a []",
+      "delete b",
+      "create b2 [a]",
+      "update b2 []",
+      "delete a",
+      "create a2 [b2]",
+      "update b2 [a2]",
+    ]);
+    expect(remote).toEqual(
+      new Map([
+        ["a2", ["b2"]],
+        ["b2", ["a2"]],
+      ]),
+    );
+    runtime.close();
+  });
+
+  it("keeps the contributions that don't refer to other members in the placeholder", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const shared = worker("shared");
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, shared);
+    bind(a, b);
+    bind(b, a);
+    const runtime = createRuntime([a, b, shared], "cycle-kept");
+
+    await runtime.run("cycle-kept-1");
+    expect(calls).toEqual([
+      "create shared []",
+      "create a [shared]",
+      "create b [a]",
+      "update a [b, shared]",
+    ]);
+
+    calls.length = 0;
+    await runtime.destroy("cycle-kept-2");
+    expect(calls).toEqual([
+      "update a [shared]",
+      "delete b",
+      "delete a",
+      "delete shared",
+    ]);
+    runtime.close();
+  });
+
+  it("does not read a placeholder that it created for drift in the next pass", async () => {
+    const { worker, bind } = defineWorkers({ versioned: true });
+    const a = worker("a");
+    const b = worker("b");
+    // A contribution that sets nothing, so that the placeholder's full params
+    // are its placeholder params, and the next pass decides noop for it.
+    a.contribute(() => ({}), { deps: { b } });
+    bind(b, a);
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime([a, b], "cycle-drift", {
+      driftDetection: true,
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("cycle-drift-1");
+    // Only the read that follows each create.
+    expect(
+      events
+        .filter(
+          (event: any) =>
+            event.event === "reconciler.operation.lifecycle" &&
+            event.operation === "read" &&
+            event.status === "start",
+        )
+        .map((event: any) => event.resourceId),
+    ).toEqual(["a", "b"]);
+    runtime.close();
+  });
+
+  it("does not trip the create guard in a dry run of a new cycle", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const runtime = createRuntime([a, b], "cycle-dry-run", { dryRun: true });
+
+    // A dry run creates nothing, so b can't read the name of a, as in any
+    // new chain of resources.
+    const run = runtime.run("cycle-dry-run-1");
+    await expect(run).rejects.toThrow(
+      "Output a.name was read before a was deployed",
+    );
+    await expect(run).rejects.not.toThrow(ResourceCycleError);
+    expect(calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("runs only the first pass in a dry run, so a replacement is not decided twice", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [a, b];
+    const options = { dryRun: false };
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "cycle-dry-run-replace", {
+      get dryRun() {
+        return options.dryRun;
+      },
+      emit: (event) => void events.push(event),
+    });
+    await runtime.run("cycle-dry-run-replace-1");
+    calls.length = 0;
+    events.length = 0;
+
+    const nextA = worker("a");
+    const nextB = worker("b", "b2");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    resources.splice(0, 2, nextA, nextB);
+    options.dryRun = true;
+    await runtime.run("cycle-dry-run-replace-2");
+
+    expect(calls).toEqual([]);
+    expect(
+      events
+        .filter((event) => event.event === "reconciler.deploy.decision")
+        .map((event: any) => [event.resourceId, event.decision]),
+    ).toEqual([["b", "replace"]]);
+    runtime.close();
+  });
+
+  it("names the replacement when a member that it deleted would be created again", async () => {
+    const { worker, bind } = defineWorkers({ blocksDelete: true });
+    const resources = [worker("a")];
+    const runtime = createRuntime(resources, "cycle-cascade");
+    await runtime.run("cycle-cascade-1");
+
+    const a = worker("a", "a2");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    resources.splice(0, 1, a, b);
+    const run = runtime.run("cycle-cascade-2");
+    await expect(run).rejects.toThrow(ResourceCycleError);
+    await expect(run).rejects.toThrow(
+      "b would be created again while its cycle with a settles. This deploy created it, and its record was deleted again, when deploy replaced a and deleted the resources that block that delete.",
+    );
+    runtime.close();
+  });
+
+  it("fails to revert a member when a dependency has no record", async () => {
+    const { worker, bind } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [a, b];
+    const runtime = createRuntime(resources, "cycle-missing-dependency");
+    await runtime.run("cycle-missing-dependency-1");
+
+    const role = worker("role");
+    const nextA = worker("a");
+    const nextB = worker("b");
+    nextA.dependOn(role);
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    resources.splice(0, 2, role, nextA, nextB);
+
+    await expect(runtime.destroy("cycle-missing-dependency-2")).rejects.toThrow(
+      "Cannot revert a to its placeholder params: its dependency role has no state record, so its output is not known.",
+    );
     runtime.close();
   });
 

@@ -36,6 +36,8 @@
  *   state:<write>:<id>:settle:<n>        a write in pass <n> over a cycle
  *   state:persist:<id>:revert[:<replaced id>]   the write of a revert to
  *                              placeholder params
+ *   state:delete:<id>:replace:<replaced id>   the removal of a dependent
+ *                              that blocks the delete of <replaced id>
  *   *:replace:delete:*         replacement, first half: the delete
  *   *:replace:create:*         replacement, second half: the create, ending
  *                              in state:create

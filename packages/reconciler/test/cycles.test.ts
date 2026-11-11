@@ -44,6 +44,18 @@ const RequiredBindings = resource({
   } as any)
   .defineOperations(operations);
 
+const RequiredTags = resource({ type: "test/cycles/tags", provider: "test" })
+  .defineSchema({
+    ...bindingsSchema,
+    tags: {
+      propertyType: "param",
+      presence: "required",
+      value: v.array(v.string()),
+      collect: (items: string[][]) => items.flat().sort(),
+    },
+  } as any)
+  .defineOperations(operations);
+
 const NoUpdate = resource({ type: "test/cycles/no-update", provider: "test" })
   .defineSchema(bindingsSchema as any)
   .defineOperations({
@@ -172,11 +184,23 @@ describe("orderDeployUnits", () => {
       message = (error as Error).message;
     }
     expect(message).toContain(
-      "- a takes bindings from contributions, and bindings is required.",
+      "- a takes bindings from contributions that refer to other members of its cycle, and bindings is required.",
     );
     expect(message).toContain(
       "- test/cycles/no-update has no update operation, so b can't be updated after it is created.",
     );
+  });
+
+  it("checks only the params that the contributions that refer to peers set", () => {
+    const a = worker("a", RequiredTags);
+    const b = worker("b", NoUpdate);
+    a.contribute({ tags: ["static"] } as any);
+    bind(a, b);
+    bind(b, a);
+
+    expect(describeUnits(orderDeployUnits([a, b]))).toEqual([
+      { members: ["a", "b"], placeholders: ["a"] },
+    ]);
   });
 
   it("fails when a loop remains through a placeholder, and gives a reason only for the other members", () => {
@@ -208,7 +232,7 @@ describe("orderDeployUnits", () => {
 
   it("fails on a duplicate ID", () => {
     expect(() => orderDeployUnits([worker("a"), worker("a")])).toThrow(
-      "Duplicate resource id",
+      "Duplicate resource id: a",
     );
   });
 });

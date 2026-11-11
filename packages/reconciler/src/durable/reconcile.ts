@@ -66,11 +66,12 @@ export type ReconcileOptions = {
   /** Runs before a replacement deletes the resource. */
   beforeReplace?: () => AsyncGenerator<any, void, any>;
   /**
-   * Reconciles the resource as the placeholder of a cycle: a resource with no
-   * record is created with its params without contributions. A resource with
-   * a record is left as it is, and only its output is loaded.
+   * Reconciles the resource as the placeholder of a cycle whose members these
+   * are: a resource with no record is created without the contributions that
+   * depend on the members. A resource with a record is left as it is, and
+   * only its output is loaded.
    */
-  placeholder?: true;
+  placeholder?: ReadonlySet<BaseResource>;
 };
 
 /**
@@ -89,7 +90,7 @@ export async function* reconcileResource(
   // other than the ones the decision was taken against. The step also pins
   // the answer across a replay.
   const params = yield* step.run("params", () =>
-    resource.getParams({ contributions: !options.placeholder }),
+    resource.getParams({ excludeContributionsFrom: options.placeholder }),
   );
   await validateParams(resource, params, "deploy");
   const dependsOn = getDependencyIds(resource);
@@ -367,6 +368,8 @@ async function* deleteBlockingDependents(
       ),
       opts,
       { reason: "dependency-replaced", replacedDependency: resource.id },
+      // Two replacements in one deploy can each delete the same dependent.
+      `replace:${encodeURIComponent(resource.id)}`,
     );
   }
 }
@@ -385,8 +388,10 @@ export async function* deleteResource(
   opts: DurableWorkflowOptions,
   /** Added to the delete's lifecycle events. */
   cause: Pick<OperationLifecycleEvent, "reason" | "replacedDependency"> = {},
+  /** See `ReconcileOptions.writeKey`. */
+  writeKey?: string,
 ): AsyncGenerator<any, void, any> {
-  const session = yield* openStateSession(step, opts, declared);
+  const session = yield* openStateSession(step, opts, declared, writeKey);
   if (!session.node) return;
   let resource = declared;
   if (session.node.type !== declared.type) {

@@ -1,6 +1,7 @@
 import {
   changedKeys,
   diffParams,
+  forcesReplacement,
   validateParams,
   type BaseResource,
 } from "@notation/resource";
@@ -39,7 +40,8 @@ const CREATING_DECISIONS: ResourceAction["decision"][] = [
  *    which no member's output changes ends the deploy of the cycle.
  *
  * A cycle of N members gets N passes after the first. When outputs still
- * change in the last of them, deploy fails and names those outputs.
+ * change in the last of them, deploy fails and names those outputs. A dry
+ * run stops after the first pass, as it creates and updates nothing.
  */
 export async function* reconcileCycle(
   step: DurableStep,
@@ -51,21 +53,25 @@ export async function* reconcileCycle(
       step,
       `notation:deploy:${encodeURIComponent(resource.id)}${suffix ? `:${suffix}` : ""}`,
     );
+  const members = new Set(cycle.members);
   // A second create in one execution would reuse the create effect IDs of
   // the first, so it would not run.
   const created = new Set<BaseResource>();
+  const replaced: BaseResource[] = [];
   const options = (resource: BaseResource): ReconcileOptions => ({
     onDecision: (decision) => {
       if (!CREATING_DECISIONS.includes(decision)) return;
       if (created.has(resource)) {
-        throw new ResourceCycleError(
-          `${resource.id} would be ${decision === "replace" || decision === "drift-replace" ? "replaced" : "created"} while its cycle with ${listIds(others(cycle, resource))} settles, after this deploy created it. A param of ${resource.id} that forces a replacement takes a value from an output of another member of the cycle, and that output changed when the member was updated with its contributions. Take the param from an output that stays the same, such as a name.`,
-        );
+        throw recreateError(cycle, resource, decision, replaced);
       }
       created.add(resource);
     },
-    beforeReplace: () =>
-      revertPeers(scope(resource, "revert"), cycle, resource, opts),
+    beforeReplace: () => {
+      replaced.push(resource);
+      // The scope has no pass number: the guard above allows at most one
+      // replace of each member in one execution.
+      return revertPeers(scope(resource, "revert"), cycle, resource, opts);
+    },
   });
 
   for (const resource of cycle.members) {
@@ -75,24 +81,27 @@ export async function* reconcileCycle(
       resource,
       opts,
       placeholder
-        ? { ...options(resource), placeholder: true }
+        ? { ...options(resource), placeholder: members }
         : options(resource),
     );
   }
+  if (opts.dryRun) return;
 
   let changed: string[] = [];
   for (let pass = 1; pass <= cycle.members.length; pass += 1) {
     changed = [];
     for (const resource of cycle.members) {
       // This loop's first pass is the first time that deploy reconciles a
-      // placeholder with its full params, so the placeholder is checked for
-      // drift then, and its noop is announced.
+      // placeholder with its full params, so its noop is announced then. A
+      // placeholder that this deploy did not create is checked for drift
+      // then too.
       const first = pass === 1 && cycle.placeholders.includes(resource);
+      const detectDrift = first && !created.has(resource);
       const before = resource.output as Record<string, unknown> | null;
       yield* reconcileResource(
         scope(resource, `settle:${pass}`),
         resource,
-        first ? opts : { ...opts, driftDetection: false },
+        detectDrift ? opts : { ...opts, driftDetection: false },
         {
           ...options(resource),
           writeKey: `settle:${pass}`,
@@ -101,7 +110,7 @@ export async function* reconcileCycle(
       );
       changed.push(...changedOutputs(resource, before));
     }
-    if (changed.length === 0 || opts.dryRun) return;
+    if (changed.length === 0) return;
   }
 
   throw new ResourceCycleError(
@@ -126,15 +135,18 @@ async function* revertPeers(
       opts,
       `revert:${encodeURIComponent(replaced.id)}`,
       { reason: "cycle-revert", replacedDependency: replaced.id },
+      new Set(cycle.members),
     );
   }
 }
 
 /**
  * Updates a resource with its placeholder params, so that it no longer
- * refers to the other members of its cycle. Does nothing when the resource
- * has no record, when the record has another type, or when a fixed
- * dependency has no output.
+ * refers to the other members of its cycle. The params start from the
+ * record, so that a change to the config since the last deploy is not part
+ * of the update. Only the params that the contributions that depend on
+ * `peers` set take their placeholder values. Does nothing when the resource
+ * has no record, or when the record has another type.
  */
 export async function* revertToPlaceholder(
   step: DurableStepRunner,
@@ -144,31 +156,61 @@ export async function* revertToPlaceholder(
   writeKey: string,
   /** Added to the update's lifecycle events. */
   cause: Pick<OperationLifecycleEvent, "reason" | "replacedDependency">,
+  /** The members of the resource's cycle. */
+  peers: ReadonlySet<BaseResource>,
 ): AsyncGenerator<any, void, any> {
   const session = yield* openStateSession(step, opts, resource, writeKey);
   if (!session.node || session.node.type !== resource.type) return;
   resource.setOutput(session.node.output);
 
+  // Peers that are only in contributions are left out of the placeholder
+  // params, so their outputs are not needed.
+  const fixed = new Set(resource.getFixedDependencies());
   const missing = resource
-    .getFixedDependencies()
-    .filter((dependency) => dependency.output == null);
+    .getDependencies()
+    .filter(
+      (dependency) =>
+        (fixed.has(dependency) || !peers.has(dependency)) &&
+        dependency.output == null,
+    );
   const records = yield* step.run("dependency-outputs", () =>
     Promise.all(missing.map((dependency) => opts.state.get(dependency.id))),
   );
   for (const [index, dependency] of missing.entries()) {
     const record = records[index];
-    if (!record) return;
+    if (!record || record.type !== dependency.type) {
+      throw new ResourceCycleError(
+        `Cannot revert ${resource.id} to its placeholder params: its dependency ${dependency.id} ${record ? `has a state record of type ${record.type}, not ${dependency.type}` : "has no state record"}, so its output is not known.`,
+      );
+    }
     dependency.setOutput(record.output);
   }
 
-  const params = yield* step.run("params", () =>
-    resource.getParams({ contributions: false }),
+  const placeholder = yield* step.run("params", () =>
+    resource.getParams({ excludeContributionsFrom: peers }),
   );
+  const params: Record<string, unknown> = { ...session.node.params };
+  for (const [key, item] of Object.entries(resource.schema)) {
+    // State does not hold hidden params.
+    if (item.hidden) params[key] = placeholder[key];
+  }
+  for (const key of resource.getContributedParams({ from: peers })) {
+    params[key] = placeholder[key];
+  }
   await validateParams(resource, params, "deploy");
   const { patch } = diffParams(resource.schema, session.node.params, params, {
     canUpdate: true,
   });
   if (Object.keys(patch).length === 0) return;
+  const replacing = Object.keys(patch).filter((key) => {
+    const item = resource.schema[key];
+    return item && forcesReplacement(item);
+  });
+  if (replacing.length > 0) {
+    throw new ResourceCycleError(
+      `Cannot revert ${resource.id} to its placeholder params: the revert changes ${replacing.join(", ")}, and a change to ${replacing.length === 1 ? "it" : "them"} replaces ${resource.id}.`,
+    );
+  }
 
   const emit = durableEmitter(step, opts.emit);
   yield* updateResourceOperation(step, {
@@ -184,8 +226,30 @@ export async function* revertToPlaceholder(
   });
 }
 
-function others(cycle: ResourceCycle, except: BaseResource): BaseResource[] {
-  return cycle.members.filter((member) => member !== except);
+/**
+ * The error for a member that deploy would create or replace a second time
+ * while its cycle settles.
+ */
+function recreateError(
+  cycle: ResourceCycle,
+  resource: BaseResource,
+  decision: ResourceAction["decision"],
+  replaced: BaseResource[],
+): ResourceCycleError {
+  const others = listIds(cycle.members.filter((member) => member !== resource));
+  if (decision === "replace" || decision === "drift-replace") {
+    return new ResourceCycleError(
+      `${resource.id} would be replaced while its cycle with ${others} settles, after this deploy created it. A param of ${resource.id} that forces a replacement takes a value from an output of another member of the cycle, and that output changed when the member was updated with its contributions. Take the param from an output that stays the same, such as a name.`,
+    );
+  }
+  const cascaded = replaced.filter((member) => member !== resource);
+  const when =
+    cascaded.length > 0
+      ? `, when deploy replaced ${listIds(cascaded)} and deleted the resources that block that delete`
+      : "";
+  return new ResourceCycleError(
+    `${resource.id} would be created again while its cycle with ${others} settles. This deploy created it, and its record was deleted again${when}. Deploy can create a resource only once in one deploy. Deploy again to create ${resource.id}.`,
+  );
 }
 
 /**

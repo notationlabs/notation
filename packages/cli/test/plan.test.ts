@@ -119,7 +119,7 @@ it("prints the placeholder of a cycle, and the members that a replacement revert
 
   expect(lines.slice(1, 6)).toEqual([
     "+ create test/plan/worker a",
-    "    created first without its contributions, in a cycle with b",
+    "    created first without the contributions that refer to b, the other members of its cycle",
     "-/+ replace test/plan/worker b",
     "    name forces replacement",
     "    a is reverted to its placeholder first, and b is unavailable until the cycle settles",

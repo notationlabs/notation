@@ -7,8 +7,8 @@ import { buildDepthLevels } from "./dependency-graph";
 
 /**
  * Resources that depend on each other. Deploy creates each placeholder first,
- * with its params without contributions, and updates it with its full params
- * once the others exist.
+ * without the contributions that depend on other members, and updates it
+ * with its full params once the others exist.
  */
 export type ResourceCycle = {
   /**
@@ -43,8 +43,10 @@ export class ResourceCycleError extends Error {
  * a cycle has no member that can be created as a placeholder.
  */
 export function orderDeployUnits(resources: BaseResource[]): DeployUnit[] {
-  if (new Set(resources.map(({ id }) => id)).size !== resources.length) {
-    throw new Error("Duplicate resource id");
+  const ids = new Set<string>();
+  for (const { id } of resources) {
+    if (ids.has(id)) throw new Error(`Duplicate resource id: ${id}`);
+    ids.add(id);
   }
   const position = new Map(
     resources.map((resource, index) => [resource, index]),
@@ -108,9 +110,9 @@ function resolveCycle(members: BaseResource[]): ResourceCycle {
     for (const loop of loops) {
       const candidates = loop.filter((member) => !placeholders.has(member));
       const chosen = candidates.find(
-        (member) => !placeholderBlocker(member, loop),
+        (member) => !placeholderBlocker(member, loop, inCycle),
       );
-      if (!chosen) throw unresolvableCycleError(loop, candidates);
+      if (!chosen) throw unresolvableCycleError(loop, candidates, inCycle);
       placeholders.add(chosen);
     }
   }
@@ -129,11 +131,13 @@ function resolveCycle(members: BaseResource[]): ResourceCycle {
 
 /**
  * Why `member` can't be created as a placeholder to break `loop`, or
- * undefined when it can.
+ * undefined when it can. `cycle` holds every member of the cycle that
+ * `loop` is in.
  */
 function placeholderBlocker(
   member: BaseResource,
   loop: BaseResource[],
+  cycle: ReadonlySet<BaseResource>,
 ): string | undefined {
   const inLoop = new Set(loop);
   const fixed = new Set(member.getFixedDependencies());
@@ -146,7 +150,7 @@ function placeholderBlocker(
       .filter((dependency) => inLoop.has(dependency));
     return `${member.id} depends on ${listIds(peers)} through its config, its dependencies or dependOn, not through contributions`;
   }
-  return placeholderParamsBlocker(member);
+  return placeholderParamsBlocker(member, cycle);
 }
 
 /**
@@ -166,7 +170,7 @@ export function revertedPeers(
       !peer.getFixedDependencies().includes(replaced),
   );
   for (const peer of peers) {
-    const blocker = placeholderParamsBlocker(peer);
+    const blocker = placeholderParamsBlocker(peer, new Set(cycle.members));
     if (blocker) {
       throw new ResourceCycleError(
         `${replaced.id} must be replaced, so deploy must first update ${peer.id} without its contributions, so that ${peer.id} no longer refers to ${replaced.id}. It can't: ${blocker}.`,
@@ -178,19 +182,23 @@ export function revertedPeers(
 
 /**
  * Why `resource` can't go between its placeholder params and its full
- * params with an update, or undefined when it can.
+ * params with an update, or undefined when it can. The placeholder params
+ * leave out the contributions that depend on `peers`.
  */
-function placeholderParamsBlocker(resource: BaseResource): string | undefined {
+function placeholderParamsBlocker(
+  resource: BaseResource,
+  peers: ReadonlySet<BaseResource>,
+): string | undefined {
   if (!resource.update) {
     return `${resource.type} has no update operation, so ${resource.id} can't be updated after it is created`;
   }
-  for (const param of resource.getContributedParams()) {
+  for (const param of resource.getContributedParams({ from: peers })) {
     const item = resource.schema[param];
     if (item?.presence === "required") {
-      return `${resource.id} takes ${param} from contributions, and ${param} is required`;
+      return `${resource.id} takes ${param} from contributions that refer to other members of its cycle, and ${param} is required`;
     }
     if (item && forcesReplacement(item)) {
-      return `${resource.id} takes ${param} from contributions, and a change to ${param} replaces it`;
+      return `${resource.id} takes ${param} from contributions that refer to other members of its cycle, and a change to ${param} replaces it`;
     }
   }
   return undefined;
@@ -203,14 +211,15 @@ function placeholderParamsBlocker(resource: BaseResource): string | undefined {
 function unresolvableCycleError(
   loop: BaseResource[],
   blocked: BaseResource[],
+  cycle: ReadonlySet<BaseResource>,
 ): ResourceCycleError {
   const reasons = blocked
-    .map((member) => `- ${placeholderBlocker(member, loop)}.`)
+    .map((member) => `- ${placeholderBlocker(member, loop, cycle)}.`)
     .join("\n");
   return new ResourceCycleError(
     `The resources ${listIds(loop)} depend on each other, and none of them can be created first. ` +
       `Deploy can create a member of a cycle first without its contributions, and update it once the others exist. ` +
-      `This needs a member whose dependencies on the others come only from contributions, whose contributed params are optional and don't force a replacement, and whose type has an update operation.\n${reasons}`,
+      `This needs a member whose dependencies on the others come only from contributions, whose params that those contributions set are optional and don't force a replacement, and whose type has an update operation.\n${reasons}`,
   );
 }
 

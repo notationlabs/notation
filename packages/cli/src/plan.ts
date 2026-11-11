@@ -79,7 +79,7 @@ function printPlanSummary(result: Plan, logger: Logger) {
     }
     if (node.placeholder) {
       logger.info(
-        `    created first without its contributions, in a cycle with ${(node.cycle ?? []).join(", ")}`,
+        `    created first without the contributions that refer to ${(node.cycle ?? []).join(", ")}, the other members of its cycle`,
       );
     }
     if (node.revertedPeers) {

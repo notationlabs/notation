@@ -86,7 +86,9 @@ When the replaced resource depends on a field that is unknown at plan, its own e
 
 ## Dependency cycles
 
-Resources that depend on each other, directly or through other resources, form a cycle. `orderDeployUnits` (`packages/reconciler/src/cycles.ts`) finds each cycle and picks its placeholders, as described in [Cycles](../reference/resource.md#cycles). Plan, deploy and destroy treat a cycle as one unit in the dependency order: it comes after every resource that one of its members depends on, and before every resource that depends on one of its members. Inside the cycle, the members are ordered by their edges, where a placeholder counts only the edges that don't come from contributions. So a placeholder comes before the members that depend on it.
+Resources that depend on each other, directly or through other resources, form a cycle. `orderDeployUnits` (`packages/reconciler/src/cycles.ts`) finds each cycle and picks its placeholders, as described in [Cycles](../reference/resource.md#cycles). Plan, deploy and destroy treat a cycle as one unit in the dependency order: it comes after every resource that one of its members depends on, and before every resource that depends on one of its members. Inside the cycle, the members are ordered by their edges, where a placeholder counts only the edges that don't come from contributions that refer to other members. So a placeholder comes before the members that depend on it.
+
+A member's placeholder params are its params without the contributions that refer to other members of its cycle. Its other contributions stay.
 
 Deploy applies a cycle in passes:
 
@@ -96,18 +98,18 @@ Deploy applies a cycle in passes:
 
 A cycle of N members gets at most N passes after the first. If an output still changes in the last pass, deploy fails with `ResourceCycleError`, which names the outputs that changed in it, such as `a.version`. This happens when a member takes an output that changes on every update, such as a version ID.
 
-After the first pass, a pass announces a decision only when it is not **noop**, except the second pass for a placeholder. Drift detection runs once for each member: in the first pass, or, for a placeholder, in the second pass. Each pass has its own step keys, `notation:deploy:<id>:settle:<n>`, and its own state write keys, such as `state:persist:<id>:settle:<n>`. The first pass for a placeholder uses `notation:deploy:<id>:placeholder`.
+After the first pass, a pass announces a decision only when it is not **noop**, except the second pass for a placeholder. Drift detection runs once for each member: in the first pass, or, for a placeholder, in the second pass. A placeholder that this deploy created is not checked for drift. Each pass has its own step keys, `notation:deploy:<id>:settle:<n>`, and its own state write keys, such as `state:persist:<id>:settle:<n>`. The first pass for a placeholder uses `notation:deploy:<id>:placeholder`.
 
 When deploy fails after it created a placeholder, the placeholder has a record. The next deploy leaves it as it is in the first pass, and updates it in the second.
 
-A pass after the first must not create or replace a member that this deploy has already created. A second create would reuse the create effect IDs of the first. This happens when a param of a member that forces a replacement takes an output of another member, and that output changed when the other member was updated with its contributions. Deploy fails with `ResourceCycleError` instead.
+A pass after the first must not create or replace a member that this deploy has already created. A second create would reuse the create effect IDs of the first. This happens when a param of a member that forces a replacement takes an output of another member, and that output changed when the other member was updated with its contributions. It also happens when deploy replaces a member, and deletes a member that this deploy created because it blocks the delete. Deploy fails with `ResourceCycleError` in both cases, and the error says which. In the second case, the next deploy creates the deleted member.
 
 ### Replacing a member of a cycle
 
 A provider may refuse to delete a resource that another resource refers to. Cloudflare, for example, does not delete a Worker that another Worker binds. So before deploy deletes a member that it replaces, it reverts the other members that refer to it:
 
-1. Each member that depends on the replaced member only through its contributions is updated with its placeholder params. The update's lifecycle events have `reason: "cycle-revert"` and `replacedDependency` set to the replaced member. When such a member can't go back to its placeholder params with an update, for the reasons that stop a member from being a placeholder, plan and deploy fail with `ResourceCycleError`, which names the member.
-2. Deploy replaces the member as usual: it deletes the dependents that block the delete, deletes the member, and creates it again.
+1. Each member that depends on the replaced member only through its contributions is updated with its placeholder params. The params of the update start from the member's record, and only the params that the left-out contributions set take their placeholder values. So a change to the member's config since the last deploy, such as a new name, is not part of the revert. The later passes apply it. When the revert would change a param that forces a replacement, deploy fails with `ResourceCycleError`. The update's lifecycle events have `reason: "cycle-revert"` and `replacedDependency` set to the replaced member. When such a member can't go back to its placeholder params with an update, for the reasons that stop a member from being a placeholder, plan and deploy fail with `ResourceCycleError`, which names the member.
+2. Deploy replaces the member as usual: it deletes the dependents that block the delete, deletes the member, and creates it again. The removal of each dependent's record has the state write key `state:delete:<dependent id>:replace:<replaced id>`.
 3. The later passes update the reverted members with their full params.
 
 The replaced member is unavailable from step 2 until its cycle settles. Plan shows the members that deploy reverts in `PlanNode.revertedPeers`, and `notation plan` prints:
@@ -122,7 +124,7 @@ Notation has no names that let the old and the new resource exist side by side, 
 
 ### Destroying a cycle
 
-Destroy reverts only the placeholders. It updates each placeholder that has a record to its placeholder params, with `reason: "cycle-revert"`. Then the members are ordered by their remaining edges, and destroy deletes them in the reverse of that order, so each member is deleted before the members it still refers to. The other members are not reverted, as they are deleted before the members they refer to. To compute the placeholder params, destroy reads the outputs of the placeholder's other dependencies from state. When one of them has no record, destroy skips the revert, and deletes the members in the same order.
+Destroy reverts only the placeholders. It updates each placeholder that has a record to its placeholder params, with `reason: "cycle-revert"`. As in deploy, the params start from the record. Then the members are ordered by their remaining edges, and destroy deletes them in the reverse of that order, so each member is deleted before the members it still refers to. The other members are not reverted, as they are deleted before the members they refer to. To compute the placeholder params, destroy reads the outputs of the placeholder's other dependencies from state. When one of them has no record, or a record of another type, destroy fails with `ResourceCycleError`, which names the dependency.
 
 The orphan sweep does not revert orphans that form a cycle. An orphan is made from its state record, and state does not hold its contributions, or its hidden params, so the sweep can't compute its placeholder params. The sweep deletes the cycle in storage order, as before, so a provider that refuses one of the deletes fails the deploy. Remove the contributions that close the cycle in one deploy, and the resources in a later deploy.
 
@@ -132,12 +134,12 @@ Plan loads the output of every member of a cycle from state before it plans the 
 
 ```
 + create cloudflare/workers/WorkerScript worker:api
-    created first without its contributions, in a cycle with worker:reports
+    created first without the contributions that refer to worker:reports, the other members of its cycle
 ```
 
 The node shows the full params, not the placeholder params.
 
-A dry run of a cycle runs the first pass and one more, and then stops, as nothing changes.
+A dry run of a cycle runs only the first pass, as it creates and updates nothing that a later pass could see. A dry run of a new cycle fails in the first pass when a member reads an output of a placeholder that does not exist yet, as a dry run of any new chain of resources does.
 
 ## Dependency check
 
