@@ -10,6 +10,9 @@ type DurableObjectNamespace = {
 
 const PAGE_SIZE = 1_000;
 
+// A stop for an API that never returns an empty page.
+const MAX_PAGES = 100;
+
 /**
  * Returns the ID of the Durable Object namespace for the class `className`
  * that the Worker `scriptName` hosts, or `undefined` if Cloudflare lists none.
@@ -23,7 +26,7 @@ export async function findScriptNamespace(
 ): Promise<string | undefined> {
   // Cloudflare may return fewer namespaces than `per_page`, so only an empty
   // page ends the list.
-  for (let page = 1; ; page++) {
+  for (let page = 1; page <= MAX_PAGES; page++) {
     const namespaces =
       (await cloudflare<DurableObjectNamespace[] | null>(
         "GET",
@@ -39,4 +42,7 @@ export async function findScriptNamespace(
     );
     if (namespace) return namespace.id;
   }
+  throw new Error(
+    `Cloudflare listed more than ${MAX_PAGES} pages of Durable Object namespaces without finding the class ${className} of the Worker ${scriptName}.`,
+  );
 }

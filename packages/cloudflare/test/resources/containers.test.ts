@@ -158,6 +158,17 @@ describe("ContainerApplication", () => {
     });
   });
 
+  it("stops after 100 pages when Cloudflare never returns an empty page", async () => {
+    mockFetch(() =>
+      ok([{ id: "other", class: "Sandbox", script: "another-worker" }]),
+    );
+
+    await expect(application.create(params)).rejects.toThrow(
+      "Cloudflare listed more than 100 pages of Durable Object namespaces",
+    );
+    expect(calls).toHaveLength(100);
+  });
+
   it("skips the namespaces of previews and of dispatch namespaces with the same script and class", async () => {
     mockApi(
       () => ok({ id: "app1" }),

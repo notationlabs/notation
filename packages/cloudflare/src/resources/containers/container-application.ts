@@ -304,7 +304,7 @@ function createError(
   error: unknown,
 ): unknown {
   if (!(error instanceof CloudflareApiError)) return error;
-  // This error has no code of its own.
+  // This error has only Cloudflare's generic code 1000.
   if (
     error.status === 400 &&
     error.hasMessage(/Durable Object namespace was not found/i)
@@ -322,7 +322,7 @@ function createError(
   }
   if (error.hasCode(NAMESPACE_NOT_CONTAINER_ENABLED)) {
     return new ResourceOperationPendingError(
-      `The upload of the Worker ${params.ScriptName} declared the class ${params.ClassName} as a container class, but Cloudflare doesn't treat the Durable Object namespace ${namespace} as a container namespace yet.`,
+      `The upload of the Worker ${params.ScriptName} declared the class ${params.ClassName} as a container class, but Cloudflare doesn't treat the Durable Object namespace ${namespace} as a container namespace yet. If this lasts, check that the account has access to Containers.`,
       { retryAfterMs: 5_000, cause: error },
     );
   }
