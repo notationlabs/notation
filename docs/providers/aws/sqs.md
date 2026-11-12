@@ -376,6 +376,8 @@ The function's one `handler` receives the messages of both queues. Each record's
 
 A queue can feed a given function once. A second mapping of the same queue and function throws.
 
+The resource class `LambdaEventSourceMapping` supports one mapping per function and event source. Lambda keeps a queue's mapping to a function unique. It allows several mappings of one stream to one function, and Notation fails when it looks such a mapping up and finds more than one.
+
 ## `queue.grant(actions)`
 
 `grant` returns a policy statement for the queue. A declaration adds it to its function's role with the `policy` option. For example, to let the `orders` function send messages to `refundQueue`, and read the queue's URL:

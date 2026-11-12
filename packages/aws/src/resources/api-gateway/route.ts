@@ -3,7 +3,7 @@ import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/resources/utils/aws-clients";
 import { awsCreate } from "src/resources/utils/errors";
-import { findInPages } from "src/resources/utils/paginate";
+import { findOnlyInPages } from "src/resources/utils/paginate";
 import { ApiInstance, LambdaIntegrationInstance } from ".";
 import { AwsSchema } from "src/resources/utils/types";
 import { AuthInstance } from "./auth";
@@ -119,12 +119,14 @@ export const Route = routeSchema
     find: async (params) => {
       let route;
       try {
-        route = await findInPages(
+        route = await findOnlyInPages(
           (NextToken) =>
             apiGatewayClient().send(
               new sdk.GetRoutesCommand({ ApiId: params.ApiId, NextToken }),
             ),
           (item) => item.RouteKey === params.RouteKey,
+          `API Gateway route ${params.RouteKey} in API ${params.ApiId}`,
+          (item) => item.RouteId!,
         );
       } catch (error) {
         // GetRoutes throws this when the API does not exist, and then the
@@ -137,8 +139,7 @@ export const Route = routeSchema
         }
         throw error;
       }
-      if (route) return { RouteId: route.RouteId! };
-      throw new ResourceNotFoundError("No API Gateway route has the route key");
+      return { RouteId: route.RouteId! };
     },
     read: async (key) => {
       try {

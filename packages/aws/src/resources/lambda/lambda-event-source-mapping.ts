@@ -156,8 +156,9 @@ export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
     ),
 
     // AWS assigns the UUID, so `find` matches on the function and the event
-    // source. Lambda allows several mappings of one stream to one function,
-    // and `find` fails when it finds more than one.
+    // source. This class supports one mapping per function and source.
+    // Lambda allows several mappings of one stream to one function, and
+    // `find` fails when it finds more than one.
     find: async (params) => {
       const mapping = await findOnlyInPages(
         async (Marker) => {
