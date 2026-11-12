@@ -80,11 +80,12 @@ const titleTakenMessage = (account: string, title: string) =>
 
 /** A Workers KV namespace. */
 export const KVNamespace = kvNamespaceSchema.defineOperations({
-  // Cloudflare rejects a second namespace with the same title, but a create
-  // whose outcome is unknown is found again by its title. So create checks
-  // first that no other namespace has the title, and `find` can take the
-  // namespace with the title as the one that this create made. The check is
-  // outside `cloudflareCreate`: if it throws, nothing was created.
+  // Cloudflare rejects a second namespace with the same title. After a
+  // create whose outcome is unknown, `find` looks the namespace up by its
+  // title. So create first checks that no namespace has the title, and
+  // `find` can then take the namespace with the title as the one that this
+  // create made. The check is outside `cloudflareCreate`: if it throws,
+  // nothing was created.
   create: async (params) => {
     if (await findNamespaceByTitle(params.AccountId, params.Title)) {
       throw new Error(titleTakenMessage(params.AccountId, params.Title));
