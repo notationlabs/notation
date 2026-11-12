@@ -6,9 +6,9 @@ import {
 import type { StateBackend, StateNode } from "@notation/state";
 import {
   assertDependenciesPresent,
-  buildResourceDepthLevels,
   collectDependents,
 } from "./dependency-graph";
+import { isCycle, orderDeployUnits, type DeployUnit } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
@@ -79,69 +79,121 @@ export async function createPlan({
   // the ID of the replaced resource.
   const cascaded = new Map<string, string>();
 
-  for (const level of buildResourceDepthLevels(resources)) {
-    for (const resource of level) {
-      const { stateNode, params } = await planKnownParams(
+  const planResource = async (
+    resource: BaseResource,
+    cycle: DeployUnit | undefined,
+    detectDrift = driftDetection,
+  ): Promise<PlanNode> => {
+    const { stateNode, params } = await planKnownParams(
+      resource,
+      state,
+      "plan",
+    );
+    const action = await runOperation(
+      applyDriftDetection(createStepRunner(), {
+        action: decideAction({ resource, stateNode, params }),
+        driftDetection: detectDrift,
         resource,
-        state,
-        "plan",
-      );
-      const action = await runOperation(
-        applyDriftDetection(createStepRunner(), {
-          action: decideAction({ resource, stateNode, params }),
-          driftDetection,
-          resource,
-          resourceParams: params,
-          persistedOutput: stateNode?.output,
-          emit: emitStep,
-          maxOperationAttempts,
-        }),
-      );
+        resourceParams: params,
+        persistedOutput: stateNode?.output,
+        emit: emitStep,
+        maxOperationAttempts,
+      }),
+    );
 
-      const dependsOn = getDependencyIds(resource);
-      const replaceFields =
-        "replaceFields" in action ? action.replaceFields : undefined;
-      const replacedDependency = cascaded.get(resource.id);
-      const replaced = Boolean(replaceFields || replacedDependency);
+    const dependsOn = getDependencyIds(resource);
+    const replaceFields =
+      "replaceFields" in action ? action.replaceFields : undefined;
+    const replacedDependency = cascaded.get(resource.id);
+    const replaced = Boolean(replaceFields || replacedDependency);
 
-      // A resource with no `read` can't recover a missing output, and update
-      // doesn't write one. A replace, including one that is only possible,
-      // creates the resource again. Deploy checks again once the decision is
-      // known.
-      if (!replaced) assertOutputsRecoverable(resource, stateNode);
+    // A resource with no `read` can't recover a missing output, and update
+    // doesn't write one. A replace, including one that is only possible,
+    // creates the resource again. Deploy checks again once the decision is
+    // known.
+    if (!replaced) assertOutputsRecoverable(resource, stateNode);
 
-      if (replaceFields) {
-        for (const id of collectDependents(
-          resource.id,
-          edgesById,
-          blocksDelete,
-        )) {
-          cascaded.set(id, resource.id);
-          edgesById.delete(id);
-        }
+    if (replaceFields) {
+      for (const id of collectDependents(
+        resource.id,
+        edgesById,
+        blocksDelete,
+      )) {
+        cascaded.set(id, resource.id);
+        edgesById.delete(id);
       }
+    }
 
-      if (replaced) {
-        // A replacement's output is unknown until it has been created again,
-        // so its dependents plan against unknown params, as they would for a
-        // resource with no state.
-        resource.setOutput(null as any);
-      }
-      edgesById.set(resource.id, dependsOn);
+    // As deploy lists them for the delete: by the edges in state for a
+    // resource it has not reached, and by the edges in code for one it has.
+    const brokenDependents =
+      replaceFields && resource.deleteTakesDependents
+        ? [...edgesById]
+            .filter(
+              ([id, edges]) =>
+                id !== resource.id &&
+                resourceById.has(id) &&
+                edges.includes(resource.id),
+            )
+            .map(([id]) => id)
+            .sort()
+        : [];
 
-      // A resource deleted in a cascade is created again, so a diff of an
-      // update does not apply to it.
-      const cascadeOnly = replacedDependency && !replaceFields;
-      nodes.push({
-        id: resource.id,
-        type: resource.type,
-        decision: cascadeOnly ? "replace" : action.decision,
-        ...("diff" in action && !cascadeOnly ? { diff: action.diff } : {}),
-        ...(replaceFields ? { replaceFields } : {}),
-        ...(replacedDependency ? { replacedDependency } : {}),
-        params,
-        dependsOn,
-      });
+    if (replaced) {
+      // A replacement's output is unknown until it has been created again,
+      // so its dependents plan against unknown params, as they would for a
+      // resource with no state.
+      resource.setOutput(null as any);
+    }
+    edgesById.set(resource.id, dependsOn);
+
+    // A resource deleted in a cascade is created again, so a diff of an
+    // update does not apply to it.
+    const cascadeOnly = replacedDependency && !replaceFields;
+    const placeholder =
+      cycle?.placeholders.includes(resource) &&
+      (action.decision === "create" || action.decision === "drift-recreate");
+    return {
+      id: resource.id,
+      type: resource.type,
+      decision: cascadeOnly ? "replace" : action.decision,
+      ...("diff" in action && !cascadeOnly ? { diff: action.diff } : {}),
+      ...(replaceFields ? { replaceFields } : {}),
+      ...(replacedDependency ? { replacedDependency } : {}),
+      ...(brokenDependents.length > 0 ? { brokenDependents } : {}),
+      ...(cycle
+        ? {
+            cycle: cycle.members
+              .filter((member) => member !== resource)
+              .map((member) => member.id),
+          }
+        : {}),
+      ...(placeholder ? { placeholder: true as const } : {}),
+      params,
+      dependsOn,
+    };
+  };
+
+  for (const unit of orderDeployUnits(resources)) {
+    const cycle = isCycle(unit) ? unit : undefined;
+    const members = await loadUnit(unit, state);
+    const start = nodes.length;
+    for (const resource of members) {
+      nodes.push(await planResource(resource, cycle));
+    }
+    if (!cycle) continue;
+    // A member planned before a replaced member took the output of the old
+    // resource from state. Deploy updates it with the unknown output of the
+    // replacement once it is created, so it is planned again. The first plan
+    // read it for drift, so the second plan doesn't, and a member with drift
+    // keeps its first node.
+    const isReplaced = (node: PlanNode) =>
+      node.decision === "replace" || node.decision === "drift-replace";
+    const last = nodes.slice(start).findLastIndex(isReplaced);
+    for (let index = 0; index < last; index += 1) {
+      const node = nodes[start + index]!;
+      if (node.decision !== "noop" && node.decision !== "update") continue;
+      nodes[start + index] = await planResource(members[index]!, cycle, false);
     }
   }
 
@@ -160,6 +212,35 @@ export async function createPlan({
 }
 
 /**
+ * Returns the resources of a unit in order. For a cycle, it first loads the
+ * output of every member from state, as a member can depend on a member
+ * that comes after it.
+ */
+export async function loadUnit(
+  unit: DeployUnit,
+  state: { get(id: string): Promise<StateNode | undefined> },
+): Promise<BaseResource[]> {
+  if (isCycle(unit)) {
+    for (const member of unit.members) await loadOutput(member, state);
+  }
+  return unit.members;
+}
+
+/**
+ * Loads the resource's output from its state record, and returns the
+ * record. Throws if the record has a different type.
+ */
+async function loadOutput(
+  resource: BaseResource,
+  state: { get(id: string): Promise<StateNode | undefined> },
+): Promise<StateNode | undefined> {
+  const stateNode = await state.get(resource.id);
+  assertSameType(resource, stateNode);
+  if (stateNode) resource.setOutput(stateNode.output);
+  return stateNode;
+}
+
+/**
  * Loads the resource's outputs from state, then returns and checks the
  * params that plan knows. Throws if the state record has a different type.
  * Outputs in state stand in for the outputs of dependencies, so the
@@ -173,9 +254,7 @@ export async function planKnownParams(
   stateNode: StateNode | undefined;
   params: Record<string, unknown>;
 }> {
-  const stateNode = await state.get(resource.id);
-  assertSameType(resource, stateNode);
-  if (stateNode) resource.setOutput(stateNode.output);
+  const stateNode = await loadOutput(resource, state);
   const params = await resource.planParams();
   await validateParams(resource, params, point);
   return { stateNode, params };

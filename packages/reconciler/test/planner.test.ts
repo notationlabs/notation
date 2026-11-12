@@ -1326,3 +1326,201 @@ describe("createPlan", () => {
     });
   });
 });
+
+describe("dependency cycles", () => {
+  const schema = {
+    name: {
+      propertyType: "param",
+      presence: "required",
+      primaryKey: true,
+      value: v.string(),
+    },
+    bindings: {
+      propertyType: "param",
+      presence: "optional",
+      value: v.array(v.string()),
+      collect: (items: string[][]) => items.flat(),
+    },
+  } as any;
+  const Worker = resource({ type: "test/planner/worker", provider: "test" })
+    .defineSchema(schema)
+    .defineOperations({
+      create: async () => undefined,
+      update: async () => undefined,
+      delete: async () => undefined,
+    });
+
+  const pair = () => {
+    const a = new Worker("a", { config: { name: "a" } as any });
+    const b = new Worker("b", { config: { name: "b" } as any });
+    a.contribute({ bindings: [b.outputRef("name")] } as any);
+    b.contribute({ bindings: [a.outputRef("name")] } as any);
+    return [a, b];
+  };
+
+  const record = (name: string, bindings: string[]) => ({
+    version: 1,
+    id: name,
+    type: Worker.type,
+    provider: "test",
+    config: { name },
+    params: { name, bindings },
+    output: { name, bindings },
+    dependsOn: [name === "a" ? "b" : "a"],
+    lastOperation: "update" as const,
+    lastOperationAt: "2026-07-22T00:00:00.000Z",
+  });
+
+  it("plans a new cycle as creates, with the placeholder marked and peer outputs unknown", async () => {
+    const plan = await createPlan({
+      resources: pair(),
+      state: new MemoryStateBackend(),
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({
+        id: "a",
+        decision: "create",
+        placeholder: true,
+        cycle: ["b"],
+        params: { name: "a", bindings: [UNKNOWN_AFTER_APPLY] },
+      }),
+      expect.objectContaining({
+        id: "b",
+        decision: "create",
+        cycle: ["a"],
+        params: { name: "b", bindings: [UNKNOWN_AFTER_APPLY] },
+      }),
+    ]);
+    expect(plan.nodes[1]).not.toHaveProperty("placeholder");
+  });
+
+  it("marks a placeholder that no longer exists, as deploy creates it again without its contributions", async () => {
+    const Gone = resource({
+      type: "test/planner/gone-worker",
+      provider: "test",
+    })
+      .defineSchema(schema)
+      .defineOperations({
+        create: async () => undefined,
+        read: async () => {
+          throw new ResourceNotFoundError("not found");
+        },
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const a = new Gone("a", { config: { name: "a" } as any });
+    const b = new Worker("b", { config: { name: "b" } as any });
+    a.contribute({ bindings: [b.outputRef("name")] } as any);
+    b.contribute({ bindings: [a.outputRef("name")] } as any);
+
+    const plan = await createPlan({
+      resources: [a, b],
+      state: new MemoryStateBackend({
+        a: { ...record("a", ["b"]), type: Gone.type },
+        b: record("b", ["a"]),
+      }),
+    });
+
+    expect(plan.nodes[0]).toMatchObject({
+      id: "a",
+      decision: "drift-recreate",
+      placeholder: true,
+    });
+  });
+
+  it("plans a deployed cycle with the outputs of every member from state", async () => {
+    const plan = await createPlan({
+      resources: pair(),
+      state: new MemoryStateBackend({
+        a: record("a", ["b"]),
+        b: record("b", ["a"]),
+      }),
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({ id: "a", decision: "noop", cycle: ["b"] }),
+      expect.objectContaining({ id: "b", decision: "noop", cycle: ["a"] }),
+    ]);
+    expect(plan.nodes[0]).not.toHaveProperty("placeholder");
+  });
+
+  it("plans a member that comes before a replaced member against the unknown output of the replacement", async () => {
+    const [a, b] = pair();
+    (b as any).config.name = "b2";
+    const plan = await createPlan({
+      resources: [a!, b!],
+      state: new MemoryStateBackend({
+        a: record("a", ["b"]),
+        b: record("b", ["a"]),
+      }),
+    });
+
+    expect(plan.nodes[0]).toMatchObject({
+      id: "a",
+      decision: "update",
+      params: { name: "a", bindings: [UNKNOWN_AFTER_APPLY] },
+    });
+  });
+
+  it("names the dependents whose references a replacement breaks, for a type that takes dependents in its delete", async () => {
+    const Forced = resource({
+      type: "test/planner/forced-worker",
+      provider: "test",
+      deleteTakesDependents: true,
+    })
+      .defineSchema(schema)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const worker = (id: string, name = id) =>
+      new Forced(id, { config: { name } as any });
+    const a = worker("a");
+    const b = worker("b", "b2");
+    const c = worker("c");
+    a.contribute({ bindings: [b.outputRef("name")] } as any);
+    b.contribute({ bindings: [a.outputRef("name")] } as any);
+    c.contribute({ bindings: [b.outputRef("name")] } as any);
+    const forced = (name: string, bindings: string[]) => ({
+      ...record(name, bindings),
+      type: Forced.type,
+      dependsOn: bindings,
+    });
+
+    const plan = await createPlan({
+      resources: [a, b, c],
+      state: new MemoryStateBackend({
+        a: forced("a", ["b"]),
+        b: forced("b", ["a"]),
+        c: forced("c", ["b"]),
+        gone: forced("gone", ["b"]),
+      }),
+    });
+
+    expect(plan.nodes.find(({ id }) => id === "b")).toMatchObject({
+      decision: "replace",
+      brokenDependents: ["a", "c"],
+    });
+    expect(plan.nodes.find(({ id }) => id === "a")).not.toHaveProperty(
+      "brokenDependents",
+    );
+  });
+
+  it("names no dependents for a replaced resource of a type that does not take dependents in its delete", async () => {
+    const [a, b] = pair();
+    (b as any).config.name = "b2";
+    const plan = await createPlan({
+      resources: [a!, b!],
+      state: new MemoryStateBackend({
+        a: record("a", ["b"]),
+        b: record("b", ["a"]),
+      }),
+    });
+
+    expect(plan.nodes.find(({ id }) => id === "b")).not.toHaveProperty(
+      "brokenDependents",
+    );
+  });
+});

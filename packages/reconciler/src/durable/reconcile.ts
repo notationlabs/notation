@@ -10,9 +10,11 @@ import {
   validateParams,
   type BaseResource,
   type ResourceGroupRef,
+  type ResourceDeletion,
   type ResourceType,
 } from "@notation/resource";
 import { VersionConflict, type StateNode } from "@notation/state";
+import { remainingDependencies } from "../cycles";
 import { buildDepthLevels, collectDependents } from "../dependency-graph";
 import { createBlocksDelete } from "../delete-cascade";
 import type { OperationLifecycleEvent } from "../events";
@@ -30,9 +32,12 @@ import {
 } from "../operations";
 import {
   decideAction,
+  decideDriftAction,
   getDependencyIds,
   hasSameEdges,
   recordedEdges,
+  type DriftRead,
+  type ResourceAction,
 } from "../plan";
 import { assertOutputsRecoverable } from "../planner";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
@@ -49,9 +54,35 @@ import type { DurableStep } from "./sdk";
  * conditional on that exact read. `remove` exists only alongside a `node`:
  * a record that was never read cannot be removed safely.
  */
-type ResourceStateSession =
+export type ResourceStateSession =
   | { node: undefined; persist: PersistState; remove?: never }
   | { node: StateNode; persist: PersistState; remove: RemoveState };
+
+export type ReconcileOptions = {
+  /** Leaves out the decision event when the decision is noop. */
+  quietNoop?: boolean;
+  /** Called with the decision before deploy acts on it. Throws to stop. */
+  onDecision?: (decision: ResourceAction["decision"]) => void;
+  /**
+   * Leaves out the contributions that depend on one of these, to create or
+   * update the placeholder of a cycle. The decision event is marked as a
+   * placeholder.
+   */
+  excludeContributionsFrom?: ReadonlySet<BaseResource>;
+  /**
+   * Called when deploy replaces the resource, after the delete, with the IDs
+   * of the dependents that the replacement deleted because they block the
+   * delete. Deploy creates the resource without the contributions that
+   * depend on one of the returned resources.
+   */
+  replaceWithout?: (deleted: ReadonlySet<string>) => ReadonlySet<BaseResource>;
+  /**
+   * The caller's read of the remote. Deploy decides drift from it, and does
+   * not read the resource again. A resource that the read found gone is
+   * created again, whatever its params.
+   */
+  driftRead?: DriftRead;
+};
 
 /**
  * Reconciles one resource: load the persisted record, decide, read the
@@ -62,15 +93,8 @@ export async function* reconcileResource(
   step: DurableStepRunner,
   resource: BaseResource,
   opts: DurableDeployOptions,
+  options: ReconcileOptions = {},
 ): AsyncGenerator<any, void, any> {
-  // Resolved once and then carried: deriveParams is user code and need not be
-  // deterministic, so an operation resolving them again could persist params
-  // other than the ones the decision was taken against. The step also pins
-  // the answer across a replay.
-  const params = yield* step.run("params", () => resource.getParams());
-  await validateParams(resource, params, "deploy");
-  const dependsOn = getDependencyIds(resource);
-
   const emit = durableEmitter(step, opts.emit);
   const session = yield* openStateSession(step, opts, resource);
   // Repeats the notation:validate check, because validate ran before the
@@ -78,22 +102,50 @@ export async function* reconcileResource(
   assertSameType(resource, session.node);
   if (session.node) resource.setOutput(session.node.output);
 
+  // Resolved once and then carried: deriveParams is user code and need not be
+  // deterministic, so an operation resolving them again could persist params
+  // other than the ones the decision was taken against. The step also pins
+  // the answer across a replay.
+  const params = yield* step.run("params", () =>
+    resource.getParams({
+      excludeContributionsFrom: options.excludeContributionsFrom,
+    }),
+  );
+  await validateParams(resource, params, "deploy");
+  // A placeholder's record leaves out the edges to the peers that its params
+  // leave out, as those may not exist yet.
+  const dependsOn = getDependencyIds(
+    resource,
+    options.excludeContributionsFrom
+      ? remainingDependencies(resource, options.excludeContributionsFrom)
+      : undefined,
+  );
+
   let action = decideAction({ resource, stateNode: session.node, params });
 
   // Its own scope: when the gate fires, the operation that follows the drift
   // read reads the remote again, and the two reads must not share step keys.
   const driftStep = step.scope("drift-read");
-  action = yield* applyDriftDetection(driftStep, {
-    action,
-    driftDetection: opts.driftDetection,
-    resource,
-    resourceParams: params,
-    persistedOutput: session.node?.output,
-    // No dryRun: a dry run suppresses mutations, not reads, and reading is
-    // how a dry run reports drift at all.
-    emit: durableEmitter(driftStep, opts.emit),
-    maxOperationAttempts: opts.maxOperationAttempts,
-  });
+  const { driftRead } = options;
+  if (driftRead?.kind === "absent") {
+    action = { decision: "drift-recreate" };
+  } else if (driftRead) {
+    if (action.decision === "noop") {
+      action = decideDriftAction({ resource, params, driftRead });
+    }
+  } else {
+    action = yield* applyDriftDetection(driftStep, {
+      action,
+      driftDetection: opts.driftDetection,
+      resource,
+      resourceParams: params,
+      persistedOutput: session.node?.output,
+      // No dryRun: a dry run suppresses mutations, not reads, and reading is
+      // how a dry run reports drift at all.
+      emit: durableEmitter(driftStep, opts.emit),
+      maxOperationAttempts: opts.maxOperationAttempts,
+    });
+  }
 
   if (
     action.decision === "drift-update" ||
@@ -108,16 +160,22 @@ export async function* reconcileResource(
     });
   }
 
-  yield* emit({
-    level: "info",
-    event: "reconciler.deploy.decision",
-    resourceId: resource.id,
-    resourceType: resource.type,
-    decision: action.decision,
-    ...("replaceFields" in action
-      ? { replaceFields: action.replaceFields }
-      : {}),
-  });
+  options.onDecision?.(action.decision);
+  if (action.decision !== "noop" || !options.quietNoop) {
+    yield* emit({
+      level: "info",
+      event: "reconciler.deploy.decision",
+      resourceId: resource.id,
+      resourceType: resource.type,
+      decision: action.decision,
+      ...("replaceFields" in action
+        ? { replaceFields: action.replaceFields }
+        : {}),
+      ...(options.excludeContributionsFrom
+        ? { placeholder: true as const }
+        : {}),
+    });
+  }
 
   const shared = {
     executionId: opts.executionId,
@@ -162,7 +220,13 @@ export async function* reconcileResource(
           `Cannot replace ${resource.id}: it has no state record`,
         );
       }
-      yield* replaceResource(step, opts, session, shared);
+      yield* replaceResource(
+        step,
+        opts,
+        session,
+        shared,
+        options.replaceWithout,
+      );
       return;
     case "noop":
       if (!session.node) return;
@@ -252,6 +316,30 @@ async function* rewriteRecord(
 }
 
 /**
+ * `shared` with the params and edges of the resource without the
+ * contributions that depend on one of `excluded`.
+ */
+async function* withoutContributions(
+  step: DurableStepRunner,
+  shared: Omit<CreateResourceParams, "persist">,
+  excluded: ReadonlySet<BaseResource>,
+): AsyncGenerator<any, Omit<CreateResourceParams, "persist">, any> {
+  const { resource } = shared;
+  const params = yield* step.run("replace:params", () =>
+    resource.getParams({ excludeContributionsFrom: excluded }),
+  );
+  await validateParams(resource, params, "deploy");
+  return {
+    ...shared,
+    resourceParams: params,
+    dependsOn: getDependencyIds(
+      resource,
+      remainingDependencies(resource, excluded),
+    ),
+  };
+}
+
+/**
  * Deletes the resource and then creates it again, each part in its own scope.
  * Deleting first is deliberate: a resource usually takes its physical name
  * from its params, so a new one created beside the old would collide with it.
@@ -265,8 +353,9 @@ async function* replaceResource(
   opts: DurableDeployOptions,
   session: Extract<ResourceStateSession, { node: StateNode }>,
   shared: Omit<CreateResourceParams, "persist">,
+  replaceWithout?: ReconcileOptions["replaceWithout"],
 ): AsyncGenerator<any, void, any> {
-  yield* deleteBlockingDependents(
+  const deleted = yield* deleteBlockingDependents(
     step.scope("replace:dependents"),
     opts,
     shared.resource,
@@ -275,15 +364,21 @@ async function* replaceResource(
   const deleteStep = step.scope("replace:delete");
   yield* deleteResourceOperation(deleteStep, {
     resource: shared.resource,
+    deletion: yield* readDeletion(deleteStep, opts, shared.resource),
     dryRun: shared.dryRun,
     emit: durableEmitter(deleteStep, opts.emit),
     maxOperationAttempts: shared.maxOperationAttempts,
     remove: session.remove,
   });
 
+  const excluded = replaceWithout?.(new Set(deleted));
+  const created = excluded?.size
+    ? yield* withoutContributions(step, shared, excluded)
+    : shared;
+
   const createStep = step.scope("replace:create");
   yield* createResourceOperation(createStep, {
-    ...shared,
+    ...created,
     emit: durableEmitter(createStep, opts.emit),
     // The persisted output describes the resource that was just deleted.
     persistedOutput: undefined,
@@ -299,7 +394,7 @@ async function* replaceResource(
  * afterwards, so deploy creates it again when it reaches it, after
  * `resource` has been created again. Each orphan among them is gone before
  * the sweep reaches it. Every other dependent stays in place, including one
- * with no class.
+ * with no class. Returns the IDs of the deleted dependents.
  *
  * Records are listed when the replacement starts. Deploy has written the
  * edges in code for every resource it has reached by then, and a resource it
@@ -309,13 +404,13 @@ async function* deleteBlockingDependents(
   step: DurableStepRunner,
   opts: DurableDeployOptions,
   resource: BaseResource,
-): AsyncGenerator<any, void, any> {
+): AsyncGenerator<any, string[], any> {
   const registry = workflowRegistry(opts);
   // Skips listing state, which copies every record into the journal.
   const blockable = [...registry.values()].some((Class) =>
     Class.blocksDeleteOf.includes(resource.type),
   );
-  if (!blockable) return;
+  if (!blockable) return [];
 
   const records = yield* step.run("list", () => opts.state.values());
   const resourceById = new Map(
@@ -333,7 +428,11 @@ async function* deleteBlockingDependents(
   for (const id of dependents) {
     const record = recordById.get(id)!;
     yield* deleteResource(
-      step.scope(encodeURIComponent(id)),
+      // Two replacements in one deploy can each delete the same dependent.
+      step.scope(
+        encodeURIComponent(id),
+        `replace:${encodeURIComponent(resource.id)}`,
+      ),
       await instantiateRecord(
         registry.get(record.type as ResourceType)!,
         record,
@@ -342,6 +441,7 @@ async function* deleteBlockingDependents(
       { reason: "dependency-replaced", replacedDependency: resource.id },
     );
   }
+  return dependents;
 }
 
 /**
@@ -381,11 +481,40 @@ export async function* deleteResource(
   const emit = durableEmitter(step, opts.emit);
   yield* deleteResourceOperation(step, {
     resource,
+    deletion: yield* readDeletion(step, opts, resource),
     dryRun: opts.dryRun,
     emit: (event) => emit({ ...event, ...cause }),
     maxOperationAttempts: opts.maxOperationAttempts,
     remove: session.remove,
   });
+}
+
+/**
+ * Reads what a `delete` of `resource` is told about the delete, when its
+ * type takes it: the resources whose state records depend on it now. Listed
+ * just before the delete, so that it leaves out the dependents that deploy
+ * has already deleted. The step returns only the dependents, as its result
+ * is copied into the journal.
+ */
+async function* readDeletion(
+  step: DurableStepRunner,
+  opts: DurableWorkflowOptions,
+  resource: BaseResource,
+): AsyncGenerator<any, ResourceDeletion | undefined, any> {
+  if (!resource.deleteTakesDependents || opts.dryRun) return undefined;
+  const resourceById = new Map(
+    opts.resources.map((desired) => [desired.id, desired]),
+  );
+  const dependents = yield* step.run("dependents", async () =>
+    (await opts.state.values())
+      .filter(
+        (node) =>
+          node.id !== resource.id &&
+          recordedEdges(node, resourceById).includes(resource.id),
+      )
+      .map(({ id, type, params }) => ({ id, type, params })),
+  );
+  return { dependents };
 }
 
 /**
@@ -547,7 +676,7 @@ function collectDependencies(
  * version the record was read at, so a write made against it cannot land on a
  * record another writer has moved on.
  */
-async function* openStateSession(
+export async function* openStateSession(
   step: DurableStepRunner,
   opts: DurableWorkflowOptions,
   resource: BaseResource,
@@ -564,6 +693,14 @@ async function* openStateSession(
     persist,
     remove: removeResourceState(step, opts, resource, snapshot),
   };
+}
+
+function stateKey(
+  step: DurableStepRunner,
+  name: string,
+  resource: BaseResource,
+) {
+  return `state:${name}:${resource.id}${step.stateKey ? `:${step.stateKey}` : ""}`;
 }
 
 /**
@@ -587,7 +724,7 @@ function persistResourceState(
       id: opts.state.storeId(resource.id),
     });
     const result = yield* store.updateFrom(
-      `state:persist:${resource.id}`,
+      stateKey(step, "persist", resource),
       snapshot,
       () => next,
     );
@@ -615,7 +752,7 @@ function createResourceState(
     const store = step.store(resourceStateStore, {
       id: opts.state.storeId(resource.id),
     });
-    yield* store.update(`state:create:${resource.id}`, () => next);
+    yield* store.update(stateKey(step, "create", resource), () => next);
   };
 }
 
@@ -630,7 +767,7 @@ function removeResourceState(
       id: opts.state.storeId(resource.id),
     });
     const result = yield* store.deleteFrom(
-      `state:delete:${resource.id}`,
+      stateKey(step, "delete", resource),
       snapshot,
     );
     if (!result.deleted) {

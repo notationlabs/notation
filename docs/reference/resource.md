@@ -83,11 +83,12 @@ const LambdaFunction = defineResource<{
 
 `meta` defines runtime values for state tracking, reconciliation, and display
 
-| Field            | Purpose                                                                                                                                                              |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `type`           | a `platform/service/ResourceName` string (e.g. `aws/lambda/LambdaFunction`).                                                                                         |
-| `provider`       | the package or package subpath that exports the class (e.g. `@notation/aws/resources`). State records it with the type. See [Provider packages](#provider-packages). |
-| `blocksDeleteOf` | `ResourceType[]?`. The types that the provider refuses to delete while a resource of this type depends on them. Defaults to `[]`.                                    |
+| Field                   | Purpose                                                                                                                                                              |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`                  | a `platform/service/ResourceName` string (e.g. `aws/lambda/LambdaFunction`).                                                                                         |
+| `provider`              | the package or package subpath that exports the class (e.g. `@notation/aws/resources`). State records it with the type. See [Provider packages](#provider-packages). |
+| `blocksDeleteOf`        | `ResourceType[]?`. The types that the provider refuses to delete while a resource of this type depends on them. Defaults to `[]`.                                    |
+| `deleteTakesDependents` | `boolean?`. Set when `delete` uses its `deletion` argument. See [Deletes of a resource that others refer to](#deletes-of-a-resource-that-others-refer-to).           |
 
 When deploy replaces a resource of a listed type, it first deletes each resource of this type that depends on it, and creates it again after the new resource. AWS, for example, does not delete an EventBridge bus that has rules, so `aws/eventBridge/rule` lists the bus type:
 
@@ -99,6 +100,22 @@ const eventBridgeRule = resource<EventBridgeRuleSchema>({
 ```
 
 List a type only when the provider refuses the delete. A dependent of a type that does not list the type stays in place, and deploy updates it when its params change. Write the type as a string literal when importing the class would make an import cycle. Nothing checks that a listed type exists, so a mistyped type is ignored. The resource class exposes the list as `blocksDeleteOf`, as it exposes `type`.
+
+#### Deletes of a resource that others refer to
+
+Some providers refuse to delete a resource while another resource refers to it, and can force the delete. Cloudflare does this for a Worker that another Worker binds. Deploy must delete such a resource while a dependent still refers to it in three cases: when it replaces the resource, when resources that depend on each other are destroyed, and when they are removed from code.
+
+Set `deleteTakesDependents` on the type. `delete` then gets `deletion.dependents`: the resources whose state records depend on the deleted resource, each with its `id`, `type` and the `params` in its record. Deploy updates or deletes each of them in the same run. Force the delete only when every reference to the resource comes from one of the dependents, and fail otherwise, as nothing repairs a reference from a resource that the deployment does not manage:
+
+```ts
+const workerScript = resource<WorkerScriptSchema>({
+  type: "cloudflare/workers/WorkerScript",
+  provider: "@notation/cloudflare/resources",
+  deleteTakesDependents: true,
+});
+```
+
+Deploy lists state before each delete of a resource of such a type, so set it only when `delete` uses the argument. Without it, `deletion` is undefined. A forced delete can leave the dependents' references broken until deploy updates them. Deploy updates a dependent only when its params change, so a replacement must change an output that the dependents take, such as the name.
 
 **2. `resource({ type, provider })`** – `type` defines
 
@@ -223,7 +240,7 @@ An issue in a statement that holds an unknown is still dropped, because the stat
 | `find`         | no       | `(params, token) => Promise<ComputedPrimaryKey<S>>` – find the resource that the create attempt with `token` made, or throw `ResourceNotFoundError`. See [Unknown create outcomes](#unknown-create-outcomes). |
 | `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                                                                          |
 | `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                                                            |
-| `delete`       | yes      | `(key, state, context?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone.                                                        |
+| `delete`       | yes      | `(key, state, context?, deletion?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone.                                             |
 | `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                                                                         |
 
 The reconciler records params, results and state, so each must be a durable value as `@notation/durable` 0.9.0 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
@@ -482,6 +499,45 @@ Contributions close when evaluation ends, and `contribute` and `dependOn` throw 
 The infra build wraps each declaration, such as a `$lambda` call, in a call that records the declaration's module. `declaredIn(value, path, binding, moduleExports?)` records the module's path, relative to the project root, and the local name of the binding on `value`, under `Symbol.for("@notation/declaredIn")`, and returns `value`. For a declaration marked `platform: workerd`, `moduleExports` is `{ exports, starExports }`: the names that the runtime bundle re-exports besides the entry, and the specifiers of the module's `export * from` statements, whose names the bundle doesn't re-export. `getDeclaredIn(value)` returns the record, or `undefined`. `$lambda` reads the record to find the module, and so the path of the function's bundle.
 
 When you delete a `contribute` call, the collected value changes, and the resource updates on the next deploy. When the API cannot unset a removed field, the provider resets it to the API's default. When there is no default, mark the field `immutable`, so that removing it replaces the resource.
+
+### Cycles
+
+A resource in `config` or `dependencies` must already be constructed, so two resources can only depend on each other through `contribute` or `dependOn`. For example, two Workers that call each other each contribute a service binding to the other:
+
+```ts
+const a = new WorkerScript("a", { config: { ScriptName: "a" } });
+const b = new WorkerScript("b", { config: { ScriptName: "b" } });
+a.contribute({
+  Bindings: [
+    { type: "service", name: "B", service: b.outputRef("ScriptName") },
+  ],
+});
+b.contribute({
+  Bindings: [
+    { type: "service", name: "A", service: a.outputRef("ScriptName") },
+  ],
+});
+```
+
+Deploy breaks the cycle at a placeholder. It creates the placeholder first, without the contributions that refer to the other members of the cycle. It creates the other members, and then updates the placeholder with its full params:
+
+```
+create a (no bindings) → create b (binds a) → update a (binds b)
+```
+
+A member can be the placeholder when:
+
+- it depends on the other members of the loop only through its contributions, not through its config, its `dependencies` or `dependOn`,
+- each param that its contributions that refer to other members set is optional, and is not `immutable`, `primaryKey` or `secondaryKey`. A function contribution can set any collected param, so then this applies to every collected param,
+- its type has `update`.
+
+Deploy leaves out a whole contribution when any value in it refers to another member. Use one contribution for each reference, so that the placeholder keeps the values that don't refer to other members. For example, contribute a service binding to another Worker on its own, not in the same `contribute` call as variables.
+
+In each loop, the first member in the order of the resources that can be the placeholder becomes one. When no member of a loop can, plan and deploy fail with `ResourceCycleError`, which names the members of the loop and says why each of them can't be the placeholder.
+
+Three methods give the engine what it needs: `getFixedDependencies()` returns the dependencies that don't come from contributions, `getContributedParams({ from })` returns the collected params that the contributions that depend on a resource in `from` set, and `getParams({ excludeContributionsFrom })` returns the params without the contributions that depend on a resource in `excludeContributionsFrom`. A contribution depends on the resources in the `deps` of a function contribution, or on the resources whose output refs it holds. See [Dependency cycles](../internals/reconciler.md#dependency-cycles) for how deploy, destroy and plan handle a cycle.
+
+Destroy deletes the members of a cycle while they still refer to each other, and so does a replace of a member. When the provider refuses to delete a resource that another resource refers to, the type must force the delete. See [Deletes of a resource that others refer to](#deletes-of-a-resource-that-others-refer-to).
 
 ## Resource groups
 

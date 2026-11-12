@@ -52,6 +52,25 @@ The declaration adds the Worker even when nothing imports it.
 
 `WorkerEnv<typeof worker>` is the type of `env`, and `WorkerHandler<typeof worker>` is the type of the default export. A Worker that binds another Worker is uploaded after it.
 
+Two Workers can bind each other as services. Each service binding is a [contribution](../../reference/resource.md#cycles) to the Worker's script, so deploy can break the cycle:
+
+1. Deploy uploads one of the Workers without its service bindings.
+2. It uploads the other Worker, which binds the first.
+3. It uploads the first Worker again, with its service bindings.
+
+Between steps 1 and 3, the first Worker's `env` has no service bindings, so a request that calls the other Worker fails.
+
+### Deleting a Worker that other Workers bind
+
+Cloudflare doesn't delete a Worker that another Worker binds as a service, or whose Durable Object namespace another Worker binds, unless the delete is forced. Deploy deletes a Worker when its `name` changes, when it is removed from code, and in destroy.
+
+- When every Worker that binds it is in the same app and stage, the delete is forced. After a change of `name`, deploy uploads each of those Workers again with the new name. Their bindings are broken from the delete until that upload, so requests that use them fail in between.
+- When another Worker binds it, such as a Worker of another app or stage, or one that Notation did not deploy, the delete fails, and the error names that Worker. A Pages project that binds the Worker, and a Worker that sends it tail events, stop the delete in the same way. Remove the reference first.
+
+Deleting a Worker deletes the objects of the Durable Object namespaces that it hosts, forced or not.
+
+Namespaces can't close a cycle. When two Workers each bind a namespace that the other hosts, plan fails, as each Worker is uploaded after the host of each namespace that it binds.
+
 ## `$durableObject(config)`
 
 A runtime module calls `$durableObject` to declare a Durable Object namespace. The module holds only this declaration and the class. A Worker hosts the namespace when it binds the namespace and its module exports the class:

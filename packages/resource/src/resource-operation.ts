@@ -7,6 +7,27 @@ import type { DurableObject } from "./durable-value";
 export type ResourceOperationContext = Readonly<DurableObject>;
 
 /**
+ * What deploy knows about a delete. A `delete` operation gets it when its
+ * type sets `deleteTakesDependents`.
+ */
+export type ResourceDeletion = {
+  /**
+   * The resources of the deployment whose state records depend on the
+   * deleted resource, with the params in their records. Deploy updates or
+   * deletes each of them in the same run: it updates a dependent of a
+   * replaced resource when it reaches it, and destroy and the orphan sweep
+   * delete a dependent too. So a provider that refuses to delete a resource
+   * that others refer to can force the delete when every reference comes
+   * from one of these.
+   */
+  dependents: readonly {
+    id: string;
+    type: string;
+    params: Readonly<Record<string, unknown>>;
+  }[];
+};
+
+/**
  * A `read` operation throws this error when no resource exists for its key.
  */
 export class ResourceNotFoundError extends Error {

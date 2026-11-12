@@ -4,7 +4,7 @@ The reconciler expresses deployment and destruction as `@notation/durable` async
 
 ## Deploy flow
 
-`deploy` first [validates](resource.md#value-types) every param it knows, so that a malformed value fails before any change. As in the planner, outputs from state stand in for the outputs of dependencies during this check. It then takes the deployment hold, walks dependency levels in order, decides an action for every resource, executes provider calls as durable steps, persists the result in a resource store, and deletes registered orphans in reverse order of the [edges in state](#dependency-edges).
+`deploy` first [validates](resource.md#value-types) every param it knows, so that a malformed value fails before any change. As in the planner, outputs from state stand in for the outputs of dependencies during this check. It then takes the deployment hold, walks dependency levels in order (resources that depend on each other are deployed together; see [Dependency cycles](#dependency-cycles)), decides an action for every resource, executes provider calls as durable steps, persists the result in a resource store, and deletes registered orphans in reverse order of the [edges in state](#dependency-edges).
 
 | Condition                                                                                | Decision           |
 | ---------------------------------------------------------------------------------------- | ------------------ |
@@ -84,6 +84,79 @@ Plan finds the same dependents with the same code. It shows each dependent in co
 
 When the replaced resource depends on a field that is unknown at plan, its own entry says "unknown, may force replacement". Its dependents are shown as **replace** in the same way, and `notation plan` prints `deleted if eventbridge-bus:orders is replaced`, because deploy deletes them only if it replaces the resource.
 
+## Dependency cycles
+
+Resources that depend on each other, directly or through other resources, form a cycle. `orderDeployUnits` (`packages/reconciler/src/cycles.ts`) finds each cycle and picks its placeholders, as described in [Cycles](../reference/resource.md#cycles). Plan, deploy and destroy treat a cycle as one unit in the dependency order: it comes after every resource that one of its members depends on, and before every resource that depends on one of its members. Inside the cycle, the members are ordered by their edges, where a placeholder counts only the edges that don't come from contributions that refer to other members. So a placeholder comes before the members that depend on it.
+
+A member's placeholder params are its params without the contributions that refer to other members of its cycle. Its other contributions stay.
+
+Deploy applies a cycle in passes:
+
+1. The first pass goes through the members in order. A placeholder with no record is created with its placeholder params, and the decision event has `placeholder: true`. Its record leaves out the edges to the members that its placeholder params leave out, as they may not exist yet. So when deploy fails before it creates them, the orphan sweep can delete the placeholder without an edge to a resource that has no record. The second pass writes the full edges. A placeholder with a record is left as it is, and its output from state stands in for the members that follow it. This holds when the placeholder must be replaced too: the second pass replaces it. A member that this deploy creates is then created with the output of the old resource, and updated after the replace, which is one more update than a create after the replace would need. With drift detection, deploy first reads a placeholder that has a record, and when it no longer exists, creates it with its placeholder params, with the decision **drift-recreate**. Every other member is reconciled as usual, so it sees the placeholder's output.
+2. Each later pass reconciles every member with its full params, in the same order. A placeholder is updated with its contributions in the second pass. A member whose params changed, because the output of another member changed, is updated again.
+3. Deploy stops after a pass in which no member's output changed, and after which no member lacks contributions because of a replacement, as the next pass would change nothing. A member lacks contributions when a replacement created it without some of them, and the pass has not reconciled the member since.
+
+A cycle of N members gets at most N passes after the first, and at least two, so that a member that refers to itself is updated with its contributions in one pass and checked in the next. Each replace of a member adds a pass, as the replacement is created again. If an output still changes in the last pass, deploy fails with `ResourceCycleError`, which names the outputs that changed in it, such as `a.version`. This happens when a member takes an output that changes on every update, such as a version ID.
+
+After the first pass, a pass announces a decision only when it is not **noop**, except the second pass for a placeholder. Drift detection reads each member once, in the first pass. A placeholder with a record is read in the first pass to find out whether it still exists, with the step keys `notation:deploy:<id>:placeholder:check`. The second pass decides its drift from that read, when its full params match its record. A placeholder that this deploy created is not checked for drift. Each pass has its own step keys, `notation:deploy:<id>:settle:<n>`, and its own state write keys, such as `state:persist:<id>:settle:<n>`. The first pass for a placeholder uses `notation:deploy:<id>:placeholder`.
+
+When deploy fails after it created a placeholder, the placeholder has a record. The next deploy leaves it as it is in the first pass, and updates it in the second.
+
+A pass after the first must not create or replace a member that this deploy has already created. A second create would reuse the create effect IDs of the first. This happens when a param of a member that forces a replacement takes an output of another member, and that output changed when the other member was updated with its contributions. It also happens when deploy replaces a member, and deletes a member that this deploy created because it blocks the delete. Deploy fails with `ResourceCycleError` in both cases, and the error says which. In the second case, the next deploy creates the deleted member.
+
+### Replacing a member of a cycle
+
+Deploy replaces a member of a cycle as it replaces any resource: it deletes the dependents that block the delete, deletes the member, and creates it again. The other members still refer to the member when it is deleted. A provider may refuse to delete a resource that another resource refers to. Cloudflare, for example, does not delete a Worker that another Worker binds, unless the delete is forced. So the provider must delete the member while a dependent in the deployment refers to it. See [Deletes of a resource that others refer to](#deletes-of-a-resource-that-others-refer-to).
+
+The members that refer to the replaced member are updated with the output of the new resource when deploy reaches them: later in the same pass, or in the next pass. Until then, their references point at a resource that no longer exists. The replaced member is unavailable from its delete until its cycle settles.
+
+A replaced member is created without some of its contributions in two cases, and the next pass updates it with them:
+
+- It refers to itself through its contributions. They hold the output of the resource that was deleted.
+- It refers through its contributions to a member that the replacement deleted as a dependent that blocks the delete. That member exists again only when deploy reaches it.
+
+The removal of each dependent's record has the state write key `state:delete:<dependent id>:replace:<replaced id>`.
+
+A member that depends on the replaced member is updated only when its params change. This holds when it takes an output that the replacement changes, such as the name. Deploy does not update a member whose params stay the same, so a provider whose references break for good when the target is deleted, even when a resource with the same name is created again, must make a replacement change an output that the dependents take. A Worker is replaced only when its name changes, and the Workers that bind it take its name.
+
+Plan plans each member that comes before a replaced member a second time, after the replaced member, so that its node shows the update with the unknown output of the replacement, not a **noop** against the output of the old resource.
+
+Notation has no names that let the old and the new resource exist side by side, so deploy can't create the new resource before it deletes the old one.
+
+### Destroying a cycle
+
+Destroy deletes the members of a cycle in the reverse of their order in deploy. A placeholder comes first in deploy, so it is deleted last, and it still refers to the members that are deleted before it. As in a replace, the provider must delete a resource that a dependent in the deployment refers to. Destroy does not read the current code for this, so a change to the code since the last deploy does not stop it.
+
+The orphan sweep deletes orphans that form a cycle in storage order, and relies on the provider in the same way. This covers the ordinary case of removing two Workers that bind each other from code.
+
+### Deletes of a resource that others refer to
+
+A type that sets `deleteTakesDependents` gets a fourth argument in `delete`: `{ dependents }`, the resources whose state records depend on the deleted resource, each with its `id`, `type` and the `params` in its record. Deploy lists state just before the delete, in the step `dependents` of the delete's scope, so the list leaves out the dependents that it has already deleted. A dry run does not list state.
+
+Deploy updates or deletes every dependent in the same run:
+
+- In a replace, each dependent is a resource in code that deploy updates when it reaches it, or an orphan that the sweep deletes.
+- In destroy and in the orphan sweep, each dependent is deleted too.
+
+So a provider can force a delete that it would otherwise refuse, when every reference to the resource comes from one of the dependents. It must refuse when another resource refers to it, such as a resource of another deployment, as nothing repairs that reference.
+
+`WorkerScript` does this. Cloudflare refuses the delete of a Worker that another Worker binds as a service (code 10142), or whose Durable Object namespace another Worker binds (code 10064). On either refusal, the delete reads the Worker's references and the Workers that send it tail events. When every one of them is a `WorkerScript` among the dependents, it deletes the Worker with `force=true`. Otherwise it fails, and the error names the Workers that the deployment does not manage. A reference from a Pages project fails in the same way. A forced delete leaves the bindings to the Worker broken until each Worker that holds one is uploaded again.
+
+When deploy fails between a forced delete and the update of a dependent, the dependent keeps its broken reference. The next deploy creates the resource if it is missing, and updates the dependent.
+
+### Plan
+
+Plan loads the output of every member of a cycle from state before it plans the first member. A member that depends on a member with no record plans the value as unknown, as for any resource. Each member's node has `cycle`, the IDs of the other members. A placeholder that deploy creates has `placeholder: true`, and `notation plan` prints:
+
+```
++ create cloudflare/workers/WorkerScript worker:api
+    created first without the contributions that refer to worker:reports, the other members of its cycle
+```
+
+The node shows the full params, not the placeholder params.
+
+A dry run of a cycle runs only the first pass, as it creates and updates nothing that a later pass could see. It then reconciles each placeholder that has a record with its full params, under the step keys of the second pass, so that it reports the update that deploy would make. A dry run of a new cycle fails in the first pass when a member reads an output of a placeholder that does not exist yet, as a dry run of any new chain of resources does.
+
 ## Dependency check
 
 Before plan or deploy does anything else, `assertDependenciesPresent` (`packages/reconciler/src/dependency-graph.ts`) checks every dependency of every resource. A resource gets dependencies in four ways:
@@ -132,7 +205,7 @@ Each state record stores the IDs of the resources it depends on in `dependsOn`, 
 
 The sweep deletes orphans in reverse order of these edges, as deploy and destroy do for resources in the graph. A replacement deletes the dependents that block its delete in the same order; see [Dependents of a replaced resource](#dependents-of-a-replaced-resource). An edge to a resource that is not an orphan is ignored, including an edge to a resource that is no longer in state. A record written before edges were recorded has no `dependsOn`, and keeps its storage order among the orphans it has no edges to. The next deploy that reaches the resource writes its edges.
 
-Orphans that form a cycle cannot be ordered. They, and the orphans that depend on them, are deleted first, in storage order, so a provider that refuses one of the deletes fails the deploy. An orphan in this group with no registered class does not keep the orphans it depends on in the group, as the sweep can delete them before it reaches the orphan.
+Orphans that form a cycle cannot be ordered. They, and the orphans that depend on them, are deleted first, in storage order. A provider that refuses to delete a resource that another orphan refers to fails the deploy, unless its type forces the delete; see [Deletes of a resource that others refer to](#deletes-of-a-resource-that-others-refer-to). An orphan in this group with no registered class does not keep the orphans it depends on in the group, as the sweep can delete them before it reaches the orphan.
 
 The sweep looks up an orphan's class by its type in the caller's `registry`, merged with the classes of the resources in the graph. Each state record stores the provider of its resource in `provider`, a package name or a package subpath, which the resource class declares with `resource({ type, provider })`. `deployApp` and `destroyApp` in `@notation/core` collect the providers that state names, in a `notation:providers` step, and pass the resource classes that each provider exports. Only the records whose type has no class in the graph count, as the graph's classes cover the others. Each provider is resolved with `createRequire` from the project root, and then imported. A provider package is not always a direct dependency of the project, and pnpm does not link a transitive package into the project's `node_modules`. So a package that the root can't resolve is resolved from the real directory of each package in the project's dependency tree, breadth first, starting from the nearest `package.json` at or above the root, as Node resolves it when that package imports it. The walk stops at the first directory that resolves the package. If the tree holds two versions of a package, the first one found is loaded. A package is skipped, and a `reconciler.provider.load-failed` warning names it with the cause, when it can't be resolved, resolves to a builtin module such as `fs`, throws on import, or exports no resource classes that declare it as their provider. The loader takes the resource classes among the module's exports and among the values of each exported object, so a namespace export such as `lambda` is read. It reads `default` in the same way, because `import()` puts a CommonJS module's exports there. Other exports are ignored. A class whose `provider` is another package is ignored too, so each type is loaded only from the provider that its state record names. A provider name may contain only letters, digits, `_`, `.`, `~` and `-`, with an optional leading `@` and `/` between segments, and no segment may start with a dot. A record whose provider is not such a name, such as a relative path, an absolute path or a Windows drive path, is skipped in the same way. A record with no `provider` was written by an earlier version, and plan, deploy and destroy fail on it at the start. Deploy and destroy emit the warning in a step under `notation:providers:<package>`, so a resumed execution does not emit it again. The sweep's `reconciler.orphan-deletion.skipped` warning still names each record that is left in place. Core does not list the provider packages, so a provider from outside this repository works the same way. `planApp` loads the same packages without a step, so plan finds the same blocking dependents as deploy. Without these classes, a record whose type no longer appears in the graph could not be deleted. The packages are read before the deployment hold. So when an execution waits on another's hold, it does not have the packages of the records that the other execution writes, and its sweep skips those records as orphans until the next deploy.
 

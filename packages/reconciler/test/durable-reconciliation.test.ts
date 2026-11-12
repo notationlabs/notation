@@ -12,6 +12,7 @@ import {
   resource,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
+  type ResourceDeletion,
   ResourceOperationPendingError,
   SchemaStructureError,
   ValueValidationError,
@@ -30,6 +31,7 @@ import {
   type ResourceRegistry,
 } from "../src/resource-registry";
 import { ResourceTypeChangedError } from "../src/resource-type";
+import { ResourceCycleError } from "../src/cycles";
 
 const logger = pino({ level: "silent" });
 
@@ -2324,6 +2326,34 @@ describe("replacement with dependents", () => {
     runtime.close();
   });
 
+  it("resumes after a crash that follows the removal of a dependent's record", async () => {
+    const world = defineWorld();
+    const resources = declare(world, "orders");
+    const runtime = createRuntime(resources, "replace-dependents-crash", {
+      // The key names the replaced resource, so that two replacements that
+      // delete the same dependent don't share it.
+      crashAfterStep: "state:delete:rule:replace:bus",
+    });
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declare(world, "shop"));
+    world.calls.length = 0;
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "simulated process crash",
+    );
+    expect(world.calls).toEqual(["delete:rule"]);
+
+    await runtime.run("deploy-2");
+    expect(world.calls).toEqual([
+      "delete:rule",
+      "delete:orders",
+      "create:shop",
+      "create:rule",
+      "update:fn",
+    ]);
+    runtime.close();
+  });
+
   it("deletes a dependent whose record has no edges, by the edges in code", async () => {
     const world = defineWorld();
     const resources = declare(world, "orders");
@@ -3837,6 +3867,887 @@ describe("value validation at deploy", () => {
 
     expect(deleteSpy).toHaveBeenCalledOnce();
     expect(await runtime.state.get("orphan")).toBeUndefined();
+    runtime.close();
+  });
+});
+
+describe("dependency cycles", () => {
+  /**
+   * Workers that bind each other by name, as Cloudflare Workers do through
+   * service bindings. The fake provider refuses an upload that binds a
+   * Worker that doesn't exist. It refuses the delete of a Worker that
+   * another Worker binds, unless that Worker is one of the dependents that
+   * deploy passes to the delete. With `versioned`, each create and update makes a new
+   * version, and bindings are not checked. With `blocksDelete`, a Worker
+   * blocks the delete of the Workers it depends on, so a replacement deletes
+   * them first, and bindings are not checked. With `readable`, a read
+   * reports whether the Worker exists.
+   */
+  function defineWorkers(
+    opts: {
+      versioned?: boolean;
+      blocksDelete?: boolean;
+      readable?: boolean;
+    } = {},
+  ) {
+    const remote = new Map<string, string[]>();
+    const calls: string[] = [];
+    const failCreate = new Set<string>();
+    let version = 0;
+    const put = (verb: string, params: any) => {
+      const bindings: string[] = params.bindings ?? [];
+      for (const bound of bindings) {
+        if (
+          opts.versioned ||
+          opts.blocksDelete ||
+          bound === params.name ||
+          remote.has(bound)
+        ) {
+          continue;
+        }
+        throw new Error(`${params.name} binds ${bound}, which does not exist`);
+      }
+      remote.set(params.name, bindings);
+      calls.push(`${verb} ${params.name} [${bindings.join(", ")}]`);
+    };
+    const type = "test/durable/cycle-worker" as const;
+    const Worker = resource({
+      type,
+      provider: "test",
+      deleteTakesDependents: true,
+      ...(opts.blocksDelete ? { blocksDeleteOf: [type] } : {}),
+    })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          primaryKey: true,
+          value: v.string(),
+        },
+        bindings: {
+          propertyType: "param",
+          presence: "optional",
+          value: v.array(v.string()),
+          collect: (items: string[][]) => items.flat(),
+        },
+        version: {
+          propertyType: "computed",
+          presence: "optional",
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          if (failCreate.delete(params.name)) {
+            throw new Error(`create ${params.name} failed`);
+          }
+          put("create", params);
+        },
+        read: opts.versioned
+          ? async () => ({ version: `v${(version += 1)}` }) as any
+          : opts.readable
+            ? async (key: any) => {
+                if (!remote.has(key.name)) {
+                  throw new ResourceNotFoundError(`${key.name} not found`);
+                }
+                return {} as any;
+              }
+            : undefined,
+        update: async (_key: any, _patch: any, params: any) =>
+          put("update", params),
+        delete: async (
+          key: any,
+          _state: any,
+          _context: any,
+          deletion?: ResourceDeletion,
+        ) => {
+          const dependents = new Set(
+            deletion?.dependents.map(({ params }) => params.name),
+          );
+          for (const [other, bindings] of remote) {
+            if (opts.blocksDelete || dependents.has(other)) continue;
+            if (other !== key.name && bindings.includes(key.name)) {
+              throw new Error(`${other} still binds ${key.name}`);
+            }
+          }
+          remote.delete(key.name);
+          calls.push(`delete ${key.name}`);
+        },
+      });
+    const worker = (id: string, name = id): BaseResource =>
+      new Worker(id, { config: { name } as any });
+    const bind = (from: BaseResource, to: BaseResource, output = "name") =>
+      from.contribute({ bindings: [to.outputRef(output)] } as any);
+    return { Worker, worker, bind, remote, calls, failCreate };
+  }
+
+  it("creates one member as a placeholder, and updates it once the other exists", async () => {
+    const { worker, bind, remote, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime([a, b], "cycle-create", {
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("cycle-create-1");
+
+    expect(calls).toEqual(["create a []", "create b [a]", "update a [b]"]);
+    expect(remote).toEqual(
+      new Map([
+        ["a", ["b"]],
+        ["b", ["a"]],
+      ]),
+    );
+    expect(await runtime.state.get("a")).toMatchObject({
+      params: { name: "a", bindings: ["b"] },
+      dependsOn: ["b"],
+    });
+    expect(
+      events
+        .filter((event) => event.event === "reconciler.deploy.decision")
+        .map(({ resourceId, decision, placeholder }: any) => ({
+          resourceId,
+          decision,
+          ...(placeholder ? { placeholder } : {}),
+        })),
+    ).toEqual([
+      { resourceId: "a", decision: "create", placeholder: true },
+      { resourceId: "b", decision: "create" },
+      { resourceId: "a", decision: "update" },
+    ]);
+
+    calls.length = 0;
+    await runtime.run("cycle-create-2");
+    expect(calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("updates a placeholder that a failed deploy left", async () => {
+    const { worker, bind, calls, failCreate } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const runtime = createRuntime([a, b], "cycle-resume");
+    failCreate.add("b");
+
+    await expect(runtime.run("cycle-resume-1")).rejects.toThrow(
+      "create b failed",
+    );
+    expect(calls).toEqual(["create a []"]);
+    expect(await runtime.state.get("a")).toMatchObject({
+      params: { name: "a" },
+    });
+
+    calls.length = 0;
+    await runtime.run("cycle-resume-2");
+    expect(calls).toEqual(["create b [a]", "update a [b]"]);
+    runtime.close();
+  });
+
+  it("creates a dependent outside the cycle after the cycle settles", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    const c = worker("c");
+    bind(a, b);
+    bind(b, a);
+    bind(c, a);
+    const runtime = createRuntime([c, a, b], "cycle-dependent");
+
+    await runtime.run("cycle-dependent-1");
+
+    expect(calls).toEqual([
+      "create a []",
+      "create b [a]",
+      "update a [b]",
+      "create c [a]",
+    ]);
+    runtime.close();
+  });
+
+  it("does not create a dependent outside the cycle when the cycle fails after its placeholder exists", async () => {
+    const { worker, bind, calls, failCreate } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    const c = worker("c");
+    bind(a, b);
+    bind(b, a);
+    bind(c, a);
+    const runtime = createRuntime([c, a, b], "cycle-dependent-fail");
+    failCreate.add("b");
+
+    await expect(runtime.run("cycle-dependent-fail-1")).rejects.toThrow(
+      "create b failed",
+    );
+    expect(calls).toEqual(["create a []"]);
+
+    calls.length = 0;
+    await runtime.run("cycle-dependent-fail-2");
+    expect(calls).toEqual(["create b [a]", "update a [b]", "create c [a]"]);
+    runtime.close();
+  });
+
+  it("updates a member that reads an output of a later member that an update changes", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const build = (target: string) => {
+      const a = worker("a");
+      const b = worker("b");
+      const c = worker("c");
+      const d = worker("d");
+      a.contribute({ bindings: b.outputRef("bindings") } as any);
+      bind(b, a);
+      bind(b, target === "c" ? c : d);
+      return [c, d, a, b];
+    };
+    const resources = build("c");
+    const runtime = createRuntime(resources, "cycle-update-read");
+    await runtime.run("cycle-update-read-1");
+    expect(calls.slice(2)).toEqual([
+      "create a []",
+      "create b [a, c]",
+      "update a [a, c]",
+    ]);
+    calls.length = 0;
+
+    resources.splice(0, 4, ...build("d"));
+    await runtime.run("cycle-update-read-2");
+
+    expect(calls).toEqual(["update b [a, d]", "update a [a, d]"]);
+    runtime.close();
+  });
+
+  it("fails when an output that a member takes changes on every update", async () => {
+    const { worker, bind } = defineWorkers({ versioned: true });
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b, "version");
+    bind(b, a, "version");
+    const runtime = createRuntime([a, b], "cycle-unsettled");
+
+    const run = runtime.run("cycle-unsettled-1");
+    await expect(run).rejects.toThrow(
+      "The cycle of a and b did not settle after 3 passes.",
+    );
+    await expect(run).rejects.toThrow("a.version");
+    runtime.close();
+  });
+
+  it("deletes the members of a cycle in destroy while a member in state still refers to them", async () => {
+    const { worker, bind, remote, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const runtime = createRuntime([a, b], "cycle-destroy");
+    await runtime.run("cycle-destroy-1");
+    calls.length = 0;
+
+    await runtime.destroy("cycle-destroy-2");
+
+    expect(calls).toEqual(["delete b", "delete a"]);
+    expect(remote.size).toBe(0);
+    expect(await runtime.state.values()).toHaveLength(0);
+    runtime.close();
+  });
+
+  it("replaces two members that refer to each other in one deploy", async () => {
+    const { worker, bind, calls, remote } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [a, b];
+    const runtime = createRuntime(resources, "cycle-rename-both");
+    await runtime.run("cycle-rename-both-1");
+    calls.length = 0;
+
+    const nextA = worker("a", "a2");
+    const nextB = worker("b", "b2");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    resources.splice(0, 2, nextA, nextB);
+    await runtime.run("cycle-rename-both-2");
+
+    expect(calls).toEqual([
+      "delete b",
+      "create b2 [a]",
+      "delete a",
+      "create a2 [b2]",
+      "update b2 [a2]",
+    ]);
+    expect(remote).toEqual(
+      new Map([
+        ["a2", ["b2"]],
+        ["b2", ["a2"]],
+      ]),
+    );
+    runtime.close();
+  });
+
+  it("keeps the contributions that don't refer to other members in the placeholder", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const shared = worker("shared");
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, shared);
+    bind(a, b);
+    bind(b, a);
+    const runtime = createRuntime([a, b, shared], "cycle-kept");
+
+    await runtime.run("cycle-kept-1");
+    expect(calls).toEqual([
+      "create shared []",
+      "create a [shared]",
+      "create b [a]",
+      "update a [b, shared]",
+    ]);
+
+    calls.length = 0;
+    await runtime.destroy("cycle-kept-2");
+    expect(calls).toEqual(["delete b", "delete a", "delete shared"]);
+    runtime.close();
+  });
+
+  it("does not read a placeholder that it created for drift in the next pass", async () => {
+    const { worker, bind } = defineWorkers({ versioned: true });
+    const a = worker("a");
+    const b = worker("b");
+    // A contribution that sets nothing, so that the placeholder's full params
+    // are its placeholder params, and the next pass decides noop for it.
+    a.contribute(() => ({}), { deps: { b } });
+    bind(b, a);
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime([a, b], "cycle-drift", {
+      driftDetection: true,
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("cycle-drift-1");
+    // Only the read that follows each create.
+    expect(
+      events
+        .filter(
+          (event: any) =>
+            event.event === "reconciler.operation.lifecycle" &&
+            event.operation === "read" &&
+            event.status === "start",
+        )
+        .map((event: any) => event.resourceId),
+    ).toEqual(["a", "b"]);
+    runtime.close();
+  });
+
+  it("reads a placeholder that has a record once for drift", async () => {
+    const { worker, bind, calls } = defineWorkers({ readable: true });
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime([a, b], "cycle-drift-kept", {
+      driftDetection: true,
+      emit: (event) => void events.push(event),
+    });
+    await runtime.run("cycle-drift-kept-1");
+    events.length = 0;
+    calls.length = 0;
+
+    await runtime.run("cycle-drift-kept-2");
+
+    expect(calls).toEqual([]);
+    expect(
+      events
+        .filter(
+          (event: any) =>
+            event.event === "reconciler.operation.lifecycle" &&
+            event.operation === "read" &&
+            event.status === "start",
+        )
+        .map((event: any) => event.resourceId),
+    ).toEqual(["a", "b"]);
+    expect(
+      events
+        .filter((event) => event.event === "reconciler.deploy.decision")
+        .map(({ resourceId, decision }: any) => ({ resourceId, decision })),
+    ).toEqual([
+      { resourceId: "b", decision: "noop" },
+      { resourceId: "a", decision: "noop" },
+    ]);
+    runtime.close();
+  });
+
+  it("does not trip the create guard in a dry run of a new cycle", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const runtime = createRuntime([a, b], "cycle-dry-run", { dryRun: true });
+
+    // A dry run creates nothing, so b can't read the name of a, as in any
+    // new chain of resources.
+    const run = runtime.run("cycle-dry-run-1");
+    await expect(run).rejects.toThrow(
+      "Output a.name was read before a was deployed",
+    );
+    await expect(run).rejects.not.toThrow(ResourceCycleError);
+    expect(calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("runs only the first pass in a dry run, so a replacement is not decided twice", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [a, b];
+    const options = { dryRun: false };
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "cycle-dry-run-replace", {
+      get dryRun() {
+        return options.dryRun;
+      },
+      emit: (event) => void events.push(event),
+    });
+    await runtime.run("cycle-dry-run-replace-1");
+    calls.length = 0;
+    events.length = 0;
+
+    const nextA = worker("a");
+    const nextB = worker("b", "b2");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    resources.splice(0, 2, nextA, nextB);
+    options.dryRun = true;
+    await runtime.run("cycle-dry-run-replace-2");
+
+    expect(calls).toEqual([]);
+    expect(
+      events
+        .filter((event) => event.event === "reconciler.deploy.decision")
+        .map((event: any) => [event.resourceId, event.decision]),
+    ).toEqual([
+      ["b", "replace"],
+      ["a", "noop"],
+    ]);
+    runtime.close();
+  });
+
+  it("names the replacement when a member that it deleted would be created again", async () => {
+    const { worker, bind } = defineWorkers({ blocksDelete: true });
+    const resources = [worker("a")];
+    const runtime = createRuntime(resources, "cycle-cascade");
+    await runtime.run("cycle-cascade-1");
+
+    const a = worker("a", "a2");
+    const b = worker("b");
+    bind(a, b);
+    b.dependOn(a);
+    resources.splice(0, 1, a, b);
+    const run = runtime.run("cycle-cascade-2");
+    await expect(run).rejects.toThrow(ResourceCycleError);
+    await expect(run).rejects.toThrow(
+      "b would be created again while its cycle with a settles. This deploy created it, and its record was deleted again, when deploy replaced a and deleted the resources that block that delete.",
+    );
+    runtime.close();
+  });
+
+  it("creates a replaced member without its contributions that refer to a member that the replacement deleted", async () => {
+    const { worker, bind, calls, remote } = defineWorkers({
+      blocksDelete: true,
+    });
+    const declare = (name: string) => {
+      const p = worker("p");
+      const d = worker("d");
+      const r = worker("r", name);
+      bind(p, d);
+      d.dependOn(r);
+      bind(r, p);
+      return [p, d, r];
+    };
+    const resources = declare("r");
+    const runtime = createRuntime(resources, "cycle-cascade-binding");
+    await runtime.run("cycle-cascade-binding-1");
+    calls.length = 0;
+
+    resources.splice(0, 3, ...declare("r2"));
+    await runtime.run("cycle-cascade-binding-2");
+
+    expect(calls).toEqual([
+      "delete p",
+      "delete d",
+      "delete r",
+      "create r2 []",
+      "create d []",
+      "create p [d]",
+      "update r2 [p]",
+    ]);
+    expect(remote).toEqual(
+      new Map([
+        ["r2", ["p"]],
+        ["d", []],
+        ["p", ["d"]],
+      ]),
+    );
+    runtime.close();
+  });
+
+  it("destroys a cycle when a member has a new dependency with no record", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [a, b];
+    const runtime = createRuntime(resources, "cycle-missing-dependency");
+    await runtime.run("cycle-missing-dependency-1");
+    calls.length = 0;
+
+    const role = worker("role");
+    const nextA = worker("a");
+    const nextB = worker("b");
+    nextA.dependOn(role);
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    resources.splice(0, 2, role, nextA, nextB);
+
+    await runtime.destroy("cycle-missing-dependency-2");
+
+    expect(calls).toEqual(["delete b", "delete a"]);
+    runtime.close();
+  });
+
+  it("replaces a member that another member refers to, and updates that member with the new output", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [a, b];
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "cycle-replace", {
+      emit: (event) => void events.push(event),
+    });
+    await runtime.run("cycle-replace-1");
+    calls.length = 0;
+    events.length = 0;
+
+    const nextA = worker("a");
+    const nextB = worker("b", "b2");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    resources.splice(0, 2, nextA, nextB);
+    await runtime.run("cycle-replace-2");
+
+    expect(calls).toEqual(["delete b", "create b2 [a]", "update a [b2]"]);
+    runtime.close();
+  });
+  it("creates a placeholder again in the first pass when it was deleted outside Notation", async () => {
+    const { worker, bind, remote, calls } = defineWorkers({ readable: true });
+    const shared = worker("shared");
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [shared, a, b];
+    const runtime = createRuntime(resources, "cycle-placeholder-gone", {
+      driftDetection: true,
+    });
+    await runtime.run("cycle-placeholder-gone-1");
+    remote.delete("a");
+    calls.length = 0;
+
+    const nextA = worker("a");
+    const nextB = worker("b");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    bind(nextB, shared);
+    resources.splice(1, 2, nextA, nextB);
+    await runtime.run("cycle-placeholder-gone-2");
+
+    expect(calls).toEqual([
+      "create a []",
+      "update b [a, shared]",
+      "update a [b]",
+    ]);
+    runtime.close();
+  });
+
+  // c is outside the cycle, but its record depends on b, so deploy passes
+  // it to the delete of b as a dependent, and the provider allows the delete.
+  it("replaces a member that a resource outside the cycle refers to", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    const c = worker("c");
+    bind(a, b);
+    bind(b, a);
+    bind(c, b);
+    const resources = [a, b, c];
+    const runtime = createRuntime(resources, "cycle-replace-outside");
+    await runtime.run("cycle-replace-outside-1");
+    calls.length = 0;
+
+    const nextA = worker("a");
+    const nextB = worker("b", "b2");
+    const nextC = worker("c");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    bind(nextC, nextB);
+    resources.splice(0, 3, nextA, nextB, nextC);
+
+    await runtime.run("cycle-replace-outside-2");
+
+    expect(calls).toEqual([
+      "delete b",
+      "create b2 [a]",
+      "update a [b2]",
+      "update c [b2]",
+    ]);
+    runtime.close();
+  });
+
+  it("leaves the delete of a replaced member to the provider when a resource that is not in state refers to it", async () => {
+    const { worker, bind, calls, remote } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [a, b];
+    const runtime = createRuntime(resources, "cycle-replace-foreign");
+    await runtime.run("cycle-replace-foreign-1");
+    calls.length = 0;
+    remote.set("other-app", ["b"]);
+
+    const nextA = worker("a");
+    const nextB = worker("b", "b2");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    resources.splice(0, 2, nextA, nextB);
+
+    await expect(runtime.run("cycle-replace-foreign-2")).rejects.toThrow(
+      "other-app still binds b",
+    );
+    expect(calls).toEqual([]);
+    expect(remote.get("a")).toEqual(["b"]);
+    runtime.close();
+  });
+
+  it("deletes two orphans that refer to each other in the sweep", async () => {
+    const { Worker, worker, bind, calls, remote } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [a, b];
+    const runtime = createRuntime(resources, "cycle-orphans", {
+      registry: createResourceRegistry([Worker as any]),
+    });
+    await runtime.run("cycle-orphans-1");
+    calls.length = 0;
+
+    resources.splice(0, 2);
+    await runtime.run("cycle-orphans-2");
+
+    expect([...calls].sort()).toEqual(["delete a", "delete b"]);
+    expect(remote.size).toBe(0);
+    expect(await runtime.state.values()).toHaveLength(0);
+    runtime.close();
+  });
+
+  it("deletes the resources that block the delete of a replaced member, in and outside the cycle", async () => {
+    const { worker, bind, calls, remote } = defineWorkers({
+      blocksDelete: true,
+    });
+    const a = worker("a");
+    const b = worker("b");
+    const c = worker("c");
+    bind(a, b);
+    bind(b, a);
+    bind(c, b);
+    const resources = [a, b, c];
+    const runtime = createRuntime(resources, "cycle-replace-outside-blocks");
+    await runtime.run("cycle-replace-outside-blocks-1");
+    calls.length = 0;
+
+    const nextA = worker("a");
+    const nextB = worker("b", "b2");
+    const nextC = worker("c");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    bind(nextC, nextB);
+    resources.splice(0, 3, nextA, nextB, nextC);
+    await runtime.run("cycle-replace-outside-blocks-2");
+
+    // a and c block the delete of b, so the replacement deletes them, and
+    // deploy creates them again when it reaches them. b2 is created without
+    // its contribution that refers to a, as a does not exist then.
+    expect(calls).toEqual([
+      "delete a",
+      "delete c",
+      "delete b",
+      "create b2 []",
+      "create a [b2]",
+      "update b2 [a]",
+      "create c [b2]",
+    ]);
+    expect(remote.get("c")).toEqual(["b2"]);
+    runtime.close();
+  });
+
+  it("replaces the placeholder of a cycle", async () => {
+    const { worker, bind, calls, remote } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [a, b];
+    const runtime = createRuntime(resources, "cycle-replace-placeholder");
+    await runtime.run("cycle-replace-placeholder-1");
+    calls.length = 0;
+
+    const nextA = worker("a", "a2");
+    const nextB = worker("b");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    resources.splice(0, 2, nextA, nextB);
+    await runtime.run("cycle-replace-placeholder-2");
+
+    expect(calls).toEqual(["delete a", "create a2 [b]", "update b [a2]"]);
+    expect(remote).toEqual(
+      new Map([
+        ["a2", ["b"]],
+        ["b", ["a2"]],
+      ]),
+    );
+    runtime.close();
+  });
+
+  it("replaces a resource that contributes its own output to itself", async () => {
+    const { worker, bind, calls, remote } = defineWorkers();
+    const a = worker("a");
+    bind(a, a);
+    const resources = [a];
+    const runtime = createRuntime(resources, "cycle-replace-self");
+    await runtime.run("cycle-replace-self-1");
+    calls.length = 0;
+
+    const nextA = worker("a", "a2");
+    bind(nextA, nextA);
+    resources.splice(0, 1, nextA);
+    await runtime.run("cycle-replace-self-2");
+
+    expect(calls).toEqual(["delete a", "create a2 []", "update a2 [a2]"]);
+    expect(remote).toEqual(new Map([["a2", ["a2"]]]));
+    runtime.close();
+  });
+
+  it("deploys a resource that contributes its own output to itself", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    bind(a, a);
+    const runtime = createRuntime([a], "cycle-self");
+
+    await runtime.run("cycle-self-1");
+    expect(calls).toEqual(["create a []", "update a [a]"]);
+
+    calls.length = 0;
+    await runtime.run("cycle-self-2");
+    expect(calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("reports the update of a placeholder that has a record in a dry run", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const shared = worker("shared");
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [shared, a, b];
+    const options = { dryRun: false };
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "cycle-dry-run-placeholder", {
+      get dryRun() {
+        return options.dryRun;
+      },
+      emit: (event) => void events.push(event),
+    });
+    await runtime.run("cycle-dry-run-placeholder-1");
+    calls.length = 0;
+    events.length = 0;
+
+    const nextA = worker("a");
+    const nextB = worker("b");
+    bind(nextA, nextB);
+    bind(nextA, shared);
+    bind(nextB, nextA);
+    resources.splice(1, 2, nextA, nextB);
+    options.dryRun = true;
+    await runtime.run("cycle-dry-run-placeholder-2");
+
+    expect(calls).toEqual([]);
+    expect(
+      events
+        .filter((event) => event.event === "reconciler.deploy.decision")
+        .map((event: any) => [event.resourceId, event.decision]),
+    ).toEqual([
+      ["shared", "noop"],
+      ["b", "noop"],
+      ["a", "update"],
+    ]);
+    runtime.close();
+  });
+
+  it("keeps the other contributions of a member that refers to a replaced member", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    const c = worker("c");
+    bind(a, b);
+    bind(a, c);
+    bind(b, a);
+    bind(c, a);
+    const resources = [a, b, c];
+    const runtime = createRuntime(resources, "cycle-replace-narrow");
+    await runtime.run("cycle-replace-narrow-1");
+    calls.length = 0;
+
+    const nextA = worker("a");
+    const nextB = worker("b");
+    const nextC = worker("c", "c2");
+    bind(nextA, nextB);
+    bind(nextA, nextC);
+    bind(nextB, nextA);
+    bind(nextC, nextA);
+    resources.splice(0, 3, nextA, nextB, nextC);
+    await runtime.run("cycle-replace-narrow-2");
+
+    expect(calls).toEqual(["delete c", "create c2 [a]", "update a [b, c2]"]);
+    runtime.close();
+  });
+
+  it("records only the fixed edges of a placeholder that it created without its contributions", async () => {
+    const { worker, bind, failCreate } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const runtime = createRuntime([a, b], "cycle-placeholder-edges");
+    failCreate.add("b");
+
+    await expect(runtime.run("cycle-placeholder-edges-1")).rejects.toThrow(
+      "create b failed",
+    );
+    expect(await runtime.state.get("a")).toMatchObject({ dependsOn: [] });
+
+    await runtime.run("cycle-placeholder-edges-2");
+    expect(await runtime.state.get("a")).toMatchObject({ dependsOn: ["b"] });
     runtime.close();
   });
 });

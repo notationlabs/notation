@@ -38,6 +38,24 @@ export type PlanNode = {
    * `replacedDependency`.
    */
   replacedDependency?: string;
+  /**
+   * Set when deploy replaces the resource and passes dependents to its
+   * delete (`deleteTakesDependents`): the IDs of the declared resources whose
+   * records depend on it and that deploy does not delete first. The delete
+   * can break their references to it, which stay broken until deploy updates
+   * each of them.
+   */
+  brokenDependents?: string[];
+  /**
+   * Set when the resource is in a dependency cycle: the IDs of the other
+   * resources in the cycle.
+   */
+  cycle?: string[];
+  /**
+   * Set when deploy creates the resource first without its contributions,
+   * and updates it with them once the rest of its cycle exists.
+   */
+  placeholder?: true;
   params: Record<string, unknown>;
   dependsOn: string[];
 };
@@ -176,8 +194,11 @@ function pick(
  * The resource's edges as state records them. Sorted and deduplicated, so a
  * resource whose edges have not changed compares equal to its record.
  */
-export function getDependencyIds(resource: BaseResource): string[] {
-  const ids = resource.getDependencies().map((dependency) => dependency.id);
+export function getDependencyIds(
+  resource: BaseResource,
+  dependencies = resource.getDependencies(),
+): string[] {
+  const ids = dependencies.map((dependency) => dependency.id);
   return [...new Set(ids)].sort();
 }
 

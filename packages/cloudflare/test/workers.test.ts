@@ -5,6 +5,7 @@ import {
   expect,
   expectTypeOf,
   it,
+  vi,
 } from "vitest";
 import type * as cf from "@cloudflare/workers-types";
 import { setConfigFile } from "@notation/core";
@@ -60,6 +61,36 @@ function group(graph: ResourceGraph, id: string): WorkerGroup {
 
 const collect = (evaluate: () => unknown) =>
   collectResourceGraph(evaluate, { scope: { app: "shop", stage: "dev" } });
+
+// The params of a Worker's script at deploy, once its bundle and the Workers
+// it binds exist. With `peers`, the params without the contributions that
+// depend on them.
+async function deployParams(
+  worker: WorkerGroup,
+  bound: WorkerGroup[],
+  { peers }: { peers?: WorkerGroup[] } = {},
+) {
+  vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "account");
+  try {
+    worker.code.setOutput({
+      filePath: "dist/index.mjs",
+      sourceSha256: "hex",
+      fileSha256: "sha",
+    });
+    for (const other of bound) {
+      other.script.setOutput({
+        ScriptName: other.script.config.ScriptName,
+      } as any);
+    }
+    return await worker.script.getParams(
+      peers && {
+        excludeContributionsFrom: new Set(peers.map((peer) => peer.script)),
+      },
+    );
+  } finally {
+    vi.unstubAllEnvs();
+  }
+}
 
 describe("$worker", () => {
   it("uploads the runtime bundle of its module, with nodejs_compat", async () => {
@@ -120,12 +151,18 @@ describe("$worker", () => {
       );
     });
     const api = group(graph, "api");
+    const auth = group(graph, "auth");
 
     expect(api.script.config.Bindings).toEqual([
       { type: "plain_text", name: "GREETING", text: "hello" },
-      { type: "service", name: "AUTH", service: "shop--dev--auth" },
     ]);
-    expect(api.script.getDependencies()).toContain(group(graph, "auth").script);
+    expect(api.script.getDependencies()).toContain(auth.script);
+    expect(await deployParams(api, [auth])).toMatchObject({
+      Bindings: [
+        { type: "plain_text", name: "GREETING", text: "hello" },
+        { type: "service", name: "AUTH", service: "shop--dev--auth" },
+      ],
+    });
   });
 
   it("hosts a namespace whose class its module exports", async () => {
@@ -265,58 +302,190 @@ describe("$worker", () => {
     );
   });
 
-  it("fails for two Workers that bind each other", async () => {
-    await expect(
-      collect(() => {
-        const api: unknown = inWorker(
-          $worker({
-            id: "api",
-            compatibilityDate,
-            bindings: () => ({ REPORTS: reports }),
-          }),
-          "runtime/api.ts",
-        );
-        const reports = inWorker(
-          $worker({
-            id: "reports",
-            compatibilityDate,
-            bindings: () => ({ API: api as any }),
-          }),
-          "runtime/reports.ts",
-        );
-      }),
-    ).rejects.toThrow(
-      `The Workers "api" → "reports" → "api" bind each other in a cycle.`,
-    );
+  it("contributes the service bindings of two Workers that bind each other", async () => {
+    const graph = await collect(() => {
+      const api: unknown = inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ REPORTS: reports }),
+        }),
+        "runtime/api.ts",
+      );
+      const reports = inWorker(
+        $worker({
+          id: "reports",
+          compatibilityDate,
+          bindings: () => ({ API: api as any }),
+        }),
+        "runtime/reports.ts",
+      );
+    });
+    const api = group(graph, "api");
+    const reports = group(graph, "reports");
+
+    // A contribution is not a fixed dependency, so deploy can create either
+    // Worker first without its binding.
+    expect(api.script.getDependencies()).toContain(reports.script);
+    expect(api.script.getFixedDependencies()).not.toContain(reports.script);
+    expect(api.script.getContributedParams()).toEqual(["Bindings"]);
+    expect(
+      await deployParams(api, [], { peers: [api, reports] }),
+    ).toMatchObject({
+      Bindings: [],
+    });
+    expect(await deployParams(api, [reports])).toMatchObject({
+      Bindings: [
+        { type: "service", name: "REPORTS", service: "shop--dev--reports" },
+      ],
+    });
   });
 
-  it("fails when the host of a namespace binds a Worker that binds the namespace on it", async () => {
+  it("builds a host of a namespace that binds a Worker that binds the namespace on it", async () => {
+    const graph = await collect(() => {
+      const counters = inModule(
+        $durableObject({ id: "counters", class: Counter }),
+        "runtime/counter.ts",
+      );
+      const api: unknown = inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, REPORTS: reports }),
+        }),
+        "runtime/api.ts",
+        ["Counter"],
+      );
+      const reports = inWorker(
+        $worker({
+          id: "reports",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, API: api as any }),
+        }),
+        "runtime/reports.ts",
+      );
+    });
+    const api = group(graph, "api");
+    const reports = group(graph, "reports");
+
+    expect(reports.script.getFixedDependencies()).toContain(api.script);
+    expect(api.script.getFixedDependencies()).not.toContain(reports.script);
+    expect(api.script.getDependencies()).toContain(reports.script);
+  });
+
+  it("builds a Worker that binds a namespace on a Worker that binds it, when it is declared first", async () => {
+    const graph = await collect(() => {
+      const counters = inModule(
+        $durableObject({ id: "counters", class: Counter }),
+        "runtime/counter.ts",
+      );
+      const reports: unknown = inWorker(
+        $worker({
+          id: "reports",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, API: api as any }),
+        }),
+        "runtime/reports.ts",
+      );
+      const api = inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, REPORTS: reports as any }),
+        }),
+        "runtime/api.ts",
+        ["Counter"],
+      );
+    });
+    const api = group(graph, "api");
+    const reports = group(graph, "reports");
+
+    expect(reports.script.getFixedDependencies()).toContain(api.script);
+    expect(api.script.getFixedDependencies()).not.toContain(reports.script);
+    expect(api.script.getDependencies()).toContain(reports.script);
+    expect(await deployParams(api, [reports])).toMatchObject({
+      Bindings: expect.arrayContaining([
+        { type: "service", name: "REPORTS", service: "shop--dev--reports" },
+      ]),
+    });
+  });
+
+  it("builds a cycle that a service binding closes through a namespace, when a Worker in it is declared first", async () => {
+    const graph = await collect(() => {
+      const counters = inModule(
+        $durableObject({ id: "counters", class: Counter }),
+        "runtime/counter.ts",
+      );
+      const rooms = inModule(
+        $durableObject({ id: "rooms", class: Room as any }),
+        "runtime/room.ts",
+      );
+      inWorker(
+        $worker({
+          id: "a",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, ROOMS: rooms }),
+        }),
+        "runtime/a.ts",
+        ["Room"],
+      );
+      const x: unknown = inWorker(
+        $worker({
+          id: "x",
+          compatibilityDate,
+          bindings: () => ({ ROOMS: rooms }),
+        }),
+        "runtime/x.ts",
+      );
+      inWorker(
+        $worker({
+          id: "h",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, X: x as any }),
+        }),
+        "runtime/h.ts",
+        ["Counter"],
+      );
+    });
+    const h = group(graph, "h");
+    const x = group(graph, "x");
+
+    expect(h.script.getFixedDependencies()).not.toContain(x.script);
+    expect(h.script.getDependencies()).toContain(x.script);
+  });
+
+  it("fails for two Workers that each bind a namespace that the other hosts", async () => {
     await expect(
       collect(() => {
         const counters = inModule(
           $durableObject({ id: "counters", class: Counter }),
           "runtime/counter.ts",
         );
-        const api: unknown = inWorker(
+        const rooms = inModule(
+          $durableObject({ id: "rooms", class: Room as any }),
+          "runtime/room.ts",
+        );
+        inWorker(
           $worker({
             id: "api",
             compatibilityDate,
-            bindings: () => ({ COUNTERS: counters, REPORTS: reports }),
+            bindings: () => ({ COUNTERS: counters, ROOMS: rooms }),
           }),
           "runtime/api.ts",
           ["Counter"],
         );
-        const reports = inWorker(
+        inWorker(
           $worker({
             id: "reports",
             compatibilityDate,
-            bindings: () => ({ COUNTERS: counters, API: api as any }),
+            bindings: () => ({ COUNTERS: counters, ROOMS: rooms }),
           }),
           "runtime/reports.ts",
+          ["Room"],
         );
       }),
     ).rejects.toThrow(
-      `The Workers "api" → "reports" → "api" bind each other in a cycle.`,
+      `The Workers "api" → "reports" → "api" bind each other's Durable Object namespaces in a cycle.`,
     );
   });
 

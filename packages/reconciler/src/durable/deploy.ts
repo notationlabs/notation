@@ -1,8 +1,7 @@
-import {
-  assertDependenciesPresent,
-  buildResourceDepthLevels,
-} from "../dependency-graph";
-import { planKnownParams } from "../planner";
+import { isCycle, orderDeployUnits } from "../cycles";
+import { assertDependenciesPresent } from "../dependency-graph";
+import { loadUnit, planKnownParams } from "../planner";
+import { reconcileCycle } from "./cycle";
 import { withDeploymentHold } from "./deployment-hold";
 import { reconcileResource, sweepOrphans } from "./reconcile";
 import { scopeStep } from "./step";
@@ -23,14 +22,17 @@ export async function* deploy(
   yield* withDeploymentHold(step, opts, async function* () {
     // Reconcile in dependency order, so a resource only runs once its
     // dependencies have converged.
-    for (const level of buildResourceDepthLevels(opts.resources)) {
-      for (const resource of level) {
-        yield* reconcileResource(
-          scopeStep(step, `notation:deploy:${encodeURIComponent(resource.id)}`),
-          resource,
-          opts,
-        );
+    for (const unit of orderDeployUnits(opts.resources)) {
+      if (isCycle(unit)) {
+        yield* reconcileCycle(step, unit, opts);
+        continue;
       }
+      const [resource] = unit.members;
+      yield* reconcileResource(
+        scopeStep(step, `notation:deploy:${encodeURIComponent(resource!.id)}`),
+        resource!,
+        opts,
+      );
     }
 
     yield* sweepOrphans(step, opts, "deploy");
@@ -51,8 +53,8 @@ export async function* deploy(
  * still checks before any change.
  */
 async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
-  for (const level of buildResourceDepthLevels(opts.resources)) {
-    for (const resource of level) {
+  for (const unit of orderDeployUnits(opts.resources)) {
+    for (const resource of await loadUnit(unit, opts.state)) {
       await planKnownParams(resource, opts.state, "deploy");
     }
   }

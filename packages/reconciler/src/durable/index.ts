@@ -12,6 +12,10 @@
  *   notation:validate          deploy's check of known params, before
  *                              any change
  *   notation:deploy:<id>:*     per-resource reconciliation steps
+ *   notation:deploy:<id>:placeholder:*   the first pass over a cycle, for
+ *                              a placeholder
+ *   notation:deploy:<id>:settle:<n>:*    pass <n> after the first over a
+ *                              cycle
  *   notation:destroy:<id>:*    per-resource deletion steps
  *   notation:orphans:list      the orphan sweep's one read of persisted state
  *   notation:orphans:<id>:*    orphan sweep, per persisted record
@@ -25,6 +29,9 @@
  *   state:delete:<id>          conditional removal of one
  *   state:create:<id>          unconditional write of a record removed
  *                              earlier in the same execution
+ *   state:<write>:<id>:settle:<n>        a write in pass <n> over a cycle
+ *   state:delete:<id>:replace:<replaced id>   the removal of a dependent
+ *                              that blocks the delete of <replaced id>
  *   *:replace:delete:*         replacement, first half: the delete
  *   *:replace:create:*         replacement, second half: the create, ending
  *                              in state:create

@@ -1,29 +1,11 @@
 import type { BaseResource } from "@notation/resource";
 
-export type ResourceDepthLevels = BaseResource[][];
-
 export type DepthLevels<T> = {
   levels: T[][];
   // The items left out of `levels`: members of a cycle, and every item that
   // depends on one. In input order.
   unordered: T[];
 };
-
-export function buildResourceDepthLevels(
-  resources: BaseResource[],
-): ResourceDepthLevels {
-  const { levels, unordered } = buildDepthLevels(
-    resources,
-    (resource) => resource.id,
-    (resource) => resource.getDependencies().map((dependency) => dependency.id),
-  );
-
-  if (unordered.length > 0) {
-    throw new Error("Resource dependency cycle detected");
-  }
-
-  return levels;
-}
 
 /**
  * Throws when a resource depends on a resource that is not among `resources`

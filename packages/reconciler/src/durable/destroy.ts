@@ -1,4 +1,4 @@
-import { buildResourceDepthLevels } from "../dependency-graph";
+import { orderDeployUnits } from "../cycles";
 import { withDeploymentHold } from "./deployment-hold";
 import { deleteResource, sweepOrphans } from "./reconcile";
 import { scopeStep } from "./step";
@@ -17,10 +17,12 @@ export async function* destroy(
     const kept = yield* sweepOrphans(step, opts, "destroy");
 
     // Delete in reverse dependency order, so dependents are gone before the
-    // resources they depend on.
-    const levels = buildResourceDepthLevels(opts.resources);
-    for (let index = levels.length - 1; index >= 0; index -= 1) {
-      for (const resource of levels[index]!) {
+    // resources they depend on. The members of a cycle are deleted in the
+    // reverse of their order in deploy. A placeholder still refers to the
+    // members deleted before it, so its provider must delete a resource that
+    // a dependent in state refers to. See `ResourceDeletion`.
+    for (const unit of orderDeployUnits(opts.resources).reverse()) {
+      for (const resource of [...unit.members].reverse()) {
         if (kept.has(resource.id)) continue;
         yield* deleteResource(
           scopeStep(

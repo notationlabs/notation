@@ -896,3 +896,121 @@ describe("plan params", () => {
     });
   });
 });
+
+describe("placeholder params", () => {
+  it("leave out the contributions that depend on the excluded resources, and keep the rest", async () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    queue.setOutput({ QueueUrl: "url", QueueName: "orders", QueueArn: "arn" });
+    const other = new Queue("other", { config: { QueueName: "other" } });
+    other.setOutput({ QueueUrl: "u2", QueueName: "other", QueueArn: "arn2" });
+    const fn = new Fn("fn", {
+      config: {
+        FunctionName: "f",
+        Role: "role",
+        Environment: { Variables: { STAGE: "dev" } },
+      },
+    });
+    fn.contribute({
+      Environment: { Variables: { QUEUE: queue.outputRef("QueueArn") } },
+    });
+    fn.contribute(
+      ({ deps }) => ({
+        Environment: { Variables: { OTHER: deps.other.output.QueueArn } },
+      }),
+      { deps: { other } },
+    );
+    fn.contribute({ Environment: { Variables: { PLAIN: "p" } } });
+
+    expect(
+      await fn.getParams({ excludeContributionsFrom: new Set([queue]) }),
+    ).toEqual({
+      FunctionName: "f",
+      Role: "role",
+      Environment: { Variables: { STAGE: "dev", OTHER: "arn2", PLAIN: "p" } },
+    });
+    expect(
+      await fn.getParams({ excludeContributionsFrom: new Set([queue, other]) }),
+    ).toEqual({
+      FunctionName: "f",
+      Role: "role",
+      Environment: { Variables: { STAGE: "dev", PLAIN: "p" } },
+    });
+    expect((await fn.getParams()).Environment).toEqual({
+      Variables: { STAGE: "dev", QUEUE: "arn", OTHER: "arn2", PLAIN: "p" },
+    });
+  });
+
+  it("leave a collected param unset when only excluded contributions set it", async () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    const fn = new Fn("fn", { config: { FunctionName: "f", Role: "role" } });
+    fn.contribute({
+      Environment: { Variables: { QUEUE: queue.outputRef("QueueArn") } },
+    });
+
+    expect(
+      await fn.getParams({ excludeContributionsFrom: new Set([queue]) }),
+    ).toEqual({
+      FunctionName: "f",
+      Role: "role",
+    });
+  });
+});
+
+describe("dependencies by source", () => {
+  it("separate fixed dependencies from those that only contributions add", () => {
+    const role = new Queue("role", { config: { QueueName: "role" } });
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    const other = new Queue("other", { config: { QueueName: "other" } });
+    const fn = new Fn("fn", {
+      config: { FunctionName: "f", Role: role.outputRef("QueueArn") },
+    });
+    fn.dependOn(other);
+    fn.contribute({
+      Environment: { Variables: { QUEUE: queue.outputRef("QueueArn") } },
+    });
+
+    expect(fn.getFixedDependencies()).toEqual([other, role]);
+    expect(fn.getDependencies()).toEqual([other, role, queue]);
+  });
+
+  it("list the collected params that contributions set", () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    const policy = new Policy("policy", { config: { PolicyName: "p" } });
+    const plain = new Fn("plain", {
+      config: { FunctionName: "p", Role: "role" },
+    });
+    expect(plain.getContributedParams()).toEqual([]);
+
+    const fn = new Fn("fn", { config: { FunctionName: "f", Role: "role" } });
+    fn.contribute({ Environment: { Variables: { A: "a" } } });
+    expect(fn.getContributedParams()).toEqual(["Environment"]);
+
+    policy.contribute(
+      ({ deps }) => ({
+        PolicyDocument: {
+          Statement: [grant(deps.queue.output.QueueArn)],
+        },
+      }),
+      { deps: { queue } },
+    );
+    expect(policy.getContributedParams()).toEqual(["PolicyDocument"]);
+  });
+
+  it("list only the params that contributions from the given resources set", () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    const other = new Queue("other", { config: { QueueName: "other" } });
+    const policy = new Policy("policy", { config: { PolicyName: "p" } });
+    policy.contribute(
+      ({ deps }) => ({
+        PolicyDocument: {
+          Statement: [grant(deps.queue.output.QueueArn)],
+        },
+      }),
+      { deps: { queue } },
+    );
+    expect(policy.getContributedParams({ from: new Set([other]) })).toEqual([]);
+    expect(policy.getContributedParams({ from: new Set([queue]) })).toEqual([
+      "PolicyDocument",
+    ]);
+  });
+});

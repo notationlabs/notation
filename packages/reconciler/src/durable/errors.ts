@@ -5,6 +5,7 @@ import {
   ValueValidationError,
 } from "@notation/resource";
 import { VersionConflict } from "@notation/state";
+import { ResourceCycleError } from "../cycles";
 import { ResourceTypeChangedError } from "../resource-type";
 import { registerErrorClass } from "./sdk";
 
@@ -19,3 +20,4 @@ registerErrorClass("ResourceNotFoundError", ResourceNotFoundError);
 registerErrorClass("ValueValidationError", ValueValidationError);
 registerErrorClass("SchemaStructureError", SchemaStructureError);
 registerErrorClass("ResourceTypeChangedError", ResourceTypeChangedError);
+registerErrorClass("ResourceCycleError", ResourceCycleError);

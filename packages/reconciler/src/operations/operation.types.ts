@@ -1,4 +1,5 @@
 import type {
+  ResourceDeletion,
   BaseResource,
   DurableValue,
   ResourceGroupRef,
@@ -109,6 +110,8 @@ export type UpdateResourceParams = ResolvedResourceParams & {
 
 export type DeleteResourceParams = ResourceOperationBaseParams & {
   remove: RemoveState;
+  /** Passed to the resource's `delete`. */
+  deletion?: ResourceDeletion;
 };
 
 export function getErrorDetails(err: unknown): {

@@ -18,7 +18,10 @@ import type {
   Fallback,
   NoInfer,
 } from "./types";
-import type { ResourceOperationContext } from "./resource-operation";
+import type {
+  ResourceDeletion,
+  ResourceOperationContext,
+} from "./resource-operation";
 import type { DurableObject } from "./durable-value";
 import { UNKNOWN_AFTER_APPLY, toComparableParams } from "./diff-params";
 import {
@@ -143,8 +146,19 @@ export interface BaseResource {
     key: any,
     state: any,
     context?: ResourceOperationContext,
+    deletion?: ResourceDeletion,
   ) => Promise<void>;
-  getParams(): Promise<DurableObject>;
+  /** See `DefineResourceMeta.deleteTakesDependents`. */
+  readonly deleteTakesDependents?: boolean;
+  /**
+   * The params the resource deploys with. Deploy creates the placeholder of
+   * a dependency cycle before the other members exist, so it leaves out the
+   * contributions that depend on them.
+   */
+  getParams(options?: {
+    /** Leaves out each contribution that depends on one of these. */
+    excludeContributionsFrom?: ReadonlySet<BaseResource>;
+  }): Promise<DurableObject>;
   toState(output: {}): {};
   toResult(result: {}): DurableObject;
   toComparable(output: {}): {};
@@ -176,6 +190,21 @@ export interface BaseResource {
    */
   getDependencies(): BaseResource[];
   /**
+   * The dependencies that do not come from contributions: the declared
+   * dependencies, those added with `dependOn`, and the resources whose
+   * output refs the config holds.
+   */
+  getFixedDependencies(): BaseResource[];
+  /**
+   * The collected params that contributions set, sorted. A function
+   * contribution can set any collected param, so it counts as setting all
+   * of them.
+   */
+  getContributedParams(options?: {
+    /** Counts only the contributions that depend on one of these. */
+    from?: ReadonlySet<BaseResource>;
+  }): string[];
+  /**
    * The params as a plan shows them. A value that holds an output not yet
    * deployed is `UNKNOWN_AFTER_APPLY` at its own path.
    */
@@ -203,6 +232,7 @@ export abstract class Resource<
   #sealed = false;
   abstract type: ResourceType;
   abstract provider: string;
+  declare readonly deleteTakesDependents?: boolean;
   abstract schema: Schema;
   abstract create: (
     params: T["params"],
@@ -225,6 +255,7 @@ export abstract class Resource<
     key: T["compoundKey"],
     state: T["state"],
     context?: ResourceOperationContext,
+    deletion?: ResourceDeletion,
   ) => Promise<void>;
   abstract deriveParams(opts: {
     id: string;
@@ -368,34 +399,61 @@ export abstract class Resource<
   }
 
   getDependencies(): BaseResource[] {
+    const found = new Set(this.getFixedDependencies());
+    for (const contribution of this.#contributions) {
+      for (const dependency of contributionDependencies(contribution)) {
+        found.add(dependency);
+      }
+    }
+    return [...found];
+  }
+
+  getFixedDependencies(): BaseResource[] {
     this.#sealed = true;
     const found = new Set<BaseResource>();
     for (const dependency of Object.values(this.dependencies)) {
       if (dependency) found.add(dependency as BaseResource);
     }
     for (const dependency of this.#addedDependencies) found.add(dependency);
-    const addToken = (token: OutputRef) => found.add(token.resource);
-    forEachOutputRef(this.config, addToken);
-    for (const contribution of this.#contributions) {
-      if ("compute" in contribution) {
-        for (const dependency of Object.values(contribution.deps)) {
-          found.add(dependency);
-        }
-      } else {
-        forEachOutputRef(contribution.values, addToken);
-      }
-    }
+    forEachOutputRef(this.config, (token) => found.add(token.resource));
     return [...found];
   }
 
-  async getParams(): Promise<T["params"]> {
+  getContributedParams({
+    from,
+  }: { from?: ReadonlySet<BaseResource> } = {}): string[] {
+    this.#sealed = true;
+    const params = new Set<string>();
+    for (const contribution of this.#contributions) {
+      if (from && !dependsOnAny(contribution, from)) continue;
+      const keys =
+        "compute" in contribution
+          ? Object.keys(this.schema).filter(
+              (key) =>
+                this.schema[key]?.propertyType === "param" &&
+                Boolean(this.schema[key].collect),
+            )
+          : Object.keys(contribution.values);
+      for (const key of keys) params.add(key);
+    }
+    return [...params].sort();
+  }
+
+  async getParams({
+    excludeContributionsFrom,
+  }: { excludeContributionsFrom?: ReadonlySet<BaseResource> } = {}): Promise<
+    T["params"]
+  > {
     this.#sealed = true;
     const derivedParams = await this.deriveParams({
       id: this.id,
       config: this.config,
       deps: this.dependencies,
     });
-    return (await this.#combineParams(derivedParams, false)) as T["params"];
+    return (await this.#combineParams(derivedParams, {
+      plan: false,
+      excludeContributionsFrom,
+    })) as T["params"];
   }
 
   /**
@@ -420,7 +478,7 @@ export abstract class Resource<
       }),
     );
     if (derivedParams === undefined) return this.#cautiousPlanParams();
-    const params = await this.#combineParams(derivedParams, true);
+    const params = await this.#combineParams(derivedParams, { plan: true });
     return markUnknownOutputRefs(withoutUndefined(params)) as Record<
       string,
       unknown
@@ -446,13 +504,20 @@ export abstract class Resource<
 
   async #combineParams(
     derivedParams: Record<string, unknown>,
-    plan: boolean,
+    options: {
+      plan: boolean;
+      excludeContributionsFrom?: ReadonlySet<BaseResource>;
+    },
   ): Promise<Record<string, unknown>> {
+    const { plan, excludeContributionsFrom } = options;
     const params: Record<string, unknown> = {
       ...this.config,
       ...derivedParams,
     };
-    const contributions = await this.#evaluateContributions(plan);
+    const contributions = await this.#evaluateContributions(
+      plan,
+      excludeContributionsFrom,
+    );
     for (const [key, item] of Object.entries(this.schema)) {
       if (item.propertyType !== "param" || !item.collect) continue;
       params[key] = this.#collect(
@@ -475,9 +540,13 @@ export abstract class Resource<
    * does not exist yet, plan cannot tell which params it would set, so
    * `unknown` is set and `#collect` marks every collected param unknown.
    */
-  async #evaluateContributions(plan: boolean): Promise<EvaluatedContributions> {
+  async #evaluateContributions(
+    plan: boolean,
+    exclude?: ReadonlySet<BaseResource>,
+  ): Promise<EvaluatedContributions> {
     const evaluated: EvaluatedContributions = { items: [], unknown: false };
     for (const contribution of this.#contributions) {
+      if (exclude && dependsOnAny(contribution, exclude)) continue;
       if (!("compute" in contribution)) {
         evaluated.items.push(contribution);
         continue;
@@ -573,6 +642,26 @@ export abstract class Resource<
   }
 }
 
+/**
+ * The deps of a function contribution, or the resources whose output refs
+ * a contribution of values holds.
+ */
+function contributionDependencies(contribution: Contribution): BaseResource[] {
+  if ("compute" in contribution) return Object.values(contribution.deps);
+  const found: BaseResource[] = [];
+  forEachOutputRef(contribution.values, (token) => found.push(token.resource));
+  return found;
+}
+
+function dependsOnAny(
+  contribution: Contribution,
+  resources: ReadonlySet<BaseResource>,
+): boolean {
+  return contributionDependencies(contribution).some((dependency) =>
+    resources.has(dependency),
+  );
+}
+
 type EvaluatedContributions = {
   items: ContributedValues[];
   // Set when a function contribution read a pending output at plan.
@@ -629,6 +718,12 @@ export type DefineResourceMeta = {
    */
   blocksDeleteOf?: ResourceType[];
   /**
+   * Set when `delete` uses its `deletion` argument. Deploy then lists state
+   * before each delete of a resource of this type, to find the resources
+   * that depend on it. Without it, `deletion` is undefined.
+   */
+  deleteTakesDependents?: boolean;
+  /**
    * The package or package subpath that exports this class, such as
    * `@notation/aws/resources`. Stored in state, so the class can be loaded
    * after its type is removed from code.
@@ -675,6 +770,7 @@ export type ResourceOperationsOptions<
     key: T["compoundKey"],
     state: T["state"],
     context?: ResourceOperationContext,
+    deletion?: ResourceDeletion,
   ) => Promise<void>;
   deriveParams?: (opts: {
     config: Partial<T["params"]>;
@@ -778,6 +874,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             static provider = meta.provider;
             type = meta.type;
             static blocksDeleteOf = meta.blocksDeleteOf ?? [];
+            deleteTakesDependents = meta.deleteTakesDependents ?? false;
             provider = meta.provider;
             schema = schema;
             create = opts.create;

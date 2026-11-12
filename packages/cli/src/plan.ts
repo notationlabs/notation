@@ -65,6 +65,12 @@ function printPlanSummary(result: Plan, logger: Logger) {
           : `    ${field.name} unknown, may force replacement`,
       );
     }
+    if (node.brokenDependents) {
+      const certain = node.replaceFields?.some((field) => field.known);
+      logger.info(
+        `    the references from ${node.brokenDependents.join(", ")} are broken until deploy updates them${certain ? "" : ", if it is replaced"}`,
+      );
+    }
     if (node.replacedDependency) {
       const replaced = result.nodes.find(
         ({ id }) => id === node.replacedDependency,
@@ -75,6 +81,11 @@ function printPlanSummary(result: Plan, logger: Logger) {
         certain
           ? `    deleted before ${node.replacedDependency} is replaced`
           : `    deleted if ${node.replacedDependency} is replaced`,
+      );
+    }
+    if (node.placeholder) {
+      logger.info(
+        `    created first without the contributions that refer to ${(node.cycle ?? []).join(", ")}, the other members of its cycle`,
       );
     }
   }

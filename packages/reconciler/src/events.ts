@@ -12,6 +12,10 @@ export type OperationLifecycleEvent = {
   status: OperationLifecycleStatus;
   resourceId: string;
   resourceType: ResourceType;
+  /**
+   * `dependency-replaced`: the delete of a dependent that blocks the delete
+   * of a replaced resource.
+   */
   reason?: string;
   /**
    * With the reason `dependency-replaced`: the resource whose replacement
@@ -36,6 +40,12 @@ export type DeployDecisionEvent = {
     | "drift-recreate"
     | "noop";
   replaceFields?: ReplaceField[];
+  /**
+   * Set when deploy creates the resource without its contributions, as the
+   * first member of a dependency cycle. A later decision for the same
+   * resource applies its full params.
+   */
+  placeholder?: true;
 };
 
 export type DriftDetectedEvent = {

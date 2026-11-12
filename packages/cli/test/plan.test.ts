@@ -86,3 +86,79 @@ it("prints that a dependent is deleted only if an unknown field replaces its dep
     "    deleted if bus is replaced",
   ]);
 });
+
+it("prints the placeholder of a cycle", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "a",
+        type: "test/plan/worker",
+        decision: "create",
+        cycle: ["b"],
+        placeholder: true,
+        params: {},
+        dependsOn: ["b"],
+      },
+      {
+        id: "b",
+        type: "test/plan/worker",
+        decision: "replace",
+        replaceFields: [{ name: "name", known: true }],
+        cycle: ["a"],
+        params: {},
+        dependsOn: ["a"],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 5)).toEqual([
+    "+ create test/plan/worker a",
+    "    created first without the contributions that refer to b, the other members of its cycle",
+    "-/+ replace test/plan/worker b",
+    "    name forces replacement",
+  ]);
+});
+
+it("prints the dependents whose references a replacement breaks", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "api",
+        type: "test/plan/worker",
+        decision: "replace",
+        replaceFields: [{ name: "name", known: true }],
+        brokenDependents: ["reports", "web"],
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "queue",
+        type: "test/plan/worker",
+        decision: "replace",
+        replaceFields: [{ name: "name", known: false }],
+        brokenDependents: ["web"],
+        params: {},
+        dependsOn: [],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 7)).toEqual([
+    "-/+ replace test/plan/worker api",
+    "    name forces replacement",
+    "    the references from reports, web are broken until deploy updates them",
+    "-/+ replace test/plan/worker queue",
+    "    name unknown, may force replacement",
+    "    the references from web are broken until deploy updates them, if it is replaced",
+  ]);
+});
