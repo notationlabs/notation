@@ -34,6 +34,7 @@ import {
   hasSameEdges,
   recordedEdges,
 } from "../plan";
+import { assertOutputsRecoverable } from "../planner";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
@@ -129,6 +130,15 @@ export async function* reconcileResource(
     maxOperationAttempts: opts.maxOperationAttempts,
   };
 
+  // The check for a resource with no `read` runs here and not in
+  // validateKnownParams, because only here is the decision known. See
+  // validateKnownParams. It runs before the operation: an update would change
+  // the remote resource and still leave the output missing, and a noop would
+  // fail in recoverOutputs without the hint.
+  if (action.decision === "noop" || action.decision === "update") {
+    assertOutputsRecoverable(resource, session.node);
+  }
+
   switch (action.decision) {
     case "create":
     case "drift-recreate":
@@ -189,7 +199,8 @@ function findMissingOutputs(
  * record before they fail on a missing output, so a later deploy can decide
  * noop for it, and its dependents would read the output as undefined. The
  * resource is read again, and the record is written with what the read
- * returns. The deploy fails while an output is still missing.
+ * returns. The deploy fails while an output is still missing. A resource with
+ * no `read` fails before it gets here.
  */
 async function* recoverOutputs(
   step: DurableStepRunner,
@@ -198,21 +209,19 @@ async function* recoverOutputs(
   shared: Omit<CreateResourceParams, "persist">,
 ): AsyncGenerator<any, void, any> {
   const { resource } = shared;
-  if (resource.read) {
-    const readStep = step.scope("output-read");
-    const readResult = yield* readResourceOperation(readStep, {
-      resource,
-      resourceParams: shared.resourceParams,
-      persistedOutput: session.node.output,
-      // No dryRun, as for the drift read.
-      emit: durableEmitter(readStep, opts.emit),
-      maxOperationAttempts: shared.maxOperationAttempts,
-    });
-    resource.setOutput({ ...session.node.output, ...readResult });
-  }
+  const readStep = step.scope("output-read");
+  const readResult = yield* readResourceOperation(readStep, {
+    resource,
+    resourceParams: shared.resourceParams,
+    persistedOutput: session.node.output,
+    // No dryRun, as for the drift read.
+    emit: durableEmitter(readStep, opts.emit),
+    maxOperationAttempts: shared.maxOperationAttempts,
+  });
+  resource.setOutput({ ...session.node.output, ...readResult });
 
   const missing = findMissingOutputs(resource, resource.output);
-  if (!opts.dryRun && resource.read) {
+  if (!opts.dryRun) {
     const { version: _, ...record } = session.node;
     yield* session.persist({
       ...record,

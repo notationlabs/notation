@@ -23,6 +23,22 @@ import { workflowRegistry, type ResourceRegistry } from "./resource-registry";
 import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
 
+/**
+ * Throws if a resource with no `read` lacks a required output in its state
+ * record. Does nothing for a resource with no record or with a `read`.
+ */
+export function assertOutputsRecoverable(
+  resource: BaseResource,
+  stateNode: StateNode | undefined,
+): void {
+  if (!stateNode || resource.read) return;
+  assertRequiredOutputs(
+    resource,
+    stateNode.output,
+    "The resource's type has no read, so deploy can't fill them in. Remove the resource from the code, deploy, then add it back, so that it is created again.",
+  );
+}
+
 export type CreatePlanOptions = {
   resources: BaseResource[];
   state: StateBackend;
@@ -86,6 +102,13 @@ export async function createPlan({
       const replaceFields =
         "replaceFields" in action ? action.replaceFields : undefined;
       const replacedDependency = cascaded.get(resource.id);
+      const replaced = Boolean(replaceFields || replacedDependency);
+
+      // A resource with no `read` can't recover a missing output, and update
+      // doesn't write one. A replace, including one that is only possible,
+      // creates the resource again. Deploy checks again once the decision is
+      // known.
+      if (!replaced) assertOutputsRecoverable(resource, stateNode);
 
       if (replaceFields) {
         for (const id of collectDependents(
@@ -98,7 +121,7 @@ export async function createPlan({
         }
       }
 
-      if (replaceFields || replacedDependency) {
+      if (replaced) {
         // A replacement's output is unknown until it has been created again,
         // so its dependents plan against unknown params, as they would for a
         // resource with no state.
@@ -140,8 +163,7 @@ export async function createPlan({
  * Loads the resource's outputs from state, then returns and checks the
  * params that plan knows. Throws if the state record has a different type.
  * Outputs in state stand in for the outputs of dependencies, so the
- * dependencies must be loaded first. Throws if a resource with no `read` lacks
- * a required output in state.
+ * dependencies must be loaded first.
  */
 export async function planKnownParams(
   resource: BaseResource,
@@ -154,19 +176,6 @@ export async function planKnownParams(
   const stateNode = await state.get(resource.id);
   assertSameType(resource, stateNode);
   if (stateNode) resource.setOutput(stateNode.output);
-  // Plan treats a required output missing from a resource's state as unknown,
-  // because deploy reads the resource again to fill it in. A resource with no
-  // `read` cannot be read again. Update can't fill in an output either,
-  // because deploy keeps only the update's params as output. The check runs
-  // even when this deploy replaces the resource, though the create would
-  // write a missing output that is part of its key.
-  if (stateNode && !resource.read) {
-    assertRequiredOutputs(
-      resource,
-      stateNode.output,
-      "The resource's type has no read, so deploy can't fill them in. Remove the resource from the code, deploy, then add it back, so that it is created again.",
-    );
-  }
   const params = await resource.planParams();
   await validateParams(resource, params, point);
   return { stateNode, params };
