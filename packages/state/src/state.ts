@@ -33,6 +33,13 @@ export type StateNode = {
    * any other record.
    */
   creates?: string[];
+  /**
+   * Set only on a "creating" record that was written over a full record,
+   * after a drift read reported the resource gone: that full record, without
+   * its version. Deploy writes it back when the create is refused because
+   * the resource exists. Deploy ignores the field on any other record.
+   */
+  recorded?: DurableObject;
   [key: string]: DurableValue;
 };
 

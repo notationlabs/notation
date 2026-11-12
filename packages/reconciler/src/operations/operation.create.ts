@@ -13,7 +13,7 @@ import {
   type DurableObject,
   type ResourceOperationContext,
 } from "@notation/resource";
-import { isCreatingRecord } from "@notation/state";
+import { isCreatingRecord, type StateNode } from "@notation/state";
 import { WorkflowEffectError, type EffectLookup } from "@notation/durable";
 import {
   type CreateResourceParams,
@@ -70,6 +70,10 @@ const MAX_CREATE_LOOKUP_ATTEMPTS = 10;
  * When create fails and its outcome is not unknown, the record that this
  * execution started from is written back, or the record is cleared if it
  * started from none. An unknown outcome keeps the "creating" record.
+ *
+ * A "creating" record written over a full record keeps that record in
+ * `recorded`. When a create from such a "creating" record is refused because
+ * the resource exists, the full record is written back.
  */
 export async function* createResourceOperation(
   step: StepRunner,
@@ -113,7 +117,7 @@ export async function* createResourceOperation(
                 ]),
               );
         if (proof) return yield* reclaim(step, params, proof);
-        yield* restorePrior(params);
+        yield* restorePrior(params, recordedBefore(params.prior));
         throw new ResourceAlreadyExistsError(refusalMessage(params, error), {
           cause: error,
         });
@@ -198,16 +202,23 @@ async function* reclaim(
  * if it started from none. A "creating" record that an earlier execution
  * left keeps its `creates`, so a later deploy can still prove ownership by
  * the tokens of those executions.
+ *
+ * A refused create passes `recorded`, the full record that the "creating"
+ * record it started from was written over, and that record is written back
+ * instead. The resource exists and no listed execution made it, so the full
+ * record is the only evidence that it is Notation's. The next deploy reads
+ * the resource by that record.
  */
 async function* restorePrior(
   params: CreateResourceParams,
+  recorded?: DurableObject,
 ): AsyncGenerator<unknown, void, unknown> {
   const { prior } = params;
   if (!prior) {
     yield* params.persist(null, "restored");
     return;
   }
-  const { version: _, ...record } = prior;
+  const { version: _, ...record } = recorded ?? prior;
   yield* params.persist(
     {
       ...record,
@@ -266,6 +277,7 @@ function refusalMessage(
 function creatingRecord(params: CreateResourceParams): PersistedResourceState {
   const { resource, resourceParams, prior } = params;
   const key = definedKey(resource, resourceParams);
+  const recorded = recordedBefore(prior);
   return resourceRecord(params, {
     lastOperation: "creating",
     params: resource.toState(resourceParams),
@@ -273,7 +285,22 @@ function creatingRecord(params: CreateResourceParams): PersistedResourceState {
       prior && !isCreatingRecord(prior) ? { ...prior.output, ...key } : key,
     ),
     creates: [...earlierExecutions(params), params.executionId],
+    ...(recorded ? { recorded } : {}),
   });
+}
+
+/**
+ * The full record that the resource had before its "creating" record: `prior`
+ * itself, without its version, or the one that a "creating" record in `prior`
+ * carries. Undefined when the resource had no full record.
+ */
+function recordedBefore(
+  prior: StateNode | undefined,
+): DurableObject | undefined {
+  if (!prior) return undefined;
+  if (isCreatingRecord(prior)) return prior.recorded;
+  const { version: _, ...record } = prior;
+  return record;
 }
 
 /**
@@ -375,7 +402,7 @@ function resourceRecord(
   params: CreateResourceParams,
   fields: Pick<
     PersistedResourceState,
-    "lastOperation" | "params" | "output" | "creates"
+    "lastOperation" | "params" | "output" | "creates" | "recorded"
   >,
 ): PersistedResourceState {
   const { resource } = params;

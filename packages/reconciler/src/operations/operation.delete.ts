@@ -70,6 +70,11 @@ export async function* deleteResourceOperation(
  *    holds no key.
  * 3. Otherwise nothing proves that the resource is Notation's.
  *
+ * Without the proof, a "creating" record that was written over a full record
+ * is deleted as that full record would be, by the key in its output. A full
+ * record is deleted without proof, and the "creating" record replaced it only
+ * because a drift read reported the resource gone.
+ *
  * Returns the reason to remove only the record, or undefined to delete.
  */
 async function* findCreatedResource(
@@ -78,12 +83,21 @@ async function* findCreatedResource(
   creating: NonNullable<DeleteResourceParams["creating"]>,
 ): AsyncGenerator<unknown, string | undefined, unknown> {
   const { resource } = params;
-  if (resource.ownership === undefined) return "ownership-unproven";
-  const proof = yield* step.run("delete:find", () =>
-    proveOwnership(resource, creating.params, creating.creates),
-  );
-  if (!proof) return "not-created";
-  resource.setOutput({ ...resource.output, ...proof.key });
+  const proof =
+    resource.ownership === undefined
+      ? null
+      : yield* step.run("delete:find", () =>
+          proveOwnership(resource, creating.params, creating.creates),
+        );
+  if (proof) {
+    resource.setOutput({ ...resource.output, ...proof.key });
+  } else if (creating.recordedOutput) {
+    resource.setOutput(creating.recordedOutput);
+  } else {
+    return resource.ownership === undefined
+      ? "ownership-unproven"
+      : "not-created";
+  }
   return Object.values(resource.key).some((v) => v === undefined)
     ? "key-unknown"
     : undefined;

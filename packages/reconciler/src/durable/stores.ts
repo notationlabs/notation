@@ -37,6 +37,7 @@ const resourceRecordSchema = v.objectWithRest(
     lastOperation: v.picklist(["creating", "create", "update"]),
     lastOperationAt: v.string(),
     creates: v.optional(v.array(v.string())),
+    recorded: v.optional(durableRecord),
   },
   durableValue,
 );

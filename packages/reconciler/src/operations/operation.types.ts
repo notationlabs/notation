@@ -1,6 +1,7 @@
 import type {
   ResourceDeletion,
   BaseResource,
+  DurableObject,
   DurableValue,
   ResourceGroupRef,
 } from "@notation/resource";
@@ -60,6 +61,8 @@ export type PersistedResourceState = Pick<
   dependsOn: string[];
   /** Set only on a "creating" record. */
   creates?: string[];
+  /** Set only on a "creating" record that was written over a full record. */
+  recorded?: DurableObject;
   [key: string]: DurableValue;
 };
 
@@ -136,10 +139,15 @@ export type DeleteResourceParams = ResourceOperationBaseParams & {
   /** Passed to the resource's `delete`. */
   deletion?: ResourceDeletion;
   /**
-   * Set when the record is a "creating" record: its params, and the
-   * executions whose creates it lists.
+   * Set when the record is a "creating" record: its params, the executions
+   * whose creates it lists, and the output of the full record that it was
+   * written over, if it was written over one.
    */
-  creating?: { params: Record<string, unknown>; creates: string[] };
+  creating?: {
+    params: Record<string, unknown>;
+    creates: string[];
+    recordedOutput?: Record<string, unknown>;
+  };
 };
 
 export function getErrorDetails(err: unknown): {

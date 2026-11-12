@@ -957,6 +957,229 @@ describe("recoverable creates", () => {
     runtime.close();
   });
 
+  /**
+   * Runs a deploy whose drift read, if it makes one, misses the recorded
+   * resource, and whose create makes nothing and ends with an unknown outcome when its attempts
+   * run out. The "creating" record stays.
+   */
+  async function driftRecreateEndsUnknown(
+    runtime: ReturnType<typeof createRuntime>,
+    control: { hiddenReads?: number; failCreate?: Error },
+    executionId: string,
+  ) {
+    control.hiddenReads = 1;
+    control.failCreate = new ResourceCreationUnknownError("socket timed out");
+    await expect(runtime.run(executionId)).resolves.toMatchObject({
+      status: "suspended",
+    });
+    runtime.advance(1_000);
+    await expect(runtime.run(executionId)).rejects.toMatchObject({
+      code: "EFFECT_OUTCOME_UNKNOWN",
+    });
+    control.failCreate = undefined;
+    // A deploy that starts from a "creating" record makes no drift read.
+    control.hiddenReads = undefined;
+  }
+
+  it("writes the full record back when a create from the creating record of a drift-recreate is refused", async () => {
+    const { Named, remote, calls, control } = defineNamed(
+      "test/durable/drift-recreate-recorded",
+    );
+    const resources: BaseResource[] = [
+      new Named("role", { config: { name: "app", path: "/" } as any }),
+    ];
+    const runtime = createRuntime(resources, "drift-recreate-recorded", {
+      driftDetection: true,
+      maxOperationAttempts: 2,
+    });
+
+    await runtime.run("deploy-1");
+    const full = await runtime.state.get("role");
+    const { version: _, ...recorded } = full!;
+
+    await driftRecreateEndsUnknown(runtime, control, "deploy-2");
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "creating",
+      creates: ["deploy-2"],
+      recorded,
+    });
+
+    // The resource has deploy-1's token, which the record does not name.
+    await abandon(runtime, "drift-recreate-recorded", "deploy-2");
+    await expect(runtime.run("deploy-3")).rejects.toThrow(
+      "Cannot create role: app already exists.",
+    );
+    const restored = await runtime.state.get("role");
+    expect(restored).toMatchObject(recorded);
+    expect(restored).not.toHaveProperty("creates");
+    expect(restored).not.toHaveProperty("recorded");
+
+    // deploy-4 reads the resource by the full record, and updates it as
+    // config requires.
+    resources[0] = new Named("role", {
+      config: { name: "app", path: "/", description: "the app" } as any,
+    });
+    await runtime.run("deploy-4");
+    expect(calls).toEqual([
+      "create:app",
+      "create:app",
+      "create:app",
+      "create:app",
+      'update:app:{"description":"the app"}',
+    ]);
+    expect(remote.size).toBe(1);
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "update",
+      params: { name: "app", path: "/", description: "the app" },
+    });
+
+    await runtime.run("deploy-5");
+    expect(calls).toHaveLength(5);
+    runtime.close();
+  });
+
+  it("carries the full record forward when a later create from the creating record ends unknown", async () => {
+    const { Named, calls, control } = defineNamed(
+      "test/durable/drift-recreate-recorded-chain",
+    );
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "drift-recreate-recorded-chain",
+      { driftDetection: true, maxOperationAttempts: 2 },
+    );
+
+    await runtime.run("deploy-1");
+    const { version: _, ...recorded } = (await runtime.state.get("role"))!;
+
+    await driftRecreateEndsUnknown(runtime, control, "deploy-2");
+    await abandon(runtime, "drift-recreate-recorded-chain", "deploy-2");
+    await driftRecreateEndsUnknown(runtime, control, "deploy-3");
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "creating",
+      creates: ["deploy-2", "deploy-3"],
+      recorded,
+    });
+
+    await abandon(runtime, "drift-recreate-recorded-chain", "deploy-3");
+    await expect(runtime.run("deploy-4")).rejects.toThrow(
+      "Cannot create role: app already exists.",
+    );
+    const restored = await runtime.state.get("role");
+    expect(restored).toMatchObject(recorded);
+    expect(restored).not.toHaveProperty("creates");
+    expect(restored).not.toHaveProperty("recorded");
+
+    await runtime.run("deploy-5");
+    expect(calls.filter((call) => !call.startsWith("create:"))).toEqual([]);
+    runtime.close();
+  });
+
+  it("keeps the creating record and its full record when a create from it fails", async () => {
+    const { Named, control } = defineNamed(
+      "test/durable/drift-recreate-recorded-fails",
+    );
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "drift-recreate-recorded-fails",
+      { driftDetection: true, maxOperationAttempts: 2 },
+    );
+
+    await runtime.run("deploy-1");
+    const { version: _, ...recorded } = (await runtime.state.get("role"))!;
+    await driftRecreateEndsUnknown(runtime, control, "deploy-2");
+    await abandon(runtime, "drift-recreate-recorded-fails", "deploy-2");
+
+    control.failCreate = new Error("access denied");
+    await expect(runtime.run("deploy-3")).rejects.toThrow("access denied");
+
+    // deploy-3's create made nothing, so the record does not list it.
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "creating",
+      creates: ["deploy-2"],
+      recorded,
+    });
+    runtime.close();
+  });
+
+  it("writes a record without the full record when a create from the creating record of a drift-recreate succeeds", async () => {
+    const { Named, remote, control } = defineNamed(
+      "test/durable/drift-recreate-recorded-created",
+    );
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "drift-recreate-recorded-created",
+      { driftDetection: true, maxOperationAttempts: 2 },
+    );
+
+    await runtime.run("deploy-1");
+    await driftRecreateEndsUnknown(runtime, control, "deploy-2");
+    expect(await runtime.state.get("role")).toHaveProperty("recorded");
+    await abandon(runtime, "drift-recreate-recorded-created", "deploy-2");
+
+    // The resource is gone, as the drift read said.
+    remote.clear();
+    await runtime.run("deploy-3");
+
+    const record = await runtime.state.get("role");
+    expect(record).toMatchObject({ lastOperation: "create" });
+    expect(record).not.toHaveProperty("creates");
+    expect(record).not.toHaveProperty("recorded");
+    runtime.close();
+  });
+
+  it("deletes the resource of a creating record by the key of the full record that it was written over", async () => {
+    const { Named, remote, calls, control } = defineNamed(
+      "test/durable/drift-recreate-recorded-destroy",
+    );
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "drift-recreate-recorded-destroy",
+      { driftDetection: true, maxOperationAttempts: 2 },
+    );
+
+    await runtime.run("deploy-1");
+    await driftRecreateEndsUnknown(runtime, control, "deploy-2");
+    await abandon(runtime, "drift-recreate-recorded-destroy", "deploy-2");
+    // find matches no token that the record lists.
+    await runtime.destroy("destroy-1");
+
+    expect(calls).toEqual([
+      "create:app",
+      "create:app",
+      "create:app",
+      "delete:app",
+    ]);
+    expect(remote.size).toBe(0);
+    expect(await runtime.state.get("role")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("deletes the resource of a creating record that was written over a full record when its class cannot prove ownership", async () => {
+    const { Named, remote, calls, control } = defineNamed(
+      "test/durable/drift-recreate-recorded-unproven",
+      "none",
+    );
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "drift-recreate-recorded-unproven",
+      { driftDetection: true },
+    );
+
+    await runtime.run("deploy-1");
+    control.hiddenReads = 1;
+    control.failCreate = new ResourceCreationUnknownError("socket timed out");
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "ResourceCreationUnknownError",
+    });
+    await abandon(runtime, "drift-recreate-recorded-unproven", "deploy-2");
+    await runtime.destroy("destroy-1");
+
+    expect(calls).toEqual(["create:app", "create:app", "delete:app"]);
+    expect(remote.size).toBe(0);
+    expect(await runtime.state.get("role")).toBeUndefined();
+    runtime.close();
+  });
+
   it("takes over a recorded resource of a parent class whose drift read reported it gone", async () => {
     const { Named, calls, control } = defineNamed(
       "test/durable/reclaim-drift-recreate",
@@ -1089,6 +1312,7 @@ describe("recoverable creates", () => {
       lastOperation: "creating",
       output: { url: "app/0", name: "app" },
       creates: ["deploy-2"],
+      recorded: { lastOperation: "create", output: { url: "app/0" } },
     });
 
     await abandon(runtime, "drift-recreate-unknown", "deploy-2");
@@ -1103,6 +1327,7 @@ describe("recoverable creates", () => {
       output: { url: "app/1", name: "app" },
     });
     expect(record).not.toHaveProperty("creates");
+    expect(record).not.toHaveProperty("recorded");
     runtime.close();
   });
 

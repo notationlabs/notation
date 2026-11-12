@@ -88,6 +88,8 @@ When the replaced resource depends on a field that is unknown at plan, its own e
 
 Before deploy calls a resource's `create`, it writes a `creating` state record, under the step key `state:persist:<id>:creating`. The record holds the resource's config, params and dependency edges, and the key fields that params supply. It also lists, in `creates`, the IDs of the executions whose creates may have made the resource. An execution's create token is `notation:create:<execution id>:<resource id>`, and every attempt of its create receives the same token, so a later execution can compute the token from the list. Each attempt's effect ID adds the attempt number to the token. A `creating` record that an earlier execution left keeps its entries, and the new execution adds its own. If the new execution's create fails and its outcome is known, deploy writes the earlier record back, without the new entry. The entries are kept when config changed the key too, because `find` checks the desired key as well as the token. When the create is done, deploy replaces the record with the usual record, which has no `creates`.
 
+A `creating` record that deploy writes over a full record, in a drift-recreate, also keeps that full record, in `recorded`. A `creating` record written over a `creating` record carries its `recorded` forward. The record that replaces a `creating` record has no `recorded`. See [The record after a failed create](#the-record-after-a-failed-create).
+
 #### The ownership rule
 
 Deploy takes over or deletes an existing resource only with proof that one of Notation's own creates made it. Each resource class says how the proof is made, in its `ownership` field:
@@ -123,9 +125,9 @@ Drift-recreate follows the same rule. When drift detection read a recorded resou
 - `parent`: the proof holds, so deploy takes the resource over.
 - `token`: `find` is called with the current execution's token only. The resource that the drift read missed has the token of the execution that made it, which no record names, so deploy fails with `ResourceAlreadyExistsError` and writes the full record back. The next deploy reads the resource again.
 
-When the outcome of a drift-recreate's create is unknown, the `creating` record stays, and lists the execution. The next deploy calls `find` with that execution's token before `create`, and takes over the resource that the create made.
+When the outcome of a drift-recreate's create is unknown, the `creating` record stays, and lists the execution. The next deploy calls `find` with that execution's token before `create`, and takes over the resource that the create made. If the create made nothing and the drift read was wrong, the resource still has the token of the execution that first made it. The next deploy's `create` then throws `ResourceAlreadyExistsError` and the proof fails, so deploy writes the full record in `recorded` back, and the deploy after it reads the resource again.
 
-The `creating` record of a drift-recreate keeps the recorded output. A delete of that record then still has a key that the provider assigned; see [Deleting the resource of a creating record](#deleting-the-resource-of-a-creating-record).
+The `creating` record of a drift-recreate keeps the recorded output, with the key fields that params supply written over it. A delete of that record then still has a key that the provider assigned; see [Deleting the resource of a creating record](#deleting-the-resource-of-a-creating-record).
 
 When the proof fails, deploy fails with `ResourceAlreadyExistsError`. Deploy then writes back the record that the execution started from; see [The record after a failed create](#the-record-after-a-failed-create). The message says why: the resource's class can't prove which create made a resource, nothing proves that one of Notation's creates made it, or the create was of a replacement.
 
@@ -136,7 +138,8 @@ Deploy keeps the `creating` record when the outcome is unknown: after `ResourceC
 After any other error, the create made nothing that deploy may record. This covers `ResourceAlreadyExistsError` without proof, and errors for which `perform` either never ran or made nothing, including another `WorkflowEffectError` code. Deploy then writes back the record that the execution started from, under `state:persist:<id>:restored`:
 
 - When it started from no record, deploy removes the `creating` record.
-- When it started from a `creating` record that an earlier execution left, deploy writes that record back. Its `creates` lists the earlier executions and not the current one, so a later deploy can still prove ownership by their tokens.
+- When it started from a `creating` record that an earlier execution left, deploy writes that record back. Its `creates` lists the earlier executions and not the current one, so a later deploy can still prove ownership by their tokens. It keeps its `recorded` too.
+- When it started from a `creating` record that has `recorded`, and the error is `ResourceAlreadyExistsError` without proof, deploy writes the full record in `recorded` back instead. The resource exists, and no execution that the `creating` record lists made it, so the full record is the only evidence that it is Notation's. The next deploy reads the resource by that record, as it does when the refusal happens in the execution that made the drift read. Any other error says nothing about an existing resource, so the `creating` record is written back, and a later deploy can still take over what an earlier create made.
 - When it started from a full record, after a drift read reported the resource gone, deploy writes that record back, so that the next deploy reads the resource again.
 
 A `create` that makes more than one call must throw `ResourceCreationUnknownError` when a call after the first mutating call fails, if what the first call made would otherwise be left without a record. `LambdaLogGroup` does this when its retention policy can't be set. Its lookup then reads the log group by its name, and the takeover sets the retention in the same deploy. The EventBridge rule instead deletes the rule when its targets can't be put. It checks the rule's create token after `PutRule`, before it puts the targets, and refuses a rule without it, which another writer made after create checked for one. It throws `ResourceCreationUnknownError` if the delete fails. `sqs.Queue` checks its create token after `CreateQueue` in the same way.
@@ -149,6 +152,8 @@ The orphan sweep and destroy delete the resource of a `creating` record only wit
 - `parent`: a class with `find` calls it in the same step, and a `find` that finds nothing gives `not-created`. A class without `find` needs no call. They delete the resource by the key that `find` returned or that the record holds, and a missing resource counts as deleted. The `creating` record of a drift-recreate holds the key that the provider assigned to the recorded resource. When neither holds a key, because the provider assigns it, they remove only the record, and emit `skip` with the reason `key-unknown`.
 - No `ownership`: they remove only the record, and emit `skip` with the reason `ownership-unproven`.
 
+A `creating` record that has `recorded` is an exception. When the proof fails, or the class has no `ownership`, the orphan sweep and destroy delete the resource by the key in the output of the full record in `recorded`, as they would have deleted it from that full record. A full record is deleted without proof, and the `creating` record replaced it only because a drift read reported the resource gone. A missing resource counts as deleted. When the proof holds, they delete the resource that it found, and not the one in `recorded`.
+
 A full record that lacks a key field is deleted as usual, so the provider's error stops the deployment.
 
 #### Limits
@@ -156,6 +161,8 @@ A full record that lacks a key field is deleted as usual, so the provider's erro
 A resource whose key the provider assigns and whose class has no `ownership: "token"` never reports that it already exists. A new execution creates it again, and the first one is left in the provider.
 
 When the `creating` record names another key than the desired one, for example after config changed the resource's name, deploy creates the resource under the new key. The resource that the abandoned create may have made under the old key is left in the provider, and state does not track it.
+
+When the provider assigns the key, the `creating` record of a drift-recreate can stand for two resources: the recorded one, if the drift read was wrong, and one that the create with an unknown outcome made. A takeover or a delete with the proof handles the second, and the first is left in the provider.
 
 A resource without `ownership` that an abandoned create made is left in the provider. The next deploy refuses it, and the orphan sweep and destroy don't delete it.
 

@@ -586,7 +586,12 @@ export async function* deleteResource(
     maxOperationAttempts: opts.maxOperationAttempts,
     remove: session.remove,
     creating: isCreatingRecord(session.node)
-      ? { params: session.node.params, creates: session.node.creates ?? [] }
+      ? {
+          params: session.node.params,
+          creates: session.node.creates ?? [],
+          recordedOutput: session.node.recorded?.output as
+            Record<string, unknown> | undefined,
+        }
       : undefined,
   });
 }
