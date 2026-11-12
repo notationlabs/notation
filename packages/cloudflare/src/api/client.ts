@@ -73,7 +73,7 @@ function apiToken(): string {
   const token = process.env.CLOUDFLARE_API_TOKEN;
   if (!token) {
     throw new Error(
-      "Set CLOUDFLARE_API_TOKEN to an API token with the Workers Scripts: Edit permission for the account.",
+      "Set CLOUDFLARE_API_TOKEN to an API token for the account with the permissions for the resources that it deploys: Workers Scripts: Edit for WorkerScript, Workers KV Storage: Edit for KVNamespace, Workers R2 Storage: Edit for R2Bucket, and Workers Containers: Edit for ContainerApplication and ContainerRegistry.",
     );
   }
   return token;
