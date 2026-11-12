@@ -235,6 +235,52 @@ describe("$worker", () => {
     );
   });
 
+  it("passes the namespaces that a Worker binds on other Workers, and the Workers that bind each hosted namespace", async () => {
+    const graph = await collect(() => {
+      const counters = inModule(
+        $durableObject({ id: "counters", class: Counter }),
+        "runtime/counter.ts",
+      );
+      const rooms = inModule(
+        $durableObject({ id: "rooms", class: Room }),
+        "runtime/room.ts",
+      );
+      for (const id of ["web", "reports"]) {
+        inWorker(
+          $worker({
+            id,
+            compatibilityDate,
+            bindings: () => ({ COUNTERS: counters }),
+          }),
+          `runtime/${id}.ts`,
+        );
+      }
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, ROOMS: rooms }),
+        }),
+        "runtime/api.ts",
+        ["Counter", "Room"],
+      );
+    });
+    const api = group(graph, "api").script.config;
+    const web = group(graph, "web").script.config;
+
+    expect(web.BoundDurableObjects).toEqual([
+      { id: "counters", className: "Counter", scriptName: "shop--dev--api" },
+    ]);
+    expect(web.DurableObjectTransferSources).toBeUndefined();
+    expect(api.BoundDurableObjects).toBeUndefined();
+    expect(api.DurableObjectTransferSources).toEqual([
+      {
+        id: "counters",
+        scriptNames: ["shop--dev--reports", "shop--dev--web"],
+      },
+    ]);
+  });
+
   it("passes the ids of hosted namespaces that set protect: false, and undefined when there are none", async () => {
     const graph = await collect(() => {
       const counters = inModule(

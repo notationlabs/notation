@@ -46,7 +46,15 @@ export type ScriptBinding = v.InferOutput<typeof bindingSchema>;
 export type DurableObjectExport =
   | { type: "durable-object"; storage: "sqlite" }
   | { type: "durable-object"; state: "deleted" }
-  | { type: "durable-object"; state: "renamed"; renamed_to: string };
+  | { type: "durable-object"; state: "renamed"; renamed_to: string }
+  | {
+      type: "durable-object";
+      storage: "sqlite";
+      state: "expecting-transfer";
+      /** The Worker that hosts the namespace now. */
+      transfer_from: string;
+    }
+  | { type: "durable-object"; state: "transferred"; transferred_to: string };
 
 export type ScriptSettings = {
   compatibility_date?: string;
@@ -109,6 +117,69 @@ export async function putScript(
     }),
   );
   await cloudflare("PUT", scriptPath(account, scriptName), form);
+}
+
+/**
+ * Sets the Durable Object `exports` map of the Worker's deployed version,
+ * without uploading its code. The map must list every namespace that the
+ * Worker hosts.
+ */
+export async function patchScriptExports(
+  account: string,
+  scriptName: string,
+  exports: Record<string, DurableObjectExport>,
+): Promise<void> {
+  const form = new FormData();
+  form.set("settings", JSON.stringify({ exports }));
+  await cloudflare(
+    "PATCH",
+    `${scriptPath(account, scriptName)}/settings`,
+    form,
+  );
+}
+
+/** A Durable Object namespace in the account. */
+export type AccountNamespace = {
+  /** The Worker that hosts the namespace. */
+  script: string;
+  className: string;
+  sqlite: boolean;
+};
+
+const NAMESPACE_PAGE_SIZE = 1000;
+
+/**
+ * Lists the account's Durable Object namespaces. Leaves out the namespaces
+ * of Worker previews and of Workers in dispatch namespaces.
+ */
+export async function listAccountNamespaces(
+  account: string,
+): Promise<AccountNamespace[]> {
+  const namespaces: AccountNamespace[] = [];
+  for (let page = 1; ; page++) {
+    const items = await cloudflare<
+      {
+        script?: string | null;
+        class?: string | null;
+        use_sqlite?: boolean | null;
+        dispatch_namespace?: string | null;
+        preview?: unknown;
+      }[]
+    >(
+      "GET",
+      `/accounts/${encodeURIComponent(account)}/workers/durable_objects/namespaces?page=${page}&per_page=${NAMESPACE_PAGE_SIZE}`,
+    );
+    for (const item of items ?? []) {
+      if (!item.script || !item.class) continue;
+      if (item.dispatch_namespace || item.preview) continue;
+      namespaces.push({
+        script: item.script,
+        className: item.class,
+        sqlite: item.use_sqlite !== false,
+      });
+    }
+    if ((items ?? []).length < NAMESPACE_PAGE_SIZE) return namespaces;
+  }
 }
 
 /**

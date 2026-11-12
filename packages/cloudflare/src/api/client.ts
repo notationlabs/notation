@@ -105,7 +105,7 @@ function isRateLimited(errors: CloudflareErrorItem[]): boolean {
  * when the request is rate limited, so the reconciler retries.
  */
 export async function cloudflare<T>(
-  method: "GET" | "PUT" | "POST" | "DELETE",
+  method: "GET" | "PUT" | "POST" | "PATCH" | "DELETE",
   /** The path after `/client/v4`, such as `/accounts/<id>/workers/scripts`. */
   path: string,
   body?: FormData | object,
