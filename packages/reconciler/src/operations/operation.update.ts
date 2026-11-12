@@ -48,8 +48,8 @@ export async function* updateResourceOperation(
 
     // An update starts from the computed outputs in state, because the read
     // may not return some of them, such as a value that only the create
-    // returns. Params are left out, so that a param removed from the
-    // declaration is not kept from state.
+    // returns. Params are left out, so that for a resource with a read, a
+    // param removed from the declaration is not kept from state.
     const persistedComputedOutputs = Object.fromEntries(
       Object.entries(params.persistedOutput ?? {}).filter(
         ([field]) => params.resource.schema[field]?.propertyType === "computed",

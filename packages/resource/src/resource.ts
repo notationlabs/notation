@@ -210,6 +210,11 @@ export abstract class Resource<
     token?: string,
   ) => Promise<T["primaryKey"]>;
   find?: (params: T["params"], token: string) => Promise<T["primaryKey"]>;
+  /**
+   * After an update, a computed output that the read leaves out keeps its
+   * value from state. Return an optional computed output as `undefined` when
+   * it is no longer set, or its old value stays in state.
+   */
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
