@@ -72,7 +72,7 @@ function printPlanSummary(result: Plan, logger: Logger) {
       );
     }
     if (node.mayTakeOver) {
-      logger.info(`    taken over if an earlier deploy created it`);
+      logger.info(`    recovers a create that an earlier deploy did not finish`);
     }
     if (node.replacedDependency) {
       const replaced = result.nodes.find(
