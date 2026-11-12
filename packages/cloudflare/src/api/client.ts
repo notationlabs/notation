@@ -110,9 +110,11 @@ export async function cloudflare<T>(
   /** The path after `/client/v4`, such as `/accounts/<id>/workers/scripts`. */
   path: string,
   body?: FormData | object,
+  requestHeaders: Record<string, string> = {},
 ): Promise<T> {
   const request = `${method} ${path}`;
   const headers: Record<string, string> = {
+    ...requestHeaders,
     Authorization: `Bearer ${apiToken()}`,
   };
   let payload: FormData | string | undefined;
