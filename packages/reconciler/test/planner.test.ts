@@ -972,7 +972,7 @@ describe("createPlan", () => {
       expect(error).toMatchObject({
         name: "SchemaStructureError",
         fields: ["arn"],
-        message: expect.stringContaining("Give the resource a new ID"),
+        message: expect.stringContaining("Remove the resource from the code"),
       });
     });
   });

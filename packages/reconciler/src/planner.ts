@@ -164,7 +164,7 @@ export async function planKnownParams(
     assertRequiredOutputs(
       resource,
       stateNode.output,
-      "The resource's type has no read, so deploy can't fill them in. Give the resource a new ID, so it is created again and the old one is deleted as an orphan.",
+      "The resource's type has no read, so deploy can't fill them in. Remove the resource from the code, deploy, then add it back, so that it is created again.",
     );
   }
   const params = await resource.planParams();

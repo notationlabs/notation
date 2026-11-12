@@ -82,12 +82,19 @@ export class SchemaStructureError extends Error {
   readonly resourceType: string;
   readonly fields: string[];
 
-  constructor(subject: ValidationSubject, problem: string, fields: string[]) {
+  constructor(
+    subject: ValidationSubject,
+    problem: string,
+    fields: string[],
+    // Added to the end of the message, as a sentence of its own.
+    hint?: string,
+  ) {
     const site = subject.declaredAt
       ? `, declared at ${subject.declaredAt}`
       : "";
     super(
-      `${subject.id} (${subject.type})${site}: ${problem}: ${fields.join(", ")}`,
+      `${subject.id} (${subject.type})${site}: ${problem}: ${fields.join(", ")}` +
+        (hint ? `. ${hint}` : ""),
     );
     this.name = "SchemaStructureError";
     this.resourceId = subject.id;
@@ -333,13 +340,12 @@ export function assertRequiredOutputs(
 ): void {
   const missing = missingRequiredOutputs(subject, output);
   if (missing.length > 0) {
-    const error = new SchemaStructureError(
+    throw new SchemaStructureError(
       subject,
       "these required outputs are missing",
       missing,
+      hint,
     );
-    if (hint) error.message += `. ${hint}`;
-    throw error;
   }
 }
 
