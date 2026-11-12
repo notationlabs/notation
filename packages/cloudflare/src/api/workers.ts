@@ -4,6 +4,12 @@ import { CloudflareApiError, cloudflare } from "./client";
 /** Cloudflare's error code for a Worker that doesn't exist. */
 const WORKER_NOT_FOUND = 10007;
 
+/**
+ * Cloudflare's error code for an account with no workers.dev subdomain. It's
+ * the same code as for a missing Worker.
+ */
+const NO_ACCOUNT_SUBDOMAIN = 10007;
+
 /** True for a Worker that doesn't exist. */
 export const isNotFound = (error: unknown): boolean =>
   error instanceof CloudflareApiError && error.hasCode(WORKER_NOT_FOUND);
@@ -71,8 +77,10 @@ export async function getScriptSettings(
       `${scriptPath(account, scriptName)}/settings`,
     );
   } catch (error) {
-    if (isNotFound(error)) return undefined;
+    // Checked first, so that a Worker with no versions is never read as
+    // missing, whatever code Cloudflare sends with it.
     if (error instanceof CloudflareApiError && hasNoVersions(error)) return {};
+    if (isNotFound(error)) return undefined;
     throw error;
   }
 }
@@ -206,10 +214,6 @@ export async function setScriptSubdomain(
     enabled,
   });
 }
-
-// Cloudflare's error code for an account with no workers.dev subdomain. It's
-// the same code as for a missing Worker.
-const NO_ACCOUNT_SUBDOMAIN = 10007;
 
 /** Returns the account's workers.dev subdomain. */
 export async function getAccountSubdomain(account: string): Promise<string> {
