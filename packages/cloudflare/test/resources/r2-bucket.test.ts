@@ -26,6 +26,10 @@ function mockFetch(respond: (call: Call) => Response | Promise<Response>) {
   });
 }
 
+function mockResponses(responses: Response[]) {
+  mockFetch(() => responses.shift()!);
+}
+
 const ok = (result: unknown = null) =>
   Response.json({ success: true, errors: [], result });
 
@@ -48,11 +52,7 @@ const params = {
   StorageClass: "Standard" as const,
 };
 
-const key = {
-  AccountId: "acc",
-  BucketName: "app--dev--uploads",
-  Jurisdiction: "default" as const,
-};
+const { StorageClass: _, ...key } = params;
 
 const bucket = new R2Bucket("bucket:uploads", {
   config: {
@@ -87,29 +87,31 @@ describe("R2Bucket", () => {
       locationHint: "weur",
       storageClass: "Standard",
     });
-    expect(calls[1]!.headers).not.toHaveProperty("cf-r2-jurisdiction");
+    expect(calls[1]!.headers["cf-r2-jurisdiction"]).toBe("default");
   });
 
-  it("sends the jurisdiction header on every request for a bucket outside the default jurisdiction", async () => {
-    const eu = { ...key, Jurisdiction: "eu" as const };
-    mockFetch((call) => {
-      if (call.method === "GET" && calls.length === 1) return noSuchBucket();
-      if (call.method === "GET") return ok({ storage_class: "Standard" });
-      return ok({});
-    });
+  it("doesn't keep the location hint in state, so a change to it doesn't replace the bucket", () => {
+    const output = { ...params, LocationHint: "weur" as const };
 
-    await bucket.create({ ...params, Jurisdiction: "eu" });
-    await bucket.read!(eu);
-    await bucket.update!(
-      eu,
-      {} as any,
-      { ...params, Jurisdiction: "eu" },
-      {
-        ...params,
-        Jurisdiction: "eu",
-      },
-    );
-    await bucket.delete(eu, {} as any);
+    expect(bucket.toState(output)).not.toHaveProperty("LocationHint");
+    expect(bucket.toComparable(output)).not.toHaveProperty("LocationHint");
+  });
+
+  it("sends the jurisdiction header on every request", async () => {
+    const euParams = { ...params, Jurisdiction: "eu" as const };
+    const { StorageClass: _, ...euKey } = euParams;
+    mockResponses([
+      noSuchBucket(),
+      ok({}),
+      ok({ storage_class: "Standard" }),
+      ok({}),
+      ok({}),
+    ]);
+
+    await bucket.create(euParams);
+    await bucket.read!(euKey);
+    await bucket.update!(euKey, {} as any, euParams, euParams);
+    await bucket.delete(euKey, {} as any);
 
     expect(calls).toHaveLength(5);
     for (const call of calls) {
@@ -121,25 +123,9 @@ describe("R2Bucket", () => {
     mockFetch(() => ok({ name: "app--dev--uploads" }));
 
     await expect(bucket.create(params)).rejects.toThrow(
-      "A bucket named app--dev--uploads already exists in the Cloudflare account acc. Give the bucket another name",
+      "A bucket named app--dev--uploads already exists in the default jurisdiction of the Cloudflare account acc. Give the bucket another name",
     );
     expect(calls).toHaveLength(1);
-  });
-
-  it("names the jurisdiction when Cloudflare rejects the create because the name is taken", async () => {
-    mockFetch((call) =>
-      call.method === "GET"
-        ? noSuchBucket()
-        : fail(409, 10004, "The bucket you tried to create already exists."),
-    );
-
-    const error = await bucket
-      .create({ ...params, Jurisdiction: "eu" })
-      .catch((e) => e);
-    expect(error).not.toBeInstanceOf(ResourceCreationUnknownError);
-    expect(error.message).toContain(
-      "A bucket named app--dev--uploads already exists in the eu jurisdiction of the Cloudflare account acc",
-    );
   });
 
   it("fails with Cloudflare's message for an invalid name", async () => {
@@ -243,7 +229,7 @@ describe("R2Bucket", () => {
     );
 
     await expect(bucket.delete(key, {} as any)).rejects.toThrow(
-      "The bucket app--dev--uploads in the Cloudflare account acc still has objects, and Cloudflare deletes only an empty bucket. Delete its objects, then try again.",
+      "The bucket app--dev--uploads in the default jurisdiction of the Cloudflare account acc still has objects, and Cloudflare deletes only an empty bucket. Delete its objects, then try again.",
     );
   });
 

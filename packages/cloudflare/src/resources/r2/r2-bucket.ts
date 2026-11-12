@@ -5,14 +5,12 @@ import {
   createBucket,
   deleteBucket,
   getBucket,
-  isBucketAlreadyExists,
   isBucketNotEmpty,
   isNoSuchBucket,
   jurisdictionSchema,
   locationHintSchema,
   setBucketStorageClass,
   storageClassSchema,
-  type BucketKey,
   type Jurisdiction,
   type LocationHint,
   type StorageClass,
@@ -24,13 +22,15 @@ type R2BucketKey = {
   Jurisdiction: Jurisdiction;
 };
 
+type R2BucketParams = {
+  LocationHint?: LocationHint;
+  StorageClass: StorageClass;
+};
+
 export type R2BucketSchema = {
   Key: R2BucketKey;
-  CreateParams: R2BucketKey & {
-    LocationHint?: LocationHint;
-    StorageClass: StorageClass;
-  };
-  UpdateParams: { StorageClass: StorageClass };
+  CreateParams: R2BucketKey & R2BucketParams;
+  UpdateParams: R2BucketParams;
   ReadResult: {};
 };
 
@@ -55,8 +55,8 @@ const r2BucketSchema = r2Bucket.defineSchema({
     value: v.string(),
   },
   /**
-   * Where Cloudflare stores the bucket's objects. Every request for a bucket
-   * outside `default` names its jurisdiction, so it is part of the key.
+   * Where Cloudflare stores the bucket's objects. Every request for the
+   * bucket names its jurisdiction, so it is part of the key.
    */
   Jurisdiction: {
     propertyType: "param",
@@ -67,12 +67,13 @@ const r2BucketSchema = r2Bucket.defineSchema({
   },
   /**
    * Where Cloudflare places the bucket when it creates it. Cloudflare can
-   * place it elsewhere, so the read doesn't return the hint.
+   * place it elsewhere, so the read doesn't return the hint. A change to the
+   * hint doesn't move a bucket that exists.
    */
   LocationHint: {
     propertyType: "param",
     presence: "optional",
-    immutable: true,
+    hidden: true,
     value: locationHintSchema,
   },
   /** The storage class of new objects, unless an upload sets another. */
@@ -83,46 +84,31 @@ const r2BucketSchema = r2Bucket.defineSchema({
   },
 } as const);
 
-const bucketKey = (key: R2BucketKey): BucketKey => ({
-  account: key.AccountId,
-  name: key.BucketName,
-  jurisdiction: key.Jurisdiction,
-});
-
 const inAccount = (key: R2BucketKey) =>
-  key.Jurisdiction === "default"
-    ? `the Cloudflare account ${key.AccountId}`
-    : `the ${key.Jurisdiction} jurisdiction of the Cloudflare account ${key.AccountId}`;
-
-function alreadyExists(key: R2BucketKey, cause?: unknown): Error {
-  return new Error(
-    `A bucket named ${key.BucketName} already exists in ${inAccount(key)}. Give the bucket another name, or delete the existing bucket and deploy again.`,
-    { cause },
-  );
-}
+  `the ${key.Jurisdiction} jurisdiction of the Cloudflare account ${key.AccountId}`;
 
 export const R2Bucket = r2BucketSchema.defineOperations({
-  // Cloudflare rejects a name that the account has already. The check
-  // still runs first: after a create with an unknown outcome, the
-  // reconciler reads the key, and it would take a bucket that existed
-  // before as the one the create made. The check is outside
-  // `cloudflareCreate`: if it throws, nothing was created.
+  // Check first, so an existing bucket isn't taken as this create's. The
+  // check is outside `cloudflareCreate`: if it throws, nothing was created.
   create: async (params) => {
-    const key = bucketKey(params);
-    if (await getBucket(key)) throw alreadyExists(params);
-    try {
-      await cloudflareCreate(createBucket)(key, {
-        locationHint: params.LocationHint,
-        storageClass: params.StorageClass,
-      });
-    } catch (error) {
-      if (isBucketAlreadyExists(error)) throw alreadyExists(params, error);
-      throw error;
+    const { AccountId, BucketName, Jurisdiction } = params;
+    if (await getBucket(AccountId, BucketName, Jurisdiction)) {
+      throw new Error(
+        `A bucket named ${BucketName} already exists in ${inAccount(params)}. Give the bucket another name, or delete the existing bucket and deploy again.`,
+      );
     }
+    await cloudflareCreate(createBucket)(AccountId, BucketName, Jurisdiction, {
+      locationHint: params.LocationHint,
+      storageClass: params.StorageClass,
+    });
   },
 
   read: async (key) => {
-    const bucket = await getBucket(bucketKey(key));
+    const bucket = await getBucket(
+      key.AccountId,
+      key.BucketName,
+      key.Jurisdiction,
+    );
     if (!bucket) {
       throw new ResourceNotFoundError("R2 bucket was not found");
     }
@@ -130,17 +116,22 @@ export const R2Bucket = r2BucketSchema.defineOperations({
       AccountId: key.AccountId,
       BucketName: key.BucketName,
       Jurisdiction: key.Jurisdiction,
-      StorageClass: bucket.storage_class ?? undefined,
+      StorageClass: bucket.storage_class,
     };
   },
 
   update: async (key, _patch, params) => {
-    await setBucketStorageClass(bucketKey(key), params.StorageClass);
+    await setBucketStorageClass(
+      key.AccountId,
+      key.BucketName,
+      key.Jurisdiction,
+      params.StorageClass,
+    );
   },
 
   delete: async (key) => {
     try {
-      await deleteBucket(bucketKey(key));
+      await deleteBucket(key.AccountId, key.BucketName, key.Jurisdiction);
     } catch (error) {
       if (isNoSuchBucket(error)) return;
       if (isBucketNotEmpty(error)) {
