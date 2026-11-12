@@ -93,7 +93,12 @@ export async function getScriptSettings(
   }
 }
 
-/** Creates the Worker, or replaces a Worker with the same name. */
+/**
+ * Creates the Worker, or replaces a Worker with the same name. The upload
+ * keeps the secrets of the Worker's latest version. Without `keep_bindings`,
+ * Cloudflare drops every secret that is not in `bindings`, such as a secret
+ * set with wrangler or in the dashboard.
+ */
 export async function putScript(
   account: string,
   scriptName: string,
@@ -104,6 +109,7 @@ export async function putScript(
     compatibility_date: upload.compatibilityDate,
     compatibility_flags: upload.compatibilityFlags,
     bindings: upload.bindings,
+    keep_bindings: ["secret_text", "secret_key"],
     ...(Object.keys(upload.exports).length > 0
       ? { exports: upload.exports }
       : {}),

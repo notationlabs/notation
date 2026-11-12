@@ -101,6 +101,7 @@ describe("WorkerScript", () => {
         compatibility_date: "2026-10-12",
         compatibility_flags: ["nodejs_compat"],
         bindings: params.Bindings,
+        keep_bindings: ["secret_text", "secret_key"],
         exports: { Counter: { type: "durable-object", storage: "sqlite" } },
       },
       module: { type: "application/javascript+module", text: code },
@@ -261,6 +262,16 @@ describe("WorkerScript", () => {
       CompatibilityDate: undefined,
       CompatibilityFlags: undefined,
     });
+  });
+
+  it("keeps the Worker's secrets when it uploads a change", async () => {
+    mockFetch(() => ok({}));
+    const key = { AccountId: "acc", ScriptName: "app--dev--api" };
+
+    await script.update!(key, {} as any, params, params);
+
+    const { metadata } = await uploadedMetadata(calls[0]!);
+    expect(metadata.keep_bindings).toEqual(["secret_text", "secret_key"]);
   });
 
   it("renames a namespace whose class changed, and deletes one whose declaration is gone", async () => {
