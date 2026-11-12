@@ -1143,8 +1143,8 @@ describe("dependency cycles", () => {
   const pair = () => {
     const a = new Worker("a", { config: { name: "a" } as any });
     const b = new Worker("b", { config: { name: "b" } as any });
-    a.contribute({ bindings: [b.outputValue("name")] } as any);
-    b.contribute({ bindings: [a.outputValue("name")] } as any);
+    a.contribute({ bindings: [b.outputRef("name")] } as any);
+    b.contribute({ bindings: [a.outputRef("name")] } as any);
     return [a, b];
   };
 

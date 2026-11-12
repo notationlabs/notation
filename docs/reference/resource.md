@@ -492,12 +492,12 @@ const a = new WorkerScript("a", { config: { ScriptName: "a" } });
 const b = new WorkerScript("b", { config: { ScriptName: "b" } });
 a.contribute({
   Bindings: [
-    { type: "service", name: "B", service: b.outputValue("ScriptName") },
+    { type: "service", name: "B", service: b.outputRef("ScriptName") },
   ],
 });
 b.contribute({
   Bindings: [
-    { type: "service", name: "A", service: a.outputValue("ScriptName") },
+    { type: "service", name: "A", service: a.outputRef("ScriptName") },
   ],
 });
 ```
@@ -516,7 +516,7 @@ A member can be the placeholder when:
 
 In each loop, the first member in the order of the resources that can be the placeholder becomes one. When no member of a loop can, plan and deploy fail with `ResourceCycleError`, which names the members of the loop and says why each of them can't be the placeholder.
 
-Three methods give the engine what it needs: `getFixedDependencies()` returns the dependencies that don't come from contributions, `getContributedParams({ from })` returns the collected params that the contributions that depend on a resource in `from` set, and `getParams({ excludeContributionsFrom })` returns the params without the contributions that depend on a resource in `excludeContributionsFrom`. A contribution depends on the resources in the `deps` of a function contribution, or on the resources whose output values it holds. See [Dependency cycles](../internals/reconciler.md#dependency-cycles) for how deploy, destroy and plan handle a cycle.
+Three methods give the engine what it needs: `getFixedDependencies()` returns the dependencies that don't come from contributions, `getContributedParams({ from })` returns the collected params that the contributions that depend on a resource in `from` set, and `getParams({ excludeContributionsFrom })` returns the params without the contributions that depend on a resource in `excludeContributionsFrom`. A contribution depends on the resources in the `deps` of a function contribution, or on the resources whose output refs it holds. See [Dependency cycles](../internals/reconciler.md#dependency-cycles) for how deploy, destroy and plan handle a cycle.
 
 ## Resource groups
 

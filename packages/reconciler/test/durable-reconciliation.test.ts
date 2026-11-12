@@ -3679,7 +3679,7 @@ describe("dependency cycles", () => {
     const worker = (id: string, name = id): BaseResource =>
       new Worker(id, { config: { name } as any });
     const bind = (from: BaseResource, to: BaseResource, output = "name") =>
-      from.contribute({ bindings: [to.outputValue(output)] } as any);
+      from.contribute({ bindings: [to.outputRef(output)] } as any);
     return { worker, bind, remote, calls, failCreate };
   }
 

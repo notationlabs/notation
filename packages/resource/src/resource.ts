@@ -186,7 +186,7 @@ export interface BaseResource {
   /**
    * The dependencies that do not come from contributions: the declared
    * dependencies, those added with `dependOn`, and the resources whose
-   * output values the config holds.
+   * output refs the config holds.
    */
   getFixedDependencies(): BaseResource[];
   /**
@@ -407,7 +407,7 @@ export abstract class Resource<
       if (dependency) found.add(dependency as BaseResource);
     }
     for (const dependency of this.#addedDependencies) found.add(dependency);
-    forEachOutputValue(this.config, (token) => found.add(token.resource));
+    forEachOutputRef(this.config, (token) => found.add(token.resource));
     return [...found];
   }
 
@@ -635,15 +635,13 @@ export abstract class Resource<
 }
 
 /**
- * The deps of a function contribution, or the resources whose output values
+ * The deps of a function contribution, or the resources whose output refs
  * a contribution of values holds.
  */
 function contributionDependencies(contribution: Contribution): BaseResource[] {
   if ("compute" in contribution) return Object.values(contribution.deps);
   const found: BaseResource[] = [];
-  forEachOutputValue(contribution.values, (token) =>
-    found.push(token.resource),
-  );
+  forEachOutputRef(contribution.values, (token) => found.push(token.resource));
   return found;
 }
 

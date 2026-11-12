@@ -68,7 +68,7 @@ const worker = (id: string, Class = Worker): BaseResource =>
   new Class(id, { config: { name: id } as any });
 
 const bind = (from: BaseResource, to: BaseResource) =>
-  from.contribute({ bindings: [to.outputValue("name")] } as any);
+  from.contribute({ bindings: [to.outputRef("name")] } as any);
 
 function describeUnits(units: DeployUnit[]) {
   return units.map((unit) =>

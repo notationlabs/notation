@@ -215,7 +215,7 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
               {
                 type: "service",
                 name,
-                service: bound.script.outputValue("ScriptName"),
+                service: bound.script.outputRef("ScriptName"),
               },
             ],
           }),

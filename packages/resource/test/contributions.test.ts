@@ -911,7 +911,7 @@ describe("placeholder params", () => {
       },
     });
     fn.contribute({
-      Environment: { Variables: { QUEUE: queue.outputValue("QueueArn") } },
+      Environment: { Variables: { QUEUE: queue.outputRef("QueueArn") } },
     });
     fn.contribute(
       ({ deps }) => ({
@@ -944,7 +944,7 @@ describe("placeholder params", () => {
     const queue = new Queue("orders", { config: { QueueName: "orders" } });
     const fn = new Fn("fn", { config: { FunctionName: "f", Role: "role" } });
     fn.contribute({
-      Environment: { Variables: { QUEUE: queue.outputValue("QueueArn") } },
+      Environment: { Variables: { QUEUE: queue.outputRef("QueueArn") } },
     });
 
     expect(
@@ -962,11 +962,11 @@ describe("dependencies by source", () => {
     const queue = new Queue("orders", { config: { QueueName: "orders" } });
     const other = new Queue("other", { config: { QueueName: "other" } });
     const fn = new Fn("fn", {
-      config: { FunctionName: "f", Role: role.outputValue("QueueArn") },
+      config: { FunctionName: "f", Role: role.outputRef("QueueArn") },
     });
     fn.dependOn(other);
     fn.contribute({
-      Environment: { Variables: { QUEUE: queue.outputValue("QueueArn") } },
+      Environment: { Variables: { QUEUE: queue.outputRef("QueueArn") } },
     });
 
     expect(fn.getFixedDependencies()).toEqual([other, role]);
