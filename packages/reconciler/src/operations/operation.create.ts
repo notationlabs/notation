@@ -60,8 +60,8 @@ const MAX_CREATE_LOOKUP_ATTEMPTS = 10;
  * 3. The provider reports that the resource already exists.
  *
  * Two rules limit a takeover:
- * 1. The create of a replacement does not keep the resource it replaces as
- *    the replacement. See `refuseReplaced` and `hasReplacedKey`.
+ * 1. The create of a replacement refuses an existing resource that has the
+ *    key of the resource it replaces. See `refuseReplaced`.
  * 2. A resource whose key the provider assigns is taken over only through
  *    `find`, which matches on a unique attribute. See `existingKey`.
  *
@@ -105,12 +105,14 @@ export async function* createResourceOperation(
         throw error;
       }
       const key = yield* existingKey(step, params, error);
-      if (hasReplacedKey(params, key)) yield* refuseReplaced(params);
+      yield* refuseReplaced(params, key);
       return yield* takeOver(step, params, key);
     }
 
-    if (created.lookedUp && resource.read) {
-      return yield* takeOver(step, params, created.key ?? {});
+    if (created.lookedUp) {
+      const key = created.key ?? {};
+      yield* refuseReplaced(params, key);
+      if (resource.read) return yield* takeOver(step, params, key);
     }
 
     const computedPrimaryKey = created.key;
@@ -232,11 +234,7 @@ async function* takeOver(
     resourceRecord(params, {
       lastOperation: "create",
       params: resource.toState(
-        observedParams(resource, remote ?? {}, resourceParams, {
-          // The resource may be the replaced one, which differs from config
-          // in a param that replaces it. So no param is assumed to match.
-          assumeUnread: !hasReplacedKey(params, key),
-        }),
+        observedParams(resource, remote ?? {}, resourceParams),
       ),
       output: resource.toState(resource.output),
     }),
@@ -249,38 +247,29 @@ async function* takeOver(
 }
 
 /**
- * True in the create of a replacement when the existing resource has the key
- * of the resource it replaces. The existing resource is then the replaced
- * one, if its delete has not taken effect, or the replacement, if a create
- * with an unknown outcome made it.
- */
-function hasReplacedKey(
-  params: CreateResourceParams,
-  key: DurableObject,
-): boolean {
-  const { resource, resourceParams, replaces } = params;
-  if (!replaces) return false;
-  const existing = resource.keyOf({ ...resourceParams, ...key });
-  return changedKeys(existing, resource.keyOf(replaces.output)).length === 0;
-}
-
-/**
- * Fails the create of a replacement that the provider refused because the
- * replaced resource still exists. The create made nothing, so a takeover
- * would keep the replaced resource as the replacement.
+ * Fails the create of a replacement when the existing resource has the key
+ * of the resource it replaces. That resource is the replaced one, if its
+ * delete has not taken effect, or the replacement, if a create with an
+ * unknown outcome made it. Deploy cannot tell which, and a takeover of the
+ * replaced one would keep it as the replacement.
  *
  * The record of the replaced resource is written back, so the next deploy
  * replaces the resource again.
  */
 async function* refuseReplaced(
   params: CreateResourceParams,
-): AsyncGenerator<unknown, never, unknown> {
-  yield* restoreRecord(params, params.replaces);
+  key: DurableObject,
+): AsyncGenerator<unknown, void, unknown> {
+  const { resource, resourceParams, replaces } = params;
+  if (!replaces) return;
+  const existing = resource.keyOf({ ...resourceParams, ...key });
+  if (changedKeys(existing, resource.keyOf(replaces.output)).length > 0) return;
+  yield* restoreRecord(params, replaces);
   throw new ResourceAlreadyExistsError(
-    `Cannot create the replacement of ${params.resource.id}: the resource ` +
-      `that it replaces still exists after its delete. Deploy does not ` +
-      `take it over as the replacement. The next deploy deletes it and ` +
-      `creates the replacement again.`,
+    `Cannot create the replacement of ${resource.id}: a resource with the ` +
+      `key of the resource that it replaces exists after the delete. ` +
+      `Deploy does not take it over as the replacement. The next deploy ` +
+      `deletes it and creates the replacement again.`,
   );
 }
 
@@ -358,15 +347,14 @@ function definedKey(
  * params, each with the value that the read returned.
  *
  * A param that the read did not return is left out, so the comparison with
- * config that follows updates it. With `assumeUnread`, it keeps its desired
- * value instead when a difference in it would replace the resource, because
- * a replace needs evidence that the param differs.
+ * config that follows updates it. It keeps its desired value instead when a
+ * difference in it would replace the resource, because a replace needs
+ * evidence that the param differs.
  */
 function observedParams(
   resource: BaseResource,
   remote: Record<string, unknown>,
   desired: Record<string, unknown>,
-  { assumeUnread }: { assumeUnread: boolean },
 ): Record<string, unknown> {
   const set = Object.entries(desired).filter(
     ([, value]) => value !== undefined,
@@ -377,12 +365,7 @@ function observedParams(
   const { changed, replaceFields } = diffParams(resource.schema, {}, unread, {
     canUpdate: Boolean(resource.update),
   });
-  // The resource was read by its key, so a key param matches.
-  const kept = new Set(
-    assumeUnread
-      ? replaceFields.map((field) => field.name)
-      : Object.keys(resource.keyOf({})),
-  );
+  const kept = new Set(replaceFields.map((field) => field.name));
   const leftOut = new Set(changed.filter((name) => !kept.has(name)));
   return Object.fromEntries(
     set
