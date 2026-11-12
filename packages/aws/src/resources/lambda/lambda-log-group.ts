@@ -5,14 +5,7 @@ import {
   ResourceNotFoundError,
 } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-cloudwatch-logs";
-import {
-  GetFunctionCommand,
-  ResourceNotFoundException as FunctionNotFoundException,
-} from "@aws-sdk/client-lambda";
-import {
-  cloudWatchLogsClient,
-  lambdaClient,
-} from "src/resources/utils/aws-clients";
+import { cloudWatchLogsClient } from "src/resources/utils/aws-clients";
 import { awsCreate } from "src/resources/utils/errors";
 import { AwsSchema } from "src/resources/utils/types";
 import { LambdaFunctionInstance } from "../lambda";
@@ -23,8 +16,6 @@ export type LambdaLogGroupSchema = AwsSchema<{
 }>;
 
 export type LambdaLogGroupDependencies = { lambda: LambdaFunctionInstance };
-
-const LOG_GROUP_PREFIX = "/aws/lambda/";
 
 const lambdaLogGroup = resource<LambdaLogGroupSchema>({
   type: "aws/lambda/LambdaLogGroup",
@@ -70,7 +61,7 @@ export const LambdaLogGroup = lambdaLogGroupSchema
           await cloudWatchLogsClient().send(retentionCommand);
         } catch (error) {
           // The log group exists, so the outcome is unknown, not failed.
-          // Deploy then finds the log group and sets its retention.
+          // Deploy then reads the log group and sets its retention.
           throw new ResourceCreationUnknownError(
             `The log group was created, but its retention policy was not set: ${error instanceof Error ? error.message : String(error)}`,
             { cause: error },
@@ -82,21 +73,6 @@ export const LambdaLogGroup = lambdaLogGroupSchema
           error instanceof sdk.ResourceAlreadyExistsException,
       },
     ),
-    // Lambda makes the log group itself when the function first logs, and
-    // keeps it after the function is deleted. So a log group that exists may
-    // belong to an earlier function of the same name. `find` accepts only a
-    // log group made after the function was last modified, because Lambda
-    // does not report when a function was created.
-    find: async (params) => {
-      const logGroup = await describeLogGroup(params.logGroupName);
-      if (logGroup?.creationTime !== undefined) {
-        const modified = await functionLastModified(params.logGroupName);
-        if (modified !== undefined && logGroup.creationTime >= modified) return;
-      }
-      throw new ResourceNotFoundError(
-        "No log group was made after the function that it belongs to",
-      );
-    },
     read: async (key) => {
       const logGroup = await describeLogGroup(key.logGroupName);
       if (!logGroup) {
@@ -148,7 +124,7 @@ export const LambdaLogGroup = lambdaLogGroupSchema
   })
   .requireDependencies<LambdaLogGroupDependencies>()
   .deriveParams(({ deps }) => ({
-    logGroupName: `${LOG_GROUP_PREFIX}${deps.lambda.output.FunctionName}`,
+    logGroupName: `/aws/lambda/${deps.lambda.output.FunctionName}`,
   }));
 
 async function describeLogGroup(
@@ -184,29 +160,6 @@ async function setTags(
     await cloudWatchLogsClient().send(
       new sdk.TagResourceCommand({ resourceArn, tags }),
     );
-  }
-}
-
-/**
- * The time in milliseconds at which the log group's function was last
- * modified, or undefined when the function does not exist.
- */
-async function functionLastModified(
-  logGroupName: string,
-): Promise<number | undefined> {
-  if (!logGroupName.startsWith(LOG_GROUP_PREFIX)) return undefined;
-  try {
-    const { Configuration } = await lambdaClient().send(
-      new GetFunctionCommand({
-        FunctionName: logGroupName.slice(LOG_GROUP_PREFIX.length),
-      }),
-    );
-    return Configuration?.LastModified
-      ? Date.parse(Configuration.LastModified)
-      : undefined;
-  } catch (error) {
-    if (error instanceof FunctionNotFoundException) return undefined;
-    throw error;
   }
 }
 

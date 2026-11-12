@@ -111,12 +111,10 @@ export async function* createResourceOperation(
           params.replacement && params.resource.ownership === "parent"
             ? null
             : yield* step.run("create:prove", () =>
-                proveOwnership(
-                  params.resource,
-                  params.resourceParams,
-                  [...earlier, params.executionId],
-                  hasEarlierCreatingRecord(params),
-                ),
+                proveOwnership(params.resource, params.resourceParams, [
+                  ...earlier,
+                  params.executionId,
+                ]),
               );
         if (proof) return yield* reclaim(step, params, proof);
         yield* restorePrior(params);
@@ -294,23 +292,6 @@ function creatingRecord(params: CreateResourceParams): PersistedResourceState {
 function earlierExecutions(params: CreateResourceParams): string[] {
   return (params.prior?.creates ?? []).filter(
     (id) => id !== params.executionId,
-  );
-}
-
-/**
- * True when `params.prior` is a "creating" record that names an earlier
- * execution and holds the desired key.
- */
-function hasEarlierCreatingRecord(params: CreateResourceParams): boolean {
-  const { resource, resourceParams, prior } = params;
-  if (!isCreatingRecord(prior) || earlierExecutions(params).length === 0) {
-    return false;
-  }
-  const desired = resource.keyOf(resourceParams) as Record<string, unknown>;
-  const recorded = resource.keyOf(prior.params) as Record<string, unknown>;
-  return Object.keys(desired).every(
-    (field) =>
-      desired[field] !== undefined && desired[field] === recorded[field],
   );
 }
 

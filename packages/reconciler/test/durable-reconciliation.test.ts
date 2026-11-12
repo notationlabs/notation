@@ -541,8 +541,7 @@ describe("recoverable creates", () => {
    * and, with `ownership: "token"`, `find` checks it, as a tag would. `hiddenReads` makes that many reads
    * report the resource as not found, as a provider whose reads lag behind
    * does. With `ownership: "parent"` and `parentFind`, `find` finds the
-   * resource unless `refuseFind` is set, as `LambdaLogGroup`'s `find`
-   * refuses a log group made before its function's latest update.
+   * resource unless `refuseFind` is set.
    */
   function defineNamed(
     type: ResourceType,
@@ -1547,14 +1546,14 @@ describe("recoverable creates", () => {
     runtime.close();
   });
 
-  it("takes over a resource of a creating record that an earlier execution left when its parent proves ownership, without its find", async () => {
-    const { Named, calls, control } = defineNamed(
+  it("refuses a resource whose parent's find refuses it, when a creating record that an earlier execution left holds its key", async () => {
+    const { Named, remote, calls, control } = defineNamed(
       "test/durable/reclaim-parent-recorded",
       "parent",
       true,
     );
     const runtime = createRuntime(
-      [new Named("log-group", { config: { name: "app", path: "/" } as any })],
+      [new Named("route", { config: { name: "app", path: "/" } as any })],
       "reclaim-parent-recorded",
       { failFirstSettle: true },
     );
@@ -1562,20 +1561,18 @@ describe("recoverable creates", () => {
     await expect(runtime.run("deploy-1")).rejects.toMatchObject({
       name: "InfrastructureError",
     });
-    // As a log group's function updated after the log group was made.
     control.refuseFind = true;
     await abandon(runtime, "reclaim-parent-recorded", "deploy-1");
-    await runtime.run("deploy-2");
-
-    expect(calls).toEqual(["create:app", "create:app"]);
-    expect(await runtime.state.get("log-group")).toMatchObject({
-      lastOperation: "create",
-      params: { name: "app", path: "/" },
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "ResourceAlreadyExistsError",
     });
+
+    expect(calls).toEqual(["create:app", "create:app", "find:app"]);
+    expect(remote.size).toBe(1);
     runtime.close();
   });
 
-  it("refuses a resource whose parent's find refuses it when no creating record holds its key", async () => {
+  it("refuses a resource whose parent's find refuses it", async () => {
     const { Named, remote, calls, control } = defineNamed(
       "test/durable/reclaim-parent-find-refuses",
       "parent",
@@ -1596,14 +1593,14 @@ describe("recoverable creates", () => {
     runtime.close();
   });
 
-  it("destroys the resource of a creating record when its parent proves ownership, without its find", async () => {
+  it("leaves the resource of a creating record when its parent's find refuses it", async () => {
     const { Named, remote, calls, control } = defineNamed(
       "test/durable/creating-destroy-parent-recorded",
       "parent",
       true,
     );
     const runtime = createRuntime(
-      [new Named("log-group", { config: { name: "app", path: "/" } as any })],
+      [new Named("route", { config: { name: "app", path: "/" } as any })],
       "creating-destroy-parent-recorded",
       { failFirstSettle: true },
     );
@@ -1615,9 +1612,9 @@ describe("recoverable creates", () => {
     await abandon(runtime, "creating-destroy-parent-recorded", "deploy-1");
     await runtime.destroy("destroy-1");
 
-    expect(calls).toEqual(["create:app", "delete:app"]);
-    expect(remote.size).toBe(0);
-    expect(await runtime.state.get("log-group")).toBeUndefined();
+    expect(calls).toEqual(["create:app", "find:app"]);
+    expect(remote.size).toBe(1);
+    expect(await runtime.state.get("route")).toBeUndefined();
     runtime.close();
   });
 

@@ -35,23 +35,17 @@ export function createToken(executionId: string, resourceId: string): string {
  *    execution in `executionIds`, and returns the first match.
  * 2. With `ownership: "parent"`, any resource with the key is Notation's. A
  *    class with `find` finds the resource's key. `find` receives the token
- *    of the last execution in `executionIds`. `find` is not called when
- *    `recorded` is set and params make up the whole key, because the record
- *    already proves that one of Notation's creates tried this key.
+ *    of the last execution in `executionIds`.
  * 3. Otherwise nothing proves it.
  */
 export async function proveOwnership(
   resource: BaseResource,
   resourceParams: Record<string, unknown>,
   executionIds: string[],
-  // Set when a "creating" record that an earlier execution left has the key.
-  recorded = false,
 ): Promise<OwnershipProof | null> {
   const { find } = resource;
   if (resource.ownership === "parent") {
-    if (!find || (recorded && !hasComputedPrimaryKey(resource))) {
-      return { key: null, executionId: null };
-    }
+    if (!find) return { key: null, executionId: null };
     const executionId = executionIds[executionIds.length - 1] ?? "";
     const key = await findKey(resource, () =>
       find(resourceParams, createToken(executionId, resource.id)),

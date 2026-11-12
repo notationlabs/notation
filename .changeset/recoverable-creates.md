@@ -8,7 +8,7 @@
 "@notation/cloudflare": patch
 ---
 
-Deploy needs new IAM permissions: `iam:TagRole`, `events:TagResource`, `events:ListTagsForResource`, `sqs:TagQueue` and `sqs:ListQueueTags` for the create tokens, and `logs:DescribeLogGroups` for the log group's read and `find`.
+Deploy needs new IAM permissions: `iam:TagRole`, `events:TagResource`, `events:ListTagsForResource`, `sqs:TagQueue` and `sqs:ListQueueTags` for the create tokens, and `logs:DescribeLogGroups` for the log group's read.
 
 A deploy can now recover a resource that an abandoned deploy created but did not record.
 

@@ -4,7 +4,6 @@ import path from "node:path";
 import * as v from "valibot";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-cloudwatch-logs";
-import { GetFunctionCommand } from "@aws-sdk/client-lambda";
 import { NodeDurableRuntime, runDurableWorkflow } from "@notation/core";
 import * as durable from "@notation/reconciler/durable";
 import {
@@ -13,10 +12,7 @@ import {
   ResourceCreationUnknownError,
   ResourceNotFoundError,
 } from "@notation/resource";
-import {
-  cloudWatchLogsClient,
-  lambdaClient,
-} from "src/resources/utils/aws-clients";
+import { cloudWatchLogsClient } from "src/resources/utils/aws-clients";
 import { LambdaLogGroup } from "src/resources/lambda/lambda-log-group";
 
 const params = { logGroupName: "/aws/lambda/app", retentionInDays: 7 };
@@ -194,36 +190,7 @@ describe("LambdaLogGroup read", () => {
   });
 });
 
-describe("LambdaLogGroup find", () => {
-  const modified = Date.parse("2026-11-01T12:00:00.000+0000");
-
-  function mockLogGroup(creationTime: number) {
-    vi.spyOn(cloudWatchLogsClient(), "send").mockImplementation(async () => ({
-      logGroups: [{ logGroupName: "/aws/lambda/app", creationTime }],
-    }));
-    vi.spyOn(lambdaClient(), "send").mockImplementation(async () => ({
-      Configuration: { LastModified: "2026-11-01T12:00:00.000+0000" },
-    }));
-  }
-
-  it("finds a log group made at or after the function was last modified", async () => {
-    mockLogGroup(modified);
-
-    await expect(logGroup.find!(params, "token")).resolves.toBeUndefined();
-  });
-
-  it("does not find a log group made before the function, as one that a deleted function left", async () => {
-    mockLogGroup(modified - 1);
-
-    await expect(logGroup.find!(params, "token")).rejects.toSatisfy(
-      ResourceNotFoundError.is,
-    );
-  });
-});
-
 describe("LambdaLogGroup in the durable reconciler", () => {
-  const modified = Date.parse("2026-11-01T12:00:00.000+0000");
-
   const Function = resource({ type: "test/aws/function", provider: "test" })
     .defineSchema({
       FunctionName: {
@@ -239,34 +206,15 @@ describe("LambdaLogGroup in the durable reconciler", () => {
     });
 
   /**
-   * Deploys a function and its log group. The log group exists already,
-   * with no retention, and was made at `creationTime`.
+   * Deploys a function and its log group. `send` answers the CloudWatch
+   * Logs commands.
    */
-  async function deployOverExistingLogGroup(creationTime: number) {
+  async function deployLogGroup(send: (command: unknown) => unknown) {
     const sent: unknown[] = [];
     vi.spyOn(cloudWatchLogsClient(), "send").mockImplementation(
       async (command: unknown) => {
         sent.push(command);
-        if (command instanceof sdk.CreateLogGroupCommand) {
-          throw new sdk.ResourceAlreadyExistsException({
-            message: "The specified log group already exists",
-            $metadata: {},
-          });
-        }
-        if (command instanceof sdk.DescribeLogGroupsCommand) {
-          return {
-            logGroups: [{ logGroupName: "/aws/lambda/app", creationTime }],
-          };
-        }
-        return {};
-      },
-    );
-    vi.spyOn(lambdaClient(), "send").mockImplementation(
-      async (command: unknown) => {
-        if (!(command instanceof GetFunctionCommand)) return {};
-        return {
-          Configuration: { LastModified: "2026-11-01T12:00:00.000+0000" },
-        };
+        return send(command);
       },
     );
 
@@ -285,7 +233,7 @@ describe("LambdaLogGroup in the durable reconciler", () => {
       deployment: { app: "aws", stage: "test" },
       databasePath: path.join(directory, "workflows.db"),
     });
-    const deployed = runDurableWorkflow(
+    const error = await runDurableWorkflow(
       { workflowId: "deploy", runtime, executionId: "deploy-1" },
       (step, executionId) =>
         durable.deploy(step, {
@@ -298,7 +246,6 @@ describe("LambdaLogGroup in the durable reconciler", () => {
       () => undefined,
       (error: unknown) => error,
     );
-    const error = await deployed;
     const record = await runtime.state.get("log-group");
     runtime.close();
     await rm(directory, { recursive: true, force: true });
@@ -308,10 +255,20 @@ describe("LambdaLogGroup in the durable reconciler", () => {
     return { error, record, retention };
   }
 
-  it("takes over the log group that Lambda made, and sets its retention in the same deploy", async () => {
-    const { error, record, retention } = await deployOverExistingLogGroup(
-      modified + 60_000,
-    );
+  it("takes over a log group that exists already, and sets its retention in the same deploy", async () => {
+    // As Lambda makes a function's log group when the function first logs.
+    const { error, record, retention } = await deployLogGroup((command) => {
+      if (command instanceof sdk.CreateLogGroupCommand) {
+        throw new sdk.ResourceAlreadyExistsException({
+          message: "The specified log group already exists",
+          $metadata: {},
+        });
+      }
+      if (command instanceof sdk.DescribeLogGroupsCommand) {
+        return { logGroups: [{ logGroupName: "/aws/lambda/app" }] };
+      }
+      return {};
+    });
 
     expect(error).toBeUndefined();
     expect(retention.map((command) => command.input)).toEqual([
@@ -323,13 +280,23 @@ describe("LambdaLogGroup in the durable reconciler", () => {
     });
   });
 
-  it("refuses a log group made before the function, and leaves it unchanged", async () => {
-    const { error, record, retention } = await deployOverExistingLogGroup(
-      modified - 60_000,
-    );
+  it("takes over the log group that its create made when the retention could not be set, and sets it in the same deploy", async () => {
+    let failures = 1;
+    const { error, record, retention } = await deployLogGroup((command) => {
+      if (command instanceof sdk.PutRetentionPolicyCommand && failures-- > 0) {
+        throw new Error("throttled");
+      }
+      if (command instanceof sdk.DescribeLogGroupsCommand) {
+        return { logGroups: [{ logGroupName: "/aws/lambda/app" }] };
+      }
+      return {};
+    });
 
-    expect(error).toMatchObject({ name: "ResourceAlreadyExistsError" });
-    expect(retention).toEqual([]);
-    expect(record).toBeUndefined();
+    expect(error).toBeUndefined();
+    expect(retention).toHaveLength(2);
+    expect(record).toMatchObject({
+      lastOperation: "update",
+      params: { logGroupName: "/aws/lambda/app", retentionInDays: 7 },
+    });
   });
 });

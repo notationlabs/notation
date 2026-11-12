@@ -66,9 +66,8 @@ export async function* deleteResourceOperation(
  * 1. With `ownership: "token"`, a match sets the resource's output to the
  *    key `find` returned. Without one there is nothing to delete.
  * 2. With `ownership: "parent"`, it deletes by the key that `find` returned,
- *    or that the record holds. The record proves ownership, so `find` runs
- *    only for a key that the provider assigns. A record whose key the
- *    provider assigns holds no key.
+ *    or that the record holds. A record whose key the provider assigns
+ *    holds no key.
  * 3. Otherwise nothing proves that the resource is Notation's.
  *
  * Returns the reason to remove only the record, or undefined to delete.
@@ -81,12 +80,7 @@ async function* findCreatedResource(
   const { resource } = params;
   if (resource.ownership === undefined) return "ownership-unproven";
   const proof = yield* step.run("delete:find", () =>
-    proveOwnership(
-      resource,
-      creating.params,
-      creating.creates,
-      creating.creates.length > 0,
-    ),
+    proveOwnership(resource, creating.params, creating.creates),
   );
   if (!proof) return "not-created";
   resource.setOutput({ ...resource.output, ...proof.key });
