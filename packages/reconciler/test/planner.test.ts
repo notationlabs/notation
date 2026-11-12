@@ -1462,4 +1462,65 @@ describe("dependency cycles", () => {
       params: { name: "a", bindings: [UNKNOWN_AFTER_APPLY] },
     });
   });
+
+  it("names the dependents whose references a replacement breaks, for a type that takes dependents in its delete", async () => {
+    const Forced = resource({
+      type: "test/planner/forced-worker",
+      provider: "test",
+      deleteTakesDependents: true,
+    })
+      .defineSchema(schema)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const worker = (id: string, name = id) =>
+      new Forced(id, { config: { name } as any });
+    const a = worker("a");
+    const b = worker("b", "b2");
+    const c = worker("c");
+    a.contribute({ bindings: [b.outputRef("name")] } as any);
+    b.contribute({ bindings: [a.outputRef("name")] } as any);
+    c.contribute({ bindings: [b.outputRef("name")] } as any);
+    const forced = (name: string, bindings: string[]) => ({
+      ...record(name, bindings),
+      type: Forced.type,
+      dependsOn: bindings,
+    });
+
+    const plan = await createPlan({
+      resources: [a, b, c],
+      state: new MemoryStateBackend({
+        a: forced("a", ["b"]),
+        b: forced("b", ["a"]),
+        c: forced("c", ["b"]),
+        gone: forced("gone", ["b"]),
+      }),
+    });
+
+    expect(plan.nodes.find(({ id }) => id === "b")).toMatchObject({
+      decision: "replace",
+      brokenDependents: ["a", "c"],
+    });
+    expect(plan.nodes.find(({ id }) => id === "a")).not.toHaveProperty(
+      "brokenDependents",
+    );
+  });
+
+  it("names no dependents for a replaced resource of a type that does not take dependents in its delete", async () => {
+    const [a, b] = pair();
+    (b as any).config.name = "b2";
+    const plan = await createPlan({
+      resources: [a!, b!],
+      state: new MemoryStateBackend({
+        a: record("a", ["b"]),
+        b: record("b", ["a"]),
+      }),
+    });
+
+    expect(plan.nodes.find(({ id }) => id === "b")).not.toHaveProperty(
+      "brokenDependents",
+    );
+  });
 });

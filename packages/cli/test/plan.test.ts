@@ -123,3 +123,42 @@ it("prints the placeholder of a cycle", async () => {
     "    name forces replacement",
   ]);
 });
+
+it("prints the dependents whose references a replacement breaks", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "api",
+        type: "test/plan/worker",
+        decision: "replace",
+        replaceFields: [{ name: "name", known: true }],
+        brokenDependents: ["reports", "web"],
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "queue",
+        type: "test/plan/worker",
+        decision: "replace",
+        replaceFields: [{ name: "name", known: false }],
+        brokenDependents: ["web"],
+        params: {},
+        dependsOn: [],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 7)).toEqual([
+    "-/+ replace test/plan/worker api",
+    "    name forces replacement",
+    "    the references from reports, web are broken until deploy updates them",
+    "-/+ replace test/plan/worker queue",
+    "    name unknown, may force replacement",
+    "    the references from web are broken until deploy updates them, if it is replaced",
+  ]);
+});

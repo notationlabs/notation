@@ -124,6 +124,21 @@ export async function createPlan({
       }
     }
 
+    // As deploy lists them for the delete: by the edges in state for a
+    // resource it has not reached, and by the edges in code for one it has.
+    const brokenDependents =
+      replaceFields && resource.deleteTakesDependents
+        ? [...edgesById]
+            .filter(
+              ([id, edges]) =>
+                id !== resource.id &&
+                resourceById.has(id) &&
+                edges.includes(resource.id),
+            )
+            .map(([id]) => id)
+            .sort()
+        : [];
+
     if (replaced) {
       // A replacement's output is unknown until it has been created again,
       // so its dependents plan against unknown params, as they would for a
@@ -145,6 +160,7 @@ export async function createPlan({
       ...("diff" in action && !cascadeOnly ? { diff: action.diff } : {}),
       ...(replaceFields ? { replaceFields } : {}),
       ...(replacedDependency ? { replacedDependency } : {}),
+      ...(brokenDependents.length > 0 ? { brokenDependents } : {}),
       ...(cycle
         ? {
             cycle: cycle.members
