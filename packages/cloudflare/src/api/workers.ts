@@ -4,7 +4,7 @@ import { CloudflareApiError, cloudflare } from "./client";
 /** Cloudflare's error code for a Worker that doesn't exist. */
 const WORKER_NOT_FOUND = 10007;
 
-/** True for a Worker that doesn't exist (code 10007). */
+/** True for a Worker that doesn't exist. */
 export const isNotFound = (error: unknown): boolean =>
   error instanceof CloudflareApiError && error.hasCode(WORKER_NOT_FOUND);
 
@@ -207,6 +207,10 @@ export async function setScriptSubdomain(
   });
 }
 
+// Cloudflare's error code for an account with no workers.dev subdomain. It's
+// the same code as for a missing Worker.
+const NO_ACCOUNT_SUBDOMAIN = 10007;
+
 /** Returns the account's workers.dev subdomain. */
 export async function getAccountSubdomain(account: string): Promise<string> {
   try {
@@ -216,11 +220,12 @@ export async function getAccountSubdomain(account: string): Promise<string> {
     );
     return subdomain;
   } catch (error) {
-    // On this path, code 10007 means that the account has no workers.dev
-    // subdomain, not that a Worker is missing.
-    if (isNotFound(error)) {
+    if (
+      error instanceof CloudflareApiError &&
+      error.hasCode(NO_ACCOUNT_SUBDOMAIN)
+    ) {
       throw new Error(
-        `The account ${account} has no workers.dev subdomain. Set one up on the dashboard's Workers & Pages page, then deploy again.`,
+        `The account ${account} has no workers.dev subdomain. Set one up at https://dash.cloudflare.com/${account}/workers/onboarding, then deploy again.`,
         { cause: error },
       );
     }
