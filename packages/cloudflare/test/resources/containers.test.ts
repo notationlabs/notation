@@ -4,6 +4,7 @@ import {
   ResourceNotFoundError,
   ResourceOperationPendingError,
 } from "@notation/resource";
+import { CloudflareApiError } from "src/api/client";
 import { ContainerApplication } from "src/resources/containers/container-application";
 import { ContainerRegistry } from "src/resources/containers/container-registry";
 import { WorkerScript } from "src/resources/workers/worker-script";
@@ -69,7 +70,8 @@ describe("ContainerApplication", () => {
   const NAMESPACES =
     "https://api.cloudflare.com/client/v4/accounts/acc/workers/durable_objects/namespaces";
 
-  // Answers the namespace lists of the create and `find` with `namespaces`.
+  // Answers the first page of the namespace list with `namespaces`, and
+  // later pages with an empty list.
   function mockApi(
     respond: (call: Call) => Response | Promise<Response>,
     namespaces: unknown[] = [
@@ -77,9 +79,10 @@ describe("ContainerApplication", () => {
       { id: "ns1", class: "Sandbox", script: "app--dev--api" },
     ],
   ) {
-    mockFetch((call) =>
-      call.url.startsWith(NAMESPACES) ? ok(namespaces) : respond(call),
-    );
+    mockFetch((call) => {
+      if (!call.url.startsWith(NAMESPACES)) return respond(call);
+      return ok(call.url.includes("page=1&") ? namespaces : []);
+    });
   }
 
   it("creates the application for the namespace that Cloudflare lists for the class, and returns its id", async () => {
@@ -118,7 +121,10 @@ describe("ContainerApplication", () => {
     expect(error.message).toContain(
       "Cloudflare doesn't list a Durable Object namespace for the class Sandbox of the Worker app--dev--api yet",
     );
-    expect(calls.map((call) => call.method)).toEqual(["GET"]);
+    expect(calls.map((call) => call.url)).toEqual([
+      `${NAMESPACES}?page=1&per_page=1000`,
+      `${NAMESPACES}?page=2&per_page=1000`,
+    ]);
   });
 
   it("fails, and doesn't report the create as unknown, when the namespace list fails", async () => {
@@ -129,17 +135,15 @@ describe("ContainerApplication", () => {
     expect(calls.map((call) => call.method)).toEqual(["GET"]);
   });
 
-  it("looks for the namespace on every page of the list", async () => {
-    const firstPage = Array.from({ length: 1_000 }, (_, i) => ({
-      id: `other${i}`,
-      class: "Sandbox",
-      script: "another-worker",
-    }));
+  it("requests the next page after a page shorter than per_page, and stops at the page with the namespace", async () => {
     mockFetch((call) => {
       if (call.method === "POST") return ok({ id: "app1" });
       return call.url.includes("page=1&")
-        ? ok(firstPage)
-        : ok([{ id: "ns1", class: "Sandbox", script: "app--dev--api" }]);
+        ? ok([{ id: "other", class: "Sandbox", script: "another-worker" }])
+        : ok([
+            { id: "ns1", class: "Sandbox", script: "app--dev--api" },
+            { id: "ns9", class: "Sandbox", script: "app--dev--api" },
+          ]);
     });
 
     await application.create(params);
@@ -247,6 +251,18 @@ describe("ContainerApplication", () => {
     );
   });
 
+  it("tries again while Cloudflare doesn't treat the namespace as a container namespace", async () => {
+    mockApi(() => fail(400, 1607, "DURABLE_OBJECT_NOT_CONTAINER_ENABLED"));
+
+    const error = await application.create(params).catch((e) => e);
+    expect(error).toBeInstanceOf(ResourceOperationPendingError);
+    expect(error.retryAfterMs).toBe(5_000);
+    expect(error.cause).toBeInstanceOf(CloudflareApiError);
+    expect(error.message).toContain(
+      "The upload of the Worker app--dev--api declared the class Sandbox as a container class, but Cloudflare doesn't treat the Durable Object namespace ns1 as a container namespace yet",
+    );
+  });
+
   it("reports a 500 that says Cloudflare can't create the application at this time as unknown", async () => {
     mockApi(() => fail(500, 1000, "can't create application at this time"));
 
@@ -255,27 +271,15 @@ describe("ContainerApplication", () => {
     );
   });
 
-  it.each([
-    [
-      1608,
-      "DURABLE_OBJECT_ALREADY_HAS_APPLICATION",
-      "already has a container application, and a namespace can have only one",
-    ],
-    [
-      1607,
-      "DURABLE_OBJECT_NOT_CONTAINER_ENABLED",
-      'Set `container: true` on the entry "sandboxes" in the Worker\'s DurableObjectNamespaces',
-    ],
-  ])(
-    "fails with a message that says what to do for error %i",
-    async (code, message, expected) => {
-      mockApi(() => fail(400, code, message));
+  it("fails with a message that says what to do when the namespace already has an application", async () => {
+    mockApi(() => fail(400, 1608, "DURABLE_OBJECT_ALREADY_HAS_APPLICATION"));
 
-      const error = await application.create(params).catch((e) => e);
-      expect(error).not.toBeInstanceOf(ResourceCreationUnknownError);
-      expect(error.message).toContain(expected);
-    },
-  );
+    const error = await application.create(params).catch((e) => e);
+    expect(error).not.toBeInstanceOf(ResourceCreationUnknownError);
+    expect(error.message).toContain(
+      "already has a container application, and a namespace can have only one",
+    );
+  });
 
   it("reads the settings", async () => {
     mockFetch(() =>

@@ -22,7 +22,7 @@ import {
   updateApplication,
   type ContainerConfiguration,
 } from "src/api/containers";
-import { listScriptNamespaces } from "src/api/durable-objects";
+import { findScriptNamespace } from "src/api/durable-objects";
 import {
   WorkerScript,
   type WorkerScriptInstance,
@@ -103,7 +103,8 @@ const containerApplicationSchema = containerApplication.defineSchema({
     immutable: true,
     value: v.string(),
   },
-  // A renamed class keeps its namespace, so the application stays.
+  // `update` does nothing with a changed ClassName. A renamed class keeps
+  // its namespace and the namespace keeps its ID, so the application stays.
   ClassName: {
     propertyType: "param",
     presence: "required",
@@ -137,6 +138,10 @@ type Params = ContainerApplicationSchema["CreateParams"];
  *
  * An application that pulls its image from a private registry should
  * `dependOn` the `ContainerRegistry` for that registry.
+ *
+ * The namespaces that `$worker` and `$durableObject` declare never set
+ * `container`, so for now an application can only use a namespace of a
+ * `WorkerScript` that is declared with the resources API.
  *
  * A change to `Configuration` starts a rollout that replaces the instances,
  * 25% of them at a time. Pin the image by its digest: a new image pushed under
@@ -255,10 +260,7 @@ export const ContainerApplication = containerApplicationSchema
     }
     if (!hosted.container) {
       throw new Error(
-        notContainerEnabledMessage(
-          `for the class ${hosted.className}`,
-          config.HostedNamespaceId,
-        ),
+        `The Durable Object namespace for the class ${hosted.className} can't run containers. Set \`container: true\` on the entry "${config.HostedNamespaceId}" in the Worker's DurableObjectNamespaces, and deploy again.`,
       );
     }
     return {
@@ -278,8 +280,11 @@ export type ContainerApplicationInstance = InstanceType<
  * not be listed straight away.
  */
 async function namespaceIdOf(params: Params): Promise<string | undefined> {
-  const ids = await listScriptNamespaces(params.AccountId, params.ScriptName);
-  return ids[params.ClassName];
+  return await findScriptNamespace(
+    params.AccountId,
+    params.ScriptName,
+    params.ClassName,
+  );
 }
 
 /**
@@ -287,6 +292,11 @@ async function namespaceIdOf(params: Params): Promise<string | undefined> {
  * upload creates a namespace, Cloudflare refuses an application for it, and
  * nothing is made. That error becomes a `ResourceOperationPendingError`, so
  * the reconciler tries again.
+ *
+ * `deriveParams` checks that the hosted entry sets `container: true`, and the
+ * Worker is uploaded before the create. So a 1607 means that Cloudflare
+ * hasn't applied the container class to the namespace yet, and it is also
+ * retried.
  */
 function createError(
   params: Params,
@@ -311,17 +321,10 @@ function createError(
     );
   }
   if (error.hasCode(NAMESPACE_NOT_CONTAINER_ENABLED)) {
-    return new Error(
-      notContainerEnabledMessage(namespace, params.HostedNamespaceId),
-      { cause: error },
+    return new ResourceOperationPendingError(
+      `The upload of the Worker ${params.ScriptName} declared the class ${params.ClassName} as a container class, but Cloudflare doesn't treat the Durable Object namespace ${namespace} as a container namespace yet.`,
+      { retryAfterMs: 5_000, cause: error },
     );
   }
   return error;
-}
-
-function notContainerEnabledMessage(
-  namespace: string,
-  hostedNamespaceId: string,
-): string {
-  return `The Durable Object namespace ${namespace} can't run containers. Set \`container: true\` on the entry "${hostedNamespaceId}" in the Worker's DurableObjectNamespaces, and deploy again.`;
 }
