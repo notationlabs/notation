@@ -246,34 +246,27 @@ export function createPlanViews() {
   };
 
   const pendingView = (dep: BaseResource): BaseResource => {
-    // A ref taken from the view names the dependency, so plan reads the
-    // dependency's output rather than the view's, which throws, and the
-    // dependent's dependency edge points at the dependency.
-    const outputRef = { value: (key: string) => new OutputRef(dep, [key]) };
     const output = dep.output as Record<string, unknown> | null;
-    if (output == null) {
-      return Object.create(dep, {
-        output: { get: () => throwPending(dep) },
-        outputRef,
-      });
-    }
     // Deploy fails when a required output is missing, so each one is present
     // at deploy. Each missing one is a getter, so that `in`, `Object.hasOwn`
     // and `Object.keys` give the answers they will give at deploy, and only
     // a read of its value throws.
-    const missing = missingRequiredOutputs(dep, output);
-    const viewedOutput = Object.defineProperties(
-      { ...output },
-      Object.fromEntries(
-        missing.map((key) => [
-          key,
-          { enumerable: true, get: () => throwPending(dep) },
-        ]),
-      ),
-    );
+    const viewedOutput =
+      output &&
+      Object.defineProperties(
+        { ...output },
+        Object.fromEntries(
+          missingRequiredOutputs(dep, output).map((key) => [
+            key,
+            { enumerable: true, get: () => throwPending(dep) },
+          ]),
+        ),
+      );
     return Object.create(dep, {
-      output: { get: () => viewedOutput },
-      outputRef,
+      output: { get: () => viewedOutput ?? throwPending(dep) },
+      // planLookup runs after tryAtPlan returns, so a ref must name the
+      // dependency, whose output does not throw.
+      outputRef: { value: dep.outputRef.bind(dep) },
     });
   };
 
