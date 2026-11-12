@@ -6,7 +6,7 @@ import {
   findStronglyConnected,
   isCycle,
   orderDeployUnits,
-  revertedPeers,
+  revertedDependents,
   type DeployUnit,
 } from "../src/cycles";
 
@@ -238,7 +238,7 @@ describe("orderDeployUnits", () => {
   });
 });
 
-describe("revertedPeers", () => {
+describe("revertedDependents", () => {
   it("returns the members that refer to the replaced member through contributions", () => {
     const a = worker("a");
     const b = worker("b");
@@ -247,7 +247,9 @@ describe("revertedPeers", () => {
     const [unit] = orderDeployUnits([a, b]);
     if (!unit || !isCycle(unit)) throw new Error("expected a cycle");
 
-    expect(revertedPeers(unit, a).map((peer) => peer.id)).toEqual(["b"]);
+    expect(revertedDependents([a, b], unit, a).map((peer) => peer.id)).toEqual([
+      "b",
+    ]);
   });
 
   it("fails and names a peer that can't be reverted", () => {
@@ -258,10 +260,32 @@ describe("revertedPeers", () => {
     const [unit] = orderDeployUnits([a, b]);
     if (!unit || !isCycle(unit)) throw new Error("expected a cycle");
 
-    expect(() => revertedPeers(unit, a)).toThrow(ResourceCycleError);
-    expect(() => revertedPeers(unit, a)).toThrow(
+    expect(() => revertedDependents([a, b], unit, a)).toThrow(
+      ResourceCycleError,
+    );
+    expect(() => revertedDependents([a, b], unit, a)).toThrow(
       "test/cycles/no-update has no update operation, so b can't be updated after it is created",
     );
+  });
+});
+
+describe("revertedDependents outside the cycle", () => {
+  it("returns a resource outside the cycle after the members, and leaves out one that can't be reverted", () => {
+    const a = worker("a");
+    const b = worker("b");
+    const c = worker("c");
+    const d = worker("d", NoUpdate);
+    bind(a, b);
+    bind(b, a);
+    bind(c, b);
+    bind(d, b);
+    const resources = [c, d, a, b];
+    const unit = orderDeployUnits(resources).find(isCycle);
+    if (!unit) throw new Error("expected a cycle");
+
+    expect(
+      revertedDependents(resources, unit, b).map((dependent) => dependent.id),
+    ).toEqual(["a", "c"]);
   });
 });
 

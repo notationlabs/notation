@@ -22,7 +22,6 @@ import {
   applyDriftDetection,
   createResourceOperation,
   deleteResourceOperation,
-  readDriftOperation,
   readResourceOperation,
   updateResourceOperation,
   type CreateResourceParams,
@@ -61,14 +60,15 @@ export type ReconcileOptions = {
   onDecision?: (decision: ResourceAction["decision"]) => void;
   /** Runs before a replacement deletes the resource. */
   beforeReplace?: () => AsyncGenerator<any, void, any>;
+  /** Leaves out the contributions that depend on one of these. */
+  excludeContributionsFrom?: ReadonlySet<BaseResource>;
+  /** Marks the decision event as the placeholder of a cycle. */
+  placeholder?: boolean;
   /**
-   * Reconciles the resource as the placeholder of a cycle whose members these
-   * are: a resource with no record is created without the contributions that
-   * depend on the members. A resource with a record is left as it is, and
-   * only its output is loaded. With drift detection, it is read first, and
-   * created without those contributions when it no longer exists.
+   * Decides drift-recreate without reading the remote: the caller has read
+   * the resource and found it gone.
    */
-  placeholder?: ReadonlySet<BaseResource>;
+  recreate?: boolean;
 };
 
 /**
@@ -88,23 +88,20 @@ export async function* reconcileResource(
   // hold and the record may have changed since.
   assertSameType(resource, session.node);
   if (session.node) resource.setOutput(session.node.output);
-  const gone =
-    session.node && options.placeholder
-      ? yield* isPlaceholderGone(step, opts, resource, session.node)
-      : false;
-  if (session.node && options.placeholder && !gone) return;
 
   // Resolved once and then carried: deriveParams is user code and need not be
   // deterministic, so an operation resolving them again could persist params
   // other than the ones the decision was taken against. The step also pins
   // the answer across a replay.
   const params = yield* step.run("params", () =>
-    resource.getParams({ excludeContributionsFrom: options.placeholder }),
+    resource.getParams({
+      excludeContributionsFrom: options.excludeContributionsFrom,
+    }),
   );
   await validateParams(resource, params, "deploy");
   const dependsOn = getDependencyIds(resource);
 
-  let action: ResourceAction = gone
+  let action: ResourceAction = options.recreate
     ? { decision: "drift-recreate" }
     : decideAction({ resource, stateNode: session.node, params });
 
@@ -203,31 +200,6 @@ export async function* reconcileResource(
       }
       return;
   }
-}
-
-/**
- * Reads a placeholder that has a record, to find out whether it still
- * exists. The cycle's members that come after it bind it, so it must exist
- * before they are reconciled. Without drift detection, or without a read,
- * the record is trusted.
- */
-async function* isPlaceholderGone(
-  step: DurableStepRunner,
-  opts: DurableDeployOptions,
-  resource: BaseResource,
-  node: StateNode,
-): AsyncGenerator<any, boolean, any> {
-  if (!(opts.driftDetection ?? true) || !resource.read) return false;
-  const readStep = step.scope("placeholder-read");
-  const read = yield* readDriftOperation(readStep, {
-    resource,
-    resourceParams: node.params,
-    persistedOutput: node.output,
-    // No dryRun, as for the drift read.
-    emit: durableEmitter(readStep, opts.emit),
-    maxOperationAttempts: opts.maxOperationAttempts,
-  });
-  return read.kind === "absent";
 }
 
 function findMissingOutputs(

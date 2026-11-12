@@ -25,7 +25,7 @@ For resources that depend on each other, the plan prints a line under the resour
     created first without the contributions that refer to worker:reports, the other members of its cycle
 -/+ replace cloudflare/workers/WorkerScript worker:reports
     ScriptName forces replacement
-    worker:api is reverted to its placeholder first, and worker:reports is unavailable until the cycle settles
+    worker:api is updated first without its contributions that refer to worker:reports, and worker:reports is unavailable until the cycle settles
 ```
 
 See [Dependency cycles](../internals/reconciler.md#dependency-cycles).

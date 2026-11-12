@@ -86,8 +86,8 @@ function printPlanSummary(result: Plan, logger: Logger) {
       const peers = node.revertedPeers;
       logger.info(
         peers.length === 1
-          ? `    ${peers[0]} is reverted to its placeholder first, and ${node.id} is unavailable until the cycle settles`
-          : `    ${peers.join(", ")} are reverted to their placeholders first, and ${node.id} is unavailable until the cycle settles`,
+          ? `    ${peers[0]} is updated first without its contributions that refer to ${node.id}, and ${node.id} is unavailable until the cycle settles`
+          : `    ${peers.join(", ")} are updated first without their contributions that refer to ${node.id}, and ${node.id} is unavailable until the cycle settles`,
       );
     }
   }

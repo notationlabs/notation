@@ -163,65 +163,48 @@ function placeholderBlocker(
 }
 
 /**
- * The members of `cycle` that deploy reverts to their placeholder params
- * before it replaces `replaced`: each refers to `replaced` only through its
- * contributions. Throws `ResourceCycleError` when one of them can't go back
- * to its placeholder params with an update.
- */
-export function revertedPeers(
-  cycle: DeployUnit,
-  replaced: BaseResource,
-): BaseResource[] {
-  const peers = cycle.members.filter(
-    (peer) =>
-      peer !== replaced &&
-      peer.getDependencies().includes(replaced) &&
-      !peer.getFixedDependencies().includes(replaced),
-  );
-  for (const peer of peers) {
-    const blocker = placeholderParamsBlocker(peer, new Set(cycle.members));
-    if (blocker) {
-      throw new ResourceCycleError(
-        `${replaced.id} must be replaced, so deploy must first update ${peer.id} without its contributions, so that ${peer.id} no longer refers to ${replaced.id}. It can't: ${blocker}.`,
-      );
-    }
-  }
-  return peers;
-}
-
-/**
- * The resources outside `cycle` that deploy reverts before it replaces
- * `replaced`, so that they no longer refer to it: each refers to `replaced`
- * only through its contributions, can go back to the params without those
- * contributions with an update, and does not block the delete of
- * `replaced`. Deploy reconciles them after the cycle, which restores them.
- * A resource that can't be reverted is left as it is, and the provider
- * decides whether `replaced` can be deleted.
+ * The resources that deploy reverts before it replaces `replaced`, so that
+ * they no longer refer to it: each refers to `replaced` only through its
+ * contributions, and is updated without those contributions. Members of
+ * `cycle` come first, in its order. Throws `ResourceCycleError` when a
+ * member can't be reverted with an update. A resource outside the cycle
+ * that can't be is left out, and the provider decides whether `replaced`
+ * can be deleted. Deploy restores the members while the cycle settles, and
+ * the other resources when it reaches them.
  */
 export function revertedDependents(
   resources: BaseResource[],
   cycle: DeployUnit,
   replaced: BaseResource,
-  blocksDelete: (resource: BaseResource) => boolean,
 ): BaseResource[] {
   const members = new Set(cycle.members);
   const from = new Set([replaced]);
-  return resources.filter(
+  const dependents = [
+    ...cycle.members,
+    ...resources.filter((resource) => !members.has(resource)),
+  ].filter(
     (resource) =>
-      !members.has(resource) &&
+      resource !== replaced &&
       resource.getDependencies().includes(replaced) &&
-      !resource.getFixedDependencies().includes(replaced) &&
-      !blocksDelete(resource) &&
-      !placeholderParamsBlocker(resource, from),
+      !resource.getFixedDependencies().includes(replaced),
   );
+  return dependents.filter((resource) => {
+    const blocker = placeholderParamsBlocker(resource, from);
+    if (blocker && members.has(resource)) {
+      throw new ResourceCycleError(
+        `${replaced.id} must be replaced, so deploy must first update ${resource.id} without its contributions, so that ${resource.id} no longer refers to ${replaced.id}. It can't: ${blocker}.`,
+      );
+    }
+    return !blocker;
+  });
 }
 
 /**
- * Why `resource` can't go between its placeholder params and its full
- * params with an update, or undefined when it can. The placeholder params
- * leave out the contributions that depend on `peers`.
+ * Why `resource` can't go between its params without the contributions that
+ * depend on `peers` and its full params with an update, or undefined when it
+ * can.
  */
-function placeholderParamsBlocker(
+export function placeholderParamsBlocker(
   resource: BaseResource,
   peers: ReadonlySet<BaseResource>,
 ): string | undefined {

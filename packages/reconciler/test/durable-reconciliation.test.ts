@@ -3941,7 +3941,10 @@ describe("dependency cycles", () => {
       events
         .filter((event) => event.event === "reconciler.deploy.decision")
         .map((event: any) => [event.resourceId, event.decision]),
-    ).toEqual([["b", "replace"]]);
+    ).toEqual([
+      ["b", "replace"],
+      ["a", "noop"],
+    ]);
     runtime.close();
   });
 
@@ -4121,6 +4124,164 @@ describe("dependency cycles", () => {
         ["c", ["b2"]],
       ]),
     );
+    runtime.close();
+  });
+  it("deploys a resource that contributes its own output to itself", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    bind(a, a);
+    const runtime = createRuntime([a], "cycle-self");
+
+    await runtime.run("cycle-self-1");
+    expect(calls).toEqual(["create a []", "update a [a]"]);
+
+    calls.length = 0;
+    await runtime.run("cycle-self-2");
+    expect(calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("reports the update of a placeholder that has a record in a dry run", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const shared = worker("shared");
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [shared, a, b];
+    const options = { dryRun: false };
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "cycle-dry-run-placeholder", {
+      get dryRun() {
+        return options.dryRun;
+      },
+      emit: (event) => void events.push(event),
+    });
+    await runtime.run("cycle-dry-run-placeholder-1");
+    calls.length = 0;
+    events.length = 0;
+
+    const nextA = worker("a");
+    const nextB = worker("b");
+    bind(nextA, nextB);
+    bind(nextA, shared);
+    bind(nextB, nextA);
+    resources.splice(1, 2, nextA, nextB);
+    options.dryRun = true;
+    await runtime.run("cycle-dry-run-placeholder-2");
+
+    expect(calls).toEqual([]);
+    expect(
+      events
+        .filter((event) => event.event === "reconciler.deploy.decision")
+        .map((event: any) => [event.resourceId, event.decision]),
+    ).toEqual([
+      ["shared", "noop"],
+      ["b", "noop"],
+      ["a", "update"],
+    ]);
+    runtime.close();
+  });
+
+  it("reverts only the contributions that refer to the replaced member", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    const c = worker("c");
+    bind(a, b);
+    bind(a, c);
+    bind(b, a);
+    bind(c, a);
+    const resources = [a, b, c];
+    const runtime = createRuntime(resources, "cycle-replace-narrow");
+    await runtime.run("cycle-replace-narrow-1");
+    calls.length = 0;
+
+    const nextA = worker("a");
+    const nextB = worker("b");
+    const nextC = worker("c", "c2");
+    bind(nextA, nextB);
+    bind(nextA, nextC);
+    bind(nextB, nextA);
+    bind(nextC, nextA);
+    resources.splice(0, 3, nextA, nextB, nextC);
+    await runtime.run("cycle-replace-narrow-2");
+
+    expect(calls).toEqual([
+      "update a [b]",
+      "delete c",
+      "create c2 [a]",
+      "update a [b, c2]",
+    ]);
+    runtime.close();
+  });
+
+  it("leaves out a contribution to a resource with no record when it reverts a resource outside the cycle", async () => {
+    const { worker, bind, remote, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    const d = worker("d");
+    bind(a, b);
+    bind(b, a);
+    bind(d, b);
+    const resources = [a, b, d];
+    const runtime = createRuntime(resources, "cycle-replace-new-dependency");
+    await runtime.run("cycle-replace-new-dependency-1");
+    calls.length = 0;
+
+    const nextA = worker("a");
+    const nextB = worker("b", "b2");
+    const nextD = worker("d");
+    const e = worker("e");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    bind(nextD, nextB);
+    bind(nextD, e);
+    resources.splice(0, 3, nextA, nextB, nextD, e);
+    await runtime.run("cycle-replace-new-dependency-2");
+
+    expect(calls).toEqual([
+      "update a []",
+      "update d []",
+      "delete b",
+      "create b2 [a]",
+      "update a [b2]",
+      "create e []",
+      "update d [b2, e]",
+    ]);
+    expect(remote.get("d")).toEqual(["b2", "e"]);
+    runtime.close();
+  });
+
+  it("fails before it reverts anything when a revert can't be computed", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    const d = worker("d");
+    bind(a, b);
+    bind(b, a);
+    bind(d, b);
+    const resources = [a, b, d];
+    const runtime = createRuntime(resources, "cycle-replace-fixed-dependency");
+    await runtime.run("cycle-replace-fixed-dependency-1");
+    calls.length = 0;
+
+    const nextA = worker("a");
+    const nextB = worker("b", "b2");
+    const nextD = worker("d");
+    const role = worker("role");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    bind(nextD, nextB);
+    nextD.dependOn(role);
+    resources.splice(0, 3, nextA, nextB, nextD, role);
+
+    await expect(
+      runtime.run("cycle-replace-fixed-dependency-2"),
+    ).rejects.toThrow(
+      "Cannot update d without its contributions that refer to b: its dependency role has no state record",
+    );
+    expect(calls).toEqual([]);
     runtime.close();
   });
 });
