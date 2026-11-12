@@ -3721,8 +3721,10 @@ describe("value validation at deploy", () => {
     runtime.close();
   });
 
-  // Pins a partial apply. Deploy checks the resource with no read when it
-  // reaches it, so the resources before it have been deployed.
+  // Pins a partial apply on purpose. A check before any change would need
+  // deploy's decision, which isn't known until deploy reaches the resource,
+  // so it would fail deploys that succeed. See validateKnownParams in
+  // durable/deploy.ts.
   it("fails at a resource with no read that lacks a required output, after it deploys the resources before it", async () => {
     const Role = defineRole({ create: async () => ({ arn: "arn:role" }) });
     const Attachment = defineUnreadAttachment(

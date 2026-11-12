@@ -130,9 +130,11 @@ export async function* reconcileResource(
     maxOperationAttempts: opts.maxOperationAttempts,
   };
 
-  // Runs before the operation. An update would change the remote resource
-  // and still leave the output missing. A noop would fail in recoverOutputs
-  // without the hint.
+  // The check for a resource with no `read` runs here and not in
+  // validateKnownParams, because only here is the decision known. See
+  // validateKnownParams. It runs before the operation: an update would change
+  // the remote resource and still leave the output missing, and a noop would
+  // fail in recoverOutputs without the hint.
   if (action.decision === "noop" || action.decision === "update") {
     assertOutputsRecoverable(resource, session.node);
   }

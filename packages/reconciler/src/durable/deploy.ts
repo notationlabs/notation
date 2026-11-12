@@ -40,10 +40,15 @@ export async function* deploy(
 /**
  * Checks every value deploy knows before it changes anything, as the planner
  * does. A value that comes from an output that does not exist yet is checked
- * later, just before the operation of the resource that holds it. A required
- * output missing from the record of a resource with no `read` is checked when
- * deploy reaches the resource, because only then is it known whether deploy
- * replaces it.
+ * later, just before the operation of the resource that holds it.
+ *
+ * A required output missing from the record of a resource with no `read` is
+ * not checked here, on purpose. It is checked in `reconcileResource`, so a
+ * deploy can fail there after it has deployed the resources before it. A
+ * check here would need deploy's decision for the resource, which depends on
+ * drift reads and on the outputs of dependencies that deploy creates again.
+ * Neither is known yet, so the check would fail deploys that succeed. Plan
+ * still checks before any change.
  */
 async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
   for (const level of buildResourceDepthLevels(opts.resources)) {
