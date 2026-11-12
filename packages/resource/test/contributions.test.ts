@@ -710,6 +710,46 @@ describe("plan params", () => {
     });
   });
 
+  it("plans cautiously when deriveParams tests for a required output missing from state", async () => {
+    const Derived = LogGroup.requireDependencies<{
+      fn: InstanceType<typeof Fn>;
+    }>().deriveParams(({ deps }) => ({
+      logGroupName: "FunctionArn" in deps.fn.output ? "/arn" : "/none",
+    }));
+    const fn = fnWith();
+    fn.setOutput({ FunctionName: "f", Role: "r" } as any);
+    const logGroup = new Derived("logs", {
+      config: { retention: 7 },
+      dependencies: { fn },
+    });
+    expect(await logGroup.planParams()).toEqual({
+      logGroupName: UNKNOWN_AFTER_APPLY,
+      retention: 7,
+    });
+  });
+
+  it("plans exactly when deriveParams tests for outputs that are in state", async () => {
+    const Derived = LogGroup.requireDependencies<{
+      fn: InstanceType<typeof Fn>;
+    }>().deriveParams(({ deps }) => ({
+      logGroupName:
+        "FunctionName" in deps.fn.output &&
+        Object.hasOwn(deps.fn.output, "Role")
+          ? "/present"
+          : "/absent",
+    }));
+    const fn = fnWith();
+    fn.setOutput({ FunctionName: "f", Role: "r" } as any);
+    const logGroup = new Derived("logs", {
+      config: { retention: 7 },
+      dependencies: { fn },
+    });
+    expect(await logGroup.planParams()).toEqual({
+      logGroupName: "/present",
+      retention: 7,
+    });
+  });
+
   it("plans exactly when deriveParams reads only outputs that are in state", async () => {
     const Derived = LogGroup.requireDependencies<{
       fn: InstanceType<typeof Fn>;

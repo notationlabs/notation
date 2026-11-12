@@ -227,8 +227,8 @@ export class PendingOutput extends Error {
  * A view of a dependency whose output lacks a required output throws it when
  * that output is read. `readPending` is set by such a read, so a plan still
  * knows of it when the code catches the error. Code that lists the keys of
- * such an output, such as a spread or `Object.keys`, or that tests a key with
- * `in`, does not throw, but sets `readPending` too.
+ * such an output, such as a spread or `Object.keys`, or that tests a missing
+ * output with `in`, does not throw, but sets `readPending` too.
  */
 export function createPlanViews() {
   const views = {
@@ -253,15 +253,17 @@ export function createPlanViews() {
       return Object.create(dep, { output: { get: () => throwPending(dep) } });
     }
     const missing = missingRequiredOutputs(dep, output);
+    const isMissing = (key: string | symbol) =>
+      typeof key === "string" && missing.includes(key);
     const viewedOutput = new Proxy(output, {
       get(target, key, receiver) {
-        if (typeof key === "string" && missing.includes(key)) {
-          return throwPending(dep);
-        }
+        if (isMissing(key)) return throwPending(dep);
         return Reflect.get(target, key, receiver);
       },
+      // `in` and `Object.hasOwn` answer false for a missing output, which
+      // deploy may make true. For any other key the answer holds.
       has(target, key) {
-        views.readPending = true;
+        if (isMissing(key)) views.readPending = true;
         return Reflect.has(target, key);
       },
       ownKeys(target) {
@@ -269,7 +271,7 @@ export function createPlanViews() {
         return Reflect.ownKeys(target);
       },
       getOwnPropertyDescriptor(target, key) {
-        views.readPending = true;
+        if (isMissing(key)) views.readPending = true;
         return Reflect.getOwnPropertyDescriptor(target, key);
       },
     });

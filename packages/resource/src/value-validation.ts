@@ -322,18 +322,24 @@ export function assertComputedFields(
   }
 }
 
-/** Throws unless every required computed field has a value in `output`. */
+/**
+ * Throws unless every required computed field has a value in `output`.
+ * `hint` is added to the end of the error message.
+ */
 export function assertRequiredOutputs(
   subject: ValidationSubject,
   output: Record<string, unknown>,
+  hint?: string,
 ): void {
   const missing = missingRequiredOutputs(subject, output);
   if (missing.length > 0) {
-    throw new SchemaStructureError(
+    const error = new SchemaStructureError(
       subject,
       "these required outputs are missing",
       missing,
     );
+    if (hint) error.message += `. ${hint}`;
+    throw error;
   }
 }
 

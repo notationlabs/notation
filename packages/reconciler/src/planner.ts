@@ -146,8 +146,10 @@ export async function createPlan({
  * because deploy reads the resource again to fill it in. A resource with no
  * `read` cannot be read again, so this throws for it. Dependencies are
  * planned first, so the check covers every resource, with or without
- * dependents. A resource with no `read` fails plan even when this deploy's
- * update would produce the missing output.
+ * dependents. Update can't fill in an output either, because deploy keeps
+ * only the update's params as output. A resource with no `read` fails plan
+ * even when this deploy replaces it, though the create would write a
+ * missing output that is part of its key.
  */
 export async function planKnownParams(
   resource: BaseResource,
@@ -161,7 +163,11 @@ export async function planKnownParams(
   assertSameType(resource, stateNode);
   if (stateNode) resource.setOutput(stateNode.output);
   if (stateNode && !resource.read) {
-    assertRequiredOutputs(resource, stateNode.output);
+    assertRequiredOutputs(
+      resource,
+      stateNode.output,
+      "The resource's type has no read, so deploy can't fill them in. Give the resource a new ID, so it is created again and the old one is deleted as an orphan.",
+    );
   }
   const params = await resource.planParams();
   await validateParams(resource, params, point);
