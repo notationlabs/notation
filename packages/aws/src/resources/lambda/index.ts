@@ -1,6 +1,7 @@
 export * from "./lambda-permission";
 export * from "./lambda-event-source-mapping";
 export * from "./lambda-log-group";
+export * from "./lambda-function-concurrency";
 export * from "./lambda-role-policy";
 export * from "./lambda-role-policy-attachment";
 export * from "./lambda-role";

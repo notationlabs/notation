@@ -54,7 +54,7 @@ test("the function deploys the runtime bundle of the declaration's module", asyn
   expect(group.fn.config.Handler).toBe("index.handler");
 });
 
-test("runtime, timeout and memory are applied to the function", async () => {
+test("runtime, timeout, memory and concurrency are applied to the function", async () => {
   const graph = await collectResourceGraph(() => {
     inModule(
       $lambda({
@@ -62,15 +62,20 @@ test("runtime, timeout and memory are applied to the function", async () => {
         runtime: "nodejs20.x",
         timeout: 5,
         memory: 256,
+        concurrency: 10,
       }),
     );
   });
+  const group = lambdaGroup(graph, "orders");
 
-  expect(lambdaGroup(graph, "orders").fn.config).toMatchObject({
+  expect(group.fn.config).toMatchObject({
     Runtime: "nodejs20.x",
     Timeout: 5,
     MemorySize: 256,
   });
+  expect(
+    group.resources.find((r) => r.id === "lambda:orders:concurrency")?.config,
+  ).toEqual({ ReservedConcurrentExecutions: 10 });
 });
 
 test("name overrides the function's AWS name, and the id stays its state key", async () => {

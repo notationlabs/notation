@@ -66,6 +66,16 @@ describe("diffParams", () => {
     );
   });
 
+  // State written by an earlier version can hold a param that the schema has
+  // since dropped.
+  test("ignores a stored param that is not in the schema", () => {
+    expect(
+      diffParams(schema, { ...previous, removed: 1 }, previous, {
+        canUpdate: true,
+      }),
+    ).toMatchObject({ patch: {}, changed: [], replaceFields: [] });
+  });
+
   test("updates a mutable param in place", () => {
     const result = diffParams(
       schema,

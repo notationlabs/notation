@@ -36,6 +36,14 @@ export type LambdaConfig = {
   timeout?: number;
   /** Megabytes of memory for the function. Lambda's default is 128. */
   memory?: number;
+  /**
+   * The function's reserved concurrency: the most instances that may run at
+   * once, set aside from the account's limit. Without it, the function uses
+   * the account's unreserved concurrency. `0` stops all invocations. AWS
+   * rejects a reservation that would leave the account below its minimum
+   * unreserved concurrency, and the deploy fails.
+   */
+  concurrency?: number;
 };
 
 // Marks a LambdaGroup. Two installed copies of this package have different
@@ -183,8 +191,6 @@ const build = (
         Runtime: runtime,
         Timeout: config.timeout,
         MemorySize: config.memory,
-        // todo: make this configurable and remove it as a default
-        ReservedConcurrentExecutions: 1,
       },
       dependencies: {
         role,
@@ -199,6 +205,18 @@ const build = (
       dependencies: { lambda: lambdaResource },
     }),
   );
+
+  if (config.concurrency !== undefined) {
+    functionGroup.add(
+      new aws.lambda.LambdaFunctionConcurrency(
+        resourceId("lambda", lambdaId, "concurrency"),
+        {
+          config: { ReservedConcurrentExecutions: config.concurrency },
+          dependencies: { lambda: lambdaResource },
+        },
+      ),
+    );
+  }
 
   return { fn: lambdaResource, role };
 };

@@ -23,12 +23,10 @@ import { LambdaIamRoleInstance } from "./";
 export type LambdaFunctionSchema = AwsSchema<{
   Key: Omit<sdk.GetFunctionRequest, "Qualifier">;
   CreateParams: Omit<sdk.CreateFunctionRequest, "Code" | "Environment"> &
-    sdk.PutFunctionConcurrencyRequest &
     LambdaCodeParams &
     LambdaEnvironmentParams;
   UpdateParams: Omit<sdk.UpdateFunctionCodeRequest, "ZipFile"> &
     Omit<sdk.UpdateFunctionConfigurationRequest, "Environment"> &
-    sdk.PutFunctionConcurrencyRequest &
     sdk.PutFunctionCodeSigningConfigRequest &
     LambdaCodeParams &
     LambdaEnvironmentParams;
@@ -37,7 +35,6 @@ export type LambdaFunctionSchema = AwsSchema<{
     "Environment"
   > &
     NonNullable<sdk.GetFunctionResponse["Code"]> &
-    NonNullable<sdk.GetFunctionResponse["Concurrency"]> &
     LambdaEnvironmentParams;
 }>;
 
@@ -196,11 +193,6 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
     presence: "optional",
     value: v.boolean(),
   },
-  ReservedConcurrentExecutions: {
-    propertyType: "param",
-    presence: "required",
-    value: v.number(),
-  },
   RevisionId: {
     propertyType: "computed",
     presence: "required",
@@ -285,14 +277,6 @@ export const LambdaFunction = lambdaFunctionSchema
       });
 
       await runLambdaMutation(() => lambdaClient().send(command));
-
-      // if (params.ReservedConcurrentExecutions) {
-      //   const concurrencyCommand = new sdk.PutFunctionConcurrencyCommand({
-      //     FunctionName: params.FunctionName,
-      //     ReservedConcurrentExecutions: params.ReservedConcurrentExecutions,
-      //   });
-      //   await lambdaClient().send(concurrencyCommand);
-      // }
     }),
 
     // A function without the token was not made by the attempt. Reporting it
@@ -314,8 +298,7 @@ export const LambdaFunction = lambdaFunctionSchema
     read: async (key) => {
       try {
         const command = new sdk.GetFunctionCommand(key);
-        const { Configuration, Concurrency } =
-          await lambdaClient().send(command);
+        const { Configuration } = await lambdaClient().send(command);
 
         if (Configuration?.State !== "Active") {
           throw new ResourceOperationPendingError(
@@ -341,7 +324,6 @@ export const LambdaFunction = lambdaFunctionSchema
           Layers: Configuration.Layers?.map((layer) => layer.Arn),
           VpcConfig: Configuration.VpcConfig ? vpcConfig : undefined,
           SnapStart: Configuration.SnapStart ? snapStart : undefined,
-          ...Concurrency,
         };
       } catch (error) {
         if (error instanceof sdk.ResourceNotFoundException) {

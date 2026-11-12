@@ -66,7 +66,6 @@ describe("Lambda config values", () => {
       new LambdaFunction("app", {
         config: {
           FunctionName: "app",
-          ReservedConcurrentExecutions: 1,
           ...config,
         } as any,
         dependencies: {} as any,
@@ -129,7 +128,7 @@ describe("Lambda code", () => {
     const role = new LambdaIamRole("role", { config: { RoleName: "app" } });
     role.setOutput({ Arn: "arn:aws:iam::123456789012:role/app" } as any);
     return new LambdaFunction("app", {
-      config: { FunctionName: "app", ReservedConcurrentExecutions: 1 },
+      config: { FunctionName: "app" },
       dependencies: { role, zipFile },
     });
   }
@@ -144,7 +143,6 @@ describe("Lambda code", () => {
         Role: "arn:aws:iam::123456789012:role/app",
         CodeSha256,
       },
-      Concurrency: { ReservedConcurrentExecutions: 1 },
     };
     vi.spyOn(lambdaClient(), "send").mockImplementation(async (command) => {
       if (command instanceof sdk.GetFunctionCommand) return response;
@@ -152,8 +150,11 @@ describe("Lambda code", () => {
     });
   }
 
-  async function planUnchanged(lambda: LambdaFunctionInstance) {
-    const params = await lambda.getParams();
+  async function planUnchanged(
+    lambda: LambdaFunctionInstance,
+    stored: Record<string, unknown> = {},
+  ) {
+    const params = { ...(await lambda.getParams()), ...stored };
     const plan = await createPlan({
       resources: [lambda],
       state: new MemoryStateBackend({
@@ -178,6 +179,16 @@ describe("Lambda code", () => {
     mockGetFunction(await sha256Base64(filePath));
 
     expect(await planUnchanged(lambda)).toMatchObject({ decision: "noop" });
+  });
+
+  // Earlier versions recorded ReservedConcurrentExecutions: 1 on the function.
+  it("ignores a ReservedConcurrentExecutions param in state", async () => {
+    const lambda = await createLambda();
+    mockGetFunction(await sha256Base64(filePath));
+
+    expect(
+      await planUnchanged(lambda, { ReservedConcurrentExecutions: 1 }),
+    ).toMatchObject({ decision: "noop" });
   });
 
   it("reports drift when AWS reports a different CodeSha256", async () => {
@@ -313,7 +324,6 @@ describe("Lambda environment", () => {
     const lambda = new LambdaFunction("app", {
       config: {
         FunctionName: "app",
-        ReservedConcurrentExecutions: 1,
         Environment,
       },
       dependencies: {} as any,
