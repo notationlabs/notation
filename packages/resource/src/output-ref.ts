@@ -227,8 +227,9 @@ export class PendingOutput extends Error {
  * A view of a dependency whose output lacks a required output throws it when
  * that output is read. `readPending` is set by such a read, so a plan still
  * knows of it when the code catches the error. A view's `outputRef` names the
- * dependency, because plan resolves refs after the code has returned, and the
- * dependency's output does not throw.
+ * dependency, not the view. Plan resolves refs after the code has returned,
+ * outside `tryAtPlan`, so a ref that named the view would throw
+ * `PendingOutput` there instead of planning as unknown.
  */
 export function createPlanViews() {
   const views = {
