@@ -1,7 +1,7 @@
 import type { Schema } from "./resource.schema";
 import type { StandardSchemaV1 } from "./standard-schema";
 import { isUnknownAfterApply } from "./diff-params";
-import { isPlainObject } from "./output-ref";
+import { isPlainObject, missingRequiredOutputs } from "./output-ref";
 
 /**
  * Where the engine validated a value:
@@ -82,12 +82,19 @@ export class SchemaStructureError extends Error {
   readonly resourceType: string;
   readonly fields: string[];
 
-  constructor(subject: ValidationSubject, problem: string, fields: string[]) {
+  constructor(
+    subject: ValidationSubject,
+    problem: string,
+    fields: string[],
+    // Added to the end of the message, as a sentence of its own.
+    hint?: string,
+  ) {
     const site = subject.declaredAt
       ? `, declared at ${subject.declaredAt}`
       : "";
     super(
-      `${subject.id} (${subject.type})${site}: ${problem}: ${fields.join(", ")}`,
+      `${subject.id} (${subject.type})${site}: ${problem}: ${fields.join(", ")}` +
+        (hint ? `. ${hint}` : ""),
     );
     this.name = "SchemaStructureError";
     this.resourceId = subject.id;
@@ -322,24 +329,22 @@ export function assertComputedFields(
   }
 }
 
-/** Throws unless every required computed field has a value in `output`. */
+/**
+ * Throws unless every required computed field has a value in `output`.
+ * `hint` is added to the end of the error message.
+ */
 export function assertRequiredOutputs(
   subject: ValidationSubject,
   output: Record<string, unknown>,
+  hint?: string,
 ): void {
-  const missing = Object.entries(subject.schema)
-    .filter(
-      ([field, item]) =>
-        item.propertyType === "computed" &&
-        item.presence === "required" &&
-        output[field] === undefined,
-    )
-    .map(([field]) => field);
+  const missing = missingRequiredOutputs(subject, output);
   if (missing.length > 0) {
     throw new SchemaStructureError(
       subject,
       "these required outputs are missing",
       missing,
+      hint,
     );
   }
 }

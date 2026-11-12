@@ -17,8 +17,7 @@ export type CollectContext = {
 
 /**
  * A contribution computed from the outputs of `deps`. At deploy it receives
- * the deps. At plan it receives views of the deps, and reading the output of
- * a dep that has none yet throws `PendingOutput`.
+ * the deps. At plan it receives views of the deps; see `createPlanViews`.
  */
 export type ContributionFunction<Deps, Values> = (context: {
   deps: Deps;

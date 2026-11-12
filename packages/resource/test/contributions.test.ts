@@ -461,6 +461,17 @@ describe("function contributions", () => {
     );
   });
 
+  it("plans the collected param unknown when a dep's state lacks a required output", async () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    queue.setOutput({ QueueUrl: "orders", QueueName: "orders" } as any);
+    const policy = new Policy("policy", { config: { PolicyName: "p" } });
+    contributeRead(policy, queue);
+    expect(await policy.planParams()).toEqual({
+      PolicyName: "p",
+      PolicyDocument: UNKNOWN_AFTER_APPLY,
+    });
+  });
+
   it("fails plan when the function throws without a pending read", async () => {
     const pending = new Queue("pending", { config: { QueueName: "pending" } });
     const policy = new Policy("policy", { config: { PolicyName: "p" } });
@@ -573,6 +584,23 @@ describe("plan params", () => {
     });
   });
 
+  it("plans a required output that is missing from state as unknown", async () => {
+    const queue = new Queue("orders", { config: { QueueName: "orders" } });
+    queue.setOutput({ QueueUrl: "url", QueueName: "orders" } as any);
+    const fn = fnWith();
+    fn.contribute({
+      Environment: {
+        Variables: {
+          ARN: queue.outputRef("QueueArn"),
+          URL: queue.outputRef("QueueUrl"),
+        },
+      },
+    });
+    expect((await fn.planParams()).Environment).toEqual({
+      Variables: { ARN: UNKNOWN_AFTER_APPLY, URL: "url" },
+    });
+  });
+
   it("does not find a conflict between values not known yet", async () => {
     const a = new Queue("a", { config: { QueueName: "a" } });
     const b = new Queue("b", { config: { QueueName: "b" } });
@@ -641,6 +669,119 @@ describe("plan params", () => {
     const logGroup = new Derived("logs", {
       dependencies: { fn, other: fnWith() },
     });
+    expect(await logGroup.planParams()).toEqual({
+      logGroupName: "/aws/lambda/f",
+    });
+  });
+
+  it("plans cautiously when deriveParams reads a required output missing from state", async () => {
+    const Derived = LogGroup.requireDependencies<{
+      fn: InstanceType<typeof Fn>;
+    }>().deriveParams(({ deps }) => ({
+      logGroupName: `/aws/lambda/${deps.fn.output.FunctionArn}`,
+    }));
+    const fn = fnWith();
+    fn.setOutput({ FunctionName: "f", Role: "r" } as any);
+    const logGroup = new Derived("logs", {
+      config: { retention: 7 },
+      dependencies: { fn },
+    });
+    expect(await logGroup.planParams()).toEqual({
+      logGroupName: UNKNOWN_AFTER_APPLY,
+      retention: 7,
+    });
+  });
+
+  it("plans exactly when deriveParams lists the keys of an output that lacks a required output, as deploy fills it in", async () => {
+    const Derived = LogGroup.requireDependencies<{
+      fn: InstanceType<typeof Fn>;
+    }>().deriveParams(({ deps }) => ({
+      logGroupName: `/${Object.keys(deps.fn.output).sort().join()}`,
+    }));
+    const fn = fnWith();
+    fn.setOutput({ FunctionName: "f", Role: "r" } as any);
+    const logGroup = new Derived("logs", {
+      config: { retention: 7 },
+      dependencies: { fn },
+    });
+    expect(await logGroup.planParams()).toEqual({
+      logGroupName: "/FunctionArn,FunctionName,Role",
+      retention: 7,
+    });
+  });
+
+  it("plans cautiously when deriveParams copies an output that lacks a required output", async () => {
+    const Derived = LogGroup.requireDependencies<{
+      fn: InstanceType<typeof Fn>;
+    }>().deriveParams(({ deps }) => {
+      const output = { ...deps.fn.output };
+      return { logGroupName: `/aws/lambda/${output.FunctionName}` };
+    });
+    const fn = fnWith();
+    fn.setOutput({ FunctionName: "f", Role: "r" } as any);
+    const logGroup = new Derived("logs", {
+      config: { retention: 7 },
+      dependencies: { fn },
+    });
+    expect(await logGroup.planParams()).toEqual({
+      logGroupName: UNKNOWN_AFTER_APPLY,
+      retention: 7,
+    });
+  });
+
+  it("plans exactly when deriveParams tests for a required output missing from state, as deploy fills it in", async () => {
+    const Derived = LogGroup.requireDependencies<{
+      fn: InstanceType<typeof Fn>;
+    }>().deriveParams(({ deps }) => ({
+      logGroupName:
+        "FunctionArn" in deps.fn.output &&
+        Object.hasOwn(deps.fn.output, "FunctionArn")
+          ? "/arn"
+          : "/none",
+    }));
+    const fn = fnWith();
+    fn.setOutput({ FunctionName: "f", Role: "r" } as any);
+    const logGroup = new Derived("logs", {
+      config: { retention: 7 },
+      dependencies: { fn },
+    });
+    expect(await logGroup.planParams()).toEqual({
+      logGroupName: "/arn",
+      retention: 7,
+    });
+  });
+
+  it("plans exactly when deriveParams tests for outputs that are in state", async () => {
+    const Derived = LogGroup.requireDependencies<{
+      fn: InstanceType<typeof Fn>;
+    }>().deriveParams(({ deps }) => ({
+      logGroupName:
+        "FunctionName" in deps.fn.output &&
+        Object.hasOwn(deps.fn.output, "Role")
+          ? "/present"
+          : "/absent",
+    }));
+    const fn = fnWith();
+    fn.setOutput({ FunctionName: "f", Role: "r" } as any);
+    const logGroup = new Derived("logs", {
+      config: { retention: 7 },
+      dependencies: { fn },
+    });
+    expect(await logGroup.planParams()).toEqual({
+      logGroupName: "/present",
+      retention: 7,
+    });
+  });
+
+  it("plans exactly when deriveParams reads only outputs that are in state", async () => {
+    const Derived = LogGroup.requireDependencies<{
+      fn: InstanceType<typeof Fn>;
+    }>().deriveParams(({ deps }) => ({
+      logGroupName: `/aws/lambda/${deps.fn.output.FunctionName}`,
+    }));
+    const fn = fnWith();
+    fn.setOutput({ FunctionName: "f", Role: "r" } as any);
+    const logGroup = new Derived("logs", { dependencies: { fn } });
     expect(await logGroup.planParams()).toEqual({
       logGroupName: "/aws/lambda/f",
     });
