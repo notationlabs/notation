@@ -40,7 +40,10 @@ export async function* deploy(
 /**
  * Checks every value deploy knows before it changes anything, as the planner
  * does. A value that comes from an output that does not exist yet is checked
- * later, just before the operation of the resource that holds it.
+ * later, just before the operation of the resource that holds it. A required
+ * output missing from the record of a resource with no `read` is checked when
+ * deploy reaches the resource, because only then is it known whether deploy
+ * replaces it.
  */
 async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
   for (const level of buildResourceDepthLevels(opts.resources)) {

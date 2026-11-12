@@ -99,7 +99,9 @@ export async function createPlan({
       // unknown, because deploy reads the resource again to fill it in. A
       // resource with no `read` cannot be read again, and an update keeps only
       // its params as output. A replace creates the resource again, and the
-      // create writes the output.
+      // create writes the output. A replace that is only possible, because a
+      // field that forces it is unknown, passes too. Deploy fails if it ends
+      // up a noop or an update.
       if (stateNode && !resource.read && !replaced) {
         assertRequiredOutputs(
           resource,

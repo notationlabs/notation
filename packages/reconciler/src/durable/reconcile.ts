@@ -130,6 +130,18 @@ export async function* reconcileResource(
     maxOperationAttempts: opts.maxOperationAttempts,
   };
 
+  // A resource with no `read` can't fill in a missing output, and update
+  // checks outputs only after the remote update. So the check runs before
+  // any operation. A replace creates the resource again, and the create
+  // writes the output.
+  if (session.node && !resource.read && action.decision !== "replace") {
+    assertRequiredOutputs(
+      resource,
+      session.node.output,
+      NO_READ_MISSING_OUTPUTS_HINT,
+    );
+  }
+
   switch (action.decision) {
     case "create":
     case "drift-recreate":
@@ -140,16 +152,6 @@ export async function* reconcileResource(
       return;
     case "update":
     case "drift-update":
-      // The update operation checks outputs only after the remote update. A
-      // resource with no `read` can't fill in a missing output, so the check
-      // runs first. Such a resource is never decided drift-update.
-      if (session.node && !resource.read) {
-        assertRequiredOutputs(
-          resource,
-          session.node.output,
-          NO_READ_MISSING_OUTPUTS_HINT,
-        );
-      }
       yield* updateResourceOperation(step, {
         ...shared,
         patch: action.patch,
@@ -185,10 +187,9 @@ export async function* reconcileResource(
 function findMissingOutputs(
   resource: BaseResource,
   output: Record<string, unknown>,
-  hint?: string,
 ): SchemaStructureError | undefined {
   try {
-    assertRequiredOutputs(resource, output, hint);
+    assertRequiredOutputs(resource, output);
   } catch (error) {
     if (SchemaStructureError.is(error)) return error;
     throw error;
@@ -201,7 +202,8 @@ function findMissingOutputs(
  * record before they fail on a missing output, so a later deploy can decide
  * noop for it, and its dependents would read the output as undefined. The
  * resource is read again, and the record is written with what the read
- * returns. The deploy fails while an output is still missing.
+ * returns. The deploy fails while an output is still missing. A resource with
+ * no `read` fails before it gets here.
  */
 async function* recoverOutputs(
   step: DurableStepRunner,
@@ -210,25 +212,19 @@ async function* recoverOutputs(
   shared: Omit<CreateResourceParams, "persist">,
 ): AsyncGenerator<any, void, any> {
   const { resource } = shared;
-  if (resource.read) {
-    const readStep = step.scope("output-read");
-    const readResult = yield* readResourceOperation(readStep, {
-      resource,
-      resourceParams: shared.resourceParams,
-      persistedOutput: session.node.output,
-      // No dryRun, as for the drift read.
-      emit: durableEmitter(readStep, opts.emit),
-      maxOperationAttempts: shared.maxOperationAttempts,
-    });
-    resource.setOutput({ ...session.node.output, ...readResult });
-  }
-
-  const missing = findMissingOutputs(
+  const readStep = step.scope("output-read");
+  const readResult = yield* readResourceOperation(readStep, {
     resource,
-    resource.output,
-    resource.read ? undefined : NO_READ_MISSING_OUTPUTS_HINT,
-  );
-  if (!opts.dryRun && resource.read) {
+    resourceParams: shared.resourceParams,
+    persistedOutput: session.node.output,
+    // No dryRun, as for the drift read.
+    emit: durableEmitter(readStep, opts.emit),
+    maxOperationAttempts: shared.maxOperationAttempts,
+  });
+  resource.setOutput({ ...session.node.output, ...readResult });
+
+  const missing = findMissingOutputs(resource, resource.output);
+  if (!opts.dryRun) {
     const { version: _, ...record } = session.node;
     yield* session.persist({
       ...record,
