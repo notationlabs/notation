@@ -30,7 +30,7 @@ export async function* destroy(
           scope(placeholder.id),
           placeholder,
           opts,
-          unit,
+          new Set(unit.members),
         );
       }
       for (const resource of [...unit.members].reverse()) {

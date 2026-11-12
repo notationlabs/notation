@@ -193,8 +193,11 @@ function pick(
  * The resource's edges as state records them. Sorted and deduplicated, so a
  * resource whose edges have not changed compares equal to its record.
  */
-export function getDependencyIds(resource: BaseResource): string[] {
-  const ids = resource.getDependencies().map((dependency) => dependency.id);
+export function getDependencyIds(
+  resource: BaseResource,
+  dependencies = resource.getDependencies(),
+): string[] {
+  const ids = dependencies.map((dependency) => dependency.id);
   return [...new Set(ids)].sort();
 }
 

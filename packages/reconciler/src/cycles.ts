@@ -21,8 +21,6 @@ export type DeployUnit = {
   placeholders: BaseResource[];
 };
 
-export type ResourceCycle = DeployUnit;
-
 /** A cycle always has a placeholder, as one is needed to break its loop. */
 export function isCycle(unit: DeployUnit): boolean {
   return unit.placeholders.length > 0;
@@ -95,7 +93,7 @@ export function orderDeployUnits(resources: BaseResource[]): DeployUnit[] {
  * and whose contributions close the loop becomes one. Its contributions no
  * longer count as edges.
  */
-function resolveCycle(members: BaseResource[]): ResourceCycle {
+function resolveCycle(members: BaseResource[]): DeployUnit {
   const inCycle = new Set(members);
   const placeholders = new Set<BaseResource>();
   const edgesOf = (resource: BaseResource) =>
@@ -171,7 +169,7 @@ function placeholderBlocker(
  * to its placeholder params with an update.
  */
 export function revertedPeers(
-  cycle: ResourceCycle,
+  cycle: DeployUnit,
   replaced: BaseResource,
 ): BaseResource[] {
   const peers = cycle.members.filter(
@@ -189,6 +187,33 @@ export function revertedPeers(
     }
   }
   return peers;
+}
+
+/**
+ * The resources outside `cycle` that deploy reverts before it replaces
+ * `replaced`, so that they no longer refer to it: each refers to `replaced`
+ * only through its contributions, can go back to the params without those
+ * contributions with an update, and does not block the delete of
+ * `replaced`. Deploy reconciles them after the cycle, which restores them.
+ * A resource that can't be reverted is left as it is, and the provider
+ * decides whether `replaced` can be deleted.
+ */
+export function revertedDependents(
+  resources: BaseResource[],
+  cycle: DeployUnit,
+  replaced: BaseResource,
+  blocksDelete: (resource: BaseResource) => boolean,
+): BaseResource[] {
+  const members = new Set(cycle.members);
+  const from = new Set([replaced]);
+  return resources.filter(
+    (resource) =>
+      !members.has(resource) &&
+      resource.getDependencies().includes(replaced) &&
+      !resource.getFixedDependencies().includes(replaced) &&
+      !blocksDelete(resource) &&
+      !placeholderParamsBlocker(resource, from),
+  );
 }
 
 /**
