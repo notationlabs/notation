@@ -186,17 +186,31 @@ describe("R2Bucket", () => {
     });
   });
 
-  it.each(["ab", "-uploads", "uploads-", "Uploads", "up_loads"])(
-    "rejects the bucket name %s when it is declared",
-    (BucketName) => {
-      expect(
-        () =>
-          new R2Bucket("bucket:invalid", {
-            config: { ...bucket.config, BucketName },
-          }),
-      ).toThrow("An R2 bucket name must be 3 to 64 lowercase letters");
-    },
-  );
+  it("accepts a 64-character bucket name", () => {
+    const BucketName = "a".repeat(64);
+    expect(
+      () =>
+        new R2Bucket("bucket:long", {
+          config: { ...bucket.config, BucketName },
+        }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    "ab",
+    "-uploads",
+    "uploads-",
+    "Uploads",
+    "up_loads",
+    "a".repeat(65),
+  ])("rejects the bucket name %s when it is declared", (BucketName) => {
+    expect(
+      () =>
+        new R2Bucket("bucket:invalid", {
+          config: { ...bucket.config, BucketName },
+        }),
+    ).toThrow("An R2 bucket name must be 3 to 64 lowercase letters");
+  });
 
   it.each([
     ["AccountId", /An R2 bucket can't move to another account/],
