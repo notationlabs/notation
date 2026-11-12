@@ -23,6 +23,13 @@ import { workflowRegistry, type ResourceRegistry } from "./resource-registry";
 import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
 
+/**
+ * Added to the error for a required output missing from the state record of
+ * a resource with no `read`.
+ */
+export const NO_READ_MISSING_OUTPUTS_HINT =
+  "The resource's type has no read, so deploy can't fill them in. Remove the resource from the code, deploy, then add it back, so that it is created again.";
+
 export type CreatePlanOptions = {
   resources: BaseResource[];
   state: StateBackend;
@@ -49,7 +56,19 @@ export async function createPlan({
   assertDependenciesPresent(resources);
 
   const stateNodes = await state.values();
-  const cascade = createReplaceCascade({ resources, stateNodes, registry });
+  // The edges in state as deploy finds them when it replaces a resource.
+  // Deploy writes the edges in code for each resource it reaches, so a
+  // resource takes those once it is planned.
+  const edgesById = new Map(
+    stateNodes.map((node) => [node.id, recordedEdges(node, resourceById)]),
+  );
+  const blocksDelete = createBlocksDelete(
+    stateNodes,
+    workflowRegistry({ resources, registry }),
+  );
+  // The resources that deploy deletes before a replaced resource, by ID, with
+  // the ID of the replaced resource.
+  const cascaded = new Map<string, string>();
 
   for (const level of buildResourceDepthLevels(resources)) {
     for (const resource of level) {
@@ -73,20 +92,40 @@ export async function createPlan({
       const dependsOn = getDependencyIds(resource);
       const replaceFields =
         "replaceFields" in action ? action.replaceFields : undefined;
-      const replacedDependency = cascade.replacedDependency(resource.id);
-      assertOutputsRecoverable(
-        resource,
-        stateNode,
-        Boolean(replaceFields || replacedDependency),
-      );
-      cascade.add(resource, Boolean(replaceFields));
+      const replacedDependency = cascaded.get(resource.id);
+      const replaced = Boolean(replaceFields || replacedDependency);
 
-      if (replaceFields || replacedDependency) {
+      // Plan treats a required output missing from a resource's state as
+      // unknown, because deploy reads the resource again to fill it in. A
+      // resource with no `read` cannot be read again, and an update keeps only
+      // its params as output. A replace creates the resource again, and the
+      // create writes the output.
+      if (stateNode && !resource.read && !replaced) {
+        assertRequiredOutputs(
+          resource,
+          stateNode.output,
+          NO_READ_MISSING_OUTPUTS_HINT,
+        );
+      }
+
+      if (replaceFields) {
+        for (const id of collectDependents(
+          resource.id,
+          edgesById,
+          blocksDelete,
+        )) {
+          cascaded.set(id, resource.id);
+          edgesById.delete(id);
+        }
+      }
+
+      if (replaced) {
         // A replacement's output is unknown until it has been created again,
         // so its dependents plan against unknown params, as they would for a
         // resource with no state.
         resource.setOutput(null as any);
       }
+      edgesById.set(resource.id, dependsOn);
 
       // A resource deleted in a cascade is created again, so a diff of an
       // update does not apply to it.
@@ -116,76 +155,6 @@ export async function createPlan({
   }
 
   return { createdAt: new Date().toISOString(), nodes };
-}
-
-/**
- * Follows the resources that deploy deletes before a replaced resource, as
- * deploy finds them. Add each resource in dependency order, after its
- * decision.
- */
-export function createReplaceCascade(opts: {
-  resources: BaseResource[];
-  stateNodes: StateNode[];
-  registry?: ResourceRegistry;
-}) {
-  const resourceById = new Map(
-    opts.resources.map((resource) => [resource.id, resource]),
-  );
-  // The edges in state as deploy finds them when it replaces a resource.
-  // Deploy writes the edges in code for each resource it reaches, so a
-  // resource takes those once it is added.
-  const edgesById = new Map(
-    opts.stateNodes.map((node) => [node.id, recordedEdges(node, resourceById)]),
-  );
-  const blocksDelete = createBlocksDelete(
-    opts.stateNodes,
-    workflowRegistry({ resources: opts.resources, registry: opts.registry }),
-  );
-  // The ID of each resource that deploy deletes in a cascade, with the ID of
-  // the replaced resource.
-  const cascaded = new Map<string, string>();
-
-  return {
-    /** The ID of the replaced resource that deploy deletes this one before. */
-    replacedDependency(id: string): string | undefined {
-      return cascaded.get(id);
-    },
-    add(resource: BaseResource, replaced: boolean): void {
-      if (replaced) {
-        for (const id of collectDependents(
-          resource.id,
-          edgesById,
-          blocksDelete,
-        )) {
-          cascaded.set(id, resource.id);
-          edgesById.delete(id);
-        }
-      }
-      edgesById.set(resource.id, getDependencyIds(resource));
-    },
-  };
-}
-
-/**
- * Throws if a resource with no `read` lacks a required output in state and
- * deploy does not replace it. Plan treats a required output missing from a
- * resource's state as unknown, because deploy reads the resource again to
- * fill it in. A resource with no `read` cannot be read again. Update can't
- * fill in an output either, because deploy keeps only the update's params as
- * output. A replace deletes the resource and creates it again, and the create
- * writes the output.
- */
-export function assertOutputsRecoverable(
-  resource: BaseResource,
-  stateNode: StateNode | undefined,
-  replaced: boolean,
-): void {
-  if (!stateNode || resource.read || replaced) return;
-  assertRequiredOutputs(
-    resource,
-    stateNode.output,
-    "The resource's type has no read, so deploy can't fill them in. Remove the resource from the code, deploy, then add it back, so that it is created again.",
-  );
 }
 
 /**

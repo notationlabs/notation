@@ -3523,6 +3523,7 @@ describe("value validation at deploy", () => {
       name: "SchemaStructureError",
       fields: ["arn"],
     });
+    expect(error.message).toContain("The resource's type has no read");
     runtime.close();
   });
 
@@ -3609,6 +3610,113 @@ describe("value validation at deploy", () => {
 
     expect(await runtime.state.get("policy")).toMatchObject({
       output: { arn: "arn:policy" },
+    });
+    runtime.close();
+  });
+
+  // A type with no read, whose `target` param is immutable when `immutable`
+  // is set.
+  function defineUnreadAttachment(
+    create: () => Promise<any>,
+    update: () => Promise<void>,
+    immutable = false,
+  ) {
+    return resource<{
+      Key: { name: string };
+      CreateParams: { name: string; target: string };
+      UpdateParams: { target: string };
+      ReadResult: { arn: string };
+    }>({
+      type: "test/durable/unread-attachment",
+      provider: "test",
+    })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          primaryKey: true,
+          immutable: true,
+        },
+        target: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          ...(immutable ? { immutable: true as const } : {}),
+        },
+        arn: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create,
+        update,
+        delete: async () => undefined,
+      });
+  }
+
+  it("fails before the update of a resource with no read that lacks a required output", async () => {
+    const updateFn = vi.fn(async () => undefined);
+    const Attachment = defineUnreadAttachment(async () => undefined, updateFn);
+    const resources: BaseResource[] = [
+      new Attachment("attachment", {
+        config: { name: "attachment", target: "a" },
+      }),
+    ];
+    const runtime = createRuntime(resources, "update-missing-outputs");
+    await runtime.run("update-missing-outputs-1").catch(() => {});
+    expect((await runtime.state.get("attachment"))?.output.arn).toBeUndefined();
+
+    resources.splice(
+      0,
+      1,
+      new Attachment("attachment", {
+        config: { name: "attachment", target: "b" },
+      }),
+    );
+    const error = await runtime.run("update-missing-outputs-2").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "SchemaStructureError",
+      fields: ["arn"],
+    });
+    expect(error.message).toContain("The resource's type has no read");
+    expect(updateFn).not.toHaveBeenCalled();
+    runtime.close();
+  });
+
+  it("replaces a resource with no read that lacks a required output when an immutable param takes a replaced dependency's output", async () => {
+    let roleArn = "arn:role-1";
+    let attachmentArn: string | undefined;
+    const Role = defineRole({ create: async () => ({ arn: roleArn }) });
+    const Attachment = defineUnreadAttachment(
+      async () => ({ arn: attachmentArn }),
+      async () => undefined,
+      true,
+    );
+    const resources: BaseResource[] = [];
+    const declare = (boundary?: string) => {
+      const role = new Role("role", { config: { name: "role", boundary } });
+      const attachment = new Attachment("attachment", {
+        config: { name: "attachment", target: role.outputRef("arn") },
+      });
+      resources.splice(0, resources.length, role, attachment);
+    };
+    declare();
+    const runtime = createRuntime(resources, "dependent-missing-outputs");
+    await runtime.run("dependent-missing-outputs-1").catch(() => {});
+    expect((await runtime.state.get("attachment"))?.output.arn).toBeUndefined();
+
+    roleArn = "arn:role-2";
+    attachmentArn = "arn:attachment";
+    declare("b");
+    await runtime.run("dependent-missing-outputs-2");
+
+    expect(await runtime.state.get("attachment")).toMatchObject({
+      params: { name: "attachment", target: "arn:role-2" },
+      output: { arn: "arn:attachment" },
     });
     runtime.close();
   });

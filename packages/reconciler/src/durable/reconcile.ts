@@ -34,6 +34,7 @@ import {
   hasSameEdges,
   recordedEdges,
 } from "../plan";
+import { NO_READ_MISSING_OUTPUTS_HINT } from "../planner";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
@@ -139,6 +140,16 @@ export async function* reconcileResource(
       return;
     case "update":
     case "drift-update":
+      // The update operation checks outputs only after the remote update. A
+      // resource with no `read` can't fill in a missing output, so the check
+      // runs first. Such a resource is never decided drift-update.
+      if (session.node && !resource.read) {
+        assertRequiredOutputs(
+          resource,
+          session.node.output,
+          NO_READ_MISSING_OUTPUTS_HINT,
+        );
+      }
       yield* updateResourceOperation(step, {
         ...shared,
         patch: action.patch,
@@ -174,9 +185,10 @@ export async function* reconcileResource(
 function findMissingOutputs(
   resource: BaseResource,
   output: Record<string, unknown>,
+  hint?: string,
 ): SchemaStructureError | undefined {
   try {
-    assertRequiredOutputs(resource, output);
+    assertRequiredOutputs(resource, output, hint);
   } catch (error) {
     if (SchemaStructureError.is(error)) return error;
     throw error;
@@ -211,7 +223,11 @@ async function* recoverOutputs(
     resource.setOutput({ ...session.node.output, ...readResult });
   }
 
-  const missing = findMissingOutputs(resource, resource.output);
+  const missing = findMissingOutputs(
+    resource,
+    resource.output,
+    resource.read ? undefined : NO_READ_MISSING_OUTPUTS_HINT,
+  );
   if (!opts.dryRun && resource.read) {
     const { version: _, ...record } = session.node;
     yield* session.persist({
