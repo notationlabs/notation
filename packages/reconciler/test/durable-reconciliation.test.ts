@@ -1207,7 +1207,6 @@ describe("recoverable creates", () => {
       expect([...remote.keys()]).toEqual(["app/1"]);
       expect(await runtime.state.get("api")).toMatchObject({
         lastOperation: "creating",
-        output: { url: "app/0", name: "app" },
       });
 
       await abandon(runtime, "drift-recreate-unknown", "deploy-2");
@@ -1352,7 +1351,8 @@ describe("recoverable creates", () => {
 
     await expect(runtime.run("deploy-1")).rejects.toThrow(
       "Cannot take over no-read: test/durable/takeover-no-read has no read " +
-        "operation, so its params cannot be compared with config.",
+        "operation, so its params cannot be compared with config. Delete " +
+        "the existing resource, or run destroy, and deploy again.",
     );
     runtime.close();
   });
@@ -1618,51 +1618,6 @@ describe("recoverable creates", () => {
       }),
     );
     expect(await runtime.state.get("api")).toBeUndefined();
-    runtime.close();
-  });
-
-  it("deletes a resource with a provider-assigned key by the key that each creating record of a drift-recreate kept", async () => {
-    const { Assigned, remote, calls, control } = defineAssigned(
-      "test/durable/creating-drift-assigned-key",
-    );
-    const runtime = createRuntime(
-      [new Assigned("integration")],
-      "creating-drift-assigned-key",
-      { driftDetection: true },
-    );
-
-    await runtime.run("deploy-1");
-    // The drift read misses the resource, and the create that follows makes
-    // nothing and ends with an unknown outcome.
-    control.hiddenReads = 1;
-    control.failCreate = new ResourceCreationUnknownError("socket timed out");
-    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
-      name: "ResourceCreationUnknownError",
-    });
-    expect(await runtime.state.get("integration")).toMatchObject({
-      lastOperation: "creating",
-      output: { remoteId: "integration-1" },
-    });
-
-    // A create from the "creating" record ends unknown too, and its record
-    // keeps the key.
-    await abandon(runtime, "creating-drift-assigned-key", "deploy-2");
-    await expect(runtime.run("deploy-3")).rejects.toMatchObject({
-      name: "ResourceCreationUnknownError",
-    });
-    expect(await runtime.state.get("integration")).toMatchObject({
-      lastOperation: "creating",
-      output: { remoteId: "integration-1" },
-    });
-
-    await abandon(runtime, "creating-drift-assigned-key", "deploy-3");
-    await runtime.destroy("destroy-1");
-
-    expect(calls.filter((call) => call.startsWith("delete"))).toEqual([
-      "delete:integration-1",
-    ]);
-    expect(remote.size).toBe(0);
-    expect(await runtime.state.get("integration")).toBeUndefined();
     runtime.close();
   });
 

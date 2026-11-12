@@ -215,7 +215,8 @@ async function* takeOver(
   if (!resource.read) {
     throw new Error(
       `Cannot take over ${resource.id}: ${resource.type} has no read ` +
-        `operation, so its params cannot be compared with config.`,
+        `operation, so its params cannot be compared with config. Delete ` +
+        `the existing resource, or run destroy, and deploy again.`,
     );
   }
   resource.setOutput({ ...resourceParams, ...key });
@@ -312,22 +313,13 @@ function isOutcomeUnknown(error: unknown): boolean {
  * The record written before the create is attempted. Its output holds the
  * key fields that params supply, so that the resource can be read or deleted
  * from the record alone.
- *
- * It keeps the output of the record that the create started from too. After
- * a drift read reported the resource gone, that output holds the key that
- * the provider assigned. If the create's outcome stays unknown, a delete of
- * this record then still has that key. A class with no `find` has no other
- * way to get it.
  */
 function creatingRecord(params: CreateResourceParams): PersistedResourceState {
-  const { resource, resourceParams, prior } = params;
+  const { resource, resourceParams } = params;
   return resourceRecord(params, {
     lastOperation: "creating",
     params: resource.toState(resourceParams),
-    output: resource.toState({
-      ...(prior?.output as Record<string, unknown> | undefined),
-      ...definedKey(resource, resourceParams),
-    }),
+    output: resource.toState(definedKey(resource, resourceParams)),
   });
 }
 

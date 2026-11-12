@@ -20,8 +20,7 @@ export type StateNode = {
   /**
    * `creating` marks a record written before a create is attempted. The
    * create may or may not have made the resource. Its output holds the key
-   * fields that params supply, and the output of the record that it was
-   * written over, if any.
+   * fields that params supply.
    */
   lastOperation: "creating" | "create" | "update";
   lastOperationAt: string;
