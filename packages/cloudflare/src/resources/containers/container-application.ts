@@ -253,6 +253,14 @@ export const ContainerApplication = containerApplicationSchema
         `The Worker ${script.ScriptName} hosts no Durable Object namespace with the id "${config.HostedNamespaceId}". Set HostedNamespaceId to the id of an entry in the Worker's DurableObjectNamespaces.`,
       );
     }
+    if (!hosted.container) {
+      throw new Error(
+        notContainerEnabledMessage(
+          `for the class ${hosted.className}`,
+          config.HostedNamespaceId,
+        ),
+      );
+    }
     return {
       AccountId: accountId(),
       ScriptName: script.ScriptName,
@@ -304,9 +312,16 @@ function createError(
   }
   if (error.hasCode(NAMESPACE_NOT_CONTAINER_ENABLED)) {
     return new Error(
-      `The Durable Object namespace ${namespace} can't run containers. Set \`container: true\` on the entry "${params.HostedNamespaceId}" in the Worker's DurableObjectNamespaces, and deploy again.`,
+      notContainerEnabledMessage(namespace, params.HostedNamespaceId),
       { cause: error },
     );
   }
   return error;
+}
+
+function notContainerEnabledMessage(
+  namespace: string,
+  hostedNamespaceId: string,
+): string {
+  return `The Durable Object namespace ${namespace} can't run containers. Set \`container: true\` on the entry "${hostedNamespaceId}" in the Worker's DurableObjectNamespaces, and deploy again.`;
 }
