@@ -1025,8 +1025,7 @@ describe("recoverable creates", () => {
     });
     expect(await runtime.state.get("role")).toBeUndefined();
 
-    // The record of the refused create is cleared, so a later deploy
-    // refuses too.
+    // The refused create leaves no record, so a later deploy refuses too.
     await abandon(runtime, "reclaim-foreign", "deploy-1");
     await expect(runtime.run("deploy-2")).rejects.toMatchObject({
       name: "ResourceAlreadyExistsError",
@@ -1123,7 +1122,11 @@ describe("recoverable creates", () => {
     });
     expect(create).toHaveBeenCalledTimes(2);
     expect(read).not.toHaveBeenCalled();
-    expect(await runtime.state.get("unproven")).toBeUndefined();
+    // The refusal writes back the record that deploy-1 left.
+    expect(await runtime.state.get("unproven")).toMatchObject({
+      lastOperation: "creating",
+      creates: ["deploy-1"],
+    });
     runtime.close();
   });
 
@@ -1433,8 +1436,11 @@ describe("recoverable creates", () => {
 
     expect(calls).toEqual(["create:app", "create:app"]);
     expect(remote.size).toBe(1);
-    // The refusal clears the record that the earlier execution left.
-    expect(await runtime.state.get("role")).toBeUndefined();
+    // The refusal writes back the record that the earlier execution left.
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "creating",
+      creates: ["deploy-1"],
+    });
     runtime.close();
   });
 
@@ -1463,7 +1469,45 @@ describe("recoverable creates", () => {
 
     expect(calls).toEqual(["create:app", "create:app"]);
     expect(remote.get("app")).toMatchObject({ name: "app" });
-    expect(await runtime.state.get("role")).toBeUndefined();
+    // The refusal writes back the record that deploy-1 left, without
+    // deploy-2, whose create made nothing.
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "creating",
+      creates: ["deploy-1"],
+    });
+    runtime.close();
+  });
+
+  it("takes over a resource by the token of an earlier execution after a refusal", async () => {
+    const { Named, remote, tokens, calls } = defineNamed(
+      "test/durable/reclaim-after-refusal",
+    );
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "reclaim-after-refusal",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    const token = tokens.get("app")!;
+    // deploy-2 can't see the token, as when a provider's tag reads lag.
+    tokens.set("app", "not-visible-yet");
+    await abandon(runtime, "reclaim-after-refusal", "deploy-1");
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "ResourceAlreadyExistsError",
+    });
+    tokens.set("app", token);
+    await runtime.run("deploy-3");
+
+    // find matched deploy-1's token before deploy-3's create.
+    expect(calls).toEqual(["create:app", "create:app"]);
+    expect(remote.size).toBe(1);
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "create",
+      creates: ["deploy-1"],
+    });
     runtime.close();
   });
 
@@ -1569,6 +1613,10 @@ describe("recoverable creates", () => {
 
     expect(calls).toEqual(["create:app", "create:app", "find:app"]);
     expect(remote.size).toBe(1);
+    expect(await runtime.state.get("route")).toMatchObject({
+      lastOperation: "creating",
+      creates: ["deploy-1"],
+    });
     runtime.close();
   });
 
@@ -1642,7 +1690,7 @@ describe("recoverable creates", () => {
     runtime.close();
   });
 
-  it("keeps a creating record that an earlier execution left when create fails", async () => {
+  it("writes back a creating record that an earlier execution left when create fails", async () => {
     const { Named, remote, calls, control } = defineNamed(
       "test/durable/creating-kept",
     );
@@ -1662,9 +1710,10 @@ describe("recoverable creates", () => {
     await expect(runtime.run("deploy-2")).rejects.toThrow("access denied");
 
     expect(calls).toEqual(["create:app", "create:app"]);
+    // deploy-2's create made nothing, so the record does not list it.
     expect(await runtime.state.get("role")).toMatchObject({
       lastOperation: "creating",
-      creates: ["deploy-1", "deploy-2"],
+      creates: ["deploy-1"],
     });
     runtime.close();
   });

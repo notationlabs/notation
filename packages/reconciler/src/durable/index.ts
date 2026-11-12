@@ -30,10 +30,9 @@
  *                              record, before a create is attempted
  *   state:persist:<id>:reclaimed  conditional write of the record of a
  *                              resource that create took over
- *   state:persist:<id>:cleared    conditional removal of the "creating"
- *                              record, after a create that made nothing
- *   state:persist:<id>:restored   conditional write of the full record
- *                              that a refused drift-recreate started from
+ *   state:persist:<id>:restored   conditional write of the record that a
+ *                              failed create started from, or removal of
+ *                              the "creating" record if it started from none
  *   state:delete:<id>          conditional removal of one
  *   state:<write>:<id>:settle:<n>        a write in pass <n> over a cycle
  *   state:delete:<id>:replace:<replaced id>   the removal of a dependent

@@ -78,11 +78,10 @@ export type PersistState = (
 ) => AsyncGenerator<unknown, void, unknown>;
 
 /**
- * `cleared` clears the record after a create that made nothing, so that a
- * later deploy can't take over a resource with the same key. `restored`
- * writes back the full record that a refused create started from.
+ * `restored` writes back the record that a failed create started from, or
+ * clears the record if the create started from none.
  */
-export type PersistStage = "creating" | "reclaimed" | "cleared" | "restored";
+export type PersistStage = "creating" | "reclaimed" | "restored";
 
 export type RemoveState = () => AsyncGenerator<unknown, void, unknown>;
 

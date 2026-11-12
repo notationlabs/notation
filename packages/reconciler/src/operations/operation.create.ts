@@ -62,14 +62,11 @@ const MAX_CREATE_LOOKUP_ATTEMPTS = 10;
  * 2. The create attempt's outcome was unknown, and its lookup found the
  *    resource.
  * 3. The provider reports that the resource already exists, and the proof
- *    holds. Without the proof, create fails. The record is cleared when the
- *    execution started from no record or from a "creating" record, and is
- *    written back when it started from a full record.
+ *    holds. Without the proof, create fails.
  *
- * When create fails with another error that does not leave its outcome
- * unknown, the "creating" record is cleared if this execution started from
- * no record, and the prior record is written back if it started from a full
- * record. A "creating" record that an earlier execution left stays.
+ * When create fails and its outcome is not unknown, the record that this
+ * execution started from is written back, or the record is cleared if it
+ * started from none. An unknown outcome keeps the "creating" record.
  */
 export async function* createResourceOperation(
   step: StepRunner,
@@ -122,10 +119,7 @@ export async function* createResourceOperation(
           cause: error,
         });
       }
-      if (isOutcomeUnknown(error)) throw error;
-      if (!params.prior || !isCreatingRecord(params.prior)) {
-        yield* restorePrior(params);
-      }
+      if (!isOutcomeUnknown(error)) yield* restorePrior(params);
       throw error;
     }
 
@@ -205,18 +199,17 @@ async function* reclaim(
 }
 
 /**
- * Undoes the "creating" record after a refusal or a failed create. A full
- * record describes a resource that a drift read reported gone, and it is
- * written back, so that the next deploy reads the resource again. Any other
- * record is cleared, because after a refusal it would let a later deploy try
- * the proof again for a resource that is not Notation's.
+ * Writes back the record that the create started from, or clears the record
+ * if it started from none. A "creating" record that an earlier execution
+ * left keeps its `creates`, so a later deploy can still prove ownership by
+ * the tokens of those executions.
  */
 async function* restorePrior(
   params: CreateResourceParams,
 ): AsyncGenerator<unknown, void, unknown> {
   const { prior } = params;
-  if (!prior || isCreatingRecord(prior)) {
-    yield* params.persist(null, "cleared");
+  if (!prior) {
+    yield* params.persist(null, "restored");
     return;
   }
   const { version: _, ...record } = prior;
