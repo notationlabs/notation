@@ -22,6 +22,11 @@ import {
   updateApplication,
   type ContainerConfiguration,
 } from "src/api/containers";
+import { listScriptNamespaces } from "src/api/durable-objects";
+import {
+  WorkerScript,
+  type WorkerScriptInstance,
+} from "src/resources/workers/worker-script";
 
 type Settings = {
   /** The most instances that can run at once. */
@@ -35,16 +40,35 @@ export type ContainerApplicationSchema = {
   CreateParams: Settings & {
     AccountId: string;
     Name: string;
+    /**
+     * The `id` of the entry in the Worker's `DurableObjectNamespaces` whose
+     * namespace runs the containers. The entry must set `container: true`.
+     */
+    HostedNamespaceId: string;
+    ScriptName: string;
+    /** The class of the hosted namespace. */
+    ClassName: string;
+  };
+  UpdateParams: Settings & { ClassName: string };
+  ReadResult: {
     /** The Durable Object namespace whose objects run the containers. */
     DurableObjectNamespaceId: string;
   };
-  UpdateParams: Settings;
-  ReadResult: {};
+};
+
+export type ContainerApplicationDependencies = {
+  /** The Worker that hosts the Durable Object namespace. */
+  script: WorkerScriptInstance;
 };
 
 const containerApplication = resource<ContainerApplicationSchema>({
   type: "cloudflare/containers/ContainerApplication",
   provider: "@notation/cloudflare/resources",
+  // A replaced Worker gets new namespaces, and Cloudflare deletes the old
+  // ones with the old Worker. The application would be left with a
+  // namespace that no longer exists, so deploy deletes it first and creates
+  // it again for the new namespace.
+  blocksDeleteOf: [WorkerScript.type],
 });
 
 const containerApplicationSchema = containerApplication.defineSchema({
@@ -67,10 +91,27 @@ const containerApplicationSchema = containerApplication.defineSchema({
     immutable: true,
     value: v.string(),
   },
-  DurableObjectNamespaceId: {
+  HostedNamespaceId: {
     propertyType: "param",
     presence: "required",
     immutable: true,
+    value: v.string(),
+  },
+  ScriptName: {
+    propertyType: "param",
+    presence: "required",
+    immutable: true,
+    value: v.string(),
+  },
+  // A renamed class keeps its namespace, so the application stays.
+  ClassName: {
+    propertyType: "param",
+    presence: "required",
+    value: v.string(),
+  },
+  DurableObjectNamespaceId: {
+    propertyType: "computed",
+    presence: "required",
     value: v.string(),
   },
   MaxInstances: {
@@ -88,11 +129,11 @@ const containerApplicationSchema = containerApplication.defineSchema({
 type Params = ContainerApplicationSchema["CreateParams"];
 
 /**
- * Runs the containers of a Durable Object namespace. The Worker that hosts
- * the namespace must declare the namespace's class as a container class.
- * Notation's `WorkerScript` doesn't support container classes yet, so the
- * Worker must be deployed some other way, and `DurableObjectNamespaceId` set
- * by hand.
+ * Runs the containers of a Durable Object namespace that a `WorkerScript`
+ * hosts. `HostedNamespaceId` picks the namespace from the Worker's
+ * `DurableObjectNamespaces`, and that entry must set `container: true`. The
+ * Worker is deployed first. The create then looks up the namespace's ID in
+ * the namespaces that Cloudflare lists for the Worker.
  *
  * An application that pulls its image from a private registry should
  * `dependOn` the `ContainerRegistry` for that registry.
@@ -116,33 +157,44 @@ export const ContainerApplication = containerApplicationSchema
     // can't take over an existing application. `find` can: after a process
     // stop, it adopts the application with the name and the namespace, even
     // if this deploy didn't make it.
-    create: cloudflareCreate(async (params) => {
-      try {
-        const application = await createApplication(params.AccountId, {
-          name: params.Name,
-          durable_objects: { namespace_id: params.DurableObjectNamespaceId },
-          configuration: params.Configuration,
-          max_instances: params.MaxInstances,
-        });
-        return { ApplicationId: application.id };
-      } catch (error) {
-        throw createError(params, error);
+    create: async (params) => {
+      const namespaceId = await namespaceIdOf(params);
+      if (!namespaceId) {
+        throw new ResourceOperationPendingError(
+          `Cloudflare doesn't list a Durable Object namespace for the class ${params.ClassName} of the Worker ${params.ScriptName} yet. This lasts a short time after a Worker upload creates the namespace.`,
+          { retryAfterMs: 5_000 },
+        );
       }
-    }),
+      return await cloudflareCreate(async () => {
+        try {
+          const application = await createApplication(params.AccountId, {
+            name: params.Name,
+            durable_objects: { namespace_id: namespaceId },
+            configuration: params.Configuration,
+            max_instances: params.MaxInstances,
+          });
+          return { ApplicationId: application.id };
+        } catch (error) {
+          throw createError(params, namespaceId, error);
+        }
+      })();
+    },
 
     // Only one application can use a namespace, so the application with the
     // namespace and the name is taken to be the one that the create made.
     find: async (params) => {
-      const applications = await listApplications(params.AccountId);
+      const namespaceId = await namespaceIdOf(params);
+      const applications = namespaceId
+        ? await listApplications(params.AccountId)
+        : [];
       const application = applications.find(
         (application) =>
           application.name === params.Name &&
-          application.durable_objects?.namespace_id ===
-            params.DurableObjectNamespaceId,
+          application.durable_objects?.namespace_id === namespaceId,
       );
       if (!application) {
         throw new ResourceNotFoundError(
-          `No container application is named ${params.Name} and uses the Durable Object namespace ${params.DurableObjectNamespaceId}`,
+          `No container application is named ${params.Name} and uses the Durable Object namespace of the class ${params.ClassName}`,
         );
       }
       return { ApplicationId: application.id };
@@ -190,12 +242,37 @@ export const ContainerApplication = containerApplicationSchema
       }
     },
   })
-  .requireDependencies<{}>()
-  .deriveParams(async () => ({ AccountId: accountId() }));
+  .requireDependencies<ContainerApplicationDependencies>()
+  .deriveParams(async ({ config, deps }) => {
+    const script = deps.script.config;
+    const hosted = script.DurableObjectNamespaces?.find(
+      (namespace) => namespace.id === config.HostedNamespaceId,
+    );
+    if (!hosted) {
+      throw new Error(
+        `The Worker ${script.ScriptName} hosts no Durable Object namespace with the id "${config.HostedNamespaceId}". Set HostedNamespaceId to the id of an entry in the Worker's DurableObjectNamespaces.`,
+      );
+    }
+    return {
+      AccountId: accountId(),
+      ScriptName: script.ScriptName,
+      ClassName: hosted.className,
+    };
+  });
 
 export type ContainerApplicationInstance = InstanceType<
   typeof ContainerApplication
 >;
+
+/**
+ * Returns the ID of the namespace that Cloudflare lists for the class, or
+ * `undefined` if it lists none. A namespace that a Worker upload made may
+ * not be listed straight away.
+ */
+async function namespaceIdOf(params: Params): Promise<string | undefined> {
+  const ids = await listScriptNamespaces(params.AccountId, params.ScriptName);
+  return ids[params.ClassName];
+}
 
 /**
  * Returns the error that the create throws. For a short time after a Worker
@@ -203,16 +280,19 @@ export type ContainerApplicationInstance = InstanceType<
  * nothing is made. That error becomes a `ResourceOperationPendingError`, so
  * the reconciler tries again.
  */
-function createError(params: Params, error: unknown): unknown {
+function createError(
+  params: Params,
+  namespace: string,
+  error: unknown,
+): unknown {
   if (!(error instanceof CloudflareApiError)) return error;
-  const namespace = params.DurableObjectNamespaceId;
   // This error has no code of its own.
   if (
     error.status === 400 &&
     error.hasMessage(/Durable Object namespace was not found/i)
   ) {
     return new ResourceOperationPendingError(
-      `Cloudflare can't find the Durable Object namespace ${namespace} yet. This lasts a short time after a Worker upload creates the namespace. If it doesn't pass, check that DurableObjectNamespaceId is the ID of a namespace in the account ${params.AccountId}.`,
+      `Cloudflare can't find the Durable Object namespace ${namespace} yet. This lasts a short time after a Worker upload creates the namespace.`,
       { retryAfterMs: 5_000, cause: error },
     );
   }
@@ -224,7 +304,7 @@ function createError(params: Params, error: unknown): unknown {
   }
   if (error.hasCode(NAMESPACE_NOT_CONTAINER_ENABLED)) {
     return new Error(
-      `The Durable Object namespace ${namespace} can't run containers. The Worker that hosts the namespace must declare its class as a container class. Notation's WorkerScript doesn't support container classes yet.`,
+      `The Durable Object namespace ${namespace} can't run containers. Set \`container: true\` on the entry "${params.HostedNamespaceId}" in the Worker's DurableObjectNamespaces, and deploy again.`,
       { cause: error },
     );
   }

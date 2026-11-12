@@ -128,6 +128,26 @@ describe("WorkerScript", () => {
 
     const { metadata } = await uploadedMetadata(calls[1]!);
     expect(metadata).not.toHaveProperty("exports");
+    expect(metadata).not.toHaveProperty("containers");
+  });
+
+  it("declares the container classes in the upload", async () => {
+    mockFetch(untilUploaded());
+
+    await script.create({
+      ...params,
+      DurableObjectNamespaces: [
+        { id: "counters", className: "Counter" },
+        { id: "sandboxes", className: "Sandbox", container: true },
+      ],
+    });
+
+    const { metadata } = await uploadedMetadata(calls[1]!);
+    expect(metadata.containers).toEqual([{ class_name: "Sandbox" }]);
+    expect(metadata.exports).toEqual({
+      Counter: { type: "durable-object", storage: "sqlite" },
+      Sandbox: { type: "durable-object", storage: "sqlite" },
+    });
   });
 
   it("reports a Worker that exists already as ResourceAlreadyExistsError", async () => {

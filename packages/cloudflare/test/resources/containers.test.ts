@@ -6,6 +6,7 @@ import {
 } from "@notation/resource";
 import { ContainerApplication } from "src/resources/containers/container-application";
 import { ContainerRegistry } from "src/resources/containers/container-registry";
+import { WorkerScript } from "src/resources/workers/worker-script";
 
 type Call = { method: string; url: string; body: unknown };
 let calls: Call[];
@@ -47,12 +48,15 @@ afterEach(() => {
 describe("ContainerApplication", () => {
   const application = new ContainerApplication("app", {
     config: {} as any,
+    dependencies: {} as any,
   });
 
   const params = {
     AccountId: "acc",
     Name: "app--dev--sandbox",
-    DurableObjectNamespaceId: "ns1",
+    HostedNamespaceId: "sandboxes",
+    ScriptName: "app--dev--api",
+    ClassName: "Sandbox",
     MaxInstances: 5,
     Configuration: {
       image: "registry.cloudflare.com/acc/sandbox:1",
@@ -62,13 +66,34 @@ describe("ContainerApplication", () => {
 
   const key = { AccountId: "acc", ApplicationId: "app1" };
 
-  it("creates the application for the namespace and returns its id", async () => {
-    mockFetch(() => ok({ id: "app1", name: params.Name }));
+  const NAMESPACES =
+    "https://api.cloudflare.com/client/v4/accounts/acc/workers/durable_objects/namespaces";
+
+  // Answers the namespace lists of the create and `find` with `namespaces`.
+  function mockApi(
+    respond: (call: Call) => Response | Promise<Response>,
+    namespaces: unknown[] = [
+      { id: "ns0", class: "Sandbox", script: "another-worker" },
+      { id: "ns1", class: "Sandbox", script: "app--dev--api" },
+    ],
+  ) {
+    mockFetch((call) =>
+      call.url.startsWith(NAMESPACES) ? ok(namespaces) : respond(call),
+    );
+  }
+
+  it("creates the application for the namespace that Cloudflare lists for the class, and returns its id", async () => {
+    mockApi(() => ok({ id: "app1", name: params.Name }));
 
     await expect(application.create(params)).resolves.toEqual({
       ApplicationId: "app1",
     });
     expect(calls).toEqual([
+      {
+        method: "GET",
+        url: `${NAMESPACES}?page=1&per_page=1000`,
+        body: undefined,
+      },
       {
         method: "POST",
         url: `${API}/applications`,
@@ -82,8 +107,55 @@ describe("ContainerApplication", () => {
     ]);
   });
 
-  it("reports a create whose response was a server error as unknown", async () => {
+  it("tries again, and makes nothing, while Cloudflare doesn't list a namespace for the class", async () => {
+    mockApi(
+      () => ok({ id: "app1" }),
+      [{ id: "ns2", class: "Counter", script: "app--dev--api" }],
+    );
+
+    const error = await application.create(params).catch((e) => e);
+    expect(error).toBeInstanceOf(ResourceOperationPendingError);
+    expect(error.message).toContain(
+      "Cloudflare doesn't list a Durable Object namespace for the class Sandbox of the Worker app--dev--api yet",
+    );
+    expect(calls.map((call) => call.method)).toEqual(["GET"]);
+  });
+
+  it("fails, and doesn't report the create as unknown, when the namespace list fails", async () => {
     mockFetch(() => fail(502, undefined, "bad gateway"));
+
+    const error = await application.create(params).catch((e) => e);
+    expect(error).not.toBeInstanceOf(ResourceCreationUnknownError);
+    expect(calls.map((call) => call.method)).toEqual(["GET"]);
+  });
+
+  it("looks for the namespace on every page of the list", async () => {
+    const firstPage = Array.from({ length: 1_000 }, (_, i) => ({
+      id: `other${i}`,
+      class: "Sandbox",
+      script: "another-worker",
+    }));
+    mockFetch((call) => {
+      if (call.method === "POST") return ok({ id: "app1" });
+      return call.url.includes("page=1&")
+        ? ok(firstPage)
+        : ok([{ id: "ns1", class: "Sandbox", script: "app--dev--api" }]);
+    });
+
+    await application.create(params);
+
+    expect(calls.map((call) => call.url)).toEqual([
+      `${NAMESPACES}?page=1&per_page=1000`,
+      `${NAMESPACES}?page=2&per_page=1000`,
+      `${API}/applications`,
+    ]);
+    expect(calls[2]!.body).toMatchObject({
+      durable_objects: { namespace_id: "ns1" },
+    });
+  });
+
+  it("reports a create whose response was a server error as unknown", async () => {
+    mockApi(() => fail(502, undefined, "bad gateway"));
 
     await expect(application.create(params)).rejects.toBeInstanceOf(
       ResourceCreationUnknownError,
@@ -91,7 +163,7 @@ describe("ContainerApplication", () => {
   });
 
   it("finds the application with the name and the namespace after an unknown create", async () => {
-    mockFetch(() =>
+    mockApi(() =>
       ok([
         { id: "other", name: params.Name, durable_objects: null },
         {
@@ -105,14 +177,14 @@ describe("ContainerApplication", () => {
     await expect(application.find!(params, "token")).resolves.toEqual({
       ApplicationId: "app1",
     });
-    expect(calls[0]).toMatchObject({
+    expect(calls[1]).toMatchObject({
       method: "GET",
       url: `${API}/applications`,
     });
   });
 
   it("finds nothing when no application has the name and the namespace", async () => {
-    mockFetch(() =>
+    mockApi(() =>
       ok([{ id: "x", name: "x", durable_objects: { namespace_id: "ns1" } }]),
     );
 
@@ -121,20 +193,29 @@ describe("ContainerApplication", () => {
     );
   });
 
+  it("finds nothing, without listing the applications, when Cloudflare lists no namespace for the class", async () => {
+    mockApi(() => ok([{ id: "app1", name: params.Name }]), []);
+
+    await expect(application.find!(params, "token")).rejects.toBeInstanceOf(
+      ResourceNotFoundError,
+    );
+    expect(calls).toHaveLength(1);
+  });
+
   it("tries again while Cloudflare can't see a new namespace", async () => {
-    mockFetch(() =>
+    mockApi(() =>
       fail(400, 1000, "The provided Durable Object namespace was not found"),
     );
 
     const error = await application.create(params).catch((e) => e);
     expect(error).toBeInstanceOf(ResourceOperationPendingError);
     expect(error.message).toContain(
-      "check that DurableObjectNamespaceId is the ID of a namespace",
+      "Cloudflare can't find the Durable Object namespace ns1 yet",
     );
   });
 
   it("reports a 500 that says Cloudflare can't create the application at this time as unknown", async () => {
-    mockFetch(() => fail(500, 1000, "can't create application at this time"));
+    mockApi(() => fail(500, 1000, "can't create application at this time"));
 
     await expect(application.create(params)).rejects.toBeInstanceOf(
       ResourceCreationUnknownError,
@@ -150,12 +231,12 @@ describe("ContainerApplication", () => {
     [
       1607,
       "DURABLE_OBJECT_NOT_CONTAINER_ENABLED",
-      "must declare its class as a container class. Notation's WorkerScript doesn't support container classes yet",
+      'Set `container: true` on the entry "sandboxes" in the Worker\'s DurableObjectNamespaces',
     ],
   ])(
     "fails with a message that says what to do for error %i",
     async (code, message, expected) => {
-      mockFetch(() => fail(400, code, message));
+      mockApi(() => fail(400, code, message));
 
       const error = await application.create(params).catch((e) => e);
       expect(error).not.toBeInstanceOf(ResourceCreationUnknownError);
@@ -405,8 +486,67 @@ describe("ContainerRegistry", () => {
   );
 });
 
+describe("ContainerApplication namespace", () => {
+  function deployedPair(hostedNamespaceId = "sandboxes") {
+    const script = new WorkerScript("worker:api", {
+      config: {
+        ScriptName: "app--dev--api",
+        CompatibilityDate: "2026-10-12",
+        DurableObjectNamespaces: [
+          { id: "counters", className: "Counter" },
+          { id: "sandboxes", className: "Sandbox", container: true },
+        ],
+      },
+      dependencies: {} as any,
+    });
+    const application = new ContainerApplication("app", {
+      config: {
+        Name: "app--dev--sandbox",
+        HostedNamespaceId: hostedNamespaceId,
+        MaxInstances: 1,
+        Configuration: { image: "img:1" },
+      },
+      dependencies: { script },
+    });
+    return { script, application };
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "acc");
+  });
+
+  it("depends on the Worker, and is deleted before a replaced Worker", () => {
+    const { script, application } = deployedPair();
+
+    expect(application.getDependencies()).toContain(script);
+    expect(ContainerApplication.blocksDeleteOf).toEqual([WorkerScript.type]);
+  });
+
+  it("takes the Worker's name and the class of the hosted namespace from the Worker's config", async () => {
+    const { application } = deployedPair();
+
+    await expect(application.getParams()).resolves.toMatchObject({
+      AccountId: "acc",
+      HostedNamespaceId: "sandboxes",
+      ScriptName: "app--dev--api",
+      ClassName: "Sandbox",
+    });
+  });
+
+  it("throws when the Worker hosts no namespace with the id", async () => {
+    const { application } = deployedPair("rooms");
+
+    await expect(application.getParams()).rejects.toThrow(
+      'The Worker app--dev--api hosts no Durable Object namespace with the id "rooms"',
+    );
+  });
+});
+
 describe("ContainerApplication configuration", () => {
-  const application = new ContainerApplication("app", { config: {} as any });
+  const application = new ContainerApplication("app", {
+    config: {} as any,
+    dependencies: {} as any,
+  });
   const validate = (value: unknown) =>
     application.schema.Configuration.value["~standard"].validate(value);
 

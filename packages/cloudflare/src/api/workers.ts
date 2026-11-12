@@ -80,6 +80,8 @@ export type ScriptUpload = {
   compatibilityFlags: string[];
   bindings: ScriptBinding[];
   exports: Record<string, DurableObjectExport>;
+  /** The Durable Object classes whose namespaces run containers. */
+  containers: { class_name: string }[];
 };
 
 /**
@@ -118,6 +120,7 @@ export async function putScript(
     ...(Object.keys(upload.exports).length > 0
       ? { exports: upload.exports }
       : {}),
+    ...(upload.containers.length > 0 ? { containers: upload.containers } : {}),
   };
   const form = new FormData();
   form.set("metadata", JSON.stringify(metadata));
