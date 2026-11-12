@@ -47,7 +47,13 @@ const containerRegistrySchema = containerRegistry.defineSchema({
     presence: "required",
     immutable: true,
     primaryKey: true,
-    value: v.string(),
+    value: v.pipe(
+      v.string(),
+      v.regex(
+        /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/,
+        "Domain must be a lowercase hostname, such as docker.io, with no scheme or path",
+      ),
+    ),
   },
   Kind: {
     propertyType: "param",
@@ -68,8 +74,8 @@ const containerRegistrySchema = containerRegistry.defineSchema({
 /**
  * Gives Containers the credentials to pull images from a private registry.
  * Cloudflare can't change a registry's credentials, so a change replaces the
- * registry. The read doesn't return `Auth`, so a change made outside
- * notation to the credentials is not seen.
+ * registry. The read doesn't return `Kind` or `Auth`, so a change made
+ * outside notation to them is not seen.
  */
 export const ContainerRegistry = containerRegistrySchema
   .defineOperations({
@@ -94,14 +100,9 @@ export const ContainerRegistry = containerRegistrySchema
       if (!registry) {
         throw new ResourceNotFoundError("Container registry was not found");
       }
-      return {
-        AccountId: key.AccountId,
-        Domain: key.Domain,
-        Kind:
-          registry.kind === "default"
-            ? undefined
-            : (registry.kind ?? undefined),
-      };
+      // `Kind` is left out: it is immutable, so a value that Cloudflare
+      // returns in another case would replace the registry.
+      return { AccountId: key.AccountId, Domain: key.Domain };
     },
 
     // Cloudflare lists no error for a registry that doesn't exist. When the
@@ -111,7 +112,14 @@ export const ContainerRegistry = containerRegistrySchema
         await deleteRegistry(key.AccountId, key.Domain);
       } catch (error) {
         if (!(error instanceof CloudflareApiError)) throw error;
-        if (await findRegistry(key.AccountId, key.Domain)) throw error;
+        let registry;
+        try {
+          registry = await findRegistry(key.AccountId, key.Domain);
+        } catch (listError) {
+          error.cause = listError;
+          throw error;
+        }
+        if (registry) throw error;
       }
     },
   })

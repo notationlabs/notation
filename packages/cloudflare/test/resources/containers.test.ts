@@ -150,7 +150,7 @@ describe("ContainerApplication", () => {
     [
       1607,
       "DURABLE_OBJECT_NOT_CONTAINER_ENABLED",
-      "Declare its class as a container class in the Worker",
+      "must declare its class as a container class. Notation's WorkerScript doesn't support container classes yet",
     ],
   ])(
     "fails with a message that says what to do for error %i",
@@ -230,7 +230,7 @@ describe("ContainerApplication", () => {
           description: "Deployed by notation",
           strategy: "rolling",
           kind: "full_auto",
-          step_percentage: 100,
+          step_percentage: 25,
           target_configuration: configuration,
         },
       },
@@ -321,10 +321,7 @@ describe("ContainerRegistry", () => {
   it("reads the registry from the list, and reads one that is not listed as not found", async () => {
     mockFetch(() => ok([{ domain: "docker.io", kind: "DockerHub" }]));
 
-    await expect(registry.read!(key)).resolves.toEqual({
-      ...key,
-      Kind: "DockerHub",
-    });
+    await expect(registry.read!(key)).resolves.toEqual(key);
     await expect(
       registry.read!({ AccountId: "acc", Domain: "ghcr.io" }),
     ).rejects.toBeInstanceOf(ResourceNotFoundError);
@@ -359,6 +356,37 @@ describe("ContainerRegistry", () => {
       "failed with status 404",
     );
   });
+
+  it("throws a failed delete with the error of the list as its cause when the list also fails", async () => {
+    mockFetch((call) =>
+      call.method === "DELETE"
+        ? fail(404, 1000, "not found")
+        : fail(500, undefined, "list failed"),
+    );
+
+    const error = await registry.delete(key, {} as any).catch((e) => e);
+    expect(error.message).toContain("DELETE");
+    expect(error.message).toContain("failed with status 404");
+    expect(error.cause.message).toContain("list failed");
+  });
+
+  it.each(["docker.io", "123456789012.dkr.ecr.us-east-1.amazonaws.com"])(
+    "accepts the domain %s",
+    async (domain) => {
+      const result =
+        await registry.schema.Domain.value["~standard"].validate(domain);
+      expect(result.issues).toBeUndefined();
+    },
+  );
+
+  it.each(["https://docker.io", "docker.io/library", "Docker.io", ""])(
+    "rejects the domain %j",
+    async (domain) => {
+      const result =
+        await registry.schema.Domain.value["~standard"].validate(domain);
+      expect(result.issues).toBeDefined();
+    },
+  );
 });
 
 describe("ContainerApplication configuration", () => {
@@ -376,6 +404,12 @@ describe("ContainerApplication configuration", () => {
 
   it("rejects a key that is not supported", async () => {
     const result = await validate({ image: "img:1", disk: { size_mb: 2000 } });
+    expect(result.issues).toBeDefined();
+  });
+
+  it("rejects a max instances below 1", async () => {
+    const result =
+      await application.schema.MaxInstances.value["~standard"].validate(0);
     expect(result.issues).toBeDefined();
   });
 

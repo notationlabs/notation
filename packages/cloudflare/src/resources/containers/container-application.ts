@@ -74,7 +74,7 @@ const containerApplicationSchema = containerApplication.defineSchema({
   MaxInstances: {
     propertyType: "param",
     presence: "required",
-    value: v.pipe(v.number(), v.integer()),
+    value: v.pipe(v.number(), v.integer(), v.minValue(1)),
   },
   Configuration: {
     propertyType: "param",
@@ -88,11 +88,19 @@ type Params = ContainerApplicationSchema["CreateParams"];
 /**
  * Runs the containers of a Durable Object namespace. The Worker that hosts
  * the namespace must declare the namespace's class as a container class.
+ * Notation's `WorkerScript` doesn't support container classes yet, so the
+ * Worker must be deployed some other way, and `DurableObjectNamespaceId` set
+ * by hand.
  *
- * A change to `Configuration` starts a rollout that replaces every instance.
- * The read doesn't return `Configuration`, because Cloudflare fills in
- * defaults for keys that were not set, so a change made outside notation to
- * the configuration is not seen.
+ * An application that pulls its image from a private registry should
+ * `dependOn` the `ContainerRegistry` for that registry.
+ *
+ * A change to `Configuration` starts a rollout that replaces the instances,
+ * 25% of them at a time. Pin the image by its digest: a new image pushed under
+ * the same tag doesn't change `Configuration`, so it starts no rollout. The
+ * read doesn't return `Configuration`, because Cloudflare fills in defaults
+ * for keys that were not set, so a change made outside notation to the
+ * configuration is not seen.
  */
 export const ContainerApplication = containerApplicationSchema
   .defineOperations({
@@ -206,7 +214,7 @@ function createError(params: Params, error: unknown): unknown {
   }
   if (error.hasCode(1607)) {
     return new Error(
-      `The Durable Object namespace ${namespace} can't run containers. Declare its class as a container class in the Worker that hosts it, and deploy the Worker first.`,
+      `The Durable Object namespace ${namespace} can't run containers. The Worker that hosts the namespace must declare its class as a container class. Notation's WorkerScript doesn't support container classes yet.`,
       { cause: error },
     );
   }

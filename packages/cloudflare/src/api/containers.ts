@@ -12,10 +12,19 @@ const assignIpSchema = v.picklist(["none", "predefined"]);
 // Cloudflare rejects a configuration with a key it doesn't know, so the
 // object is strict and a misspelt key fails before the request.
 export const configurationSchema = v.strictObject({
+  /**
+   * Pin the image by its digest, such as `registry.cloudflare.com/<account>/app@sha256:...`.
+   * A rollout starts only when `Configuration` changes, so pushing a new image
+   * under the same tag starts no rollout.
+   */
   image: v.string(),
   instance_type: v.optional(v.string()),
   vcpu: v.optional(v.number()),
   memory_mib: v.optional(v.number()),
+  /**
+   * Don't put secrets here. The values are stored as plain text in state and
+   * shown in plan output.
+   */
   environment_variables: v.optional(
     v.array(v.strictObject({ name: v.string(), value: v.string() })),
   ),
@@ -95,8 +104,13 @@ export async function updateApplication(
 }
 
 /**
- * Starts a rollout that replaces every instance with one that runs
- * `configuration`. Cloudflare finishes the rollout after the call returns.
+ * Starts a rollout that replaces the instances with ones that run
+ * `configuration`, 25% of them at a time. Cloudflare finishes the rollout
+ * after the call returns.
+ *
+ * The target configuration is sent whole. Whether a key that is left out of
+ * it is removed from the application has not been checked against the live
+ * API.
  */
 export async function rollOutConfiguration(
   account: string,
@@ -110,7 +124,7 @@ export async function rollOutConfiguration(
       description: "Deployed by notation",
       strategy: "rolling",
       kind: "full_auto",
-      step_percentage: 100,
+      step_percentage: 25,
       target_configuration: configuration,
     },
   );
