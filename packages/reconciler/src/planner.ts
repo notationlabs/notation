@@ -140,16 +140,8 @@ export async function createPlan({
  * Loads the resource's outputs from state, then returns and checks the
  * params that plan knows. Throws if the state record has a different type.
  * Outputs in state stand in for the outputs of dependencies, so the
- * dependencies must be loaded first.
- *
- * Plan treats a required output missing from a resource's state as unknown,
- * because deploy reads the resource again to fill it in. A resource with no
- * `read` cannot be read again, so this throws for it. Dependencies are
- * planned first, so the check covers every resource, with or without
- * dependents. Update can't fill in an output either, because deploy keeps
- * only the update's params as output. A resource with no `read` fails plan
- * even when this deploy replaces it, though the create would write a
- * missing output that is part of its key.
+ * dependencies must be loaded first. Throws if a resource with no `read` lacks
+ * a required output in state.
  */
 export async function planKnownParams(
   resource: BaseResource,
@@ -162,6 +154,12 @@ export async function planKnownParams(
   const stateNode = await state.get(resource.id);
   assertSameType(resource, stateNode);
   if (stateNode) resource.setOutput(stateNode.output);
+  // Plan treats a required output missing from a resource's state as unknown,
+  // because deploy reads the resource again to fill it in. A resource with no
+  // `read` cannot be read again. Update can't fill in an output either,
+  // because deploy keeps only the update's params as output. The check runs
+  // even when this deploy replaces the resource, though the create would
+  // write a missing output that is part of its key.
   if (stateNode && !resource.read) {
     assertRequiredOutputs(
       resource,
