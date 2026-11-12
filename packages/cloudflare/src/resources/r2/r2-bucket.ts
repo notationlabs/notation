@@ -101,60 +101,59 @@ function alreadyExists(key: R2BucketKey, cause?: unknown): Error {
   );
 }
 
-export const R2Bucket = r2BucketSchema
-  .defineOperations({
-    // Cloudflare rejects a name that the account has already. The check
-    // still runs first: after a create with an unknown outcome, the
-    // reconciler reads the key, and it would take a bucket that existed
-    // before as the one the create made. The check is outside
-    // `cloudflareCreate`: if it throws, nothing was created.
-    create: async (params) => {
-      const key = bucketKey(params);
-      if (await getBucket(key)) throw alreadyExists(params);
-      try {
-        await cloudflareCreate(createBucket)(key, {
-          locationHint: params.LocationHint,
-          storageClass: params.StorageClass,
-        });
-      } catch (error) {
-        if (isBucketAlreadyExists(error)) throw alreadyExists(params, error);
-        throw error;
+export const R2Bucket = r2BucketSchema.defineOperations({
+  // Cloudflare rejects a name that the account has already. The check
+  // still runs first: after a create with an unknown outcome, the
+  // reconciler reads the key, and it would take a bucket that existed
+  // before as the one the create made. The check is outside
+  // `cloudflareCreate`: if it throws, nothing was created.
+  create: async (params) => {
+    const key = bucketKey(params);
+    if (await getBucket(key)) throw alreadyExists(params);
+    try {
+      await cloudflareCreate(createBucket)(key, {
+        locationHint: params.LocationHint,
+        storageClass: params.StorageClass,
+      });
+    } catch (error) {
+      if (isBucketAlreadyExists(error)) throw alreadyExists(params, error);
+      throw error;
+    }
+  },
+
+  read: async (key) => {
+    const bucket = await getBucket(bucketKey(key));
+    if (!bucket) {
+      throw new ResourceNotFoundError("R2 bucket was not found");
+    }
+    return {
+      AccountId: key.AccountId,
+      BucketName: key.BucketName,
+      Jurisdiction: key.Jurisdiction,
+      StorageClass: bucket.storage_class ?? undefined,
+    };
+  },
+
+  update: async (key, _patch, params) => {
+    await setBucketStorageClass(bucketKey(key), params.StorageClass);
+  },
+
+  delete: async (key) => {
+    try {
+      await deleteBucket(bucketKey(key));
+    } catch (error) {
+      if (isNoSuchBucket(error)) return;
+      if (isBucketNotEmpty(error)) {
+        throw new Error(
+          `The bucket ${key.BucketName} in ${inAccount(key)} still has objects, and Cloudflare deletes only an empty bucket. Delete its objects, then try again.`,
+          { cause: error },
+        );
       }
-    },
+      throw error;
+    }
+  },
 
-    read: async (key) => {
-      const bucket = await getBucket(bucketKey(key));
-      if (!bucket) {
-        throw new ResourceNotFoundError("R2 bucket was not found");
-      }
-      return {
-        AccountId: key.AccountId,
-        BucketName: key.BucketName,
-        Jurisdiction: key.Jurisdiction,
-        StorageClass: bucket.storage_class ?? undefined,
-      };
-    },
-
-    update: async (key, _patch, params) => {
-      await setBucketStorageClass(bucketKey(key), params.StorageClass);
-    },
-
-    delete: async (key) => {
-      try {
-        await deleteBucket(bucketKey(key));
-      } catch (error) {
-        if (isNoSuchBucket(error)) return;
-        if (isBucketNotEmpty(error)) {
-          throw new Error(
-            `The bucket ${key.BucketName} in ${inAccount(key)} still has objects, and Cloudflare deletes only an empty bucket. Delete its objects, then try again.`,
-            { cause: error },
-          );
-        }
-        throw error;
-      }
-    },
-
-    deriveParams: () => ({ AccountId: accountId() }),
-  });
+  deriveParams: () => ({ AccountId: accountId() }),
+});
 
 export type R2BucketInstance = InstanceType<typeof R2Bucket>;
