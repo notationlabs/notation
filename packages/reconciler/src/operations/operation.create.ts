@@ -14,7 +14,7 @@ import {
   type DurableObject,
   type ResourceOperationContext,
 } from "@notation/resource";
-import { isCreatingRecord, type StateNode } from "@notation/state";
+import { type StateNode } from "@notation/state";
 import { WorkflowEffectError, type EffectLookup } from "@notation/durable";
 import {
   type CreateResourceParams,
@@ -53,9 +53,9 @@ const MAX_CREATE_LOOKUP_ATTEMPTS = 10;
  * the params the read returned. The result has `tookOver: true`, and the
  * caller compares the record with the desired params, as for any recorded
  * resource. There are three ways to a takeover:
- * 1. The record is a "creating" record that an earlier deploy left, and
- *    `find` finds the resource. This runs before the create, so that a
- *    resource whose key the provider assigns is not made a second time.
+ * 1. `find` finds the resource. This runs before every create of a class
+ *    with `find`, so that a resource whose key the provider assigns is not
+ *    made a second time.
  * 2. The create attempt's outcome was unknown, and its lookup found the
  *    resource.
  * 3. The provider reports that the resource already exists.
@@ -68,7 +68,10 @@ const MAX_CREATE_LOOKUP_ATTEMPTS = 10;
  *
  * When create fails and its outcome is not unknown, the record that this
  * create started from is written back, or the record is cleared if it
- * started from none. An unknown outcome keeps the "creating" record.
+ * started from none. When the provider reports that the resource exists and
+ * deploy cannot take it over, the create of a replacement writes back the
+ * record of the replaced resource instead. An unknown outcome keeps the
+ * "creating" record.
  */
 export async function* createResourceOperation(
   step: StepRunner,
@@ -83,11 +86,14 @@ export async function* createResourceOperation(
 
   const { resource, resourceParams } = params;
   try {
-    if (isCreatingRecord(params.prior) && resource.find) {
+    if (resource.find) {
       const key = yield* step.run("create:find", () =>
         findResourceKey(resource, resourceParams),
       );
-      if (key) return yield* takeOver(step, params, key);
+      if (key) {
+        yield* refuseReplaced(params, key);
+        return yield* takeOver(step, params, key);
+      }
     }
 
     yield* params.persist(creatingRecord(params), "creating");
@@ -105,15 +111,28 @@ export async function* createResourceOperation(
         if (!isOutcomeUnknown(error)) yield* restoreRecord(params);
         throw error;
       }
-      const key = yield* existingKey(step, params, error);
+      // The provider refused the create, so the create made nothing. When
+      // deploy cannot take the existing resource over, no "creating" record
+      // is left.
+      let key: DurableObject;
+      try {
+        key = yield* existingKey(step, params, error);
+      } catch (failure) {
+        yield* restoreRecord(params, params.replaces ?? params.prior);
+        throw failure;
+      }
       yield* refuseReplaced(params, key);
+      if (!resource.read) {
+        yield* restoreRecord(params, params.replaces ?? params.prior);
+        throw noReadError(resource);
+      }
       return yield* takeOver(step, params, key);
     }
 
     if (created.lookedUp) {
       const key = created.key ?? {};
       yield* refuseReplaced(params, key);
-      if (resource.read) return yield* takeOver(step, params, key);
+      return yield* takeOver(step, params, key);
     }
 
     const computedPrimaryKey = created.key;
@@ -195,7 +214,6 @@ async function* existingKey(
   } else {
     return {};
   }
-  yield* restoreRecord(params);
   throw new ResourceAlreadyExistsError(
     `Cannot create ${resource.id}: ${error.message}. Deploy cannot take ` +
       `over the existing resource, because ${reason}.`,
@@ -213,13 +231,7 @@ async function* takeOver(
   key: DurableObject,
 ): AsyncGenerator<unknown, { tookOver: boolean }, unknown> {
   const { resource, resourceParams } = params;
-  if (!resource.read) {
-    throw new Error(
-      `Cannot take over ${resource.id}: ${resource.type} has no read ` +
-        `operation, so its params cannot be compared with config. Delete ` +
-        `the existing resource, or run destroy, and deploy again.`,
-    );
-  }
+  if (!resource.read) throw noReadError(resource);
   resource.setOutput({ ...resourceParams, ...key });
   const { output, remote } = yield* readRemoteOperation(
     step.scope("create:takeover"),
@@ -246,6 +258,14 @@ async function* takeOver(
     reason: "taken-over",
   });
   return { tookOver: true };
+}
+
+function noReadError(resource: BaseResource): Error {
+  return new Error(
+    `Cannot take over ${resource.id}: ${resource.type} has no read ` +
+      `operation, so its params cannot be compared with config. Delete ` +
+      `the existing resource and deploy again.`,
+  );
 }
 
 /**
