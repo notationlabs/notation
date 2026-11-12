@@ -24,20 +24,16 @@ export async function* destroy(
     for (const unit of orderDeployUnits(opts.resources).reverse()) {
       const scope = (id: string) =>
         scopeStep(step, `notation:destroy:${encodeURIComponent(id)}`);
-      if (unit.kind === "cycle") {
-        for (const placeholder of unit.cycle.placeholders) {
-          if (kept.has(placeholder.id)) continue;
-          yield* revertToPlaceholder(
-            scope(placeholder.id),
-            placeholder,
-            opts,
-            unit.cycle,
-          );
-        }
+      for (const placeholder of unit.placeholders) {
+        if (kept.has(placeholder.id)) continue;
+        yield* revertToPlaceholder(
+          scope(placeholder.id),
+          placeholder,
+          opts,
+          unit,
+        );
       }
-      const members =
-        unit.kind === "cycle" ? unit.cycle.members : [unit.resource];
-      for (const resource of [...members].reverse()) {
+      for (const resource of [...unit.members].reverse()) {
         if (kept.has(resource.id)) continue;
         yield* deleteResource(scope(resource.id), resource, opts);
       }

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   ResourceCycleError,
   findStronglyConnected,
+  isCycle,
   orderDeployUnits,
   revertedPeers,
   type DeployUnit,
@@ -71,12 +72,12 @@ const bind = (from: BaseResource, to: BaseResource) =>
 
 function describeUnits(units: DeployUnit[]) {
   return units.map((unit) =>
-    unit.kind === "resource"
-      ? unit.resource.id
-      : {
-          members: unit.cycle.members.map((member) => member.id),
-          placeholders: unit.cycle.placeholders.map((member) => member.id),
-        },
+    isCycle(unit)
+      ? {
+          members: unit.members.map((member) => member.id),
+          placeholders: unit.placeholders.map((member) => member.id),
+        }
+      : unit.members[0]!.id,
   );
 }
 
@@ -244,9 +245,9 @@ describe("revertedPeers", () => {
     bind(a, b);
     bind(b, a);
     const [unit] = orderDeployUnits([a, b]);
-    if (unit?.kind !== "cycle") throw new Error("expected a cycle");
+    if (!unit || !isCycle(unit)) throw new Error("expected a cycle");
 
-    expect(revertedPeers(unit.cycle, a).map((peer) => peer.id)).toEqual(["b"]);
+    expect(revertedPeers(unit, a).map((peer) => peer.id)).toEqual(["b"]);
   });
 
   it("fails and names a peer that can't be reverted", () => {
@@ -255,10 +256,10 @@ describe("revertedPeers", () => {
     bind(a, b);
     bind(b, a);
     const [unit] = orderDeployUnits([a, b]);
-    if (unit?.kind !== "cycle") throw new Error("expected a cycle");
+    if (!unit || !isCycle(unit)) throw new Error("expected a cycle");
 
-    expect(() => revertedPeers(unit.cycle, a)).toThrow(ResourceCycleError);
-    expect(() => revertedPeers(unit.cycle, a)).toThrow(
+    expect(() => revertedPeers(unit, a)).toThrow(ResourceCycleError);
+    expect(() => revertedPeers(unit, a)).toThrow(
       "test/cycles/no-update has no update operation, so b can't be updated after it is created",
     );
   });

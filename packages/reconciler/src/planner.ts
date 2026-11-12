@@ -8,7 +8,12 @@ import {
   assertDependenciesPresent,
   collectDependents,
 } from "./dependency-graph";
-import { orderDeployUnits, revertedPeers, type DeployUnit } from "./cycles";
+import {
+  isCycle,
+  orderDeployUnits,
+  revertedPeers,
+  type DeployUnit,
+} from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
@@ -64,7 +69,7 @@ export async function createPlan({
   const cascaded = new Map<string, string>();
 
   for (const unit of orderDeployUnits(resources)) {
-    const cycle = unit.kind === "cycle" ? unit.cycle : undefined;
+    const cycle = isCycle(unit) ? unit : undefined;
     for (const resource of await loadUnit(unit, state)) {
       const { stateNode, params } = await planKnownParams(
         resource,
@@ -161,9 +166,10 @@ export async function loadUnit(
   unit: DeployUnit,
   state: { get(id: string): Promise<StateNode | undefined> },
 ): Promise<BaseResource[]> {
-  if (unit.kind === "resource") return [unit.resource];
-  for (const member of unit.cycle.members) await loadOutput(member, state);
-  return unit.cycle.members;
+  if (isCycle(unit)) {
+    for (const member of unit.members) await loadOutput(member, state);
+  }
+  return unit.members;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { orderDeployUnits } from "../cycles";
+import { isCycle, orderDeployUnits } from "../cycles";
 import { assertDependenciesPresent } from "../dependency-graph";
 import { loadUnit, planKnownParams } from "../planner";
 import { reconcileCycle } from "./cycle";
@@ -23,16 +23,14 @@ export async function* deploy(
     // Reconcile in dependency order, so a resource only runs once its
     // dependencies have converged.
     for (const unit of orderDeployUnits(opts.resources)) {
-      if (unit.kind === "cycle") {
-        yield* reconcileCycle(step, unit.cycle, opts);
+      if (isCycle(unit)) {
+        yield* reconcileCycle(step, unit, opts);
         continue;
       }
+      const [resource] = unit.members;
       yield* reconcileResource(
-        scopeStep(
-          step,
-          `notation:deploy:${encodeURIComponent(unit.resource.id)}`,
-        ),
-        unit.resource,
+        scopeStep(step, `notation:deploy:${encodeURIComponent(resource!.id)}`),
+        resource!,
         opts,
       );
     }

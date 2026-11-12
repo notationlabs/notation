@@ -6,11 +6,13 @@ import {
 import { buildDepthLevels } from "./dependency-graph";
 
 /**
- * Resources that depend on each other. Deploy creates each placeholder first,
- * without the contributions that depend on other members, and updates it
- * with its full params once the others exist.
+ * Resources that deploy reconciles together. A unit is either one resource
+ * that does not depend on itself, with no placeholders, or a cycle: resources
+ * that depend on each other. Deploy creates each placeholder of a cycle
+ * first, without the contributions that depend on other members, and updates
+ * it with its full params once the others exist.
  */
-export type ResourceCycle = {
+export type DeployUnit = {
   /**
    * In the order of the first pass: each member comes after the members it
    * depends on, where a placeholder counts only its fixed dependencies.
@@ -19,9 +21,12 @@ export type ResourceCycle = {
   placeholders: BaseResource[];
 };
 
-export type DeployUnit =
-  | { kind: "resource"; resource: BaseResource }
-  | { kind: "cycle"; cycle: ResourceCycle };
+export type ResourceCycle = DeployUnit;
+
+/** A cycle always has a placeholder, as one is needed to break its loop. */
+export function isCycle(unit: DeployUnit): boolean {
+  return unit.placeholders.length > 0;
+}
 
 export class ResourceCycleError extends Error {
   readonly _tag = "ResourceCycleError" as const;
@@ -79,11 +84,8 @@ export function orderDeployUnits(resources: BaseResource[]): DeployUnit[] {
 
   return levels.flat().map((index): DeployUnit => {
     const members = components[index]!;
-    const [first] = members;
-    if (members.length === 1 && !edgesOf(first!).includes(first!)) {
-      return { kind: "resource", resource: first! };
-    }
-    return { kind: "cycle", cycle: resolveCycle(members) };
+    if (!isLoop(members, edgesOf)) return { members, placeholders: [] };
+    return resolveCycle(members);
   });
 }
 
@@ -103,30 +105,39 @@ function resolveCycle(members: BaseResource[]): ResourceCycle {
     ).filter((dependency) => inCycle.has(dependency));
 
   for (;;) {
-    const loops = findStronglyConnected(members, edgesOf).filter(
-      (loop) => loop.length > 1 || edgesOf(loop[0]!).includes(loop[0]!),
-    );
-    if (loops.length === 0) break;
+    // With no loop left, each component has one member, and the components
+    // come after the components they depend on.
+    const components = findStronglyConnected(members, edgesOf);
+    const loops = components.filter((component) => isLoop(component, edgesOf));
+    if (loops.length === 0) {
+      const ordered = components.flat();
+      return {
+        members: ordered,
+        placeholders: ordered.filter((member) => placeholders.has(member)),
+      };
+    }
     for (const loop of loops) {
-      const candidates = loop.filter((member) => !placeholders.has(member));
-      const chosen = candidates.find(
-        (member) => !placeholderBlocker(member, loop, inCycle),
-      );
-      if (!chosen) throw unresolvableCycleError(loop, candidates, inCycle);
-      placeholders.add(chosen);
+      const candidates = loop
+        .filter((member) => !placeholders.has(member))
+        .map((member) => ({
+          member,
+          blocker: placeholderBlocker(member, loop, inCycle),
+        }));
+      const chosen = candidates.find(({ blocker }) => !blocker);
+      if (!chosen) {
+        throw unresolvableCycleError(
+          loop,
+          candidates.map(({ blocker }) => blocker!),
+        );
+      }
+      placeholders.add(chosen.member);
     }
   }
+}
 
-  const { levels } = buildDepthLevels(
-    members,
-    (member) => member.id,
-    (member) => edgesOf(member).map((dependency) => dependency.id),
-  );
-  const ordered = levels.flat();
-  return {
-    members: ordered,
-    placeholders: ordered.filter((member) => placeholders.has(member)),
-  };
+/** A component that has more than one member, or a member that depends on itself. */
+function isLoop<T>(component: T[], edgesOf: (item: T) => T[]): boolean {
+  return component.length > 1 || edgesOf(component[0]!).includes(component[0]!);
 }
 
 /**
@@ -205,17 +216,14 @@ function placeholderParamsBlocker(
 }
 
 /**
- * `blocked` are the members of `loop` that are not placeholders yet. Each of
- * them gets a line that says why it can't be one.
+ * `blockers` say why each member of `loop` that is not a placeholder yet
+ * can't be one.
  */
 function unresolvableCycleError(
   loop: BaseResource[],
-  blocked: BaseResource[],
-  cycle: ReadonlySet<BaseResource>,
+  blockers: string[],
 ): ResourceCycleError {
-  const reasons = blocked
-    .map((member) => `- ${placeholderBlocker(member, loop, cycle)}.`)
-    .join("\n");
+  const reasons = blockers.map((blocker) => `- ${blocker}.`).join("\n");
   return new ResourceCycleError(
     `The resources ${listIds(loop)} depend on each other, and none of them can be created first. ` +
       `Deploy can create a member of a cycle first without its contributions, and update it once the others exist. ` +
