@@ -5643,6 +5643,42 @@ describe("dependency cycles", () => {
     runtime.close();
   });
 
+  it("creates a placeholder whose record is a creating record", async () => {
+    const { worker, bind, remote, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const runtime = createRuntime([a, b], "cycle-creating");
+    await runtime.storeClient
+      .store(durable.resourceStateStore, runtime.state.storeId("a"))
+      .update(() => ({
+        ...resourceStateRecord("a"),
+        type: "test/durable/cycle-worker",
+        params: { name: "a" },
+        output: { name: "a" },
+        lastOperation: "creating" as const,
+        creates: ["cycle-creating-0"],
+      }));
+
+    await runtime.run("cycle-creating-1");
+
+    expect(calls).toEqual(["create a []", "create b [a]", "update a [b]"]);
+    expect(remote).toEqual(
+      new Map([
+        ["a", ["b"]],
+        ["b", ["a"]],
+      ]),
+    );
+    const record = await runtime.state.get("a");
+    expect(record).toMatchObject({
+      lastOperation: "update",
+      params: { name: "a", bindings: ["b"] },
+    });
+    expect(record).not.toHaveProperty("creates");
+    runtime.close();
+  });
+
   it("creates a dependent outside the cycle after the cycle settles", async () => {
     const { worker, bind, calls } = defineWorkers();
     const a = worker("a");

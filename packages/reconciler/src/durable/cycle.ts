@@ -1,4 +1,5 @@
 import { changedKeys, type BaseResource } from "@notation/resource";
+import { isCreatingRecord } from "@notation/state";
 import {
   ResourceCycleError,
   listIds,
@@ -28,9 +29,10 @@ const CREATING_DECISIONS: ResourceAction["decision"][] = [
  * Deploys the members of a cycle in passes:
  *
  * 1. The first pass goes through the members in order. A placeholder with no
- *    record is created with its placeholder params. A placeholder with a
- *    record is left as it is, unless drift detection finds that it no
- *    longer exists, and then it is created with its placeholder params.
+ *    record, or with a "creating" record, is created with its placeholder
+ *    params. A placeholder with any other record is left as it is, unless
+ *    drift detection finds that it no longer exists, and then it is created
+ *    with its placeholder params.
  *    Every other member is reconciled as usual.
  * 2. Each later pass reconciles every member with its full params. A pass in
  *    which no member's output changes, and after which no member lacks
@@ -186,7 +188,11 @@ async function* checkPlaceholder(
   // Repeats the notation:validate check, because validate ran before the
   // hold and the record may have changed since.
   assertSameType(resource, session.node);
-  if (!session.node) return { recorded: false };
+  // A "creating" record does not show that the resource exists, so the
+  // placeholder goes through create, as it does with no record.
+  if (!session.node || isCreatingRecord(session.node)) {
+    return { recorded: false };
+  }
   resource.setOutput(session.node.output);
   if (!(opts.driftDetection ?? true) || !resource.read) {
     return { recorded: true };
