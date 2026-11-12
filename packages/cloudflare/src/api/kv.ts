@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { CloudflareApiError, cloudflare } from "./client";
 
 /** Cloudflare's error code for a KV namespace that doesn't exist. */
@@ -9,21 +10,19 @@ const TITLE_TAKEN = 10014;
 // The largest page that the list accepts.
 const LIST_PAGE_SIZE = 1000;
 
-export type Jurisdiction = "eu" | "fedramp" | "us";
+export const jurisdictionSchema = v.picklist(["eu", "fedramp", "us"]);
 
-export type Mode = "instant";
+export type Jurisdiction = v.InferOutput<typeof jurisdictionSchema>;
 
 export type Namespace = {
   id: string;
   title: string;
   jurisdiction?: Jurisdiction | null;
-  mode?: Mode | null;
+  mode?: "instant" | null;
 };
 
 export type NamespaceCreate = {
-  title: string;
-  jurisdiction?: Jurisdiction;
-  mode?: Mode;
+  [K in keyof Omit<Namespace, "id">]: NonNullable<Namespace[K]>;
 };
 
 export const isNotFound = (error: unknown): boolean =>
@@ -72,13 +71,13 @@ export async function findNamespaceByTitle(
   title: string,
 ): Promise<Namespace | undefined> {
   for (let page = 1; ; page++) {
-    const namespaces = await cloudflare<Namespace[] | null>(
+    const namespaces = await cloudflare<Namespace[]>(
       "GET",
       `${namespacesPath(account)}?page=${page}&per_page=${LIST_PAGE_SIZE}`,
     );
-    const found = namespaces?.find((namespace) => namespace.title === title);
+    const found = namespaces.find((namespace) => namespace.title === title);
     if (found) return found;
-    if (!namespaces || namespaces.length < LIST_PAGE_SIZE) return undefined;
+    if (namespaces.length < LIST_PAGE_SIZE) return undefined;
   }
 }
 

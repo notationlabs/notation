@@ -8,9 +8,9 @@ import {
   getNamespace,
   isNotFound,
   isTitleTaken,
+  jurisdictionSchema,
   renameNamespace,
   type Jurisdiction,
-  type Mode,
 } from "src/api/kv";
 
 export type KVNamespaceSchema = {
@@ -19,7 +19,7 @@ export type KVNamespaceSchema = {
     AccountId: string;
     Title: string;
     Jurisdiction?: Jurisdiction;
-    Mode?: Mode;
+    Mode?: "instant";
   };
   UpdateParams: { Title: string };
   ReadResult: {};
@@ -62,7 +62,7 @@ const kvNamespaceSchema = kvNamespace.defineSchema({
     immutable: true,
     rejectReplace: (previous, desired) =>
       `The jurisdiction of this KV namespace is ${previous ?? "not set"}, and the code sets it to ${desired ?? "nothing"}. Cloudflare sets the jurisdiction only when it creates a namespace, so the change would replace the namespace and delete its keys. ${recreateSteps}`,
-    value: v.picklist(["eu", "fedramp", "us"]),
+    value: jurisdictionSchema,
   },
   /** `instant` makes a KV Instant namespace. Without it, the namespace is a classic namespace. */
   Mode: {
@@ -76,38 +76,25 @@ const kvNamespaceSchema = kvNamespace.defineSchema({
 } as const);
 
 const titleTakenMessage = (account: string, title: string) =>
-  `The Cloudflare account ${account} already has a KV namespace titled ${JSON.stringify(title)}. Give this namespace another title, or delete the other namespace if you no longer need it.`;
+  `The Cloudflare account ${account} already has a KV namespace titled ${JSON.stringify(title)}. Give this namespace another title, or delete the other namespace if you no longer need it. If a previous deploy failed partway, the namespace may be the one it made, so check it before you delete it.`;
 
 /** A Workers KV namespace. */
 export const KVNamespace = kvNamespaceSchema.defineOperations({
-  // Cloudflare rejects a second namespace with the same title. After a
-  // create whose outcome is unknown, `find` looks the namespace up by its
-  // title. So create first checks that no namespace has the title, and
-  // `find` can then take the namespace with the title as the one that this
-  // create made. The check is outside `cloudflareCreate`: if it throws,
-  // nothing was created.
+  // Check first, so that `find` doesn't adopt a namespace that existed before.
+  // The check is outside `cloudflareCreate`: if it throws, nothing was created.
   create: async (params) => {
     if (await findNamespaceByTitle(params.AccountId, params.Title)) {
       throw new Error(titleTakenMessage(params.AccountId, params.Title));
     }
-    try {
-      const namespace = await cloudflareCreate(createNamespace)(
-        params.AccountId,
-        {
-          title: params.Title,
-          jurisdiction: params.Jurisdiction,
-          mode: params.Mode,
-        },
-      );
-      return { NamespaceId: namespace.id };
-    } catch (error) {
-      if (isTitleTaken(error)) {
-        throw new Error(titleTakenMessage(params.AccountId, params.Title), {
-          cause: error,
-        });
-      }
-      throw error;
-    }
+    const namespace = await cloudflareCreate(createNamespace)(
+      params.AccountId,
+      {
+        title: params.Title,
+        jurisdiction: params.Jurisdiction,
+        mode: params.Mode,
+      },
+    );
+    return { NamespaceId: namespace.id };
   },
 
   find: async (params) => {
@@ -136,7 +123,6 @@ export const KVNamespace = kvNamespaceSchema.defineOperations({
   },
 
   update: async (key, patch) => {
-    if (patch.Title === undefined) return;
     try {
       await renameNamespace(key.AccountId, key.NamespaceId, patch.Title);
     } catch (error) {

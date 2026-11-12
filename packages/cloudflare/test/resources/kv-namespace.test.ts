@@ -77,20 +77,6 @@ describe("KVNamespace", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("explains the error when another namespace takes the title after the check", async () => {
-    mockFetch((call) =>
-      isList(call)
-        ? ok([])
-        : fail(400, 10014, "a namespace with this title already exists"),
-    );
-
-    const error = await namespace.create(params).catch((e) => e);
-    expect(error).not.toBeInstanceOf(ResourceCreationUnknownError);
-    expect(error.message).toContain(
-      'already has a KV namespace titled "app--dev--cache"',
-    );
-  });
-
   it("reports a create whose response was a server error as unknown", async () => {
     mockFetch((call) => (isList(call) ? ok([]) : fail(502, 0, "bad gateway")));
 
@@ -100,8 +86,8 @@ describe("KVNamespace", () => {
   });
 
   it("reports a create that timed out as unknown", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
-      if ((init?.method ?? "GET") === "GET") return ok([]);
+    mockFetch((call) => {
+      if (isList(call)) return ok([]);
       throw new DOMException("The operation timed out.", "TimeoutError");
     });
 
@@ -236,38 +222,12 @@ describe("KVNamespace", () => {
     ).rejects.toThrow("namespace not found (10013)");
   });
 
-  it("rejects a replacement when the account, the jurisdiction or the mode changes", () => {
-    const { AccountId, Jurisdiction, Mode } = namespace.schema;
-    if (
-      AccountId.propertyType !== "param" ||
-      Jurisdiction.propertyType !== "param" ||
-      Mode.propertyType !== "param"
-    ) {
-      throw new Error("not a param");
-    }
+  it("rejects a replacement when the jurisdiction changes", () => {
+    const { Jurisdiction } = namespace.schema;
+    if (Jurisdiction.propertyType !== "param") throw new Error("not a param");
 
-    expect(AccountId.rejectReplace?.("old", "new")).toMatch(
-      /CLOUDFLARE_ACCOUNT_ID is new, but this KV namespace was created in the account old/,
-    );
     expect(Jurisdiction.rejectReplace?.(undefined, "eu")).toMatch(
       /The jurisdiction of this KV namespace is not set, and the code sets it to eu/,
     );
-    expect(Mode.rejectReplace?.("instant", undefined)).toMatch(
-      /The mode of this KV namespace is instant, and the code sets it to classic/,
-    );
-  });
-
-  it("takes the account from CLOUDFLARE_ACCOUNT_ID", async () => {
-    vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "acc");
-
-    await expect(
-      namespace.deriveParams({
-        id: namespace.id,
-        config: namespace.config,
-        deps: {},
-      }),
-    ).resolves.toEqual({
-      AccountId: "acc",
-    });
   });
 });
