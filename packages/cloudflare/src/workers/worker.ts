@@ -152,7 +152,6 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
   const declaration = { id: config.id } as unknown as Worker<B>;
   let bindings: Bindings | undefined;
   let group: WorkerGroup | undefined;
-  let building = false;
   const waiting: ((group: WorkerGroup) => void)[] = [];
 
   const entry: Entry = {
@@ -184,7 +183,6 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
       if (chain.includes(entry)) {
         throw bindingCycleError([...chain.slice(chain.indexOf(entry)), entry]);
       }
-      building = true;
       const resolved = resolveBindings(entry);
       const record = entry.record();
       const after = resolved.dependsOn.map(
@@ -227,7 +225,6 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
       return group;
     },
     whenBuilt: (callback) => {
-      if (!group && !building) entry.build();
       if (group) callback(group);
       else waiting.push(callback);
     },

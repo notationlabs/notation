@@ -410,6 +410,50 @@ describe("$worker", () => {
     });
   });
 
+  it("builds a cycle that a service binding closes through a namespace, when a Worker in it is declared first", async () => {
+    const graph = await collect(() => {
+      const counters = inModule(
+        $durableObject({ id: "counters", class: Counter }),
+        "runtime/counter.ts",
+      );
+      const rooms = inModule(
+        $durableObject({ id: "rooms", class: Room as any }),
+        "runtime/room.ts",
+      );
+      inWorker(
+        $worker({
+          id: "a",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, ROOMS: rooms }),
+        }),
+        "runtime/a.ts",
+        ["Room"],
+      );
+      const x: unknown = inWorker(
+        $worker({
+          id: "x",
+          compatibilityDate,
+          bindings: () => ({ ROOMS: rooms }),
+        }),
+        "runtime/x.ts",
+      );
+      inWorker(
+        $worker({
+          id: "h",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, X: x as any }),
+        }),
+        "runtime/h.ts",
+        ["Counter"],
+      );
+    });
+    const h = group(graph, "h");
+    const x = group(graph, "x");
+
+    expect(h.script.getFixedDependencies()).not.toContain(x.script);
+    expect(h.script.getDependencies()).toContain(x.script);
+  });
+
   it("fails for two Workers that each bind a namespace that the other hosts", async () => {
     await expect(
       collect(() => {
