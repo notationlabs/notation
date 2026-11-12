@@ -35,6 +35,9 @@
  *                              the "creating" record if it started from none
  *   state:delete:<id>          conditional removal of one
  *   state:<write>:<id>:settle:<n>        a write in pass <n> over a cycle
+ *   state:<write>:<id>[:<stage>]:after-takeover   a write that follows a
+ *                              takeover, with one :after-takeover for each
+ *                              takeover it follows
  *   state:delete:<id>:replace:<replaced id>   the removal of a dependent
  *                              that blocks the delete of <replaced id>
  *   *:replace:delete:*         replacement, first half: the delete
@@ -56,8 +59,9 @@
  * notation:create:<execution id>:<resource id>:<n>, with both IDs
  * URI-encoded. The resource receives notation:create:<execution id>:<resource
  * id> as its create token, which is the same for every attempt. A create
- * that follows a takeover in the same execution uses
- * <execution id>/reclaimed as its execution ID.
+ * that follows a takeover in the same execution adds /reclaimed to the
+ * execution ID of the create that took the resource over, so a create after
+ * a second takeover uses <execution id>/reclaimed/reclaimed.
  *
  * An <id> inside a scope is URI-encoded, so the `:` delimiter is unambiguous.
  * The state: keys are store-handle keys and so are not scope-prefixed: a

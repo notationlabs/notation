@@ -298,7 +298,14 @@ async function* reconcileReclaimed(
   opts: DurableDeployOptions,
   shared: Omit<CreateResourceParams, "persist">,
 ): AsyncGenerator<any, void, any> {
-  const step = parent.scope("reclaimed");
+  // The state key keeps the writes that follow a takeover apart from the
+  // writes of the create that took the resource over. It nests, because a
+  // replace that follows a takeover can end in another takeover. It must
+  // not equal a persist stage, which sits at the same place in the key.
+  const step = parent.scope(
+    "reclaimed",
+    [parent.stateKey, "after-takeover"].filter(Boolean).join(":"),
+  );
   const { resource, resourceParams } = shared;
   const reclaimed = yield* openStateSession(step, opts, resource);
   const action = decideAction({
@@ -311,8 +318,9 @@ async function* reconcileReclaimed(
   yield* applyAction(step, opts, reclaimed, action, {
     ...shared,
     // Names the effects of a create that replaces the resource apart from
-    // those of the create that took it over.
-    executionId: `${opts.executionId}/reclaimed`,
+    // those of the create that took it over. It is built from the ID of
+    // that create, so that it differs at each level of nesting.
+    executionId: `${shared.executionId}/reclaimed`,
     emit,
     persistedOutput: reclaimed.node?.output,
     prior: reclaimed.node,

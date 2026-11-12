@@ -814,6 +814,113 @@ describe("recoverable creates", () => {
     runtime.close();
   });
 
+  it("replaces a resource it took over after its create reported that it exists", async () => {
+    const { Named, remote, calls } = defineNamed(
+      "test/durable/reclaim-exists-replace",
+      "parent",
+    );
+    remote.set("app", { name: "app", path: "/elsewhere/" });
+    const runtime = createRuntime(
+      [new Named("route", { config: { name: "app", path: "/" } as any })],
+      "reclaim-exists-replace",
+    );
+
+    await runtime.run("deploy-1");
+
+    expect(calls).toEqual(["create:app", "delete:app", "create:app"]);
+    expect(remote.get("app")).toMatchObject({ path: "/" });
+    expect(await runtime.state.get("route")).toMatchObject({
+      lastOperation: "create",
+      params: { path: "/" },
+    });
+    expect(await readHolder(runtime, "reclaim-exists-replace")).toBeNull();
+    runtime.close();
+  });
+
+  it("replaces a replacement that its lookup found with another immutable param", async () => {
+    const { Named, remote, calls, control } = defineNamed(
+      "test/durable/replace-lookup-replace",
+    );
+    const resources: BaseResource[] = [
+      new Named("role", { config: { name: "app", path: "/" } as any }),
+    ];
+    const runtime = createRuntime(resources, "replace-lookup-replace");
+    await runtime.run("deploy-1");
+
+    control.failAfterCreate = new ResourceCreationUnknownError(
+      "socket timed out",
+    );
+    resources[0] = new Named("role", {
+      config: { name: "app", path: "/other/" } as any,
+    });
+    await expect(runtime.run("deploy-2")).resolves.toMatchObject({
+      status: "suspended",
+    });
+    remote.get("app")!.path = "/elsewhere/";
+    control.failAfterCreate = undefined;
+    runtime.advance(1_000);
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual([
+      "create:app",
+      "delete:app",
+      "create:app",
+      "delete:app",
+      "create:app",
+    ]);
+    expect(remote.get("app")).toMatchObject({ path: "/other/" });
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "create",
+      params: { path: "/other/" },
+    });
+    runtime.close();
+  });
+
+  it("creates the second replacement when one execution takes a resource over twice", async () => {
+    const { Named, remote, calls, control } = defineNamed(
+      "test/durable/reclaim-twice",
+    );
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "reclaim-twice",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    remote.get("app")!.path = "/elsewhere/";
+    await abandon(runtime, "reclaim-twice", "deploy-1");
+
+    // The create of the first replacement makes the resource and ends
+    // unknown, so its lookup takes the resource over a second time.
+    control.failAfterCreate = new ResourceCreationUnknownError(
+      "socket timed out",
+    );
+    await expect(runtime.run("deploy-2")).resolves.toMatchObject({
+      status: "suspended",
+    });
+    expect(calls).toEqual(["create:app", "delete:app", "create:app"]);
+    remote.get("app")!.path = "/elsewhere/";
+    control.failAfterCreate = undefined;
+    runtime.advance(1_000);
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual([
+      "create:app",
+      "delete:app",
+      "create:app",
+      "delete:app",
+      "create:app",
+    ]);
+    expect(remote.get("app")).toMatchObject({ path: "/" });
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "create",
+      params: { path: "/" },
+    });
+    runtime.close();
+  });
+
   it("refuses a recorded resource of a token class whose drift read reported it gone, and writes its record back", async () => {
     const { Named, remote, calls, control } = defineNamed(
       "test/durable/drift-recreate-refused",
