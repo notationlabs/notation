@@ -81,8 +81,9 @@ export type ResourceOperationBaseParams = {
 };
 
 /**
- * Inputs resolved before an operation starts: the desired params, and — for
- * a resource with no read operation — the output the last write persisted.
+ * Inputs resolved before an operation starts: the desired params, and the
+ * output the last write persisted. Read uses that output for a resource with
+ * no read operation, and update keeps its computed outputs.
  * An operation that resolved either itself could see a different answer from
  * the one the decision was taken against. Read takes exactly this; create
  * and update add their write.

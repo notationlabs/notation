@@ -1889,6 +1889,147 @@ describe("drift detection and repair", () => {
   });
 });
 
+describe("outputs after an update", () => {
+  // A token whose create returns a value that no read returns. The read
+  // returns `remote`, and the update removes a drifted name from it.
+  function defineToken(remote: { name?: string; status?: unknown }) {
+    return (
+      resource({ type: "test/durable/token", provider: "test" })
+        // Cast: a resource declared without API types constrains every schema
+        // key to be a key of an `any` API schema, which no named key satisfies.
+        .defineSchema({
+          name: {
+            presence: "required",
+            propertyType: "param",
+            value: v.string(),
+          },
+          label: {
+            presence: "optional",
+            propertyType: "param",
+            value: v.string(),
+          },
+          value: {
+            presence: "required",
+            propertyType: "computed",
+            value: v.string(),
+          },
+          status: {
+            presence: "optional",
+            propertyType: "computed",
+            value: v.string(),
+          },
+        } as any)
+        .defineOperations({
+          create: async () => ({ value: "secret", status: "created" }) as any,
+          read: async () => remote as any,
+          update: async () => {
+            delete remote.name;
+          },
+          delete: async () => undefined,
+        })
+    );
+  }
+
+  it("keeps a computed output from the create that the read does not return", async () => {
+    const remote: { status?: string } = {};
+    const Token = defineToken(remote);
+    const resources: BaseResource[] = [
+      new Token("token", { config: { name: "before" } as any }),
+    ];
+    const runtime = createRuntime(resources, "update-keeps-computed");
+
+    await runtime.run("deploy-1");
+    resources[0] = new Token("token", { config: { name: "after" } as any });
+    await runtime.run("deploy-2");
+
+    expect(await runtime.state.get("token")).toMatchObject({
+      lastOperation: "update",
+      output: { name: "after", value: "secret", status: "created" },
+    });
+    runtime.close();
+  });
+
+  it("overwrites a computed output from state with the value the read returns", async () => {
+    const remote: { status?: string } = {};
+    const Token = defineToken(remote);
+    const resources: BaseResource[] = [
+      new Token("token", { config: { name: "before" } as any }),
+    ];
+    const runtime = createRuntime(resources, "update-reads-computed");
+
+    await runtime.run("deploy-1");
+    remote.status = "active";
+    resources[0] = new Token("token", { config: { name: "after" } as any });
+    await runtime.run("deploy-2");
+
+    expect(await runtime.state.get("token")).toMatchObject({
+      output: { name: "after", value: "secret", status: "active" },
+    });
+    runtime.close();
+  });
+
+  it("records a computed output from state when the read after an update is malformed", async () => {
+    const remote: { status?: unknown } = {};
+    const Token = defineToken(remote);
+    const resources: BaseResource[] = [
+      new Token("token", { config: { name: "before" } as any }),
+    ];
+    const runtime = createRuntime(resources, "update-read-fails");
+
+    await runtime.run("deploy-1");
+    remote.status = 5;
+    resources[0] = new Token("token", { config: { name: "after" } as any });
+    await expect(runtime.run("deploy-2")).rejects.toThrow(ValueValidationError);
+
+    expect(await runtime.state.get("token")).toMatchObject({
+      lastOperation: "update",
+      output: { name: "after", value: "secret", status: "created" },
+    });
+    runtime.close();
+  });
+
+  it("does not keep a param from state that the declaration no longer sets", async () => {
+    const remote: { status?: string } = {};
+    const Token = defineToken(remote);
+    const resources: BaseResource[] = [
+      new Token("token", { config: { name: "n", label: "old" } as any }),
+    ];
+    const runtime = createRuntime(resources, "update-drops-param");
+
+    await runtime.run("deploy-1");
+    resources[0] = new Token("token", { config: { name: "n" } as any });
+    await runtime.run("deploy-2");
+
+    const node = await runtime.state.get("token");
+    expect(node).toMatchObject({
+      lastOperation: "update",
+      output: { name: "n", value: "secret" },
+    });
+    expect(node!.output).not.toHaveProperty("label");
+    runtime.close();
+  });
+
+  it("keeps a computed output from the create when an update repairs drift", async () => {
+    const remote: { name?: string } = {};
+    const Token = defineToken(remote);
+    const runtime = createRuntime(
+      [new Token("token", { config: { name: "expected" } as any })],
+      "drift-update-keeps-computed",
+      { driftDetection: true },
+    );
+
+    await runtime.run("deploy-1");
+    remote.name = "drifted";
+    await runtime.run("deploy-2");
+
+    expect(await runtime.state.get("token")).toMatchObject({
+      lastOperation: "update",
+      output: { name: "expected", value: "secret" },
+    });
+    runtime.close();
+  });
+});
+
 describe("replacement", () => {
   /** A role-like resource whose path cannot change after creation. */
   function defineReplaceable(

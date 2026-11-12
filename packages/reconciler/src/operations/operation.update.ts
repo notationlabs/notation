@@ -2,6 +2,7 @@ import {
   assertRequiredOutputs,
   deployLookup,
   resolveOutputRefs,
+  type BaseResource,
   type DurableObject,
 } from "@notation/resource";
 import {
@@ -46,7 +47,11 @@ export async function* updateResourceOperation(
       params.maxOperationAttempts,
     );
 
+    // An update starts from the computed outputs in state, because the read
+    // may not return some of them, such as a value that only the create
+    // returns.
     params.resource.setOutput({
+      ...persistedComputedOutputs(params.resource, params.persistedOutput),
       ...params.resource.key,
       ...params.resourceParams,
     });
@@ -55,25 +60,17 @@ export async function* updateResourceOperation(
     // the outputs known at that point.
     const deferredError = yield* firstDeferredError([
       async function* () {
-        try {
-          const readResult = yield* readResourceOperation(step, {
-            resource: params.resource,
-            resourceParams: params.resourceParams,
-            persistedOutput: params.persistedOutput,
-            emit: params.emit,
-            maxOperationAttempts: params.maxOperationAttempts,
-          });
-          params.resource.setOutput({
-            ...params.resource.output,
-            ...readResult,
-          });
-        } catch (error) {
-          params.resource.setOutput({
-            ...params.persistedOutput,
-            ...params.resource.output,
-          });
-          throw error;
-        }
+        const readResult = yield* readResourceOperation(step, {
+          resource: params.resource,
+          resourceParams: params.resourceParams,
+          persistedOutput: params.persistedOutput,
+          emit: params.emit,
+          maxOperationAttempts: params.maxOperationAttempts,
+        });
+        params.resource.setOutput({
+          ...params.resource.output,
+          ...readResult,
+        });
       },
       async function* () {
         assertRequiredOutputs(params.resource, params.resource.output);
@@ -105,4 +102,21 @@ export async function* updateResourceOperation(
     yield* emitLifecycleEvent(params, "update", "error", getErrorDetails(err));
     throw err;
   }
+}
+
+/**
+ * Returns the fields of `output` that the resource's schema marks computed.
+ * Params are left out, so that a param removed from the declaration is not
+ * kept from state.
+ */
+function persistedComputedOutputs(
+  resource: BaseResource,
+  output: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!output) return {};
+  return Object.fromEntries(
+    Object.entries(output).filter(
+      ([field]) => resource.schema[field]?.propertyType === "computed",
+    ),
+  );
 }
