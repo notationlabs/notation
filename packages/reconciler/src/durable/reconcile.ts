@@ -69,11 +69,12 @@ export type ReconcileOptions = {
    */
   excludeContributionsFrom?: ReadonlySet<BaseResource>;
   /**
-   * When deploy replaces the resource, creates it without the contributions
-   * that depend on one of these. A member of a cycle that refers to itself
-   * would otherwise be created with the output of the resource it replaces.
+   * Called when deploy replaces the resource, after the delete, with the IDs
+   * of the dependents that the replacement deleted because they block the
+   * delete. Deploy creates the resource without the contributions that
+   * depend on one of the returned resources.
    */
-  replaceWithout?: ReadonlySet<BaseResource>;
+  replaceWithout?: (deleted: ReadonlySet<string>) => ReadonlySet<BaseResource>;
   /**
    * Decides drift-recreate without reading the remote: the caller has read
    * the resource and found it gone.
@@ -215,9 +216,8 @@ export async function* reconcileResource(
         step,
         opts,
         session,
-        options.replaceWithout
-          ? yield* withoutContributions(step, shared, options.replaceWithout)
-          : shared,
+        shared,
+        options.replaceWithout,
       );
       return;
     case "noop":
@@ -345,8 +345,9 @@ async function* replaceResource(
   opts: DurableDeployOptions,
   session: Extract<ResourceStateSession, { node: StateNode }>,
   shared: Omit<CreateResourceParams, "persist">,
+  replaceWithout?: ReconcileOptions["replaceWithout"],
 ): AsyncGenerator<any, void, any> {
-  yield* deleteBlockingDependents(
+  const deleted = yield* deleteBlockingDependents(
     step.scope("replace:dependents"),
     opts,
     shared.resource,
@@ -361,9 +362,14 @@ async function* replaceResource(
     remove: session.remove,
   });
 
+  const excluded = replaceWithout?.(new Set(deleted));
+  const created = excluded?.size
+    ? yield* withoutContributions(step, shared, excluded)
+    : shared;
+
   const createStep = step.scope("replace:create");
   yield* createResourceOperation(createStep, {
-    ...shared,
+    ...created,
     emit: durableEmitter(createStep, opts.emit),
     // The persisted output describes the resource that was just deleted.
     persistedOutput: undefined,
@@ -379,7 +385,7 @@ async function* replaceResource(
  * afterwards, so deploy creates it again when it reaches it, after
  * `resource` has been created again. Each orphan among them is gone before
  * the sweep reaches it. Every other dependent stays in place, including one
- * with no class.
+ * with no class. Returns the IDs of the deleted dependents.
  *
  * Records are listed when the replacement starts. Deploy has written the
  * edges in code for every resource it has reached by then, and a resource it
@@ -389,13 +395,13 @@ async function* deleteBlockingDependents(
   step: DurableStepRunner,
   opts: DurableDeployOptions,
   resource: BaseResource,
-): AsyncGenerator<any, void, any> {
+): AsyncGenerator<any, string[], any> {
   const registry = workflowRegistry(opts);
   // Skips listing state, which copies every record into the journal.
   const blockable = [...registry.values()].some((Class) =>
     Class.blocksDeleteOf.includes(resource.type),
   );
-  if (!blockable) return;
+  if (!blockable) return [];
 
   const records = yield* step.run("list", () => opts.state.values());
   const resourceById = new Map(
@@ -426,6 +432,7 @@ async function* deleteBlockingDependents(
       { reason: "dependency-replaced", replacedDependency: resource.id },
     );
   }
+  return dependents;
 }
 
 /**

@@ -4267,6 +4267,81 @@ describe("dependency cycles", () => {
     runtime.close();
   });
 
+  it("creates a replaced member without its contributions that refer to a member that the replacement deleted", async () => {
+    const { worker, bind, calls, remote } = defineWorkers({
+      blocksDelete: true,
+    });
+    const declare = (name: string) => {
+      const p = worker("p");
+      const d = worker("d");
+      const r = worker("r", name);
+      bind(p, d);
+      d.dependOn(r);
+      bind(r, p);
+      return [p, d, r];
+    };
+    const resources = declare("r");
+    const runtime = createRuntime(resources, "cycle-cascade-binding");
+    await runtime.run("cycle-cascade-binding-1");
+    calls.length = 0;
+
+    resources.splice(0, 3, ...declare("r2"));
+    await runtime.run("cycle-cascade-binding-2");
+
+    expect(calls).toEqual([
+      "delete p",
+      "delete d",
+      "delete r",
+      "create r2 []",
+      "create d []",
+      "create p [d]",
+      "update r2 [p]",
+    ]);
+    expect(remote).toEqual(
+      new Map([
+        ["r2", ["p"]],
+        ["d", []],
+        ["p", ["d"]],
+      ]),
+    );
+    runtime.close();
+  });
+
+  it("does not fail a dry run when a reverted member has a dependency that deploy would create", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const declare = (name: string, added: boolean) => {
+      const a = worker("a");
+      const b = worker("b", name);
+      bind(a, b);
+      bind(b, a);
+      if (!added) return [a, b];
+      const n = worker("n");
+      a.dependOn(n);
+      return [n, a, b];
+    };
+    const resources = declare("b", false);
+    const options: { dryRun?: boolean } = {};
+    const runtime = createRuntime(resources, "cycle-dry-revert", options);
+    await runtime.run("cycle-dry-revert-1");
+    calls.length = 0;
+
+    resources.splice(0, resources.length, ...declare("b2", true));
+    options.dryRun = true;
+    await runtime.run("cycle-dry-revert-2");
+    expect(calls).toEqual([]);
+
+    options.dryRun = false;
+    await runtime.run("cycle-dry-revert-3");
+    expect(calls).toEqual([
+      "create n []",
+      "update a []",
+      "delete b",
+      "create b2 [a]",
+      "update a [b2]",
+    ]);
+    runtime.close();
+  });
+
   it("fails to revert a member when a dependency has no record", async () => {
     const { worker, bind } = defineWorkers();
     const a = worker("a");

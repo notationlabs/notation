@@ -141,7 +141,8 @@ export async function createPlan({
     // update does not apply to it.
     const cascadeOnly = replacedDependency && !replaceFields;
     const placeholder =
-      cycle?.placeholders.includes(resource) && action.decision === "create";
+      cycle?.placeholders.includes(resource) &&
+      (action.decision === "create" || action.decision === "drift-recreate");
     const reverted =
       cycle && replaceFields
         ? revertedPeers(cycle, resource).map((peer) => peer.id)

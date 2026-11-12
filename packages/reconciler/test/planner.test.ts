@@ -1328,21 +1328,22 @@ describe("createPlan", () => {
 });
 
 describe("dependency cycles", () => {
+  const schema = {
+    name: {
+      propertyType: "param",
+      presence: "required",
+      primaryKey: true,
+      value: v.string(),
+    },
+    bindings: {
+      propertyType: "param",
+      presence: "optional",
+      value: v.array(v.string()),
+      collect: (items: string[][]) => items.flat(),
+    },
+  } as any;
   const Worker = resource({ type: "test/planner/worker", provider: "test" })
-    .defineSchema({
-      name: {
-        propertyType: "param",
-        presence: "required",
-        primaryKey: true,
-        value: v.string(),
-      },
-      bindings: {
-        propertyType: "param",
-        presence: "optional",
-        value: v.array(v.string()),
-        collect: (items: string[][]) => items.flat(),
-      },
-    } as any)
+    .defineSchema(schema)
     .defineOperations({
       create: async () => undefined,
       update: async () => undefined,
@@ -1392,6 +1393,40 @@ describe("dependency cycles", () => {
       }),
     ]);
     expect(plan.nodes[1]).not.toHaveProperty("placeholder");
+  });
+
+  it("marks a placeholder that no longer exists, as deploy creates it again without its contributions", async () => {
+    const Gone = resource({
+      type: "test/planner/gone-worker",
+      provider: "test",
+    })
+      .defineSchema(schema)
+      .defineOperations({
+        create: async () => undefined,
+        read: async () => {
+          throw new ResourceNotFoundError("not found");
+        },
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const a = new Gone("a", { config: { name: "a" } as any });
+    const b = new Worker("b", { config: { name: "b" } as any });
+    a.contribute({ bindings: [b.outputRef("name")] } as any);
+    b.contribute({ bindings: [a.outputRef("name")] } as any);
+
+    const plan = await createPlan({
+      resources: [a, b],
+      state: new MemoryStateBackend({
+        a: { ...record("a", ["b"]), type: Gone.type },
+        b: record("b", ["a"]),
+      }),
+    });
+
+    expect(plan.nodes[0]).toMatchObject({
+      id: "a",
+      decision: "drift-recreate",
+      placeholder: true,
+    });
   });
 
   it("plans a deployed cycle with the outputs of every member from state", async () => {

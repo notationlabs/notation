@@ -41,8 +41,8 @@ const CREATING_DECISIONS: ResourceAction["decision"][] = [
  *    longer exists, and then it is created with its placeholder params.
  *    Every other member is reconciled as usual.
  * 2. Each later pass reconciles every member with its full params. A pass in
- *    which no member's output changes, and in which no replacement reverted
- *    a member, ends the deploy of the cycle.
+ *    which no member's output changes, and after which no member lacks
+ *    contributions because of a replacement, ends the deploy of the cycle.
  *
  * A cycle gets one pass after the first for each member, and at least two,
  * so that a member that refers to itself is updated and then checked. Each
@@ -71,14 +71,17 @@ export async function* reconcileCycle(
   const replaced: BaseResource[] = [];
   // The passes after the first. A replace adds one.
   let passes = 0;
-  // The members that a replacement reverted in the current pass. Their
-  // outputs changed outside their own reconcile, so the pass doesn't end the
-  // deploy of the cycle.
-  const reverted: BaseResource[] = [];
+  // The members that lack contributions and that the current pass has not
+  // reconciled since: a replacement reverted them, or created them without
+  // the contributions that refer to itself or to a member it deleted. The
+  // pass doesn't end the deploy of the cycle while one remains.
+  const incomplete = new Set<BaseResource>();
   const options = (resource: BaseResource): ReconcileOptions => ({
-    ...(refersToItself(resource)
-      ? { replaceWithout: new Set([resource]) }
-      : {}),
+    replaceWithout: (deleted) => {
+      const without = replacedWithout(cycle, resource, deleted);
+      if (without.size > 0) incomplete.add(resource);
+      return without;
+    },
     onDecision: (decision) => {
       if (!CREATING_DECISIONS.includes(decision)) return;
       if (created.has(resource)) {
@@ -112,7 +115,7 @@ export async function* reconcileCycle(
       }
       for (const { peer, revert } of reverts) {
         yield* revert();
-        reverted.push(peer);
+        incomplete.add(peer);
       }
     },
   });
@@ -160,8 +163,9 @@ export async function* reconcileCycle(
   let changed: string[] = [];
   for (let pass = 1; pass <= passes; pass += 1) {
     changed = [];
-    reverted.length = 0;
     for (const resource of cycle.members) {
+      // This reconcile applies the full params of the resource.
+      incomplete.delete(resource);
       // This loop's first pass is the first time that deploy reconciles a
       // placeholder with its full params, so its noop is announced then. A
       // placeholder that this deploy did not create is checked for drift
@@ -177,15 +181,15 @@ export async function* reconcileCycle(
       );
       changed.push(...changedOutputs(resource, before));
     }
-    if (changed.length === 0 && reverted.length === 0) return;
+    if (changed.length === 0 && incomplete.size === 0) return;
   }
 
-  const revertedText =
-    reverted.length > 0
-      ? ` These members were updated without their contributions in the last pass: ${listIds(reverted)}.`
+  const incompleteText =
+    incomplete.size > 0
+      ? ` These members were left without some of their contributions in the last pass: ${listIds([...incomplete])}.`
       : "";
   throw new ResourceCycleError(
-    `The cycle of ${listIds(cycle.members)} did not settle after ${passes + 1} passes. These outputs changed in the last pass: ${changed.join(", ") || "none"}.${revertedText} When a member takes an output of another member, take a value that stays the same across updates, such as a name, in place of one that changes on every update, such as a version ID.`,
+    `The cycle of ${listIds(cycle.members)} did not settle after ${passes + 1} passes. These outputs changed in the last pass: ${changed.join(", ") || "none"}.${incompleteText} When a member takes an output of another member, take a value that stays the same across updates, such as a name, in place of one that changes on every update, such as a version ID.`,
   );
 }
 
@@ -302,6 +306,10 @@ async function* prepareRevert(
       const record = records[index];
       if (record && record.type === dependency.type) {
         dependency.setOutput(record.output);
+      } else if (fixed.has(dependency) && !record && opts.dryRun) {
+        // A dry run creates nothing, so a dependency that deploy would have
+        // created by now has no record, and the revert can't be computed.
+        return undefined;
       } else if (fixed.has(dependency)) {
         const others = listIds([...peers].filter((peer) => peer !== resource));
         throw new ResourceCycleError(
@@ -366,15 +374,31 @@ async function* prepareRevert(
 }
 
 /**
- * Whether `resource` refers to itself only through its contributions, and
- * can be created without them and then updated with them.
+ * The members of `cycle` whose contributions a replacement of `resource`
+ * leaves out when it creates the resource again: the resource itself, as its
+ * contributions hold the output of the resource that was deleted, and each
+ * member in `deleted`, which the replacement deleted because it blocks the
+ * delete, and which exists again only when deploy reaches it. Only the
+ * members that `resource` refers to through its contributions alone count.
+ * Empty when the resource can't be created without those contributions and
+ * then updated with them.
  */
-function refersToItself(resource: BaseResource): boolean {
-  return (
-    resource.getDependencies().includes(resource) &&
-    !resource.getFixedDependencies().includes(resource) &&
-    !placeholderParamsBlocker(resource, new Set([resource]))
+function replacedWithout(
+  cycle: DeployUnit,
+  resource: BaseResource,
+  deleted: ReadonlySet<string>,
+): ReadonlySet<BaseResource> {
+  const dependencies = new Set(resource.getDependencies());
+  const fixed = new Set(resource.getFixedDependencies());
+  const without = new Set(
+    cycle.members.filter(
+      (member) =>
+        (member === resource || deleted.has(member.id)) &&
+        dependencies.has(member) &&
+        !fixed.has(member),
+    ),
   );
+  return placeholderParamsBlocker(resource, without) ? new Set() : without;
 }
 
 /**
