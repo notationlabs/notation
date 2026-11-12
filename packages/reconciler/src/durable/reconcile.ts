@@ -13,6 +13,7 @@ import {
   type ResourceType,
 } from "@notation/resource";
 import { VersionConflict, type StateNode } from "@notation/state";
+import { remainingDependencies } from "../cycles";
 import { buildDepthLevels, collectDependents } from "../dependency-graph";
 import { createBlocksDelete } from "../delete-cascade";
 import type { OperationLifecycleEvent } from "../events";
@@ -100,7 +101,14 @@ export async function* reconcileResource(
     }),
   );
   await validateParams(resource, params, "deploy");
-  const dependsOn = getDependencyIds(resource);
+  // A placeholder's record leaves out the edges to the peers that its params
+  // leave out, as those may not exist yet.
+  const dependsOn = getDependencyIds(
+    resource,
+    options.excludeContributionsFrom
+      ? remainingDependencies(resource, options.excludeContributionsFrom)
+      : undefined,
+  );
 
   let action: ResourceAction = options.recreate
     ? { decision: "drift-recreate" }

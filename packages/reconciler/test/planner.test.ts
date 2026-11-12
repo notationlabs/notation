@@ -1427,4 +1427,22 @@ describe("dependency cycles", () => {
       revertedPeers: ["a"],
     });
   });
+
+  it("plans a member that comes before a replaced member against the unknown output of the replacement", async () => {
+    const [a, b] = pair();
+    (b as any).config.name = "b2";
+    const plan = await createPlan({
+      resources: [a!, b!],
+      state: new MemoryStateBackend({
+        a: record("a", ["b"]),
+        b: record("b", ["a"]),
+      }),
+    });
+
+    expect(plan.nodes[0]).toMatchObject({
+      id: "a",
+      decision: "update",
+      params: { name: "a", bindings: [UNKNOWN_AFTER_APPLY] },
+    });
+  });
 });

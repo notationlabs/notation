@@ -166,11 +166,14 @@ function placeholderBlocker(
  * The resources that deploy reverts before it replaces `replaced`, so that
  * they no longer refer to it: each refers to `replaced` only through its
  * contributions, and is updated without those contributions. Members of
- * `cycle` come first, in its order. Throws `ResourceCycleError` when a
- * member can't be reverted with an update. A resource outside the cycle
- * that can't be is left out, and the provider decides whether `replaced`
- * can be deleted. Deploy restores the members while the cycle settles, and
- * the other resources when it reaches them.
+ * `cycle` come first, in its order, then the resources outside it. Throws
+ * `ResourceCycleError` when a member can't be reverted with an update.
+ * Deploy restores the members while the cycle settles, and the other
+ * resources when it reaches them.
+ *
+ * A resource outside the cycle is returned even when it can't be reverted.
+ * Deploy then skips its revert with a warning, and the provider decides
+ * whether `replaced` can be deleted while that resource still refers to it.
  */
 export function revertedDependents(
   resources: BaseResource[],
@@ -188,15 +191,30 @@ export function revertedDependents(
       resource.getDependencies().includes(replaced) &&
       !resource.getFixedDependencies().includes(replaced),
   );
-  return dependents.filter((resource) => {
+  for (const resource of dependents) {
+    if (!members.has(resource)) continue;
     const blocker = placeholderParamsBlocker(resource, from);
-    if (blocker && members.has(resource)) {
+    if (blocker) {
       throw new ResourceCycleError(
         `${replaced.id} must be replaced, so deploy must first update ${resource.id} without its contributions, so that ${resource.id} no longer refers to ${replaced.id}. It can't: ${blocker}.`,
       );
     }
-    return !blocker;
-  });
+  }
+  return dependents;
+}
+
+/**
+ * The dependencies of `resource` that remain when the contributions that
+ * depend on one of `excluded` are left out.
+ */
+export function remainingDependencies(
+  resource: BaseResource,
+  excluded: ReadonlySet<BaseResource>,
+): BaseResource[] {
+  const fixed = new Set(resource.getFixedDependencies());
+  return resource
+    .getDependencies()
+    .filter((dependency) => fixed.has(dependency) || !excluded.has(dependency));
 }
 
 /**

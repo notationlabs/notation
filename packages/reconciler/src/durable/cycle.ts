@@ -9,6 +9,7 @@ import {
   ResourceCycleError,
   listIds,
   placeholderParamsBlocker,
+  remainingDependencies,
   revertedDependents,
   type DeployUnit,
 } from "../cycles";
@@ -40,7 +41,8 @@ const CREATING_DECISIONS: ResourceAction["decision"][] = [
  *    longer exists, and then it is created with its placeholder params.
  *    Every other member is reconciled as usual.
  * 2. Each later pass reconciles every member with its full params. A pass in
- *    which no member's output changes ends the deploy of the cycle.
+ *    which no member's output changes, and in which no replacement reverted
+ *    a member, ends the deploy of the cycle.
  *
  * A cycle gets one pass after the first for each member, and at least two,
  * so that a member that refers to itself is updated and then checked. When
@@ -66,6 +68,10 @@ export async function* reconcileCycle(
   // the first, so it would not run.
   const created = new Set<BaseResource>();
   const replaced: BaseResource[] = [];
+  // The members that a replacement reverted in the current pass. Their
+  // outputs changed outside their own reconcile, so the pass doesn't end the
+  // deploy of the cycle.
+  const reverted: BaseResource[] = [];
   const options = (resource: BaseResource): ReconcileOptions => ({
     onDecision: (decision) => {
       if (!CREATING_DECISIONS.includes(decision)) return;
@@ -89,16 +95,44 @@ export async function* reconcileCycle(
         cycle,
         resource,
       )) {
-        const revert = yield* prepareRevert(
-          revertStep.scope(encodeURIComponent(dependent.id)),
-          dependent,
-          opts,
-          from,
-          resource,
+        const dependentStep = revertStep.scope(
+          encodeURIComponent(dependent.id),
         );
-        if (revert) reverts.push(revert);
+        try {
+          const revert = yield* prepareRevert(
+            dependentStep,
+            dependent,
+            opts,
+            from,
+            resource,
+          );
+          if (revert) reverts.push({ dependent, revert });
+        } catch (error) {
+          // A resource outside the cycle that can't be reverted keeps its
+          // contributions. This is deliberate: the provider decides whether
+          // the delete can go ahead, as it does for any resource that refers
+          // to a replaced one. If it refuses, the deploy fails after the
+          // reverts above have run, and the next deploy restores them.
+          if (members.has(dependent) || !ResourceCycleError.is(error)) {
+            throw error;
+          }
+          yield* durableEmitter(
+            dependentStep,
+            opts.emit,
+          )({
+            level: "warn",
+            event: "reconciler.cycle-revert.skipped",
+            resourceId: dependent.id,
+            resourceType: dependent.type,
+            replacedDependency: resource.id,
+            errorMessage: error.message,
+          });
+        }
       }
-      for (const revert of reverts) yield* revert();
+      for (const { dependent, revert } of reverts) {
+        yield* revert();
+        if (members.has(dependent)) reverted.push(dependent);
+      }
     },
   });
 
@@ -146,6 +180,7 @@ export async function* reconcileCycle(
   let changed: string[] = [];
   for (let pass = 1; pass <= passes; pass += 1) {
     changed = [];
+    reverted.length = 0;
     for (const resource of cycle.members) {
       // This loop's first pass is the first time that deploy reconciles a
       // placeholder with its full params, so its noop is announced then. A
@@ -162,11 +197,15 @@ export async function* reconcileCycle(
       );
       changed.push(...changedOutputs(resource, before));
     }
-    if (changed.length === 0) return;
+    if (changed.length === 0 && reverted.length === 0) return;
   }
 
+  const revertedText =
+    reverted.length > 0
+      ? ` These members were updated without their contributions in the last pass: ${listIds(reverted)}.`
+      : "";
   throw new ResourceCycleError(
-    `The cycle of ${listIds(cycle.members)} did not settle after ${passes + 1} passes. These outputs changed in the last pass: ${changed.join(", ")}. When a member takes an output of another member, take a value that stays the same across updates, such as a name, in place of one that changes on every update, such as a version ID.`,
+    `The cycle of ${listIds(cycle.members)} did not settle after ${passes + 1} passes. These outputs changed in the last pass: ${changed.join(", ") || "none"}.${revertedText} When a member takes an output of another member, take a value that stays the same across updates, such as a name, in place of one that changes on every update, such as a version ID.`,
   );
 }
 
@@ -241,8 +280,10 @@ export async function* revertToPlaceholder(
  * needs the current code to resolve: it reads the outputs of the other
  * dependencies from their records. A contribution that depends on a
  * resource with no record was not deployed, so it is left out too. A
- * dependency outside contributions that has no record fails the revert.
- * The record keeps only the edges that remain.
+ * dependency outside contributions that has no record throws
+ * `ResourceCycleError`, as does a param that the left-out contributions
+ * set and that is required or forces a replacement. The record keeps only
+ * the edges that remain.
  */
 async function* prepareRevert(
   parent: DurableStepRunner,
@@ -291,19 +332,19 @@ async function* prepareRevert(
       }
     }
   }
-  if (excluded.size > peers.size) {
-    const blocker = placeholderParamsBlocker(resource, excluded);
-    if (blocker) {
-      throw new ResourceCycleError(
-        `Cannot update ${resource.id} without its contributions that refer to resources with no state record: ${blocker}. Deploy those resources first.`,
-      );
-    }
+  // The cycle's placeholders and members are checked for this when deploy
+  // and destroy order the resources. The check here covers the resources
+  // outside the cycle and the contributions that depend on resources with no
+  // record.
+  const blocker = placeholderParamsBlocker(resource, excluded);
+  if (blocker) {
+    throw new ResourceCycleError(
+      `Cannot update ${resource.id} without its contributions that refer to ${listIds([...excluded].filter((peer) => peer !== resource))}: ${blocker}.`,
+    );
   }
   // A peer that is only in contributions is left out of the params, so its
   // output is not needed, and the record no longer depends on it.
-  const remaining = resource
-    .getDependencies()
-    .filter((dependency) => fixed.has(dependency) || !excluded.has(dependency));
+  const remaining = remainingDependencies(resource, excluded);
 
   const placeholder = yield* step.run("params", () =>
     resource.getParams({ excludeContributionsFrom: excluded }),
@@ -313,10 +354,8 @@ async function* prepareRevert(
     // State does not hold hidden params.
     if (item.hidden) params[key] = placeholder[key];
   }
-  // These params neither are required nor force a replacement: the cycle's
-  // placeholders are checked for that when deploy and destroy order the
-  // resources, `revertedDependents` checks the others, and the check above
-  // covers the contributions that depend on resources with no record.
+  // These params neither are required nor force a replacement, as checked
+  // above.
   for (const key of resource.getContributedParams({ from: excluded })) {
     params[key] = placeholder[key];
   }

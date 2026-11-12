@@ -4528,7 +4528,10 @@ describe("dependency cycles", () => {
     runtime.close();
   });
 
-  it("fails before it reverts anything when a revert can't be computed", async () => {
+  // The revert of d can't be computed, as role has no record. Deploy skips
+  // it on purpose and leaves the delete of b to the provider. This one
+  // refuses it, as d still binds b, so the deploy fails after a was reverted.
+  it("skips the revert of a resource outside the cycle that can't be computed, and leaves the delete to the provider", async () => {
     const { worker, bind, calls } = defineWorkers();
     const a = worker("a");
     const b = worker("b");
@@ -4537,8 +4540,11 @@ describe("dependency cycles", () => {
     bind(b, a);
     bind(d, b);
     const resources = [a, b, d];
-    const runtime = createRuntime(resources, "cycle-replace-fixed-dependency");
-    await runtime.run("cycle-replace-fixed-dependency-1");
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "cycle-replace-skip-revert", {
+      emit: (event) => void events.push(event),
+    });
+    await runtime.run("cycle-replace-skip-revert-1");
     calls.length = 0;
 
     const nextA = worker("a");
@@ -4551,12 +4557,81 @@ describe("dependency cycles", () => {
     nextD.dependOn(role);
     resources.splice(0, 3, nextA, nextB, nextD, role);
 
-    await expect(
-      runtime.run("cycle-replace-fixed-dependency-2"),
-    ).rejects.toThrow(
-      "Cannot update d without its contributions that refer to b: its dependency role has no state record",
+    await expect(runtime.run("cycle-replace-skip-revert-2")).rejects.toThrow(
+      "d still binds b",
     );
-    expect(calls).toEqual([]);
+    expect(calls).toEqual(["update a []"]);
+    expect(
+      events.filter(
+        (event) => event.event === "reconciler.cycle-revert.skipped",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        level: "warn",
+        resourceId: "d",
+        replacedDependency: "b",
+        errorMessage: expect.stringContaining(
+          "Cannot update d without its contributions that refer to b: its dependency role has no state record",
+        ),
+      }),
+    ]);
+    runtime.close();
+  });
+
+  it("replaces the member when the provider deletes it while a resource whose revert was skipped refers to it", async () => {
+    const { worker, bind, calls } = defineWorkers({ blocksDelete: true });
+    const a = worker("a");
+    const b = worker("b");
+    const d = worker("d");
+    bind(a, b);
+    bind(b, a);
+    bind(d, b);
+    const resources = [a, b, d];
+    const runtime = createRuntime(resources, "cycle-replace-skip-allowed");
+    await runtime.run("cycle-replace-skip-allowed-1");
+    calls.length = 0;
+
+    const nextA = worker("a");
+    const nextB = worker("b", "b2");
+    const nextD = worker("d");
+    const role = worker("role");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    bind(nextD, nextB);
+    nextD.dependOn(role);
+    resources.splice(0, 3, nextA, nextB, nextD, role);
+    await runtime.run("cycle-replace-skip-allowed-2");
+
+    // d blocks the delete of b, so the replacement deletes it, and deploy
+    // creates it again when it reaches it.
+    expect(calls).toEqual([
+      "update a []",
+      "delete d",
+      "delete b",
+      "create b2 [a]",
+      "update a [b2]",
+      "create role []",
+      "create d [b2]",
+    ]);
+    runtime.close();
+  });
+
+  it("records only the fixed edges of a placeholder that it created without its contributions", async () => {
+    const { worker, bind, failCreate } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const runtime = createRuntime([a, b], "cycle-placeholder-edges");
+    failCreate.add("b");
+
+    await expect(runtime.run("cycle-placeholder-edges-1")).rejects.toThrow(
+      "create b failed",
+    );
+    expect(await runtime.state.get("a")).toMatchObject({ dependsOn: [] });
+
+    await runtime.run("cycle-placeholder-edges-2");
+    expect(await runtime.state.get("a")).toMatchObject({ dependsOn: ["b"] });
     runtime.close();
   });
 });

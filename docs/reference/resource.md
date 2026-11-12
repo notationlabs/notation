@@ -514,6 +514,8 @@ A member can be the placeholder when:
 - each param that its contributions that refer to other members set is optional, and is not `immutable`, `primaryKey` or `secondaryKey`. A function contribution can set any collected param, so then this applies to every collected param,
 - its type has `update`.
 
+Deploy leaves out a whole contribution when any value in it refers to another member. Use one contribution for each reference, so that the placeholder keeps the values that don't refer to other members. For example, contribute a service binding to another Worker on its own, not in the same `contribute` call as variables.
+
 In each loop, the first member in the order of the resources that can be the placeholder becomes one. When no member of a loop can, plan and deploy fail with `ResourceCycleError`, which names the members of the loop and says why each of them can't be the placeholder.
 
 Three methods give the engine what it needs: `getFixedDependencies()` returns the dependencies that don't come from contributions, `getContributedParams({ from })` returns the collected params that the contributions that depend on a resource in `from` set, and `getParams({ excludeContributionsFrom })` returns the params without the contributions that depend on a resource in `excludeContributionsFrom`. A contribution depends on the resources in the `deps` of a function contribution, or on the resources whose output refs it holds. See [Dependency cycles](../internals/reconciler.md#dependency-cycles) for how deploy, destroy and plan handle a cycle.

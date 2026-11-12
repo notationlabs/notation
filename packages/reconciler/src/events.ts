@@ -86,6 +86,22 @@ export type OrphanDeletionSkippedEvent = {
   keptDependencies: string[];
 };
 
+/**
+ * Deploy did not update a resource outside a cycle without its contributions
+ * before it replaced a member that the resource refers to.
+ * `errorMessage` says why the revert can't be computed. The provider then
+ * decides whether the member can be deleted.
+ */
+export type CycleRevertSkippedEvent = {
+  level: "warn";
+  event: "reconciler.cycle-revert.skipped";
+  resourceId: string;
+  resourceType: ResourceType;
+  /** The member being replaced. */
+  replacedDependency: string;
+  errorMessage: string;
+};
+
 /** A provider package named in state could not be loaded. */
 export type ProviderLoadFailedEvent = {
   level: "warn";
@@ -100,6 +116,7 @@ export type ReconcilerEvent =
   | DriftDetectedEvent
   | HoldWaitingEvent
   | OrphanDeletionSkippedEvent
+  | CycleRevertSkippedEvent
   | ProviderLoadFailedEvent;
 
 export type ReconcilerEventEmitter = (

@@ -270,7 +270,7 @@ describe("revertedDependents", () => {
 });
 
 describe("revertedDependents outside the cycle", () => {
-  it("returns a resource outside the cycle after the members, and leaves out one that can't be reverted", () => {
+  it("returns the resources outside the cycle after the members, including one that can't be reverted", () => {
     const a = worker("a");
     const b = worker("b");
     const c = worker("c");
@@ -285,7 +285,7 @@ describe("revertedDependents outside the cycle", () => {
 
     expect(
       revertedDependents(resources, unit, b).map((dependent) => dependent.id),
-    ).toEqual(["a", "c"]);
+    ).toEqual(["a", "c", "d"]);
   });
 });
 
