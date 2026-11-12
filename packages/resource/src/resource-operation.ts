@@ -112,10 +112,33 @@ export class ResourceCreationUnknownError extends Error {
   }
 }
 
+/**
+ * A `create` operation throws this error when the provider refuses the create
+ * because a resource with the same key already exists, for example IAM's
+ * `EntityAlreadyExists`.
+ *
+ * The reconciler takes the resource over only with proof that one of
+ * Notation's own creates made it. The resource's `ownership` says
+ * how that is proved. Otherwise the create fails.
+ */
+export class ResourceAlreadyExistsError extends Error {
+  readonly _tag = "ResourceAlreadyExistsError" as const;
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ResourceAlreadyExistsError";
+  }
+
+  static is(error: unknown): error is ResourceAlreadyExistsError {
+    return hasTag(error, "ResourceAlreadyExistsError");
+  }
+}
+
 export type ResourceOperationSignal =
   | ResourceNotFoundError
   | ResourceOperationPendingError
-  | ResourceCreationUnknownError;
+  | ResourceCreationUnknownError
+  | ResourceAlreadyExistsError;
 
 function hasTag<T extends string>(
   error: unknown,

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-lambda";
 import {
   collectResourceGraph,
+  ResourceAlreadyExistsError,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
   SchemaStructureError,
@@ -168,6 +169,35 @@ describe("LambdaPermission", () => {
     await expect(
       permission().create(await permission().getParams()),
     ).rejects.toSatisfy(ResourceCreationUnknownError.is);
+  });
+
+  it("reports a statement that already exists as ResourceAlreadyExistsError", async () => {
+    mockSend(() => {
+      throw new sdk.ResourceConflictException({
+        message:
+          "The statement id (api-permission) provided already exists. Please provide a new statement id, or remove the existing statement.",
+        $metadata: {},
+      });
+    });
+    await expect(
+      permission().create(await permission().getParams()),
+    ).rejects.toSatisfy(ResourceAlreadyExistsError.is);
+  });
+
+  it("proves its ownership by its parent, the function's policy", () => {
+    expect(permission().ownership).toBe("parent");
+  });
+
+  it("keeps a conflict that is not about an existing statement as it is", async () => {
+    mockSend(() => {
+      throw new sdk.ResourceConflictException({
+        message: "The operation cannot be performed at this time.",
+        $metadata: {},
+      });
+    });
+    await expect(
+      permission().create(await permission().getParams()),
+    ).rejects.toBeInstanceOf(sdk.ResourceConflictException);
   });
 });
 

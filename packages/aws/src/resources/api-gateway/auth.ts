@@ -63,6 +63,7 @@ const apiSchema = authorizer.defineSchema({
 
 export const RouteAuth = apiSchema
   .defineOperations({
+    ownership: "parent",
     create: async (params) => {
       const command = new sdk.CreateAuthorizerCommand(params);
       const result = await apiGatewayClient().send(command);

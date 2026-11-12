@@ -56,6 +56,7 @@ export const WorkerSubdomain = workerSubdomainSchema
     create: async (params) => {
       await setScriptSubdomain(params.AccountId, params.ScriptName, true);
     },
+    ownership: "parent",
 
     read: async (key) => {
       const subdomain = await getScriptSubdomain(key.AccountId, key.ScriptName);

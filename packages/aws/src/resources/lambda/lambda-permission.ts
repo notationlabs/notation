@@ -3,6 +3,7 @@ import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-lambda";
 import { lambdaClient } from "src/resources/utils/aws-clients";
 import { awsCreate } from "src/resources/utils/errors";
+import { isLambdaAlreadyExists } from "src/resources/utils/lambda-mutation";
 import { AwsSchema } from "src/resources/utils/types";
 import { statementId } from "src/resources/utils/statement-id";
 import type { LambdaFunctionInstance } from "./lambda";
@@ -90,9 +91,13 @@ export const LambdaPermission = lambdaPermissionSchema
   .defineOperations({
     // AddPermission fails when the StatementId exists, so a create whose
     // outcome is unknown is found by `read`, whose key is made of params.
-    create: awsCreate(async (params) => {
-      await lambdaClient().send(new sdk.AddPermissionCommand(params));
-    }),
+    create: awsCreate(
+      async (params) => {
+        await lambdaClient().send(new sdk.AddPermissionCommand(params));
+      },
+      { alreadyExists: isLambdaAlreadyExists },
+    ),
+    ownership: "parent",
     read: async (key) => {
       const statement = await findStatement(key);
       if (!statement) {

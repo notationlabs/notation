@@ -197,6 +197,100 @@ describe("createPlan", () => {
     });
   });
 
+  it("plans a create for a resource whose record is a creating record", async () => {
+    const TestResource = resource({
+      type: "test/planner/creating",
+      provider: "test",
+    })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        read: async () => {
+          throw new Error("a creating record is not read at plan");
+        },
+        delete: async () => undefined,
+      });
+    const state = new MemoryStateBackend({
+      creating: {
+        version: 1,
+        id: "creating",
+        type: TestResource.type,
+        provider: "test",
+        config: {},
+        params: {},
+        output: {},
+        lastOperation: "creating",
+        lastOperationAt: "2026-07-22T00:00:00.000Z",
+      },
+    });
+
+    const plan = await createPlan({
+      resources: [new TestResource("creating")],
+      state,
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({ id: "creating", decision: "create" }),
+    ]);
+  });
+
+  it("notes that deploy may take over an existing resource when its class can prove ownership", async () => {
+    const operations = {
+      create: async () => undefined,
+      delete: async () => undefined,
+    };
+    const ByParent = resource({ type: "test/planner/parent", provider: "test" })
+      .defineSchema({})
+      .defineOperations({ ...operations, ownership: "parent" });
+    const ByToken = resource({ type: "test/planner/token", provider: "test" })
+      .defineSchema({})
+      .defineOperations({
+        ...operations,
+        ownership: "token",
+        find: async () => undefined,
+      });
+    const Unprovable = resource({
+      type: "test/planner/unprovable",
+      provider: "test",
+    })
+      .defineSchema({})
+      .defineOperations(operations);
+    const creatingRecord = (id: string, type: string) => ({
+      version: 1,
+      id,
+      type,
+      provider: "test",
+      config: {},
+      params: {},
+      output: {},
+      lastOperation: "creating" as const,
+      lastOperationAt: "2026-07-22T00:00:00.000Z",
+      creates: ["deploy-1"],
+    });
+    const state = new MemoryStateBackend({
+      "token-recorded": creatingRecord("token-recorded", ByToken.type),
+      unprovable: creatingRecord("unprovable", Unprovable.type),
+    });
+
+    const plan = await createPlan({
+      resources: [
+        new ByParent("parent"),
+        new ByToken("token-recorded"),
+        new ByToken("token-new"),
+        new Unprovable("unprovable"),
+      ],
+      state,
+    });
+
+    // A token proves nothing without a record of an earlier create.
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({ id: "parent", mayTakeOver: true }),
+      expect.objectContaining({ id: "token-recorded", mayTakeOver: true }),
+      expect.not.objectContaining({ mayTakeOver: true }),
+      expect.not.objectContaining({ mayTakeOver: true }),
+    ]);
+  });
+
   it("waits for a pending read before planning", async () => {
     let attempts = 0;
     const TestResource = resource({

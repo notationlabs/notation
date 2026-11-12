@@ -13,7 +13,10 @@ import {
   type LambdaFunctionInstance,
 } from "src/resources/lambda/lambda";
 import { LambdaIamRole } from "src/resources/lambda/lambda-role";
-import { ResourceNotFoundError } from "@notation/resource";
+import {
+  ResourceAlreadyExistsError,
+  ResourceNotFoundError,
+} from "@notation/resource";
 import {
   CREATE_TOKEN_TAG,
   createTokenTagValue,
@@ -234,6 +237,20 @@ describe("Lambda code", () => {
     });
   });
 
+  it("reports a function that already exists as ResourceAlreadyExistsError", async () => {
+    const lambda = await createLambda();
+    vi.spyOn(lambdaClient(), "send").mockImplementation(async () => {
+      throw new sdk.ResourceConflictException({
+        message: "Function already exist: app",
+        $metadata: {},
+      });
+    });
+
+    await expect(lambda.create(await lambda.getParams())).rejects.toSatisfy(
+      ResourceAlreadyExistsError.is,
+    );
+  });
+
   it("does not create the function when the archive changed after params were computed", async () => {
     const lambda = await createLambda();
     const params = await lambda.getParams();
@@ -288,6 +305,10 @@ describe("Lambda create token", () => {
       throw new Error("unexpected command");
     });
   }
+
+  it("proves its ownership by its create token", () => {
+    expect(lambda.ownership).toBe("token");
+  });
 
   it("finds the function that has the create token", async () => {
     mockTags({ [CREATE_TOKEN_TAG]: createTokenTagValue(TOKEN) });

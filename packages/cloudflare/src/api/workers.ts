@@ -60,6 +60,7 @@ export type ScriptUpload = {
   compatibilityFlags: string[];
   bindings: ScriptBinding[];
   exports: Record<string, DurableObjectExport>;
+  tags?: string[];
 };
 
 /**
@@ -82,6 +83,23 @@ export async function getScriptSettings(
   }
 }
 
+/** Returns the Worker's tags, or `undefined` if the Worker doesn't exist. */
+export async function getScriptTags(
+  account: string,
+  scriptName: string,
+): Promise<string[] | undefined> {
+  try {
+    const settings = await cloudflare<{ tags?: string[] | null }>(
+      "GET",
+      `${scriptPath(account, scriptName)}/script-settings`,
+    );
+    return settings.tags ?? [];
+  } catch (error) {
+    if (isNotFound(error)) return undefined;
+    throw error;
+  }
+}
+
 /** Creates the Worker, or replaces a Worker with the same name. */
 export async function putScript(
   account: string,
@@ -96,6 +114,7 @@ export async function putScript(
     ...(Object.keys(upload.exports).length > 0
       ? { exports: upload.exports }
       : {}),
+    ...(upload.tags ? { tags: upload.tags } : {}),
   };
   const form = new FormData();
   form.set("metadata", JSON.stringify(metadata));

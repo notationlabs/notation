@@ -58,6 +58,7 @@ export type PersistedResourceState = Pick<
   group: ResourceGroupRef | null;
   // Required here, though optional on StateNode: every write records edges.
   dependsOn: string[];
+  creates?: string[];
   [key: string]: DurableValue;
 };
 
@@ -65,10 +66,23 @@ export type PersistedResourceState = Pick<
  * How the driver writes state. Both are steps so the driver can carry its own
  * concurrency control: in a workflow that is a store write stamped with the
  * step that made it, so a replay does not repeat it.
+ *
+ * An operation that writes the record more than once names each write but
+ * the last with a `stage`, so that each write has its own step key. Each
+ * write is made against the record the one before it left. `null` clears the
+ * record.
  */
 export type PersistState = (
-  next: PersistedResourceState,
+  next: PersistedResourceState | null,
+  stage?: PersistStage,
 ) => AsyncGenerator<unknown, void, unknown>;
+
+/**
+ * `cleared` clears the record after a create that made nothing, so that a
+ * later deploy can't take over a resource with the same key. `restored`
+ * writes back the full record that a refused create started from.
+ */
+export type PersistStage = "creating" | "reclaimed" | "cleared" | "restored";
 
 export type RemoveState = () => AsyncGenerator<unknown, void, unknown>;
 
@@ -96,6 +110,15 @@ export type ResolvedResourceParams = ResourceOperationBaseParams & {
 export type CreateResourceParams = ResolvedResourceParams & {
   /** Names the create effects, together with the resource ID. */
   executionId: string;
+  /**
+   * The record that an earlier execution left and this create started from:
+   * a "creating" record, or the record of a resource that the drift read
+   * reported as gone. Create takes over a resource that the provider reports
+   * as already existing only with this record and a proof of ownership.
+   */
+  prior?: StateNode;
+  /** Set for the create of a replacement, after its record was removed. */
+  replacement?: boolean;
   /** The edges to record with the resource. */
   dependsOn: string[];
   persist: PersistState;
@@ -103,6 +126,8 @@ export type CreateResourceParams = ResolvedResourceParams & {
 
 export type UpdateResourceParams = ResolvedResourceParams & {
   patch: Record<string, unknown>;
+  /** The record's executions that created it, which the update keeps. */
+  creates?: string[];
   /** The edges to record with the resource. */
   dependsOn: string[];
   persist: PersistState;
@@ -112,6 +137,11 @@ export type DeleteResourceParams = ResourceOperationBaseParams & {
   remove: RemoveState;
   /** Passed to the resource's `delete`. */
   deletion?: ResourceDeletion;
+  /**
+   * Set when the record is a "creating" record: its params, and the
+   * executions whose creates it lists.
+   */
+  creating?: { params: Record<string, unknown>; creates: string[] };
 };
 
 export function getErrorDetails(err: unknown): {

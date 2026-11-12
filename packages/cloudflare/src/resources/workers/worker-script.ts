@@ -5,6 +5,7 @@ import path from "node:path";
 import { fromProjectRoot } from "@notation/core/paths";
 import {
   resource,
+  ResourceAlreadyExistsError,
   ResourceNotFoundError,
   type ResourceDeletion,
 } from "@notation/resource";
@@ -15,6 +16,7 @@ import {
   deleteScript,
   getScriptReferences,
   getScriptSettings,
+  getScriptTags,
   isNotFound,
   isReferenced,
   putScript,
@@ -176,13 +178,26 @@ export const WorkerScript = workerScriptSchema
   .defineOperations({
     // An upload replaces a Worker with the same name, so check first. The
     // check is outside `cloudflareCreate`: if it throws, nothing was created.
-    create: async (params) => {
+    create: async (params, _context, token) => {
       if (await getScriptSettings(params.AccountId, params.ScriptName)) {
-        throw new Error(
+        throw new ResourceAlreadyExistsError(
           `A Worker named ${params.ScriptName} already exists in the Cloudflare account ${params.AccountId}`,
         );
       }
-      await cloudflareCreate(upload)(params, []);
+      await cloudflareCreate(upload)(
+        params,
+        [],
+        token ? [createTokenTag(token)] : undefined,
+      );
+    },
+
+    ownership: "token",
+    find: async (params, token) => {
+      const tags = await getScriptTags(params.AccountId, params.ScriptName);
+      if (tags?.includes(createTokenTag(token))) return;
+      throw new ResourceNotFoundError(
+        "No Worker has the name and the create token",
+      );
     },
 
     read: async (key) => {
@@ -202,9 +217,11 @@ export const WorkerScript = workerScriptSchema
 
     // An upload sets the whole Worker, so the patch is not used. The upload
     // compares the namespaces in state with the new ones, to rename or
-    // delete those that changed.
+    // delete those that changed. The Worker's current tags are sent too,
+    // otherwise the upload removes the create token's tag.
     update: async (_key, _patch, params, state) => {
-      await upload(params, state.DurableObjectNamespaces ?? []);
+      const tags = await getScriptTags(params.AccountId, params.ScriptName);
+      await upload(params, state.DurableObjectNamespaces ?? [], tags);
     },
 
     delete: async (key, _state, _context, deletion) => {
@@ -235,9 +252,18 @@ export function sortedFlags(flags: string[]): string[] {
   return [...new Set(flags)].sort();
 }
 
+/**
+ * A token holds URI-encoded IDs, so the tag holds the token's hex SHA-256.
+ */
+function createTokenTag(token: string): string {
+  const hash = crypto.createHash("sha256").update(token).digest("hex");
+  return `notation-create-token-${hash}`;
+}
+
 async function upload(
   params: WorkerScriptParams,
   previous: HostedNamespace[],
+  tags?: string[],
 ): Promise<void> {
   const code = await readCode(params.CodeFilePath, params.CodeSha256);
   const exports = durableObjectExports(
@@ -251,6 +277,7 @@ async function upload(
     compatibilityFlags: params.CompatibilityFlags ?? [],
     bindings: params.Bindings ?? [],
     exports,
+    tags,
   });
 }
 

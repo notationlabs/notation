@@ -16,11 +16,27 @@ export async function* readResourceOperation(
   step: StepRunner,
   params: ResolvedResourceParams,
 ): AsyncGenerator<unknown, Record<string, unknown>, unknown> {
+  return (yield* readRemoteOperation(step, params)).output;
+}
+
+/**
+ * Reads the resource. `output` is the read merged over the desired params.
+ * `remote` holds only what the read returned. It is undefined in a dry run,
+ * and for a class with no read.
+ */
+export async function* readRemoteOperation(
+  step: StepRunner,
+  params: ResolvedResourceParams,
+): AsyncGenerator<
+  unknown,
+  { output: Record<string, unknown>; remote?: Record<string, unknown> },
+  unknown
+> {
   yield* emitLifecycleEvent(params, "read", "start");
 
   if (params.dryRun) {
     yield* emitLifecycleEvent(params, "read", "dry-run");
-    return {};
+    return { output: {} };
   }
 
   try {
@@ -33,7 +49,7 @@ export async function* readResourceOperation(
         reason: "read-not-implemented",
       });
       yield* emitLifecycleEvent(params, "read", "success");
-      return merged as Record<string, unknown>;
+      return { output: merged as Record<string, unknown> };
     }
 
     const remote = yield* runPendingOperation(
@@ -56,7 +72,7 @@ export async function* readResourceOperation(
     };
 
     yield* emitLifecycleEvent(params, "read", "success");
-    return mergedOutput;
+    return { output: mergedOutput, remote: remote ?? undefined };
   } catch (err) {
     yield* emitLifecycleEvent(params, "read", "error", getErrorDetails(err));
     throw err;

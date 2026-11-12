@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-/** The tag that records the create attempt that made a resource. */
+/** The tag that records the create token of the execution that made a resource. */
 export const CREATE_TOKEN_TAG = "notation:create-token";
 
 /**

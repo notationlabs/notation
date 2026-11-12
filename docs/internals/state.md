@@ -14,6 +14,8 @@ The runtime assigns a UUIDv7 `instanceId` when a store is created and increments
 
 Each record holds the resource's `id`, `type`, `provider`, `group`, `config`, `params`, `output` and `dependsOn`. `provider` is the package or package subpath that exports the resource's class, such as `@notation/aws/resources`, so deploy and destroy can load the class of a record whose type is no longer in the graph. `dependsOn` lists the IDs of the resources it depends on, so the reconciler can order the deletes of orphans from state alone. A record written before edges were recorded has no `dependsOn`. See [Dependency edges](./reconciler.md#dependency-edges).
 
+`lastOperation` is `create`, `update` or `creating`. Deploy writes a `creating` record before it calls a resource's `create`, and replaces it with a `create` record when the create is done. A `creating` record says that a deploy tried to create the resource, and may or may not have made it. Its `output` holds only the key fields that params supply. `creates` lists the IDs of the executions whose creates may have made the resource, so that deploy can compute their create tokens. See [Recoverable creates](./reconciler.md#recoverable-creates).
+
 `DurableStateBackend` is read-only: state writes happen inside the workflow, through the store handle, so each write is stamped with the step that made it and is not repeated on replay.
 
 The workflow serializes deploy and destroy through one `notation/deployment-hold` store per deployment.

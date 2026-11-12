@@ -234,14 +234,15 @@ An issue in a statement that holds an unknown is still dropped, because the stat
 
 `defineOperations` accepts CRUD handlers and parameter derivation:
 
-| Field          | Required | Signature / Description                                                                                                                                                                                       |
-| -------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create`       | yes      | `(params, context?, token?) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key. `token` is unique to the attempt.                                                              |
-| `find`         | no       | `(params, token) => Promise<ComputedPrimaryKey<S>>` – find the resource that the create attempt with `token` made, or throw `ResourceNotFoundError`. See [Unknown create outcomes](#unknown-create-outcomes). |
-| `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                                                                          |
-| `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                                                            |
-| `delete`       | yes      | `(key, state, context?, deletion?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone.                                             |
-| `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                                                                         |
+| Field          | Required | Signature / Description                                                                                                                                                                                                      |
+| -------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`       | yes      | `(params, context?, token?) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key. `token` is unique to the execution and the resource, and every attempt of the execution's create receives it. |
+| `find`         | no       | `(params, token) => Promise<ComputedPrimaryKey<S>>` – find the resource that the create with `token` made, or throw `ResourceNotFoundError`. Requires `ownership`. See [Unknown create outcomes](#unknown-create-outcomes).  |
+| `ownership`    | no       | `"token"` or `"parent"` – how the reconciler proves that one of Notation's creates made a resource. See [Resources that already exist](#resources-that-already-exist).                                                       |
+| `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                                                                                         |
+| `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                                                                           |
+| `delete`       | yes      | `(key, state, context?, deletion?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone.                                                             |
+| `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                                                                                        |
 
 The reconciler records params, results and state, so each must be a durable value as `@notation/durable` 0.9.0 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
 
@@ -251,6 +252,7 @@ Import the errors from `@notation/resource`:
 
 ```ts
 import {
+  ResourceAlreadyExistsError,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
@@ -270,6 +272,8 @@ new ResourceOperationPendingError(message: string, {
 });
 
 new ResourceCreationUnknownError(message: string, options?: { cause?: unknown });
+
+new ResourceAlreadyExistsError(message: string, options?: { cause?: unknown });
 ```
 
 | Handler result                                                                        | Meaning                                                                                   | What the reconciler does                                                                                                                                                                                                                            |
@@ -278,6 +282,7 @@ new ResourceCreationUnknownError(message: string, options?: { cause?: unknown })
 | `throw new ResourceNotFoundError(message, { cause })`                                 | `read` or `delete` found no resource for the given key.                                   | From `read`, treats the resource as absent during planning and drift detection; a read after create or update fails because that operation claimed to have finished. From `delete`, treats the delete as complete, since absence is its goal state. |
 | `throw new ResourceOperationPendingError(message, { retryAfterMs, callbackContext })` | The operation has not finished.                                                           | Waits for `retryAfterMs`, then calls the same handler again. It passes `callbackContext` as the handler's final argument.                                                                                                                           |
 | `throw new ResourceCreationUnknownError(message, { cause })`                          | `create` cannot tell whether the provider made the resource, for example after a timeout. | Looks the resource up, as described in [Unknown create outcomes](#unknown-create-outcomes).                                                                                                                                                         |
+| `throw new ResourceAlreadyExistsError(message, { cause })`                            | `create` was refused because a resource with the same key already exists.                 | Takes the resource over only with proof that one of Notation's creates made it, as described in [Resources that already exist](#resources-that-already-exist). Otherwise stops the deployment.                                                      |
 | Throw any other error                                                                 | The operation failed.                                                                     | Stops the deployment.                                                                                                                                                                                                                               |
 
 `ResourceNotFoundError` means the resource is absent wherever it is thrown. A `delete` handler may either catch the provider's missing-resource error and return normally, or translate it to `ResourceNotFoundError`; both count as success.
@@ -317,11 +322,12 @@ read: async (key, context) => {
 
 ### Unknown create outcomes
 
-The outcome of a create attempt is unknown when the process stops after `create` returns and before the reconciler records the result, or when `create` throws `ResourceCreationUnknownError`. The reconciler then looks the resource up before it calls `create` again:
+The outcome of a create attempt is unknown when the process stops after `create` returns and before the reconciler records the result, or when `create` throws `ResourceCreationUnknownError`. The reconciler then looks the resource up before it calls `create` again. The lookup only finds a resource that the resource's `ownership` proves is Notation's:
 
-1. A resource with `find` is found by the attempt's token. `create` must record the token on the remote resource, for example as a tag, so that `find` can search for it.
-2. A resource with `read`, whose key is made of params, is read by the key it would have. A read that throws `ResourceOperationPendingError` finds the resource, because a pending read means that the resource exists. A read that throws a throttled `ResourceOperationPendingError` doesn't.
-3. Any other resource cannot be found. The reconciler calls `create` again after a stopped process, and fails the deployment on a `ResourceCreationUnknownError`.
+1. With `ownership: "token"`, `find` is called with the create token. `create` must record the token on the remote resource, for example as a tag, so that `find` can search for it.
+2. With `ownership: "parent"` and `find`, `find` finds the resource inside its parent.
+3. With `ownership: "parent"` and `read`, a resource whose key is made of params is read by the key it would have. A read that throws `ResourceOperationPendingError` finds the resource, because a pending read means that the resource exists. A read that throws a throttled `ResourceOperationPendingError` doesn't.
+4. Any other resource cannot be found. The reconciler calls `create` again after a stopped process, and fails the deployment on a `ResourceCreationUnknownError`. The next deploy refuses the resource if it exists.
 
 When a lookup finds the resource, the reconciler uses what it found as the result of `create`. When it throws, the reconciler looks again after one second. When the outcome is still unknown after 10 attempts, or after `maxOperationAttempts` when it is lower, the deployment fails with a `WorkflowEffectError` with code `EFFECT_OUTCOME_UNKNOWN`.
 
@@ -341,6 +347,7 @@ create: async (params, _context, token) => {
     throw error;
   }
 },
+ownership: "token",
 find: async (_params, token) => {
   const api = await findApiByTag(TOKEN_TAG, token);
   if (!api) throw new ResourceNotFoundError("No API has the token");
@@ -348,7 +355,44 @@ find: async (_params, token) => {
 },
 ```
 
-In `@notation/aws/resources`, `awsCreate` wraps a `create` handler and throws `ResourceCreationUnknownError` when an AWS call times out, loses its connection or gets a server error.
+In `@notation/aws/resources`, `awsCreate` wraps a `create` handler and throws `ResourceCreationUnknownError` when an AWS call times out, loses its connection or gets a server error. Its `alreadyExists` option takes a function that returns `true` for the provider's "already exists" error, which `awsCreate` then throws as `ResourceAlreadyExistsError`.
+
+### Resources that already exist
+
+A `create` handler throws `ResourceAlreadyExistsError` when the provider refuses the create because a resource with the same key exists, for example IAM's `EntityAlreadyExists`. The reconciler takes the resource over only with proof that one of Notation's own creates made it. The resource's `ownership` option says how that is proved:
+
+| `ownership` | Proof                                                                                                                                                                                                                                                                    |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `"token"`   | `create` records its `token` on the resource, for example as a tag, and `find(params, token)` checks it. The reconciler calls `find` with the token of each execution that the resource's record lists, and of the current execution.                                    |
+| `"parent"`  | The resource lives inside another resource that Notation owns, such as a statement in a Lambda function's policy, so any resource with the desired key is Notation's. A `find` finds the resource inside its parent, and refuses it by throwing `ResourceNotFoundError`. |
+| not set     | None. The reconciler never takes the resource over, never looks up a create with an unknown outcome, and never deletes the resource of a `creating` record.                                                                                                              |
+
+```ts
+create: awsCreate(
+  async (params, _context, token) => {
+    await iam.send(
+      new CreateRoleCommand({
+        ...params,
+        Tags: token ? [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }] : undefined,
+      }),
+    );
+  },
+  { alreadyExists: (error) => error instanceof EntityAlreadyExistsException },
+),
+ownership: "token",
+find: async (params, token) => {
+  const { Role } = await iam.send(new GetRoleCommand({ RoleName: params.RoleName }));
+  const value = createTokenTagValue(token);
+  if (Role?.Tags?.some((tag) => tag.Key === CREATE_TOKEN_TAG && tag.Value === value)) return;
+  throw new ResourceNotFoundError("No role has the name and the create token");
+},
+```
+
+The reconciler checks the proof each time `create` throws `ResourceAlreadyExistsError`. With `ownership: "token"` and a `creating` record, it also calls `find` with the tokens of the earlier executions that the record lists before it calls `create`, so that a resource whose key the provider assigns is not made twice. With the proof, the reconciler reads the resource by its key, records it with the params that the read returned, and then updates, replaces or keeps it. The resource must have a `read`. The reconciler does the same when a create with an unknown outcome is found by its lookup. Without the proof, the deployment fails. The reconciler clears a `creating` record, and writes back a full record that a drift read reported gone. See [Recoverable creates](../internals/reconciler.md#recoverable-creates).
+
+The reconciler clears the `creating` record after any other error that isn't classified as unknown, when the deploy started from no record. A `create` that makes more than one call should throw `ResourceCreationUnknownError` when a later call fails after an earlier call made the resource, so that the record stays.
+
+The orphan sweep and destroy delete the resource of a `creating` record only with the same proof. Otherwise they remove only the record.
 
 ## Dependencies
 

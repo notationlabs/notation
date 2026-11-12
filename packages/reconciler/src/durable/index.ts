@@ -26,21 +26,39 @@
  *   notation:hold:*            deployment hold: inspect/acquire/release
  *   state:persist:<id>         conditional create or update of a resource
  *                              record
+ *   state:persist:<id>:creating   conditional write of the "creating"
+ *                              record, before a create is attempted
+ *   state:persist:<id>:reclaimed  conditional write of the record of a
+ *                              resource that create took over
+ *   state:persist:<id>:cleared    conditional removal of the "creating"
+ *                              record, after a create that made nothing
+ *   state:persist:<id>:restored   conditional write of the full record
+ *                              that a refused drift-recreate started from
  *   state:delete:<id>          conditional removal of one
- *   state:create:<id>          unconditional write of a record removed
- *                              earlier in the same execution
  *   state:<write>:<id>:settle:<n>        a write in pass <n> over a cycle
  *   state:delete:<id>:replace:<replaced id>   the removal of a dependent
  *                              that blocks the delete of <replaced id>
  *   *:replace:delete:*         replacement, first half: the delete
- *   *:replace:create:*         replacement, second half: the create, ending
- *                              in state:create
+ *   *:replace:create:*         replacement, second half: a read of the
+ *                              removed record, then the create
+ *   *:create:find              the search, before a create, for the resource
+ *                              that an earlier execution's create made
+ *   *:create:prove             the search for proof that one of Notation's
+ *                              creates made an existing resource
+ *   *:delete:find              the search for the resource of a "creating"
+ *                              record by its create tokens, before a delete
+ *   *:create:reclaim:read:*    the read of a resource that create took over
+ *   *:reclaimed:*              the decision and change that follow a
+ *                              takeover
  *
  * Opening a store has no step key.
  *
  * Effect IDs are persisted in the same way. A create attempt's effect ID is
  * notation:create:<execution id>:<resource id>:<n>, with both IDs
- * URI-encoded. The resource receives it as the attempt's token.
+ * URI-encoded. The resource receives notation:create:<execution id>:<resource
+ * id> as its create token, which is the same for every attempt. A create
+ * that follows a takeover in the same execution uses
+ * <execution id>/reclaimed as its execution ID.
  *
  * An <id> inside a scope is URI-encoded, so the `:` delimiter is unambiguous.
  * The state: keys are store-handle keys and so are not scope-prefixed: a

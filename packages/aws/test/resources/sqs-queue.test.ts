@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-sqs";
 import {
+  ResourceAlreadyExistsError,
   ResourceNotFoundError,
   validateValues,
   ValueValidationError,
@@ -38,6 +39,9 @@ describe("SQS queue", () => {
   it("creates the queue with its attributes as strings and the create token", async () => {
     const send = mockSend((command) => {
       if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
+      if (command instanceof sdk.ListQueueTagsCommand) {
+        return { Tags: { [CREATE_TOKEN_TAG]: createTokenTagValue("token") } };
+      }
       return { QueueUrl: url };
     });
 
@@ -124,13 +128,38 @@ describe("SQS queue", () => {
     });
   });
 
-  it("does not take over a queue that exists already", async () => {
+  it("reports a queue that exists already as ResourceAlreadyExistsError", async () => {
     const send = mockSend(() => ({ QueueUrl: url }));
 
-    await expect(queue.create({ QueueName: "orders" })).rejects.toThrow(
+    const created = queue.create({ QueueName: "orders" });
+    await expect(created).rejects.toThrow(
       "An SQS queue named orders already exists",
     );
+    await expect(created).rejects.toSatisfy(ResourceAlreadyExistsError.is);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a queue that another writer made after the check, which lacks the create token", async () => {
+    mockSend((command) => {
+      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
+      if (command instanceof sdk.ListQueueTagsCommand) return { Tags: {} };
+      return { QueueUrl: url };
+    });
+
+    await expect(
+      queue.create({ QueueName: "orders" }, undefined, "token"),
+    ).rejects.toSatisfy(ResourceAlreadyExistsError.is);
+  });
+
+  it("reports a queue whose attributes differ from an existing one as ResourceAlreadyExistsError", async () => {
+    mockSend((command) => {
+      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
+      throw new sdk.QueueNameExists({ message: "exists", $metadata: {} });
+    });
+
+    await expect(
+      queue.create({ QueueName: "orders" }, undefined, "token"),
+    ).rejects.toSatisfy(ResourceAlreadyExistsError.is);
   });
 
   it("finds the queue that has the create token", async () => {

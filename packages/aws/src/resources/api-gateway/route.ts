@@ -106,14 +106,17 @@ export const routeSchema = route.defineSchema({
 
 export const Route = routeSchema
   .defineOperations({
-    create: awsCreate(async (params) => {
-      const command = new sdk.CreateRouteCommand(params);
-      const result = await apiGatewayClient().send(command);
+    create: awsCreate(
+      async (params) => {
+        const command = new sdk.CreateRouteCommand(params);
+        const result = await apiGatewayClient().send(command);
 
-      return { RouteId: result.RouteId! };
-    }),
-    // A route key is unique within an API, so it finds the route that a
-    // create attempt made.
+        return { RouteId: result.RouteId! };
+      },
+      { alreadyExists: (error) => error instanceof sdk.ConflictException },
+    ),
+    ownership: "parent",
+    // A route key is unique within an API, so `find` matches on it.
     find: async (params) => {
       const route = await findInPages(
         (NextToken) =>

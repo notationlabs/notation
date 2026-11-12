@@ -95,6 +95,7 @@ export async function* updateResourceOperation(
       params: params.resource.toState(params.resourceParams),
       output: params.resource.toState(params.resource.output),
       dependsOn: params.dependsOn,
+      ...(params.creates ? { creates: params.creates } : {}),
     });
     // Thrown only once the record is written, so that state still records
     // the update.

@@ -1,9 +1,18 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/resources/utils/aws-clients";
-import { validateValues } from "@notation/resource";
+import {
+  ResourceAlreadyExistsError,
+  ResourceCreationUnknownError,
+  ResourceNotFoundError,
+  validateValues,
+} from "@notation/resource";
 import { EventBridgeRule } from "src/resources/event-bridge/rule";
 import { EventBus } from "src/resources/event-bridge/event-bus";
+import {
+  CREATE_TOKEN_TAG,
+  createTokenTagValue,
+} from "src/resources/utils/create-token";
 
 const send = vi.spyOn(eventBridgeClient(), "send");
 
@@ -17,6 +26,29 @@ const rule = new EventBridgeRule("rule", {
 });
 
 const key = { Name: "daily", EventBusName: "default" };
+const token = "notation:create:deploy-1:rule";
+
+/**
+ * Answers the calls that create makes before and after PutTargets: no rule
+ * exists before PutRule, and the rule that PutRule makes has the tags in
+ * `ruleTags`.
+ */
+function createCalls(
+  command: any,
+  ruleTags = [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }],
+) {
+  if (command instanceof sdk.DescribeRuleCommand) {
+    throw new sdk.ResourceNotFoundException({
+      message: "Rule daily does not exist",
+      $metadata: {},
+    });
+  }
+  if (command instanceof sdk.PutRuleCommand) return { RuleArn: "arn:rule" };
+  if (command instanceof sdk.ListTagsForResourceCommand) {
+    return { Tags: ruleTags };
+  }
+  return undefined;
+}
 
 function mockExistingTargets(ids: string[]) {
   send.mockImplementation(async (command: any) => {
@@ -109,8 +141,11 @@ test("read reports the rule's current targets", async () => {
 function mockFailedEntries(
   failingCommand: new (...args: any[]) => unknown,
   existingTargetIds: string[] = [],
+  ruleTags?: { Key: string; Value: string }[],
 ) {
   send.mockImplementation(async (command: any) => {
+    const answer = createCalls(command, ruleTags);
+    if (answer) return answer;
     if (command instanceof sdk.ListTargetsByRuleCommand) {
       return {
         Targets: existingTargetIds.map((Id) => ({ Id, Arn: `arn:${Id}` })),
@@ -139,7 +174,146 @@ test("create fails when a target could not be put", async () => {
   mockFailedEntries(sdk.PutTargetsCommand);
   const params = { ...key, Targets: [{ Id: "bad-fn", Arn: "arn:bad-fn" }] };
 
-  await expect(rule.create!(params, {} as any)).rejects.toThrow(failureMessage);
+  await expect(rule.create!(params, undefined, token)).rejects.toThrow(
+    failureMessage,
+  );
+  expect(sentCommands().map((c) => c.constructor)).toEqual([
+    sdk.DescribeRuleCommand,
+    sdk.PutRuleCommand,
+    sdk.ListTagsForResourceCommand,
+    sdk.PutTargetsCommand,
+    sdk.ListTargetsByRuleCommand,
+    sdk.DeleteRuleCommand,
+  ]);
+});
+
+test("create tags the rule with the create token and leaves the targets out of PutRule", async () => {
+  mockFailedEntries(class Never {});
+  const params = { ...key, Targets: [{ Id: "fn", Arn: "arn:fn" }] };
+
+  await rule.create!(params, undefined, token);
+
+  const putRule = sentCommands().find((c) => c instanceof sdk.PutRuleCommand);
+  expect(putRule!.input).toEqual({
+    ...key,
+    Tags: [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }],
+  });
+});
+
+test("create refuses a rule that exists, without changing it", async () => {
+  send.mockImplementation(async (command: any) => {
+    if (command instanceof sdk.DescribeRuleCommand) {
+      return { Name: "daily", Arn: "arn:rule" };
+    }
+    return {};
+  });
+  const params = { ...key, Targets: [{ Id: "fn", Arn: "arn:fn" }] };
+
+  await expect(rule.create!(params, undefined, token)).rejects.toSatisfy(
+    ResourceAlreadyExistsError.is,
+  );
+  expect(sentCommands().map((c) => c.constructor)).toEqual([
+    sdk.DescribeRuleCommand,
+  ]);
+});
+
+test("create refuses a rule that another writer made after the check, before it puts the targets", async () => {
+  mockFailedEntries(
+    class Never {},
+    [],
+    [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue("someone-else") }],
+  );
+  const params = { ...key, Targets: [{ Id: "fn", Arn: "arn:fn" }] };
+
+  await expect(rule.create!(params, undefined, token)).rejects.toSatisfy(
+    ResourceAlreadyExistsError.is,
+  );
+  expect(sentCommands().map((c) => c.constructor)).toEqual([
+    sdk.DescribeRuleCommand,
+    sdk.PutRuleCommand,
+    sdk.ListTagsForResourceCommand,
+  ]);
+});
+
+test("create without a token does not delete the rule when the targets could not be put", async () => {
+  mockFailedEntries(sdk.PutTargetsCommand);
+  const params = { ...key, Targets: [{ Id: "bad-fn", Arn: "arn:bad-fn" }] };
+
+  const created = rule.create!(params, undefined, undefined);
+  await expect(created).rejects.toThrow(/the rule was not deleted/);
+  await expect(created).rejects.not.toSatisfy(ResourceAlreadyExistsError.is);
+  const sent = sentCommands().map((c) => c.constructor);
+  expect(sent).not.toContain(sdk.RemoveTargetsCommand);
+  expect(sent).not.toContain(sdk.DeleteRuleCommand);
+});
+
+test("find returns for a rule with the create token, and not for another", async () => {
+  send.mockImplementation(async (command: any) => {
+    if (command instanceof sdk.DescribeRuleCommand) {
+      return { Name: "daily", Arn: "arn:rule" };
+    }
+    if (command instanceof sdk.ListTagsForResourceCommand) {
+      return {
+        Tags: [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }],
+      };
+    }
+    return {};
+  });
+  const params = { ...key, Targets: [] };
+
+  await expect(rule.find!(params, token)).resolves.toBeUndefined();
+  await expect(rule.find!(params, "other-token")).rejects.toSatisfy(
+    ResourceNotFoundError.is,
+  );
+});
+
+test("create deletes the rule, removing the targets that were put, when another target could not be put", async () => {
+  mockFailedEntries(sdk.PutTargetsCommand, ["fn"]);
+  const params = {
+    ...key,
+    Targets: [
+      { Id: "fn", Arn: "arn:fn" },
+      { Id: "bad-fn", Arn: "arn:bad-fn" },
+    ],
+  };
+
+  await expect(rule.create!(params, undefined, token)).rejects.toThrow(
+    /the rule was deleted/,
+  );
+  expect(sentCommands().map((c) => c.constructor)).toEqual([
+    sdk.DescribeRuleCommand,
+    sdk.PutRuleCommand,
+    sdk.ListTagsForResourceCommand,
+    sdk.PutTargetsCommand,
+    sdk.ListTargetsByRuleCommand,
+    sdk.RemoveTargetsCommand,
+    sdk.DeleteRuleCommand,
+  ]);
+});
+
+test("create reports an unknown outcome, naming both failures, when the rule could not be deleted after its targets failed", async () => {
+  send.mockImplementation(async (command: any) => {
+    const answer = createCalls(command);
+    if (answer) return answer;
+    if (command instanceof sdk.PutTargetsCommand) {
+      throw new Error("access denied to the target");
+    }
+    if (command instanceof sdk.ListTargetsByRuleCommand) return { Targets: [] };
+    if (command instanceof sdk.DeleteRuleCommand) {
+      throw new Error("access denied to the rule");
+    }
+    return {};
+  });
+
+  const created = rule.create!(
+    { ...key, Targets: [{ Id: "fn", Arn: "arn:fn" }] },
+    undefined,
+    token,
+  );
+  await expect(created).rejects.toThrow(
+    /access denied to the target.*could not be deleted: access denied to the rule/,
+  );
+  await expect(created).rejects.toSatisfy(ResourceCreationUnknownError.is);
 });
 
 test("update fails when a stale target could not be removed", async () => {
@@ -176,7 +350,7 @@ test("create succeeds when no targets failed", async () => {
   mockFailedEntries(class Never {});
   const params = { ...key, Targets: [{ Id: "fn", Arn: "arn:fn" }] };
 
-  await expect(rule.create!(params, {} as any)).resolves.toBeUndefined();
+  await expect(rule.create!(params, undefined, token)).resolves.toBeUndefined();
 });
 
 test("read returns the event pattern in compact form", async () => {

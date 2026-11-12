@@ -10,10 +10,12 @@ import {
 import { SqliteRuntime, createSqliteDb } from "@notation/durable/sqlite/node";
 import {
   resource,
+  ResourceAlreadyExistsError,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
   type ResourceDeletion,
   ResourceOperationPendingError,
+  type ResourceOwnership,
   SchemaStructureError,
   ValueValidationError,
   mergeContributions,
@@ -84,7 +86,7 @@ describe("durable execution and replay", () => {
     expect(await runtime.state.get("pending")).toMatchObject({
       id: "pending",
       lastOperation: "create",
-      version: 1,
+      version: 2,
     });
     runtime.close();
   });
@@ -107,11 +109,13 @@ describe("durable execution and replay", () => {
       "simulated process crash",
     );
     expect(create).toHaveBeenCalledOnce();
-    expect(await runtime.state.get("resume")).toBeUndefined();
+    expect(await runtime.state.get("resume")).toMatchObject({
+      lastOperation: "creating",
+    });
 
     await runtime.run("resume-execution");
     expect(create).toHaveBeenCalledOnce();
-    expect(await runtime.state.get("resume")).toMatchObject({ version: 1 });
+    expect(await runtime.state.get("resume")).toMatchObject({ version: 2 });
     runtime.close();
   });
 
@@ -132,7 +136,12 @@ describe("durable execution and replay", () => {
           value: v.string(),
         },
       } as any)
-      .defineOperations({ create, read, delete: async () => undefined });
+      .defineOperations({
+        create,
+        ownership: "parent",
+        read,
+        delete: async () => undefined,
+      });
     const runtime = createRuntime(
       [new TestResource("looked-up", { config: { name: "app" } as any })],
       "effect-read",
@@ -151,7 +160,7 @@ describe("durable execution and replay", () => {
     expect(read).toHaveBeenNthCalledWith(1, { name: "app" });
     expect(await runtime.state.get("looked-up")).toMatchObject({
       output: { name: "app" },
-      version: 1,
+      version: 2,
     });
     runtime.close();
   });
@@ -175,7 +184,7 @@ describe("durable execution and replay", () => {
     });
     await runtime.run("no-read-execution");
     expect(create).toHaveBeenCalledTimes(2);
-    expect(await runtime.state.get("no-read")).toMatchObject({ version: 1 });
+    expect(await runtime.state.get("no-read")).toMatchObject({ version: 2 });
     runtime.close();
   });
 
@@ -203,6 +212,7 @@ describe("durable execution and replay", () => {
       .defineOperations({
         // Cast: a schema declared without API types infers no primary key.
         create: create as any,
+        ownership: "token",
         find: find as any,
         delete: async () => undefined,
       });
@@ -215,14 +225,14 @@ describe("durable execution and replay", () => {
     await runtime.run("find-execution");
 
     expect(create).toHaveBeenCalledOnce();
-    expect(tokens).toEqual(["notation:create:find-execution:found:0"]);
+    expect(tokens).toEqual(["notation:create:find-execution:found"]);
     expect(find).toHaveBeenCalledWith(
       {},
-      "notation:create:find-execution:found:0",
+      "notation:create:find-execution:found",
     );
     expect(await runtime.state.get("found")).toMatchObject({
-      output: { remoteId: "remote-for-notation:create:find-execution:found:0" },
-      version: 1,
+      output: { remoteId: "remote-for-notation:create:find-execution:found" },
+      version: 2,
     });
     runtime.close();
   });
@@ -256,7 +266,12 @@ describe("durable execution and replay", () => {
           value: v.string(),
         },
       } as any)
-      .defineOperations({ create, read, delete: async () => undefined });
+      .defineOperations({
+        create,
+        ownership: "parent",
+        read,
+        delete: async () => undefined,
+      });
     const runtime = createRuntime(
       [new TestResource("throttled", { config: { name: "app" } as any })],
       "effect-throttled-read",
@@ -277,7 +292,7 @@ describe("durable execution and replay", () => {
     expect(create).toHaveBeenCalledTimes(2);
     expect(await runtime.state.get("throttled")).toMatchObject({
       output: { name: "app" },
-      version: 1,
+      version: 2,
     });
     runtime.close();
   });
@@ -304,6 +319,9 @@ describe("durable execution and replay", () => {
       "socket timed out",
     );
     expect(create).toHaveBeenCalledOnce();
+    expect(await runtime.state.get("unfindable")).toMatchObject({
+      lastOperation: "creating",
+    });
     runtime.close();
   });
 
@@ -321,6 +339,7 @@ describe("durable execution and replay", () => {
       .defineSchema({})
       .defineOperations({
         create,
+        ownership: "token",
         find,
         delete: async () => undefined,
       });
@@ -340,6 +359,9 @@ describe("durable execution and replay", () => {
     });
     expect(create).toHaveBeenCalledOnce();
     expect(find).toHaveBeenCalledOnce();
+    expect(await runtime.state.get("unknown")).toMatchObject({
+      lastOperation: "creating",
+    });
     runtime.close();
   });
 
@@ -357,6 +379,7 @@ describe("durable execution and replay", () => {
       .defineSchema({})
       .defineOperations({
         create,
+        ownership: "token",
         find,
         delete: async () => undefined,
       });
@@ -467,13 +490,15 @@ describe("durable execution and replay", () => {
 
     await runtime.run("post-write-read-execution");
     expect(reads).toBe(1);
-    expect(await runtime.state.get("eventually-readable")).toBeUndefined();
+    expect(await runtime.state.get("eventually-readable")).toMatchObject({
+      lastOperation: "creating",
+    });
 
     await sleep(PAST_RETRY_MS);
     await runtime.run("post-write-read-execution");
     expect(reads).toBe(2);
     expect(await runtime.state.get("eventually-readable")).toMatchObject({
-      version: 1,
+      version: 2,
     });
     runtime.close();
   });
@@ -499,7 +524,1259 @@ describe("durable execution and replay", () => {
     await expect(runtime.run("missing-after-create-execution")).rejects.toThrow(
       "resource is absent",
     );
-    expect(await runtime.state.get("missing-after-create")).toBeUndefined();
+    expect(await runtime.state.get("missing-after-create")).toMatchObject({
+      lastOperation: "creating",
+    });
+    runtime.close();
+  });
+});
+
+describe("recoverable creates", () => {
+  type NamedRemote = { name: string; path: string; description?: string };
+
+  /**
+   * A resource whose provider keeps one resource per name, as IAM keeps
+   * roles, and refuses a second create of a name with
+   * `ResourceAlreadyExistsError`. Create records its token on the resource,
+   * and, with `ownership: "token"`, `find` checks it, as a tag would. `hiddenReads` makes that many reads
+   * report the resource as not found, as a provider whose reads lag behind
+   * does. With `ownership: "parent"` and `parentFind`, `find` finds the
+   * resource unless `refuseFind` is set, as `LambdaLogGroup`'s `find`
+   * refuses a log group made before its function's latest update.
+   */
+  function defineNamed(
+    type: ResourceType,
+    ownership: ResourceOwnership | "none" = "token",
+    parentFind = false,
+  ) {
+    const remote = new Map<string, NamedRemote>();
+    const tokens = new Map<string, string>();
+    const calls: string[] = [];
+    const control: {
+      hiddenReads?: number;
+      failCreate?: Error;
+      keepOnDelete?: boolean;
+      refuseFind?: boolean;
+      /** The params that read does not return. */
+      unread?: string[];
+    } = {};
+    const Named = resource({ type, provider: "test" })
+      // Cast: see "reads a create interrupted before its outcome was
+      // recorded instead of creating again".
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+        path: {
+          presence: "required",
+          propertyType: "param",
+          immutable: true,
+          value: v.string(),
+        },
+        description: {
+          presence: "optional",
+          propertyType: "param",
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async (params: any, _context: unknown, token?: string) => {
+          calls.push(`create:${params.name}`);
+          if (control.failCreate) throw control.failCreate;
+          if (remote.has(params.name)) {
+            throw new ResourceAlreadyExistsError(
+              `${params.name} already exists`,
+            );
+          }
+          remote.set(params.name, { ...params });
+          if (token) tokens.set(params.name, token);
+        },
+        ownership: ownership === "none" ? undefined : ownership,
+        find:
+          ownership === "token"
+            ? async (params: any, token: string) => {
+                if (
+                  remote.has(params.name) &&
+                  tokens.get(params.name) === token
+                ) {
+                  return;
+                }
+                throw new ResourceNotFoundError(
+                  `no ${params.name} has the token`,
+                );
+              }
+            : parentFind
+              ? async (params: any) => {
+                  calls.push(`find:${params.name}`);
+                  if (remote.has(params.name) && !control.refuseFind) return;
+                  throw new ResourceNotFoundError(
+                    `find refused ${params.name}`,
+                  );
+                }
+              : undefined,
+        read: async (key: any) => {
+          const found = remote.get(key.name);
+          if (control.hiddenReads) {
+            control.hiddenReads -= 1;
+            throw new ResourceNotFoundError(`${key.name} not visible yet`);
+          }
+          if (!found) throw new ResourceNotFoundError(`${key.name} not found`);
+          const result: Record<string, unknown> = { ...found };
+          for (const name of control.unread ?? []) delete result[name];
+          return result;
+        },
+        update: async (key: any, patch: any) => {
+          calls.push(`update:${key.name}:${JSON.stringify(patch)}`);
+          Object.assign(remote.get(key.name)!, patch);
+        },
+        delete: async (key: any) => {
+          calls.push(`delete:${key.name}`);
+          if (control.keepOnDelete) return;
+          remote.delete(key.name);
+          tokens.delete(key.name);
+        },
+      });
+    return { Named, remote, tokens, calls, control };
+  }
+
+  async function abandon(
+    runtime: ReturnType<typeof createRuntime>,
+    deploymentId: string,
+    executionId: string,
+  ) {
+    await durable.clearDeploymentHold({
+      storeClient: runtime.storeClient,
+      deploymentId,
+      fromExecutionId: executionId,
+    });
+  }
+
+  it("takes over a resource that an abandoned execution's create made", async () => {
+    const { Named, remote, calls } = defineNamed("test/durable/reclaim-noop");
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "reclaim-noop",
+      { failFirstSettle: true, emit: (event) => void events.push(event) },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "creating",
+      output: { name: "app" },
+    });
+
+    await abandon(runtime, "reclaim-noop", "deploy-1");
+    events.length = 0;
+    await runtime.run("deploy-2");
+
+    // find matched deploy-1's token before the create, so create ran once.
+    expect(calls).toEqual(["create:app"]);
+    expect(remote.size).toBe(1);
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "create",
+      params: { name: "app", path: "/" },
+      output: { name: "app", path: "/" },
+    });
+    expect(
+      events
+        .filter((event) => event.event === "reconciler.deploy.decision")
+        .map((event) => event.decision),
+    ).toEqual(["create", "noop"]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        operation: "create",
+        status: "success",
+        reason: "reclaimed",
+      }),
+    );
+    runtime.close();
+  });
+
+  it("updates a resource it took over whose params differ from config", async () => {
+    const { Named, remote, calls } = defineNamed("test/durable/reclaim-update");
+    const runtime = createRuntime(
+      [
+        new Named("role", {
+          config: { name: "app", path: "/", description: "new" } as any,
+        }),
+      ],
+      "reclaim-update",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    remote.get("app")!.description = "changed elsewhere";
+
+    await abandon(runtime, "reclaim-update", "deploy-1");
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:app", 'update:app:{"description":"new"}']);
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "update",
+      params: { description: "new" },
+    });
+    runtime.close();
+  });
+
+  it("updates a param of a resource it took over that the read does not return", async () => {
+    const { Named, remote, calls, control } = defineNamed(
+      "test/durable/reclaim-unread",
+    );
+    control.unread = ["description"];
+    const runtime = createRuntime(
+      [
+        new Named("role", {
+          config: { name: "app", path: "/", description: "new" } as any,
+        }),
+      ],
+      "reclaim-unread",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    remote.get("app")!.description = "changed elsewhere";
+
+    await abandon(runtime, "reclaim-unread", "deploy-1");
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:app", 'update:app:{"description":"new"}']);
+    expect(remote.get("app")).toMatchObject({ description: "new" });
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "update",
+      params: { description: "new" },
+    });
+    runtime.close();
+  });
+
+  it("keeps a resource it took over whose immutable param the read does not return", async () => {
+    const { Named, remote, calls, control } = defineNamed(
+      "test/durable/reclaim-unread-immutable",
+    );
+    control.unread = ["path"];
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "reclaim-unread-immutable",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    remote.get("app")!.path = "/elsewhere/";
+
+    await abandon(runtime, "reclaim-unread-immutable", "deploy-1");
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:app"]);
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "create",
+      params: { name: "app", path: "/" },
+    });
+    runtime.close();
+  });
+
+  it("replaces a resource it took over whose immutable param differs from config", async () => {
+    const { Named, remote, calls } = defineNamed(
+      "test/durable/reclaim-replace",
+    );
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "reclaim-replace",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    remote.get("app")!.path = "/elsewhere/";
+
+    await abandon(runtime, "reclaim-replace", "deploy-1");
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:app", "delete:app", "create:app"]);
+    expect(remote.get("app")).toMatchObject({ path: "/" });
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "create",
+      params: { path: "/" },
+    });
+    runtime.close();
+  });
+
+  it("takes over a recorded resource whose drift read reported it gone", async () => {
+    const { Named, calls, control } = defineNamed(
+      "test/durable/reclaim-drift-recreate",
+    );
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "reclaim-drift-recreate",
+      { driftDetection: true },
+    );
+
+    await runtime.run("deploy-1");
+    control.hiddenReads = 1;
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:app", "create:app"]);
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "create",
+      params: { name: "app", path: "/" },
+    });
+    runtime.close();
+  });
+
+  /**
+   * A resource whose key, `url`, the provider computes from the name, as SQS
+   * computes a queue's URL. With `refusesDuplicate`, the provider refuses a
+   * second create of a name, as SQS does for other attributes. Without it,
+   * the provider makes a new resource on each create, as API Gateway makes a
+   * new API. `dropDescription` makes create set an empty description, as a
+   * rule's create can stop before it puts the targets.
+   */
+  function defineComputedKey(type: ResourceType, refusesDuplicate: boolean) {
+    const remote = new Map<
+      string,
+      { name: string; description?: string; token?: string }
+    >();
+    const calls: string[] = [];
+    const control: { hiddenReads?: number; dropDescription?: boolean } = {};
+    let next = 0;
+    const Computed = resource({ type, provider: "test" })
+      .defineSchema({
+        url: {
+          presence: "required",
+          propertyType: "computed",
+          primaryKey: true,
+          value: v.string(),
+        },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          value: v.string(),
+        },
+        description: {
+          presence: "optional",
+          propertyType: "param",
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: (async (params: any, _context: unknown, token?: string) => {
+          calls.push(`create:${params.name}`);
+          const existing = [...remote.values()].some(
+            (item) => item.name === params.name,
+          );
+          if (refusesDuplicate && existing) {
+            throw new ResourceAlreadyExistsError(`${params.name} exists`);
+          }
+          const url = `${params.name}/${next++}`;
+          const { description, ...rest } = params;
+          remote.set(url, {
+            ...rest,
+            ...(control.dropDescription
+              ? { description: "" }
+              : { description }),
+            token,
+          });
+          return { url };
+        }) as any,
+        ownership: "token",
+        find: (async (params: any, token: string) => {
+          for (const [url, item] of remote) {
+            if (item.name === params.name && item.token === token) {
+              return { url };
+            }
+          }
+          throw new ResourceNotFoundError(`no ${params.name} has the token`);
+        }) as any,
+        read: async (key: any) => {
+          const found = remote.get(key.url);
+          if (control.hiddenReads) {
+            control.hiddenReads -= 1;
+            throw new ResourceNotFoundError(`${key.url} not visible yet`);
+          }
+          if (!found) throw new ResourceNotFoundError(`${key.url} not found`);
+          const { token: _, ...item } = found;
+          return { url: key.url, ...item };
+        },
+        update: async (key: any, patch: any) => {
+          calls.push(`update:${key.url}:${JSON.stringify(patch)}`);
+          Object.assign(remote.get(key.url)!, patch);
+        },
+        delete: async (key: any) => {
+          calls.push(`delete:${key.url}`);
+          remote.delete(key.url);
+        },
+      });
+    return { Computed, remote, calls, control };
+  }
+
+  it("takes over a recorded resource with a computed key whose drift read reported it gone", async () => {
+    const { Computed, remote, calls, control } = defineComputedKey(
+      "test/durable/reclaim-drift-computed-key",
+      true,
+    );
+    const runtime = createRuntime(
+      [new Computed("queue", { config: { name: "app" } as any })],
+      "reclaim-drift-computed-key",
+      { driftDetection: true },
+    );
+
+    await runtime.run("deploy-1");
+    control.hiddenReads = 1;
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:app", "create:app"]);
+    expect(remote.size).toBe(1);
+    expect(await runtime.state.get("queue")).toMatchObject({
+      lastOperation: "create",
+      output: { url: "app/0", name: "app" },
+      creates: ["deploy-1"],
+    });
+    runtime.close();
+  });
+
+  it("takes over a resource with a provider-assigned key that an abandoned create made, before creating it again", async () => {
+    const { Computed, remote, calls } = defineComputedKey(
+      "test/durable/reclaim-assigned-key",
+      false,
+    );
+    const runtime = createRuntime(
+      [new Computed("api", { config: { name: "app" } as any })],
+      "reclaim-assigned-key",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    await abandon(runtime, "reclaim-assigned-key", "deploy-1");
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:app"]);
+    expect(remote.size).toBe(1);
+    expect(await runtime.state.get("api")).toMatchObject({
+      lastOperation: "create",
+      output: { url: "app/0" },
+      creates: ["deploy-1"],
+    });
+    runtime.close();
+  });
+
+  it("records what the read observed for a create that its lookup settled, and updates the rest in the same deploy", async () => {
+    const { Computed, remote, calls, control } = defineComputedKey(
+      "test/durable/lookup-reclaim",
+      false,
+    );
+    control.dropDescription = true;
+    const runtime = createRuntime(
+      [
+        new Computed("rule", {
+          config: { name: "app", description: "wanted" } as any,
+        }),
+      ],
+      "lookup-reclaim",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    await runtime.run("deploy-1");
+
+    expect(calls).toEqual([
+      "create:app",
+      'update:app/0:{"description":"wanted"}',
+    ]);
+    expect(remote.get("app/0")).toMatchObject({ description: "wanted" });
+    expect(await runtime.state.get("rule")).toMatchObject({
+      lastOperation: "update",
+      params: { name: "app", description: "wanted" },
+    });
+    runtime.close();
+  });
+
+  it("refuses to take over a resource that existed before the create", async () => {
+    const { Named, remote, calls } = defineNamed(
+      "test/durable/reclaim-foreign",
+    );
+    remote.set("app", { name: "app", path: "/" });
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "reclaim-foreign",
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "ResourceAlreadyExistsError",
+      message: expect.stringContaining(
+        "nothing proves that one of Notation's creates made it",
+      ),
+    });
+    expect(await runtime.state.get("role")).toBeUndefined();
+
+    // The record of the refused create is cleared, so a later deploy
+    // refuses too.
+    await abandon(runtime, "reclaim-foreign", "deploy-1");
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "ResourceAlreadyExistsError",
+    });
+    expect(calls).toEqual(["create:app", "create:app"]);
+    expect(await runtime.state.get("role")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("takes over a resource whose parent proves its ownership when it exists after an unknown outcome", async () => {
+    let made = false;
+    const create = vi.fn(async () => {
+      if (made) throw new ResourceAlreadyExistsError("app already exists");
+      made = true;
+      throw new ResourceCreationUnknownError("socket timed out");
+    });
+    // The lookup runs before the resource is visible to reads.
+    const read = vi
+      .fn()
+      .mockRejectedValueOnce(new ResourceNotFoundError("not found"))
+      .mockResolvedValue({ name: "app" });
+    const TestResource = resource({
+      type: "test/durable/effect-already-exists",
+      provider: "test",
+    })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create,
+        ownership: "parent",
+        read,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime(
+      [new TestResource("eventual", { config: { name: "app" } as any })],
+      "effect-already-exists",
+    );
+
+    await expect(runtime.run("eventual-execution")).resolves.toMatchObject({
+      status: "suspended",
+    });
+    runtime.advance(1_000);
+    await runtime.run("eventual-execution");
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(await runtime.state.get("eventual")).toMatchObject({
+      lastOperation: "create",
+      output: { name: "app" },
+    });
+    runtime.close();
+  });
+
+  it("does not look up a create with an unknown outcome when its class cannot prove ownership", async () => {
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ResourceCreationUnknownError("socket timed out"),
+      )
+      .mockRejectedValue(new ResourceAlreadyExistsError("app already exists"));
+    const read = vi.fn(async () => ({ name: "app" }));
+    const TestResource = resource({
+      type: "test/durable/effect-unproven",
+      provider: "test",
+    })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({ create, read, delete: async () => undefined });
+    const runtime = createRuntime(
+      [new TestResource("unproven", { config: { name: "app" } as any })],
+      "effect-unproven",
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toThrow("socket timed out");
+    expect(read).not.toHaveBeenCalled();
+    expect(await runtime.state.get("unproven")).toMatchObject({
+      lastOperation: "creating",
+    });
+
+    await abandon(runtime, "effect-unproven", "deploy-1");
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "ResourceAlreadyExistsError",
+    });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(read).not.toHaveBeenCalled();
+    expect(await runtime.state.get("unproven")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("refuses a resource that exists after a find found no resource with the attempt's token", async () => {
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ResourceCreationUnknownError("socket timed out"),
+      )
+      .mockRejectedValue(new ResourceAlreadyExistsError("app already exists"));
+    const find = vi.fn(async () => {
+      throw new ResourceNotFoundError("no resource has the create token");
+    });
+    const read = vi.fn(async () => ({ name: "app" }));
+    const TestResource = resource({
+      type: "test/durable/effect-find-foreign",
+      provider: "test",
+    })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create,
+        ownership: "token",
+        find,
+        read,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime(
+      [new TestResource("foreign", { config: { name: "app" } as any })],
+      "effect-find-foreign",
+    );
+
+    await expect(runtime.run("foreign-execution")).resolves.toMatchObject({
+      status: "suspended",
+    });
+    runtime.advance(1_000);
+    await expect(runtime.run("foreign-execution")).rejects.toMatchObject({
+      name: "ResourceAlreadyExistsError",
+    });
+
+    expect(create).toHaveBeenCalledTimes(2);
+    // The lookup, then the proof.
+    expect(find).toHaveBeenCalledTimes(2);
+    expect(read).not.toHaveBeenCalled();
+    expect(await runtime.state.get("foreign")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("clears the creating record when create fails", async () => {
+    const TestResource = resource({
+      type: "test/durable/create-fails",
+      provider: "test",
+    })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => {
+          throw new Error("access denied");
+        },
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime([new TestResource("denied")], "create-fails");
+
+    await expect(runtime.run("deploy-1")).rejects.toThrow("access denied");
+    expect(await runtime.state.get("denied")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("deletes the resource of an orphaned creating record when find matches a recorded token", async () => {
+    const { Named, remote, calls } = defineNamed(
+      "test/durable/creating-orphan",
+    );
+    const resources: BaseResource[] = [
+      new Named("role", { config: { name: "app", path: "/" } as any }),
+    ];
+    const runtime = createRuntime(resources, "creating-orphan", {
+      failFirstSettle: true,
+      registry: createResourceRegistry([Named]),
+    });
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+
+    await abandon(runtime, "creating-orphan", "deploy-1");
+    resources.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:app", "delete:app"]);
+    expect(remote.size).toBe(0);
+    expect(await runtime.state.get("role")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("leaves the resource of an orphaned creating record that no recorded create made", async () => {
+    const { Named, remote, tokens, calls } = defineNamed(
+      "test/durable/creating-orphan-foreign",
+    );
+    const resources: BaseResource[] = [
+      new Named("role", { config: { name: "app", path: "/" } as any }),
+    ];
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "creating-orphan-foreign", {
+      failFirstSettle: true,
+      registry: createResourceRegistry([Named]),
+      emit: (event) => void events.push(event),
+    });
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    // Someone else's resource took the name after the abandoned create.
+    tokens.set("app", "someone-else");
+    await abandon(runtime, "creating-orphan-foreign", "deploy-1");
+    resources.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:app"]);
+    expect(remote.size).toBe(1);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        operation: "delete",
+        status: "skip",
+        reason: "not-created",
+      }),
+    );
+    expect(await runtime.state.get("role")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("leaves the resource of an orphaned creating record whose class cannot prove ownership", async () => {
+    const { Named, remote, calls } = defineNamed(
+      "test/durable/creating-orphan-unproven",
+      "none",
+    );
+    const resources: BaseResource[] = [
+      new Named("role", { config: { name: "app", path: "/" } as any }),
+    ];
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "creating-orphan-unproven", {
+      failFirstSettle: true,
+      registry: createResourceRegistry([Named]),
+      emit: (event) => void events.push(event),
+    });
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    await abandon(runtime, "creating-orphan-unproven", "deploy-1");
+    resources.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:app"]);
+    expect(remote.size).toBe(1);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        operation: "delete",
+        status: "skip",
+        reason: "ownership-unproven",
+      }),
+    );
+    expect(await runtime.state.get("role")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("destroys the resource of a creating record by its key when its parent proves ownership", async () => {
+    const { Named, remote, calls } = defineNamed(
+      "test/durable/creating-destroy-parent",
+      "parent",
+    );
+    const runtime = createRuntime(
+      [new Named("statement", { config: { name: "app", path: "/" } as any })],
+      "creating-destroy-parent",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    await abandon(runtime, "creating-destroy-parent", "deploy-1");
+    await runtime.destroy("destroy-1");
+
+    expect(calls).toEqual(["create:app", "delete:app"]);
+    expect(remote.size).toBe(0);
+    expect(await runtime.state.get("statement")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("removes an orphaned creating record whose key the provider assigns, without a delete", async () => {
+    const deleteSpy = vi.fn(async () => undefined);
+    const Assigned = resource({
+      type: "test/durable/creating-assigned-key",
+      provider: "test",
+    })
+      .defineSchema({
+        remoteId: {
+          value: v.string(),
+          presence: "required",
+          propertyType: "computed",
+          primaryKey: true,
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        ownership: "parent",
+        delete: deleteSpy,
+      });
+    const resources: BaseResource[] = [new Assigned("api")];
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "creating-assigned-key", {
+      failFirstSettle: true,
+      registry: createResourceRegistry([Assigned]),
+      emit: (event) => void events.push(event),
+    });
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    expect(await runtime.state.get("api")).toMatchObject({
+      lastOperation: "creating",
+      output: {},
+    });
+
+    await abandon(runtime, "creating-assigned-key", "deploy-1");
+    resources.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(deleteSpy).not.toHaveBeenCalled();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        operation: "delete",
+        status: "skip",
+        reason: "key-unknown",
+      }),
+    );
+    expect(await runtime.state.get("api")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("deletes an orphan whose record lacks a key field, instead of skipping it, when the record is not a creating record", async () => {
+    const deleteSpy = vi.fn(async (key: any) => {
+      if (key.remoteId === undefined) throw new Error("remoteId is required");
+    });
+    const Assigned = resource({
+      type: "test/durable/record-without-key",
+      provider: "test",
+    })
+      .defineSchema({
+        remoteId: {
+          value: v.string(),
+          presence: "required",
+          propertyType: "computed",
+          primaryKey: true,
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        delete: deleteSpy,
+      });
+    const resources: BaseResource[] = [new Assigned("api")];
+    const runtime = createRuntime(resources, "record-without-key", {
+      registry: createResourceRegistry([Assigned]),
+    });
+
+    // Create records the resource before it fails on the missing output.
+    await expect(runtime.run("deploy-1")).rejects.toThrow();
+    expect(await runtime.state.get("api")).toMatchObject({
+      lastOperation: "create",
+      output: {},
+    });
+
+    resources.length = 0;
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "remoteId is required",
+    );
+    expect(deleteSpy).toHaveBeenCalled();
+    expect(await runtime.state.get("api")).toBeDefined();
+    runtime.close();
+  });
+
+  it("refuses to take over a resource whose class cannot prove which create made it", async () => {
+    const { Named, remote, calls } = defineNamed(
+      "test/durable/reclaim-unprovable",
+      "none",
+    );
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "reclaim-unprovable",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    await abandon(runtime, "reclaim-unprovable", "deploy-1");
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "ResourceAlreadyExistsError",
+      message: expect.stringContaining(
+        "test/durable/reclaim-unprovable cannot prove which create made a resource",
+      ),
+    });
+
+    expect(calls).toEqual(["create:app", "create:app"]);
+    expect(remote.size).toBe(1);
+    // The refusal clears the record that the earlier execution left.
+    expect(await runtime.state.get("role")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("refuses to take over a resource that no recorded create attempt made", async () => {
+    const { Named, remote, tokens, calls } = defineNamed(
+      "test/durable/reclaim-other-token",
+    );
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "reclaim-other-token",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    // Someone else's resource took the name after the abandoned create.
+    tokens.set("app", "someone-else");
+    await abandon(runtime, "reclaim-other-token", "deploy-1");
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "ResourceAlreadyExistsError",
+      message: expect.stringContaining(
+        "nothing proves that one of Notation's creates made it",
+      ),
+    });
+
+    expect(calls).toEqual(["create:app", "create:app"]);
+    expect(remote.get("app")).toMatchObject({ name: "app" });
+    expect(await runtime.state.get("role")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("takes over a resource whose parent proves its ownership", async () => {
+    const { Named, calls } = defineNamed(
+      "test/durable/reclaim-parent",
+      "parent",
+    );
+    const runtime = createRuntime(
+      [new Named("statement", { config: { name: "app", path: "/" } as any })],
+      "reclaim-parent",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    await abandon(runtime, "reclaim-parent", "deploy-1");
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:app", "create:app"]);
+    expect(await runtime.state.get("statement")).toMatchObject({
+      lastOperation: "create",
+      params: { name: "app", path: "/" },
+    });
+    runtime.close();
+  });
+
+  it("takes over a resource that existed before the create when its parent proves ownership", async () => {
+    // As Lambda makes a function's log group when the function first logs.
+    const { Named, remote, calls } = defineNamed(
+      "test/durable/reclaim-parent-existing",
+      "parent",
+    );
+    remote.set("app", { name: "app", path: "/", description: "old" });
+    const runtime = createRuntime(
+      [
+        new Named("log-group", {
+          config: { name: "app", path: "/", description: "new" } as any,
+        }),
+      ],
+      "reclaim-parent-existing",
+    );
+
+    await runtime.run("deploy-1");
+
+    expect(calls).toEqual(["create:app", 'update:app:{"description":"new"}']);
+    expect(await runtime.state.get("log-group")).toMatchObject({
+      lastOperation: "update",
+      params: { name: "app", path: "/", description: "new" },
+    });
+    runtime.close();
+  });
+
+  it("refuses a recorded resource whose drift read reported it gone, when no recorded attempt made the one that exists, and writes its record back", async () => {
+    const { Named, tokens, calls, control } = defineNamed(
+      "test/durable/drift-recreate-foreign",
+    );
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "drift-recreate-foreign",
+      { driftDetection: true },
+    );
+
+    await runtime.run("deploy-1");
+    tokens.set("app", "someone-else");
+    control.hiddenReads = 1;
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "ResourceAlreadyExistsError",
+    });
+
+    expect(calls).toEqual(["create:app", "create:app"]);
+    // The record describes a resource that the drift read missed, so the
+    // next deploy reads it again.
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "create",
+      output: { name: "app", path: "/" },
+      creates: ["deploy-1"],
+    });
+    runtime.close();
+  });
+
+  it("takes over a resource of a creating record that an earlier execution left when its parent proves ownership, without its find", async () => {
+    const { Named, calls, control } = defineNamed(
+      "test/durable/reclaim-parent-recorded",
+      "parent",
+      true,
+    );
+    const runtime = createRuntime(
+      [new Named("log-group", { config: { name: "app", path: "/" } as any })],
+      "reclaim-parent-recorded",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    // As a log group's function updated after the log group was made.
+    control.refuseFind = true;
+    await abandon(runtime, "reclaim-parent-recorded", "deploy-1");
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:app", "create:app"]);
+    expect(await runtime.state.get("log-group")).toMatchObject({
+      lastOperation: "create",
+      params: { name: "app", path: "/" },
+    });
+    runtime.close();
+  });
+
+  it("refuses a resource whose parent's find refuses it when no creating record holds its key", async () => {
+    const { Named, remote, calls, control } = defineNamed(
+      "test/durable/reclaim-parent-find-refuses",
+      "parent",
+      true,
+    );
+    remote.set("app", { name: "app", path: "/" });
+    control.refuseFind = true;
+    const runtime = createRuntime(
+      [new Named("log-group", { config: { name: "app", path: "/" } as any })],
+      "reclaim-parent-find-refuses",
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "ResourceAlreadyExistsError",
+    });
+    expect(calls).toEqual(["create:app", "find:app"]);
+    expect(await runtime.state.get("log-group")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("destroys the resource of a creating record when its parent proves ownership, without its find", async () => {
+    const { Named, remote, calls, control } = defineNamed(
+      "test/durable/creating-destroy-parent-recorded",
+      "parent",
+      true,
+    );
+    const runtime = createRuntime(
+      [new Named("log-group", { config: { name: "app", path: "/" } as any })],
+      "creating-destroy-parent-recorded",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    control.refuseFind = true;
+    await abandon(runtime, "creating-destroy-parent-recorded", "deploy-1");
+    await runtime.destroy("destroy-1");
+
+    expect(calls).toEqual(["create:app", "delete:app"]);
+    expect(remote.size).toBe(0);
+    expect(await runtime.state.get("log-group")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("writes back a recorded resource whose drift read reported it gone when its create fails", async () => {
+    const { Named, calls, control } = defineNamed(
+      "test/durable/drift-recreate-fails",
+    );
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "drift-recreate-fails",
+      { driftDetection: true },
+    );
+
+    await runtime.run("deploy-1");
+    control.hiddenReads = 1;
+    control.failCreate = new Error("access denied");
+    await expect(runtime.run("deploy-2")).rejects.toThrow("access denied");
+
+    expect(calls).toEqual(["create:app", "create:app"]);
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "create",
+      output: { name: "app", path: "/" },
+      creates: ["deploy-1"],
+    });
+    runtime.close();
+  });
+
+  it("keeps a creating record that an earlier execution left when create fails", async () => {
+    const { Named, remote, calls, control } = defineNamed(
+      "test/durable/creating-kept",
+    );
+    const runtime = createRuntime(
+      [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "creating-kept",
+      { failFirstSettle: true },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    // Without the resource, find matches nothing before the create.
+    remote.clear();
+    await abandon(runtime, "creating-kept", "deploy-1");
+    control.failCreate = new Error("access denied");
+    await expect(runtime.run("deploy-2")).rejects.toThrow("access denied");
+
+    expect(calls).toEqual(["create:app", "create:app"]);
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "creating",
+      creates: ["deploy-1", "deploy-2"],
+    });
+    runtime.close();
+  });
+
+  it("leaves the resource that an abandoned create made under another key", async () => {
+    const { Named, remote, calls } = defineNamed(
+      "test/durable/creating-renamed",
+    );
+    const resources: BaseResource[] = [
+      new Named("role", { config: { name: "app", path: "/" } as any }),
+    ];
+    const runtime = createRuntime(resources, "creating-renamed", {
+      failFirstSettle: true,
+    });
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    await abandon(runtime, "creating-renamed", "deploy-1");
+    resources[0] = new Named("role", {
+      config: { name: "app-2", path: "/" } as any,
+    });
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:app", "create:app-2"]);
+    expect([...remote.keys()]).toEqual(["app", "app-2"]);
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "create",
+      output: { name: "app-2" },
+      creates: ["deploy-2"],
+    });
+    runtime.close();
+  });
+
+  it("takes over a resource that its own earlier attempt made when the lookup missed it", async () => {
+    let made: string | undefined;
+    let findCalls = 0;
+    const create = vi.fn(
+      async (_params: unknown, _context: unknown, token?: string) => {
+        if (made) throw new ResourceAlreadyExistsError("app already exists");
+        made = token;
+        throw new ResourceCreationUnknownError("socket timed out");
+      },
+    );
+    // The lookup runs before the resource is visible.
+    const find = vi.fn(async (_params: unknown, token: string) => {
+      findCalls += 1;
+      if (findCalls === 1 || token !== made) {
+        throw new ResourceNotFoundError("no resource has the create token");
+      }
+    });
+    const read = vi.fn(async () => ({ name: "app" }));
+    const TestResource = resource({
+      type: "test/durable/effect-find-lagging",
+      provider: "test",
+    })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create,
+        ownership: "token",
+        find,
+        read,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime(
+      [new TestResource("lagging", { config: { name: "app" } as any })],
+      "effect-find-lagging",
+    );
+
+    await expect(runtime.run("lagging-execution")).resolves.toMatchObject({
+      status: "suspended",
+    });
+    runtime.advance(1_000);
+    await runtime.run("lagging-execution");
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(await runtime.state.get("lagging")).toMatchObject({
+      lastOperation: "create",
+      output: { name: "app" },
+    });
+    runtime.close();
+  });
+
+  it("names the replacement in the error when its create finds a resource with the same key", async () => {
+    const { Named, calls, control } = defineNamed(
+      "test/durable/replacement-exists",
+    );
+    const resources: BaseResource[] = [
+      new Named("role", { config: { name: "app", path: "/" } as any }),
+    ];
+    const runtime = createRuntime(resources, "replacement-exists");
+    await runtime.run("deploy-1");
+
+    // The delete reports success, but the resource stays.
+    control.keepOnDelete = true;
+    resources[0] = new Named("role", {
+      config: { name: "app", path: "/other/" } as any,
+    });
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "ResourceAlreadyExistsError",
+      message: expect.stringContaining("Cannot create the replacement of role"),
+    });
+
+    expect(calls).toEqual(["create:app", "delete:app", "create:app"]);
+    expect(await runtime.state.get("role")).toBeUndefined();
     runtime.close();
   });
 });
@@ -564,7 +1841,9 @@ describe("durable values", () => {
       name: "WorkflowValueError",
       code: "INVALID_STEP_VALUE",
     });
-    expect(await runtime.state.get("bytes")).toBeUndefined();
+    expect(await runtime.state.get("bytes")).toMatchObject({
+      lastOperation: "creating",
+    });
     runtime.close();
   });
 
@@ -609,7 +1888,7 @@ describe("durable values", () => {
       Date,
     );
     expect(await runtime.state.get("dated-context")).toMatchObject({
-      version: 1,
+      version: 2,
     });
     runtime.close();
   });
@@ -693,7 +1972,7 @@ describe("conditional state persistence", () => {
     });
     // The losing write left the other writer's record intact.
     expect(await runtime.state.get("raced")).toMatchObject({
-      version: 2,
+      version: 3,
       lastOperationAt: "1999-01-01T00:00:00.000Z",
     });
     runtime.close();
@@ -727,7 +2006,7 @@ describe("conditional state persistence", () => {
       name: "VersionConflict",
       // A conflict names the version the record moved to; only a genuinely
       // absent record may be reported as "missing".
-      message: expect.stringMatching(/expected 1, got 2$/),
+      message: expect.stringMatching(/expected 2, got 3$/),
     });
     // State survives a removal that could not be proven safe.
     expect(await runtime.state.get("delete-raced")).toBeDefined();
@@ -1331,7 +2610,7 @@ describe("dependency edges in state", () => {
     expect(updateSpy).not.toHaveBeenCalled();
     expect(await runtime.state.get("moved")).toMatchObject({
       provider: "@acme/new",
-      version: 2,
+      version: 3,
     });
     runtime.close();
   });
@@ -1345,7 +2624,7 @@ describe("dependency edges in state", () => {
     await runtime.run("deploy-1");
     await runtime.run("deploy-2");
 
-    expect(await runtime.state.get("fn")).toMatchObject({ version: 1 });
+    expect(await runtime.state.get("fn")).toMatchObject({ version: 2 });
     runtime.close();
   });
 
@@ -1362,7 +2641,7 @@ describe("dependency edges in state", () => {
     await runtime.run("deploy-2");
 
     expect(await runtime.state.get("fn")).toMatchObject({
-      version: 1,
+      version: 2,
       dependsOn: [],
     });
     runtime.close();
@@ -3218,7 +4497,7 @@ describe("value validation at deploy", () => {
     );
     expect(update).not.toHaveBeenCalled();
     expect(await runtime.state.get("role")).toMatchObject({
-      version: 1,
+      version: 2,
       params: { boundary: "arn:boundary" },
     });
     runtime.close();
@@ -4941,21 +6220,27 @@ function seedResourceState(
     .update(() => resourceStateRecord(resourceId));
 }
 
-/** Deletes a resource's store and creates it again, returning the new instance ID. */
+/**
+ * Deletes a resource's store and creates it again at the version it had,
+ * returning the new instance ID.
+ */
 async function recreateResourceState(
   storeClient: StoreClient,
   storeId: string,
   resourceId: string,
 ) {
+  const store = storeClient.store(durable.resourceStateStore, storeId);
+  const { version } = await store.get();
   await storeClient.deleteStore({
     definition: durable.resourceStateStore,
     id: storeId,
   });
-  const store = storeClient.store(durable.resourceStateStore, storeId);
-  await store.update(() => ({
-    ...resourceStateRecord(resourceId),
-    lastOperationAt: "1999-01-01T00:00:00.000Z",
-  }));
+  for (let written = 0; written < version; written += 1) {
+    await store.update(() => ({
+      ...resourceStateRecord(resourceId),
+      lastOperationAt: "1999-01-01T00:00:00.000Z",
+    }));
+  }
   return (await store.get()).instanceId;
 }
 

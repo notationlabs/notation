@@ -3,7 +3,11 @@ import {
   validateParams,
   type BaseResource,
 } from "@notation/resource";
-import type { StateBackend, StateNode } from "@notation/state";
+import {
+  isCreatingRecord,
+  type StateBackend,
+  type StateNode,
+} from "@notation/state";
 import {
   assertDependenciesPresent,
   collectDependents,
@@ -17,6 +21,7 @@ import {
   getDependencyIds,
   recordedEdges,
   type Plan,
+  type ResourceAction,
   type PlanNode,
 } from "./plan";
 import { workflowRegistry, type ResourceRegistry } from "./resource-registry";
@@ -25,13 +30,14 @@ import { createStepRunner, runOperation } from "./step-runner";
 
 /**
  * Throws if a resource with no `read` lacks a required output in its state
- * record. Does nothing for a resource with no record or with a `read`.
+ * record. Does nothing for a resource with no record, a "creating" record, or
+ * a `read`.
  */
 export function assertOutputsRecoverable(
   resource: BaseResource,
   stateNode: StateNode | undefined,
 ): void {
-  if (!stateNode || resource.read) return;
+  if (!stateNode || isCreatingRecord(stateNode) || resource.read) return;
   assertRequiredOutputs(
     resource,
     stateNode.output,
@@ -153,10 +159,11 @@ export async function createPlan({
     const placeholder =
       cycle?.placeholders.includes(resource) &&
       (action.decision === "create" || action.decision === "drift-recreate");
+    const decision = cascadeOnly ? "replace" : action.decision;
     return {
       id: resource.id,
       type: resource.type,
-      decision: cascadeOnly ? "replace" : action.decision,
+      decision,
       ...("diff" in action && !cascadeOnly ? { diff: action.diff } : {}),
       ...(replaceFields ? { replaceFields } : {}),
       ...(replacedDependency ? { replacedDependency } : {}),
@@ -169,6 +176,9 @@ export async function createPlan({
           }
         : {}),
       ...(placeholder ? { placeholder: true as const } : {}),
+      ...(mayTakeOver(resource, stateNode, decision)
+        ? { mayTakeOver: true as const }
+        : {}),
       params,
       dependsOn,
     };
@@ -236,7 +246,11 @@ async function loadOutput(
 ): Promise<StateNode | undefined> {
   const stateNode = await state.get(resource.id);
   assertSameType(resource, stateNode);
-  if (stateNode) resource.setOutput(stateNode.output);
+  // A "creating" record holds no outputs, so dependents plan against unknown
+  // outputs, as for a resource with no record.
+  if (stateNode && !isCreatingRecord(stateNode)) {
+    resource.setOutput(stateNode.output);
+  }
   return stateNode;
 }
 
@@ -258,4 +272,16 @@ export async function planKnownParams(
   const params = await resource.planParams();
   await validateParams(resource, params, point);
   return { stateNode, params };
+}
+
+function mayTakeOver(
+  resource: BaseResource,
+  stateNode: StateNode | undefined,
+  decision: ResourceAction["decision"],
+): boolean {
+  if (decision !== "create" && decision !== "drift-recreate") return false;
+  if (resource.ownership === "parent") return true;
+  return (
+    resource.ownership === "token" && (stateNode?.creates?.length ?? 0) > 0
+  );
 }

@@ -113,6 +113,7 @@ const lambdaRolePolicySchema = lambdaRolePolicy.defineSchema({
 // knows the primary key before the role is deployed.
 export const LambdaRolePolicy = lambdaRolePolicySchema
   .defineOperations({
+    ownership: "parent",
     create: async (params) => {
       await putRolePolicy(params);
     },

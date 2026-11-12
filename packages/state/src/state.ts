@@ -17,10 +17,28 @@ export type StateNode = {
    * written before edges were recorded.
    */
   dependsOn?: string[];
-  lastOperation: "create" | "update";
+  /**
+   * `creating` marks a record written before a create is attempted. It is
+   * evidence that Notation tried to create the resource, so a later deploy
+   * may take over a resource the provider reports as already existing. Its
+   * output holds only the key fields that params supply.
+   */
+  lastOperation: "creating" | "create" | "update";
   lastOperationAt: string;
+  /**
+   * The IDs of the executions whose creates may have made the resource. An
+   * execution's create token is derived from its ID and the resource's ID,
+   * so deploy can recompute it. A "creating" record lists every execution
+   * that wrote it. A record that create wrote lists the execution that made
+   * the resource. Absent on a record written before creates were recorded.
+   */
+  creates?: string[];
   [key: string]: DurableValue;
 };
+
+export function isCreatingRecord(node: StateNode | undefined): boolean {
+  return node?.lastOperation === "creating";
+}
 
 /**
  * Read-only: state writes happen inside the durable workflow, through the

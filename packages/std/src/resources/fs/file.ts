@@ -51,6 +51,8 @@ export const File = fileSchema.defineOperations({
     }
   },
   create: async () => {},
+  // The parent is the project directory.
+  ownership: "parent",
   update: async () => {},
   delete: async () => {},
 });

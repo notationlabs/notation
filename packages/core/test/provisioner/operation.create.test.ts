@@ -15,7 +15,7 @@ import {
 
 describe("resource creation", () => {
   it("passes computed input to resource.create", async () => {
-    let persisted: PersistedResourceState | undefined;
+    let persisted: PersistedResourceState | null | undefined;
     const readResult = { ...testResourceOutput, volatileComputed: "123" };
     const createMock = vi.fn(async () => ({ primaryKey: "" }));
     const readMock = vi.fn(async () => readResult);
@@ -50,7 +50,7 @@ describe("resource creation", () => {
     expect(createMock.mock.calls[0]).toEqual([
       params,
       undefined,
-      "notation:create:test-execution:test-resource:0",
+      "notation:create:test-execution:test-resource",
     ]);
     expect(persisted).toMatchObject({
       id: testResource.id,

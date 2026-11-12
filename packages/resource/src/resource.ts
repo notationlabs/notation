@@ -134,6 +134,8 @@ export interface BaseResource {
     token?: string,
   ) => Promise<{} | void>;
   find?: (params: any, token: string) => Promise<{} | void>;
+  /** See `ResourceOperationsOptions.ownership`. */
+  readonly ownership?: ResourceOwnership;
   read?: (key: any, context?: ResourceOperationContext) => Promise<{}>;
   update?: (
     key: any,
@@ -240,6 +242,7 @@ export abstract class Resource<
     token?: string,
   ) => Promise<T["primaryKey"]>;
   find?: (params: T["params"], token: string) => Promise<T["primaryKey"]>;
+  ownership?: ResourceOwnership;
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -694,6 +697,27 @@ function withoutUndefined(
   return defined;
 }
 
+export type ResourceOwnership = "token" | "parent";
+
+function assertOwnership(
+  type: ResourceType,
+  opts: { find?: unknown; ownership?: ResourceOwnership },
+) {
+  if (opts.find && !opts.ownership) {
+    throw new Error(
+      `${type} defines find without ownership. Set ownership to "token" ` +
+        `when find checks the create token, or to "parent" when it finds ` +
+        `the resource inside a parent that Notation owns.`,
+    );
+  }
+  if (opts.ownership === "token" && !opts.find) {
+    throw new Error(
+      `${type} sets ownership to "token" without find, so nothing can ` +
+        `check the create token.`,
+    );
+  }
+}
+
 export type DefineResourceMeta = {
   type: ResourceType;
   /**
@@ -736,8 +760,9 @@ export type ResourceOperationsOptions<
   IntrinsicParams extends Partial<T["params"]>,
 > = {
   /**
-   * Creates the resource. `token` is unique to the attempt. A resource that
-   * defines `find` with a token records it on the remote resource, for
+   * Creates the resource. `token` is unique to the execution and the
+   * resource, and is the same for each attempt that the execution makes. A
+   * resource with `ownership: "token"` records it on the remote resource, for
    * example as a tag.
    */
   create: (
@@ -746,15 +771,33 @@ export type ResourceOperationsOptions<
     token?: string,
   ) => Promise<T["primaryKey"]>;
   /**
-   * Finds the resource that a create attempt with `token` made, and returns
-   * what that create would have returned. Throws `ResourceNotFoundError` when
-   * the attempt made no resource.
+   * Finds the resource that a create with `token` made, and returns what
+   * that create would have returned. Throws `ResourceNotFoundError` when the
+   * create made no resource. Requires `ownership`.
    *
-   * The reconciler calls it after a create attempt with an unknown outcome.
-   * Without it, the reconciler reads a resource whose key is made of params,
-   * and creates again a resource whose key the provider assigns.
+   * With `ownership: "token"`, it must match on the token. With
+   * `ownership: "parent"`, it may match on the resource's identity inside
+   * the parent.
    */
   find?: (params: T["params"], token: string) => Promise<T["primaryKey"]>;
+  /**
+   * How deploy proves that a resource with the desired key, which the
+   * provider reports as already existing, was made by one of Notation's own
+   * creates. Deploy takes over such a resource only with that proof.
+   *
+   * - `token`: `find` returns the resource for the create token of an
+   *   execution that the resource's record names, or of the current one.
+   *   `create` must record the token on the resource, for example as a tag,
+   *   and `find` must check it.
+   * - `parent`: the resource lives inside another resource that Notation
+   *   owns, such as a statement in a Lambda function's policy, so any
+   *   resource with the desired key is Notation's.
+   *
+   * Without it, deploy never takes over an existing resource, never looks
+   * up a create with an unknown outcome, and never deletes the resource of
+   * a "creating" record.
+   */
+  ownership?: ResourceOwnership;
   read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -863,6 +906,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
           ConfigParams<T, keyof IntrinsicParams>,
           IntrinsicParams
         > {
+          assertOwnership(meta.type, opts);
           class SimpleResource<
             D extends Record<string, BaseResource | void> = {},
             C extends Record<string, any> = ConfigParams<
@@ -879,6 +923,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             schema = schema;
             create = opts.create;
             find = opts.find;
+            ownership = opts.ownership;
             read = opts.read ? opts.read : undefined;
             update = opts.update ? opts.update : undefined;
             delete = opts.delete;

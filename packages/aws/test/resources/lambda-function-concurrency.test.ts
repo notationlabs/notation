@@ -78,6 +78,10 @@ describe("LambdaFunctionConcurrency", () => {
     );
   });
 
+  it("proves its ownership by its parent, the Lambda function", () => {
+    expect(concurrency().ownership).toBe("parent");
+  });
+
   it("reads the reserved concurrency", async () => {
     mockSend(() => ({ ReservedConcurrentExecutions: 10 }));
 

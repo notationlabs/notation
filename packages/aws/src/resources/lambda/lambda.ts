@@ -15,7 +15,10 @@ import {
   createTokenTagValue,
 } from "src/resources/utils/create-token";
 import { awsCreate } from "src/resources/utils/errors";
-import { runLambdaMutation } from "src/resources/utils/lambda-mutation";
+import {
+  isLambdaAlreadyExists,
+  runLambdaMutation,
+} from "src/resources/utils/lambda-mutation";
 import { AwsSchema } from "src/resources/utils/types";
 import { fs } from "@notation/std/resources";
 import { LambdaIamRoleInstance } from "./";
@@ -263,24 +266,24 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
 
 export const LambdaFunction = lambdaFunctionSchema
   .defineOperations({
-    // The create attempt is recorded as a tag, so `find` can tell this
-    // deploy's function from another with the same name.
-    create: awsCreate(async (params, _context, token) => {
-      const { CodeFilePath, Environment, ...functionParams } = params;
-      const command = new sdk.CreateFunctionCommand({
-        ...functionParams,
-        Environment: encodeEnvironment(params.FunctionName, Environment),
-        Tags: token
-          ? { ...params.Tags, [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
-          : params.Tags,
-        Code: { ZipFile: await readCode(CodeFilePath, params.CodeSha256) },
-      });
+    create: awsCreate(
+      async (params, _context, token) => {
+        const { CodeFilePath, Environment, ...functionParams } = params;
+        const command = new sdk.CreateFunctionCommand({
+          ...functionParams,
+          Environment: encodeEnvironment(params.FunctionName, Environment),
+          Tags: token
+            ? { ...params.Tags, [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
+            : params.Tags,
+          Code: { ZipFile: await readCode(CodeFilePath, params.CodeSha256) },
+        });
 
-      await runLambdaMutation(() => lambdaClient().send(command));
-    }),
+        await runLambdaMutation(() => lambdaClient().send(command));
+      },
+      { alreadyExists: isLambdaAlreadyExists },
+    ),
 
-    // A function without the token was not made by the attempt. Reporting it
-    // as not found makes create fail on the name, instead of taking it over.
+    ownership: "token",
     find: async (params, token) => {
       try {
         const { Tags } = await lambdaClient().send(

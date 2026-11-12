@@ -4,7 +4,7 @@ import {
   type ParamsDiffDisplay,
   type ReplaceField,
 } from "@notation/resource";
-import type { StateNode } from "@notation/state";
+import { isCreatingRecord, type StateNode } from "@notation/state";
 
 export {
   UNKNOWN_AFTER_APPLY,
@@ -56,6 +56,13 @@ export type PlanNode = {
    * and updates it with them once the rest of its cycle exists.
    */
   placeholder?: true;
+  /**
+   * Set for a create that may take over an existing resource: one whose
+   * class has `ownership: "parent"`, or `ownership: "token"` with a record
+   * that names an earlier create. If the resource already exists, deploy
+   * takes it over when the proof holds.
+   */
+  mayTakeOver?: true;
   params: Record<string, unknown>;
   dependsOn: string[];
 };
@@ -97,7 +104,10 @@ export function decideAction(opts: {
   params: Record<string, unknown>;
 }): ResourceAction {
   const { resource, stateNode, params } = opts;
-  if (!stateNode) {
+  // A create that left a "creating" record may or may not have made the
+  // resource. Create runs again, and takes the resource over if the provider
+  // reports that it already exists.
+  if (!stateNode || isCreatingRecord(stateNode)) {
     return { decision: "create" };
   }
 
@@ -179,7 +189,7 @@ export function decideDriftAction(opts: {
  * comparing them would plan the same drift on every deploy, and replace the
  * resource if the field is immutable or a key.
  */
-function pick(
+export function pick(
   values: Record<string, unknown>,
   other: Record<string, unknown>,
 ): Record<string, unknown> {

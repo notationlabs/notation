@@ -200,3 +200,40 @@ describe("resource operation signals", () => {
     ).toThrowError("retryAfterMs must be a non-negative number");
   });
 });
+
+describe("resource ownership", () => {
+  const builder = () =>
+    resource({ type: "provider/service/owned", provider: "test" }).defineSchema(
+      {},
+    );
+  const operations = {
+    create: async () => undefined,
+    delete: async () => undefined,
+  };
+
+  it("rejects find without ownership", () => {
+    expect(() =>
+      builder().defineOperations({
+        ...operations,
+        find: async () => undefined,
+      }),
+    ).toThrow("provider/service/owned defines find without ownership");
+  });
+
+  it("rejects token ownership without find", () => {
+    expect(() =>
+      builder().defineOperations({ ...operations, ownership: "token" }),
+    ).toThrow('sets ownership to "token" without find');
+  });
+
+  it("accepts find with either ownership", () => {
+    for (const ownership of ["token", "parent"] as const) {
+      const Owned = builder().defineOperations({
+        ...operations,
+        ownership,
+        find: async () => undefined,
+      });
+      expect(new Owned("owned").ownership).toBe(ownership);
+    }
+  });
+});

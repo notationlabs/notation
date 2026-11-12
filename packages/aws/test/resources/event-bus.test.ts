@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import {
+  ResourceAlreadyExistsError,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
 } from "@notation/resource";
@@ -9,6 +10,10 @@ import {
   DefaultEventBus,
   EventBus,
 } from "src/resources/event-bridge/event-bus";
+import {
+  CREATE_TOKEN_TAG,
+  createTokenTagValue,
+} from "src/resources/utils/create-token";
 
 const arn = "arn:aws:events:eu-west-2:123456789012:event-bus/orders";
 
@@ -41,6 +46,67 @@ describe("EventBridge event bus", () => {
     expect(command.input).toEqual({ Name: "orders" });
   });
 
+  it("tags the bus with the create attempt's token", async () => {
+    const send = mockSend(() => ({ EventBusArn: arn }));
+
+    await bus.create({ Name: "orders" }, undefined, "token-1");
+
+    const command = send.mock.calls[0]![0] as sdk.CreateEventBusCommand;
+    expect(command.input).toEqual({
+      Name: "orders",
+      Tags: [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue("token-1") }],
+    });
+  });
+
+  it("finds the bus that has the create token", async () => {
+    const send = mockSend((command) => {
+      if (command instanceof sdk.DescribeEventBusCommand) {
+        return { Name: "orders", Arn: arn };
+      }
+      return {
+        Tags: [
+          { Key: CREATE_TOKEN_TAG, Value: createTokenTagValue("token-1") },
+        ],
+      };
+    });
+
+    await expect(bus.find!({ Name: "orders" }, "token-1")).resolves.toBe(
+      undefined,
+    );
+    const tagsCommand = send.mock
+      .calls[1]![0] as sdk.ListTagsForResourceCommand;
+    expect(tagsCommand.input).toEqual({ ResourceARN: arn });
+  });
+
+  it("reports a bus with the same name and another token as not found", async () => {
+    mockSend((command) => {
+      if (command instanceof sdk.DescribeEventBusCommand) {
+        return { Name: "orders", Arn: arn };
+      }
+      return {
+        Tags: [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue("other") }],
+      };
+    });
+
+    await expect(bus.find!({ Name: "orders" }, "token-1")).rejects.toSatisfy(
+      ResourceNotFoundError.is,
+    );
+  });
+
+  it("reports a missing bus as not found by find", async () => {
+    mockSend(() => {
+      throw notFound();
+    });
+
+    await expect(bus.find!({ Name: "orders" }, "token-1")).rejects.toSatisfy(
+      ResourceNotFoundError.is,
+    );
+  });
+
+  it("proves its ownership by its create token", () => {
+    expect(bus.ownership).toBe("token");
+  });
+
   it("reports a create that may have taken effect as unknown", async () => {
     mockSend(() => {
       throw Object.assign(new Error("timed out"), { name: "TimeoutError" });
@@ -48,6 +114,19 @@ describe("EventBridge event bus", () => {
 
     await expect(bus.create({ Name: "orders" })).rejects.toBeInstanceOf(
       ResourceCreationUnknownError,
+    );
+  });
+
+  it("reports a bus that already exists as ResourceAlreadyExistsError", async () => {
+    mockSend(() => {
+      throw new sdk.ResourceAlreadyExistsException({
+        message: "Event bus orders already exists.",
+        $metadata: {},
+      });
+    });
+
+    await expect(bus.create({ Name: "orders" })).rejects.toBeInstanceOf(
+      ResourceAlreadyExistsError,
     );
   });
 

@@ -1,8 +1,18 @@
 import * as v from "valibot";
-import { resource, ResourceNotFoundError } from "@notation/resource";
+import {
+  resource,
+  ResourceAlreadyExistsError,
+  ResourceCreationUnknownError,
+  ResourceNotFoundError,
+} from "@notation/resource";
 import { AwsSchema } from "src/resources/utils/types";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/resources/utils/aws-clients";
+import {
+  CREATE_TOKEN_TAG,
+  createTokenTagValue,
+} from "src/resources/utils/create-token";
+import { awsCreate } from "src/resources/utils/errors";
 import { LambdaFunctionInstance } from "../lambda";
 import {
   EventBus,
@@ -265,19 +275,58 @@ export const EventBridgeRule = eventBridgeRuleSchema
       }
     },
 
-    create: async (params) => {
-      const createRuleCommand = new sdk.PutRuleCommand(params);
-      const createTargetsCommand = new sdk.PutTargetsCommand({
-        Rule: params.Name,
+    // PutRule overwrites an existing rule instead of failing, and does not
+    // tag it. So create checks for the rule first, and checks the tag
+    // afterwards, in case another writer made the rule in between.
+    create: awsCreate(async (params, _context, token) => {
+      const key = { Name: params.Name, EventBusName: params.EventBusName };
+      if (await describeRule(key)) {
+        throw new ResourceAlreadyExistsError(
+          `EventBridge rule "${params.Name}" already exists`,
+        );
+      }
+      const { Targets, ...ruleConfig } = params;
+      const { RuleArn } = await eventBridgeClient().send(
+        new sdk.PutRuleCommand({
+          ...ruleConfig,
+          Tags: token
+            ? [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }]
+            : undefined,
+        }),
+      );
+      if (token && !(await ruleHasToken(RuleArn!, token))) {
+        throw new ResourceAlreadyExistsError(
+          `EventBridge rule "${params.Name}" was made by another writer ` +
+            `after create checked for it`,
+        );
+      }
+      try {
+        assertNoFailedTargets(
+          "put",
+          params.Name,
+          await eventBridgeClient().send(
+            new sdk.PutTargetsCommand({
+              Rule: params.Name,
+              EventBusName: params.EventBusName,
+              Targets,
+            }),
+          ),
+        );
+      } catch (error) {
+        // A rule kept without its targets would be found by the create's
+        // lookup, and recorded with targets it does not have.
+        await deleteCreatedRule(key, token, errorMessage(error));
+      }
+    }),
+    ownership: "token",
+    find: async (params, token) => {
+      const rule = await describeRule({
+        Name: params.Name,
         EventBusName: params.EventBusName,
-        Targets: params.Targets,
       });
-
-      await eventBridgeClient().send(createRuleCommand);
-      assertNoFailedTargets(
-        "put",
-        params.Name,
-        await eventBridgeClient().send(createTargetsCommand),
+      if (rule?.Arn && (await hasCreateToken(rule.Arn, token))) return;
+      throw new ResourceNotFoundError(
+        "No EventBridge rule has the name and the create token",
       );
     },
     update: async (key, patch, params) => {
@@ -332,36 +381,7 @@ export const EventBridgeRule = eventBridgeRuleSchema
         );
       }
     },
-    delete: async (key) => {
-      try {
-        // The targets must be deleted first, otherwise the API will return an error response
-        const existingTargets = await eventBridgeClient().send(
-          new sdk.ListTargetsByRuleCommand({
-            Rule: key.Name,
-            EventBusName: key.EventBusName,
-          }),
-        );
-
-        if (existingTargets.Targets && existingTargets.Targets.length > 0) {
-          const deleteTargetsCommand = new sdk.RemoveTargetsCommand({
-            Rule: key.Name,
-            EventBusName: key.EventBusName,
-            Ids: existingTargets.Targets.map((target) => target.Id!),
-          });
-
-          assertNoFailedTargets(
-            "remove",
-            key.Name,
-            await eventBridgeClient().send(deleteTargetsCommand),
-          );
-        }
-
-        const deleteRuleCommand = new sdk.DeleteRuleCommand(key);
-        await eventBridgeClient().send(deleteRuleCommand);
-      } catch (error) {
-        if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
-      }
-    },
+    delete: async (key) => deleteRule(key),
   })
   .requireDependencies<EventBridgeRuleDependencies>()
   .deriveParams(({ config }) => {
@@ -373,6 +393,109 @@ export const EventBridgeRule = eventBridgeRuleSchema
         : { EventPattern: compactJson(config.EventPattern) };
     return derived;
   });
+
+/**
+ * Deletes the rule, then throws. Without a token, create cannot tell that it
+ * made the rule, so the rule is kept.
+ */
+async function deleteCreatedRule(
+  key: sdk.DescribeRuleCommandInput,
+  token: string | undefined,
+  message: string,
+): Promise<never> {
+  const notPut = `The targets of EventBridge rule "${key.Name}" were not put (${message})`;
+  if (token === undefined) {
+    throw new Error(
+      `${notPut}, and create had no token to show that it made the rule, ` +
+        `so the rule was not deleted`,
+    );
+  }
+  try {
+    await deleteRule(key);
+  } catch (error) {
+    throw new ResourceCreationUnknownError(
+      `${notPut}, and the rule could not be deleted: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
+  throw new Error(
+    `The targets of EventBridge rule "${key.Name}" were not put, so the ` +
+      `rule was deleted: ${message}`,
+  );
+}
+
+/**
+ * Throws an unknown outcome when the tags cannot be read, because the rule
+ * exists by then.
+ */
+async function ruleHasToken(arn: string, token: string): Promise<boolean> {
+  try {
+    return await hasCreateToken(arn, token);
+  } catch (error) {
+    throw new ResourceCreationUnknownError(
+      `EventBridge rule ${arn} was put, but its tags could not be read: ` +
+        errorMessage(error),
+      { cause: error },
+    );
+  }
+}
+
+async function describeRule(
+  key: sdk.DescribeRuleCommandInput,
+): Promise<sdk.DescribeRuleCommandOutput | undefined> {
+  try {
+    return await eventBridgeClient().send(new sdk.DescribeRuleCommand(key));
+  } catch (error) {
+    if (error instanceof sdk.ResourceNotFoundException) return undefined;
+    throw error;
+  }
+}
+
+async function hasCreateToken(arn: string, token: string): Promise<boolean> {
+  const { Tags } = await eventBridgeClient().send(
+    new sdk.ListTagsForResourceCommand({ ResourceARN: arn }),
+  );
+  const value = createTokenTagValue(token);
+  return (
+    Tags?.some((tag) => tag.Key === CREATE_TOKEN_TAG && tag.Value === value) ??
+    false
+  );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function deleteRule(key: sdk.DescribeRuleCommandInput) {
+  try {
+    // The targets must be deleted first, otherwise the API will return an error response
+    const existingTargets = await eventBridgeClient().send(
+      new sdk.ListTargetsByRuleCommand({
+        Rule: key.Name,
+        EventBusName: key.EventBusName,
+      }),
+    );
+
+    if (existingTargets.Targets && existingTargets.Targets.length > 0) {
+      const deleteTargetsCommand = new sdk.RemoveTargetsCommand({
+        Rule: key.Name,
+        EventBusName: key.EventBusName,
+        Ids: existingTargets.Targets.map((target) => target.Id!),
+      });
+
+      assertNoFailedTargets(
+        "remove",
+        key.Name,
+        await eventBridgeClient().send(deleteTargetsCommand),
+      );
+    }
+
+    const deleteRuleCommand = new sdk.DeleteRuleCommand(key);
+    await eventBridgeClient().send(deleteRuleCommand);
+  } catch (error) {
+    if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
+  }
+}
 
 // The pattern is compared as a string, so the configured pattern and the
 // pattern that is read are both put in the compact form that JSON.stringify

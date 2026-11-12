@@ -73,6 +73,8 @@ export const Zip = zipSchema.defineOperations({
   create: async (params) => {
     await zip.package(params.sourceFilePath, params.filePath);
   },
+  // The parent is the project directory.
+  ownership: "parent",
   update: async (config) => {
     await fs.unlink(fromProjectRoot(config.filePath));
     await zip.package(config.sourceFilePath, config.filePath);

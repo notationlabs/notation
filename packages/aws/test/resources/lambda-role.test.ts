@@ -1,11 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-iam";
 import { createPlan } from "@notation/reconciler";
-import type { DurableObject } from "@notation/resource";
+import {
+  ResourceAlreadyExistsError,
+  ResourceCreationUnknownError,
+  ResourceNotFoundError,
+  type DurableObject,
+} from "@notation/resource";
 import { MemoryStateBackend } from "@notation/state";
 import { iamClient } from "src/resources/utils/aws-clients";
 import { LambdaIamRole } from "src/resources/lambda/lambda-role";
 import { lambdaTrustPolicy } from "src/resources/templates/iam.policy";
+import {
+  CREATE_TOKEN_TAG,
+  createTokenTagValue,
+} from "src/resources/utils/create-token";
 
 const boundaryArn = "arn:aws:iam::123456789012:policy/boundary";
 
@@ -126,6 +135,98 @@ describe("LambdaIamRole drift detection", () => {
       decision: "drift-replace",
       replaceFields: [{ name: "PermissionsBoundary", known: true }],
     });
+  });
+});
+
+describe("LambdaIamRole create", () => {
+  it("tags the role with the create attempt's token", async () => {
+    const send = vi
+      .spyOn(iamClient(), "send")
+      .mockImplementation(async () => ({}));
+    const role = new LambdaIamRole("role", {
+      config: { RoleName: "app-role" },
+    });
+
+    await role.create(await role.getParams(), undefined, "token-1");
+
+    const command = send.mock.calls[0]![0] as sdk.CreateRoleCommand;
+    expect(command.input.Tags).toEqual([
+      { Key: CREATE_TOKEN_TAG, Value: createTokenTagValue("token-1") },
+    ]);
+  });
+
+  it("finds the role that has the create token", async () => {
+    mockGetRole(
+      getRoleResponse({
+        Tags: [
+          { Key: CREATE_TOKEN_TAG, Value: createTokenTagValue("token-1") },
+        ],
+      }),
+    );
+    const role = new LambdaIamRole("role", {
+      config: { RoleName: "app-role" },
+    });
+
+    await expect(
+      role.find!(await role.getParams(), "token-1"),
+    ).resolves.toBeUndefined();
+    expect(role.ownership).toBe("token");
+  });
+
+  it("reports a role with the same name and no create token as not found", async () => {
+    mockGetRole(getRoleResponse({ Tags: [{ Key: "team", Value: "web" }] }));
+    const role = new LambdaIamRole("role", {
+      config: { RoleName: "app-role" },
+    });
+
+    await expect(
+      role.find!(await role.getParams(), "token-1"),
+    ).rejects.toSatisfy(ResourceNotFoundError.is);
+  });
+
+  it("reports a missing role as not found by find", async () => {
+    vi.spyOn(iamClient(), "send").mockImplementation(async () => {
+      throw new sdk.NoSuchEntityException({
+        message: "missing",
+        $metadata: {},
+      });
+    });
+    const role = new LambdaIamRole("role", {
+      config: { RoleName: "app-role" },
+    });
+
+    await expect(
+      role.find!(await role.getParams(), "token-1"),
+    ).rejects.toSatisfy(ResourceNotFoundError.is);
+  });
+
+  it("reports a role that already exists as ResourceAlreadyExistsError", async () => {
+    vi.spyOn(iamClient(), "send").mockImplementation(async () => {
+      throw new sdk.EntityAlreadyExistsException({
+        message: "Role with name app-role already exists.",
+        $metadata: {},
+      });
+    });
+    const role = new LambdaIamRole("role", {
+      config: { RoleName: "app-role" },
+    });
+
+    await expect(role.create(await role.getParams())).rejects.toSatisfy(
+      ResourceAlreadyExistsError.is,
+    );
+  });
+
+  it("reports a create that may have taken effect as unknown", async () => {
+    vi.spyOn(iamClient(), "send").mockImplementation(async () => {
+      throw { $metadata: { httpStatusCode: 503 } };
+    });
+    const role = new LambdaIamRole("role", {
+      config: { RoleName: "app-role" },
+    });
+
+    await expect(role.create(await role.getParams())).rejects.toSatisfy(
+      ResourceCreationUnknownError.is,
+    );
   });
 });
 

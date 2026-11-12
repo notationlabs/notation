@@ -1,4 +1,7 @@
-import { ResourceCreationUnknownError } from "@notation/resource";
+import {
+  ResourceAlreadyExistsError,
+  ResourceCreationUnknownError,
+} from "@notation/resource";
 
 const NETWORK_ERROR_CODES = new Set([
   "ECONNABORTED",
@@ -29,15 +32,23 @@ export function awsCallMayHaveTakenEffect(error: unknown): boolean {
 
 /**
  * Wraps an AWS `create` so that an error from a call that may have taken
- * effect is thrown as `ResourceCreationUnknownError`.
+ * effect is thrown as `ResourceCreationUnknownError`, and an error for which
+ * `alreadyExists` returns true is thrown as `ResourceAlreadyExistsError`.
  */
 export function awsCreate<Args extends unknown[], Result>(
   create: (...args: Args) => Promise<Result>,
+  options: { alreadyExists?: (error: unknown) => boolean } = {},
 ): (...args: Args) => Promise<Result> {
   return async (...args) => {
     try {
       return await create(...args);
     } catch (error) {
+      if (options.alreadyExists?.(error)) {
+        throw new ResourceAlreadyExistsError(
+          error instanceof Error ? error.message : String(error),
+          { cause: error },
+        );
+      }
       if (!awsCallMayHaveTakenEffect(error)) throw error;
       throw new ResourceCreationUnknownError(
         `AWS did not report whether the resource was created: ${error instanceof Error ? error.message : String(error)}`,
