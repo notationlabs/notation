@@ -3552,6 +3552,281 @@ describe("value validation at deploy", () => {
       name: "SchemaStructureError",
       fields: ["arn"],
     });
+    expect(error.message).toContain("The resource's type has no read");
+    runtime.close();
+  });
+
+  it("replaces a resource with no read that lacks a required output, and records the output", async () => {
+    let arn: string | undefined;
+    const Role = defineRole({ create: async () => ({ arn }) });
+    const resources: BaseResource[] = [
+      new Role("role", { config: { name: "role" } }),
+    ];
+    const runtime = createRuntime(resources, "replace-missing-outputs");
+    await runtime.run("replace-missing-outputs-1").catch(() => {});
+    expect((await runtime.state.get("role"))?.output.arn).toBeUndefined();
+
+    arn = "arn:role";
+    resources.splice(
+      0,
+      1,
+      new Role("role", { config: { name: "role", boundary: "b" } }),
+    );
+    await runtime.run("replace-missing-outputs-2");
+
+    expect(await runtime.state.get("role")).toMatchObject({
+      params: { name: "role", boundary: "b" },
+      output: { arn: "arn:role" },
+    });
+    runtime.close();
+  });
+
+  it("replaces a resource with no read that lacks a required output when deploy deletes it before a replaced dependency", async () => {
+    let policyArn: string | undefined;
+    const Role = defineRole({ create: async () => ({ arn: "arn:role" }) });
+    // Blocks the delete of its role, so deploy deletes it before it replaces
+    // the role, and creates it again.
+    const Policy = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; role: string };
+      UpdateParams: { role: string };
+      ReadResult: { arn: string };
+    }>({
+      type: "test/durable/unread-policy",
+      provider: "test",
+      blocksDeleteOf: [Role.type],
+    })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          primaryKey: true,
+          immutable: true,
+        },
+        role: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+        },
+        arn: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create: async () => ({ arn: policyArn }) as any,
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const resources: BaseResource[] = [];
+    const declare = (boundary?: string) => {
+      const role = new Role("role", { config: { name: "role", boundary } });
+      const policy = new Policy("policy", {
+        config: { name: "policy", role: role.outputRef("arn") },
+      });
+      resources.splice(0, resources.length, role, policy);
+    };
+    declare();
+    const runtime = createRuntime(resources, "cascade-missing-outputs");
+    await runtime.run("cascade-missing-outputs-1").catch(() => {});
+    expect((await runtime.state.get("policy"))?.output.arn).toBeUndefined();
+
+    policyArn = "arn:policy";
+    declare("b");
+    await runtime.run("cascade-missing-outputs-2");
+
+    expect(await runtime.state.get("policy")).toMatchObject({
+      output: { arn: "arn:policy" },
+    });
+    runtime.close();
+  });
+
+  // A type with no read, whose `target` param is immutable when `immutable`
+  // is set.
+  function defineUnreadAttachment(
+    create: () => Promise<any>,
+    update: () => Promise<void>,
+    immutable = false,
+  ) {
+    return resource<{
+      Key: { name: string };
+      CreateParams: { name: string; target: string };
+      UpdateParams: { target: string };
+      ReadResult: { arn: string };
+    }>({
+      type: "test/durable/unread-attachment",
+      provider: "test",
+    })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          primaryKey: true,
+          immutable: true,
+        },
+        target: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          ...(immutable ? { immutable: true as const } : {}),
+        },
+        arn: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create,
+        update,
+        delete: async () => undefined,
+      });
+  }
+
+  it("fails before the update of a resource with no read that lacks a required output", async () => {
+    const updateFn = vi.fn(async () => undefined);
+    const Attachment = defineUnreadAttachment(async () => undefined, updateFn);
+    const resources: BaseResource[] = [
+      new Attachment("attachment", {
+        config: { name: "attachment", target: "a" },
+      }),
+    ];
+    const runtime = createRuntime(resources, "update-missing-outputs");
+    await runtime.run("update-missing-outputs-1").catch(() => {});
+    expect((await runtime.state.get("attachment"))?.output.arn).toBeUndefined();
+
+    resources.splice(
+      0,
+      1,
+      new Attachment("attachment", {
+        config: { name: "attachment", target: "b" },
+      }),
+    );
+    const error = await runtime.run("update-missing-outputs-2").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "SchemaStructureError",
+      fields: ["arn"],
+    });
+    expect(error.message).toContain("The resource's type has no read");
+    expect(updateFn).not.toHaveBeenCalled();
+    runtime.close();
+  });
+
+  it("replaces a resource with no read that lacks a required output when an immutable param takes a replaced dependency's output", async () => {
+    let roleArn = "arn:role-1";
+    let attachmentArn: string | undefined;
+    const Role = defineRole({ create: async () => ({ arn: roleArn }) });
+    const Attachment = defineUnreadAttachment(
+      async () => ({ arn: attachmentArn }),
+      async () => undefined,
+      true,
+    );
+    const resources: BaseResource[] = [];
+    const declare = (boundary?: string) => {
+      const role = new Role("role", { config: { name: "role", boundary } });
+      const attachment = new Attachment("attachment", {
+        config: { name: "attachment", target: role.outputRef("arn") },
+      });
+      resources.splice(0, resources.length, role, attachment);
+    };
+    declare();
+    const runtime = createRuntime(resources, "dependent-missing-outputs");
+    await runtime.run("dependent-missing-outputs-1").catch(() => {});
+    expect((await runtime.state.get("attachment"))?.output.arn).toBeUndefined();
+
+    roleArn = "arn:role-2";
+    attachmentArn = "arn:attachment";
+    declare("b");
+    await runtime.run("dependent-missing-outputs-2");
+
+    expect(await runtime.state.get("attachment")).toMatchObject({
+      params: { name: "attachment", target: "arn:role-2" },
+      output: { arn: "arn:attachment" },
+    });
+    runtime.close();
+  });
+
+  // Pins a partial apply on purpose. A check before any change would need
+  // deploy's decision, which isn't known until deploy reaches the resource,
+  // so it would fail deploys that succeed. See validateKnownParams in
+  // durable/deploy.ts.
+  it("fails at a resource with no read that lacks a required output, after it deploys the resources before it", async () => {
+    const Role = defineRole({ create: async () => ({ arn: "arn:role" }) });
+    const Attachment = defineUnreadAttachment(
+      async () => undefined,
+      async () => undefined,
+    );
+    const resources: BaseResource[] = [];
+    const declare = (withOther: boolean) => {
+      const role = new Role("role", { config: { name: "role" } });
+      const attachment = new Attachment("attachment", {
+        config: { name: "attachment", target: role.outputRef("arn") },
+      });
+      const other = new Role("other", { config: { name: "other" } });
+      resources.splice(
+        0,
+        resources.length,
+        ...(withOther ? [role, attachment, other] : [role, attachment]),
+      );
+    };
+    declare(false);
+    const runtime = createRuntime(resources, "partial-missing-outputs");
+    await runtime.run("partial-missing-outputs-1").catch(() => {});
+    expect((await runtime.state.get("attachment"))?.output.arn).toBeUndefined();
+
+    declare(true);
+    const error = await runtime
+      .run("partial-missing-outputs-2")
+      .catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "SchemaStructureError",
+      fields: ["arn"],
+    });
+    expect(error.message).toContain("The resource's type has no read");
+    expect(await runtime.state.get("other")).toMatchObject({
+      output: { arn: "arn:role" },
+    });
+    runtime.close();
+  });
+
+  it("fails when a possible replace of a resource with no read that lacks a required output ends as noop", async () => {
+    const Role = defineRole({ create: async () => ({ arn: "arn:role" }) });
+    const createFn = vi.fn(async () => undefined);
+    const Attachment = defineUnreadAttachment(
+      createFn,
+      async () => undefined,
+      true,
+    );
+    const resources: BaseResource[] = [];
+    const declare = (boundary?: string) => {
+      const role = new Role("role", { config: { name: "role", boundary } });
+      const attachment = new Attachment("attachment", {
+        config: { name: "attachment", target: role.outputRef("arn") },
+      });
+      resources.splice(0, resources.length, role, attachment);
+    };
+    declare();
+    const runtime = createRuntime(resources, "possible-replace-noop");
+    await runtime.run("possible-replace-noop-1").catch(() => {});
+    expect((await runtime.state.get("attachment"))?.output.arn).toBeUndefined();
+
+    declare("b");
+    const error = await runtime.run("possible-replace-noop-2").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "SchemaStructureError",
+      fields: ["arn"],
+    });
+    expect(error.message).toContain("The resource's type has no read");
+    expect(await runtime.state.get("role")).toMatchObject({
+      params: { name: "role", boundary: "b" },
+    });
+    expect(createFn).toHaveBeenCalledOnce();
     runtime.close();
   });
 

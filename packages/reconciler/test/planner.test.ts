@@ -977,6 +977,215 @@ describe("createPlan", () => {
     });
   });
 
+  describe("a resource with no read that lacks a required output in state", () => {
+    // Cast: see above.
+    const Queue = resource({
+      type: "test/planner/unread-queue",
+      provider: "test",
+    })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+          immutable: true,
+        },
+        size: {
+          presence: "optional",
+          propertyType: "param",
+          value: v.number(),
+        },
+        arn: {
+          presence: "required",
+          propertyType: "computed",
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    // Blocks the delete of its queue, so deploy deletes it before it replaces
+    // the queue.
+    const Subscription = resource({
+      type: "test/planner/unread-subscription",
+      provider: "test",
+      blocksDeleteOf: [Queue.type],
+    })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+        queueArn: {
+          presence: "optional",
+          propertyType: "param",
+          value: v.string(),
+        },
+        arn: {
+          presence: "required",
+          propertyType: "computed",
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const record = (
+      id: string,
+      type: string,
+      params: DurableObject,
+      dependsOn: string[] = [],
+    ) => ({
+      version: 1,
+      id,
+      type,
+      provider: "test",
+      config: {},
+      params,
+      output: params,
+      dependsOn,
+      lastOperation: "create" as const,
+      lastOperationAt: "2026-07-22T00:00:00.000Z",
+    });
+    const planQueue = (config: DurableObject) =>
+      createPlan({
+        resources: [new Queue("queue", { config } as any)],
+        state: new MemoryStateBackend({
+          queue: record("queue", Queue.type, { name: "orders", size: 1 }),
+        }),
+        driftDetection: false,
+      });
+
+    it("fails when deploy would leave it unchanged", async () => {
+      const error = await planQueue({ name: "orders", size: 1 }).catch(
+        (e) => e,
+      );
+      expect(error).toMatchObject({
+        name: "SchemaStructureError",
+        fields: ["arn"],
+      });
+    });
+
+    it("fails when deploy would update it", async () => {
+      const error = await planQueue({ name: "orders", size: 2 }).catch(
+        (e) => e,
+      );
+      expect(error).toMatchObject({
+        name: "SchemaStructureError",
+        fields: ["arn"],
+      });
+    });
+
+    it("plans a replace, and its dependents against unknown outputs", async () => {
+      const queue = new Queue("queue", {
+        config: { name: "renamed", size: 1 },
+      } as any);
+      const subscription = new Subscription("subscription", {
+        config: { name: "s", queueArn: (queue as any).outputRef("arn") },
+      } as any);
+
+      const plan = await createPlan({
+        resources: [queue, subscription],
+        state: new MemoryStateBackend({
+          queue: record("queue", Queue.type, { name: "orders", size: 1 }),
+          // The subscription's record lacks its own arn too. Deploy deletes
+          // it before it replaces the queue, and creates it again.
+          subscription: record(
+            "subscription",
+            Subscription.type,
+            { name: "s", queueArn: "arn:q" },
+            ["queue"],
+          ),
+        }),
+        driftDetection: false,
+      });
+
+      expect(plan.nodes).toMatchObject([
+        { id: "queue", decision: "replace" },
+        {
+          id: "subscription",
+          decision: "replace",
+          replacedDependency: "queue",
+          params: { name: "s", queueArn: UNKNOWN_AFTER_APPLY },
+        },
+      ]);
+    });
+
+    it("plans a possible replace when an immutable param takes a replaced dependency's output", async () => {
+      // A type with no read, whose `target` is immutable.
+      const Attachment = resource({
+        type: "test/planner/unread-attachment",
+        provider: "test",
+      })
+        .defineSchema({
+          name: {
+            presence: "required",
+            propertyType: "param",
+            primaryKey: true,
+            value: v.string(),
+          },
+          target: {
+            presence: "required",
+            propertyType: "param",
+            value: v.string(),
+            immutable: true,
+          },
+          arn: {
+            presence: "required",
+            propertyType: "computed",
+            value: v.string(),
+          },
+        } as any)
+        .defineOperations({
+          create: async () => undefined,
+          update: async () => undefined,
+          delete: async () => undefined,
+        });
+      const queue = new Queue("queue", {
+        config: { name: "renamed", size: 1 },
+      } as any);
+      const attachment = new Attachment("attachment", {
+        config: { name: "a", target: (queue as any).outputRef("arn") },
+      } as any);
+
+      const plan = await createPlan({
+        resources: [queue, attachment],
+        state: new MemoryStateBackend({
+          queue: record("queue", Queue.type, {
+            name: "orders",
+            size: 1,
+            arn: "arn:q",
+          }),
+          // The attachment's record lacks its own arn.
+          attachment: record(
+            "attachment",
+            Attachment.type,
+            { name: "a", target: "arn:q" },
+            ["queue"],
+          ),
+        }),
+        driftDetection: false,
+      });
+
+      expect(plan.nodes).toMatchObject([
+        { id: "queue", decision: "replace" },
+        {
+          id: "attachment",
+          decision: "replace",
+          replaceFields: [{ name: "target", known: false }],
+          params: { name: "a", target: UNKNOWN_AFTER_APPLY },
+        },
+      ]);
+    });
+  });
+
   describe("value validation", () => {
     const Fn = resource<{
       Key: { name: string };
