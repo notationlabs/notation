@@ -73,7 +73,7 @@ function apiToken(): string {
   const token = process.env.CLOUDFLARE_API_TOKEN;
   if (!token) {
     throw new Error(
-      "Set CLOUDFLARE_API_TOKEN to an API token for the account. The Credentials section of the Cloudflare Workers docs lists the permissions that each resource needs.",
+      "Set CLOUDFLARE_API_TOKEN to an API token for the account. It needs Workers Scripts: Edit, plus the permission for each other resource that the app deploys, which docs/providers/cloudflare/overview.md lists under Credentials.",
     );
   }
   return token;

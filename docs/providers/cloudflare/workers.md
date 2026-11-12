@@ -242,14 +242,7 @@ Plan reads `protect` from state, not from code. A deploy that sets `protect: fal
 
 ## Credentials
 
-Deploy reads two environment variables:
-
-- `CLOUDFLARE_API_TOKEN`: an API token with the permissions for what the app deploys:
-  - Workers and Durable Objects: **Workers Scripts: Edit**
-  - KV namespaces: **Workers KV Storage: Edit**
-  - R2 buckets: **Workers R2 Storage: Edit**
-  - Containers: **Containers: Edit**
-- `CLOUDFLARE_ACCOUNT_ID`: the account to deploy to. It is stored in state, so a later deploy updates or deletes each Worker in the account it was made in.
+Deploy reads the credentials described in the [Cloudflare overview](overview.md#credentials). `CLOUDFLARE_ACCOUNT_ID` is stored in state, so a later deploy updates or deletes each Worker in the account it was made in.
 
 A Worker can't move to another account. If `CLOUDFLARE_ACCOUNT_ID` changes, plan and deploy fail, because replacing each Worker would delete the objects of the namespaces that it hosts. To deploy to another account, first run `notation destroy` with the old account, or deploy to another stage.
 
