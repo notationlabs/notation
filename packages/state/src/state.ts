@@ -36,7 +36,11 @@ export type StateNode = {
   [key: string]: DurableValue;
 };
 
-export function isCreatingRecord(node: StateNode | undefined): boolean {
+// The predicate names the "creating" operation, so that a false result
+// leaves `node` as a record with another operation, not as undefined.
+export function isCreatingRecord(
+  node: StateNode | undefined,
+): node is StateNode & { lastOperation: "creating" } {
   return node?.lastOperation === "creating";
 }
 

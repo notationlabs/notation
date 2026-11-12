@@ -307,7 +307,7 @@ function hasEarlierCreatingRecord(params: CreateResourceParams): boolean {
     return false;
   }
   const desired = resource.keyOf(resourceParams) as Record<string, unknown>;
-  const recorded = resource.keyOf(prior!.params) as Record<string, unknown>;
+  const recorded = resource.keyOf(prior.params) as Record<string, unknown>;
   return Object.keys(desired).every(
     (field) =>
       desired[field] !== undefined && desired[field] === recorded[field],

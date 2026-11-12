@@ -189,7 +189,7 @@ export function decideDriftAction(opts: {
  * comparing them would plan the same drift on every deploy, and replace the
  * resource if the field is immutable or a key.
  */
-export function pick(
+function pick(
   values: Record<string, unknown>,
   other: Record<string, unknown>,
 ): Record<string, unknown> {
