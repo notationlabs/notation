@@ -570,7 +570,7 @@ describe("WorkerSubdomain", () => {
   it("explains that the account has no workers.dev subdomain", async () => {
     mockFetch((call) =>
       call.url.endsWith("/workers/subdomain")
-        ? fail(404, 10000, "not found")
+        ? fail(404, 10007, "not found")
         : ok({ enabled: true, previews_enabled: false }),
     );
 
