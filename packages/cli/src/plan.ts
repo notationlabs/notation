@@ -82,14 +82,6 @@ function printPlanSummary(result: Plan, logger: Logger) {
         `    created first without the contributions that refer to ${(node.cycle ?? []).join(", ")}, the other members of its cycle`,
       );
     }
-    if (node.revertedPeers) {
-      const peers = node.revertedPeers;
-      logger.info(
-        peers.length === 1
-          ? `    ${peers[0]} is updated first without its contributions that refer to ${node.id}, and ${node.id} is unavailable until the cycle settles`
-          : `    ${peers.join(", ")} are updated first without their contributions that refer to ${node.id}, and ${node.id} is unavailable until the cycle settles`,
-      );
-    }
   }
 
   const count = (decision: PlanNode["decision"]) =>

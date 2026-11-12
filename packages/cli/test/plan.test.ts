@@ -87,7 +87,7 @@ it("prints that a dependent is deleted only if an unknown field replaces its dep
   ]);
 });
 
-it("prints the placeholder of a cycle, and the members that a replacement reverts", async () => {
+it("prints the placeholder of a cycle", async () => {
   planApp.mockResolvedValueOnce({
     createdAt: "",
     nodes: [
@@ -106,7 +106,6 @@ it("prints the placeholder of a cycle, and the members that a replacement revert
         decision: "replace",
         replaceFields: [{ name: "name", known: true }],
         cycle: ["a"],
-        revertedPeers: ["a"],
         params: {},
         dependsOn: ["a"],
       },
@@ -117,11 +116,10 @@ it("prints the placeholder of a cycle, and the members that a replacement revert
 
   await plan(deployment, { logger });
 
-  expect(lines.slice(1, 6)).toEqual([
+  expect(lines.slice(1, 5)).toEqual([
     "+ create test/plan/worker a",
     "    created first without the contributions that refer to b, the other members of its cycle",
     "-/+ replace test/plan/worker b",
     "    name forces replacement",
-    "    a is updated first without its contributions that refer to b, and b is unavailable until the cycle settles",
   ]);
 });

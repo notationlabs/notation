@@ -6,7 +6,6 @@ import {
   findStronglyConnected,
   isCycle,
   orderDeployUnits,
-  revertedPeers,
   type DeployUnit,
 } from "../src/cycles";
 
@@ -234,33 +233,6 @@ describe("orderDeployUnits", () => {
   it("fails on a duplicate ID", () => {
     expect(() => orderDeployUnits([worker("a"), worker("a")])).toThrow(
       "Duplicate resource id: a",
-    );
-  });
-});
-
-describe("revertedPeers", () => {
-  it("returns the members that refer to the replaced member through contributions", () => {
-    const a = worker("a");
-    const b = worker("b");
-    bind(a, b);
-    bind(b, a);
-    const [unit] = orderDeployUnits([a, b]);
-    if (!unit || !isCycle(unit)) throw new Error("expected a cycle");
-
-    expect(revertedPeers(unit, a).map((peer) => peer.id)).toEqual(["b"]);
-  });
-
-  it("fails and names a peer that can't be reverted", () => {
-    const a = worker("a");
-    const b = worker("b", NoUpdate);
-    bind(a, b);
-    bind(b, a);
-    const [unit] = orderDeployUnits([a, b]);
-    if (!unit || !isCycle(unit)) throw new Error("expected a cycle");
-
-    expect(() => revertedPeers(unit, a)).toThrow(ResourceCycleError);
-    expect(() => revertedPeers(unit, a)).toThrow(
-      "test/cycles/no-update has no update operation, so b can't be updated after it is created",
     );
   });
 });

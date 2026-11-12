@@ -18,7 +18,10 @@ import type {
   Fallback,
   NoInfer,
 } from "./types";
-import type { ResourceOperationContext } from "./resource-operation";
+import type {
+  ResourceDeletion,
+  ResourceOperationContext,
+} from "./resource-operation";
 import type { DurableObject } from "./durable-value";
 import { UNKNOWN_AFTER_APPLY, toComparableParams } from "./diff-params";
 import {
@@ -143,7 +146,10 @@ export interface BaseResource {
     key: any,
     state: any,
     context?: ResourceOperationContext,
+    deletion?: ResourceDeletion,
   ) => Promise<void>;
+  /** See `DefineResourceMeta.deleteTakesDependents`. */
+  readonly deleteTakesDependents?: boolean;
   /**
    * The params the resource deploys with. Deploy creates the placeholder of
    * a dependency cycle before the other members exist, so it leaves out the
@@ -226,6 +232,7 @@ export abstract class Resource<
   #sealed = false;
   abstract type: ResourceType;
   abstract provider: string;
+  declare readonly deleteTakesDependents?: boolean;
   abstract schema: Schema;
   abstract create: (
     params: T["params"],
@@ -248,6 +255,7 @@ export abstract class Resource<
     key: T["compoundKey"],
     state: T["state"],
     context?: ResourceOperationContext,
+    deletion?: ResourceDeletion,
   ) => Promise<void>;
   abstract deriveParams(opts: {
     id: string;
@@ -710,6 +718,12 @@ export type DefineResourceMeta = {
    */
   blocksDeleteOf?: ResourceType[];
   /**
+   * Set when `delete` uses its `deletion` argument. Deploy then lists state
+   * before each delete of a resource of this type, to find the resources
+   * that depend on it. Without it, `deletion` is undefined.
+   */
+  deleteTakesDependents?: boolean;
+  /**
    * The package or package subpath that exports this class, such as
    * `@notation/aws/resources`. Stored in state, so the class can be loaded
    * after its type is removed from code.
@@ -756,6 +770,7 @@ export type ResourceOperationsOptions<
     key: T["compoundKey"],
     state: T["state"],
     context?: ResourceOperationContext,
+    deletion?: ResourceDeletion,
   ) => Promise<void>;
   deriveParams?: (opts: {
     config: Partial<T["params"]>;
@@ -859,6 +874,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             static provider = meta.provider;
             type = meta.type;
             static blocksDeleteOf = meta.blocksDeleteOf ?? [];
+            deleteTakesDependents = meta.deleteTakesDependents ?? false;
             provider = meta.provider;
             schema = schema;
             create = opts.create;

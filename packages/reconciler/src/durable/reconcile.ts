@@ -10,6 +10,7 @@ import {
   validateParams,
   type BaseResource,
   type ResourceGroupRef,
+  type ResourceDeletion,
   type ResourceType,
 } from "@notation/resource";
 import { VersionConflict, type StateNode } from "@notation/state";
@@ -62,8 +63,6 @@ export type ReconcileOptions = {
   quietNoop?: boolean;
   /** Called with the decision before deploy acts on it. Throws to stop. */
   onDecision?: (decision: ResourceAction["decision"]) => void;
-  /** Runs before a replacement deletes the resource. */
-  beforeReplace?: () => AsyncGenerator<any, void, any>;
   /**
    * Leaves out the contributions that depend on one of these, to create or
    * update the placeholder of a cycle. The decision event is marked as a
@@ -221,7 +220,6 @@ export async function* reconcileResource(
           `Cannot replace ${resource.id}: it has no state record`,
         );
       }
-      if (options.beforeReplace) yield* options.beforeReplace();
       yield* replaceResource(
         step,
         opts,
@@ -366,6 +364,7 @@ async function* replaceResource(
   const deleteStep = step.scope("replace:delete");
   yield* deleteResourceOperation(deleteStep, {
     resource: shared.resource,
+    deletion: yield* readDeletion(deleteStep, opts, shared.resource),
     dryRun: shared.dryRun,
     emit: durableEmitter(deleteStep, opts.emit),
     maxOperationAttempts: shared.maxOperationAttempts,
@@ -482,11 +481,40 @@ export async function* deleteResource(
   const emit = durableEmitter(step, opts.emit);
   yield* deleteResourceOperation(step, {
     resource,
+    deletion: yield* readDeletion(step, opts, resource),
     dryRun: opts.dryRun,
     emit: (event) => emit({ ...event, ...cause }),
     maxOperationAttempts: opts.maxOperationAttempts,
     remove: session.remove,
   });
+}
+
+/**
+ * Reads what a `delete` of `resource` is told about the delete, when its
+ * type takes it: the resources whose state records depend on it now. Listed
+ * just before the delete, so that it leaves out the dependents that deploy
+ * has already deleted. The step returns only the dependents, as its result
+ * is copied into the journal.
+ */
+async function* readDeletion(
+  step: DurableStepRunner,
+  opts: DurableWorkflowOptions,
+  resource: BaseResource,
+): AsyncGenerator<any, ResourceDeletion | undefined, any> {
+  if (!resource.deleteTakesDependents || opts.dryRun) return undefined;
+  const resourceById = new Map(
+    opts.resources.map((desired) => [desired.id, desired]),
+  );
+  const dependents = yield* step.run("dependents", async () =>
+    (await opts.state.values())
+      .filter(
+        (node) =>
+          node.id !== resource.id &&
+          recordedEdges(node, resourceById).includes(resource.id),
+      )
+      .map(({ id, type, params }) => ({ id, type, params })),
+  );
+  return { dependents };
 }
 
 /**

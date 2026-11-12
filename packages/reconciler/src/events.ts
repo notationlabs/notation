@@ -14,15 +14,12 @@ export type OperationLifecycleEvent = {
   resourceType: ResourceType;
   /**
    * `dependency-replaced`: the delete of a dependent that blocks the delete
-   * of a replaced resource. `cycle-revert`: the update that takes a member
-   * of a dependency cycle back to its placeholder params, before deploy
-   * replaces another member or destroy deletes the cycle.
+   * of a replaced resource.
    */
   reason?: string;
   /**
    * With the reason `dependency-replaced`: the resource whose replacement
    * deletes this one first. Plan names it in `PlanNode.replacedDependency`.
-   * With the reason `cycle-revert` in deploy: the member being replaced.
    */
   replacedDependency?: string;
   errorName?: string;

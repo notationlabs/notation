@@ -48,13 +48,6 @@ export type PlanNode = {
    * and updates it with them once the rest of its cycle exists.
    */
   placeholder?: true;
-  /**
-   * Set when the resource is replaced in a cycle: the IDs of the other
-   * members that deploy reverts to their placeholder params before it
-   * deletes the resource. The resource is unavailable until the cycle
-   * settles.
-   */
-  revertedPeers?: string[];
   params: Record<string, unknown>;
   dependsOn: string[];
 };

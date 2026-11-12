@@ -1,5 +1,4 @@
 import { orderDeployUnits } from "../cycles";
-import { revertToPlaceholder } from "./cycle";
 import { withDeploymentHold } from "./deployment-hold";
 import { deleteResource, sweepOrphans } from "./reconcile";
 import { scopeStep } from "./step";
@@ -18,24 +17,21 @@ export async function* destroy(
     const kept = yield* sweepOrphans(step, opts, "destroy");
 
     // Delete in reverse dependency order, so dependents are gone before the
-    // resources they depend on. The placeholders of a cycle are reverted
-    // first, so that the members that remain can be deleted in reverse order
-    // too.
+    // resources they depend on. The members of a cycle are deleted in the
+    // reverse of their order in deploy. A placeholder still refers to the
+    // members deleted before it, so its provider must delete a resource that
+    // a dependent in state refers to. See `ResourceDeletion`.
     for (const unit of orderDeployUnits(opts.resources).reverse()) {
-      const scope = (id: string) =>
-        scopeStep(step, `notation:destroy:${encodeURIComponent(id)}`);
-      for (const placeholder of unit.placeholders) {
-        if (kept.has(placeholder.id)) continue;
-        yield* revertToPlaceholder(
-          scope(placeholder.id),
-          placeholder,
-          opts,
-          new Set(unit.members),
-        );
-      }
       for (const resource of [...unit.members].reverse()) {
         if (kept.has(resource.id)) continue;
-        yield* deleteResource(scope(resource.id), resource, opts);
+        yield* deleteResource(
+          scopeStep(
+            step,
+            `notation:destroy:${encodeURIComponent(resource.id)}`,
+          ),
+          resource,
+          opts,
+        );
       }
     }
   });

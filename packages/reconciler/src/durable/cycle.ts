@@ -1,19 +1,12 @@
-import {
-  changedKeys,
-  diffParams,
-  validateParams,
-  type BaseResource,
-} from "@notation/resource";
+import { changedKeys, type BaseResource } from "@notation/resource";
 import {
   ResourceCycleError,
   listIds,
   placeholderParamsBlocker,
-  remainingDependencies,
-  revertedPeers,
   type DeployUnit,
 } from "../cycles";
-import { readDriftOperation, updateResourceOperation } from "../operations";
-import { getDependencyIds, type DriftRead, type ResourceAction } from "../plan";
+import { readDriftOperation } from "../operations";
+import type { DriftRead, ResourceAction } from "../plan";
 import { assertSameType } from "../resource-type";
 import {
   openStateSession,
@@ -21,7 +14,7 @@ import {
   type ReconcileOptions,
 } from "./reconcile";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
-import type { DurableDeployOptions, DurableWorkflowOptions } from "./types";
+import type { DurableDeployOptions } from "./types";
 import type { DurableStep } from "./sdk";
 
 const CREATING_DECISIONS: ResourceAction["decision"][] = [
@@ -70,10 +63,10 @@ export async function* reconcileCycle(
   const replaced: BaseResource[] = [];
   // The passes after the first. A replace adds one.
   let passes = 0;
-  // The members that lack contributions and that the current pass has not
-  // reconciled since: a replacement reverted them, or created them without
-  // the contributions that refer to itself or to a member it deleted. The
-  // pass doesn't end the deploy of the cycle while one remains.
+  // The members that a replacement created without the contributions that
+  // refer to itself or to a member it deleted, and that the current pass has
+  // not reconciled since. The pass doesn't end the deploy of the cycle while
+  // one remains.
   const incomplete = new Set<BaseResource>();
   const options = (resource: BaseResource): ReconcileOptions => ({
     replaceWithout: (deleted) => {
@@ -87,34 +80,12 @@ export async function* reconcileCycle(
         throw recreateError(cycle, resource, decision, replaced);
       }
       created.add(resource);
-    },
-    beforeReplace: async function* () {
-      replaced.push(resource);
-      // The replacement is created again, so the cycle gets one more pass
-      // for it to settle in. The guard above allows one replace of each
-      // member, so the number of passes stays bounded.
-      passes += 1;
-      // The scope has no pass number: the guard above allows at most one
-      // replace of each member in one execution.
-      const revertStep = scope(resource, "revert");
-      const from = new Set([resource]);
-      // Every revert is prepared before the first one runs, so that a
-      // revert that can't be computed fails the deploy before any resource
-      // has lost its contributions.
-      const reverts = [];
-      for (const peer of revertedPeers(cycle, resource)) {
-        const revert = yield* prepareRevert(
-          revertStep.scope(encodeURIComponent(peer.id)),
-          peer,
-          opts,
-          from,
-          resource,
-        );
-        if (revert) reverts.push({ peer, revert });
-      }
-      for (const { peer, revert } of reverts) {
-        yield* revert();
-        incomplete.add(peer);
+      if (decision === "replace" || decision === "drift-replace") {
+        replaced.push(resource);
+        // The replacement is created again, so the cycle gets one more pass
+        // for it to settle in. The guard above allows one replace of each
+        // member, so the number of passes stays bounded.
+        passes += 1;
       }
     },
   });
@@ -230,144 +201,6 @@ async function* checkPlaceholder(
     maxOperationAttempts: opts.maxOperationAttempts,
   });
   return { recorded: true, driftRead };
-}
-
-/**
- * Updates `resource` without the contributions that depend on one of
- * `peers`, so that it no longer refers to them. Destroy does this for each
- * placeholder before it deletes a cycle.
- */
-export async function* revertToPlaceholder(
-  parent: DurableStepRunner,
-  resource: BaseResource,
-  opts: DurableWorkflowOptions,
-  peers: ReadonlySet<BaseResource>,
-): AsyncGenerator<any, void, any> {
-  const revert = yield* prepareRevert(parent, resource, opts, peers);
-  if (revert) yield* revert();
-}
-
-/**
- * Computes the update that leaves out the contributions of `resource` that
- * depend on one of `peers`, and returns a function that runs it. Deploy
- * prepares these before it replaces `replaced`, and destroy for each
- * placeholder, with no `replaced`. Returns undefined when there is nothing
- * to update: the resource has no record, its record has another type, or
- * the params would not change.
- *
- * The params start from the record. The params that those contributions set
- * and the hidden params take their values from the current code, as state
- * holds neither as they would be without the contributions. So the revert
- * needs the current code to resolve: it reads the outputs of the other
- * dependencies from their records. A contribution that depends on a
- * resource with no record was not deployed, so it is left out too. A
- * dependency outside contributions that has no record throws
- * `ResourceCycleError`, as does a param that the left-out contributions
- * set and that is required or forces a replacement. The record keeps only
- * the edges that remain.
- */
-async function* prepareRevert(
-  parent: DurableStepRunner,
-  resource: BaseResource,
-  opts: DurableWorkflowOptions,
-  peers: ReadonlySet<BaseResource>,
-  replaced?: BaseResource,
-): AsyncGenerator<
-  any,
-  (() => AsyncGenerator<any, void, any>) | undefined,
-  any
-> {
-  const revertKey = replaced
-    ? `revert:${encodeURIComponent(replaced.id)}`
-    : "revert";
-  const step = parent.scope("revert", revertKey);
-  const session = yield* openStateSession(step, opts, resource);
-  const node = session.node;
-  if (!node || node.type !== resource.type) return undefined;
-  resource.setOutput(node.output);
-
-  const fixed = new Set(resource.getFixedDependencies());
-  const excluded = new Set(peers);
-  const missing = resource
-    .getDependencies()
-    .filter(
-      (dependency) =>
-        (fixed.has(dependency) || !excluded.has(dependency)) &&
-        dependency.output == null,
-    );
-  if (missing.length > 0) {
-    const records = yield* step.run("dependency-outputs", () =>
-      Promise.all(missing.map((dependency) => opts.state.get(dependency.id))),
-    );
-    for (const [index, dependency] of missing.entries()) {
-      const record = records[index];
-      if (record && record.type === dependency.type) {
-        dependency.setOutput(record.output);
-      } else if (fixed.has(dependency) && !record && opts.dryRun) {
-        // A dry run creates nothing, so a dependency that deploy would have
-        // created by now has no record, and the revert can't be computed.
-        return undefined;
-      } else if (fixed.has(dependency)) {
-        const others = listIds([...peers].filter((peer) => peer !== resource));
-        throw new ResourceCycleError(
-          `Cannot update ${resource.id} without its contributions that refer to ${others}: its dependency ${dependency.id} ${record ? `has a state record of type ${record.type}, not ${dependency.type}` : "has no state record"}, so its output is not known. The revert takes the dependencies of ${resource.id} from the current code. Undo the change to them since the last deploy, or deploy them first.`,
-        );
-      } else {
-        excluded.add(dependency);
-      }
-    }
-  }
-  // The cycle's placeholders and the peers of a replaced member are checked
-  // for this when deploy and destroy order the resources. The check here
-  // covers the contributions that depend on resources with no record.
-  const blocker = placeholderParamsBlocker(resource, excluded);
-  if (blocker) {
-    throw new ResourceCycleError(
-      `Cannot update ${resource.id} without its contributions that refer to ${listIds([...excluded].filter((peer) => peer !== resource))}: ${blocker}.`,
-    );
-  }
-  // A peer that is only in contributions is left out of the params, so its
-  // output is not needed, and the record no longer depends on it.
-  const remaining = remainingDependencies(resource, excluded);
-
-  const placeholder = yield* step.run("params", () =>
-    resource.getParams({ excludeContributionsFrom: excluded }),
-  );
-  const params: Record<string, unknown> = { ...node.params };
-  for (const [key, item] of Object.entries(resource.schema)) {
-    // State does not hold hidden params.
-    if (item.hidden) params[key] = placeholder[key];
-  }
-  // These params neither are required nor force a replacement, as checked
-  // above.
-  for (const key of resource.getContributedParams({ from: excluded })) {
-    params[key] = placeholder[key];
-  }
-  await validateParams(resource, params, "deploy");
-  const { patch } = diffParams(resource.schema, node.params, params, {
-    canUpdate: true,
-  });
-  if (Object.keys(patch).length === 0) return undefined;
-
-  const emit = durableEmitter(step, opts.emit);
-  return async function* () {
-    yield* updateResourceOperation(step, {
-      resource,
-      resourceParams: params,
-      persistedOutput: node.output,
-      patch,
-      dependsOn: getDependencyIds(resource, remaining),
-      dryRun: opts.dryRun,
-      emit: (event) =>
-        emit({
-          ...event,
-          reason: "cycle-revert",
-          ...(replaced ? { replacedDependency: replaced.id } : {}),
-        }),
-      maxOperationAttempts: opts.maxOperationAttempts,
-      persist: session.persist,
-    });
-  };
 }
 
 /**

@@ -163,43 +163,6 @@ function placeholderBlocker(
 }
 
 /**
- * The members of `cycle` that deploy reverts before it replaces `replaced`,
- * in the cycle's order, so that they no longer refer to it: each refers to
- * `replaced` only through its contributions, and is updated without those
- * contributions. Deploy restores them while the cycle settles. Throws
- * `ResourceCycleError` when a member can't be reverted with an update.
- *
- * Resources outside the cycle are not reverted. They are treated as a
- * replace treats any resource that refers to the replaced one: the provider
- * decides whether it can be deleted. A replace reverts peers only because
- * deploy can't create the members of a cycle one after the other, so a
- * member must lose its reference to the replaced member for the cycle to be
- * deployed again. Nothing about a resource outside the cycle is different
- * from a one-way reference to a resource that is not in a cycle.
- */
-export function revertedPeers(
-  cycle: DeployUnit,
-  replaced: BaseResource,
-): BaseResource[] {
-  const from = new Set([replaced]);
-  const peers = cycle.members.filter(
-    (member) =>
-      member !== replaced &&
-      member.getDependencies().includes(replaced) &&
-      !member.getFixedDependencies().includes(replaced),
-  );
-  for (const peer of peers) {
-    const blocker = placeholderParamsBlocker(peer, from);
-    if (blocker) {
-      throw new ResourceCycleError(
-        `${replaced.id} must be replaced, so deploy must first update ${peer.id} without its contributions, so that ${peer.id} no longer refers to ${replaced.id}. It can't: ${blocker}.`,
-      );
-    }
-  }
-  return peers;
-}
-
-/**
  * The dependencies of `resource` that remain when the contributions that
  * depend on one of `excluded` are left out.
  */

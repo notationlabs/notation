@@ -1445,24 +1445,6 @@ describe("dependency cycles", () => {
     expect(plan.nodes[0]).not.toHaveProperty("placeholder");
   });
 
-  it("names the members that a replacement reverts", async () => {
-    const [a, b] = pair();
-    (b as any).config.name = "b2";
-    const plan = await createPlan({
-      resources: [a!, b!],
-      state: new MemoryStateBackend({
-        a: record("a", ["b"]),
-        b: record("b", ["a"]),
-      }),
-    });
-
-    expect(plan.nodes[1]).toMatchObject({
-      id: "b",
-      decision: "replace",
-      revertedPeers: ["a"],
-    });
-  });
-
   it("plans a member that comes before a replaced member against the unknown output of the replacement", async () => {
     const [a, b] = pair();
     (b as any).config.name = "b2";

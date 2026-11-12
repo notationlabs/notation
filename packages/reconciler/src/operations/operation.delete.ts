@@ -28,6 +28,7 @@ export async function* deleteResourceOperation(
             params.resource.key,
             params.resource.toState(params.resource.output),
             context,
+            params.deletion,
           ),
         params.maxOperationAttempts,
       );
