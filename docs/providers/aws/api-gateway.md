@@ -348,18 +348,18 @@ In AWS, the authorizer is named after its `id`, such as `user-auth`, or after `n
 
 The authorizer owns its API Gateway authorizer resource. Each route of the authorizer requires its `scopes`.
 
-## Integrations and authorizers after an unknown create
+## Integrations after an unknown create
 
-After a create with an unknown outcome, Notation looks the resource up before it creates it again. An API is found by its `notation:create-token` tag, a route by its route key and a Lambda function by its name and the tag. An integration or authorizer has no tag and no unique key, so Notation cannot look it up. It is created again in two cases:
+After a create with an unknown outcome, Notation looks the resource up before it creates it again. An API and an authorizer are found by name, and a route by its route key. An integration has no name and no unique key, so Notation cannot look it up. It is created again in two cases:
 
-1. The process stops after AWS creates the integration or authorizer and before Notation records it. The next run creates it again.
-2. `CreateIntegration` or `CreateAuthorizer` times out or gets a server error after AWS has created it. The deploy fails, and the next deploy creates it again.
+1. The process stops after AWS creates the integration and before Notation records it. The next run creates it again.
+2. `CreateIntegration` times out or gets a server error after AWS has created it. The deploy fails, and the next deploy creates it again.
 
-The extra integration or authorizer has no route pointing at it, so traffic is unaffected. Notation does not record it and does not delete it. Deleting the API deletes it.
+The extra integration has no route pointing at it, so traffic is unaffected. Notation does not record it and does not delete it. Deleting the API deletes it. An extra integration counts toward the quota of 300 integrations per API. Delete an extra one in the console if an API reaches its quota.
 
-An extra authorizer counts toward the quota of 10 authorizers per HTTP API, and an extra integration counts toward the quota of 300 integrations per API. Delete an extra one in the console if an API reaches its quota.
+An API can also be created twice, because AWS does not keep an API's name unique. Notation looks for the API's name with `GetApis` one second after an unknown create. If AWS created the API and `GetApis` does not list it yet, Notation creates a second API. Notation records the second API and does not delete the first. A later lookup by name then fails, and its error lists the IDs of the APIs with the name. Delete all but one. The same holds for an authorizer.
 
-An API can also be created twice. Notation looks for the API's tag with `GetApis` one second after an unknown create. If AWS created the API and `GetApis` does not list it yet, Notation creates a second API. Notation records the second API and does not delete the first. A route is not created twice. API Gateway refuses a second route with the same route key, and deploy then finds the existing route by its route key and takes it over.
+A route is not created twice. API Gateway refuses a second route with the same route key, and deploy then finds the existing route by its route key and takes it over.
 
 ## Full example
 
