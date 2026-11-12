@@ -108,11 +108,77 @@ export async function putScript(
   await cloudflare("PUT", scriptPath(account, scriptName), form);
 }
 
+/**
+ * Without `force`, Cloudflare refuses to delete a Worker that another Worker
+ * refers to. With it, the Worker is deleted, and the bindings to it stay
+ * broken until each Worker that holds one is uploaded again. This is so even
+ * when a Worker with the same name is created again.
+ */
 export async function deleteScript(
   account: string,
   scriptName: string,
+  { force = false }: { force?: boolean } = {},
 ): Promise<void> {
-  await cloudflare("DELETE", scriptPath(account, scriptName));
+  await cloudflare(
+    "DELETE",
+    `${scriptPath(account, scriptName)}${force ? "?force=true" : ""}`,
+  );
+}
+
+/**
+ * Cloudflare's error codes for a delete that it refuses because another
+ * Worker binds the Worker as a service, or binds a Durable Object namespace
+ * that the Worker hosts.
+ */
+const REFERENCED_CODES = [10142, 10064];
+
+export const isReferenced = (error: unknown): boolean =>
+  error instanceof CloudflareApiError &&
+  REFERENCED_CODES.some((code) => error.hasCode(code));
+
+type ScriptReference = { service: string };
+
+export type ScriptReferences = {
+  /**
+   * The names of the other Workers that refer to the Worker: each binds it as
+   * a service, binds a Durable Object namespace that it hosts, uses it as
+   * the outbound Worker of a dispatch namespace, or sends it tail events.
+   */
+  workers: string[];
+  /** True when a Pages project binds the Worker as a service. */
+  pagesFunction: boolean;
+};
+
+/** The references that a forced delete of the Worker would break. */
+export async function getScriptReferences(
+  account: string,
+  scriptName: string,
+): Promise<ScriptReferences> {
+  const [references, tails] = await Promise.all([
+    cloudflare<{
+      services?: { incoming?: ScriptReference[]; pages_function?: boolean };
+      // Includes the Worker itself when it binds its own namespace.
+      durable_objects?: ScriptReference[];
+      dispatch_outbounds?: ScriptReference[];
+    }>("GET", `${scriptPath(account, scriptName)}/references`),
+    cloudflare<{ producer?: { script?: string; service?: string } }[]>(
+      "GET",
+      `/accounts/${encodeURIComponent(account)}/workers/tails/by-consumer/${encodeURIComponent(scriptName)}`,
+    ),
+  ]);
+  const workers = [
+    ...(references.services?.incoming ?? []),
+    ...(references.durable_objects ?? []),
+    ...(references.dispatch_outbounds ?? []),
+  ].map((reference) => reference.service);
+  for (const tail of tails ?? []) {
+    const producer = tail.producer?.script ?? tail.producer?.service;
+    if (producer) workers.push(producer);
+  }
+  return {
+    workers: [...new Set(workers)].filter((name) => name !== scriptName).sort(),
+    pagesFunction: references.services?.pages_function === true,
+  };
 }
 
 /**

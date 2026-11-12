@@ -332,6 +332,141 @@ describe("WorkerScript", () => {
     await expect(script.delete(key, {} as any)).resolves.toBeUndefined();
   });
 
+  describe("delete of a Worker that other Workers refer to", () => {
+    const key = { AccountId: "acc", ScriptName: "app--dev--api" };
+    const scriptUrl =
+      "https://api.cloudflare.com/client/v4/accounts/acc/workers/scripts/app--dev--api";
+    const dependent = (ScriptName: string) => ({
+      id: `worker:${ScriptName}`,
+      type: WorkerScript.type,
+      params: { AccountId: "acc", ScriptName },
+    });
+    type Refused = { status: number; code: number };
+    const byService = { status: 400, code: 10142 };
+
+    // Refuses the delete without `force`, and answers the two reads of the
+    // references.
+    function mockReferenced(
+      refused: Refused,
+      references: object,
+      tails: object[] = [],
+    ) {
+      mockFetch(({ method, url }) => {
+        if (url.endsWith("/references")) return ok(references);
+        if (url.includes("/tails/by-consumer/")) return ok(tails);
+        if (method === "DELETE" && !url.endsWith("?force=true")) {
+          return fail(refused.status, refused.code, "still referenced");
+        }
+        return ok();
+      });
+    }
+    const deletes = () =>
+      calls.filter(({ method }) => method === "DELETE").map(({ url }) => url);
+
+    it("forces the delete when every Worker that binds it as a service is a dependent", async () => {
+      mockReferenced(byService, {
+        services: {
+          incoming: [{ name: "API", service: "app--dev--reports" }],
+          outgoing: [],
+        },
+      });
+
+      await script.delete(key, {} as any, undefined, {
+        dependents: [dependent("app--dev--reports")],
+      });
+
+      expect(deletes()).toEqual([scriptUrl, `${scriptUrl}?force=true`]);
+    });
+
+    it("forces the delete when every Worker that binds a namespace it hosts is a dependent", async () => {
+      mockReferenced(
+        { status: 403, code: 10064 },
+        {
+          services: { incoming: [], outgoing: [] },
+          durable_objects: [
+            { name: "COUNTERS", service: "app--dev--api" },
+            { name: "COUNTERS", service: "app--dev--reports" },
+          ],
+        },
+      );
+
+      await script.delete(key, {} as any, undefined, {
+        dependents: [dependent("app--dev--reports")],
+      });
+
+      expect(deletes()).toEqual([scriptUrl, `${scriptUrl}?force=true`]);
+    });
+
+    it("does not force the delete when a Worker that is not a dependent refers to it, and names that Worker", async () => {
+      mockReferenced(byService, {
+        services: {
+          incoming: [
+            { name: "API", service: "app--dev--reports" },
+            { name: "API", service: "other--prod--site" },
+          ],
+          outgoing: [],
+        },
+      });
+
+      await expect(
+        script.delete(key, {} as any, undefined, {
+          dependents: [dependent("app--dev--reports")],
+        }),
+      ).rejects.toThrow(
+        'Cannot delete the Worker "app--dev--api": the Worker "other--prod--site" refers to it, and this deployment does not manage that reference.',
+      );
+      expect(deletes()).toEqual([scriptUrl]);
+    });
+
+    it("does not force the delete when it is told of no dependents", async () => {
+      mockReferenced(byService, {
+        services: {
+          incoming: [{ name: "API", service: "app--dev--reports" }],
+          outgoing: [],
+        },
+      });
+
+      await expect(script.delete(key, {} as any)).rejects.toThrow(
+        'the Worker "app--dev--reports" refers to it',
+      );
+      expect(deletes()).toEqual([scriptUrl]);
+    });
+
+    it("does not force the delete when a Pages project or a tail producer refers to it", async () => {
+      mockReferenced(
+        byService,
+        {
+          services: {
+            incoming: [{ name: "API", service: "app--dev--reports" }],
+            outgoing: [],
+            pages_function: true,
+          },
+        },
+        [{ producer: { script: "logs--prod--source" } }],
+      );
+
+      await expect(
+        script.delete(key, {} as any, undefined, {
+          dependents: [dependent("app--dev--reports")],
+        }),
+      ).rejects.toThrow(
+        'the Worker "logs--prod--source" and a Pages project refer to it',
+      );
+      expect(deletes()).toEqual([scriptUrl]);
+    });
+
+    it("throws a refusal for another reason as it is, without reading the references", async () => {
+      mockReferenced({ status: 422, code: 100109 }, {});
+
+      await expect(
+        script.delete(key, {} as any, undefined, {
+          dependents: [dependent("app--dev--reports")],
+        }),
+      ).rejects.toThrow("still referenced (100109)");
+      expect(calls).toHaveLength(1);
+    });
+  });
+
   it("names the account variable when it is not set", async () => {
     vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "");
 

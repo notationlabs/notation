@@ -3,14 +3,20 @@ import crypto from "node:crypto";
 import * as nodeFs from "node:fs/promises";
 import path from "node:path";
 import { fromProjectRoot } from "@notation/core/paths";
-import { resource, ResourceNotFoundError } from "@notation/resource";
+import {
+  resource,
+  ResourceNotFoundError,
+  type ResourceDeletion,
+} from "@notation/resource";
 import type { fs } from "@notation/std/resources";
 import { accountId, cloudflareCreate } from "src/api/client";
 import {
   bindingSchema,
   deleteScript,
+  getScriptReferences,
   getScriptSettings,
   isNotFound,
+  isReferenced,
   putScript,
   type DurableObjectExport,
   type ScriptBinding,
@@ -55,10 +61,60 @@ export type WorkerScriptDependencies = {
   code: fs.FileInstance;
 };
 
+const WORKER_SCRIPT_TYPE = "cloudflare/workers/WorkerScript";
+
 const workerScript = resource<WorkerScriptSchema>({
-  type: "cloudflare/workers/WorkerScript",
+  type: WORKER_SCRIPT_TYPE,
   provider: "@notation/cloudflare/resources",
+  deleteTakesDependents: true,
 });
+
+/**
+ * Deletes a Worker that Cloudflare refuses to delete because other Workers
+ * refer to it. The delete is forced when every reference comes from a Worker
+ * that is a dependent in the deployment's state, as deploy uploads or
+ * deletes each of those in the same run. A forced delete breaks the binding
+ * of any other Worker for good, so the delete fails and names them.
+ * `refusal` is Cloudflare's error for the delete without `force`.
+ */
+async function deleteReferencedScript(
+  key: WorkerScriptSchema["Key"],
+  deletion: ResourceDeletion | undefined,
+  refusal: unknown,
+): Promise<void> {
+  const references = await getScriptReferences(key.AccountId, key.ScriptName);
+  const dependents = new Set(
+    (deletion?.dependents ?? [])
+      .filter(
+        ({ type, params }) =>
+          type === WORKER_SCRIPT_TYPE &&
+          (params.AccountId ?? key.AccountId) === key.AccountId,
+      )
+      .map(({ params }) => params.ScriptName),
+  );
+  const others = references.workers.filter((name) => !dependents.has(name));
+  if (others.length > 0 || references.pagesFunction) {
+    const holders = [
+      ...others.map((name) => `the Worker "${name}"`),
+      ...(references.pagesFunction ? ["a Pages project"] : []),
+    ];
+    const one = holders.length === 1;
+    const listed = one
+      ? holders[0]
+      : `${holders.slice(0, -1).join(", ")} and ${holders.at(-1)}`;
+    throw new Error(
+      `Cannot delete the Worker "${key.ScriptName}": ${listed} ${one ? "refers" : "refer"} to it, and this deployment does not manage ${one ? "that reference" : "those references"}. Deleting the Worker would break ${one ? "it" : "them"}. Remove ${one ? "the reference" : "the references"} to "${key.ScriptName}" first.`,
+      { cause: refusal },
+    );
+  }
+  // Cloudflare refused for a reason that the references don't show.
+  if (references.workers.length === 0) throw refusal;
+  try {
+    await deleteScript(key.AccountId, key.ScriptName, { force: true });
+  } catch (error) {
+    if (!isNotFound(error)) throw error;
+  }
+}
 
 const workerScriptSchema = workerScript.defineSchema({
   AccountId: {
@@ -151,11 +207,13 @@ export const WorkerScript = workerScriptSchema
       await upload(params, state.DurableObjectNamespaces ?? []);
     },
 
-    delete: async (key) => {
+    delete: async (key, _state, _context, deletion) => {
       try {
         await deleteScript(key.AccountId, key.ScriptName);
       } catch (error) {
-        if (!isNotFound(error)) throw error;
+        if (isNotFound(error)) return;
+        if (!isReferenced(error)) throw error;
+        await deleteReferencedScript(key, deletion, error);
       }
     },
   })
