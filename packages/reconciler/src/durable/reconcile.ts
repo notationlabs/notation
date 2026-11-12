@@ -34,7 +34,7 @@ import {
   hasSameEdges,
   recordedEdges,
 } from "../plan";
-import { NO_READ_MISSING_OUTPUTS_HINT } from "../planner";
+import { assertOutputsRecoverable } from "../planner";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
@@ -130,16 +130,11 @@ export async function* reconcileResource(
     maxOperationAttempts: opts.maxOperationAttempts,
   };
 
-  // A resource with no `read` can't fill in a missing output, and update
-  // checks outputs only after the remote update. So the check runs before
-  // any operation. A replace creates the resource again, and the create
-  // writes the output.
-  if (session.node && !resource.read && action.decision !== "replace") {
-    assertRequiredOutputs(
-      resource,
-      session.node.output,
-      NO_READ_MISSING_OUTPUTS_HINT,
-    );
+  // Runs before the operation. An update would change the remote resource
+  // and still leave the output missing. A noop would fail in recoverOutputs
+  // without the hint.
+  if (action.decision === "noop" || action.decision === "update") {
+    assertOutputsRecoverable(resource, session.node);
   }
 
   switch (action.decision) {

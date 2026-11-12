@@ -3721,6 +3721,84 @@ describe("value validation at deploy", () => {
     runtime.close();
   });
 
+  // Pins a partial apply. Deploy checks the resource with no read when it
+  // reaches it, so the resources before it have been deployed.
+  it("fails at a resource with no read that lacks a required output, after it deploys the resources before it", async () => {
+    const Role = defineRole({ create: async () => ({ arn: "arn:role" }) });
+    const Attachment = defineUnreadAttachment(
+      async () => undefined,
+      async () => undefined,
+    );
+    const resources: BaseResource[] = [];
+    const declare = (withOther: boolean) => {
+      const role = new Role("role", { config: { name: "role" } });
+      const attachment = new Attachment("attachment", {
+        config: { name: "attachment", target: role.outputRef("arn") },
+      });
+      const other = new Role("other", { config: { name: "other" } });
+      resources.splice(
+        0,
+        resources.length,
+        ...(withOther ? [role, attachment, other] : [role, attachment]),
+      );
+    };
+    declare(false);
+    const runtime = createRuntime(resources, "partial-missing-outputs");
+    await runtime.run("partial-missing-outputs-1").catch(() => {});
+    expect((await runtime.state.get("attachment"))?.output.arn).toBeUndefined();
+
+    declare(true);
+    const error = await runtime
+      .run("partial-missing-outputs-2")
+      .catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "SchemaStructureError",
+      fields: ["arn"],
+    });
+    expect(error.message).toContain("The resource's type has no read");
+    expect(await runtime.state.get("other")).toMatchObject({
+      output: { arn: "arn:role" },
+    });
+    runtime.close();
+  });
+
+  it("fails when a possible replace of a resource with no read that lacks a required output ends as noop", async () => {
+    const Role = defineRole({ create: async () => ({ arn: "arn:role" }) });
+    const createFn = vi.fn(async () => undefined);
+    const Attachment = defineUnreadAttachment(
+      createFn,
+      async () => undefined,
+      true,
+    );
+    const resources: BaseResource[] = [];
+    const declare = (boundary?: string) => {
+      const role = new Role("role", { config: { name: "role", boundary } });
+      const attachment = new Attachment("attachment", {
+        config: { name: "attachment", target: role.outputRef("arn") },
+      });
+      resources.splice(0, resources.length, role, attachment);
+    };
+    declare();
+    const runtime = createRuntime(resources, "possible-replace-noop");
+    await runtime.run("possible-replace-noop-1").catch(() => {});
+    expect((await runtime.state.get("attachment"))?.output.arn).toBeUndefined();
+
+    declare("b");
+    const error = await runtime.run("possible-replace-noop-2").catch((e) => e);
+
+    expect(error).toMatchObject({
+      name: "SchemaStructureError",
+      fields: ["arn"],
+    });
+    expect(error.message).toContain("The resource's type has no read");
+    expect(await runtime.state.get("role")).toMatchObject({
+      params: { name: "role", boundary: "b" },
+    });
+    expect(createFn).toHaveBeenCalledOnce();
+    runtime.close();
+  });
+
   it("deletes an orphan whose recorded config no longer passes its validator", async () => {
     let strict = false;
     const deleteSpy = vi.fn(async () => undefined);

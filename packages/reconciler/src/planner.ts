@@ -24,11 +24,20 @@ import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
 
 /**
- * Added to the error for a required output missing from the state record of
- * a resource with no `read`.
+ * Throws if a resource with no `read` lacks a required output in its state
+ * record. Does nothing for a resource with no record or with a `read`.
  */
-export const NO_READ_MISSING_OUTPUTS_HINT =
-  "The resource's type has no read, so deploy can't fill them in. Remove the resource from the code, deploy, then add it back, so that it is created again.";
+export function assertOutputsRecoverable(
+  resource: BaseResource,
+  stateNode: StateNode | undefined,
+): void {
+  if (!stateNode || resource.read) return;
+  assertRequiredOutputs(
+    resource,
+    stateNode.output,
+    "The resource's type has no read, so deploy can't fill them in. Remove the resource from the code, deploy, then add it back, so that it is created again.",
+  );
+}
 
 export type CreatePlanOptions = {
   resources: BaseResource[];
@@ -95,20 +104,11 @@ export async function createPlan({
       const replacedDependency = cascaded.get(resource.id);
       const replaced = Boolean(replaceFields || replacedDependency);
 
-      // Plan treats a required output missing from a resource's state as
-      // unknown, because deploy reads the resource again to fill it in. A
-      // resource with no `read` cannot be read again, and an update keeps only
-      // its params as output. A replace creates the resource again, and the
-      // create writes the output. A replace that is only possible, because a
-      // field that forces it is unknown, passes too. Deploy fails if it ends
-      // up a noop or an update.
-      if (stateNode && !resource.read && !replaced) {
-        assertRequiredOutputs(
-          resource,
-          stateNode.output,
-          NO_READ_MISSING_OUTPUTS_HINT,
-        );
-      }
+      // A resource with no `read` can't recover a missing output, and update
+      // doesn't write one. A replace, including one that is only possible,
+      // creates the resource again. Deploy checks again once the decision is
+      // known.
+      if (!replaced) assertOutputsRecoverable(resource, stateNode);
 
       if (replaceFields) {
         for (const id of collectDependents(
