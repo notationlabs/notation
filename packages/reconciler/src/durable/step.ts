@@ -12,9 +12,14 @@ import type { DurableStep } from "./sdk";
  * `scopeStep` wraps one of those into one of these.
  */
 export interface DurableStepRunner extends StepRunner {
-  /** Narrower than StepRunner's, so a scope keeps its store handle. */
-  scope(prefix: string): DurableStepRunner;
+  /**
+   * Narrower than StepRunner's, so a scope keeps its store handle. See
+   * `scopeStep` for `stateKey`.
+   */
+  scope(prefix: string, stateKey?: string): DurableStepRunner;
   store: DurableStep["store"];
+  /** Added to the keys of the resource state writes made through this step. */
+  stateKey?: string;
 }
 
 /**
@@ -23,11 +28,15 @@ export interface DurableStepRunner extends StepRunner {
  *
  * The keys a store handle takes are caller-supplied and are not prefixed: a
  * store outlives the scope that opened it, so its call sites qualify their
- * own keys.
+ * own keys. The one exception is opt-in: a scope given `stateKey` adds it to
+ * the keys of the resource state writes made through it and its nested
+ * scopes. Deploy writes a member of a cycle more than once, and each write
+ * needs its own key.
  */
 export function scopeStep(
   step: DurableStep,
   prefix: string,
+  stateKey?: string,
 ): DurableStepRunner {
   const scoped = (key: string) => `${prefix}:${key}`;
 
@@ -36,7 +45,9 @@ export function scopeStep(
     effect: (key, descriptor) => step.effect(scoped(key), descriptor),
     delay: (key: string, ms: number) => step.delay(scoped(key), ms),
     store: step.store,
-    scope: (nested: string) => scopeStep(step, scoped(nested)),
+    stateKey,
+    scope: (nested: string, nestedStateKey = stateKey) =>
+      scopeStep(step, scoped(nested), nestedStateKey),
   };
 }
 

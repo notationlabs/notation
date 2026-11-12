@@ -1,7 +1,6 @@
 import {
   changedKeys,
   diffParams,
-  forcesReplacement,
   validateParams,
   type BaseResource,
 } from "@notation/resource";
@@ -11,7 +10,6 @@ import {
   revertedPeers,
   type ResourceCycle,
 } from "../cycles";
-import type { OperationLifecycleEvent } from "../events";
 import { updateResourceOperation } from "../operations";
 import { getDependencyIds, type ResourceAction } from "../plan";
 import {
@@ -48,10 +46,11 @@ export async function* reconcileCycle(
   cycle: ResourceCycle,
   opts: DurableDeployOptions,
 ): AsyncGenerator<any, void, any> {
-  const scope = (resource: BaseResource, suffix?: string) =>
+  const scope = (resource: BaseResource, suffix?: string, stateKey?: string) =>
     scopeStep(
       step,
       `notation:deploy:${encodeURIComponent(resource.id)}${suffix ? `:${suffix}` : ""}`,
+      stateKey,
     );
   const members = new Set(cycle.members);
   // A second create in one execution would reuse the create effect IDs of
@@ -66,11 +65,22 @@ export async function* reconcileCycle(
       }
       created.add(resource);
     },
-    beforeReplace: () => {
+    beforeReplace: async function* () {
       replaced.push(resource);
       // The scope has no pass number: the guard above allows at most one
       // replace of each member in one execution.
-      return revertPeers(scope(resource, "revert"), cycle, resource, opts);
+      const revertStep = scope(resource, "revert");
+      // Reverts the peers that refer to `resource`, so that the provider
+      // does not refuse to delete it.
+      for (const peer of revertedPeers(cycle, resource)) {
+        yield* revertToPlaceholder(
+          revertStep.scope(encodeURIComponent(peer.id)),
+          peer,
+          opts,
+          cycle,
+          resource,
+        );
+      }
     },
   });
 
@@ -99,14 +109,10 @@ export async function* reconcileCycle(
       const detectDrift = first && !created.has(resource);
       const before = resource.output as Record<string, unknown> | null;
       yield* reconcileResource(
-        scope(resource, `settle:${pass}`),
+        scope(resource, `settle:${pass}`, `settle:${pass}`),
         resource,
         detectDrift ? opts : { ...opts, driftDetection: false },
-        {
-          ...options(resource),
-          writeKey: `settle:${pass}`,
-          quietNoop: !first,
-        },
+        { ...options(resource), quietNoop: !first },
       );
       changed.push(...changedOutputs(resource, before));
     }
@@ -119,47 +125,28 @@ export async function* reconcileCycle(
 }
 
 /**
- * Reverts the peers of `replaced` that refer to it, so that the provider
- * does not refuse to delete it. See `revertedPeers`.
- */
-async function* revertPeers(
-  step: DurableStepRunner,
-  cycle: ResourceCycle,
-  replaced: BaseResource,
-  opts: DurableDeployOptions,
-): AsyncGenerator<any, void, any> {
-  for (const peer of revertedPeers(cycle, replaced)) {
-    yield* revertToPlaceholder(
-      step.scope(encodeURIComponent(peer.id)),
-      peer,
-      opts,
-      `revert:${encodeURIComponent(replaced.id)}`,
-      { reason: "cycle-revert", replacedDependency: replaced.id },
-      new Set(cycle.members),
-    );
-  }
-}
-
-/**
- * Updates a resource with its placeholder params, so that it no longer
- * refers to the other members of its cycle. The params start from the
- * record, so that a change to the config since the last deploy is not part
- * of the update. Only the params that the contributions that depend on
- * `peers` set take their placeholder values. Does nothing when the resource
- * has no record, or when the record has another type.
+ * Updates a member of `cycle` with its placeholder params, so that it no
+ * longer refers to the other members. Deploy does this before it replaces
+ * `replaced`, and destroy does it for each placeholder, with no `replaced`.
+ * The params start from the record, so that a change to the config since
+ * the last deploy is not part of the update. Only the params that the
+ * contributions that depend on the other members set take their placeholder
+ * values. Does nothing when the resource has no record, or when the record
+ * has another type.
  */
 export async function* revertToPlaceholder(
-  step: DurableStepRunner,
+  parent: DurableStepRunner,
   resource: BaseResource,
   opts: DurableWorkflowOptions,
-  /** See `ReconcileOptions.writeKey`. */
-  writeKey: string,
-  /** Added to the update's lifecycle events. */
-  cause: Pick<OperationLifecycleEvent, "reason" | "replacedDependency">,
-  /** The members of the resource's cycle. */
-  peers: ReadonlySet<BaseResource>,
+  cycle: ResourceCycle,
+  replaced?: BaseResource,
 ): AsyncGenerator<any, void, any> {
-  const session = yield* openStateSession(step, opts, resource, writeKey);
+  const revertKey = replaced
+    ? `revert:${encodeURIComponent(replaced.id)}`
+    : "revert";
+  const step = parent.scope("revert", revertKey);
+  const peers = new Set(cycle.members);
+  const session = yield* openStateSession(step, opts, resource);
   if (!session.node || session.node.type !== resource.type) return;
   resource.setOutput(session.node.output);
 
@@ -194,6 +181,9 @@ export async function* revertToPlaceholder(
     // State does not hold hidden params.
     if (item.hidden) params[key] = placeholder[key];
   }
+  // These params neither are required nor force a replacement: the cycle's
+  // placeholders and the peers that `revertedPeers` returns are checked for
+  // that when deploy and destroy order the resources.
   for (const key of resource.getContributedParams({ from: peers })) {
     params[key] = placeholder[key];
   }
@@ -202,15 +192,6 @@ export async function* revertToPlaceholder(
     canUpdate: true,
   });
   if (Object.keys(patch).length === 0) return;
-  const replacing = Object.keys(patch).filter((key) => {
-    const item = resource.schema[key];
-    return item && forcesReplacement(item);
-  });
-  if (replacing.length > 0) {
-    throw new ResourceCycleError(
-      `Cannot revert ${resource.id} to its placeholder params: the revert changes ${replacing.join(", ")}, and a change to ${replacing.length === 1 ? "it" : "them"} replaces ${resource.id}.`,
-    );
-  }
 
   const emit = durableEmitter(step, opts.emit);
   yield* updateResourceOperation(step, {
@@ -220,7 +201,12 @@ export async function* revertToPlaceholder(
     patch,
     dependsOn: getDependencyIds(resource),
     dryRun: opts.dryRun,
-    emit: (event) => emit({ ...event, ...cause }),
+    emit: (event) =>
+      emit({
+        ...event,
+        reason: "cycle-revert",
+        ...(replaced ? { replacedDependency: replaced.id } : {}),
+      }),
     maxOperationAttempts: opts.maxOperationAttempts,
     persist: session.persist,
   });

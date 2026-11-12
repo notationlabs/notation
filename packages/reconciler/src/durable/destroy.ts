@@ -28,12 +28,10 @@ export async function* destroy(
         for (const placeholder of unit.cycle.placeholders) {
           if (kept.has(placeholder.id)) continue;
           yield* revertToPlaceholder(
-            scope(placeholder.id).scope("revert"),
+            scope(placeholder.id),
             placeholder,
             opts,
-            "revert",
-            { reason: "cycle-revert" },
-            new Set(unit.cycle.members),
+            unit.cycle,
           );
         }
       }
