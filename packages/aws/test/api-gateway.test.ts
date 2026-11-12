@@ -216,6 +216,17 @@ test("a second authorizer with the same id throws", async () => {
   );
 });
 
+test("an api whose AWS name is another api's throws, and names both declarations", async () => {
+  await expect(
+    collect(() => {
+      api({ id: "todos" });
+      api({ id: "tasks", name: "todos" });
+    }),
+  ).rejects.toThrow(
+    'api({ id: "todos" }) and api({ id: "tasks", name: "todos" }) give two API Gateway APIs the same AWS name',
+  );
+});
+
 test("an authorizer whose AWS name is another's on the same api throws, and names both declarations", async () => {
   await expect(
     collect(() => {

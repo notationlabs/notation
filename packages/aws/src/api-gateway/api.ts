@@ -3,7 +3,7 @@ import { AwsResourceGroup } from "src/resource-group";
 import type { ApiGatewayRoute, ApiSource } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import { assertId, assertName, resourceId, type NameSafe } from "src/id";
-import { awsName } from "src/naming";
+import { awsName, claimAwsName, describeDeclaration } from "src/naming";
 import { isJwtAuthorizerGroup } from "./auth";
 import { RouteGroup } from "./route";
 
@@ -27,12 +27,20 @@ export class ApiGroup extends AwsResourceGroup<ApiConfig> implements ApiSource {
   constructor(config: ApiConfig) {
     assertId("api()", config.id);
     assertName("api()", config.name);
+    const apiName = awsName("apiGatewayApi", config.name ?? config.id);
     super("API Gateway", config.id, config);
+    // API Gateway does not keep API names unique, and the API is found by
+    // its name.
+    claimAwsName(
+      "API Gateway APIs",
+      apiName,
+      describeDeclaration("api()", config.id, config.name),
+    );
 
     this.api = this.add(
       new aws.apiGateway.Api(resourceId("api", config.id), {
         config: {
-          Name: awsName("apiGatewayApi", config.name ?? config.id),
+          Name: apiName,
           ProtocolType: "HTTP",
         },
       }),
