@@ -235,6 +235,43 @@ describe("$worker", () => {
     );
   });
 
+  it("passes the ids of hosted namespaces that set protect: false, and undefined when there are none", async () => {
+    const graph = await collect(() => {
+      const counters = inModule(
+        $durableObject({ id: "counters", class: Counter }),
+        "runtime/counter.ts",
+      );
+      const rooms = inModule(
+        $durableObject({ id: "rooms", class: Room, protect: false }),
+        "runtime/room.ts",
+      );
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, ROOMS: rooms }),
+        }),
+        "runtime/api.ts",
+        ["Counter", "Room"],
+      );
+      inWorker(
+        $worker({
+          id: "web",
+          compatibilityDate,
+          bindings: () => ({ ROOMS: rooms }),
+        }),
+        "runtime/web.ts",
+      );
+    });
+
+    expect(group(graph, "api").script.config.UnprotectedDurableObjects).toEqual(
+      ["rooms"],
+    );
+    expect(
+      group(graph, "web").script.config.UnprotectedDurableObjects,
+    ).toBeUndefined();
+  });
+
   it("fails for a namespace that no Worker that binds it exports the class of", async () => {
     await expect(
       collect(() => {

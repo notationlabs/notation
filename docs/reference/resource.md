@@ -162,6 +162,7 @@ All schema items carry these fields:
 
 **`param`**
 
+- `stateOnly` – saved in state, but not compared. A change to it alone doesn't update the resource: deploy writes the new value to the state record, and plan lists the resource as a noop with the param in `stateChanged`. Use it for a setting that `rejectChange` reads from state, such as consent to delete data.
 - `immutable` – cannot change after creation (forces replacement).
 - `rejectReplace` – a function `(previous, desired) => string`. When a change to the param would replace the resource, plan and deploy fail with the returned message. Use it for a param that the user can change by accident, on a resource whose delete loses data.
 - `primaryKey` / `secondaryKey` – together form the compound key used for read/update/delete.
@@ -242,8 +243,17 @@ An issue in a statement that holds an unknown is still dropped, because the stat
 | `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                                                            |
 | `delete`       | yes      | `(key, state, context?, deletion?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone.                                             |
 | `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                                                                         |
+| `rejectChange` | no       | `(previous, desired, { replace }) => string \| undefined` – return a message to fail plan and deploy with. See [Rejecting a change](#rejecting-a-change).                                                     |
 
 The reconciler records params, results and state, so each must be a durable value as `@notation/durable` 0.9.0 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
+
+### Rejecting a change
+
+`rejectChange` checks a change to a resource that has a state record. `previous` is the params in state, as they were recorded: a record written before a param existed lacks that param, and state holds no `hidden` param. `desired` is the params in code, or `undefined` when deploy would delete the resource because it is no longer in code. `replace` is true when deploy deletes the resource and creates it again: a param that forces replacement changed, or a resource that it depends on is replaced and its type lists that resource's type in `blocksDeleteOf`. The function returns a message, and plan and deploy fail with it, before deploy changes any resource. It returns `undefined` to allow the change.
+
+Plan calls it for each resource in code that has a state record, and for each orphan whose class is registered. This includes an orphan that the orphan sweep would leave in place, because an orphan whose class isn't registered depends on it. Deploy calls it in the same cases before it takes the deployment hold, again for each resource with its real params before the resource's operation, for each dependent before a replacement deletes it, and for each orphan before the orphan sweep deletes it. Deploy's first check doesn't see a replacement that only a cascade causes, so for that case it fails when it reaches the replaced resource, before it deletes the dependents or the replaced resource. `notation destroy` doesn't call it. At plan, a param that comes from an output that doesn't exist yet is `UNKNOWN_AFTER_APPLY`. In deploy's first check, this holds only for a resource whose dependencies have no state record yet.
+
+Use it for a change that would lose data and that a param's `rejectReplace` can't see, because it depends on more than one param, or because it is an update or a delete. The resource class exposes it as `rejectChange`, as it exposes `type`. `cloudflare/workers/WorkerScript` uses it to fail a change that would delete a Durable Object namespace, unless a `stateOnly` param in state lists the namespace as unprotected. Consent read from `previous` holds for an orphan too, which has no `desired`.
 
 ### Operation errors
 

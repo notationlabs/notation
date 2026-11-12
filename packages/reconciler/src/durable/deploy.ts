@@ -1,6 +1,8 @@
 import { isCycle, orderDeployUnits } from "../cycles";
 import { assertDependenciesPresent } from "../dependency-graph";
+import { assertOrphanDeleteAllowed, decideAction } from "../plan";
 import { loadUnit, planKnownParams } from "../planner";
+import { workflowRegistry } from "../resource-registry";
 import { reconcileCycle } from "./cycle";
 import { withDeploymentHold } from "./deployment-hold";
 import { reconcileResource, sweepOrphans } from "./reconcile";
@@ -41,8 +43,9 @@ export async function* deploy(
 
 /**
  * Checks every value deploy knows before it changes anything, as the planner
- * does. A value that comes from an output that does not exist yet is checked
- * later, just before the operation of the resource that holds it.
+ * does, and runs each `rejectChange`, also for each orphan. A value that
+ * comes from an output that does not exist yet is checked later, just before
+ * the operation of the resource that holds it.
  *
  * A required output missing from the record of a resource with no `read` is
  * not checked here, on purpose. It is checked in `reconcileResource`, so a
@@ -55,7 +58,19 @@ export async function* deploy(
 async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
   for (const unit of orderDeployUnits(opts.resources)) {
     for (const resource of await loadUnit(unit, opts.state)) {
-      await planKnownParams(resource, opts.state, "deploy");
+      const { stateNode, params } = await planKnownParams(
+        resource,
+        opts.state,
+        "deploy",
+      );
+      if (stateNode) decideAction({ resource, stateNode, params });
+    }
+  }
+  const inCode = new Set(opts.resources.map((resource) => resource.id));
+  const registry = workflowRegistry(opts);
+  for (const stateNode of await opts.state.values()) {
+    if (!inCode.has(stateNode.id)) {
+      assertOrphanDeleteAllowed(registry, stateNode);
     }
   }
 }

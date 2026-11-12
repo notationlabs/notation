@@ -47,6 +47,8 @@ export type WorkerGroupConfig = {
   compatibilityFlags: string[];
   bindings: cloudflare.workers.WorkerBinding[];
   namespaces: cloudflare.workers.HostedNamespace[];
+  /** The ids of the hosted namespaces that set `protect: false`. */
+  unprotectedNamespaces?: string[];
   url: boolean;
 };
 
@@ -77,6 +79,7 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
           CompatibilityFlags: config.compatibilityFlags,
           Bindings: config.bindings,
           DurableObjectNamespaces: config.namespaces,
+          UnprotectedDurableObjects: config.unprotectedNamespaces,
         },
         dependencies: { code: this.code },
       }),
@@ -202,6 +205,11 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
         ]),
         bindings: resolved.bindings,
         namespaces: resolved.namespaces,
+        // Undefined when empty, so that the params of a Worker deployed
+        // before this option existed don't change.
+        unprotectedNamespaces: resolved.unprotected.length
+          ? resolved.unprotected.sort()
+          : undefined,
         url: config.url ?? true,
       });
       for (const script of after) group.script.dependOn(script);
@@ -271,6 +279,8 @@ function claimName(scriptName: string, declaration: string) {
 type ResolvedBindings = {
   bindings: cloudflare.workers.WorkerBinding[];
   namespaces: cloudflare.workers.HostedNamespace[];
+  /** The ids of the hosted namespaces that set `protect: false`. */
+  unprotected: string[];
   /** The hosts of the namespaces that the Worker binds on another Worker. */
   dependsOn: Entry[];
   /** The other Workers that the Worker binds as services. */
@@ -285,6 +295,7 @@ function resolveBindings(self: Entry): ResolvedBindings {
   const resolved: ResolvedBindings = {
     bindings: [],
     namespaces: [],
+    unprotected: [],
     dependsOn: [],
     services: [],
   };
@@ -299,6 +310,9 @@ function resolveBindings(self: Entry): ResolvedBindings {
       const host = hostOf(self, ns, namespace.className, name);
       if (host === self) {
         addHosted(self, resolved.namespaces, ns, namespace.className);
+        if (!namespace.protect && !resolved.unprotected.includes(ns.id)) {
+          resolved.unprotected.push(ns.id);
+        }
         resolved.bindings.push({
           type: "durable_object_namespace",
           name,

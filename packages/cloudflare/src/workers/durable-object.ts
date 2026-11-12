@@ -10,9 +10,9 @@ export type DurableObjectDeclarationConfig<
   C extends DurableObjectClass,
 > = {
   /**
-   * Keep it stable. Renaming the class keeps the namespace's objects.
-   * Changing the id and the class deletes them. Changing only the id fails
-   * the deploy.
+   * Keys the namespace. It can't change while the namespace exists: plan
+   * fails. A change of `class` alone renames the class, and keeps the
+   * namespace's objects.
    */
   id: Id;
   /**
@@ -20,9 +20,17 @@ export type DurableObjectDeclarationConfig<
    * the namespace must export the class under that name.
    */
   class: C;
+  /**
+   * Defaults to `true`: plan fails when a change would delete the namespace
+   * and its objects. Plan reads the value saved when the hosting Worker was
+   * last deployed, so deploy `protect: false` first. A later deploy can then
+   * remove the namespace or its Worker. Changing only this value doesn't
+   * upload the Worker.
+   */
+  protect?: boolean;
 };
 
-type Registered = { className: string };
+type Registered = { className: string; protect: boolean };
 
 // `Symbol.for`, so two installed copies of this package share it.
 const registration = Symbol.for(
@@ -70,7 +78,7 @@ export function $durableObject<
     id: config.id,
   } as unknown as DurableObjectDeclaration<C>;
   Object.defineProperty(declaration, registration, {
-    value: { className } satisfies Registered,
+    value: { className, protect: config.protect ?? true } satisfies Registered,
   });
   return declaration;
 }

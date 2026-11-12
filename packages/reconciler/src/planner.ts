@@ -1,7 +1,9 @@
 import {
   assertRequiredOutputs,
+  diffStateOnlyParams,
   validateParams,
   type BaseResource,
+  type ResourceClass,
 } from "@notation/resource";
 import type { StateBackend, StateNode } from "@notation/state";
 import {
@@ -13,6 +15,8 @@ import { createBlocksDelete } from "./delete-cascade";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
 import {
+  assertChangeAllowed,
+  assertOrphanDeleteAllowed,
   decideAction,
   getDependencyIds,
   recordedEdges,
@@ -71,10 +75,8 @@ export async function createPlan({
   const edgesById = new Map(
     stateNodes.map((node) => [node.id, recordedEdges(node, resourceById)]),
   );
-  const blocksDelete = createBlocksDelete(
-    stateNodes,
-    workflowRegistry({ resources, registry }),
-  );
+  const classes = workflowRegistry({ resources, registry });
+  const blocksDelete = createBlocksDelete(stateNodes, classes);
   // The resources that deploy deletes before a replaced resource, by ID, with
   // the ID of the replaced resource.
   const cascaded = new Map<string, string>();
@@ -150,6 +152,19 @@ export async function createPlan({
     // A resource deleted in a cascade is created again, so a diff of an
     // update does not apply to it.
     const cascadeOnly = replacedDependency && !replaceFields;
+    if (cascadeOnly && stateNode) {
+      assertChangeAllowed(
+        resource.id,
+        (resource.constructor as ResourceClass<any, any, any>).rejectChange,
+        stateNode.params,
+        params,
+        { replace: true },
+      );
+    }
+    const stateChanged =
+      action.decision === "noop" && !cascadeOnly && stateNode
+        ? diffStateOnlyParams(resource.schema, stateNode.params, params)
+        : [];
     const placeholder =
       cycle?.placeholders.includes(resource) &&
       (action.decision === "create" || action.decision === "drift-recreate");
@@ -157,6 +172,7 @@ export async function createPlan({
       id: resource.id,
       type: resource.type,
       decision: cascadeOnly ? "replace" : action.decision,
+      ...(stateChanged.length > 0 ? { stateChanged } : {}),
       ...("diff" in action && !cascadeOnly ? { diff: action.diff } : {}),
       ...(replaceFields ? { replaceFields } : {}),
       ...(replacedDependency ? { replacedDependency } : {}),
@@ -199,6 +215,7 @@ export async function createPlan({
 
   for (const stateNode of stateNodes) {
     if (resourceById.has(stateNode.id)) continue;
+    assertOrphanDeleteAllowed(classes, stateNode);
     nodes.push({
       id: stateNode.id,
       type: stateNode.type,

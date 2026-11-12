@@ -1116,6 +1116,240 @@ describe("orphan deletion", () => {
   });
 });
 
+describe("rejectChange", () => {
+  function defineGuarded(calls: string[]) {
+    return resource<{
+      Key: { name: string };
+      CreateParams: { name: string; keep: boolean };
+      UpdateParams: { keep: boolean };
+      ReadResult: {};
+    }>({ type: "test/durable/guarded", provider: "test" })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          immutable: true,
+          value: v.string(),
+        },
+        keep: {
+          presence: "required",
+          propertyType: "param",
+          value: v.boolean(),
+        },
+      })
+      .defineOperations({
+        create: async (params) => void calls.push(`create ${params.name}`),
+        update: async (key) => void calls.push(`update ${key.name}`),
+        delete: async (key) => void calls.push(`delete ${key.name}`),
+        rejectChange: (previous, desired) =>
+          previous.keep && desired?.keep !== true
+            ? `${previous.name} is kept`
+            : undefined,
+      });
+  }
+
+  it("fails deploy before any change, for a resource in code or an orphan", async () => {
+    const calls: string[] = [];
+    const Guarded = defineGuarded(calls);
+    const resources: BaseResource[] = [
+      new Guarded("a", { config: { name: "a", keep: false } }),
+      new Guarded("b", { config: { name: "b", keep: true } }),
+    ];
+    const runtime = createRuntime(resources, "reject-change", {
+      registry: createResourceRegistry([Guarded]),
+    });
+    await runtime.run("deploy-1");
+    calls.length = 0;
+
+    resources[0] = new Guarded("a", { config: { name: "a", keep: true } });
+    resources[1] = new Guarded("b", { config: { name: "b", keep: false } });
+    await expect(runtime.run("deploy-2")).rejects.toThrow("b: b is kept");
+
+    resources.splice(1);
+    await expect(runtime.run("deploy-3")).rejects.toThrow("b: b is kept");
+    expect(calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("writes a stateOnly param to the record without an update, and reads it from state for a later delete", async () => {
+    const calls: string[] = [];
+    const Protected = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; protect?: boolean };
+      UpdateParams: { protect?: boolean };
+      ReadResult: {};
+    }>({ type: "test/durable/protected", provider: "test" })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          immutable: true,
+          value: v.string(),
+        },
+        protect: {
+          presence: "optional",
+          propertyType: "param",
+          stateOnly: true,
+          value: v.boolean(),
+        },
+      })
+      .defineOperations({
+        create: async (params) => void calls.push(`create ${params.name}`),
+        update: async (key) => void calls.push(`update ${key.name}`),
+        delete: async (key) => void calls.push(`delete ${key.name}`),
+        rejectChange: (previous, desired) =>
+          previous.protect !== false && !desired
+            ? `${previous.name} is protected`
+            : undefined,
+      });
+    const resources: BaseResource[] = [
+      new Protected("a", { config: { name: "a" } }),
+    ];
+    const runtime = createRuntime(resources, "state-only", {
+      registry: createResourceRegistry([Protected]),
+    });
+    await runtime.run("deploy-1");
+
+    resources.splice(0);
+    await expect(runtime.run("deploy-2")).rejects.toThrow("a: a is protected");
+
+    resources.push(
+      new Protected("a", { config: { name: "a", protect: false } }),
+    );
+    await runtime.run("deploy-3");
+    expect(await runtime.state.get("a")).toMatchObject({
+      version: 2,
+      params: { name: "a", protect: false },
+    });
+
+    resources.splice(0);
+    await runtime.run("deploy-4");
+    expect(calls).toEqual(["create a", "delete a"]);
+    runtime.close();
+  });
+
+  it("removes a stateOnly param from the record when code unsets it", async () => {
+    const Flagged = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; flag?: boolean };
+      UpdateParams: { flag?: boolean };
+      ReadResult: {};
+    }>({ type: "test/durable/flagged", provider: "test" })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          immutable: true,
+          value: v.string(),
+        },
+        flag: {
+          presence: "optional",
+          propertyType: "param",
+          stateOnly: true,
+          value: v.boolean(),
+        },
+      })
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const resources: BaseResource[] = [
+      new Flagged("a", { config: { name: "a", flag: true } }),
+    ];
+    const runtime = createRuntime(resources, "state-only-unset");
+    await runtime.run("deploy-1");
+
+    resources[0] = new Flagged("a", { config: { name: "a" } });
+    await runtime.run("deploy-2");
+
+    const record = await runtime.state.get("a");
+    expect(record?.version).toBe(2);
+    expect(record?.params).toEqual({ name: "a" });
+    runtime.close();
+  });
+
+  it("fails deploy before a cascade deletes a dependent whose replacement it rejects", async () => {
+    const calls: string[] = [];
+    const name = {
+      presence: "required",
+      propertyType: "param",
+      primaryKey: true,
+      immutable: true,
+      value: v.string(),
+    } as const;
+    const Parent = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; region: string };
+      UpdateParams: {};
+      ReadResult: {};
+    }>({ type: "test/durable/guarded-parent", provider: "test" })
+      .defineSchema({
+        name,
+        region: {
+          presence: "required",
+          propertyType: "param",
+          immutable: true,
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create: async (params) => void calls.push(`create ${params.name}`),
+        delete: async (key) => void calls.push(`delete ${key.name}`),
+      });
+    const Child = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; parent: string };
+      UpdateParams: { parent: string };
+      ReadResult: {};
+    }>({
+      type: "test/durable/guarded-child",
+      provider: "test",
+      blocksDeleteOf: [Parent.type],
+    })
+      .defineSchema({
+        name,
+        parent: {
+          presence: "required",
+          propertyType: "param",
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create: async (params) => void calls.push(`create ${params.name}`),
+        update: async (key) => void calls.push(`update ${key.name}`),
+        delete: async (key) => void calls.push(`delete ${key.name}`),
+        rejectChange: (previous, _desired, { replace }) =>
+          replace ? `${previous.name} would be replaced` : undefined,
+      })
+      .requireDependencies<{ parent: BaseResource }>()
+      .deriveParams(({ deps }) => ({
+        parent: (deps.parent.output as { name: string }).name,
+      }));
+    const declare = (region: string) => {
+      const parent = new Parent("parent", { config: { name: "p", region } });
+      return [
+        parent,
+        new Child("child", { config: { name: "c" }, dependencies: { parent } }),
+      ];
+    };
+    const resources: BaseResource[] = declare("eu");
+    const runtime = createRuntime(resources, "reject-cascade");
+    await runtime.run("deploy-1");
+    calls.length = 0;
+
+    resources.splice(0, 2, ...declare("us"));
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "child: c would be replaced",
+    );
+    expect(calls).toEqual([]);
+    runtime.close();
+  });
+});
+
 // Rewrites a record as an earlier version wrote it, with no edges. Written
 // to SQLite directly, as the store client would validate it against the
 // current schema.
@@ -3535,6 +3769,59 @@ describe("value validation at deploy", () => {
     expect(await runtime.state.get("fn")).toMatchObject({
       lastOperation: "create",
       params: { name: "fn", memory: 128, role: "arn:role" },
+    });
+    runtime.close();
+  });
+
+  it("writes a changed stateOnly param when it reads a resource again for a missing output", async () => {
+    let arn: string | undefined;
+    const Role = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; protect?: boolean };
+      UpdateParams: { protect?: boolean };
+      ReadResult: { arn: string };
+    }>({ type: "test/durable/recover-state-only", provider: "test" })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          primaryKey: true,
+          immutable: true,
+          value: v.string(),
+        },
+        protect: {
+          propertyType: "param",
+          presence: "optional",
+          stateOnly: true,
+          value: v.boolean(),
+        },
+        arn: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create: async () => ({}) as any,
+        read: async () => ({ arn }) as any,
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const resources: BaseResource[] = [
+      new Role("role", { config: { name: "role" } }),
+    ];
+    const runtime = createRuntime(resources, "recover-state-only");
+    await runtime.run("recover-state-only-1").catch(() => {});
+
+    arn = "arn:role";
+    resources[0] = new Role("role", {
+      config: { name: "role", protect: false },
+    });
+    await runtime.run("recover-state-only-2");
+
+    expect(await runtime.state.get("role")).toMatchObject({
+      params: { name: "role", protect: false },
+      output: { arn: "arn:role" },
     });
     runtime.close();
   });

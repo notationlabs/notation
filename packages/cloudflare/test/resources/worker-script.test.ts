@@ -9,10 +9,8 @@ import {
   ResourceNotFoundError,
   ResourceOperationPendingError,
 } from "@notation/resource";
-import {
-  durableObjectExports,
-  WorkerScript,
-} from "src/resources/workers/worker-script";
+import { decideAction } from "@notation/reconciler";
+import { WorkerScript } from "src/resources/workers/worker-script";
 import { WorkerSubdomain } from "src/resources/workers/worker-subdomain";
 import { CloudflareApiError } from "src/api/client";
 
@@ -527,25 +525,147 @@ describe("WorkerScript", () => {
   });
 });
 
-describe("durableObjectExports", () => {
-  it.each([
-    [
-      "whose namespace was removed, or had its id changed",
-      [{ id: "b", className: "Counter" }],
-      [{ id: "a", className: "Counter" }],
-    ],
-    [
-      "whose namespace now has another class",
-      [
-        { id: "a", className: "Counter2" },
-        { id: "b", className: "Counter" },
-      ],
-      [{ id: "a", className: "Counter" }],
-    ],
-  ])("fails when a new namespace takes a class %s", (_, hosted, previous) => {
-    expect(() => durableObjectExports(hosted, previous)).toThrow(
-      `The Durable Object namespace "b" has the class Counter, which the namespace "a" had before.`,
+describe("rejectChange", () => {
+  const counters = { id: "counters", className: "Counter" };
+  const rooms = { id: "rooms", className: "Room" };
+  const previous = { ...params, DurableObjectNamespaces: [counters, rooms] };
+  type Params = NonNullable<
+    Parameters<NonNullable<typeof WorkerScript.rejectChange>>[1]
+  >;
+  const reject = (
+    desired: Partial<Params> | undefined,
+    replace = false,
+    before: Partial<Params> = {},
+  ) =>
+    WorkerScript.rejectChange?.(
+      { ...previous, ...before },
+      desired && { ...previous, ...desired },
+      { replace },
     );
+  const lost =
+    /^Deploy would delete the Durable Object namespaces "counters" \(class Counter\), "rooms" \(class Room\) of the Worker app--dev--api,/;
+
+  it("allows a change of class, and the delete of a namespace that is unprotected in state", () => {
+    expect(
+      reject(
+        { DurableObjectNamespaces: [{ id: "counters", className: "Tally" }] },
+        false,
+        { UnprotectedDurableObjects: ["rooms"] },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("reads protection from state, not from code", () => {
+    expect(
+      reject({
+        DurableObjectNamespaces: [counters],
+        UnprotectedDurableObjects: ["rooms"],
+      }),
+    ).toMatch(/^Deploy would delete the Durable Object namespaces "rooms"/);
+  });
+
+  it("leaves the check to deploy when the list is unknown at plan", () => {
+    const unknown = { $unknown: "after-apply" } as never;
+    expect(reject({ DurableObjectNamespaces: unknown })).toBeUndefined();
+  });
+
+  it("allows any change to a Worker that hosted no namespace", () => {
+    expect(
+      WorkerScript.rejectChange?.(
+        { ...params, DurableObjectNamespaces: [] },
+        undefined,
+        { replace: false },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("rejects a protected namespace that the Worker no longer hosts", () => {
+    expect(reject({ DurableObjectNamespaces: [counters] })).toBe(
+      `Deploy would delete the Durable Object namespaces "rooms" (class Room) of the Worker app--dev--api, with all their objects, which can't be undone. Deploy deletes a namespace when its Worker no longer hosts it, and deletes all of a Worker's namespaces when the Worker is removed or replaced, as when its id or name changes. To keep a namespace, keep its id and export its class from this Worker. A change of class alone keeps the namespace's objects. A namespace can't move to another Worker, so if its class moved, export it from this Worker again. To delete the namespaces, first deploy with \`protect: false\` on $durableObject({ id: "rooms" }), while this Worker still hosts them. Then remove them, or the Worker, in a later deploy.`,
+    );
+  });
+
+  it("rejects a change of id, with or without a change of class", () => {
+    for (const className of ["Counter", "Tally"]) {
+      expect(
+        reject({
+          DurableObjectNamespaces: [{ id: "tallies", className }, rooms],
+        }),
+      ).toMatch(
+        /^Deploy would delete the Durable Object namespaces "counters" \(class Counter\) of the Worker app--dev--api,/,
+      );
+    }
+  });
+
+  it("rejects a namespace that takes the class of an unprotected one", () => {
+    expect(
+      reject(
+        {
+          DurableObjectNamespaces: [
+            counters,
+            { id: "lobbies", className: "Room" },
+          ],
+        },
+        false,
+        { UnprotectedDurableObjects: ["rooms"] },
+      ),
+    ).toMatch(
+      /^The Durable Object namespace "lobbies" has the class Room, which the namespace "rooms" had before\./,
+    );
+  });
+
+  it("rejects the delete or the replacement of a Worker with protected namespaces", () => {
+    expect(reject(undefined)).toMatch(lost);
+    expect(reject({ ScriptName: "app--dev--api2" }, true)).toMatch(lost);
+    expect(reject({}, true)).toMatch(lost);
+    expect(
+      reject(undefined, false, { UnprotectedDurableObjects: ["counters"] }),
+    ).toMatch(/^Deploy would delete the Durable Object namespaces "rooms"/);
+  });
+
+  it("allows the delete or the replacement of a Worker whose namespaces are all unprotected in state", () => {
+    const before = { UnprotectedDurableObjects: ["counters", "rooms"] };
+    expect(reject(undefined, false, before)).toBeUndefined();
+    expect(
+      reject({ ScriptName: "app--dev--api2" }, true, before),
+    ).toBeUndefined();
+  });
+
+  describe("through decideAction", () => {
+    const stateNode = {
+      version: 1,
+      id: "worker:api",
+      type: WorkerScript.type,
+      provider: WorkerScript.provider,
+      config: {},
+      params: previous,
+      output: previous,
+      lastOperation: "create" as const,
+      lastOperationAt: "2026-10-12T00:00:00.000Z",
+    };
+    const decide = (desired: Partial<Params>) =>
+      decideAction({
+        resource: script,
+        stateNode,
+        params: { ...previous, ...desired },
+      });
+
+    it("doesn't upload the Worker again when only protection changes", () => {
+      expect(decide({ UnprotectedDurableObjects: ["rooms"] })).toEqual({
+        decision: "noop",
+      });
+    });
+
+    it("rejects the delete of a protected namespace in the deploy that unprotects it", () => {
+      expect(() =>
+        decide({
+          DurableObjectNamespaces: [counters],
+          UnprotectedDurableObjects: ["rooms"],
+        }),
+      ).toThrow(
+        /^worker:api: Deploy would delete the Durable Object namespaces "rooms"/,
+      );
+    });
   });
 });
 

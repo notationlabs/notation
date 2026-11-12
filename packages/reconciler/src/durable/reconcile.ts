@@ -7,8 +7,11 @@ import {
   SchemaStructureError,
   assertRequiredOutputs,
   collectResourceGraph,
+  diffStateOnlyParams,
   validateParams,
   type BaseResource,
+  type DurableObject,
+  type ResourceClass,
   type ResourceGroupRef,
   type ResourceDeletion,
   type ResourceType,
@@ -31,6 +34,8 @@ import {
   type RemoveState,
 } from "../operations";
 import {
+  assertChangeAllowed,
+  assertOrphanDeleteAllowed,
   decideAction,
   decideDriftAction,
   getDependencyIds,
@@ -237,9 +242,11 @@ export async function* reconcileResource(
       if (
         !opts.dryRun &&
         (!hasSameEdges(session.node, dependsOn) ||
-          session.node.provider !== resource.provider)
+          session.node.provider !== resource.provider ||
+          diffStateOnlyParams(resource.schema, session.node.params, params)
+            .length > 0)
       ) {
-        yield* rewriteRecord(session, resource, dependsOn);
+        yield* rewriteRecord(session, resource, dependsOn, params);
       }
       return;
   }
@@ -289,6 +296,11 @@ async function* recoverOutputs(
     const { version: _, ...record } = session.node;
     yield* session.persist({
       ...record,
+      params: withStateOnlyParams(
+        resource,
+        record.params,
+        shared.resourceParams,
+      ),
       group: (record.group ?? null) as ResourceGroupRef | null,
       output: resource.toState(resource.output),
       dependsOn: shared.dependsOn,
@@ -298,17 +310,19 @@ async function* recoverOutputs(
 }
 
 /**
- * Updates `dependsOn` and `provider` in the record, without calling the
- * resource's update operation.
+ * Updates `dependsOn`, `provider` and the `stateOnly` params in the record,
+ * without calling the resource's update operation.
  */
 async function* rewriteRecord(
   session: Extract<ResourceStateSession, { node: StateNode }>,
   resource: BaseResource,
   dependsOn: string[],
+  params: Record<string, unknown>,
 ): AsyncGenerator<any, void, any> {
   const { version: _, ...record } = session.node;
   yield* session.persist({
     ...record,
+    params: withStateOnlyParams(resource, record.params, params),
     provider: resource.provider,
     group: (record.group ?? null) as ResourceGroupRef | null,
     dependsOn,
@@ -424,6 +438,24 @@ async function* deleteBlockingDependents(
     ),
     createBlocksDelete(records, registry),
   );
+
+  // Checks each one before it deletes any, so that a rejected change fails
+  // before the cascade changes anything.
+  for (const id of dependents) {
+    const record = recordById.get(id)!;
+    const declared = resourceById.get(id);
+    if (!declared) {
+      assertOrphanDeleteAllowed(registry, record);
+      continue;
+    }
+    assertChangeAllowed(
+      id,
+      (declared.constructor as ResourceClass<any, any, any>).rejectChange,
+      record.params,
+      await declared.planParams(),
+      { replace: true },
+    );
+  }
 
   for (const id of dependents) {
     const record = recordById.get(id)!;
@@ -575,6 +607,9 @@ export async function* sweepOrphans(
       continue;
     }
     if (kept.has(node.id)) continue;
+    // Repeats the check of notation:validate, because the record may have
+    // changed since validate ran before the hold.
+    if (workflow === "deploy") assertOrphanDeleteAllowed(registry, node);
 
     const resource = await instantiateRecord(Resource, node);
     yield* deleteResource(nodeScope, resource, opts);
@@ -778,4 +813,22 @@ function removeResourceState(
       );
     }
   };
+}
+
+/**
+ * Returns the params in the record, with the `stateOnly` params taken from
+ * the params in code.
+ */
+function withStateOnlyParams(
+  resource: BaseResource,
+  recorded: DurableObject,
+  params: Record<string, unknown>,
+): DurableObject {
+  const merged: Record<string, unknown> = { ...recorded };
+  for (const [name, item] of Object.entries(resource.schema)) {
+    if (item.propertyType !== "param" || !item.stateOnly) continue;
+    if (params[name] === undefined) delete merged[name];
+    else merged[name] = params[name];
+  }
+  return merged as DurableObject;
 }

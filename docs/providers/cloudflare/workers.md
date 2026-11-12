@@ -113,10 +113,11 @@ export default {
 
 ::
 
-| Option  | Description                                                                                                                                                                   |
-| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`    | Keys the namespace. Use 1 to 64 letters, digits, hyphens or underscores. Keep it stable: see [Renaming and deleting](#renaming-and-deleting).                                 |
-| `class` | The namespace's class, by name, such as `class: Counter`. Cloudflare finds the class by its export name, so the hosting Worker exports the class under the name written here. |
+| Option    | Description                                                                                                                                                                                                                     |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`      | Keys the namespace. Use 1 to 64 letters, digits, hyphens or underscores. It can't change while the namespace exists: see [Renaming and deleting](#renaming-and-deleting).                                                       |
+| `class`   | The namespace's class, by name, such as `class: Counter`. Cloudflare finds the class by its export name, so the hosting Worker exports the class under the name written here.                                                   |
+| `protect` | Defaults to `true`. Plan fails for a change that would delete a protected namespace. Plan reads the value from state, so `protect: false` takes effect after it is deployed. See [Deleting a namespace](#deleting-a-namespace). |
 
 The infra build doesn't load the class, or its imports such as `cloudflare:workers`. It replaces the class with a function of the same name.
 
@@ -132,13 +133,34 @@ The host is found by the export's name only. A Worker that binds the namespace a
 
 ### Renaming and deleting
 
-A new namespace uses SQLite storage. Deploy uploads Cloudflare's declarative `exports` map of the hosting Worker, with each namespace that the Worker hosted before:
+A new namespace uses SQLite storage. Deploy uploads Cloudflare's declarative `exports` map of the hosting Worker, with each namespace that the Worker hosted before. Cloudflare keys a namespace by its Worker and its class name, and deleting a namespace deletes all its objects, which can't be undone. So plan and deploy fail, before deploy changes anything, for a change that would delete a namespace that is protected in state:
 
 - When a namespace's `class` changes and its `id` stays the same, deploy renames the class, and the namespace keeps its objects.
-- When a namespace's declaration is removed, deploy deletes the namespace with all its objects. This can't be undone.
-- When a namespace's `id` and `class` both change, deploy deletes the old namespace with all its objects, and makes a new, empty one.
-- When the class export moves to the module of another Worker that binds the namespace, that Worker becomes the host. Deploy deletes the namespace on the old host, with all its objects, and the new host gets an empty namespace.
-- Cloudflare keys a namespace by its class name. So a deploy fails, before the upload, if a namespace takes a class that another namespace had on the same Worker before, as the new namespace would get the old one's objects. This includes a change of `id` alone. Rename or remove the old namespace in one deploy, and give its class to the new namespace in a later deploy. The check runs during deploy, not plan, so resources that deploy changes before the Worker may already have changed.
+- A namespace's `id` can't change. Plan fails, and says to change the id back. This holds when the `class` changes too.
+- When the hosting Worker no longer hosts a namespace, plan fails, unless the namespace is unprotected in state. See [Deleting a namespace](#deleting-a-namespace).
+- A namespace can't move to another Worker. When the class export moves to the module of another Worker that binds the namespace, plan fails for the old host. Export the class from the old host again.
+- When a Worker is removed or replaced, as when its `id` or `name` changes, deploy deletes all its namespaces. Plan fails unless each of them is unprotected in state.
+- Plan fails if a namespace takes a class that another namespace had on the same Worker before, as the new namespace would get the old one's objects. Rename or delete the old namespace in one deploy, and give its class to the new namespace in a later deploy.
+
+`notation destroy` doesn't make these checks. It deletes each Worker with its namespaces.
+
+### Deleting a namespace
+
+Deleting a namespace takes two deploys. First set `protect: false` on its declaration, and deploy while the Worker still hosts the namespace:
+
+```ts [runtime/rooms.ts]
+export const rooms = $durableObject({
+  id: "rooms",
+  class: Room,
+  protect: false,
+});
+```
+
+This deploy saves the value in the state of the hosting Worker. It doesn't upload the Worker again or change the namespace. Plan lists the Worker as unchanged, with `UnprotectedDurableObjects changes in state only`.
+
+In a later deploy, remove the declaration, its binding and its class. Deploy uploads a `deleted` entry for the namespace's class. The Worker's module must no longer export the class, or Cloudflare rejects the upload. In the same way, a later deploy can remove the hosting Worker, or change its `id` or `name`, once all its namespaces are unprotected in state.
+
+Plan reads `protect` from state, not from code. A deploy that sets `protect: false` and also stops hosting the namespace fails at plan.
 
 ## Credentials
 

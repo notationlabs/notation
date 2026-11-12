@@ -58,7 +58,7 @@ export type ParamsDiff = {
 
 /**
  * Keeps the params that take part in a comparison: `param` items that are
- * neither volatile nor hidden. An `undefined` value counts as absent: state
+ * not volatile, hidden or state-only. An `undefined` value counts as absent: state
  * is stored as JSON, which drops it, so keeping it would make an unset
  * optional param look changed on every deploy.
  */
@@ -120,7 +120,40 @@ export function diffParams(
 }
 
 function isComparable(item: SchemaItem): boolean {
-  return item.propertyType === "param" && !item.volatile && !item.hidden;
+  return (
+    item.propertyType === "param" &&
+    !item.volatile &&
+    !item.hidden &&
+    !item.stateOnly
+  );
+}
+
+/**
+ * Returns the names of the `stateOnly` params whose values differ between
+ * previous and desired. An `undefined` value counts as absent, as in
+ * `diffParams`. A value that is unknown after apply counts as changed.
+ */
+export function diffStateOnlyParams(
+  schema: Schema,
+  previous: Record<string, unknown>,
+  desired: Record<string, unknown>,
+): string[] {
+  const changed: string[] = [];
+  for (const [name, item] of Object.entries(schema)) {
+    if (item.propertyType !== "param" || !item.stateOnly) continue;
+    const before = previous[name];
+    const after = desired[name];
+    if (before === undefined && after === undefined) continue;
+    if (
+      containsUnknownAfterApply(after) ||
+      before === undefined ||
+      after === undefined ||
+      Object.keys(diff({ value: before }, { value: after })).length > 0
+    ) {
+      changed.push(name);
+    }
+  }
+  return changed;
 }
 
 /** A different key names a different resource, so it is never updated. */

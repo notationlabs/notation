@@ -6,6 +6,7 @@ import { fromProjectRoot } from "@notation/core/paths";
 import {
   resource,
   ResourceNotFoundError,
+  type RejectChangeContext,
   type ResourceDeletion,
 } from "@notation/resource";
 import type { fs } from "@notation/std/resources";
@@ -48,6 +49,11 @@ type WorkerScriptParams = {
   CompatibilityFlags?: string[];
   Bindings?: WorkerBinding[];
   DurableObjectNamespaces?: HostedNamespace[];
+  /**
+   * The ids of hosted namespaces that set `protect: false`. A later plan
+   * reads the list from state, and lets deploy delete these namespaces.
+   */
+  UnprotectedDurableObjects?: string[];
 };
 
 export type WorkerScriptSchema = {
@@ -170,6 +176,12 @@ const workerScriptSchema = workerScript.defineSchema({
     presence: "optional",
     value: v.array(hostedNamespaceSchema),
   },
+  UnprotectedDurableObjects: {
+    propertyType: "param",
+    presence: "optional",
+    stateOnly: true,
+    value: v.array(v.string()),
+  },
 } as const);
 
 export const WorkerScript = workerScriptSchema
@@ -216,6 +228,8 @@ export const WorkerScript = workerScriptSchema
         await deleteReferencedScript(key, deletion, error);
       }
     },
+
+    rejectChange: rejectNamespaceLoss,
   })
   .requireDependencies<WorkerScriptDependencies>()
   .deriveParams(async ({ deps }) => ({
@@ -254,14 +268,60 @@ async function upload(
   });
 }
 
+const describeHosted = (namespace: HostedNamespace) =>
+  `"${namespace.id}" (class ${namespace.className})`;
+
+/**
+ * Returns an error message when a change would delete a namespace that the
+ * Worker hosted, with its objects, and the namespace was protected when the
+ * Worker was last deployed. Cloudflare keys a namespace by its Worker and
+ * class name, so the namespace is deleted when the Worker stops hosting it,
+ * is replaced or is deleted. Protection is read from state only, so
+ * `protect: false` must be deployed before the change that deletes the
+ * namespace. Also returns a message when a namespace would get the objects
+ * of another namespace.
+ */
+export function rejectNamespaceLoss(
+  previous: Partial<WorkerScriptParams>,
+  desired: WorkerScriptParams | undefined,
+  context: RejectChangeContext,
+): string | undefined {
+  const before = previous.DurableObjectNamespaces ?? [];
+  const unprotected = previous.UnprotectedDurableObjects ?? [];
+  const kept = desired && !context.replace ? desired : undefined;
+  const hosted = kept?.DurableObjectNamespaces ?? [];
+  // At plan, the list is UNKNOWN_AFTER_APPLY when a dependency has no
+  // output yet. Deploy runs the check again with the real params.
+  if (!Array.isArray(hosted)) return undefined;
+
+  const lost = before.filter(
+    (namespace) =>
+      !unprotected.includes(namespace.id) &&
+      !hosted.some((now) => now.id === namespace.id),
+  );
+  if (lost.length > 0) {
+    const declarations = lost
+      .map((namespace) => `$durableObject({ id: "${namespace.id}" })`)
+      .join(", ");
+    return `Deploy would delete the Durable Object namespaces ${lost.map(describeHosted).join(", ")} of the Worker ${previous.ScriptName}, with all their objects, which can't be undone. Deploy deletes a namespace when its Worker no longer hosts it, and deletes all of a Worker's namespaces when the Worker is removed or replaced, as when its id or name changes. To keep a namespace, keep its id and export its class from this Worker. A change of class alone keeps the namespace's objects. A namespace can't move to another Worker, so if its class moved, export it from this Worker again. To delete the namespaces, first deploy with \`protect: false\` on ${declarations}, while this Worker still hosts them. Then remove them, or the Worker, in a later deploy.`;
+  }
+
+  for (const namespace of hosted) {
+    const taken = before.find(
+      (other) =>
+        other.className === namespace.className && other.id !== namespace.id,
+    );
+    if (taken) {
+      return `The Durable Object namespace "${namespace.id}" has the class ${taken.className}, which the namespace "${taken.id}" had before. Cloudflare keys a namespace by its class name, so "${namespace.id}" would get the objects of "${taken.id}". Give "${namespace.id}" another class, or deploy the change to "${taken.id}" first, and give its old class to "${namespace.id}" in a later deploy.`;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Makes the Durable Object `exports` map of the upload. Cloudflare fails an
  * upload that omits a previous namespace, so each one is listed as renamed
- * (same id, new class) or deleted (no longer declared).
- *
- * Throws if a namespace has the class name that another namespace had in
- * the previous upload. Cloudflare identifies a namespace by its class name,
- * so the namespace would get the other namespace's objects.
+ * (same id, new class) or deleted (no longer hosted).
  */
 export function durableObjectExports(
   hosted: HostedNamespace[],
@@ -276,14 +336,6 @@ export function durableObjectExports(
     };
   }
   for (const before of previous) {
-    const taker = hosted.find(
-      (namespace) => namespace.className === before.className,
-    );
-    if (taker && taker.id !== before.id) {
-      throw new Error(
-        `The Durable Object namespace "${taker.id}" has the class ${before.className}, which the namespace "${before.id}" had before. Cloudflare keys a namespace by its class name, so "${taker.id}" would get the objects of "${before.id}". Deploy the change to "${before.id}" first, then give the class to "${taker.id}" in a later deploy, or give "${taker.id}" another class.`,
-      );
-    }
     if (live.has(before.className)) continue;
     const now = hosted.find((namespace) => namespace.id === before.id);
     exports[before.className] = now
