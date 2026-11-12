@@ -190,6 +190,8 @@ A replaced member is created without some of its contributions in two cases, and
 - It refers to itself through its contributions. They hold the output of the resource that was deleted.
 - It refers through its contributions to a member that the replacement deleted as a dependent that blocks the delete. That member exists again only when deploy reaches it.
 
+The same holds for a member that deploy replaces after it took the resource over in the same deploy; see [Taking a resource over](#taking-a-resource-over). That replace does not add a pass.
+
 The removal of each dependent's record has the state write key `state:delete:<dependent id>:replace:<replaced id>`.
 
 A member that depends on the replaced member is updated only when its params change. This holds when it takes an output that the replacement changes, such as the name. Deploy does not update a member whose params stay the same, so a provider whose references break for good when the target is deleted, even when a resource with the same name is created again, must make a replacement change an output that the dependents take. A Worker is replaced only when its name changes, and the Workers that bind it take its name.

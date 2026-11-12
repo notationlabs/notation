@@ -6231,6 +6231,103 @@ describe("dependency cycles", () => {
     runtime.close();
   });
 
+  it("creates a member that it took over and replaced without its contributions that refer to a member that the replacement deleted", async () => {
+    const remote = new Map<string, { path: string; bindings: string[] }>();
+    const calls: string[] = [];
+    const type = "test/durable/cycle-takeover" as const;
+    const Bound = resource({ type, provider: "test", blocksDeleteOf: [type] })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          primaryKey: true,
+          value: v.string(),
+        },
+        path: {
+          propertyType: "param",
+          presence: "required",
+          immutable: true,
+          value: v.string(),
+        },
+        bindings: {
+          propertyType: "param",
+          presence: "optional",
+          value: v.array(v.string()),
+          collect: (items: string[][]) => items.flat(),
+        },
+      } as any)
+      .defineOperations({
+        ownership: "parent",
+        create: async (params: any) => {
+          const bindings: string[] = params.bindings ?? [];
+          calls.push(`create ${params.name} [${bindings.join(", ")}]`);
+          if (remote.has(params.name)) {
+            throw new ResourceAlreadyExistsError(
+              `${params.name} already exists`,
+            );
+          }
+          const missing = bindings.find((bound) => !remote.has(bound));
+          if (missing) {
+            throw new Error(
+              `${params.name} binds ${missing}, which does not exist`,
+            );
+          }
+          remote.set(params.name, { path: params.path, bindings });
+        },
+        read: async (key: any) => {
+          const found = remote.get(key.name);
+          if (!found) throw new ResourceNotFoundError(`${key.name} not found`);
+          return { name: key.name, ...found } as any;
+        },
+        update: async (_key: any, _patch: any, params: any) => {
+          const bindings: string[] = params.bindings ?? [];
+          calls.push(`update ${params.name} [${bindings.join(", ")}]`);
+          remote.get(params.name)!.bindings = bindings;
+        },
+        delete: async (key: any) => {
+          calls.push(`delete ${key.name}`);
+          remote.delete(key.name);
+        },
+      });
+    const a: BaseResource = new Bound("a", {
+      config: { name: "a", path: "/" } as any,
+    });
+    const b: BaseResource = new Bound("b", {
+      config: { name: "b", path: "/" } as any,
+    });
+    a.contribute({ bindings: [b.outputRef("name")] } as any);
+    b.contribute({ bindings: [a.outputRef("name")] } as any);
+    const runtime = createRuntime([a, b], "cycle-takeover-replace");
+    await runtime.run("cycle-takeover-replace-1");
+    expect(calls).toEqual(["create a []", "create b [a]", "update a [b]"]);
+    calls.length = 0;
+
+    // b has no record and another path, so its create takes it over and
+    // then replaces it. a is the placeholder, and its record depends on b.
+    await runtime.storeClient.deleteStore({
+      definition: durable.resourceStateStore,
+      id: runtime.state.storeId("b"),
+    });
+    remote.get("b")!.path = "/elsewhere/";
+    await runtime.run("cycle-takeover-replace-2");
+
+    expect(calls).toEqual([
+      "create b [a]",
+      "delete a",
+      "delete b",
+      "create b []",
+      "create a [b]",
+      "update b [a]",
+    ]);
+    expect(remote).toEqual(
+      new Map([
+        ["a", { path: "/", bindings: ["b"] }],
+        ["b", { path: "/", bindings: ["a"] }],
+      ]),
+    );
+    runtime.close();
+  });
+
   it("replaces the placeholder of a cycle", async () => {
     const { worker, bind, calls, remote } = defineWorkers();
     const a = worker("a");

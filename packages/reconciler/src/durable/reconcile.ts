@@ -201,7 +201,9 @@ export async function* reconcileResource(
       maxOperationAttempts: opts.maxOperationAttempts,
       prior: session.node,
     },
-    options.replaceWithout,
+    // The params of a placeholder already leave out the contributions that
+    // depend on a member of the cycle.
+    options.excludeContributionsFrom ? undefined : options.replaceWithout,
   );
 }
 
@@ -243,7 +245,9 @@ async function* applyAction(
         ...shared,
         persist: session.persist,
       });
-      if (reclaimed) yield* reconcileReclaimed(step, opts, shared);
+      if (reclaimed) {
+        yield* reconcileReclaimed(step, opts, shared, replaceWithout);
+      }
       return;
     }
     case "update":
@@ -291,6 +295,7 @@ async function* reconcileReclaimed(
   parent: DurableStepRunner,
   opts: DurableDeployOptions,
   shared: Omit<CreateResourceParams, "persist">,
+  replaceWithout?: ReconcileOptions["replaceWithout"],
 ): AsyncGenerator<any, void, any> {
   // The state key keeps the writes that follow a takeover apart from the
   // writes of the create that took the resource over. It nests, because a
@@ -309,16 +314,23 @@ async function* reconcileReclaimed(
   });
   const emit = durableEmitter(step, opts.emit);
   yield* emitDecision(emit, resource, action);
-  yield* applyAction(step, opts, reclaimed, action, {
-    ...shared,
-    // Names the effects of a create that replaces the resource apart from
-    // those of the create that took it over. It is built from the ID of
-    // that create, so that it differs at each level of nesting.
-    executionId: `${shared.executionId}/reclaimed`,
-    emit,
-    persistedOutput: reclaimed.node?.output,
-    prior: reclaimed.node,
-  });
+  yield* applyAction(
+    step,
+    opts,
+    reclaimed,
+    action,
+    {
+      ...shared,
+      // Names the effects of a create that replaces the resource apart from
+      // those of the create that took it over. It is built from the ID of
+      // that create, so that it differs at each level of nesting.
+      executionId: `${shared.executionId}/reclaimed`,
+      emit,
+      persistedOutput: reclaimed.node?.output,
+      prior: reclaimed.node,
+    },
+    replaceWithout,
+  );
 }
 
 function findMissingOutputs(
@@ -466,6 +478,8 @@ async function* replaceResource(
     replacement: true,
     persist: recreated.persist,
   });
+  // No `replaceWithout`: the params in `created` already leave out the
+  // contributions that a replace of the resource must leave out.
   if (reclaimed) yield* reconcileReclaimed(createStep, opts, created);
 }
 
