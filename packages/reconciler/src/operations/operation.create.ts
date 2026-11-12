@@ -22,6 +22,7 @@ import {
   type StepRunner,
   emitLifecycleEvent,
   getErrorDetails,
+  toPersistedState,
 } from "./operation.types";
 import {
   DEFAULT_MAX_OPERATION_ATTEMPTS,
@@ -49,7 +50,7 @@ const MAX_CREATE_LOOKUP_ATTEMPTS = 10;
  * "creating" record, so that a later deploy can tell that this one tried.
  *
  * A resource that already exists is taken over: it is read and recorded with
- * the params the read returned. The result has `reclaimed: true`, and the
+ * the params the read returned. The result has `tookOver: true`, and the
  * caller compares the record with the desired params, as for any recorded
  * resource. There are three ways to a takeover:
  * 1. The record is a "creating" record that an earlier deploy left, and
@@ -72,12 +73,12 @@ const MAX_CREATE_LOOKUP_ATTEMPTS = 10;
 export async function* createResourceOperation(
   step: StepRunner,
   params: CreateResourceParams,
-): AsyncGenerator<unknown, { reclaimed: boolean }, unknown> {
+): AsyncGenerator<unknown, { tookOver: boolean }, unknown> {
   yield* emitLifecycleEvent(params, "create", "start");
 
   if (params.dryRun) {
     yield* emitLifecycleEvent(params, "create", "dry-run");
-    return { reclaimed: false };
+    return { tookOver: false };
   }
 
   const { resource, resourceParams } = params;
@@ -157,7 +158,7 @@ export async function* createResourceOperation(
     if (deferredError) throw deferredError;
 
     yield* emitLifecycleEvent(params, "create", "success");
-    return { reclaimed: false };
+    return { tookOver: false };
   } catch (err) {
     yield* emitLifecycleEvent(params, "create", "error", getErrorDetails(err));
     throw err;
@@ -210,7 +211,7 @@ async function* takeOver(
   step: StepRunner,
   params: CreateResourceParams,
   key: DurableObject,
-): AsyncGenerator<unknown, { reclaimed: boolean }, unknown> {
+): AsyncGenerator<unknown, { tookOver: boolean }, unknown> {
   const { resource, resourceParams } = params;
   if (!resource.read) {
     throw new Error(
@@ -221,7 +222,7 @@ async function* takeOver(
   }
   resource.setOutput({ ...resourceParams, ...key });
   const { output, remote } = yield* readRemoteOperation(
-    step.scope("create:reclaim"),
+    step.scope("create:takeover"),
     {
       resource,
       resourceParams,
@@ -239,12 +240,12 @@ async function* takeOver(
       ),
       output: resource.toState(resource.output),
     }),
-    "reclaimed",
+    "taken-over",
   );
   yield* emitLifecycleEvent(params, "create", "success", {
-    reason: "reclaimed",
+    reason: "taken-over",
   });
-  return { reclaimed: true };
+  return { tookOver: true };
 }
 
 /**
@@ -286,13 +287,8 @@ async function* restoreRecord(
     yield* params.persist(null, "restored");
     return;
   }
-  const { version: _, ...fields } = record;
   yield* params.persist(
-    {
-      ...fields,
-      group: fields.group ?? null,
-      dependsOn: fields.dependsOn ?? params.dependsOn,
-    } as PersistedResourceState,
+    toPersistedState(record, record.dependsOn ?? params.dependsOn),
     "restored",
   );
 }

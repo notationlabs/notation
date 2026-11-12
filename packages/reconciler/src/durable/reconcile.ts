@@ -9,7 +9,6 @@ import {
   collectResourceGraph,
   validateParams,
   type BaseResource,
-  type ResourceGroupRef,
   type ResourceDeletion,
   type ResourceType,
 } from "@notation/resource";
@@ -29,6 +28,7 @@ import {
   createResourceOperation,
   deleteResourceOperation,
   readResourceOperation,
+  toPersistedState,
   updateResourceOperation,
   type CreateResourceParams,
   type PersistStage,
@@ -241,12 +241,12 @@ async function* applyAction(
   switch (action.decision) {
     case "create":
     case "drift-recreate": {
-      const { reclaimed } = yield* createResourceOperation(step, {
+      const { tookOver } = yield* createResourceOperation(step, {
         ...shared,
         persist: session.persist,
       });
-      if (reclaimed) {
-        yield* reconcileReclaimed(step, opts, shared, replaceWithout);
+      if (tookOver) {
+        yield* reconcileTakenOver(step, opts, shared, replaceWithout);
       }
       return;
     }
@@ -291,7 +291,7 @@ async function* applyAction(
  * is read again, because the session of the create does not hold what the
  * takeover wrote.
  */
-async function* reconcileReclaimed(
+async function* reconcileTakenOver(
   parent: DurableStepRunner,
   opts: DurableDeployOptions,
   shared: Omit<CreateResourceParams, "persist">,
@@ -302,14 +302,14 @@ async function* reconcileReclaimed(
   // replace that follows a takeover can end in another takeover. It must
   // not equal a persist stage, which sits at the same place in the key.
   const step = parent.scope(
-    "reclaimed",
+    "taken-over",
     [parent.stateKey, "after-takeover"].filter(Boolean).join(":"),
   );
   const { resource, resourceParams } = shared;
-  const reclaimed = yield* openStateSession(step, opts, resource);
+  const takenOver = yield* openStateSession(step, opts, resource);
   const action = decideAction({
     resource,
-    stateNode: reclaimed.node,
+    stateNode: takenOver.node,
     params: resourceParams,
   });
   const emit = durableEmitter(step, opts.emit);
@@ -317,17 +317,17 @@ async function* reconcileReclaimed(
   yield* applyAction(
     step,
     opts,
-    reclaimed,
+    takenOver,
     action,
     {
       ...shared,
       // Names the effects of a create that replaces the resource apart from
       // those of the create that took it over. It is built from the ID of
       // that create, so that it differs at each level of nesting.
-      executionId: `${shared.executionId}/reclaimed`,
+      executionId: `${shared.executionId}/taken-over`,
       emit,
-      persistedOutput: reclaimed.node?.output,
-      prior: reclaimed.node,
+      persistedOutput: takenOver.node?.output,
+      prior: takenOver.node,
     },
     replaceWithout,
   );
@@ -374,12 +374,9 @@ async function* recoverOutputs(
 
   const missing = findMissingOutputs(resource, resource.output);
   if (!opts.dryRun) {
-    const { version: _, ...record } = session.node;
     yield* session.persist({
-      ...record,
-      group: (record.group ?? null) as ResourceGroupRef | null,
+      ...toPersistedState(session.node, shared.dependsOn),
       output: resource.toState(resource.output),
-      dependsOn: shared.dependsOn,
     });
   }
   if (missing) throw missing;
@@ -394,12 +391,9 @@ async function* rewriteRecord(
   resource: BaseResource,
   dependsOn: string[],
 ): AsyncGenerator<any, void, any> {
-  const { version: _, ...record } = session.node;
   yield* session.persist({
-    ...record,
+    ...toPersistedState(session.node, dependsOn),
     provider: resource.provider,
-    group: (record.group ?? null) as ResourceGroupRef | null,
-    dependsOn,
   });
 }
 
@@ -468,7 +462,7 @@ async function* replaceResource(
   // The delete removed the store instance that `session` read, so a write
   // against it would conflict. The record is read again for the create.
   const recreated = yield* openStateSession(createStep, opts, shared.resource);
-  const { reclaimed } = yield* createResourceOperation(createStep, {
+  const { tookOver } = yield* createResourceOperation(createStep, {
     ...created,
     emit: durableEmitter(createStep, opts.emit),
     // The persisted output describes the resource that was just deleted.
@@ -480,7 +474,7 @@ async function* replaceResource(
   });
   // No `replaceWithout`: the params in `created` already leave out the
   // contributions that a replace of the resource must leave out.
-  if (reclaimed) yield* reconcileReclaimed(createStep, opts, created);
+  if (tookOver) yield* reconcileTakenOver(createStep, opts, created);
 }
 
 /**

@@ -132,7 +132,7 @@ export interface BaseResource {
     params: any,
     context?: ResourceOperationContext,
   ) => Promise<{} | void>;
-  find?: (params: any) => Promise<{} | void>;
+  find?: (params: any) => Promise<{}>;
   read?: (key: any, context?: ResourceOperationContext) => Promise<{}>;
   update?: (
     key: any,
@@ -237,7 +237,7 @@ export abstract class Resource<
     params: T["params"],
     context?: ResourceOperationContext,
   ) => Promise<T["primaryKey"]>;
-  find?: (params: T["params"]) => Promise<T["primaryKey"]>;
+  find?: (params: T["params"]) => Promise<T["primaryKey"] & {}>;
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -755,7 +755,7 @@ export type ResourceOperationsOptions<
    * up a create with an unknown outcome, and to delete the resource of a
    * "creating" record.
    */
-  find?: (params: T["params"]) => Promise<T["primaryKey"]>;
+  find?: (params: T["params"]) => Promise<T["primaryKey"] & {}>;
   read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,

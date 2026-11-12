@@ -28,7 +28,7 @@
  *                              record
  *   state:persist:<id>:creating   conditional write of the "creating"
  *                              record, before a create is attempted
- *   state:persist:<id>:reclaimed  conditional write of the record of a
+ *   state:persist:<id>:taken-over conditional write of the record of a
  *                              resource that create took over
  *   state:persist:<id>:restored   conditional write of the record that a
  *                              failed create started from or that the
@@ -50,8 +50,8 @@
  *                              reported as already existing
  *   *:delete:find              the find of the resource of a "creating"
  *                              record, before a delete
- *   *:create:reclaim:read:*    the read of a resource that create took over
- *   *:reclaimed:*              the decision and change that follow a
+ *   *:create:takeover:read:*   the read of a resource that create took over
+ *   *:taken-over:*             the decision and change that follow a
  *                              takeover
  *
  * Opening a store has no step key.
@@ -59,9 +59,9 @@
  * Effect IDs are persisted in the same way. A create attempt's effect ID is
  * notation:create:<execution id>:<resource id>:<n>, with both IDs
  * URI-encoded. A create that follows a takeover in the same execution adds
- * /reclaimed to the execution ID of the create that took the resource over,
+ * /taken-over to the execution ID of the create that took the resource over,
  * so a create after a second takeover uses
- * <execution id>/reclaimed/reclaimed.
+ * <execution id>/taken-over/taken-over.
  *
  * An <id> inside a scope is URI-encoded, so the `:` delimiter is unambiguous.
  * The state: keys are store-handle keys and so are not scope-prefixed: a

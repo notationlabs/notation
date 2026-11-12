@@ -738,11 +738,11 @@ describe("recoverable creates", () => {
   }
 
   it("takes over a resource that an abandoned execution's create made", async () => {
-    const { Named, remote, calls } = defineNamed("test/durable/reclaim-noop");
+    const { Named, remote, calls } = defineNamed("test/durable/takeover-noop");
     const events: ReconcilerEvent[] = [];
     const runtime = createRuntime(
       [new Named("role", { config: { name: "app", path: "/" } as any })],
-      "reclaim-noop",
+      "takeover-noop",
       { failFirstSettle: true, emit: (event) => void events.push(event) },
     );
 
@@ -754,7 +754,7 @@ describe("recoverable creates", () => {
       output: { name: "app" },
     });
 
-    await abandon(runtime, "reclaim-noop", "deploy-1");
+    await abandon(runtime, "takeover-noop", "deploy-1");
     events.length = 0;
     await runtime.run("deploy-2");
 
@@ -774,7 +774,7 @@ describe("recoverable creates", () => {
       expect.objectContaining({
         operation: "create",
         status: "success",
-        reason: "reclaimed",
+        reason: "taken-over",
       }),
     );
     runtime.close();
@@ -783,7 +783,7 @@ describe("recoverable creates", () => {
   it("takes over a resource that existed before the create, and updates it", async () => {
     // As Lambda makes a function's log group when the function first logs.
     const { Named, remote, calls } = defineNamed(
-      "test/durable/reclaim-existing",
+      "test/durable/takeover-existing",
     );
     remote.set("app", { name: "app", path: "/", description: "old" });
     const runtime = createRuntime(
@@ -792,7 +792,7 @@ describe("recoverable creates", () => {
           config: { name: "app", path: "/", description: "new" } as any,
         }),
       ],
-      "reclaim-existing",
+      "takeover-existing",
     );
 
     await runtime.run("deploy-1");
@@ -807,7 +807,7 @@ describe("recoverable creates", () => {
 
   it("updates a param of a resource it took over that the read does not return", async () => {
     const { Named, remote, calls, control } = defineNamed(
-      "test/durable/reclaim-unread",
+      "test/durable/takeover-unread",
     );
     control.unread = ["description"];
     remote.set("app", { name: "app", path: "/", description: "old" });
@@ -817,7 +817,7 @@ describe("recoverable creates", () => {
           config: { name: "app", path: "/", description: "new" } as any,
         }),
       ],
-      "reclaim-unread",
+      "takeover-unread",
     );
 
     await runtime.run("deploy-1");
@@ -833,13 +833,13 @@ describe("recoverable creates", () => {
 
   it("keeps a resource it took over whose immutable param the read does not return", async () => {
     const { Named, remote, calls, control } = defineNamed(
-      "test/durable/reclaim-unread-immutable",
+      "test/durable/takeover-unread-immutable",
     );
     control.unread = ["path"];
     remote.set("app", { name: "app", path: "/elsewhere/" });
     const runtime = createRuntime(
       [new Named("role", { config: { name: "app", path: "/" } as any })],
-      "reclaim-unread-immutable",
+      "takeover-unread-immutable",
     );
 
     await runtime.run("deploy-1");
@@ -854,12 +854,12 @@ describe("recoverable creates", () => {
 
   it("replaces a resource it took over whose immutable param differs from config", async () => {
     const { Named, remote, calls } = defineNamed(
-      "test/durable/reclaim-replace",
+      "test/durable/takeover-replace",
     );
     remote.set("app", { name: "app", path: "/elsewhere/" });
     const runtime = createRuntime(
       [new Named("route", { config: { name: "app", path: "/" } as any })],
-      "reclaim-replace",
+      "takeover-replace",
     );
 
     await runtime.run("deploy-1");
@@ -870,7 +870,7 @@ describe("recoverable creates", () => {
       lastOperation: "create",
       params: { path: "/" },
     });
-    expect(await readHolder(runtime, "reclaim-replace")).toBeNull();
+    expect(await readHolder(runtime, "takeover-replace")).toBeNull();
     runtime.close();
   });
 
@@ -1162,19 +1162,19 @@ describe("recoverable creates", () => {
 
     it("is taken over through find before a create from a creating record makes it again", async () => {
       const { Computed, remote, calls } = defineComputedKey(
-        "test/durable/reclaim-assigned-key",
+        "test/durable/takeover-assigned-key",
         false,
       );
       const runtime = createRuntime(
         [new Computed("api", { config: { name: "app" } as any })],
-        "reclaim-assigned-key",
+        "takeover-assigned-key",
         { failFirstSettle: true },
       );
 
       await expect(runtime.run("deploy-1")).rejects.toMatchObject({
         name: "InfrastructureError",
       });
-      await abandon(runtime, "reclaim-assigned-key", "deploy-1");
+      await abandon(runtime, "takeover-assigned-key", "deploy-1");
       await runtime.run("deploy-2");
 
       expect(calls).toEqual(["create:app"]);
@@ -1250,7 +1250,7 @@ describe("recoverable creates", () => {
 
   it("records what the read observed for a create that its lookup settled, and updates the rest in the same deploy", async () => {
     const { Computed, remote, calls, control } = defineComputedKey(
-      "test/durable/lookup-reclaim",
+      "test/durable/lookup-takeover",
       false,
     );
     control.dropDescription = true;
@@ -1260,7 +1260,7 @@ describe("recoverable creates", () => {
           config: { name: "app", description: "wanted" } as any,
         }),
       ],
-      "lookup-reclaim",
+      "lookup-takeover",
       { failFirstSettle: true },
     );
 
@@ -1359,11 +1359,11 @@ describe("recoverable creates", () => {
 
   it("takes over a recorded resource whose drift read reported it gone", async () => {
     const { Named, calls, control } = defineNamed(
-      "test/durable/reclaim-drift-recreate",
+      "test/durable/takeover-drift-recreate",
     );
     const runtime = createRuntime(
       [new Named("route", { config: { name: "app", path: "/" } as any })],
-      "reclaim-drift-recreate",
+      "takeover-drift-recreate",
       { driftDetection: true },
     );
 

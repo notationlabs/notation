@@ -67,7 +67,7 @@ describe("logger reconciler subscriber", () => {
       event: "reconciler.operation.lifecycle",
       operation: "create",
       status: "success",
-      reason: "reclaimed",
+      reason: "taken-over",
       resourceId: "resource-1",
       resourceType: "test/service/subscriber",
     });

@@ -61,6 +61,19 @@ export type PersistedResourceState = Pick<
   [key: string]: DurableValue;
 };
 
+/** The record to write for `node`, with `dependsOn` as its edges. */
+export function toPersistedState(
+  node: StateNode,
+  dependsOn: string[],
+): PersistedResourceState {
+  const { version: _, ...record } = node;
+  return {
+    ...record,
+    group: (record.group ?? null) as ResourceGroupRef | null,
+    dependsOn,
+  };
+}
+
 /**
  * How the driver writes state. Both are steps so the driver can carry its own
  * concurrency control: in a workflow that is a store write stamped with the
@@ -80,7 +93,7 @@ export type PersistState = (
  * `restored` writes back the record that a failed create started from, or
  * that the replaced resource had. It clears the record if there is none.
  */
-export type PersistStage = "creating" | "reclaimed" | "restored";
+export type PersistStage = "creating" | "taken-over" | "restored";
 
 export type RemoveState = () => AsyncGenerator<unknown, void, unknown>;
 

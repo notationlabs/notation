@@ -93,8 +93,7 @@ export async function findResourceKey(
   resourceParams: Record<string, unknown>,
 ): Promise<DurableObject | null> {
   try {
-    const key = await resource.find!(resourceParams);
-    return key ? resource.toResult(key) : {};
+    return resource.toResult(await resource.find!(resourceParams));
   } catch (error) {
     if (ResourceNotFoundError.is(error)) return null;
     throw error;

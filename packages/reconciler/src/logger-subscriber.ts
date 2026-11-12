@@ -25,7 +25,7 @@ export function createLoggerReconcilerSubscriber(
     logger.info(event.event, event);
     if (
       event.event === "reconciler.operation.lifecycle" &&
-      event.reason === "reclaimed"
+      event.reason === "taken-over"
     ) {
       logger.info(
         `Took over ${event.resourceId}: it already existed, so deploy ` +
