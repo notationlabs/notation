@@ -31,9 +31,11 @@ import {
 } from "../operations";
 import {
   decideAction,
+  decideDriftAction,
   getDependencyIds,
   hasSameEdges,
   recordedEdges,
+  type DriftRead,
   type ResourceAction,
 } from "../plan";
 import { assertOutputsRecoverable } from "../planner";
@@ -76,10 +78,11 @@ export type ReconcileOptions = {
    */
   replaceWithout?: (deleted: ReadonlySet<string>) => ReadonlySet<BaseResource>;
   /**
-   * Decides drift-recreate without reading the remote: the caller has read
-   * the resource and found it gone.
+   * The caller's read of the remote. Deploy decides drift from it, and does
+   * not read the resource again. A resource that the read found gone is
+   * created again, whatever its params.
    */
-  recreate?: boolean;
+  driftRead?: DriftRead;
 };
 
 /**
@@ -119,24 +122,31 @@ export async function* reconcileResource(
       : undefined,
   );
 
-  let action: ResourceAction = options.recreate
-    ? { decision: "drift-recreate" }
-    : decideAction({ resource, stateNode: session.node, params });
+  let action = decideAction({ resource, stateNode: session.node, params });
 
   // Its own scope: when the gate fires, the operation that follows the drift
   // read reads the remote again, and the two reads must not share step keys.
   const driftStep = step.scope("drift-read");
-  action = yield* applyDriftDetection(driftStep, {
-    action,
-    driftDetection: opts.driftDetection,
-    resource,
-    resourceParams: params,
-    persistedOutput: session.node?.output,
-    // No dryRun: a dry run suppresses mutations, not reads, and reading is
-    // how a dry run reports drift at all.
-    emit: durableEmitter(driftStep, opts.emit),
-    maxOperationAttempts: opts.maxOperationAttempts,
-  });
+  const { driftRead } = options;
+  if (driftRead?.kind === "absent") {
+    action = { decision: "drift-recreate" };
+  } else if (driftRead) {
+    if (action.decision === "noop") {
+      action = decideDriftAction({ resource, params, driftRead });
+    }
+  } else {
+    action = yield* applyDriftDetection(driftStep, {
+      action,
+      driftDetection: opts.driftDetection,
+      resource,
+      resourceParams: params,
+      persistedOutput: session.node?.output,
+      // No dryRun: a dry run suppresses mutations, not reads, and reading is
+      // how a dry run reports drift at all.
+      emit: durableEmitter(driftStep, opts.emit),
+      maxOperationAttempts: opts.maxOperationAttempts,
+    });
+  }
 
   if (
     action.decision === "drift-update" ||

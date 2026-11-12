@@ -4165,6 +4165,45 @@ describe("dependency cycles", () => {
     runtime.close();
   });
 
+  it("reads a placeholder that has a record once for drift", async () => {
+    const { worker, bind, calls } = defineWorkers({ readable: true });
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime([a, b], "cycle-drift-kept", {
+      driftDetection: true,
+      emit: (event) => void events.push(event),
+    });
+    await runtime.run("cycle-drift-kept-1");
+    events.length = 0;
+    calls.length = 0;
+
+    await runtime.run("cycle-drift-kept-2");
+
+    expect(calls).toEqual([]);
+    expect(
+      events
+        .filter(
+          (event: any) =>
+            event.event === "reconciler.operation.lifecycle" &&
+            event.operation === "read" &&
+            event.status === "start",
+        )
+        .map((event: any) => event.resourceId),
+    ).toEqual(["a", "b"]);
+    expect(
+      events
+        .filter((event) => event.event === "reconciler.deploy.decision")
+        .map(({ resourceId, decision }: any) => ({ resourceId, decision })),
+    ).toEqual([
+      { resourceId: "b", decision: "noop" },
+      { resourceId: "a", decision: "noop" },
+    ]);
+    runtime.close();
+  });
+
   it("does not trip the create guard in a dry run of a new cycle", async () => {
     const { worker, bind, calls } = defineWorkers();
     const a = worker("a");

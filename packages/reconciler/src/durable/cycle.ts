@@ -4,7 +4,6 @@ import {
   validateParams,
   type BaseResource,
 } from "@notation/resource";
-import type { StateNode } from "@notation/state";
 import {
   ResourceCycleError,
   listIds,
@@ -14,7 +13,7 @@ import {
   type DeployUnit,
 } from "../cycles";
 import { readDriftOperation, updateResourceOperation } from "../operations";
-import { getDependencyIds, type ResourceAction } from "../plan";
+import { getDependencyIds, type DriftRead, type ResourceAction } from "../plan";
 import { assertSameType } from "../resource-type";
 import {
   openStateSession,
@@ -120,7 +119,9 @@ export async function* reconcileCycle(
     },
   });
 
-  const kept: BaseResource[] = [];
+  // The placeholders that the first pass left as they are, each with the
+  // drift read of the first pass, if there was one.
+  const kept = new Map<BaseResource, DriftRead | undefined>();
   for (const resource of cycle.members) {
     if (!cycle.placeholders.includes(resource)) {
       yield* reconcileResource(
@@ -132,28 +133,32 @@ export async function* reconcileCycle(
       continue;
     }
     const placeholderStep = scope(resource, "placeholder");
-    const record = yield* checkPlaceholder(
+    const { recorded, driftRead } = yield* checkPlaceholder(
       placeholderStep.scope("check"),
       resource,
       opts,
     );
-    if (record === "present") {
-      kept.push(resource);
+    if (recorded && driftRead?.kind !== "absent") {
+      kept.set(resource, driftRead);
       continue;
     }
     yield* reconcileResource(placeholderStep, resource, opts, {
       ...options(resource),
       excludeContributionsFrom: members,
-      recreate: record === "absent",
+      driftRead,
     });
   }
+  // Drift detection ran in the first pass for every member. For a kept
+  // placeholder, the first reconcile with its full params decides drift from
+  // the read of the first pass.
+  const settleOpts = { ...opts, driftDetection: false };
   if (opts.dryRun) {
-    for (const resource of kept) {
+    for (const [resource, driftRead] of kept) {
       yield* reconcileResource(
         scope(resource, "settle:1", "settle:1"),
         resource,
-        opts,
-        options(resource),
+        settleOpts,
+        { ...options(resource), driftRead },
       );
     }
     return;
@@ -167,17 +172,18 @@ export async function* reconcileCycle(
       // This reconcile applies the full params of the resource.
       incomplete.delete(resource);
       // This loop's first pass is the first time that deploy reconciles a
-      // placeholder with its full params, so its noop is announced then. A
-      // placeholder that this deploy did not create is checked for drift
-      // then too.
+      // placeholder with its full params, so its noop is announced then.
       const first = pass === 1 && cycle.placeholders.includes(resource);
-      const detectDrift = first && !created.has(resource);
       const before = resource.output as Record<string, unknown> | null;
       yield* reconcileResource(
         scope(resource, `settle:${pass}`, `settle:${pass}`),
         resource,
-        detectDrift ? opts : { ...opts, driftDetection: false },
-        { ...options(resource), quietNoop: !first },
+        settleOpts,
+        {
+          ...options(resource),
+          quietNoop: !first,
+          driftRead: pass === 1 ? kept.get(resource) : undefined,
+        },
       );
       changed.push(...changedOutputs(resource, before));
     }
@@ -194,45 +200,36 @@ export async function* reconcileCycle(
 }
 
 /**
- * Loads the record of a placeholder and its output. A placeholder with a
- * record is "present", unless drift detection reads it and finds it gone,
- * and then it is "absent". The cycle's members that come after it refer to
- * it, so it must exist before they are reconciled. Without drift detection,
- * or without a read, the record is trusted.
+ * Loads the record of a placeholder and its output. With drift detection, it
+ * also reads a placeholder that has a record. The cycle's members that come
+ * after the placeholder refer to it, so deploy must know whether it still
+ * exists before it reconciles them. Without drift detection, or without a
+ * read, there is no `driftRead`, and the record is trusted.
  */
 async function* checkPlaceholder(
   step: DurableStepRunner,
   resource: BaseResource,
   opts: DurableDeployOptions,
-): AsyncGenerator<any, "none" | "present" | "absent", any> {
+): AsyncGenerator<any, { recorded: boolean; driftRead?: DriftRead }, any> {
   const session = yield* openStateSession(step, opts, resource);
   // Repeats the notation:validate check, because validate ran before the
   // hold and the record may have changed since.
   assertSameType(resource, session.node);
-  if (!session.node) return "none";
+  if (!session.node) return { recorded: false };
   resource.setOutput(session.node.output);
-  if (!(opts.driftDetection ?? true) || !resource.read) return "present";
-  return (yield* isGone(step, opts, resource, session.node))
-    ? "absent"
-    : "present";
-}
-
-async function* isGone(
-  step: DurableStepRunner,
-  opts: DurableDeployOptions,
-  resource: BaseResource,
-  node: StateNode,
-): AsyncGenerator<any, boolean, any> {
+  if (!(opts.driftDetection ?? true) || !resource.read) {
+    return { recorded: true };
+  }
   const readStep = step.scope("read");
-  const read = yield* readDriftOperation(readStep, {
+  const driftRead = yield* readDriftOperation(readStep, {
     resource,
-    resourceParams: node.params,
-    persistedOutput: node.output,
+    resourceParams: session.node.params,
+    persistedOutput: session.node.output,
     // No dryRun: a dry run suppresses mutations, not reads.
     emit: durableEmitter(readStep, opts.emit),
     maxOperationAttempts: opts.maxOperationAttempts,
   });
-  return read.kind === "absent";
+  return { recorded: true, driftRead };
 }
 
 /**
