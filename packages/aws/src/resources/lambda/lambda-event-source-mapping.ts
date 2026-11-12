@@ -149,9 +149,7 @@ export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
     create: awsCreate(async (params, _context, token) => {
       const command = new sdk.CreateEventSourceMappingCommand({
         ...params,
-        Tags: token
-          ? { [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
-          : undefined,
+        Tags: { [CREATE_TOKEN_TAG]: createTokenTagValue(token) },
       });
       const result = await runMappingMutation(() =>
         lambdaClient().send(command),

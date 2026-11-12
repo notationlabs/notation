@@ -273,9 +273,10 @@ export const LambdaFunction = lambdaFunctionSchema
         const command = new sdk.CreateFunctionCommand({
           ...functionParams,
           Environment: encodeEnvironment(params.FunctionName, Environment),
-          Tags: token
-            ? { ...params.Tags, [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
-            : params.Tags,
+          Tags: {
+            ...params.Tags,
+            [CREATE_TOKEN_TAG]: createTokenTagValue(token),
+          },
           Code: { ZipFile: await readCode(CodeFilePath, params.CodeSha256) },
         });
 

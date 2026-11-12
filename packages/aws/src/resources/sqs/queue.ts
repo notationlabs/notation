@@ -238,9 +238,7 @@ export const Queue = queueSchema.defineOperations({
           ...toAttributes(attributes),
           ...(FifoQueue ? { FifoQueue: "true" } : {}),
         },
-        tags: token
-          ? { [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
-          : undefined,
+        tags: { [CREATE_TOKEN_TAG]: createTokenTagValue(token) },
       });
       let QueueUrl: string;
       try {
@@ -254,7 +252,7 @@ export const Queue = queueSchema.defineOperations({
         }
         throw error;
       }
-      if (token && !(await queueHasToken(QueueUrl, token))) {
+      if (!(await queueHasToken(QueueUrl, token))) {
         throw new ResourceAlreadyExistsError(
           `An SQS queue named ${QueueName} was made by another writer after ` +
             `create checked for it`,

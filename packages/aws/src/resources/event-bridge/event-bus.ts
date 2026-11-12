@@ -42,9 +42,7 @@ export const EventBus = eventBusSchema.defineOperations({
       await eventBridgeClient().send(
         new sdk.CreateEventBusCommand({
           Name: params.Name,
-          Tags: token
-            ? [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }]
-            : undefined,
+          Tags: [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }],
         }),
       );
     },

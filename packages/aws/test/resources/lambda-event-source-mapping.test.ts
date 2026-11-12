@@ -36,7 +36,11 @@ describe("LambdaEventSourceMapping", () => {
     });
 
     await expect(
-      createMapping().create({ EventSourceArn: queueArn, FunctionName: "app" }),
+      createMapping().create(
+        { EventSourceArn: queueArn, FunctionName: "app" },
+        undefined,
+        "token",
+      ),
     ).rejects.toBeInstanceOf(ResourceOperationPendingError);
   });
 

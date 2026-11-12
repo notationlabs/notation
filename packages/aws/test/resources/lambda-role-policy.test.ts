@@ -63,7 +63,7 @@ describe("LambdaRolePolicy document", () => {
       .spyOn(iamClient(), "send")
       .mockImplementation(async () => ({}));
 
-    await policy.create(await policy.getParams());
+    await policy.create(await policy.getParams(), undefined, "token");
 
     const command = send.mock.calls[0]![0] as sdk.PutRolePolicyCommand;
     expect(command).toBeInstanceOf(sdk.PutRolePolicyCommand);
@@ -99,9 +99,9 @@ describe("LambdaRolePolicy document", () => {
     policy.contribute({ PolicyDocument: { Statement: [] } });
     const send = vi.spyOn(iamClient(), "send");
 
-    await expect(policy.create(await policy.getParams())).rejects.toThrow(
-      "Role policy app-role-policy has no statements",
-    );
+    await expect(
+      policy.create(await policy.getParams(), undefined, "token"),
+    ).rejects.toThrow("Role policy app-role-policy has no statements");
     expect(send).not.toHaveBeenCalled();
   });
 });

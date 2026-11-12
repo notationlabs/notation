@@ -234,15 +234,15 @@ An issue in a statement that holds an unknown is still dropped, because the stat
 
 `defineOperations` accepts CRUD handlers and parameter derivation:
 
-| Field          | Required | Signature / Description                                                                                                                                                                                                      |
-| -------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ownership`    | no       | `"token"` or `"parent"` – how the reconciler proves that one of Notation's creates made a resource. See [Resources that already exist](#resources-that-already-exist).                                                       |
-| `create`       | yes      | `(params, context?, token?) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key. `token` is unique to the execution and the resource, and every attempt of the execution's create receives it. |
-| `find`         | no       | `(params, token) => Promise<ComputedPrimaryKey<S>>` – find the resource that the create with `token` made, or throw `ResourceNotFoundError`. Requires `ownership`. See [Unknown create outcomes](#unknown-create-outcomes).  |
-| `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                                                                                         |
-| `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                                                                           |
-| `delete`       | yes      | `(key, state, context?, deletion?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone.                                                            |
-| `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                                                                                        |
+| Field          | Required | Signature / Description                                                                                                                                                                                                     |
+| -------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ownership`    | no       | `"token"` or `"parent"` – how the reconciler proves that one of Notation's creates made a resource. See [Resources that already exist](#resources-that-already-exist).                                                      |
+| `create`       | yes      | `(params, context, token) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key. `token` is unique to the execution and the resource, and every attempt of the execution's create receives it.  |
+| `find`         | no       | `(params, token) => Promise<ComputedPrimaryKey<S>>` – find the resource that the create with `token` made, or throw `ResourceNotFoundError`. Requires `ownership`. See [Unknown create outcomes](#unknown-create-outcomes). |
+| `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                                                                                        |
+| `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                                                                          |
+| `delete`       | yes      | `(key, state, context?, deletion?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone.                                                           |
+| `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                                                                                       |
 
 The reconciler records params, results and state, so each must be a durable value as `@notation/durable` 0.9.0 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
 
@@ -338,7 +338,7 @@ ownership: "token",
 create: async (params, _context, token) => {
   try {
     const result = await client.send(
-      new CreateApiCommand({ ...params, Tags: { ...params.Tags, [TOKEN_TAG]: token! } }),
+      new CreateApiCommand({ ...params, Tags: { ...params.Tags, [TOKEN_TAG]: token } }),
     );
     return { ApiId: result.ApiId! };
   } catch (error) {
@@ -374,7 +374,7 @@ create: awsCreate(
     await iam.send(
       new CreateRoleCommand({
         ...params,
-        Tags: token ? [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }] : undefined,
+        Tags: [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }],
       }),
     );
   },

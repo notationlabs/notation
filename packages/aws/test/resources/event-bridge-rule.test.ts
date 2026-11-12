@@ -235,18 +235,6 @@ test("create refuses a rule that another writer made after the check, before it 
   ]);
 });
 
-test("create without a token does not delete the rule when the targets could not be put", async () => {
-  mockFailedEntries(sdk.PutTargetsCommand);
-  const params = { ...key, Targets: [{ Id: "bad-fn", Arn: "arn:bad-fn" }] };
-
-  const created = rule.create!(params, undefined, undefined);
-  await expect(created).rejects.toThrow(/the rule was not deleted/);
-  await expect(created).rejects.not.toSatisfy(ResourceAlreadyExistsError.is);
-  const sent = sentCommands().map((c) => c.constructor);
-  expect(sent).not.toContain(sdk.RemoveTargetsCommand);
-  expect(sent).not.toContain(sdk.DeleteRuleCommand);
-});
-
 test("find returns for a rule with the create token, and not for another", async () => {
   send.mockImplementation(async (command: any) => {
     if (command instanceof sdk.DescribeRuleCommand) {

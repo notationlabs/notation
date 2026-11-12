@@ -137,9 +137,10 @@ export const Api = apiSchema.defineOperations({
   // An API's ID is assigned by AWS, and its name need not be unique, so the
   // create token is recorded as a tag for `find` to search for.
   create: awsCreate(async (params, _context, token) => {
-    const tags = token
-      ? { ...params.Tags, [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
-      : params.Tags;
+    const tags = {
+      ...params.Tags,
+      [CREATE_TOKEN_TAG]: createTokenTagValue(token),
+    };
     const command = new sdk.CreateApiCommand({ ...params, Tags: tags });
     const result = await apiGatewayClient().send(command);
     return { ApiId: result.ApiId! };

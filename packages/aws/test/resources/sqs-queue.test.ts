@@ -31,19 +31,22 @@ function mockSend(respond: (command: unknown) => unknown) {
     .mockImplementation(async (command) => respond(command));
 }
 
+/** Answers the calls of a create of a queue that does not exist yet. */
+function respondToCreate(command: unknown) {
+  if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
+  if (command instanceof sdk.ListQueueTagsCommand) {
+    return { Tags: { [CREATE_TOKEN_TAG]: createTokenTagValue("token") } };
+  }
+  return { QueueUrl: url };
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("SQS queue", () => {
   it("creates the queue with its attributes as strings and the create token", async () => {
-    const send = mockSend((command) => {
-      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
-      if (command instanceof sdk.ListQueueTagsCommand) {
-        return { Tags: { [CREATE_TOKEN_TAG]: createTokenTagValue("token") } };
-      }
-      return { QueueUrl: url };
-    });
+    const send = mockSend(respondToCreate);
 
     const key = await queue.create(
       { QueueName: "orders", VisibilityTimeout: 60, FifoQueue: false },
@@ -61,19 +64,20 @@ describe("SQS queue", () => {
   });
 
   it("creates the redrive policy as JSON and the FIFO attributes as strings", async () => {
-    const send = mockSend((command) => {
-      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
-      return { QueueUrl: url };
-    });
+    const send = mockSend(respondToCreate);
 
-    await queue.create({
-      QueueName: "orders.fifo",
-      FifoQueue: true,
-      ContentBasedDeduplication: true,
-      DeduplicationScope: "messageGroup",
-      MaximumMessageSize: 2_048,
-      RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 3 },
-    });
+    await queue.create(
+      {
+        QueueName: "orders.fifo",
+        FifoQueue: true,
+        ContentBasedDeduplication: true,
+        DeduplicationScope: "messageGroup",
+        MaximumMessageSize: 2_048,
+        RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 3 },
+      },
+      undefined,
+      "token",
+    );
 
     const command = send.mock.calls[1]![0] as sdk.CreateQueueCommand;
     expect(command.input.Attributes).toEqual({
@@ -89,35 +93,37 @@ describe("SQS queue", () => {
   });
 
   it("creates the queue without the empty redrive policies", async () => {
-    const send = mockSend((command) => {
-      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
-      return { QueueUrl: url };
-    });
+    const send = mockSend(respondToCreate);
 
-    await queue.create({
-      QueueName: "orders",
-      VisibilityTimeout: 60,
-      RedrivePolicy: "",
-      RedriveAllowPolicy: "",
-    });
+    await queue.create(
+      {
+        QueueName: "orders",
+        VisibilityTimeout: 60,
+        RedrivePolicy: "",
+        RedriveAllowPolicy: "",
+      },
+      undefined,
+      "token",
+    );
 
     const command = send.mock.calls[1]![0] as sdk.CreateQueueCommand;
     expect(command.input.Attributes).toEqual({ VisibilityTimeout: "60" });
   });
 
   it("creates the redrive allow policy as JSON", async () => {
-    const send = mockSend((command) => {
-      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
-      return { QueueUrl: url };
-    });
+    const send = mockSend(respondToCreate);
 
-    await queue.create({
-      QueueName: "orders-dlq",
-      RedriveAllowPolicy: {
-        redrivePermission: "byQueue",
-        sourceQueueArns: [sourceArn],
+    await queue.create(
+      {
+        QueueName: "orders-dlq",
+        RedriveAllowPolicy: {
+          redrivePermission: "byQueue",
+          sourceQueueArns: [sourceArn],
+        },
       },
-    });
+      undefined,
+      "token",
+    );
 
     const command = send.mock.calls[1]![0] as sdk.CreateQueueCommand;
     expect(command.input.Attributes).toEqual({
@@ -131,7 +137,7 @@ describe("SQS queue", () => {
   it("reports a queue that exists already as ResourceAlreadyExistsError", async () => {
     const send = mockSend(() => ({ QueueUrl: url }));
 
-    const created = queue.create({ QueueName: "orders" });
+    const created = queue.create({ QueueName: "orders" }, undefined, "token");
     await expect(created).rejects.toThrow(
       "An SQS queue named orders already exists",
     );

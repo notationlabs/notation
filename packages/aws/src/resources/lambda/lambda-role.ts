@@ -101,9 +101,7 @@ export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
     async (params, _context, token) => {
       const command = new sdk.CreateRoleCommand({
         ...params,
-        Tags: token
-          ? [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }]
-          : undefined,
+        Tags: [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }],
       });
       await iamClient().send(command);
     },

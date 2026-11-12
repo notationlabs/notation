@@ -53,7 +53,7 @@ describe("LambdaFunctionConcurrency", () => {
     const resource = concurrency();
     const params = await resource.getParams();
 
-    await resource.create(params);
+    await resource.create(params, undefined, "token");
     await resource.update!(key, params, params, {} as any);
 
     expect(send).toHaveBeenCalledTimes(2);

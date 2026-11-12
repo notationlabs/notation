@@ -167,7 +167,7 @@ describe("LambdaPermission", () => {
       throw { $metadata: { httpStatusCode: 503 } };
     });
     await expect(
-      permission().create(await permission().getParams()),
+      permission().create(await permission().getParams(), undefined, "token"),
     ).rejects.toSatisfy(ResourceCreationUnknownError.is);
   });
 
@@ -180,7 +180,7 @@ describe("LambdaPermission", () => {
       });
     });
     await expect(
-      permission().create(await permission().getParams()),
+      permission().create(await permission().getParams(), undefined, "token"),
     ).rejects.toSatisfy(ResourceAlreadyExistsError.is);
   });
 
@@ -196,7 +196,7 @@ describe("LambdaPermission", () => {
       });
     });
     await expect(
-      permission().create(await permission().getParams()),
+      permission().create(await permission().getParams(), undefined, "token"),
     ).rejects.toBeInstanceOf(sdk.ResourceConflictException);
   });
 });

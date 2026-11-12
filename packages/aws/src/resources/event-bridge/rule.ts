@@ -290,12 +290,10 @@ export const EventBridgeRule = eventBridgeRuleSchema
       const { RuleArn } = await eventBridgeClient().send(
         new sdk.PutRuleCommand({
           ...ruleConfig,
-          Tags: token
-            ? [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }]
-            : undefined,
+          Tags: [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }],
         }),
       );
-      if (token && !(await ruleHasToken(RuleArn!, token))) {
+      if (!(await ruleHasToken(RuleArn!, token))) {
         throw new ResourceAlreadyExistsError(
           `EventBridge rule "${params.Name}" was made by another writer ` +
             `after create checked for it`,
@@ -316,7 +314,7 @@ export const EventBridgeRule = eventBridgeRuleSchema
       } catch (error) {
         // A rule kept without its targets would be found by the create's
         // lookup, and recorded with targets it does not have.
-        await deleteCreatedRule(key, token, errorMessage(error));
+        await deleteCreatedRule(key, errorMessage(error));
       }
     }),
     find: async (params, token) => {
@@ -394,27 +392,17 @@ export const EventBridgeRule = eventBridgeRuleSchema
     return derived;
   });
 
-/**
- * Deletes the rule, then throws. Without a token, create cannot tell that it
- * made the rule, so the rule is kept.
- */
+/** Deletes the rule, then throws. */
 async function deleteCreatedRule(
   key: sdk.DescribeRuleCommandInput,
-  token: string | undefined,
   message: string,
 ): Promise<never> {
-  const notPut = `The targets of EventBridge rule "${key.Name}" were not put (${message})`;
-  if (token === undefined) {
-    throw new Error(
-      `${notPut}, and create had no token to show that it made the rule, ` +
-        `so the rule was not deleted`,
-    );
-  }
   try {
     await deleteRule(key);
   } catch (error) {
     throw new ResourceCreationUnknownError(
-      `${notPut}, and the rule could not be deleted: ${errorMessage(error)}`,
+      `The targets of EventBridge rule "${key.Name}" were not put ` +
+        `(${message}), and the rule could not be deleted: ${errorMessage(error)}`,
       { cause: error },
     );
   }

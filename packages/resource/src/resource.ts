@@ -132,8 +132,8 @@ export interface BaseResource {
   readonly ownership?: ResourceOwnership;
   create: (
     params: any,
-    context?: ResourceOperationContext,
-    token?: string,
+    context: ResourceOperationContext | undefined,
+    token: string,
   ) => Promise<{} | void>;
   find?: (params: any, token: string) => Promise<{} | void>;
   read?: (key: any, context?: ResourceOperationContext) => Promise<{}>;
@@ -239,8 +239,8 @@ export abstract class Resource<
   ownership?: ResourceOwnership;
   abstract create: (
     params: T["params"],
-    context?: ResourceOperationContext,
-    token?: string,
+    context: ResourceOperationContext | undefined,
+    token: string,
   ) => Promise<T["primaryKey"]>;
   find?: (params: T["params"], token: string) => Promise<T["primaryKey"]>;
   abstract read?: (
@@ -785,8 +785,8 @@ export type ResourceOperationsOptions<
    */
   create: (
     params: T["params"],
-    context?: ResourceOperationContext,
-    token?: string,
+    context: ResourceOperationContext | undefined,
+    token: string,
   ) => Promise<T["primaryKey"]>;
   /**
    * Finds the resource that a create with `token` made, and returns what

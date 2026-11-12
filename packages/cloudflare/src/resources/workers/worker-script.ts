@@ -185,11 +185,7 @@ export const WorkerScript = workerScriptSchema
           `A Worker named ${params.ScriptName} already exists in the Cloudflare account ${params.AccountId}`,
         );
       }
-      await cloudflareCreate(upload)(
-        params,
-        [],
-        token ? [createTokenTag(token)] : undefined,
-      );
+      await cloudflareCreate(upload)(params, [], [createTokenTag(token)]);
     },
 
     find: async (params, token) => {

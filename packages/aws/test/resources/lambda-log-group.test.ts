@@ -132,7 +132,7 @@ describe("LambdaLogGroup create", () => {
       },
     );
 
-    await expect(logGroup.create(params)).rejects.toSatisfy(
+    await expect(logGroup.create(params, undefined, "token")).rejects.toSatisfy(
       ResourceCreationUnknownError.is,
     );
   });
@@ -145,7 +145,7 @@ describe("LambdaLogGroup create", () => {
       });
     });
 
-    await expect(logGroup.create(params)).rejects.toSatisfy(
+    await expect(logGroup.create(params, undefined, "token")).rejects.toSatisfy(
       ResourceAlreadyExistsError.is,
     );
   });
