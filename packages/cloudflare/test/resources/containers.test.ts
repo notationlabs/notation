@@ -284,6 +284,22 @@ describe("ContainerRegistry", () => {
 
   const key = { AccountId: "acc", Domain: "docker.io" };
 
+  it("rejects an auth with a key that Cloudflare doesn't know", async () => {
+    const validate = (value: unknown) =>
+      registry.schema.Auth.value["~standard"].validate(value);
+    expect(
+      (await validate({ ...params.Auth, password: "x" })).issues,
+    ).toBeDefined();
+    expect(
+      (
+        await validate({
+          ...params.Auth,
+          private_credential: { ...params.Auth.private_credential, id: "x" },
+        })
+      ).issues,
+    ).toBeDefined();
+  });
+
   it("configures the registry after it checks that none is configured", async () => {
     mockFetch((call) => (call.method === "GET" ? ok([]) : ok({})));
 
@@ -416,12 +432,28 @@ describe("ContainerApplication configuration", () => {
   it("accepts a configuration with every supported key", async () => {
     const result = await validate({
       image: "img:1",
-      instance_type: "basic",
       vcpu: 1,
       memory_mib: 1024,
       environment_variables: [{ name: "A", value: "1" }],
       network: { assign_ipv4: "predefined", mode: "public" },
     });
+    expect(result.issues).toBeUndefined();
+  });
+
+  it.each([{ vcpu: 1 }, { memory_mib: 1024 }])(
+    "rejects instance_type together with %j",
+    async (resources) => {
+      const result = await validate({
+        image: "img:1",
+        instance_type: "basic",
+        ...resources,
+      });
+      expect(result.issues).toBeDefined();
+    },
+  );
+
+  it("accepts instance_type on its own", async () => {
+    const result = await validate({ image: "img:1", instance_type: "basic" });
     expect(result.issues).toBeUndefined();
   });
 });

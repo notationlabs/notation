@@ -16,6 +16,8 @@ import {
   getApplication,
   isApplicationNotFound,
   listApplications,
+  NAMESPACE_HAS_APPLICATION,
+  NAMESPACE_NOT_CONTAINER_ENABLED,
   rollOutConfiguration,
   updateApplication,
   type ContainerConfiguration,
@@ -101,11 +103,19 @@ type Params = ContainerApplicationSchema["CreateParams"];
  * read doesn't return `Configuration`, because Cloudflare fills in defaults
  * for keys that were not set, so a change made outside notation to the
  * configuration is not seen.
+ *
+ * Cloudflare may merge a rollout's target configuration with the current
+ * configuration. If it does, a key that is removed from `Configuration` stays
+ * in force, and the read can't show it. This has not been checked against the
+ * live API. A deploy soon after another may fail while the earlier rollout
+ * is still running.
  */
 export const ContainerApplication = containerApplicationSchema
   .defineOperations({
     // Cloudflare refuses a second application for a namespace, so the create
-    // can't take over an application that it didn't make.
+    // can't take over an existing application. `find` can: after a process
+    // stop, it adopts the application with the name and the namespace, even
+    // if this deploy didn't make it.
     create: cloudflareCreate(async (params) => {
       try {
         const application = await createApplication(params.AccountId, {
@@ -121,7 +131,7 @@ export const ContainerApplication = containerApplicationSchema
     }),
 
     // Only one application can use a namespace, so the application with the
-    // namespace and the name is the one that the create made.
+    // namespace and the name is taken to be the one that the create made.
     find: async (params) => {
       const applications = await listApplications(params.AccountId);
       const application = applications.find(
@@ -206,13 +216,13 @@ function createError(params: Params, error: unknown): unknown {
       { retryAfterMs: 5_000, cause: error },
     );
   }
-  if (error.hasCode(1608)) {
+  if (error.hasCode(NAMESPACE_HAS_APPLICATION)) {
     return new Error(
-      `The Durable Object namespace ${namespace} already has a container application, and a namespace can have only one. Delete the other application, or use another namespace.`,
+      `The Durable Object namespace ${namespace} already has a container application, and a namespace can have only one. The application may come from an earlier attempt of this deploy. Delete the other application, or use another namespace.`,
       { cause: error },
     );
   }
-  if (error.hasCode(1607)) {
+  if (error.hasCode(NAMESPACE_NOT_CONTAINER_ENABLED)) {
     return new Error(
       `The Durable Object namespace ${namespace} can't run containers. The Worker that hosts the namespace must declare its class as a container class. Notation's WorkerScript doesn't support container classes yet.`,
       { cause: error },

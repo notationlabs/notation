@@ -4,6 +4,12 @@ import { CloudflareApiError, cloudflare } from "./client";
 /** Cloudflare's error code for a container application that doesn't exist. */
 const APPLICATION_NOT_FOUND = 1609;
 
+/** Cloudflare's error code for a namespace whose class is not a container class. */
+export const NAMESPACE_NOT_CONTAINER_ENABLED = 1607;
+
+/** Cloudflare's error code for a namespace that already has an application. */
+export const NAMESPACE_HAS_APPLICATION = 1608;
+
 export const isApplicationNotFound = (error: unknown): boolean =>
   error instanceof CloudflareApiError && error.hasCode(APPLICATION_NOT_FOUND);
 
@@ -11,32 +17,41 @@ const assignIpSchema = v.picklist(["none", "predefined"]);
 
 // Cloudflare rejects a configuration with a key it doesn't know, so the
 // object is strict and a misspelt key fails before the request.
-export const configurationSchema = v.strictObject({
-  /**
-   * Pin the image by its digest, such as `registry.cloudflare.com/<account>/app@sha256:...`.
-   * A rollout starts only when `Configuration` changes, so pushing a new image
-   * under the same tag starts no rollout.
-   */
-  image: v.string(),
-  instance_type: v.optional(v.string()),
-  vcpu: v.optional(v.number()),
-  memory_mib: v.optional(v.number()),
-  /**
-   * Don't put secrets here. The values are stored as plain text in state and
-   * shown in plan output.
-   */
-  environment_variables: v.optional(
-    v.array(v.strictObject({ name: v.string(), value: v.string() })),
+export const configurationSchema = v.pipe(
+  v.strictObject({
+    /**
+     * Pin the image by its digest, such as `registry.cloudflare.com/<account>/app@sha256:...`.
+     * A rollout starts only when `Configuration` changes, so pushing a new image
+     * under the same tag starts no rollout.
+     */
+    image: v.string(),
+    instance_type: v.optional(v.string()),
+    vcpu: v.optional(v.number()),
+    memory_mib: v.optional(v.number()),
+    /**
+     * Don't put secrets here. The values are stored as plain text in state and
+     * shown in plan output.
+     */
+    environment_variables: v.optional(
+      v.array(v.strictObject({ name: v.string(), value: v.string() })),
+    ),
+    network: v.optional(
+      v.strictObject({
+        /** `predefined` makes the container public, and can't be combined with `mode: "private"`. */
+        assign_ipv4: v.optional(assignIpSchema),
+        assign_ipv6: v.optional(assignIpSchema),
+        mode: v.optional(v.picklist(["private", "public"])),
+      }),
+    ),
+  }),
+  v.check(
+    (configuration) =>
+      configuration.instance_type === undefined ||
+      (configuration.vcpu === undefined &&
+        configuration.memory_mib === undefined),
+    "Set either instance_type, or vcpu and memory_mib, not both",
   ),
-  network: v.optional(
-    v.strictObject({
-      /** `predefined` makes the container public, and can't be combined with `mode: "private"`. */
-      assign_ipv4: v.optional(assignIpSchema),
-      assign_ipv6: v.optional(assignIpSchema),
-      mode: v.optional(v.picklist(["private", "public"])),
-    }),
-  ),
-});
+);
 
 export type ContainerConfiguration = v.InferOutput<typeof configurationSchema>;
 
@@ -141,9 +156,9 @@ export const registryKindSchema = v.picklist(["ECR", "DockerHub", "GAR"]);
 
 export type RegistryKind = v.InferOutput<typeof registryKindSchema>;
 
-export const registryAuthSchema = v.object({
+export const registryAuthSchema = v.strictObject({
   /** The Secrets Store secret that holds the private part of the credential. */
-  private_credential: v.object({
+  private_credential: v.strictObject({
     store_id: v.string(),
     secret_name: v.string(),
   }),

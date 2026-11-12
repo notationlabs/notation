@@ -85,7 +85,7 @@ export const ContainerRegistry = containerRegistrySchema
     create: async (params) => {
       if (await findRegistry(params.AccountId, params.Domain)) {
         throw new Error(
-          `The Cloudflare account ${params.AccountId} already has credentials for the registry ${params.Domain}. Delete them before notation can manage them.`,
+          `The Cloudflare account ${params.AccountId} already has credentials for the registry ${params.Domain}. They may come from an earlier attempt of this deploy. Delete them before notation can manage them.`,
         );
       }
       await cloudflareCreate(createRegistry)(params.AccountId, {
