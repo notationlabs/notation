@@ -173,25 +173,6 @@ describe("WorkerScript", () => {
     ).rejects.toSatisfy(ResourceNotFoundError.is);
   });
 
-  it("keeps the Worker's tags, with the create token's tag, on an update", async () => {
-    const tags = ["notation-create-token-abc", "team:api"];
-    mockFetch((call) => (call.method === "GET" ? ok({ tags }) : ok({})));
-
-    await script.update!(
-      { AccountId: "acc", ScriptName: "app--dev--api" },
-      {} as any,
-      params,
-      params,
-    );
-
-    expect(calls[0]!.url).toBe(
-      "https://api.cloudflare.com/client/v4/accounts/acc/workers/scripts/app--dev--api/script-settings",
-    );
-    expect(calls[1]!.method).toBe("PUT");
-    const { metadata } = await uploadedMetadata(calls[1]!);
-    expect(metadata.tags).toEqual(tags);
-  });
-
   it("fails when the bundle changed after the params were computed", async () => {
     mockFetch(() => fail(404, 10007));
 
@@ -352,7 +333,9 @@ describe("WorkerScript", () => {
       },
     );
 
-    const { metadata } = await uploadedMetadata(calls[1]!);
+    expect(calls).toHaveLength(1);
+    const { metadata } = await uploadedMetadata(calls[0]!);
+    expect(metadata).not.toHaveProperty("tags");
     expect(metadata.exports).toEqual({
       Tally: { type: "durable-object", storage: "sqlite" },
       Counter: {

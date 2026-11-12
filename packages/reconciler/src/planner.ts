@@ -281,7 +281,7 @@ function mayTakeOver(
 ): boolean {
   if (decision !== "create" && decision !== "drift-recreate") return false;
   if (resource.ownership === "parent") return true;
-  return (
-    resource.ownership === "token" && (stateNode?.creates?.length ?? 0) > 0
-  );
+  // Only a "creating" record names executions whose tokens can prove that
+  // an existing resource is Notation's.
+  return resource.ownership === "token" && isCreatingRecord(stateNode);
 }

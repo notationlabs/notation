@@ -814,12 +814,49 @@ describe("recoverable creates", () => {
     runtime.close();
   });
 
-  it("takes over a recorded resource whose drift read reported it gone", async () => {
-    const { Named, calls, control } = defineNamed(
-      "test/durable/reclaim-drift-recreate",
+  it("refuses a recorded resource of a token class whose drift read reported it gone, and writes its record back", async () => {
+    const { Named, remote, calls, control } = defineNamed(
+      "test/durable/drift-recreate-refused",
     );
     const runtime = createRuntime(
       [new Named("role", { config: { name: "app", path: "/" } as any })],
+      "drift-recreate-refused",
+      { driftDetection: true },
+    );
+
+    await runtime.run("deploy-1");
+    expect(await runtime.state.get("role")).not.toHaveProperty("creates");
+    control.hiddenReads = 1;
+    // The resource has deploy-1's token, which the record does not name.
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "Cannot create role: app already exists. Deploy does not take over " +
+        "the existing resource, because nothing proves that one of " +
+        "Notation's creates made it.",
+    );
+
+    expect(calls).toEqual(["create:app", "create:app"]);
+    expect(remote.size).toBe(1);
+    // The record describes a resource that the drift read missed, so the
+    // next deploy reads it again.
+    const record = await runtime.state.get("role");
+    expect(record).toMatchObject({
+      lastOperation: "create",
+      output: { name: "app", path: "/" },
+    });
+    expect(record).not.toHaveProperty("creates");
+
+    await runtime.run("deploy-3");
+    expect(calls).toEqual(["create:app", "create:app"]);
+    runtime.close();
+  });
+
+  it("takes over a recorded resource of a parent class whose drift read reported it gone", async () => {
+    const { Named, calls, control } = defineNamed(
+      "test/durable/reclaim-drift-recreate",
+      "parent",
+    );
+    const runtime = createRuntime(
+      [new Named("route", { config: { name: "app", path: "/" } as any })],
       "reclaim-drift-recreate",
       { driftDetection: true },
     );
@@ -829,7 +866,7 @@ describe("recoverable creates", () => {
     await runtime.run("deploy-2");
 
     expect(calls).toEqual(["create:app", "create:app"]);
-    expect(await runtime.state.get("role")).toMatchObject({
+    expect(await runtime.state.get("route")).toMatchObject({
       lastOperation: "create",
       params: { name: "app", path: "/" },
     });
@@ -922,27 +959,68 @@ describe("recoverable creates", () => {
     return { Computed, remote, calls, control };
   }
 
-  it("takes over a recorded resource with a computed key whose drift read reported it gone", async () => {
-    const { Computed, remote, calls, control } = defineComputedKey(
-      "test/durable/reclaim-drift-computed-key",
-      true,
+  it("takes over the resource that an abandoned drift-recreate made, by the token of its execution", async () => {
+    const { Computed, remote, calls } = defineComputedKey(
+      "test/durable/drift-recreate-unknown",
+      false,
     );
     const runtime = createRuntime(
-      [new Computed("queue", { config: { name: "app" } as any })],
-      "reclaim-drift-computed-key",
-      { driftDetection: true },
+      [new Computed("api", { config: { name: "app" } as any })],
+      "drift-recreate-unknown",
+      { driftDetection: true, failSettle: 2 },
     );
 
     await runtime.run("deploy-1");
-    control.hiddenReads = 1;
+    remote.clear();
+    // deploy-2's create makes app/1, and the process dies before the
+    // outcome is recorded.
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    expect([...remote.keys()]).toEqual(["app/1"]);
+    expect(await runtime.state.get("api")).toMatchObject({
+      lastOperation: "creating",
+      output: { url: "app/0", name: "app" },
+      creates: ["deploy-2"],
+    });
+
+    await abandon(runtime, "drift-recreate-unknown", "deploy-2");
+    await runtime.run("deploy-3");
+
+    // find matched deploy-2's token before deploy-3's create.
+    expect(calls).toEqual(["create:app", "create:app"]);
+    expect([...remote.keys()]).toEqual(["app/1"]);
+    const record = await runtime.state.get("api");
+    expect(record).toMatchObject({
+      lastOperation: "create",
+      output: { url: "app/1", name: "app" },
+    });
+    expect(record).not.toHaveProperty("creates");
+    runtime.close();
+  });
+
+  it("takes over the resource that a drift-recreate made when the same execution runs again", async () => {
+    const { Computed, remote, calls } = defineComputedKey(
+      "test/durable/drift-recreate-lookup",
+      false,
+    );
+    const runtime = createRuntime(
+      [new Computed("api", { config: { name: "app" } as any })],
+      "drift-recreate-lookup",
+      { driftDetection: true, failSettle: 2 },
+    );
+
+    await runtime.run("deploy-1");
+    remote.clear();
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
     await runtime.run("deploy-2");
 
     expect(calls).toEqual(["create:app", "create:app"]);
-    expect(remote.size).toBe(1);
-    expect(await runtime.state.get("queue")).toMatchObject({
+    expect(await runtime.state.get("api")).toMatchObject({
       lastOperation: "create",
-      output: { url: "app/0", name: "app" },
-      creates: ["deploy-1"],
+      output: { url: "app/1", name: "app" },
     });
     runtime.close();
   });
@@ -966,11 +1044,13 @@ describe("recoverable creates", () => {
 
     expect(calls).toEqual(["create:app"]);
     expect(remote.size).toBe(1);
-    expect(await runtime.state.get("api")).toMatchObject({
+    const record = await runtime.state.get("api");
+    expect(record).toMatchObject({
       lastOperation: "create",
       output: { url: "app/0" },
-      creates: ["deploy-1"],
     });
+    // The takeover replaces the "creating" record, and `creates` with it.
+    expect(record).not.toHaveProperty("creates");
     runtime.close();
   });
 
@@ -1371,6 +1451,70 @@ describe("recoverable creates", () => {
     runtime.close();
   });
 
+  it("deletes a resource with a provider-assigned key by the key that the creating record of a drift-recreate kept", async () => {
+    const remote = new Set<string>();
+    const calls: string[] = [];
+    let hiddenReads = 0;
+    let failCreate: Error | undefined;
+    const Assigned = resource({
+      type: "test/durable/creating-drift-assigned-key",
+      provider: "test",
+    })
+      .defineSchema({
+        remoteId: {
+          value: v.string(),
+          presence: "required",
+          propertyType: "computed",
+          primaryKey: true,
+        },
+      } as any)
+      .defineOperations({
+        create: (async () => {
+          if (failCreate) throw failCreate;
+          remote.add("integration-1");
+          return { remoteId: "integration-1" };
+        }) as any,
+        ownership: "parent",
+        read: async (key: any) => {
+          if (hiddenReads > 0 || !remote.has(key.remoteId)) {
+            hiddenReads -= 1;
+            throw new ResourceNotFoundError(`${key.remoteId} not found`);
+          }
+          return { remoteId: key.remoteId };
+        },
+        delete: async (key: any) => {
+          calls.push(`delete:${key.remoteId}`);
+          remote.delete(key.remoteId);
+        },
+      });
+    const runtime = createRuntime(
+      [new Assigned("integration")],
+      "creating-drift-assigned-key",
+      { driftDetection: true },
+    );
+
+    await runtime.run("deploy-1");
+    // The drift read misses the resource, and the create that follows makes
+    // nothing and ends with an unknown outcome.
+    hiddenReads = 1;
+    failCreate = new ResourceCreationUnknownError("socket timed out");
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "ResourceCreationUnknownError",
+    });
+    expect(await runtime.state.get("integration")).toMatchObject({
+      lastOperation: "creating",
+      output: { remoteId: "integration-1" },
+    });
+
+    await abandon(runtime, "creating-drift-assigned-key", "deploy-2");
+    await runtime.destroy("destroy-1");
+
+    expect(calls).toEqual(["delete:integration-1"]);
+    expect(remote.size).toBe(0);
+    expect(await runtime.state.get("integration")).toBeUndefined();
+    runtime.close();
+  });
+
   it("deletes an orphan whose record lacks a key field, instead of skipping it, when the record is not a creating record", async () => {
     const deleteSpy = vi.fn(async (key: any) => {
       if (key.remoteId === undefined) throw new Error("remoteId is required");
@@ -1506,7 +1650,7 @@ describe("recoverable creates", () => {
     expect(remote.size).toBe(1);
     expect(await runtime.state.get("role")).toMatchObject({
       lastOperation: "create",
-      creates: ["deploy-1"],
+      output: { name: "app" },
     });
     runtime.close();
   });
@@ -1558,34 +1702,6 @@ describe("recoverable creates", () => {
     expect(await runtime.state.get("log-group")).toMatchObject({
       lastOperation: "update",
       params: { name: "app", path: "/", description: "new" },
-    });
-    runtime.close();
-  });
-
-  it("refuses a recorded resource whose drift read reported it gone, when no recorded attempt made the one that exists, and writes its record back", async () => {
-    const { Named, tokens, calls, control } = defineNamed(
-      "test/durable/drift-recreate-foreign",
-    );
-    const runtime = createRuntime(
-      [new Named("role", { config: { name: "app", path: "/" } as any })],
-      "drift-recreate-foreign",
-      { driftDetection: true },
-    );
-
-    await runtime.run("deploy-1");
-    tokens.set("app", "someone-else");
-    control.hiddenReads = 1;
-    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
-      name: "ResourceAlreadyExistsError",
-    });
-
-    expect(calls).toEqual(["create:app", "create:app"]);
-    // The record describes a resource that the drift read missed, so the
-    // next deploy reads it again.
-    expect(await runtime.state.get("role")).toMatchObject({
-      lastOperation: "create",
-      output: { name: "app", path: "/" },
-      creates: ["deploy-1"],
     });
     runtime.close();
   });
@@ -1685,7 +1801,6 @@ describe("recoverable creates", () => {
     expect(await runtime.state.get("role")).toMatchObject({
       lastOperation: "create",
       output: { name: "app", path: "/" },
-      creates: ["deploy-1"],
     });
     runtime.close();
   });
@@ -1743,7 +1858,6 @@ describe("recoverable creates", () => {
     expect(await runtime.state.get("role")).toMatchObject({
       lastOperation: "create",
       output: { name: "app-2" },
-      creates: ["deploy-2"],
     });
     runtime.close();
   });
@@ -6134,6 +6248,8 @@ function createRuntime(
     crashAfterStep?: string;
     /** Fails the first effect settle, as if the process died after perform. */
     failFirstSettle?: boolean;
+    /** As `failFirstSettle`, for the settle with this number, from 1. */
+    failSettle?: number;
     registry?: ResourceRegistry;
     driftDetection?: boolean;
     dryRun?: boolean;
@@ -6148,9 +6264,10 @@ function createRuntime(
   const runtime: Runtime = {
     clock: sqliteRuntime.clock,
     executions: sqliteRuntime.executions,
-    effects: options.failFirstSettle
-      ? failFirstSettle(sqliteRuntime.effects)
-      : sqliteRuntime.effects,
+    effects:
+      options.failFirstSettle || options.failSettle
+        ? failSettle(sqliteRuntime.effects, options.failSettle ?? 1)
+        : sqliteRuntime.effects,
     heap: options.crashAfterStep
       ? new CrashAfterWriteHeap(sqliteRuntime.heap, options.crashAfterStep)
       : sqliteRuntime.heap,
@@ -6280,15 +6397,15 @@ class CrashAfterWriteHeap implements HeapClient {
   }
 }
 
-function failFirstSettle(inner: EffectClient): EffectClient {
-  let failed = false;
+function failSettle(inner: EffectClient, nth: number): EffectClient {
+  let settles = 0;
   return {
     begin: (request) => inner.begin(request),
     watch: (request) => inner.watch(request),
     getEffect: (effectId) => inner.getEffect(effectId),
     settle(request) {
-      if (failed) return inner.settle(request);
-      failed = true;
+      settles += 1;
+      if (settles !== nth) return inner.settle(request);
       return Promise.reject(new Error("simulated process crash"));
     },
   };

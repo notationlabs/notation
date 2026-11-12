@@ -363,7 +363,7 @@ A `create` handler throws `ResourceAlreadyExistsError` when the provider refuses
 
 | `ownership` | Proof                                                                                                                                                                                                                                                                    |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `"token"`   | `create` records its `token` on the resource, for example as a tag, and `find(params, token)` checks it. The reconciler calls `find` with the token of each execution that the resource's record lists, and of the current execution.                                    |
+| `"token"`   | `create` records its `token` on the resource, for example as a tag, and `find(params, token)` checks it. The reconciler calls `find` with the token of each execution that the resource's `creating` record lists, and of the current execution.                         |
 | `"parent"`  | The resource lives inside another resource that Notation owns, such as a statement in a Lambda function's policy, so any resource with the desired key is Notation's. A `find` finds the resource inside its parent, and refuses it by throwing `ResourceNotFoundError`. |
 | not set     | None. The reconciler never takes the resource over, never looks up a create with an unknown outcome, and never deletes the resource of a `creating` record.                                                                                                              |
 
@@ -388,7 +388,9 @@ find: async (params, token) => {
 },
 ```
 
-The reconciler checks the proof each time `create` throws `ResourceAlreadyExistsError`. With `ownership: "token"` and a `creating` record, it also calls `find` with the tokens of the earlier executions that the record lists before it calls `create`, so that a resource whose key the provider assigns is not made twice. With the proof, the reconciler reads the resource by its key, records it with the params that the read returned, and then updates, replaces or keeps it. The resource must have a `read`. The reconciler does the same when a create with an unknown outcome is found by its lookup. Without the proof, the deployment fails. See [Recoverable creates](../internals/reconciler.md#recoverable-creates).
+The reconciler checks the proof each time `create` throws `ResourceAlreadyExistsError`. With `ownership: "token"` and a `creating` record, it also calls `find` with the tokens of the earlier executions that the record lists before it calls `create`, so that a resource whose key the provider assigns is not made twice. With the proof, the reconciler reads the resource by its key, records it with the params that the read returned, and then updates, replaces or keeps it. The resource must have a `read`. The reconciler does the same when a create with an unknown outcome is found by its lookup. Without the proof, the deployment fails.
+
+Only a `creating` record lists executions. When a drift read reports a recorded resource as gone, and `create` then throws `ResourceAlreadyExistsError`, a class with `ownership: "token"` has only the current execution's token, so the deployment fails. See [Recoverable creates](../internals/reconciler.md#recoverable-creates).
 
 After a refusal, or any other error that isn't classified as unknown, the reconciler writes back the record that the deploy started from, or removes the `creating` record when the deploy started from none. A `create` that makes more than one call should throw `ResourceCreationUnknownError` when a later call fails after an earlier call made the resource, so that the record stays.
 

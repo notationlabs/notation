@@ -62,7 +62,10 @@ const MAX_CREATE_LOOKUP_ATTEMPTS = 10;
  * 2. The create attempt's outcome was unknown, and its lookup found the
  *    resource.
  * 3. The provider reports that the resource already exists, and the proof
- *    holds. Without the proof, create fails.
+ *    holds. Without the proof, create fails. With `ownership: "token"`, the
+ *    proof is the token of this execution or of an execution that a
+ *    "creating" record names. A full record names no execution, so a
+ *    drift-recreate takes over only what this execution made.
  *
  * When create fails and its outcome is not unknown, the record that this
  * execution started from is written back, or the record is cleared if it
@@ -81,11 +84,7 @@ export async function* createResourceOperation(
 
   try {
     const earlier = earlierExecutions(params);
-    if (
-      isCreatingRecord(params.prior) &&
-      params.resource.ownership === "token" &&
-      earlier.length > 0
-    ) {
+    if (params.resource.ownership === "token" && earlier.length > 0) {
       const proof = yield* step.run("create:find", () =>
         proveOwnership(params.resource, params.resourceParams, earlier),
       );
@@ -124,10 +123,7 @@ export async function* createResourceOperation(
     }
 
     if (created.lookedUp && params.resource.read) {
-      return yield* reclaim(step, params, {
-        key: created.key ?? null,
-        executionId: params.executionId,
-      });
+      return yield* reclaim(step, params, { key: created.key ?? null });
     }
 
     const computedPrimaryKey = created.key;
@@ -171,7 +167,6 @@ export async function* createResourceOperation(
         lastOperation: "create",
         params: params.resource.toState(params.resourceParams),
         output: params.resource.toState(params.resource.output),
-        creates: [params.executionId],
       }),
     );
     // Thrown only once the record is written, so that state still tracks
@@ -259,10 +254,14 @@ function refusalMessage(
 
 /**
  * The record written before the create is attempted. It names this
- * execution and the executions that `params.prior` names. Its output holds the key fields that params supply, so
- * that the resource can be read or deleted from the record alone. After a
- * drift read reported the resource gone, it keeps the recorded output too,
- * so that a key the provider assigned is not lost.
+ * execution and the executions that a "creating" record in `params.prior`
+ * names. Its output holds the key fields that params supply, so that the
+ * resource can be read or deleted from the record alone.
+ *
+ * After a drift read reported the resource gone, it keeps the recorded
+ * output too. If the create's outcome stays unknown, a delete of this
+ * record then still has the key that the provider assigned. A class with
+ * `ownership: "parent"` and no `find` has no other way to get that key.
  */
 function creatingRecord(params: CreateResourceParams): PersistedResourceState {
   const { resource, resourceParams, prior } = params;
@@ -278,14 +277,15 @@ function creatingRecord(params: CreateResourceParams): PersistedResourceState {
 }
 
 /**
- * The executions other than this one that `params.prior` names. A create
- * made under another key does not match, because `find` checks the desired
- * key as well as the token.
+ * The executions other than this one that a "creating" record in
+ * `params.prior` names. Any other record names none. A create made under
+ * another key does not match, because `find` checks the desired key as well
+ * as the token.
  */
 function earlierExecutions(params: CreateResourceParams): string[] {
-  return (params.prior?.creates ?? []).filter(
-    (id) => id !== params.executionId,
-  );
+  const { prior } = params;
+  if (!isCreatingRecord(prior)) return [];
+  return (prior.creates ?? []).filter((id) => id !== params.executionId);
 }
 
 function definedKey(
@@ -334,7 +334,6 @@ async function* reclaimResource(
         observedParams(resource, remote ?? {}, resourceParams),
       ),
       output: resource.toState(resource.output),
-      ...(proof.executionId ? { creates: [proof.executionId] } : {}),
     }),
     "reclaimed",
   );

@@ -7,13 +7,9 @@ import {
 /**
  * The proof that one of Notation's creates made an existing resource. `key`
  * is what `find` returned, and is null when `find` returned nothing or the
- * class has no `find`. `executionId` names the execution whose token `find`
- * matched, and is null when the proof is the resource's parent.
+ * class has no `find`.
  */
-export type OwnershipProof = {
-  key: DurableObject | null;
-  executionId: string | null;
-};
+export type OwnershipProof = { key: DurableObject | null };
 
 /**
  * The create token of one execution's create of a resource. Every attempt
@@ -45,19 +41,19 @@ export async function proveOwnership(
 ): Promise<OwnershipProof | null> {
   const { find } = resource;
   if (resource.ownership === "parent") {
-    if (!find) return { key: null, executionId: null };
+    if (!find) return { key: null };
     const executionId = executionIds[executionIds.length - 1] ?? "";
     const key = await findKey(resource, () =>
       find(resourceParams, createToken(executionId, resource.id)),
     );
-    return key === undefined ? null : { key, executionId: null };
+    return key === undefined ? null : { key };
   }
   if (resource.ownership !== "token" || !find) return null;
   for (const executionId of executionIds) {
     const key = await findKey(resource, () =>
       find(resourceParams, createToken(executionId, resource.id)),
     );
-    if (key !== undefined) return { key, executionId };
+    if (key !== undefined) return { key };
   }
   return null;
 }

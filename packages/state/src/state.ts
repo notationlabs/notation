@@ -26,11 +26,11 @@ export type StateNode = {
   lastOperation: "creating" | "create" | "update";
   lastOperationAt: string;
   /**
-   * The IDs of the executions whose creates may have made the resource. An
-   * execution's create token is derived from its ID and the resource's ID,
-   * so deploy can recompute it. A "creating" record lists every execution
-   * that wrote it. A record that create wrote lists the execution that made
-   * the resource. Absent on a record written before creates were recorded.
+   * Set only on a "creating" record: the IDs of the executions whose creates
+   * may have made the resource. It lists every execution that wrote the
+   * record. An execution's create token is derived from its ID and the
+   * resource's ID, so deploy can recompute it. Deploy ignores the field on
+   * any other record.
    */
   creates?: string[];
   [key: string]: DurableValue;

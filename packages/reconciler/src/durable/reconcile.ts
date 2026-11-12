@@ -251,7 +251,6 @@ async function* applyAction(
       yield* updateResourceOperation(step, {
         ...shared,
         patch: action.patch,
-        creates: session.node?.creates,
         persist: session.persist,
       });
       return;

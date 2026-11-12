@@ -213,11 +213,9 @@ export const WorkerScript = workerScriptSchema
 
     // An upload sets the whole Worker, so the patch is not used. The upload
     // compares the namespaces in state with the new ones, to rename or
-    // delete those that changed. The Worker's current tags are sent too,
-    // otherwise the upload removes the create token's tag.
+    // delete those that changed.
     update: async (_key, _patch, params, state) => {
-      const tags = await getScriptTags(params.AccountId, params.ScriptName);
-      await upload(params, state.DurableObjectNamespaces ?? [], tags);
+      await upload(params, state.DurableObjectNamespaces ?? []);
     },
 
     delete: async (key, _state, _context, deletion) => {

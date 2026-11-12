@@ -58,6 +58,7 @@ export type PersistedResourceState = Pick<
   group: ResourceGroupRef | null;
   // Required here, though optional on StateNode: every write records edges.
   dependsOn: string[];
+  /** Set only on a "creating" record. */
   creates?: string[];
   [key: string]: DurableValue;
 };
@@ -112,8 +113,8 @@ export type CreateResourceParams = ResolvedResourceParams & {
   /**
    * The record that an earlier execution left and this create started from:
    * a "creating" record, or the record of a resource that the drift read
-   * reported as gone. Create takes over a resource that the provider reports
-   * as already existing only with this record and a proof of ownership.
+   * reported as gone. Only a "creating" record names earlier executions
+   * whose create tokens can prove ownership.
    */
   prior?: StateNode;
   /** Set for the create of a replacement, after its record was removed. */
@@ -125,8 +126,6 @@ export type CreateResourceParams = ResolvedResourceParams & {
 
 export type UpdateResourceParams = ResolvedResourceParams & {
   patch: Record<string, unknown>;
-  /** The record's executions that created it, which the update keeps. */
-  creates?: string[];
   /** The edges to record with the resource. */
   dependsOn: string[];
   persist: PersistState;

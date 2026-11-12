@@ -765,7 +765,8 @@ export type ResourceOperationsOptions<
    * creates. Deploy takes over such a resource only with that proof.
    *
    * - `token`: `find` returns the resource for the create token of an
-   *   execution that the resource's record names, or of the current one.
+   *   execution that the resource's "creating" record names, or of the
+   *   current one.
    *   `create` must record the token on the resource, for example as a tag,
    *   and `find` must check it.
    * - `parent`: the resource lives inside another resource that Notation

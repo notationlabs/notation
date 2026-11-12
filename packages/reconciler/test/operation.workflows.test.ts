@@ -130,7 +130,6 @@ describe("operation workflows", () => {
       params: {},
       output: { remoteId: "abc", status: "ready" },
       dependsOn: [],
-      creates: ["test-execution"],
     });
     expect(createMock).toHaveBeenNthCalledWith(
       1,
