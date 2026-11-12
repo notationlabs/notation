@@ -82,3 +82,40 @@ it("waits for a running deploy to finish before it exits", async () => {
   await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(1));
   expect(deployInChild).toHaveBeenCalledTimes(1);
 });
+
+it("deploys a change saved during a deploy that fails", async () => {
+  let failDeploy!: () => void;
+  deployInChild
+    .mockReturnValueOnce(
+      new Promise<void>(
+        (_, reject) =>
+          (failDeploy = () => reject(new Error("Deploy exited with code 1"))),
+      ),
+    )
+    .mockResolvedValue(undefined);
+
+  await watch(deployment, { logger: logger(), exit: vi.fn() });
+  await vi.waitFor(() => expect(deployInChild).toHaveBeenCalled(), {
+    timeout: 2000,
+  });
+
+  // Fake timers let the test run the debounce at once, so the change is
+  // queued behind the running deploy.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const debounce = vi.spyOn(globalThis, "setTimeout");
+  try {
+    writeFileSync(path.join(root, "dist", "index.js"), "// rebuilt");
+    await vi.waitFor(() =>
+      expect(debounce).toHaveBeenCalledWith(expect.any(Function), 500),
+    );
+    vi.advanceTimersByTime(500);
+  } finally {
+    debounce.mockRestore();
+    vi.useRealTimers();
+  }
+  expect(deployInChild).toHaveBeenCalledTimes(1);
+
+  failDeploy();
+  await vi.waitFor(() => expect(deployInChild).toHaveBeenCalledTimes(2));
+  changeConfig();
+});
