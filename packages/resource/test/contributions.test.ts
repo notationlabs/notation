@@ -692,12 +692,31 @@ describe("plan params", () => {
     });
   });
 
-  it("plans cautiously when deriveParams lists the keys of an output that lacks a required output", async () => {
+  it("plans exactly when deriveParams lists the keys of an output that lacks a required output, as deploy fills it in", async () => {
     const Derived = LogGroup.requireDependencies<{
       fn: InstanceType<typeof Fn>;
     }>().deriveParams(({ deps }) => ({
-      logGroupName: `/aws/lambda/${Object.keys(deps.fn.output).join()}`,
+      logGroupName: `/${Object.keys(deps.fn.output).sort().join()}`,
     }));
+    const fn = fnWith();
+    fn.setOutput({ FunctionName: "f", Role: "r" } as any);
+    const logGroup = new Derived("logs", {
+      config: { retention: 7 },
+      dependencies: { fn },
+    });
+    expect(await logGroup.planParams()).toEqual({
+      logGroupName: "/FunctionArn,FunctionName,Role",
+      retention: 7,
+    });
+  });
+
+  it("plans cautiously when deriveParams copies an output that lacks a required output", async () => {
+    const Derived = LogGroup.requireDependencies<{
+      fn: InstanceType<typeof Fn>;
+    }>().deriveParams(({ deps }) => {
+      const output = { ...deps.fn.output };
+      return { logGroupName: `/aws/lambda/${output.FunctionName}` };
+    });
     const fn = fnWith();
     fn.setOutput({ FunctionName: "f", Role: "r" } as any);
     const logGroup = new Derived("logs", {
@@ -710,11 +729,15 @@ describe("plan params", () => {
     });
   });
 
-  it("plans cautiously when deriveParams tests for a required output missing from state", async () => {
+  it("plans exactly when deriveParams tests for a required output missing from state, as deploy fills it in", async () => {
     const Derived = LogGroup.requireDependencies<{
       fn: InstanceType<typeof Fn>;
     }>().deriveParams(({ deps }) => ({
-      logGroupName: "FunctionArn" in deps.fn.output ? "/arn" : "/none",
+      logGroupName:
+        "FunctionArn" in deps.fn.output &&
+        Object.hasOwn(deps.fn.output, "FunctionArn")
+          ? "/arn"
+          : "/none",
     }));
     const fn = fnWith();
     fn.setOutput({ FunctionName: "f", Role: "r" } as any);
@@ -723,7 +746,7 @@ describe("plan params", () => {
       dependencies: { fn },
     });
     expect(await logGroup.planParams()).toEqual({
-      logGroupName: UNKNOWN_AFTER_APPLY,
+      logGroupName: "/arn",
       retention: 7,
     });
   });

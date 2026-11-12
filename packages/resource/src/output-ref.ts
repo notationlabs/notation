@@ -226,9 +226,7 @@ export class PendingOutput extends Error {
  * dependency with no output throws `PendingOutput` when its output is read.
  * A view of a dependency whose output lacks a required output throws it when
  * that output is read. `readPending` is set by such a read, so a plan still
- * knows of it when the code catches the error. Code that lists the keys of
- * such an output, such as a spread or `Object.keys`, or that tests a missing
- * output with `in`, does not throw, but sets `readPending` too.
+ * knows of it when the code catches the error.
  */
 export function createPlanViews() {
   const views = {
@@ -252,29 +250,20 @@ export function createPlanViews() {
     if (output == null) {
       return Object.create(dep, { output: { get: () => throwPending(dep) } });
     }
+    // Deploy fails when a required output is missing, so each one is present
+    // at deploy. Each missing one is a getter, so that `in`, `Object.hasOwn`
+    // and `Object.keys` give the answers they will give at deploy, and only
+    // a read of its value throws.
     const missing = missingRequiredOutputs(dep, output);
-    const isMissing = (key: string | symbol) =>
-      typeof key === "string" && missing.includes(key);
-    const viewedOutput = new Proxy(output, {
-      get(target, key, receiver) {
-        if (isMissing(key)) return throwPending(dep);
-        return Reflect.get(target, key, receiver);
-      },
-      // `in` and `Object.hasOwn` answer false for a missing output, which
-      // deploy may make true. For any other key the answer holds.
-      has(target, key) {
-        if (isMissing(key)) views.readPending = true;
-        return Reflect.has(target, key);
-      },
-      ownKeys(target) {
-        views.readPending = true;
-        return Reflect.ownKeys(target);
-      },
-      getOwnPropertyDescriptor(target, key) {
-        if (isMissing(key)) views.readPending = true;
-        return Reflect.getOwnPropertyDescriptor(target, key);
-      },
-    });
+    const viewedOutput = Object.defineProperties(
+      { ...output },
+      Object.fromEntries(
+        missing.map((key) => [
+          key,
+          { enumerable: true, get: () => throwPending(dep) },
+        ]),
+      ),
+    );
     return Object.create(dep, { output: { get: () => viewedOutput } });
   };
 
