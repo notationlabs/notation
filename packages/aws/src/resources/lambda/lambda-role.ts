@@ -2,10 +2,6 @@ import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-iam";
 import { iamClient } from "src/resources/utils/aws-clients";
-import {
-  CREATE_TOKEN_TAG,
-  createTokenTagValue,
-} from "src/resources/utils/create-token";
 import { awsCreate } from "src/resources/utils/errors";
 import { AwsSchema } from "src/resources/utils/types";
 import { lambdaTrustPolicy } from "src/resources/templates/iam.policy";
@@ -96,13 +92,10 @@ const lambdaIamRoleSchema = lambdaIamRole.defineSchema({
 } as const);
 
 export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
-  ownership: "token",
+  ownership: "parent",
   create: awsCreate(
-    async (params, _context, token) => {
-      const command = new sdk.CreateRoleCommand({
-        ...params,
-        Tags: [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }],
-      });
+    async (params) => {
+      const command = new sdk.CreateRoleCommand(params);
       await iamClient().send(command);
     },
     {
@@ -110,23 +103,6 @@ export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
         error instanceof sdk.EntityAlreadyExistsException,
     },
   ),
-  find: async (params, token) => {
-    try {
-      const { Role } = await iamClient().send(
-        new sdk.GetRoleCommand({ RoleName: params.RoleName }),
-      );
-      const value = createTokenTagValue(token);
-      const tagged = Role?.Tags?.some(
-        (tag) => tag.Key === CREATE_TOKEN_TAG && tag.Value === value,
-      );
-      if (tagged) return;
-    } catch (error) {
-      if (!(error instanceof sdk.NoSuchEntityException)) throw error;
-    }
-    throw new ResourceNotFoundError(
-      "No IAM role has the name and the create token",
-    );
-  },
   read: async (key) => {
     try {
       const command = new sdk.GetRoleCommand(key);

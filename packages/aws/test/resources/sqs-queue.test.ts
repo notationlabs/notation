@@ -9,10 +9,6 @@ import {
 import { decideDriftAction } from "@notation/reconciler";
 import { sqsClient } from "src/resources/utils/aws-clients";
 import { Queue } from "src/resources/sqs/queue";
-import {
-  CREATE_TOKEN_TAG,
-  createTokenTagValue,
-} from "src/resources/utils/create-token";
 
 const url = "https://sqs.eu-west-2.amazonaws.com/123456789012/orders";
 
@@ -34,9 +30,6 @@ function mockSend(respond: (command: unknown) => unknown) {
 /** Answers the calls of a create of a queue that does not exist yet. */
 function respondToCreate(command: unknown) {
   if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
-  if (command instanceof sdk.ListQueueTagsCommand) {
-    return { Tags: { [CREATE_TOKEN_TAG]: createTokenTagValue("token") } };
-  }
   return { QueueUrl: url };
 }
 
@@ -45,7 +38,7 @@ afterEach(() => {
 });
 
 describe("SQS queue", () => {
-  it("creates the queue with its attributes as strings and the create token", async () => {
+  it("creates the queue with its attributes as strings", async () => {
     const send = mockSend(respondToCreate);
 
     const key = await queue.create(
@@ -59,7 +52,6 @@ describe("SQS queue", () => {
     expect(command.input).toEqual({
       QueueName: "orders",
       Attributes: { VisibilityTimeout: "60" },
-      tags: { [CREATE_TOKEN_TAG]: createTokenTagValue("token") },
     });
   });
 
@@ -145,18 +137,6 @@ describe("SQS queue", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses a queue that another writer made after the check, which lacks the create token", async () => {
-    mockSend((command) => {
-      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
-      if (command instanceof sdk.ListQueueTagsCommand) return { Tags: {} };
-      return { QueueUrl: url };
-    });
-
-    await expect(
-      queue.create({ QueueName: "orders" }, undefined, "token"),
-    ).rejects.toSatisfy(ResourceAlreadyExistsError.is);
-  });
-
   it("reports a queue whose attributes differ from an existing one as ResourceAlreadyExistsError", async () => {
     mockSend((command) => {
       if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
@@ -168,21 +148,18 @@ describe("SQS queue", () => {
     ).rejects.toSatisfy(ResourceAlreadyExistsError.is);
   });
 
-  it("finds the queue that has the create token", async () => {
-    mockSend((command) => {
-      if (command instanceof sdk.GetQueueUrlCommand) return { QueueUrl: url };
-      return { Tags: { [CREATE_TOKEN_TAG]: createTokenTagValue("token") } };
-    });
+  it("finds the URL of the queue that has the name", async () => {
+    const send = mockSend(() => ({ QueueUrl: url }));
 
     await expect(
       queue.find!({ QueueName: "orders" }, "token"),
     ).resolves.toEqual({ QueueUrl: url });
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it("reports a queue without the create token as not found", async () => {
-    mockSend((command) => {
-      if (command instanceof sdk.GetQueueUrlCommand) return { QueueUrl: url };
-      return { Tags: {} };
+  it("reports a missing queue as not found by find", async () => {
+    mockSend(() => {
+      throw queueDoesNotExist();
     });
 
     await expect(

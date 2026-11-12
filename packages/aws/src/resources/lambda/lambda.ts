@@ -10,10 +10,6 @@ import { fromProjectRoot } from "@notation/core/paths";
 import crypto from "node:crypto";
 import * as nodeFs from "node:fs/promises";
 import { lambdaClient } from "src/resources/utils/aws-clients";
-import {
-  CREATE_TOKEN_TAG,
-  createTokenTagValue,
-} from "src/resources/utils/create-token";
 import { awsCreate } from "src/resources/utils/errors";
 import {
   isLambdaAlreadyExists,
@@ -266,17 +262,13 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
 
 export const LambdaFunction = lambdaFunctionSchema
   .defineOperations({
-    ownership: "token",
+    ownership: "parent",
     create: awsCreate(
-      async (params, _context, token) => {
+      async (params) => {
         const { CodeFilePath, Environment, ...functionParams } = params;
         const command = new sdk.CreateFunctionCommand({
           ...functionParams,
           Environment: encodeEnvironment(params.FunctionName, Environment),
-          Tags: {
-            ...params.Tags,
-            [CREATE_TOKEN_TAG]: createTokenTagValue(token),
-          },
           Code: { ZipFile: await readCode(CodeFilePath, params.CodeSha256) },
         });
 
@@ -284,20 +276,6 @@ export const LambdaFunction = lambdaFunctionSchema
       },
       { alreadyExists: isLambdaAlreadyExists },
     ),
-
-    find: async (params, token) => {
-      try {
-        const { Tags } = await lambdaClient().send(
-          new sdk.GetFunctionCommand({ FunctionName: params.FunctionName }),
-        );
-        if (Tags?.[CREATE_TOKEN_TAG] === createTokenTagValue(token)) return;
-      } catch (error) {
-        if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
-      }
-      throw new ResourceNotFoundError(
-        "No Lambda function has the name and the create token",
-      );
-    },
 
     read: async (key) => {
       try {

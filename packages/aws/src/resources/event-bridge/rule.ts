@@ -8,10 +8,6 @@ import {
 import { AwsSchema } from "src/resources/utils/types";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/resources/utils/aws-clients";
-import {
-  CREATE_TOKEN_TAG,
-  createTokenTagValue,
-} from "src/resources/utils/create-token";
 import { awsCreate } from "src/resources/utils/errors";
 import { LambdaFunctionInstance } from "../lambda";
 import {
@@ -275,11 +271,10 @@ export const EventBridgeRule = eventBridgeRuleSchema
       }
     },
 
-    ownership: "token",
-    // PutRule overwrites an existing rule instead of failing, and does not
-    // tag it. So create checks for the rule first, and checks the tag
-    // afterwards, in case another writer made the rule in between.
-    create: awsCreate(async (params, _context, token) => {
+    ownership: "parent",
+    // PutRule overwrites an existing rule instead of failing, so create
+    // checks for the rule first.
+    create: awsCreate(async (params) => {
       const key = { Name: params.Name, EventBusName: params.EventBusName };
       if (await describeRule(key)) {
         throw new ResourceAlreadyExistsError(
@@ -287,18 +282,7 @@ export const EventBridgeRule = eventBridgeRuleSchema
         );
       }
       const { Targets, ...ruleConfig } = params;
-      const { RuleArn } = await eventBridgeClient().send(
-        new sdk.PutRuleCommand({
-          ...ruleConfig,
-          Tags: [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }],
-        }),
-      );
-      if (!(await ruleHasToken(RuleArn!, token))) {
-        throw new ResourceAlreadyExistsError(
-          `EventBridge rule "${params.Name}" was made by another writer ` +
-            `after create checked for it`,
-        );
-      }
+      await eventBridgeClient().send(new sdk.PutRuleCommand(ruleConfig));
       try {
         assertNoFailedTargets(
           "put",
@@ -317,16 +301,6 @@ export const EventBridgeRule = eventBridgeRuleSchema
         await deleteCreatedRule(key, errorMessage(error));
       }
     }),
-    find: async (params, token) => {
-      const rule = await describeRule({
-        Name: params.Name,
-        EventBusName: params.EventBusName,
-      });
-      if (rule?.Arn && (await hasCreateToken(rule.Arn, token))) return;
-      throw new ResourceNotFoundError(
-        "No EventBridge rule has the name and the create token",
-      );
-    },
     update: async (key, patch, params) => {
       // PutRule replaces the rule's settings, so it is sent the whole rule,
       // not just the changed fields.
@@ -412,22 +386,6 @@ async function deleteCreatedRule(
   );
 }
 
-/**
- * Throws an unknown outcome when the tags cannot be read, because the rule
- * exists by then.
- */
-async function ruleHasToken(arn: string, token: string): Promise<boolean> {
-  try {
-    return await hasCreateToken(arn, token);
-  } catch (error) {
-    throw new ResourceCreationUnknownError(
-      `EventBridge rule ${arn} was put, but its tags could not be read: ` +
-        errorMessage(error),
-      { cause: error },
-    );
-  }
-}
-
 async function describeRule(
   key: sdk.DescribeRuleCommandInput,
 ): Promise<sdk.DescribeRuleCommandOutput | undefined> {
@@ -437,17 +395,6 @@ async function describeRule(
     if (error instanceof sdk.ResourceNotFoundException) return undefined;
     throw error;
   }
-}
-
-async function hasCreateToken(arn: string, token: string): Promise<boolean> {
-  const { Tags } = await eventBridgeClient().send(
-    new sdk.ListTagsForResourceCommand({ ResourceARN: arn }),
-  );
-  const value = createTokenTagValue(token);
-  return (
-    Tags?.some((tag) => tag.Key === CREATE_TOKEN_TAG && tag.Value === value) ??
-    false
-  );
 }
 
 function errorMessage(error: unknown): string {

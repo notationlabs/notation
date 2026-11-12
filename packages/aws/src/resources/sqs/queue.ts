@@ -2,16 +2,11 @@ import * as v from "valibot";
 import {
   resource,
   ResourceAlreadyExistsError,
-  ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
 } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-sqs";
 import { sqsClient } from "src/resources/utils/aws-clients";
-import {
-  CREATE_TOKEN_TAG,
-  createTokenTagValue,
-} from "src/resources/utils/create-token";
 import { awsCreate } from "src/resources/utils/errors";
 import { AwsSchema } from "src/resources/utils/types";
 
@@ -219,13 +214,11 @@ const queueSchema = queue.defineSchema({
 } as const);
 
 export const Queue = queueSchema.defineOperations({
-  ownership: "token",
+  ownership: "parent",
   // CreateQueue returns an existing queue of the same name instead of
-  // failing, and does not tag it. So create checks for the queue first, and
-  // checks the tag afterwards, in case another writer made the queue in
-  // between.
+  // failing, so create checks for the queue first.
   create: awsCreate(
-    async (params, _context, token) => {
+    async (params) => {
       if (await getQueueUrl(params.QueueName)) {
         throw new ResourceAlreadyExistsError(
           `An SQS queue named ${params.QueueName} already exists`,
@@ -238,11 +231,10 @@ export const Queue = queueSchema.defineOperations({
           ...toAttributes(attributes),
           ...(FifoQueue ? { FifoQueue: "true" } : {}),
         },
-        tags: { [CREATE_TOKEN_TAG]: createTokenTagValue(token) },
       });
-      let QueueUrl: string;
       try {
-        QueueUrl = (await sqsClient().send(command)).QueueUrl!;
+        const result = await sqsClient().send(command);
+        return { QueueUrl: result.QueueUrl! };
       } catch (error) {
         if (error instanceof sdk.QueueDeletedRecently) {
           throw new ResourceOperationPendingError(
@@ -252,24 +244,16 @@ export const Queue = queueSchema.defineOperations({
         }
         throw error;
       }
-      if (!(await queueHasToken(QueueUrl, token))) {
-        throw new ResourceAlreadyExistsError(
-          `An SQS queue named ${QueueName} was made by another writer after ` +
-            `create checked for it`,
-        );
-      }
-      return { QueueUrl };
     },
     { alreadyExists: (error) => error instanceof sdk.QueueNameExists },
   ),
 
-  find: async (params, token) => {
+  // The queue's key is its URL, which a takeover has to look up by name.
+  find: async (params) => {
     const QueueUrl = await getQueueUrl(params.QueueName);
-    if (QueueUrl && (await hasCreateToken(QueueUrl, token))) {
-      return { QueueUrl };
-    }
+    if (QueueUrl) return { QueueUrl };
     throw new ResourceNotFoundError(
-      "No SQS queue has the name and the create token",
+      `No SQS queue is named ${params.QueueName}`,
     );
   },
 
@@ -346,29 +330,6 @@ export const Queue = queueSchema.defineOperations({
 });
 
 export type QueueInstance = InstanceType<typeof Queue>;
-
-async function hasCreateToken(QueueUrl: string, token: string) {
-  const { Tags } = await sqsClient().send(
-    new sdk.ListQueueTagsCommand({ QueueUrl }),
-  );
-  return Tags?.[CREATE_TOKEN_TAG] === createTokenTagValue(token);
-}
-
-/**
- * Throws an unknown outcome when the tags cannot be read, because the queue
- * exists by then.
- */
-async function queueHasToken(QueueUrl: string, token: string) {
-  try {
-    return await hasCreateToken(QueueUrl, token);
-  } catch (error) {
-    throw new ResourceCreationUnknownError(
-      `SQS queue ${QueueUrl} was created, but its tags could not be read: ` +
-        (error instanceof Error ? error.message : String(error)),
-      { cause: error },
-    );
-  }
-}
 
 async function getQueueUrl(QueueName: string): Promise<string | undefined> {
   try {

@@ -2,10 +2,6 @@ import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/resources/utils/aws-clients";
-import {
-  CREATE_TOKEN_TAG,
-  createTokenTagValue,
-} from "src/resources/utils/create-token";
 import { awsCreate } from "src/resources/utils/errors";
 import { AwsSchema } from "src/resources/utils/types";
 
@@ -36,14 +32,11 @@ const eventBusSchema = eventBus.defineSchema({
 
 /** A custom event bus. */
 export const EventBus = eventBusSchema.defineOperations({
-  ownership: "token",
+  ownership: "parent",
   create: awsCreate(
-    async (params, _context, token) => {
+    async (params) => {
       await eventBridgeClient().send(
-        new sdk.CreateEventBusCommand({
-          Name: params.Name,
-          Tags: [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }],
-        }),
+        new sdk.CreateEventBusCommand({ Name: params.Name }),
       );
     },
     {
@@ -51,25 +44,6 @@ export const EventBus = eventBusSchema.defineOperations({
         error instanceof sdk.ResourceAlreadyExistsException,
     },
   ),
-
-  find: async (params, token) => {
-    try {
-      const { Arn } = await describeEventBus(params.Name);
-      const { Tags } = await eventBridgeClient().send(
-        new sdk.ListTagsForResourceCommand({ ResourceARN: Arn }),
-      );
-      const value = createTokenTagValue(token);
-      const tagged = Tags?.some(
-        (tag) => tag.Key === CREATE_TOKEN_TAG && tag.Value === value,
-      );
-      if (tagged) return;
-    } catch (error) {
-      if (!ResourceNotFoundError.is(error)) throw error;
-    }
-    throw new ResourceNotFoundError(
-      "No EventBridge event bus has the name and the create token",
-    );
-  },
 
   read: async (key) => describeEventBus(key.Name),
 

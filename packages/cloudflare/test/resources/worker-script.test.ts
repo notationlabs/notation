@@ -119,7 +119,6 @@ describe("WorkerScript", () => {
         compatibility_flags: ["nodejs_compat"],
         bindings: params.Bindings,
         exports: { Counter: { type: "durable-object", storage: "sqlite" } },
-        tags: [expect.stringMatching(/^notation-create-token-/)],
       },
       module: { type: "application/javascript+module", text: code },
     });
@@ -138,7 +137,7 @@ describe("WorkerScript", () => {
     expect(metadata).not.toHaveProperty("exports");
   });
 
-  it("doesn't take over a Worker that exists already", async () => {
+  it("reports a Worker that exists already as ResourceAlreadyExistsError", async () => {
     mockFetch(() => ok({ compatibility_date: "2026-01-01" }));
 
     const created = script.create(params, undefined, "token");
@@ -147,31 +146,6 @@ describe("WorkerScript", () => {
     );
     await expect(created).rejects.toSatisfy(ResourceAlreadyExistsError.is);
     expect(calls).toHaveLength(1);
-  });
-
-  it("tags the Worker with the create token, and finds it by the tag", async () => {
-    mockFetch((call) =>
-      call.method === "GET" ? fail(404, 10007, "not found") : ok({}),
-    );
-
-    await script.create(params, undefined, "notation:create:deploy-1:api");
-
-    const { metadata } = await uploadedMetadata(calls[1]!);
-    expect(metadata.tags).toEqual([
-      expect.stringMatching(/^notation-create-token-[0-9a-f]{64}$/),
-    ]);
-
-    calls = [];
-    mockFetch(() => ok({ tags: metadata.tags }));
-    await expect(
-      script.find!(params, "notation:create:deploy-1:api"),
-    ).resolves.toBeUndefined();
-    expect(calls[0]!.url).toBe(
-      "https://api.cloudflare.com/client/v4/accounts/acc/workers/scripts/app--dev--api/script-settings",
-    );
-    await expect(
-      script.find!(params, "notation:create:deploy-2:api"),
-    ).rejects.toSatisfy(ResourceNotFoundError.is);
   });
 
   it("fails when the bundle changed after the params were computed", async () => {
@@ -339,7 +313,6 @@ describe("WorkerScript", () => {
 
     expect(calls).toHaveLength(1);
     const { metadata } = await uploadedMetadata(calls[0]!);
-    expect(metadata).not.toHaveProperty("tags");
     expect(metadata.exports).toEqual({
       Tally: { type: "durable-object", storage: "sqlite" },
       Counter: {

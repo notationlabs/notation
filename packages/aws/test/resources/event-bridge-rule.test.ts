@@ -4,15 +4,10 @@ import { eventBridgeClient } from "src/resources/utils/aws-clients";
 import {
   ResourceAlreadyExistsError,
   ResourceCreationUnknownError,
-  ResourceNotFoundError,
   validateValues,
 } from "@notation/resource";
 import { EventBridgeRule } from "src/resources/event-bridge/rule";
 import { EventBus } from "src/resources/event-bridge/event-bus";
-import {
-  CREATE_TOKEN_TAG,
-  createTokenTagValue,
-} from "src/resources/utils/create-token";
 
 const send = vi.spyOn(eventBridgeClient(), "send");
 
@@ -28,15 +23,8 @@ const rule = new EventBridgeRule("rule", {
 const key = { Name: "daily", EventBusName: "default" };
 const token = "notation:create:deploy-1:rule";
 
-/**
- * Answers the calls that create makes before and after PutTargets: no rule
- * exists before PutRule, and the rule that PutRule makes has the tags in
- * `ruleTags`.
- */
-function createCalls(
-  command: any,
-  ruleTags = [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }],
-) {
+/** Answers the calls that create makes before PutTargets, for a rule that does not exist yet. */
+function createCalls(command: any) {
   if (command instanceof sdk.DescribeRuleCommand) {
     throw new sdk.ResourceNotFoundException({
       message: "Rule daily does not exist",
@@ -44,9 +32,6 @@ function createCalls(
     });
   }
   if (command instanceof sdk.PutRuleCommand) return { RuleArn: "arn:rule" };
-  if (command instanceof sdk.ListTagsForResourceCommand) {
-    return { Tags: ruleTags };
-  }
   return undefined;
 }
 
@@ -141,10 +126,9 @@ test("read reports the rule's current targets", async () => {
 function mockFailedEntries(
   failingCommand: new (...args: any[]) => unknown,
   existingTargetIds: string[] = [],
-  ruleTags?: { Key: string; Value: string }[],
 ) {
   send.mockImplementation(async (command: any) => {
-    const answer = createCalls(command, ruleTags);
+    const answer = createCalls(command);
     if (answer) return answer;
     if (command instanceof sdk.ListTargetsByRuleCommand) {
       return {
@@ -180,24 +164,20 @@ test("create fails when a target could not be put", async () => {
   expect(sentCommands().map((c) => c.constructor)).toEqual([
     sdk.DescribeRuleCommand,
     sdk.PutRuleCommand,
-    sdk.ListTagsForResourceCommand,
     sdk.PutTargetsCommand,
     sdk.ListTargetsByRuleCommand,
     sdk.DeleteRuleCommand,
   ]);
 });
 
-test("create tags the rule with the create token and leaves the targets out of PutRule", async () => {
+test("create leaves the targets out of PutRule", async () => {
   mockFailedEntries(class Never {});
   const params = { ...key, Targets: [{ Id: "fn", Arn: "arn:fn" }] };
 
   await rule.create!(params, undefined, token);
 
   const putRule = sentCommands().find((c) => c instanceof sdk.PutRuleCommand);
-  expect(putRule!.input).toEqual({
-    ...key,
-    Tags: [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }],
-  });
+  expect(putRule!.input).toEqual(key);
 });
 
 test("create refuses a rule that exists, without changing it", async () => {
@@ -217,44 +197,6 @@ test("create refuses a rule that exists, without changing it", async () => {
   ]);
 });
 
-test("create refuses a rule that another writer made after the check, before it puts the targets", async () => {
-  mockFailedEntries(
-    class Never {},
-    [],
-    [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue("someone-else") }],
-  );
-  const params = { ...key, Targets: [{ Id: "fn", Arn: "arn:fn" }] };
-
-  await expect(rule.create!(params, undefined, token)).rejects.toSatisfy(
-    ResourceAlreadyExistsError.is,
-  );
-  expect(sentCommands().map((c) => c.constructor)).toEqual([
-    sdk.DescribeRuleCommand,
-    sdk.PutRuleCommand,
-    sdk.ListTagsForResourceCommand,
-  ]);
-});
-
-test("find returns for a rule with the create token, and not for another", async () => {
-  send.mockImplementation(async (command: any) => {
-    if (command instanceof sdk.DescribeRuleCommand) {
-      return { Name: "daily", Arn: "arn:rule" };
-    }
-    if (command instanceof sdk.ListTagsForResourceCommand) {
-      return {
-        Tags: [{ Key: CREATE_TOKEN_TAG, Value: createTokenTagValue(token) }],
-      };
-    }
-    return {};
-  });
-  const params = { ...key, Targets: [] };
-
-  await expect(rule.find!(params, token)).resolves.toBeUndefined();
-  await expect(rule.find!(params, "other-token")).rejects.toSatisfy(
-    ResourceNotFoundError.is,
-  );
-});
-
 test("create deletes the rule, removing the targets that were put, when another target could not be put", async () => {
   mockFailedEntries(sdk.PutTargetsCommand, ["fn"]);
   const params = {
@@ -271,7 +213,6 @@ test("create deletes the rule, removing the targets that were put, when another 
   expect(sentCommands().map((c) => c.constructor)).toEqual([
     sdk.DescribeRuleCommand,
     sdk.PutRuleCommand,
-    sdk.ListTagsForResourceCommand,
     sdk.PutTargetsCommand,
     sdk.ListTargetsByRuleCommand,
     sdk.RemoveTargetsCommand,

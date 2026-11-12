@@ -13,14 +13,7 @@ import {
   type LambdaFunctionInstance,
 } from "src/resources/lambda/lambda";
 import { LambdaIamRole } from "src/resources/lambda/lambda-role";
-import {
-  ResourceAlreadyExistsError,
-  ResourceNotFoundError,
-} from "@notation/resource";
-import {
-  CREATE_TOKEN_TAG,
-  createTokenTagValue,
-} from "src/resources/utils/create-token";
+import { ResourceAlreadyExistsError } from "@notation/resource";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -213,9 +206,6 @@ describe("Lambda code", () => {
 
     const command = send.mock.calls[0]![0] as sdk.CreateFunctionCommand;
     expect(command).toBeInstanceOf(sdk.CreateFunctionCommand);
-    expect(command.input.Tags).toEqual({
-      [CREATE_TOKEN_TAG]: createTokenTagValue("token"),
-    });
     expect(command.input).not.toHaveProperty("CodeFilePath");
     expect(Buffer.from(command.input.Code!.ZipFile!).toString()).toBe(
       "zip bytes",
@@ -291,54 +281,6 @@ async function sha256Base64(filePath: string) {
   const bytes = await readFile(filePath);
   return crypto.createHash("sha256").update(bytes).digest("base64");
 }
-
-describe("Lambda create token", () => {
-  const TOKEN = "notation:create:execution-1:app:0";
-  const lambda = new LambdaFunction("app", {
-    config: {} as any,
-    dependencies: {} as any,
-  });
-
-  function mockTags(Tags: Record<string, string> | undefined) {
-    vi.spyOn(lambdaClient(), "send").mockImplementation(async (command) => {
-      if (command instanceof sdk.GetFunctionCommand) return { Tags };
-      throw new Error("unexpected command");
-    });
-  }
-
-  it("proves its ownership by its create token", () => {
-    expect(lambda.ownership).toBe("token");
-  });
-
-  it("finds the function that has the create token", async () => {
-    mockTags({ [CREATE_TOKEN_TAG]: createTokenTagValue(TOKEN) });
-
-    await expect(
-      lambda.find!({ FunctionName: "app" } as any, TOKEN),
-    ).resolves.toBeUndefined();
-  });
-
-  it("reports a function with the same name and no create token as not found", async () => {
-    mockTags({ team: "web" });
-
-    await expect(
-      lambda.find!({ FunctionName: "app" } as any, TOKEN),
-    ).rejects.toSatisfy(ResourceNotFoundError.is);
-  });
-
-  it("reports a missing function as not found", async () => {
-    vi.spyOn(lambdaClient(), "send").mockImplementation(async () => {
-      throw new sdk.ResourceNotFoundException({
-        message: "missing",
-        $metadata: {},
-      });
-    });
-
-    await expect(
-      lambda.find!({ FunctionName: "app" } as any, TOKEN),
-    ).rejects.toSatisfy(ResourceNotFoundError.is);
-  });
-});
 
 describe("Lambda environment", () => {
   function createLambda(Environment?: sdk.Environment) {
