@@ -11,7 +11,7 @@ import {
 import {
   isCycle,
   orderDeployUnits,
-  revertedDependents,
+  revertedPeers,
   type DeployUnit,
 } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
@@ -144,9 +144,7 @@ export async function createPlan({
       cycle?.placeholders.includes(resource) && action.decision === "create";
     const reverted =
       cycle && replaceFields
-        ? revertedDependents(resources, cycle, resource)
-            .filter((dependent) => cycle.members.includes(dependent))
-            .map((peer) => peer.id)
+        ? revertedPeers(cycle, resource).map((peer) => peer.id)
         : [];
     return {
       id: resource.id,

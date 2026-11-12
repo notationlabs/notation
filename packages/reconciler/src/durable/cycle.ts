@@ -10,7 +10,7 @@ import {
   listIds,
   placeholderParamsBlocker,
   remainingDependencies,
-  revertedDependents,
+  revertedPeers,
   type DeployUnit,
 } from "../cycles";
 import { readDriftOperation, updateResourceOperation } from "../operations";
@@ -100,48 +100,19 @@ export async function* reconcileCycle(
       // revert that can't be computed fails the deploy before any resource
       // has lost its contributions.
       const reverts = [];
-      for (const dependent of revertedDependents(
-        opts.resources,
-        cycle,
-        resource,
-      )) {
-        const dependentStep = revertStep.scope(
-          encodeURIComponent(dependent.id),
+      for (const peer of revertedPeers(cycle, resource)) {
+        const revert = yield* prepareRevert(
+          revertStep.scope(encodeURIComponent(peer.id)),
+          peer,
+          opts,
+          from,
+          resource,
         );
-        try {
-          const revert = yield* prepareRevert(
-            dependentStep,
-            dependent,
-            opts,
-            from,
-            resource,
-          );
-          if (revert) reverts.push({ dependent, revert });
-        } catch (error) {
-          // A resource outside the cycle that can't be reverted keeps its
-          // contributions. This is deliberate: the provider decides whether
-          // the delete can go ahead, as it does for any resource that refers
-          // to a replaced one. If it refuses, the deploy fails after the
-          // reverts above have run, and the next deploy restores them.
-          if (members.has(dependent) || !ResourceCycleError.is(error)) {
-            throw error;
-          }
-          yield* durableEmitter(
-            dependentStep,
-            opts.emit,
-          )({
-            level: "warn",
-            event: "reconciler.cycle-revert.skipped",
-            resourceId: dependent.id,
-            resourceType: dependent.type,
-            replacedDependency: resource.id,
-            errorMessage: error.message,
-          });
-        }
+        if (revert) reverts.push({ peer, revert });
       }
-      for (const { dependent, revert } of reverts) {
+      for (const { peer, revert } of reverts) {
         yield* revert();
-        if (members.has(dependent)) reverted.push(dependent);
+        reverted.push(peer);
       }
     },
   });
@@ -341,10 +312,9 @@ async function* prepareRevert(
       }
     }
   }
-  // The cycle's placeholders and members are checked for this when deploy
-  // and destroy order the resources. The check here covers the resources
-  // outside the cycle and the contributions that depend on resources with no
-  // record.
+  // The cycle's placeholders and the peers of a replaced member are checked
+  // for this when deploy and destroy order the resources. The check here
+  // covers the contributions that depend on resources with no record.
   const blocker = placeholderParamsBlocker(resource, excluded);
   if (blocker) {
     throw new ResourceCycleError(

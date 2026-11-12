@@ -163,44 +163,40 @@ function placeholderBlocker(
 }
 
 /**
- * The resources that deploy reverts before it replaces `replaced`, so that
- * they no longer refer to it: each refers to `replaced` only through its
- * contributions, and is updated without those contributions. Members of
- * `cycle` come first, in its order, then the resources outside it. Throws
+ * The members of `cycle` that deploy reverts before it replaces `replaced`,
+ * in the cycle's order, so that they no longer refer to it: each refers to
+ * `replaced` only through its contributions, and is updated without those
+ * contributions. Deploy restores them while the cycle settles. Throws
  * `ResourceCycleError` when a member can't be reverted with an update.
- * Deploy restores the members while the cycle settles, and the other
- * resources when it reaches them.
  *
- * A resource outside the cycle is returned even when it can't be reverted.
- * Deploy then skips its revert with a warning, and the provider decides
- * whether `replaced` can be deleted while that resource still refers to it.
+ * Resources outside the cycle are not reverted. They are treated as a
+ * replace treats any resource that refers to the replaced one: the provider
+ * decides whether it can be deleted. A replace reverts peers only because
+ * deploy can't create the members of a cycle one after the other, so a
+ * member must lose its reference to the replaced member for the cycle to be
+ * deployed again. Nothing about a resource outside the cycle is different
+ * from a one-way reference to a resource that is not in a cycle.
  */
-export function revertedDependents(
-  resources: BaseResource[],
+export function revertedPeers(
   cycle: DeployUnit,
   replaced: BaseResource,
 ): BaseResource[] {
-  const members = new Set(cycle.members);
   const from = new Set([replaced]);
-  const dependents = [
-    ...cycle.members,
-    ...resources.filter((resource) => !members.has(resource)),
-  ].filter(
-    (resource) =>
-      resource !== replaced &&
-      resource.getDependencies().includes(replaced) &&
-      !resource.getFixedDependencies().includes(replaced),
+  const peers = cycle.members.filter(
+    (member) =>
+      member !== replaced &&
+      member.getDependencies().includes(replaced) &&
+      !member.getFixedDependencies().includes(replaced),
   );
-  for (const resource of dependents) {
-    if (!members.has(resource)) continue;
-    const blocker = placeholderParamsBlocker(resource, from);
+  for (const peer of peers) {
+    const blocker = placeholderParamsBlocker(peer, from);
     if (blocker) {
       throw new ResourceCycleError(
-        `${replaced.id} must be replaced, so deploy must first update ${resource.id} without its contributions, so that ${resource.id} no longer refers to ${replaced.id}. It can't: ${blocker}.`,
+        `${replaced.id} must be replaced, so deploy must first update ${peer.id} without its contributions, so that ${peer.id} no longer refers to ${replaced.id}. It can't: ${blocker}.`,
       );
     }
   }
-  return dependents;
+  return peers;
 }
 
 /**
