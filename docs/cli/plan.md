@@ -37,6 +37,15 @@ When deploy replaces a resource that others refer to, and the provider can force
 
 If the deploy fails between the delete and those updates, the references stay broken until a later deploy succeeds. See [Deleting a Worker that other Workers bind](../providers/cloudflare/workers.md#deleting-a-worker-that-other-workers-bind).
 
+When an earlier deploy started the create of a resource and did not finish it, state holds a `creating` record for the resource. If the resource's class has `ownership`, the plan prints a line under the create:
+
+```
++ create aws/lambda/LambdaIamRole lambda:todos:role
+    recovers a create that an earlier deploy did not finish
+```
+
+Deploy then takes over the resource that the earlier create made, if it finds one and can prove that one of Notation's creates made it. Otherwise it creates the resource. See [Recoverable creates](../internals/reconciler.md#recoverable-creates).
+
 ## JSON output
 
 `--json` writes the complete plan to stdout. Build output and diagnostics move to stderr.
