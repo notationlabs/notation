@@ -3526,6 +3526,93 @@ describe("value validation at deploy", () => {
     runtime.close();
   });
 
+  it("replaces a resource with no read that lacks a required output, and records the output", async () => {
+    let arn: string | undefined;
+    const Role = defineRole({ create: async () => ({ arn }) });
+    const resources: BaseResource[] = [
+      new Role("role", { config: { name: "role" } }),
+    ];
+    const runtime = createRuntime(resources, "replace-missing-outputs");
+    await runtime.run("replace-missing-outputs-1").catch(() => {});
+    expect((await runtime.state.get("role"))?.output.arn).toBeUndefined();
+
+    arn = "arn:role";
+    resources.splice(
+      0,
+      1,
+      new Role("role", { config: { name: "role", boundary: "b" } }),
+    );
+    await runtime.run("replace-missing-outputs-2");
+
+    expect(await runtime.state.get("role")).toMatchObject({
+      params: { name: "role", boundary: "b" },
+      output: { arn: "arn:role" },
+    });
+    runtime.close();
+  });
+
+  it("replaces a resource with no read that lacks a required output when deploy deletes it before a replaced dependency", async () => {
+    let policyArn: string | undefined;
+    const Role = defineRole({ create: async () => ({ arn: "arn:role" }) });
+    // Blocks the delete of its role, so deploy deletes it before it replaces
+    // the role, and creates it again.
+    const Policy = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; role: string };
+      UpdateParams: { role: string };
+      ReadResult: { arn: string };
+    }>({
+      type: "test/durable/unread-policy",
+      provider: "test",
+      blocksDeleteOf: [Role.type],
+    })
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+          primaryKey: true,
+          immutable: true,
+        },
+        role: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+        },
+        arn: {
+          propertyType: "computed",
+          presence: "required",
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create: async () => ({ arn: policyArn }) as any,
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const resources: BaseResource[] = [];
+    const declare = (boundary?: string) => {
+      const role = new Role("role", { config: { name: "role", boundary } });
+      const policy = new Policy("policy", {
+        config: { name: "policy", role: role.outputRef("arn") },
+      });
+      resources.splice(0, resources.length, role, policy);
+    };
+    declare();
+    const runtime = createRuntime(resources, "cascade-missing-outputs");
+    await runtime.run("cascade-missing-outputs-1").catch(() => {});
+    expect((await runtime.state.get("policy"))?.output.arn).toBeUndefined();
+
+    policyArn = "arn:policy";
+    declare("b");
+    await runtime.run("cascade-missing-outputs-2");
+
+    expect(await runtime.state.get("policy")).toMatchObject({
+      output: { arn: "arn:policy" },
+    });
+    runtime.close();
+  });
+
   it("deletes an orphan whose recorded config no longer passes its validator", async () => {
     let strict = false;
     const deleteSpy = vi.fn(async () => undefined);
