@@ -101,8 +101,9 @@ function isRateLimited(errors: CloudflareErrorItem[]): boolean {
 }
 
 /**
- * Returns the response's `result`. Throws `ResourceOperationPendingError`
- * when the request is rate limited, so the reconciler retries.
+ * Returns the response's `result`. Throws a throttled
+ * `ResourceOperationPendingError` when the request is rate limited, so the
+ * reconciler retries.
  */
 export async function cloudflare<T>(
   method: "GET" | "PUT" | "POST" | "PATCH" | "DELETE",
@@ -166,6 +167,7 @@ export async function cloudflare<T>(
           Number.isFinite(retryAfter) && retryAfter > 0
             ? retryAfter * 1_000
             : 5_000,
+        throttled: true,
       },
     );
   }
