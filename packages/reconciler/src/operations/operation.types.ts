@@ -1,7 +1,6 @@
 import type {
   ResourceDeletion,
   BaseResource,
-  DurableObject,
   DurableValue,
   ResourceGroupRef,
 } from "@notation/resource";
@@ -59,10 +58,6 @@ export type PersistedResourceState = Pick<
   group: ResourceGroupRef | null;
   // Required here, though optional on StateNode: every write records edges.
   dependsOn: string[];
-  /** Set only on a "creating" record. */
-  creates?: string[];
-  /** Set only on a "creating" record that was written over a full record. */
-  recorded?: DurableObject;
   [key: string]: DurableValue;
 };
 
@@ -83,7 +78,7 @@ export type PersistState = (
 
 /**
  * `restored` writes back the record that a failed create started from, or
- * clears the record if the create started from none.
+ * that the replaced resource had. It clears the record if there is none.
  */
 export type PersistStage = "creating" | "reclaimed" | "restored";
 
@@ -116,12 +111,14 @@ export type CreateResourceParams = ResolvedResourceParams & {
   /**
    * The record that an earlier execution left and this create started from:
    * a "creating" record, or the record of a resource that the drift read
-   * reported as gone. Only a "creating" record names earlier executions
-   * whose create tokens can prove ownership.
+   * reported as gone.
    */
   prior?: StateNode;
-  /** Set for the create of a replacement, after its record was removed. */
-  replacement?: boolean;
+  /**
+   * Set for the create of a replacement: the record of the resource that it
+   * replaces, which the delete removed.
+   */
+  replaces?: StateNode;
   /** The edges to record with the resource. */
   dependsOn: string[];
   persist: PersistState;
@@ -138,16 +135,8 @@ export type DeleteResourceParams = ResourceOperationBaseParams & {
   remove: RemoveState;
   /** Passed to the resource's `delete`. */
   deletion?: ResourceDeletion;
-  /**
-   * Set when the record is a "creating" record: its params, the executions
-   * whose creates it lists, and the output of the full record that it was
-   * written over, if it was written over one.
-   */
-  creating?: {
-    params: Record<string, unknown>;
-    creates: string[];
-    recordedOutput?: Record<string, unknown>;
-  };
+  /** Set when the record is a "creating" record: its params. */
+  creatingParams?: Record<string, unknown>;
 };
 
 export function getErrorDetails(err: unknown): {

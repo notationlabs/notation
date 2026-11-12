@@ -128,14 +128,11 @@ export interface BaseResource {
   readonly dependencies: Record<string, BaseResource | void>;
   readonly key: {};
   keyOf(output: {}): {};
-  /** See `ResourceOperationsOptions.ownership`. */
-  readonly ownership?: ResourceOwnership;
   create: (
     params: any,
-    context: ResourceOperationContext | undefined,
-    token: string,
+    context?: ResourceOperationContext,
   ) => Promise<{} | void>;
-  find?: (params: any, token: string) => Promise<{} | void>;
+  find?: (params: any) => Promise<{} | void>;
   read?: (key: any, context?: ResourceOperationContext) => Promise<{}>;
   update?: (
     key: any,
@@ -236,13 +233,11 @@ export abstract class Resource<
   abstract provider: string;
   declare readonly deleteTakesDependents?: boolean;
   abstract schema: Schema;
-  ownership?: ResourceOwnership;
   abstract create: (
     params: T["params"],
-    context: ResourceOperationContext | undefined,
-    token: string,
+    context?: ResourceOperationContext,
   ) => Promise<T["primaryKey"]>;
-  find?: (params: T["params"], token: string) => Promise<T["primaryKey"]>;
+  find?: (params: T["params"]) => Promise<T["primaryKey"]>;
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -697,27 +692,6 @@ function withoutUndefined(
   return defined;
 }
 
-export type ResourceOwnership = "token" | "parent";
-
-function assertOwnership(
-  type: ResourceType,
-  opts: { find?: unknown; ownership?: ResourceOwnership },
-) {
-  if (opts.find && !opts.ownership) {
-    throw new Error(
-      `${type} defines find without ownership. Set ownership to "token" ` +
-        `when find checks the create token, or to "parent" when it finds ` +
-        `the resource inside a parent that Notation owns.`,
-    );
-  }
-  if (opts.ownership === "token" && !opts.find) {
-    throw new Error(
-      `${type} sets ownership to "token" without find, so nothing can ` +
-        `check the create token.`,
-    );
-  }
-}
-
 export type DefineResourceMeta = {
   type: ResourceType;
   /**
@@ -760,45 +734,28 @@ export type ResourceOperationsOptions<
   IntrinsicParams extends Partial<T["params"]>,
 > = {
   /**
-   * How deploy proves that a resource with the desired key, which the
-   * provider reports as already existing, was made by one of Notation's own
-   * creates. Deploy takes over such a resource only with that proof.
-   *
-   * - `token`: `find` returns the resource for the create token of an
-   *   execution that the resource's "creating" record names, or of the
-   *   current one.
-   *   `create` must record the token on the resource, for example as a tag,
-   *   and `find` must check it.
-   * - `parent`: the resource lives inside another resource that Notation
-   *   owns, such as a statement in a Lambda function's policy, so any
-   *   resource with the desired key is Notation's.
-   *
-   * Without it, deploy never takes over an existing resource, never looks
-   * up a create with an unknown outcome, and never deletes the resource of
-   * a "creating" record, unless the record was written over a full record.
-   */
-  ownership?: ResourceOwnership;
-  /**
-   * Creates the resource. `token` is unique to the execution and the
-   * resource, and is the same for each attempt that the execution makes. A
-   * resource with `ownership: "token"` records it on the remote resource, for
-   * example as a tag.
+   * Creates the resource. Throws `ResourceAlreadyExistsError` when the
+   * provider refuses the create because a resource with the same key exists.
    */
   create: (
     params: T["params"],
-    context: ResourceOperationContext | undefined,
-    token: string,
+    context?: ResourceOperationContext,
   ) => Promise<T["primaryKey"]>;
   /**
-   * Finds the resource that a create with `token` made, and returns what
-   * that create would have returned. Throws `ResourceNotFoundError` when the
-   * create made no resource. Requires `ownership`.
+   * Finds the resource that a create with `params` makes, and returns what
+   * that create would have returned. A class defines it when the provider
+   * assigns the key, or part of it.
    *
-   * With `ownership: "token"`, it must match on the token. With
-   * `ownership: "parent"`, it may match on the resource's identity inside
-   * the parent.
+   * It must match on an attribute that is unique, such as a name. It throws
+   * `ResourceNotFoundError` when no resource matches. When the provider does
+   * not keep the attribute unique and several resources match, it throws an
+   * error that names them, so that deploy never takes over one of several.
+   *
+   * Deploy calls it to get the key of a resource that it takes over, to look
+   * up a create with an unknown outcome, and to delete the resource of a
+   * "creating" record.
    */
-  find?: (params: T["params"], token: string) => Promise<T["primaryKey"]>;
+  find?: (params: T["params"]) => Promise<T["primaryKey"]>;
   read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -907,7 +864,6 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
           ConfigParams<T, keyof IntrinsicParams>,
           IntrinsicParams
         > {
-          assertOwnership(meta.type, opts);
           class SimpleResource<
             D extends Record<string, BaseResource | void> = {},
             C extends Record<string, any> = ConfigParams<
@@ -924,7 +880,6 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             schema = schema;
             create = opts.create;
             find = opts.find;
-            ownership = opts.ownership;
             read = opts.read ? opts.read : undefined;
             update = opts.update ? opts.update : undefined;
             delete = opts.delete;

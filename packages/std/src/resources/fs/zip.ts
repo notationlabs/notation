@@ -70,8 +70,6 @@ export const Zip = zipSchema.defineOperations({
       throw error;
     }
   },
-  // The parent is the project directory.
-  ownership: "parent",
   create: async (params) => {
     await zip.package(params.sourceFilePath, params.filePath);
   },

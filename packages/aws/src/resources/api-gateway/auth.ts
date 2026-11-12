@@ -3,6 +3,7 @@ import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { AwsSchema } from "src/resources/utils/types";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { apiGatewayClient } from "src/resources/utils/aws-clients";
+import { findOnlyInPages } from "src/resources/utils/paginate";
 import { ApiInstance } from "./api";
 
 type AuthorizerSdkSchema = AwsSchema<{
@@ -63,7 +64,6 @@ const apiSchema = authorizer.defineSchema({
 
 export const RouteAuth = apiSchema
   .defineOperations({
-    ownership: "parent",
     create: async (params) => {
       const command = new sdk.CreateAuthorizerCommand(params);
       const result = await apiGatewayClient().send(command);
@@ -71,6 +71,33 @@ export const RouteAuth = apiSchema
       return {
         AuthorizerId: result.AuthorizerId!,
       };
+    },
+    // AWS assigns the authorizer's ID, so `find` matches on the name within
+    // the API.
+    find: async (params) => {
+      let authorizer;
+      try {
+        authorizer = await findOnlyInPages(
+          (NextToken) =>
+            apiGatewayClient().send(
+              new sdk.GetAuthorizersCommand({ ApiId: params.ApiId, NextToken }),
+            ),
+          (item) => item.Name === params.Name,
+          `API Gateway authorizer named ${params.Name} in API ${params.ApiId}`,
+          (item) => item.AuthorizerId!,
+        );
+      } catch (error) {
+        // GetAuthorizers throws this when the API does not exist, and then
+        // the authorizer does not exist either.
+        if (error instanceof sdk.NotFoundException) {
+          throw new ResourceNotFoundError(
+            "The API of the API Gateway authorizer was not found",
+            { cause: error },
+          );
+        }
+        throw error;
+      }
+      return { AuthorizerId: authorizer.AuthorizerId! };
     },
     read: async (key) => {
       try {

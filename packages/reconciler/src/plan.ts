@@ -57,9 +57,9 @@ export type PlanNode = {
    */
   placeholder?: true;
   /**
-   * Set for a create of a resource that has a "creating" record and a class
-   * with `ownership`. An earlier deploy did not finish the create, so if the
-   * resource exists, deploy takes it over when the proof holds.
+   * Set for a create of a resource that has a "creating" record. An earlier
+   * deploy did not finish the create, so if the resource exists, deploy
+   * takes it over.
    */
   mayTakeOver?: true;
   params: Record<string, unknown>;

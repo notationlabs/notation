@@ -106,7 +106,6 @@ export const routeSchema = route.defineSchema({
 
 export const Route = routeSchema
   .defineOperations({
-    ownership: "parent",
     create: awsCreate(
       async (params) => {
         const command = new sdk.CreateRouteCommand(params);

@@ -1,4 +1,9 @@
-import { ResourceNotFoundError, validateValues } from "@notation/resource";
+import {
+  ResourceNotFoundError,
+  validateValues,
+  type BaseResource,
+  type DurableObject,
+} from "@notation/resource";
 import {
   decideDriftAction,
   type DriftRead,
@@ -76,6 +81,23 @@ export async function* readRemoteOperation(
   } catch (err) {
     yield* emitLifecycleEvent(params, "read", "error", getErrorDetails(err));
     throw err;
+  }
+}
+
+/**
+ * Calls the resource's `find`, and returns the key it found, or null when it
+ * found no resource.
+ */
+export async function findResourceKey(
+  resource: BaseResource,
+  resourceParams: Record<string, unknown>,
+): Promise<DurableObject | null> {
+  try {
+    const key = await resource.find!(resourceParams);
+    return key ? resource.toResult(key) : {};
+  } catch (error) {
+    if (ResourceNotFoundError.is(error)) return null;
+    throw error;
   }
 }
 

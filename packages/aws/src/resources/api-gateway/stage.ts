@@ -98,7 +98,6 @@ const stageSchema = stage.defineSchema({
 
 export const Stage = stageSchema
   .defineOperations({
-    ownership: "parent",
     create: awsCreate(
       async (params) => {
         const command = new sdk.CreateStageCommand(params);

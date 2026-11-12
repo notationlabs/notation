@@ -2,14 +2,9 @@ import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/resources/utils/aws-clients";
-import {
-  CREATE_TOKEN_TAG,
-  createTokenTagValue,
-  withoutCreateTokenTag,
-} from "src/resources/utils/create-token";
 import { executeApiSourceArn } from "src/resources/templates/arn";
 import { awsCreate } from "src/resources/utils/errors";
-import { findInPages } from "src/resources/utils/paginate";
+import { findOnlyInPages } from "src/resources/utils/paginate";
 import { AwsSchema } from "src/resources/utils/types";
 
 type ApiSdkSchema = AwsSchema<{
@@ -133,27 +128,23 @@ const apiSchema = api.defineSchema({
 } as const);
 
 export const Api = apiSchema.defineOperations({
-  ownership: "token",
-  // An API's ID is assigned by AWS, and its name need not be unique, so the
-  // create token is recorded as a tag for `find` to search for.
-  create: awsCreate(async (params, _context, token) => {
-    const tags = {
-      ...params.Tags,
-      [CREATE_TOKEN_TAG]: createTokenTagValue(token),
-    };
-    const command = new sdk.CreateApiCommand({ ...params, Tags: tags });
+  create: awsCreate(async (params) => {
+    const command = new sdk.CreateApiCommand(params);
     const result = await apiGatewayClient().send(command);
     return { ApiId: result.ApiId! };
   }),
-  async find(_params, token) {
-    const value = createTokenTagValue(token);
-    const api = await findInPages(
+  // AWS assigns the API's ID, and does not keep its name unique. The name
+  // that Notation gives an API is unique, so `find` matches on the name and
+  // fails when several APIs have it.
+  async find(params) {
+    const api = await findOnlyInPages(
       (NextToken) =>
         apiGatewayClient().send(new sdk.GetApisCommand({ NextToken })),
-      (item) => item.Tags?.[CREATE_TOKEN_TAG] === value,
+      (item) => item.Name === params.Name,
+      `API Gateway API named ${params.Name}`,
+      (item) => item.ApiId!,
     );
-    if (api) return { ApiId: api.ApiId! };
-    throw new ResourceNotFoundError("No API Gateway API has the create token");
+    return { ApiId: api.ApiId! };
   },
   async read(key) {
     try {
@@ -164,7 +155,6 @@ export const Api = apiSchema.defineOperations({
       return {
         RouteKey: "",
         ...result,
-        Tags: withoutCreateTokenTag(result.Tags),
         ExecuteApiSourceArn: await executeApiSourceArn(key.ApiId!),
       };
     } catch (error) {

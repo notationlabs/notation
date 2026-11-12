@@ -31,8 +31,9 @@
  *   state:persist:<id>:reclaimed  conditional write of the record of a
  *                              resource that create took over
  *   state:persist:<id>:restored   conditional write of the record that a
- *                              failed create started from, or removal of
- *                              the "creating" record if it started from none
+ *                              failed create started from or that the
+ *                              replaced resource had, or removal of the
+ *                              "creating" record if there is none
  *   state:delete:<id>          conditional removal of one
  *   state:<write>:<id>:settle:<n>        a write in pass <n> over a cycle
  *   state:<write>:<id>[:<stage>]:after-takeover   a write that follows a
@@ -43,12 +44,12 @@
  *   *:replace:delete:*         replacement, first half: the delete
  *   *:replace:create:*         replacement, second half: a read of the
  *                              removed record, then the create
- *   *:create:find              the search, before a create, for the resource
+ *   *:create:find              the find, before a create, of the resource
  *                              that an earlier execution's create made
- *   *:create:prove             the search for proof that one of Notation's
- *                              creates made an existing resource
- *   *:delete:find              the search for the resource of a "creating"
- *                              record by its create tokens, before a delete
+ *   *:create:existing          the find of a resource that the provider
+ *                              reported as already existing
+ *   *:delete:find              the find of the resource of a "creating"
+ *                              record, before a delete
  *   *:create:reclaim:read:*    the read of a resource that create took over
  *   *:reclaimed:*              the decision and change that follow a
  *                              takeover
@@ -57,11 +58,10 @@
  *
  * Effect IDs are persisted in the same way. A create attempt's effect ID is
  * notation:create:<execution id>:<resource id>:<n>, with both IDs
- * URI-encoded. The resource receives notation:create:<execution id>:<resource
- * id> as its create token, which is the same for every attempt. A create
- * that follows a takeover in the same execution adds /reclaimed to the
- * execution ID of the create that took the resource over, so a create after
- * a second takeover uses <execution id>/reclaimed/reclaimed.
+ * URI-encoded. A create that follows a takeover in the same execution adds
+ * /reclaimed to the execution ID of the create that took the resource over,
+ * so a create after a second takeover uses
+ * <execution id>/reclaimed/reclaimed.
  *
  * An <id> inside a scope is URI-encoded, so the `:` delimiter is unambiguous.
  * The state: keys are store-handle keys and so are not scope-prefixed: a

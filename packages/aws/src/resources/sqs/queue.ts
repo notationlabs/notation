@@ -214,7 +214,6 @@ const queueSchema = queue.defineSchema({
 } as const);
 
 export const Queue = queueSchema.defineOperations({
-  ownership: "parent",
   // CreateQueue returns an existing queue of the same name instead of
   // failing, so create checks for the queue first.
   create: awsCreate(

@@ -475,7 +475,7 @@ async function* replaceResource(
     persistedOutput: undefined,
     // The record was removed with the resource it describes.
     prior: undefined,
-    replacement: true,
+    replaces: session.node,
     persist: recreated.persist,
   });
   // No `replaceWithout`: the params in `created` already leave out the
@@ -544,9 +544,7 @@ async function* deleteBlockingDependents(
 /**
  * Deletes one resource. A resource with no persisted record was never created
  * — or has already been deleted — and is skipped, which is also what makes
- * the sweep of a partly-deleted deployment idempotent. The resource of a
- * "creating" record is deleted only with proof that one of Notation's
- * creates made it; see `deleteResourceOperation`. `step` must already be
+ * the sweep of a partly-deleted deployment idempotent. `step` must already be
  * scoped to the resource.
  * If the record's type differs from `declared`'s type, the record's own class
  * deletes it.
@@ -585,13 +583,8 @@ export async function* deleteResource(
     emit: (event) => emit({ ...event, ...cause }),
     maxOperationAttempts: opts.maxOperationAttempts,
     remove: session.remove,
-    creating: isCreatingRecord(session.node)
-      ? {
-          params: session.node.params,
-          creates: session.node.creates ?? [],
-          recordedOutput: session.node.recorded?.output as
-            Record<string, unknown> | undefined,
-        }
+    creatingParams: isCreatingRecord(session.node)
+      ? session.node.params
       : undefined,
   });
 }

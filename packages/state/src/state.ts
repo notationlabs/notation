@@ -18,29 +18,13 @@ export type StateNode = {
    */
   dependsOn?: string[];
   /**
-   * `creating` marks a record written before a create is attempted. It is
-   * evidence that Notation tried to create the resource, so a later deploy
-   * may take over a resource the provider reports as already existing. Its
-   * output holds the key fields that params supply, and the output of the
-   * full record that it was written over, if any.
+   * `creating` marks a record written before a create is attempted. The
+   * create may or may not have made the resource. Its output holds the key
+   * fields that params supply, and the output of the record that it was
+   * written over, if any.
    */
   lastOperation: "creating" | "create" | "update";
   lastOperationAt: string;
-  /**
-   * Set only on a "creating" record: the IDs of the executions whose creates
-   * may have made the resource. It lists every execution that wrote the
-   * record. An execution's create token is derived from its ID and the
-   * resource's ID, so deploy can recompute it. Deploy ignores the field on
-   * any other record.
-   */
-  creates?: string[];
-  /**
-   * Set only on a "creating" record that was written over a full record,
-   * after a drift read reported the resource gone: that full record, without
-   * its version. Deploy writes it back when the create is refused because
-   * the resource exists. Deploy ignores the field on any other record.
-   */
-  recorded?: DurableObject;
   [key: string]: DurableValue;
 };
 

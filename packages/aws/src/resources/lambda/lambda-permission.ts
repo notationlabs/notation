@@ -89,7 +89,6 @@ const lambdaPermissionSchema = lambdaPermission.defineSchema({
  */
 export const LambdaPermission = lambdaPermissionSchema
   .defineOperations({
-    ownership: "parent",
     // AddPermission fails when the StatementId exists, so a create whose
     // outcome is unknown is found by `read`, whose key is made of params.
     create: awsCreate(

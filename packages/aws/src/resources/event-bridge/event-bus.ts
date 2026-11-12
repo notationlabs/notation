@@ -32,7 +32,6 @@ const eventBusSchema = eventBus.defineSchema({
 
 /** A custom event bus. */
 export const EventBus = eventBusSchema.defineOperations({
-  ownership: "parent",
   create: awsCreate(
     async (params) => {
       await eventBridgeClient().send(

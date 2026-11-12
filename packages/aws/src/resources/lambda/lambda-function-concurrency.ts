@@ -49,7 +49,6 @@ const lambdaFunctionConcurrencySchema = lambdaFunctionConcurrency.defineSchema({
  */
 export const LambdaFunctionConcurrency = lambdaFunctionConcurrencySchema
   .defineOperations({
-    ownership: "parent",
     // After a create whose outcome is unknown, the reconciler looks the
     // reservation up with read. A reservation of another value counts as
     // found, and drift detection corrects it on a later deploy.

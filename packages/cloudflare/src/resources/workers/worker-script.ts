@@ -175,7 +175,6 @@ const workerScriptSchema = workerScript.defineSchema({
 
 export const WorkerScript = workerScriptSchema
   .defineOperations({
-    ownership: "parent",
     // An upload replaces a Worker with the same name, so check first. The
     // check is outside `cloudflareCreate`: if it throws, nothing was created.
     create: async (params) => {

@@ -117,9 +117,8 @@ export class ResourceCreationUnknownError extends Error {
  * because a resource with the same key already exists, for example IAM's
  * `EntityAlreadyExists`.
  *
- * The reconciler takes the resource over only with proof that one of
- * Notation's own creates made it. The resource's `ownership` says
- * how that is proved. Otherwise the create fails.
+ * The reconciler takes the resource over: it reads the resource, records it,
+ * and compares it with config.
  */
 export class ResourceAlreadyExistsError extends Error {
   readonly _tag = "ResourceAlreadyExistsError" as const;

@@ -133,7 +133,6 @@ const integrationSchema = integration.defineSchema({
 
 export const LambdaIntegration = integrationSchema
   .defineOperations({
-    ownership: "parent",
     create: async (params) => {
       const command = new sdk.CreateIntegrationCommand(params);
       const result = await apiGatewayClient().send(command);

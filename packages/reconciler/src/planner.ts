@@ -176,9 +176,7 @@ export async function createPlan({
           }
         : {}),
       ...(placeholder ? { placeholder: true as const } : {}),
-      ...(decision === "create" &&
-      resource.ownership !== undefined &&
-      isCreatingRecord(stateNode)
+      ...(decision === "create" && isCreatingRecord(stateNode)
         ? { mayTakeOver: true as const }
         : {}),
       params,

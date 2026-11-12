@@ -48,7 +48,6 @@ const lambdaLogGroupSchema = lambdaLogGroup.defineSchema({
 
 export const LambdaLogGroup = lambdaLogGroupSchema
   .defineOperations({
-    ownership: "parent",
     create: awsCreate(
       async (params) => {
         const command = new sdk.CreateLogGroupCommand(params);

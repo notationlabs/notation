@@ -262,7 +262,6 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
 
 export const LambdaFunction = lambdaFunctionSchema
   .defineOperations({
-    ownership: "parent",
     create: awsCreate(
       async (params) => {
         const { CodeFilePath, Environment, ...functionParams } = params;

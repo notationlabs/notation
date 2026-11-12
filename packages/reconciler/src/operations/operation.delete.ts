@@ -1,5 +1,4 @@
 import { ResourceNotFoundError } from "@notation/resource";
-import { proveOwnership } from "./ownership";
 import {
   type DeleteResourceParams,
   type StepRunner,
@@ -7,6 +6,7 @@ import {
   getErrorDetails,
 } from "./operation.types";
 import { runPendingOperation } from "./operation.pending";
+import { findResourceKey } from "./operation.read";
 
 export async function* deleteResourceOperation(
   step: StepRunner,
@@ -20,8 +20,12 @@ export async function* deleteResourceOperation(
   }
 
   try {
-    if (params.creating) {
-      const skip = yield* findCreatedResource(step, params, params.creating);
+    if (params.creatingParams) {
+      const skip = yield* findCreatedResource(
+        step,
+        params,
+        params.creatingParams,
+      );
       if (skip) {
         yield* emitLifecycleEvent(params, "delete", "skip", { reason: skip });
         yield* params.remove();
@@ -60,43 +64,24 @@ export async function* deleteResourceOperation(
 }
 
 /**
- * Decides whether the resource of a "creating" record is deleted. Deploy
- * deletes it only with proof that one of Notation's creates made it, which
- * `proveOwnership` checks with the record's params and executions:
- * 1. With `ownership: "token"`, a match sets the resource's output to the
- *    key `find` returned. Without one there is nothing to delete.
- * 2. With `ownership: "parent"`, it deletes by the key that `find` returned,
- *    or that the record holds. A record whose key the provider assigns
- *    holds no key.
- * 3. Otherwise nothing proves that the resource is Notation's.
- *
- * Without the proof, a "creating" record that was written over a full record
- * is deleted as that full record would be, by the key in its output. A full
- * record is deleted without proof, and the "creating" record replaced it only
- * because a drift read reported the resource gone.
+ * Finds the key of the resource of a "creating" record, so that it can be
+ * deleted. A class with `find` gets the key from `find`, with the record's
+ * params. Any other class uses the key that the record holds.
  *
  * Returns the reason to remove only the record, or undefined to delete.
  */
 async function* findCreatedResource(
   step: StepRunner,
   params: DeleteResourceParams,
-  creating: NonNullable<DeleteResourceParams["creating"]>,
+  creatingParams: Record<string, unknown>,
 ): AsyncGenerator<unknown, string | undefined, unknown> {
   const { resource } = params;
-  const proof =
-    resource.ownership === undefined
-      ? null
-      : yield* step.run("delete:find", () =>
-          proveOwnership(resource, creating.params, creating.creates),
-        );
-  if (proof) {
-    resource.setOutput({ ...resource.output, ...proof.key });
-  } else if (creating.recordedOutput) {
-    resource.setOutput(creating.recordedOutput);
-  } else {
-    return resource.ownership === undefined
-      ? "ownership-unproven"
-      : "not-created";
+  if (resource.find) {
+    const key = yield* step.run("delete:find", () =>
+      findResourceKey(resource, creatingParams),
+    );
+    if (!key) return "not-created";
+    resource.setOutput({ ...resource.output, ...key });
   }
   return Object.values(resource.key).some((v) => v === undefined)
     ? "key-unknown"

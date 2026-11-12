@@ -5,6 +5,7 @@ import {
   ResourceOperationPendingError,
   assertComputedFields,
   assertRequiredOutputs,
+  changedKeys,
   deployLookup,
   diffParams,
   resolveOutputRefs,
@@ -26,14 +27,12 @@ import {
   DEFAULT_MAX_OPERATION_ATTEMPTS,
   retryPending,
 } from "./operation.pending";
-import { readRemoteOperation, readResourceOperation } from "./operation.read";
-import { firstDeferredError } from "./deferred-checks";
 import {
-  createToken,
-  hasComputedPrimaryKey,
-  proveOwnership,
-  type OwnershipProof,
-} from "./ownership";
+  findResourceKey,
+  readRemoteOperation,
+  readResourceOperation,
+} from "./operation.read";
+import { firstDeferredError } from "./deferred-checks";
 
 /** How long @notation/durable waits before it looks up a create with an unknown outcome again. */
 const CREATE_LOOKUP_RETRY_MS = 1_000;
@@ -47,33 +46,28 @@ const MAX_CREATE_LOOKUP_ATTEMPTS = 10;
 
 /**
  * Creates the resource and records it. Before the create, it writes a
- * "creating" record that names this execution, so that a later execution
- * can tell that this one tried.
+ * "creating" record, so that a later deploy can tell that this one tried.
  *
- * A resource is taken over only with proof that one of Notation's creates
- * made it (see `BaseResource.ownership`). It is then read and recorded with
- * the params the read observed. The result has `reclaimed: true`, and the
+ * A resource that already exists is taken over: it is read and recorded with
+ * the params the read returned. The result has `reclaimed: true`, and the
  * caller compares the record with the desired params, as for any recorded
  * resource. There are three ways to a takeover:
- * 1. The record is a "creating" record, the class has `ownership: "token"`,
- *    and `find` finds the resource by the token of an earlier execution that
- *    the record names. This runs before the create, so that a resource whose
- *    key the provider assigns is not made a second time.
+ * 1. The record is a "creating" record that an earlier deploy left, and
+ *    `find` finds the resource. This runs before the create, so that a
+ *    resource whose key the provider assigns is not made a second time.
  * 2. The create attempt's outcome was unknown, and its lookup found the
  *    resource.
- * 3. The provider reports that the resource already exists, and the proof
- *    holds. Without the proof, create fails. With `ownership: "token"`, the
- *    proof is the token of this execution or of an execution that a
- *    "creating" record names. A full record names no execution, so a
- *    drift-recreate takes over only what this execution made.
+ * 3. The provider reports that the resource already exists.
+ *
+ * Two takeovers are refused:
+ * 1. The create of a replacement does not take over a resource with the key
+ *    of the resource it replaces. See `refuseReplaced`.
+ * 2. A resource whose key the provider assigns is taken over only through
+ *    `find`, which matches on a unique attribute. See `existingKey`.
  *
  * When create fails and its outcome is not unknown, the record that this
- * execution started from is written back, or the record is cleared if it
+ * create started from is written back, or the record is cleared if it
  * started from none. An unknown outcome keeps the "creating" record.
- *
- * A "creating" record written over a full record keeps that record in
- * `recorded`. When a create from such a "creating" record is refused because
- * the resource exists, the full record is written back.
  */
 export async function* createResourceOperation(
   step: StepRunner,
@@ -86,13 +80,13 @@ export async function* createResourceOperation(
     return { reclaimed: false };
   }
 
+  const { resource, resourceParams } = params;
   try {
-    const earlier = earlierExecutions(params);
-    if (params.resource.ownership === "token" && earlier.length > 0) {
-      const proof = yield* step.run("create:find", () =>
-        proveOwnership(params.resource, params.resourceParams, earlier),
+    if (isCreatingRecord(params.prior) && resource.find) {
+      const key = yield* step.run("create:find", () =>
+        findResourceKey(resource, resourceParams),
       );
-      if (proof) return yield* reclaim(step, params, proof);
+      if (key) return yield* takeOver(step, params, key);
     }
 
     yield* params.persist(creatingRecord(params), "creating");
@@ -106,37 +100,24 @@ export async function* createResourceOperation(
         params.maxOperationAttempts,
       );
     } catch (error) {
-      if (ResourceAlreadyExistsError.is(error)) {
-        const proof =
-          params.replacement && params.resource.ownership === "parent"
-            ? null
-            : yield* step.run("create:prove", () =>
-                proveOwnership(params.resource, params.resourceParams, [
-                  ...earlier,
-                  params.executionId,
-                ]),
-              );
-        if (proof) return yield* reclaim(step, params, proof);
-        yield* restorePrior(params, recordedBefore(params.prior));
-        throw new ResourceAlreadyExistsError(refusalMessage(params, error), {
-          cause: error,
-        });
+      if (!ResourceAlreadyExistsError.is(error)) {
+        if (!isOutcomeUnknown(error)) yield* restoreRecord(params);
+        throw error;
       }
-      if (!isOutcomeUnknown(error)) yield* restorePrior(params);
-      throw error;
+      const key = yield* existingKey(step, params, error);
+      return yield* takeOver(step, params, key);
     }
 
-    if (created.lookedUp && params.resource.read) {
-      return yield* reclaim(step, params, { key: created.key ?? null });
+    if (created.lookedUp) {
+      const key = created.key ?? {};
+      if (resource.read) return yield* takeOver(step, params, key);
+      yield* refuseReplaced(params, key);
     }
 
     const computedPrimaryKey = created.key;
-    params.resource.setOutput(params.resourceParams);
+    resource.setOutput(resourceParams);
     if (computedPrimaryKey) {
-      params.resource.setOutput({
-        ...computedPrimaryKey,
-        ...params.resource.output,
-      });
+      resource.setOutput({ ...computedPrimaryKey, ...resource.output });
     }
 
     // The create result is checked before the read, because the read uses
@@ -145,32 +126,29 @@ export async function* createResourceOperation(
     const deferredError = yield* firstDeferredError([
       async function* () {
         if (!computedPrimaryKey) return;
-        assertComputedFields(params.resource, computedPrimaryKey);
-        await validateValues(params.resource, computedPrimaryKey, "create");
+        assertComputedFields(resource, computedPrimaryKey);
+        await validateValues(resource, computedPrimaryKey, "create");
       },
       async function* () {
         const readResult = yield* readResourceOperation(step, {
-          resource: params.resource,
-          resourceParams: params.resourceParams,
+          resource,
+          resourceParams,
           persistedOutput: params.persistedOutput,
           emit: params.emit,
           maxOperationAttempts: params.maxOperationAttempts,
         });
-        params.resource.setOutput({
-          ...params.resource.output,
-          ...readResult,
-        });
+        resource.setOutput({ ...resource.output, ...readResult });
       },
       async function* () {
-        assertRequiredOutputs(params.resource, params.resource.output);
+        assertRequiredOutputs(resource, resource.output);
       },
     ]);
 
     yield* params.persist(
       resourceRecord(params, {
         lastOperation: "create",
-        params: params.resource.toState(params.resourceParams),
-        output: params.resource.toState(params.resource.output),
+        params: resource.toState(resourceParams),
+        output: resource.toState(resource.output),
       }),
     );
     // Thrown only once the record is written, so that state still tracks
@@ -185,12 +163,83 @@ export async function* createResourceOperation(
   }
 }
 
-async function* reclaim(
+/**
+ * Returns the part of the key that params do not supply, for a resource
+ * that the provider reported as already existing. A class with `find` gets
+ * it from `find`. A class without `find` has its whole key in params, unless
+ * the provider assigns the key.
+ *
+ * The create fails when the resource cannot be told apart from others: the
+ * provider assigns the key and the class has no `find`, or `find` finds no
+ * resource. `find` itself fails when several resources match.
+ */
+async function* existingKey(
   step: StepRunner,
   params: CreateResourceParams,
-  proof: OwnershipProof,
+  error: ResourceAlreadyExistsError,
+): AsyncGenerator<unknown, DurableObject, unknown> {
+  const { resource, resourceParams } = params;
+  let reason: string;
+  if (resource.find) {
+    const key = yield* step.run("create:existing", () =>
+      findResourceKey(resource, resourceParams),
+    );
+    if (key) return key;
+    reason = "find did not find the resource";
+  } else if (hasComputedPrimaryKey(resource)) {
+    reason =
+      `the provider assigns its key, and ${resource.type} has no find ` +
+      `operation to look the key up`;
+  } else {
+    return {};
+  }
+  yield* restoreRecord(params);
+  throw new ResourceAlreadyExistsError(
+    `Cannot create ${resource.id}: ${error.message}. Deploy cannot take ` +
+      `over the existing resource, because ${reason}.`,
+    { cause: error },
+  );
+}
+
+/**
+ * Takes over the existing resource that has `key` and the key fields in
+ * params: reads it, and records it with the params the read returned.
+ */
+async function* takeOver(
+  step: StepRunner,
+  params: CreateResourceParams,
+  key: DurableObject,
 ): AsyncGenerator<unknown, { reclaimed: boolean }, unknown> {
-  yield* reclaimResource(step, params, proof);
+  const { resource, resourceParams } = params;
+  yield* refuseReplaced(params, key);
+  if (!resource.read) {
+    throw new Error(
+      `Cannot take over ${resource.id}: ${resource.type} has no read ` +
+        `operation, so its params cannot be compared with config.`,
+    );
+  }
+  resource.setOutput({ ...resourceParams, ...key });
+  const { output, remote } = yield* readRemoteOperation(
+    step.scope("create:reclaim"),
+    {
+      resource,
+      resourceParams,
+      emit: params.emit,
+      maxOperationAttempts: params.maxOperationAttempts,
+    },
+  );
+
+  resource.setOutput({ ...key, ...output });
+  yield* params.persist(
+    resourceRecord(params, {
+      lastOperation: "create",
+      params: resource.toState(
+        observedParams(resource, remote ?? {}, resourceParams),
+      ),
+      output: resource.toState(resource.output),
+    }),
+    "reclaimed",
+  );
   yield* emitLifecycleEvent(params, "create", "success", {
     reason: "reclaimed",
   });
@@ -198,32 +247,52 @@ async function* reclaim(
 }
 
 /**
- * Writes back the record that the create started from, or clears the record
- * if it started from none. A "creating" record that an earlier execution
- * left keeps its `creates`, so a later deploy can still prove ownership by
- * the tokens of those executions.
+ * Fails the create of a replacement when the existing resource has the key
+ * of the resource it replaces. That resource is the replaced one if its
+ * delete has not taken effect yet. A takeover could keep it as the
+ * replacement, because a takeover assumes that an immutable param the read
+ * does not return matches config.
  *
- * A refused create passes `recorded`, the full record that the "creating"
- * record it started from was written over, and that record is written back
- * instead. The resource exists and no listed execution made it, so the full
- * record is the only evidence that it is Notation's. The next deploy reads
- * the resource by that record.
+ * The record of the replaced resource is written back, so the next deploy
+ * replaces the resource again.
  */
-async function* restorePrior(
+async function* refuseReplaced(
   params: CreateResourceParams,
-  recorded?: DurableObject,
+  key: DurableObject,
 ): AsyncGenerator<unknown, void, unknown> {
-  const { prior } = params;
-  if (!prior) {
+  const { resource, resourceParams, replaces } = params;
+  if (!replaces) return;
+  const existing = resource.keyOf({ ...resourceParams, ...key });
+  const replaced = resource.keyOf(replaces.output);
+  if (changedKeys(existing, replaced).length > 0) return;
+  yield* restoreRecord(params, replaces);
+  throw new ResourceAlreadyExistsError(
+    `Cannot create the replacement of ${resource.id}: a resource with the ` +
+      `key of the resource that it replaces exists after the delete. Deploy ` +
+      `does not take it over, because it may be the resource that the ` +
+      `delete was to remove. The next deploy deletes it and creates the ` +
+      `replacement again.`,
+  );
+}
+
+/**
+ * Writes back `record`, which defaults to the record that the create started
+ * from. Clears the record if there is none.
+ */
+async function* restoreRecord(
+  params: CreateResourceParams,
+  record: StateNode | undefined = params.prior,
+): AsyncGenerator<unknown, void, unknown> {
+  if (!record) {
     yield* params.persist(null, "restored");
     return;
   }
-  const { version: _, ...record } = recorded ?? prior;
+  const { version: _, ...fields } = record;
   yield* params.persist(
     {
-      ...record,
-      group: record.group ?? null,
-      dependsOn: record.dependsOn ?? params.dependsOn,
+      ...fields,
+      group: fields.group ?? null,
+      dependsOn: fields.dependsOn ?? params.dependsOn,
     } as PersistedResourceState,
     "restored",
   );
@@ -241,79 +310,27 @@ function isOutcomeUnknown(error: unknown): boolean {
   );
 }
 
-function refusalMessage(
-  params: CreateResourceParams,
-  error: ResourceAlreadyExistsError,
-): string {
-  const { resource } = params;
-  if (params.replacement) {
-    return (
-      `Cannot create the replacement of ${resource.id}: ${error.message}. ` +
-      `Deploy deleted the resource that this one replaces, and does not ` +
-      `take over another resource with the same key.`
-    );
-  }
-  const reason =
-    resource.ownership === undefined
-      ? `${resource.type} cannot prove which create made a resource`
-      : `nothing proves that one of Notation's creates made it`;
-  return (
-    `Cannot create ${resource.id}: ${error.message}. Deploy does not take ` +
-    `over the existing resource, because ${reason}.`
-  );
-}
-
 /**
- * The record written before the create is attempted. It names this
- * execution and the executions that a "creating" record in `params.prior`
- * names. Its output holds the key fields that params supply, so that the
- * resource can be read or deleted from the record alone.
+ * The record written before the create is attempted. Its output holds the
+ * key fields that params supply, so that the resource can be read or deleted
+ * from the record alone.
  *
- * After a drift read reported the resource gone, it keeps the recorded
- * output too. If the create's outcome stays unknown, a delete of this
- * record then still has the key that the provider assigned. A class with
- * `ownership: "parent"` and no `find` has no other way to get that key.
+ * It keeps the output of the record that the create started from too. After
+ * a drift read reported the resource gone, that output holds the key that
+ * the provider assigned. If the create's outcome stays unknown, a delete of
+ * this record then still has that key. A class with no `find` has no other
+ * way to get it.
  */
 function creatingRecord(params: CreateResourceParams): PersistedResourceState {
-  const { resource, resourceParams } = params;
-  const key = definedKey(resource, resourceParams);
-  const recorded = recordedBefore(params.prior);
+  const { resource, resourceParams, prior } = params;
   return resourceRecord(params, {
     lastOperation: "creating",
     params: resource.toState(resourceParams),
     output: resource.toState({
-      ...(recorded?.output as Record<string, unknown> | undefined),
-      ...key,
+      ...(prior?.output as Record<string, unknown> | undefined),
+      ...definedKey(resource, resourceParams),
     }),
-    creates: [...earlierExecutions(params), params.executionId],
-    ...(recorded ? { recorded } : {}),
   });
-}
-
-/**
- * The full record that the resource had before its "creating" record: `prior`
- * itself, without its version, or the one that a "creating" record in `prior`
- * carries. Undefined when the resource had no full record.
- */
-function recordedBefore(
-  prior: StateNode | undefined,
-): DurableObject | undefined {
-  if (!prior) return undefined;
-  if (isCreatingRecord(prior)) return prior.recorded;
-  const { version: _, ...record } = prior;
-  return record;
-}
-
-/**
- * The executions other than this one that a "creating" record in
- * `params.prior` names. Any other record names none. A create made under
- * another key does not match, because `find` checks the desired key as well
- * as the token.
- */
-function earlierExecutions(params: CreateResourceParams): string[] {
-  const { prior } = params;
-  if (!isCreatingRecord(prior)) return [];
-  return (prior.creates ?? []).filter((id) => id !== params.executionId);
 }
 
 function definedKey(
@@ -324,46 +341,6 @@ function definedKey(
     Object.entries(resource.keyOf(values)).filter(
       ([, value]) => value !== undefined,
     ),
-  );
-}
-
-/**
- * Reads a resource whose ownership `proof` established, and records it with
- * the params the read observed.
- */
-async function* reclaimResource(
-  step: StepRunner,
-  params: CreateResourceParams,
-  proof: OwnershipProof,
-): AsyncGenerator<unknown, void, unknown> {
-  const { resource, resourceParams } = params;
-  if (!resource.read) {
-    throw new Error(
-      `Cannot take over ${resource.id}: ${resource.type} has no read ` +
-        `operation, so its params cannot be compared with config.`,
-    );
-  }
-  resource.setOutput({ ...resourceParams, ...proof.key });
-  const { output, remote } = yield* readRemoteOperation(
-    step.scope("create:reclaim"),
-    {
-      resource,
-      resourceParams,
-      emit: params.emit,
-      maxOperationAttempts: params.maxOperationAttempts,
-    },
-  );
-
-  resource.setOutput({ ...proof.key, ...output });
-  yield* params.persist(
-    resourceRecord(params, {
-      lastOperation: "create",
-      params: resource.toState(
-        observedParams(resource, remote ?? {}, resourceParams),
-      ),
-      output: resource.toState(resource.output),
-    }),
-    "reclaimed",
   );
 }
 
@@ -401,10 +378,7 @@ function observedParams(
 
 function resourceRecord(
   params: CreateResourceParams,
-  fields: Pick<
-    PersistedResourceState,
-    "lastOperation" | "params" | "output" | "creates" | "recorded"
-  >,
+  fields: Pick<PersistedResourceState, "lastOperation" | "params" | "output">,
 ): PersistedResourceState {
   const { resource } = params;
   return {
@@ -432,14 +406,12 @@ type CreateAttemptResult = { key?: DurableObject; lookedUp?: true };
  * stops before the attempt is recorded, or when create throws
  * `ResourceCreationUnknownError`. Every other error fails the attempt,
  * including `ResourceAlreadyExistsError`, which `createResourceOperation`
- * answers with a proof of ownership, and `ResourceOperationPendingError`,
- * which proves that the attempt made nothing and sends the caller to the
- * next attempt.
+ * answers with a takeover, and `ResourceOperationPendingError`, which proves
+ * that the attempt made nothing and sends the caller to the next attempt.
  *
- * Every attempt passes the execution's create token to create and to the
- * lookup. Each attempt has its own effect ID, because a pending attempt
- * fails its effect and the next attempt calls create again with a new
- * callback context.
+ * Each attempt has its own effect ID, because a pending attempt fails its
+ * effect and the next attempt calls create again with a new callback
+ * context.
  */
 async function* createAttempt(
   step: StepRunner,
@@ -448,11 +420,10 @@ async function* createAttempt(
   context: ResourceOperationContext | undefined,
 ): AsyncGenerator<unknown, CreateAttemptResult, any> {
   const { resource, resourceParams } = params;
-  const token = createToken(params.executionId, resource.id);
   const lookup = getLookupFunction(resource, resourceParams);
 
   return yield* step.effect(`create:remote:effect:${attempt}`, {
-    effectId: `${token}:${attempt}`,
+    effectId: createEffectId(params.executionId, resource.id, attempt),
     operation: `notation:create:${resource.type}`,
     input: (context
       ? { params: resourceParams, context }
@@ -462,9 +433,9 @@ async function* createAttempt(
       params.maxOperationAttempts ?? DEFAULT_MAX_OPERATION_ATTEMPTS,
       MAX_CREATE_LOOKUP_ATTEMPTS,
     ),
-    lookup: async () => (lookup ? lookup(token) : { status: "not-found" }),
+    lookup: async () => (lookup ? lookup() : { status: "not-found" }),
     perform: async (): Promise<CreateAttemptResult> => {
-      const key = await resource.create(resourceParams, context, token);
+      const key = await resource.create(resourceParams, context);
       return { key: key ? resource.toResult(key) : undefined };
     },
     failsOn: (error) =>
@@ -472,55 +443,58 @@ async function* createAttempt(
   });
 }
 
+function createEffectId(
+  executionId: string,
+  resourceId: string,
+  attempt: number,
+): string {
+  return [
+    "notation:create",
+    encodeURIComponent(executionId),
+    encodeURIComponent(resourceId),
+    attempt,
+  ].join(":");
+}
+
 /**
- * Returns the effect's lookup for a resource's create, or undefined when the
- * resource's class cannot prove that a resource it finds is Notation's:
- * 1. With `ownership: "token"`, `find` searches for the execution's token.
- * 2. With `ownership: "parent"` and `find`, `find` searches the parent.
- * 3. With `ownership: "parent"`, `read`, and a key made only of params, it
- *    reads that key.
- * 4. Otherwise there is no lookup, so an unknown outcome stays unknown.
+ * Returns the effect's lookup for a resource's create:
+ * 1. With `find`, it calls `find`.
+ * 2. With `read` and a key made only of params, it reads that key.
+ * 3. Otherwise there is no lookup, so an unknown outcome stays unknown.
  */
 function getLookupFunction(
   resource: BaseResource,
   resourceParams: Record<string, unknown>,
-) {
-  const { find, read, ownership } = resource;
-  if (ownership === undefined) return undefined;
+): (() => Promise<EffectLookup<CreateAttemptResult>>) | undefined {
+  const { find, read } = resource;
+  const settled = (key?: DurableObject) =>
+    ({ status: "settled", result: { key, lookedUp: true } }) as const;
   if (find) {
-    return settledUnlessNotFound(async (token) => {
-      const key = await find(resourceParams, token);
-      return key ? resource.toResult(key) : undefined;
-    });
+    return async () => {
+      const key = await findResourceKey(resource, resourceParams);
+      return key ? settled(key) : { status: "not-found" };
+    };
   }
-  if (ownership === "parent" && read && !hasComputedPrimaryKey(resource)) {
-    return settledUnlessNotFound(async () => {
+  if (read && !hasComputedPrimaryKey(resource)) {
+    return async () => {
       try {
         await read(resource.keyOf(resourceParams));
       } catch (error) {
+        if (ResourceNotFoundError.is(error)) return { status: "not-found" };
         // A pending read reports a resource that exists and has not finished.
         // A throttled read doesn't, so the lookup throws and runs again later.
         if (!ResourceOperationPendingError.is(error) || error.throttled) {
           throw error;
         }
       }
-      return undefined;
-    });
+      return settled();
+    };
   }
   return undefined;
 }
 
-/** Wraps `lookup` in @notation/durable's lookup shape, reporting not-found on `ResourceNotFoundError`. */
-function settledUnlessNotFound(
-  lookup: (token: string) => Promise<DurableObject | undefined>,
-) {
-  return async (token: string): Promise<EffectLookup<CreateAttemptResult>> => {
-    try {
-      const key = await lookup(token);
-      return { status: "settled", result: { key, lookedUp: true } };
-    } catch (error) {
-      if (ResourceNotFoundError.is(error)) return { status: "not-found" };
-      throw error;
-    }
-  };
+function hasComputedPrimaryKey(resource: BaseResource) {
+  return Object.values(resource.schema).some(
+    (item) => item.propertyType === "computed" && item.primaryKey,
+  );
 }

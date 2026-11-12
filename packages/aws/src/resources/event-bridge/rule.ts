@@ -271,7 +271,6 @@ export const EventBridgeRule = eventBridgeRuleSchema
       }
     },
 
-    ownership: "parent",
     // PutRule overwrites an existing rule instead of failing, so create
     // checks for the rule first.
     create: awsCreate(async (params) => {

@@ -92,7 +92,6 @@ const lambdaIamRoleSchema = lambdaIamRole.defineSchema({
 } as const);
 
 export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
-  ownership: "parent",
   create: awsCreate(
     async (params) => {
       const command = new sdk.CreateRoleCommand(params);
