@@ -5,13 +5,14 @@ import { CloudflareApiError, cloudflare } from "./client";
 const WORKER_NOT_FOUND = 10007;
 
 /**
- * True for a Worker or a workers.dev setting that doesn't exist. Cloudflare
- * also returns a 404 for a Worker with no versions, but that Worker exists.
+ * Cloudflare's error code for an account with no workers.dev subdomain. It's
+ * the same code as for a missing Worker.
  */
+const NO_ACCOUNT_SUBDOMAIN = 10007;
+
+/** True for a Worker that doesn't exist. */
 export const isNotFound = (error: unknown): boolean =>
-  error instanceof CloudflareApiError &&
-  (error.hasCode(WORKER_NOT_FOUND) ||
-    (error.status === 404 && !hasNoVersions(error)));
+  error instanceof CloudflareApiError && error.hasCode(WORKER_NOT_FOUND);
 
 // A Worker made without code, such as in the dashboard, has no versions.
 const hasNoVersions = (error: CloudflareApiError): boolean =>
@@ -76,8 +77,10 @@ export async function getScriptSettings(
       `${scriptPath(account, scriptName)}/settings`,
     );
   } catch (error) {
-    if (isNotFound(error)) return undefined;
+    // Checked first, so that a Worker with no versions is never read as
+    // missing, whatever code Cloudflare sends with it.
     if (error instanceof CloudflareApiError && hasNoVersions(error)) return {};
+    if (isNotFound(error)) return undefined;
     throw error;
   }
 }
@@ -214,9 +217,22 @@ export async function setScriptSubdomain(
 
 /** Returns the account's workers.dev subdomain. */
 export async function getAccountSubdomain(account: string): Promise<string> {
-  const { subdomain } = await cloudflare<{ subdomain: string }>(
-    "GET",
-    `/accounts/${encodeURIComponent(account)}/workers/subdomain`,
-  );
-  return subdomain;
+  try {
+    const { subdomain } = await cloudflare<{ subdomain: string }>(
+      "GET",
+      `/accounts/${encodeURIComponent(account)}/workers/subdomain`,
+    );
+    return subdomain;
+  } catch (error) {
+    if (
+      error instanceof CloudflareApiError &&
+      error.hasCode(NO_ACCOUNT_SUBDOMAIN)
+    ) {
+      throw new Error(
+        `The account ${account} has no workers.dev subdomain. Set one up at https://dash.cloudflare.com/${account}/workers/onboarding, then deploy again.`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }

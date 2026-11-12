@@ -14,6 +14,7 @@ import {
   WorkerScript,
 } from "src/resources/workers/worker-script";
 import { WorkerSubdomain } from "src/resources/workers/worker-subdomain";
+import { CloudflareApiError } from "src/api/client";
 
 let root: string;
 const code = "export default { fetch() { return new Response('ok'); } };";
@@ -249,14 +250,17 @@ describe("WorkerScript", () => {
     ).rejects.toBeInstanceOf(ResourceOperationPendingError);
   });
 
-  it("doesn't take over a Worker that has no versions", async () => {
-    mockFetch(() => fail(404, 0, "Worker app--dev--api has no versions"));
+  it.each([0, 10007])(
+    "doesn't take over a Worker that has no versions (code %i)",
+    async (code) => {
+      mockFetch(() => fail(404, code, "Worker app--dev--api has no versions"));
 
-    await expect(script.create(params)).rejects.toThrow(
-      "A Worker named app--dev--api already exists",
-    );
-    expect(calls).toHaveLength(1);
-  });
+      await expect(script.create(params)).rejects.toThrow(
+        "A Worker named app--dev--api already exists",
+      );
+      expect(calls).toHaveLength(1);
+    },
+  );
 
   it("reads a Worker that has no versions as existing, without settings", async () => {
     mockFetch(() => fail(404, 0, "Worker app--dev--api has no versions"));
@@ -467,6 +471,18 @@ describe("WorkerScript", () => {
     });
   });
 
+  it("fails, and doesn't read the Worker as missing, on a 404 without Cloudflare's not-found code", async () => {
+    mockFetch(() => fail(404, 7003, "Could not route"));
+    const key = { AccountId: "acc", ScriptName: "app--dev--api" };
+
+    const read = await script.read!(key).catch((e) => e);
+    expect(read).not.toBeInstanceOf(ResourceNotFoundError);
+    expect(read.message).toContain("failed with status 404");
+    await expect(script.delete(key, {} as any)).rejects.toThrow(
+      "failed with status 404",
+    );
+  });
+
   it("names the account variable when it is not set", async () => {
     vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "");
 
@@ -553,6 +569,32 @@ describe("WorkerSubdomain", () => {
       ...key,
       Url: "https://app--dev--api.team.workers.dev",
     });
+  });
+
+  it("explains that the account has no workers.dev subdomain", async () => {
+    mockFetch((call) =>
+      call.url.endsWith("/workers/subdomain")
+        ? fail(404, 10007, "not found")
+        : ok({ enabled: true, previews_enabled: false }),
+    );
+
+    const error = await subdomain.read!(key).catch((error) => error);
+    expect(error.message).toContain(
+      "The account acc has no workers.dev subdomain.",
+    );
+    expect(error.cause).toBeInstanceOf(CloudflareApiError);
+  });
+
+  it("fails with the API error for a 404 that Cloudflare can't route", async () => {
+    mockFetch((call) =>
+      call.url.endsWith("/workers/subdomain")
+        ? fail(404, 7003, "Could not route")
+        : ok({ enabled: true, previews_enabled: false }),
+    );
+
+    await expect(subdomain.read!(key)).rejects.toThrow(
+      "failed with status 404",
+    );
   });
 
   it("reads a Worker that is not on workers.dev as not found", async () => {
