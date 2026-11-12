@@ -45,14 +45,28 @@ const r2BucketSchema = r2Bucket.defineSchema({
     presence: "required",
     immutable: true,
     secondaryKey: true,
+    rejectReplace: (previous, desired) =>
+      `CLOUDFLARE_ACCOUNT_ID is ${desired}, but this R2 bucket was created in the account ${previous}. An R2 bucket can't move to another account, and replacing it would delete the old bucket first. Set CLOUDFLARE_ACCOUNT_ID back to ${previous} to keep the bucket. To start fresh in the other account, first run \`notation destroy\` with the old account, or deploy to another stage.`,
     value: v.string(),
   },
+  /**
+   * 3 to 64 lowercase letters, digits and hyphens. The name can't start or
+   * end with a hyphen.
+   */
   BucketName: {
     propertyType: "param",
     presence: "required",
     immutable: true,
     primaryKey: true,
-    value: v.string(),
+    rejectReplace: (previous, desired) =>
+      `The bucket name is ${desired}, but this R2 bucket was created as ${previous}. An R2 bucket can't be renamed, and replacing it would delete the old bucket first. Set the name back to ${previous} to keep the bucket. To start fresh, first run \`notation destroy\`, or deploy to another stage.`,
+    value: v.pipe(
+      v.string(),
+      v.regex(
+        /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/,
+        "An R2 bucket name must be 3 to 64 lowercase letters, digits and hyphens, and can't start or end with a hyphen.",
+      ),
+    ),
   },
   /**
    * Where Cloudflare stores the bucket's objects. Every request for the
@@ -63,6 +77,8 @@ const r2BucketSchema = r2Bucket.defineSchema({
     presence: "required",
     immutable: true,
     secondaryKey: true,
+    rejectReplace: (previous, desired) =>
+      `The jurisdiction is ${desired}, but this R2 bucket was created in the ${previous} jurisdiction. An R2 bucket can't move to another jurisdiction, and replacing it would delete the old bucket first. Set the jurisdiction back to ${previous} to keep the bucket. To start fresh in the other jurisdiction, first run \`notation destroy\`, or deploy to another stage.`,
     value: jurisdictionSchema,
   },
   /**
@@ -116,10 +132,13 @@ export const R2Bucket = r2BucketSchema.defineOperations({
       AccountId: key.AccountId,
       BucketName: key.BucketName,
       Jurisdiction: key.Jurisdiction,
-      StorageClass: bucket.storage_class,
+      // Cloudflare can leave out the storage class. The default is Standard.
+      StorageClass: bucket.storage_class ?? "Standard",
     };
   },
 
+  // StorageClass is the only param that an update can change, so the update
+  // always sends the PATCH.
   update: async (key, _patch, params) => {
     await setBucketStorageClass(
       key.AccountId,

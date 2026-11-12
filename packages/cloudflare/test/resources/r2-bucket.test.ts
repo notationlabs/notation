@@ -177,6 +177,38 @@ describe("R2Bucket", () => {
     });
   });
 
+  it("reads a bucket without a storage class as Standard", async () => {
+    mockFetch(() => ok({ name: "app--dev--uploads" }));
+
+    await expect(bucket.read!(key)).resolves.toEqual({
+      ...key,
+      StorageClass: "Standard",
+    });
+  });
+
+  it.each(["ab", "-uploads", "uploads-", "Uploads", "up_loads"])(
+    "rejects the bucket name %s when it is declared",
+    (BucketName) => {
+      expect(
+        () =>
+          new R2Bucket("bucket:invalid", {
+            config: { ...bucket.config, BucketName },
+          }),
+      ).toThrow("An R2 bucket name must be 3 to 64 lowercase letters");
+    },
+  );
+
+  it.each([
+    ["AccountId", /An R2 bucket can't move to another account/],
+    ["BucketName", /An R2 bucket can't be renamed/],
+    ["Jurisdiction", /An R2 bucket can't move to another jurisdiction/],
+  ] as const)("rejects a replacement when %s changes", (name, message) => {
+    const item = bucket.schema[name];
+    if (item.propertyType !== "param") throw new Error("not a param");
+
+    expect((item.rejectReplace as any)?.("old", "new")).toMatch(message);
+  });
+
   it("reads a missing bucket as not found, and deletes it without an error", async () => {
     mockFetch(() => noSuchBucket());
 
@@ -225,7 +257,7 @@ describe("R2Bucket", () => {
 
   it("says to delete the objects when the bucket is not empty", async () => {
     mockFetch(() =>
-      fail(409, 10008, "The bucket you tried to delete is not empty."),
+      fail(409, undefined, "The bucket you tried to delete is not empty."),
     );
 
     await expect(bucket.delete(key, {} as any)).rejects.toThrow(

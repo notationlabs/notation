@@ -1,7 +1,6 @@
 import * as v from "valibot";
 import { CloudflareApiError, cloudflare } from "./client";
 
-/** Cloudflare's error code for a bucket that doesn't exist. */
 const NO_SUCH_BUCKET = 10006;
 
 export const jurisdictionSchema = v.picklist([
@@ -49,6 +48,17 @@ const bucketsPath = (account: string) =>
 const bucketPath = (account: string, name: string) =>
   `${bucketsPath(account)}/${encodeURIComponent(name)}`;
 
+const r2 = <T>(
+  method: "GET" | "POST" | "PATCH" | "DELETE",
+  path: string,
+  jurisdiction: Jurisdiction,
+  options: { body?: object; headers?: Record<string, string> } = {},
+) =>
+  cloudflare<T>(method, path, options.body, {
+    ...options.headers,
+    "cf-r2-jurisdiction": jurisdiction,
+  });
+
 /** Returns `undefined` if the bucket doesn't exist. */
 export async function getBucket(
   account: string,
@@ -56,12 +66,7 @@ export async function getBucket(
   jurisdiction: Jurisdiction,
 ): Promise<Bucket | undefined> {
   try {
-    return await cloudflare<Bucket>(
-      "GET",
-      bucketPath(account, name),
-      undefined,
-      { "cf-r2-jurisdiction": jurisdiction },
-    );
+    return await r2<Bucket>("GET", bucketPath(account, name), jurisdiction);
   } catch (error) {
     if (isNoSuchBucket(error)) return undefined;
     throw error;
@@ -74,16 +79,13 @@ export async function createBucket(
   jurisdiction: Jurisdiction,
   options: { locationHint?: LocationHint; storageClass: StorageClass },
 ): Promise<void> {
-  await cloudflare(
-    "POST",
-    bucketsPath(account),
-    {
+  await r2("POST", bucketsPath(account), jurisdiction, {
+    body: {
       name,
       locationHint: options.locationHint,
       storageClass: options.storageClass,
     },
-    { "cf-r2-jurisdiction": jurisdiction },
-  );
+  });
 }
 
 /**
@@ -96,9 +98,8 @@ export async function setBucketStorageClass(
   jurisdiction: Jurisdiction,
   storageClass: StorageClass,
 ): Promise<void> {
-  await cloudflare("PATCH", bucketPath(account, name), undefined, {
-    "cf-r2-jurisdiction": jurisdiction,
-    "cf-r2-storage-class": storageClass,
+  await r2("PATCH", bucketPath(account, name), jurisdiction, {
+    headers: { "cf-r2-storage-class": storageClass },
   });
 }
 
@@ -108,7 +109,5 @@ export async function deleteBucket(
   name: string,
   jurisdiction: Jurisdiction,
 ): Promise<void> {
-  await cloudflare("DELETE", bucketPath(account, name), undefined, {
-    "cf-r2-jurisdiction": jurisdiction,
-  });
+  await r2("DELETE", bucketPath(account, name), jurisdiction);
 }
