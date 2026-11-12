@@ -832,6 +832,24 @@ describe("plan params", () => {
     });
   });
 
+  it("plans the value of an output ref that deriveParams takes from a dependency whose state has the output", async () => {
+    const Derived = LogGroup.requireDependencies<{
+      fn: InstanceType<typeof Fn>;
+    }>().deriveParams(({ deps }) => ({
+      logGroupName: deps.fn.outputRef("FunctionName"),
+    }));
+    const fn = fnWith();
+    fn.setOutput({ FunctionName: "f", Role: "r" } as any);
+    const logGroup = new Derived("logs", {
+      config: { retention: 7 },
+      dependencies: { fn },
+    });
+    expect(await logGroup.planParams()).toEqual({
+      logGroupName: "f",
+      retention: 7,
+    });
+  });
+
   describe("an output ref that a function contribution takes from a dependency", () => {
     const contributeRef = (
       fn: InstanceType<typeof Fn>,
