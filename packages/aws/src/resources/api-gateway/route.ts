@@ -118,13 +118,26 @@ export const Route = routeSchema
     ),
     // A route key is unique within an API, so `find` matches on it.
     find: async (params) => {
-      const route = await findInPages(
-        (NextToken) =>
-          apiGatewayClient().send(
-            new sdk.GetRoutesCommand({ ApiId: params.ApiId, NextToken }),
-          ),
-        (item) => item.RouteKey === params.RouteKey,
-      );
+      let route;
+      try {
+        route = await findInPages(
+          (NextToken) =>
+            apiGatewayClient().send(
+              new sdk.GetRoutesCommand({ ApiId: params.ApiId, NextToken }),
+            ),
+          (item) => item.RouteKey === params.RouteKey,
+        );
+      } catch (error) {
+        // GetRoutes throws this when the API does not exist, and then the
+        // route does not exist either.
+        if (error instanceof sdk.NotFoundException) {
+          throw new ResourceNotFoundError(
+            "The API of the API Gateway route was not found",
+            { cause: error },
+          );
+        }
+        throw error;
+      }
       if (route) return { RouteId: route.RouteId! };
       throw new ResourceNotFoundError("No API Gateway route has the route key");
     },

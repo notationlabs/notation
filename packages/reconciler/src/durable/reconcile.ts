@@ -261,13 +261,7 @@ async function* applyAction(
           `Cannot replace ${resource.id}: it has no state record`,
         );
       }
-      yield* replaceResource(
-        step,
-        opts,
-        session,
-        shared,
-        replaceWithout,
-      );
+      yield* replaceResource(step, opts, session, shared, replaceWithout);
       return;
     case "noop":
       if (!session.node) return;

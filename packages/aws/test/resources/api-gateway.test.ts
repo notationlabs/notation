@@ -225,6 +225,24 @@ describe("API Gateway route", () => {
       route.find!({ ApiId: "api-1", RouteKey: "GET /todos" }, TOKEN),
     ).rejects.toSatisfy(ResourceNotFoundError.is);
   });
+
+  it("reports no route when the API does not exist", async () => {
+    const notFound = new sdk.NotFoundException({
+      message: "Invalid API identifier specified",
+      $metadata: {},
+    });
+    mockSend(() => {
+      throw notFound;
+    });
+
+    const found = route.find!(
+      { ApiId: "api-1", RouteKey: "GET /todos" },
+      TOKEN,
+    );
+
+    await expect(found).rejects.toSatisfy(ResourceNotFoundError.is);
+    await expect(found).rejects.toMatchObject({ cause: notFound });
+  });
 });
 
 describe("awsCallMayHaveTakenEffect", () => {
