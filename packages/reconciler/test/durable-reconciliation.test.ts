@@ -4091,6 +4091,35 @@ describe("dependency cycles", () => {
     runtime.close();
   });
 
+  it("updates a member that reads an output of a later member that an update changes", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const build = (target: string) => {
+      const a = worker("a");
+      const b = worker("b");
+      const c = worker("c");
+      const d = worker("d");
+      a.contribute({ bindings: b.outputRef("bindings") } as any);
+      bind(b, a);
+      bind(b, target === "c" ? c : d);
+      return [c, d, a, b];
+    };
+    const resources = build("c");
+    const runtime = createRuntime(resources, "cycle-update-read");
+    await runtime.run("cycle-update-read-1");
+    expect(calls.slice(2)).toEqual([
+      "create a []",
+      "create b [a, c]",
+      "update a [a, c]",
+    ]);
+    calls.length = 0;
+
+    resources.splice(0, 4, ...build("d"));
+    await runtime.run("cycle-update-read-2");
+
+    expect(calls).toEqual(["update b [a, d]", "update a [a, d]"]);
+    runtime.close();
+  });
+
   it("fails when an output that a member takes changes on every update", async () => {
     const { worker, bind } = defineWorkers({ versioned: true });
     const a = worker("a");
