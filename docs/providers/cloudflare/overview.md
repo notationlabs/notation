@@ -15,4 +15,4 @@ Deploy reads two environment variables:
   - KV namespaces: **Workers KV Storage: Edit**
   - R2 buckets: **Workers R2 Storage: Edit**
   - Containers: **Containers: Edit**
-- `CLOUDFLARE_ACCOUNT_ID`: the account to deploy to. It is stored in state. See [Credentials](workers.md#credentials) for what that means for Workers.
+- `CLOUDFLARE_ACCOUNT_ID`: the account to deploy to. It is stored in state, so a later deploy updates or deletes each resource in the account it was made in. For what this means for Workers, see [Credentials](workers.md#credentials).
