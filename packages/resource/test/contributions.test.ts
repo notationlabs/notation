@@ -800,6 +800,88 @@ describe("plan params", () => {
     await expect(logGroup.planParams()).rejects.toThrow("no");
   });
 
+  describe("an output ref that deriveParams takes from a dependency", () => {
+    const Derived = LogGroup.requireDependencies<{
+      fn: InstanceType<typeof Fn>;
+    }>().deriveParams(({ deps }) => ({
+      logGroupName: deps.fn.outputRef("FunctionArn"),
+    }));
+
+    it("plans as unknown when the dependency has no output", async () => {
+      const logGroup = new Derived("logs", {
+        config: { retention: 7 },
+        dependencies: { fn: fnWith() },
+      });
+      expect(await logGroup.planParams()).toEqual({
+        logGroupName: UNKNOWN_AFTER_APPLY,
+        retention: 7,
+      });
+    });
+
+    it("plans as unknown when the output is missing from the dependency's state", async () => {
+      const fn = fnWith();
+      fn.setOutput({ FunctionName: "f", Role: "r" } as any);
+      const logGroup = new Derived("logs", {
+        config: { retention: 7 },
+        dependencies: { fn },
+      });
+      expect(await logGroup.planParams()).toEqual({
+        logGroupName: UNKNOWN_AFTER_APPLY,
+        retention: 7,
+      });
+    });
+
+    it("plans the value when the dependency's state has the output", async () => {
+      const Derived = LogGroup.requireDependencies<{
+        fn: InstanceType<typeof Fn>;
+      }>().deriveParams(({ deps }) => ({
+        logGroupName: deps.fn.outputRef("FunctionName"),
+      }));
+      const fn = fnWith();
+      fn.setOutput({ FunctionName: "f", Role: "r" } as any);
+      const logGroup = new Derived("logs", {
+        config: { retention: 7 },
+        dependencies: { fn },
+      });
+      expect(await logGroup.planParams()).toEqual({
+        logGroupName: "f",
+        retention: 7,
+      });
+    });
+  });
+
+  describe("an output ref that a function contribution takes from a dependency", () => {
+    const contributeRef = (
+      fn: InstanceType<typeof Fn>,
+      queue: InstanceType<typeof Queue>,
+    ) =>
+      fn.contribute(
+        ({ deps }) => ({
+          Environment: { Variables: { Q: deps.queue.outputRef("QueueArn") } },
+        }),
+        { deps: { queue } },
+      );
+
+    it("plans as unknown when the dependency has no output", async () => {
+      const queue = new Queue("orders", { config: { QueueName: "orders" } });
+      const fn = fnWith();
+      contributeRef(fn, queue);
+      expect((await fn.planParams()).Environment).toEqual({
+        Variables: { Q: UNKNOWN_AFTER_APPLY },
+      });
+    });
+
+    it("plans as unknown when the output is missing from the dependency's state", async () => {
+      const queue = new Queue("orders", { config: { QueueName: "orders" } });
+      queue.setOutput({ QueueUrl: "url", QueueName: "orders" } as any);
+      const fn = fnWith();
+      contributeRef(fn, queue);
+      expect((await fn.planParams()).Environment).toEqual({
+        Variables: { Q: UNKNOWN_AFTER_APPLY },
+      });
+    });
+  });
+
   it("runs deriveParams unchanged at deploy", async () => {
     const Derived = LogGroup.requireDependencies<{
       fn: InstanceType<typeof Fn>;

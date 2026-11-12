@@ -226,7 +226,10 @@ export class PendingOutput extends Error {
  * dependency with no output throws `PendingOutput` when its output is read.
  * A view of a dependency whose output lacks a required output throws it when
  * that output is read. `readPending` is set by such a read, so a plan still
- * knows of it when the code catches the error.
+ * knows of it when the code catches the error. A view's `outputRef` names the
+ * dependency, not the view. Plan resolves refs after the code has returned,
+ * outside `tryAtPlan`, so a ref that named the view would throw
+ * `PendingOutput` there instead of planning as unknown.
  */
 export function createPlanViews() {
   const views = {
@@ -247,24 +250,25 @@ export function createPlanViews() {
 
   const pendingView = (dep: BaseResource): BaseResource => {
     const output = dep.output as Record<string, unknown> | null;
-    if (output == null) {
-      return Object.create(dep, { output: { get: () => throwPending(dep) } });
-    }
     // Deploy fails when a required output is missing, so each one is present
     // at deploy. Each missing one is a getter, so that `in`, `Object.hasOwn`
     // and `Object.keys` give the answers they will give at deploy, and only
     // a read of its value throws.
-    const missing = missingRequiredOutputs(dep, output);
-    const viewedOutput = Object.defineProperties(
-      { ...output },
-      Object.fromEntries(
-        missing.map((key) => [
-          key,
-          { enumerable: true, get: () => throwPending(dep) },
-        ]),
-      ),
-    );
-    return Object.create(dep, { output: { get: () => viewedOutput } });
+    const viewedOutput =
+      output &&
+      Object.defineProperties(
+        { ...output },
+        Object.fromEntries(
+          missingRequiredOutputs(dep, output).map((key) => [
+            key,
+            { enumerable: true, get: () => throwPending(dep) },
+          ]),
+        ),
+      );
+    return Object.create(dep, {
+      output: { get: () => viewedOutput ?? throwPending(dep) },
+      outputRef: { value: dep.outputRef.bind(dep) },
+    });
   };
 
   return views;
