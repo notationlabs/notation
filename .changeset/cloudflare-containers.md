@@ -8,4 +8,6 @@
 - `cloudflare/workers/WorkerScript` takes `container: true` on an entry of `DurableObjectNamespaces`, which declares the class as a container class in the upload. The upload sends it as `containers: [{ class_name }]`. This form hasn't been checked against the live upload API: Cloudflare's docs document it only for the Versions API, and document `exports[Class].container` for the upload.
 - `cloudflare/containers/ContainerRegistry` gives Containers the credentials to pull images from a private registry. A change to the credentials replaces the registry.
 
+For now, containers can only be used through `@notation/cloudflare/resources`. The Durable Object namespaces that `$worker` and `$durableObject` declare never set `container`, so a `ContainerApplication` can't use them.
+
 The API token in `CLOUDFLARE_API_TOKEN` also needs the Containers permission.
