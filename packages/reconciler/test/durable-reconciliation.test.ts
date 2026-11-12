@@ -4048,6 +4048,49 @@ describe("dependency cycles", () => {
     runtime.close();
   });
 
+  it("creates a dependent outside the cycle after the cycle settles", async () => {
+    const { worker, bind, calls } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    const c = worker("c");
+    bind(a, b);
+    bind(b, a);
+    bind(c, a);
+    const runtime = createRuntime([c, a, b], "cycle-dependent");
+
+    await runtime.run("cycle-dependent-1");
+
+    expect(calls).toEqual([
+      "create a []",
+      "create b [a]",
+      "update a [b]",
+      "create c [a]",
+    ]);
+    runtime.close();
+  });
+
+  it("does not create a dependent outside the cycle when the cycle fails after its placeholder exists", async () => {
+    const { worker, bind, calls, failCreate } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    const c = worker("c");
+    bind(a, b);
+    bind(b, a);
+    bind(c, a);
+    const runtime = createRuntime([c, a, b], "cycle-dependent-fail");
+    failCreate.add("b");
+
+    await expect(runtime.run("cycle-dependent-fail-1")).rejects.toThrow(
+      "create b failed",
+    );
+    expect(calls).toEqual(["create a []"]);
+
+    calls.length = 0;
+    await runtime.run("cycle-dependent-fail-2");
+    expect(calls).toEqual(["create b [a]", "update a [b]", "create c [a]"]);
+    runtime.close();
+  });
+
   it("fails when an output that a member takes changes on every update", async () => {
     const { worker, bind } = defineWorkers({ versioned: true });
     const a = worker("a");
@@ -4406,10 +4449,8 @@ describe("dependency cycles", () => {
     runtime.close();
   });
 
-  // Deploy reverts only the members of a cycle. c is outside the cycle, so
-  // its binding to b is left as it is, as it would be for a one-way binding
-  // to a resource that is not in a cycle, and the provider decides whether b
-  // can be deleted. This one refuses, as c still binds b.
+  // c is outside the cycle, but its record depends on b, so deploy passes
+  // it to the delete of b as a dependent, and the provider allows the delete.
   it("replaces a member that a resource outside the cycle refers to", async () => {
     const { worker, bind, calls } = defineWorkers();
     const a = worker("a");
