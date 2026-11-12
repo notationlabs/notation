@@ -275,6 +275,7 @@ export const EventBridgeRule = eventBridgeRuleSchema
       }
     },
 
+    ownership: "token",
     // PutRule overwrites an existing rule instead of failing, and does not
     // tag it. So create checks for the rule first, and checks the tag
     // afterwards, in case another writer made the rule in between.
@@ -318,7 +319,6 @@ export const EventBridgeRule = eventBridgeRuleSchema
         await deleteCreatedRule(key, token, errorMessage(error));
       }
     }),
-    ownership: "token",
     find: async (params, token) => {
       const rule = await describeRule({
         Name: params.Name,

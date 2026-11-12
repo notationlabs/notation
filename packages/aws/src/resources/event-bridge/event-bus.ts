@@ -36,6 +36,7 @@ const eventBusSchema = eventBus.defineSchema({
 
 /** A custom event bus. */
 export const EventBus = eventBusSchema.defineOperations({
+  ownership: "token",
   create: awsCreate(
     async (params, _context, token) => {
       await eventBridgeClient().send(
@@ -53,7 +54,6 @@ export const EventBus = eventBusSchema.defineOperations({
     },
   ),
 
-  ownership: "token",
   find: async (params, token) => {
     try {
       const { Arn } = await describeEventBus(params.Name);

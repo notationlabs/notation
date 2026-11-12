@@ -128,14 +128,14 @@ export interface BaseResource {
   readonly dependencies: Record<string, BaseResource | void>;
   readonly key: {};
   keyOf(output: {}): {};
+  /** See `ResourceOperationsOptions.ownership`. */
+  readonly ownership?: ResourceOwnership;
   create: (
     params: any,
     context?: ResourceOperationContext,
     token?: string,
   ) => Promise<{} | void>;
   find?: (params: any, token: string) => Promise<{} | void>;
-  /** See `ResourceOperationsOptions.ownership`. */
-  readonly ownership?: ResourceOwnership;
   read?: (key: any, context?: ResourceOperationContext) => Promise<{}>;
   update?: (
     key: any,
@@ -236,13 +236,13 @@ export abstract class Resource<
   abstract provider: string;
   declare readonly deleteTakesDependents?: boolean;
   abstract schema: Schema;
+  ownership?: ResourceOwnership;
   abstract create: (
     params: T["params"],
     context?: ResourceOperationContext,
     token?: string,
   ) => Promise<T["primaryKey"]>;
   find?: (params: T["params"], token: string) => Promise<T["primaryKey"]>;
-  ownership?: ResourceOwnership;
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -760,6 +760,24 @@ export type ResourceOperationsOptions<
   IntrinsicParams extends Partial<T["params"]>,
 > = {
   /**
+   * How deploy proves that a resource with the desired key, which the
+   * provider reports as already existing, was made by one of Notation's own
+   * creates. Deploy takes over such a resource only with that proof.
+   *
+   * - `token`: `find` returns the resource for the create token of an
+   *   execution that the resource's record names, or of the current one.
+   *   `create` must record the token on the resource, for example as a tag,
+   *   and `find` must check it.
+   * - `parent`: the resource lives inside another resource that Notation
+   *   owns, such as a statement in a Lambda function's policy, so any
+   *   resource with the desired key is Notation's.
+   *
+   * Without it, deploy never takes over an existing resource, never looks
+   * up a create with an unknown outcome, and never deletes the resource of
+   * a "creating" record.
+   */
+  ownership?: ResourceOwnership;
+  /**
    * Creates the resource. `token` is unique to the execution and the
    * resource, and is the same for each attempt that the execution makes. A
    * resource with `ownership: "token"` records it on the remote resource, for
@@ -780,24 +798,6 @@ export type ResourceOperationsOptions<
    * the parent.
    */
   find?: (params: T["params"], token: string) => Promise<T["primaryKey"]>;
-  /**
-   * How deploy proves that a resource with the desired key, which the
-   * provider reports as already existing, was made by one of Notation's own
-   * creates. Deploy takes over such a resource only with that proof.
-   *
-   * - `token`: `find` returns the resource for the create token of an
-   *   execution that the resource's record names, or of the current one.
-   *   `create` must record the token on the resource, for example as a tag,
-   *   and `find` must check it.
-   * - `parent`: the resource lives inside another resource that Notation
-   *   owns, such as a statement in a Lambda function's policy, so any
-   *   resource with the desired key is Notation's.
-   *
-   * Without it, deploy never takes over an existing resource, never looks
-   * up a create with an unknown outcome, and never deletes the resource of
-   * a "creating" record.
-   */
-  ownership?: ResourceOwnership;
   read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,

@@ -143,6 +143,7 @@ const TRANSITIONAL_STATES = new Set([
 
 export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
   .defineOperations({
+    ownership: "token",
     // AWS assigns the UUID, so create tags the mapping with the create
     // token, and `find` searches for that tag.
     create: awsCreate(async (params, _context, token) => {
@@ -158,7 +159,6 @@ export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
       return { UUID: result.UUID! };
     }),
 
-    ownership: "token",
     find: async (params, token) => {
       const value = createTokenTagValue(token);
       let Marker: string | undefined;

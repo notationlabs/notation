@@ -236,12 +236,12 @@ An issue in a statement that holds an unknown is still dropped, because the stat
 
 | Field          | Required | Signature / Description                                                                                                                                                                                                      |
 | -------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ownership`    | no       | `"token"` or `"parent"` – how the reconciler proves that one of Notation's creates made a resource. See [Resources that already exist](#resources-that-already-exist).                                                       |
 | `create`       | yes      | `(params, context?, token?) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key. `token` is unique to the execution and the resource, and every attempt of the execution's create receives it. |
 | `find`         | no       | `(params, token) => Promise<ComputedPrimaryKey<S>>` – find the resource that the create with `token` made, or throw `ResourceNotFoundError`. Requires `ownership`. See [Unknown create outcomes](#unknown-create-outcomes).  |
-| `ownership`    | no       | `"token"` or `"parent"` – how the reconciler proves that one of Notation's creates made a resource. See [Resources that already exist](#resources-that-already-exist).                                                       |
 | `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                                                                                         |
 | `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                                                                           |
-| `delete`       | yes      | `(key, state, context?, deletion?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone.                                                             |
+| `delete`       | yes      | `(key, state, context?, deletion?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone.                                                            |
 | `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                                                                                        |
 
 The reconciler records params, results and state, so each must be a durable value as `@notation/durable` 0.9.0 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
@@ -334,6 +334,7 @@ When a lookup finds the resource, the reconciler uses what it found as the resul
 A lookup must not report a resource as absent while a create for it can still finish. A provider whose reads are eventually consistent can break this rule.
 
 ```ts
+ownership: "token",
 create: async (params, _context, token) => {
   try {
     const result = await client.send(
@@ -347,7 +348,6 @@ create: async (params, _context, token) => {
     throw error;
   }
 },
-ownership: "token",
 find: async (_params, token) => {
   const api = await findApiByTag(TOKEN_TAG, token);
   if (!api) throw new ResourceNotFoundError("No API has the token");
@@ -368,6 +368,7 @@ A `create` handler throws `ResourceAlreadyExistsError` when the provider refuses
 | not set     | None. The reconciler never takes the resource over, never looks up a create with an unknown outcome, and never deletes the resource of a `creating` record.                                                                                                              |
 
 ```ts
+ownership: "token",
 create: awsCreate(
   async (params, _context, token) => {
     await iam.send(
@@ -379,7 +380,6 @@ create: awsCreate(
   },
   { alreadyExists: (error) => error instanceof EntityAlreadyExistsException },
 ),
-ownership: "token",
 find: async (params, token) => {
   const { Role } = await iam.send(new GetRoleCommand({ RoleName: params.RoleName }));
   const value = createTokenTagValue(token);

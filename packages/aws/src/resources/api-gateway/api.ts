@@ -133,6 +133,7 @@ const apiSchema = api.defineSchema({
 } as const);
 
 export const Api = apiSchema.defineOperations({
+  ownership: "token",
   // An API's ID is assigned by AWS, and its name need not be unique, so the
   // create token is recorded as a tag for `find` to search for.
   create: awsCreate(async (params, _context, token) => {
@@ -143,7 +144,6 @@ export const Api = apiSchema.defineOperations({
     const result = await apiGatewayClient().send(command);
     return { ApiId: result.ApiId! };
   }),
-  ownership: "token",
   async find(_params, token) {
     const value = createTokenTagValue(token);
     const api = await findInPages(

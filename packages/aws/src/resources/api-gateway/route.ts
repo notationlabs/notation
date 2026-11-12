@@ -106,6 +106,7 @@ export const routeSchema = route.defineSchema({
 
 export const Route = routeSchema
   .defineOperations({
+    ownership: "parent",
     create: awsCreate(
       async (params) => {
         const command = new sdk.CreateRouteCommand(params);
@@ -115,7 +116,6 @@ export const Route = routeSchema
       },
       { alreadyExists: (error) => error instanceof sdk.ConflictException },
     ),
-    ownership: "parent",
     // A route key is unique within an API, so `find` matches on it.
     find: async (params) => {
       const route = await findInPages(

@@ -52,11 +52,11 @@ const workerSubdomainSchema = workerSubdomain.defineSchema({
  */
 export const WorkerSubdomain = workerSubdomainSchema
   .defineOperations({
+    ownership: "parent",
     // Enabling is idempotent, so a failed create is safe to retry.
     create: async (params) => {
       await setScriptSubdomain(params.AccountId, params.ScriptName, true);
     },
-    ownership: "parent",
 
     read: async (key) => {
       const subdomain = await getScriptSubdomain(key.AccountId, key.ScriptName);

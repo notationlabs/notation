@@ -266,6 +266,7 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
 
 export const LambdaFunction = lambdaFunctionSchema
   .defineOperations({
+    ownership: "token",
     create: awsCreate(
       async (params, _context, token) => {
         const { CodeFilePath, Environment, ...functionParams } = params;
@@ -283,7 +284,6 @@ export const LambdaFunction = lambdaFunctionSchema
       { alreadyExists: isLambdaAlreadyExists },
     ),
 
-    ownership: "token",
     find: async (params, token) => {
       try {
         const { Tags } = await lambdaClient().send(

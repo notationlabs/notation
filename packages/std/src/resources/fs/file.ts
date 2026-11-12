@@ -50,9 +50,9 @@ export const File = fileSchema.defineOperations({
       throw error;
     }
   },
-  create: async () => {},
   // The parent is the project directory.
   ownership: "parent",
+  create: async () => {},
   update: async () => {},
   delete: async () => {},
 });

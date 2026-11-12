@@ -176,6 +176,7 @@ const workerScriptSchema = workerScript.defineSchema({
 
 export const WorkerScript = workerScriptSchema
   .defineOperations({
+    ownership: "token",
     // An upload replaces a Worker with the same name, so check first. The
     // check is outside `cloudflareCreate`: if it throws, nothing was created.
     create: async (params, _context, token) => {
@@ -191,7 +192,6 @@ export const WorkerScript = workerScriptSchema
       );
     },
 
-    ownership: "token",
     find: async (params, token) => {
       const tags = await getScriptTags(params.AccountId, params.ScriptName);
       if (tags?.includes(createTokenTag(token))) return;

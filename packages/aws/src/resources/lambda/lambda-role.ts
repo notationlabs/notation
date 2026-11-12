@@ -96,6 +96,7 @@ const lambdaIamRoleSchema = lambdaIamRole.defineSchema({
 } as const);
 
 export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
+  ownership: "token",
   create: awsCreate(
     async (params, _context, token) => {
       const command = new sdk.CreateRoleCommand({
@@ -111,7 +112,6 @@ export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
         error instanceof sdk.EntityAlreadyExistsException,
     },
   ),
-  ownership: "token",
   find: async (params, token) => {
     try {
       const { Role } = await iamClient().send(

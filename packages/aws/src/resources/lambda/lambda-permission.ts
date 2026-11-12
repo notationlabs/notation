@@ -89,6 +89,7 @@ const lambdaPermissionSchema = lambdaPermission.defineSchema({
  */
 export const LambdaPermission = lambdaPermissionSchema
   .defineOperations({
+    ownership: "parent",
     // AddPermission fails when the StatementId exists, so a create whose
     // outcome is unknown is found by `read`, whose key is made of params.
     create: awsCreate(
@@ -97,7 +98,6 @@ export const LambdaPermission = lambdaPermissionSchema
       },
       { alreadyExists: isLambdaAlreadyExists },
     ),
-    ownership: "parent",
     read: async (key) => {
       const statement = await findStatement(key);
       if (!statement) {

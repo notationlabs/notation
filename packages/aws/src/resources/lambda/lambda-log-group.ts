@@ -57,6 +57,7 @@ const lambdaLogGroupSchema = lambdaLogGroup.defineSchema({
 
 export const LambdaLogGroup = lambdaLogGroupSchema
   .defineOperations({
+    ownership: "parent",
     create: awsCreate(
       async (params) => {
         const command = new sdk.CreateLogGroupCommand(params);
@@ -81,7 +82,6 @@ export const LambdaLogGroup = lambdaLogGroupSchema
           error instanceof sdk.ResourceAlreadyExistsException,
       },
     ),
-    ownership: "parent",
     // Lambda makes the log group itself when the function first logs, and
     // keeps it after the function is deleted. So a log group that exists may
     // belong to an earlier function of the same name. `find` accepts only a

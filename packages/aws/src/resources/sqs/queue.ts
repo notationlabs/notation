@@ -219,6 +219,7 @@ const queueSchema = queue.defineSchema({
 } as const);
 
 export const Queue = queueSchema.defineOperations({
+  ownership: "token",
   // CreateQueue returns an existing queue of the same name instead of
   // failing, and does not tag it. So create checks for the queue first, and
   // checks the tag afterwards, in case another writer made the queue in
@@ -264,7 +265,6 @@ export const Queue = queueSchema.defineOperations({
     { alreadyExists: (error) => error instanceof sdk.QueueNameExists },
   ),
 
-  ownership: "token",
   find: async (params, token) => {
     const QueueUrl = await getQueueUrl(params.QueueName);
     if (QueueUrl && (await hasCreateToken(QueueUrl, token))) {
