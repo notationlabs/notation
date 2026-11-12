@@ -9,10 +9,8 @@ import {
   isNotFound,
   isTitleTaken,
   jurisdictionSchema,
-  modeSchema,
   renameNamespace,
   type Jurisdiction,
-  type Mode,
 } from "src/api/kv";
 
 export type KVNamespaceSchema = {
@@ -21,7 +19,6 @@ export type KVNamespaceSchema = {
     AccountId: string;
     Title: string;
     Jurisdiction?: Jurisdiction;
-    Mode?: Mode;
   };
   UpdateParams: { Title: string };
   ReadResult: {};
@@ -66,15 +63,6 @@ const kvNamespaceSchema = kvNamespace.defineSchema({
       `The jurisdiction of this KV namespace is ${previous ?? "not set"}, and the code sets it to ${desired ?? "nothing"}. Cloudflare sets the jurisdiction only when it creates a namespace, so the change would replace the namespace and delete its keys. ${recreateSteps}`,
     value: jurisdictionSchema,
   },
-  /** `instant` makes a KV Instant namespace. Without it, the namespace is a classic namespace. */
-  Mode: {
-    propertyType: "param",
-    presence: "optional",
-    immutable: true,
-    rejectReplace: (previous, desired) =>
-      `The mode of this KV namespace is ${previous ?? "classic"}, and the code sets it to ${desired ?? "classic"}. Cloudflare sets the mode only when it creates a namespace, so the change would replace the namespace and delete its keys. ${recreateSteps}`,
-    value: modeSchema,
-  },
 } as const);
 
 const titleTakenMessage = (account: string, title: string) =>
@@ -82,8 +70,11 @@ const titleTakenMessage = (account: string, title: string) =>
 
 /** A Workers KV namespace. */
 export const KVNamespace = kvNamespaceSchema.defineOperations({
-  // Check first, so that `find` doesn't adopt a namespace that existed before.
-  // The check is outside `cloudflareCreate`: if it throws, nothing was created.
+  // Check the title first, so that `find` doesn't adopt a namespace that
+  // existed before. This only holds if the attempt reached the check. If the
+  // process stops before it, `find` can still match an existing namespace by
+  // title. The check is outside `cloudflareCreate`: if it throws, nothing was
+  // created.
   create: async (params) => {
     if (await findNamespaceByTitle(params.AccountId, params.Title)) {
       throw new Error(titleTakenMessage(params.AccountId, params.Title));
@@ -93,7 +84,6 @@ export const KVNamespace = kvNamespaceSchema.defineOperations({
       {
         title: params.Title,
         jurisdiction: params.Jurisdiction,
-        mode: params.Mode,
       },
     );
     return { NamespaceId: namespace.id };
@@ -115,12 +105,14 @@ export const KVNamespace = kvNamespaceSchema.defineOperations({
     if (!namespace) {
       throw new ResourceNotFoundError("KV namespace was not found");
     }
+    // The read leaves out the jurisdiction. It is immutable, and drift in an
+    // immutable field plans a replace without calling `rejectReplace`. If
+    // Cloudflare reported the jurisdiction differently from how it was sent,
+    // the replace would delete the namespace and its keys.
     return {
       AccountId: key.AccountId,
       NamespaceId: key.NamespaceId,
       Title: namespace.title,
-      Jurisdiction: namespace.jurisdiction ?? undefined,
-      Mode: namespace.mode ?? undefined,
     };
   },
 

@@ -68,7 +68,7 @@ describe("KVNamespace", () => {
     expect(calls[1]!.body).toEqual({ title: params.Title, jurisdiction: "eu" });
   });
 
-  it("sends only the title when the code sets no jurisdiction or mode", async () => {
+  it("sends only the title when the code sets no jurisdiction", async () => {
     mockFetch((call) =>
       isList(call) ? ok([]) : ok({ id: "ns1", title: params.Title }),
     );
@@ -144,16 +144,12 @@ describe("KVNamespace", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("reads the title, jurisdiction and mode", async () => {
-    mockFetch(() =>
-      ok({ id: "ns1", title: params.Title, jurisdiction: "eu", mode: null }),
-    );
+  it("reads the title, and leaves out the jurisdiction", async () => {
+    mockFetch(() => ok({ id: "ns1", title: params.Title, jurisdiction: "eu" }));
 
     await expect(namespace.read!(key)).resolves.toEqual({
       ...key,
       Title: params.Title,
-      Jurisdiction: "eu",
-      Mode: undefined,
     });
     expect(calls[0]!.url).toBe(`${API}/storage/kv/namespaces/ns1`);
   });
@@ -241,15 +237,6 @@ describe("KVNamespace", () => {
     );
     expect(Jurisdiction.rejectReplace?.("eu", undefined)).toMatch(
       /The jurisdiction of this KV namespace is eu, and the code sets it to nothing/,
-    );
-  });
-
-  it("rejects a replacement when the mode changes", () => {
-    const { Mode } = namespace.schema;
-    if (Mode.propertyType !== "param") throw new Error("not a param");
-
-    expect(Mode.rejectReplace?.("instant", undefined)).toMatch(
-      /The mode of this KV namespace is instant, and the code sets it to classic\. .*remove the namespace from your code and deploy/,
     );
   });
 });

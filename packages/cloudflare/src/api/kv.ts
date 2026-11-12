@@ -14,21 +14,15 @@ export const jurisdictionSchema = v.picklist(["eu", "fedramp", "us"]);
 
 export type Jurisdiction = v.InferOutput<typeof jurisdictionSchema>;
 
-export const modeSchema = v.literal("instant");
-
-export type Mode = v.InferOutput<typeof modeSchema>;
-
 export type Namespace = {
   id: string;
   title: string;
   jurisdiction?: Jurisdiction | null;
-  mode?: Mode | null;
 };
 
 export type NamespaceCreate = {
   title: string;
   jurisdiction?: Jurisdiction;
-  mode?: Mode;
 };
 
 export const isNotFound = (error: unknown): boolean =>
