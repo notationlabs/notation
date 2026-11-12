@@ -57,22 +57,11 @@ import type { DurableStep } from "./sdk";
 /**
  * A read of a resource's persisted record, together with the writes that are
  * conditional on that exact read. `remove` exists only alongside a `node`:
- * a record that was never read cannot be removed safely. `snapshot` holds
- * the record as the session's last write left it.
+ * a record that was never read cannot be removed safely.
  */
 export type ResourceStateSession =
-  | {
-      node: undefined;
-      persist: PersistState;
-      remove?: never;
-      snapshot: SnapshotRef;
-    }
-  | {
-      node: StateNode;
-      persist: PersistState;
-      remove: RemoveState;
-      snapshot: SnapshotRef;
-    };
+  | { node: undefined; persist: PersistState; remove?: never }
+  | { node: StateNode; persist: PersistState; remove: RemoveState };
 
 type SnapshotRef = { current: ResourceSnapshot };
 
@@ -254,7 +243,7 @@ async function* applyAction(
         ...shared,
         persist: session.persist,
       });
-      if (reclaimed) yield* reconcileReclaimed(step, opts, session, shared);
+      if (reclaimed) yield* reconcileReclaimed(step, opts, shared);
       return;
     }
     case "update":
@@ -301,18 +290,18 @@ async function* applyAction(
 /**
  * Compares a resource that create took over with the desired params, and
  * updates, replaces or keeps it, as for any recorded resource. Its record
- * was just written from a read, so drift detection is skipped. The session
- * continues from the record that the takeover wrote.
+ * was just written from a read, so drift detection is skipped. The record
+ * is read again, because the session of the create does not hold what the
+ * takeover wrote.
  */
 async function* reconcileReclaimed(
   parent: DurableStepRunner,
   opts: DurableDeployOptions,
-  session: ResourceStateSession,
   shared: Omit<CreateResourceParams, "persist">,
 ): AsyncGenerator<any, void, any> {
   const step = parent.scope("reclaimed");
   const { resource, resourceParams } = shared;
-  const reclaimed = bindStateSession(step, opts, resource, session.snapshot);
+  const reclaimed = yield* openStateSession(step, opts, resource);
   const action = decideAction({
     resource,
     stateNode: reclaimed.node,
@@ -466,7 +455,7 @@ async function* replaceResource(
   // The delete removed the store instance that `session` read, so a write
   // against it would conflict. The record is read again for the create.
   const recreated = yield* openStateSession(createStep, opts, shared.resource);
-  yield* createResourceOperation(createStep, {
+  const { reclaimed } = yield* createResourceOperation(createStep, {
     ...created,
     emit: durableEmitter(createStep, opts.emit),
     // The persisted output describes the resource that was just deleted.
@@ -476,6 +465,7 @@ async function* replaceResource(
     replacement: true,
     persist: recreated.persist,
   });
+  if (reclaimed) yield* reconcileReclaimed(createStep, opts, created);
 }
 
 /**
@@ -781,28 +771,17 @@ export async function* openStateSession(
   const snapshot = yield* step.run("persisted-record", () =>
     opts.state.snapshot(resource.id),
   );
-  return bindStateSession(step, opts, resource, { current: snapshot });
-}
-
-/**
- * Binds the writes to `ref`. Each write is made against `ref.current`, and
- * moves it to the record that the write left.
- */
-function bindStateSession(
-  step: DurableStepRunner,
-  opts: DurableWorkflowOptions,
-  resource: BaseResource,
-  ref: SnapshotRef,
-): ResourceStateSession {
+  // Each write is made against `ref.current`, and moves it to the record
+  // that the write left.
+  const ref: SnapshotRef = { current: snapshot };
   const persist = persistResourceState(step, opts, resource, ref);
-  const node = toStateNode(ref.current);
-  if (!node) return { node: undefined, persist, snapshot: ref };
+  const node = toStateNode(snapshot);
+  if (!node) return { node: undefined, persist };
 
   return {
     node,
     persist,
     remove: removeResourceState(step, opts, resource, ref),
-    snapshot: ref,
   };
 }
 

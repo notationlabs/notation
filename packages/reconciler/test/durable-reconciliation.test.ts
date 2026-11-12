@@ -555,6 +555,8 @@ describe("recoverable creates", () => {
     const control: {
       hiddenReads?: number;
       failCreate?: Error;
+      /** Create makes the resource, then throws this. */
+      failAfterCreate?: Error;
       keepOnDelete?: boolean;
       refuseFind?: boolean;
       /** The params that read does not return. */
@@ -593,6 +595,7 @@ describe("recoverable creates", () => {
           }
           remote.set(params.name, { ...params });
           if (token) tokens.set(params.name, token);
+          if (control.failAfterCreate) throw control.failAfterCreate;
         },
         ownership: ownership === "none" ? undefined : ownership,
         find:
@@ -1777,6 +1780,52 @@ describe("recoverable creates", () => {
 
     expect(calls).toEqual(["create:app", "delete:app", "create:app"]);
     expect(await runtime.state.get("role")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("updates a param that the read does not return when the lookup settles the create of a replacement", async () => {
+    const { Named, remote, calls, control } = defineNamed(
+      "test/durable/replacement-reclaim",
+    );
+    control.unread = ["description"];
+    const resources: BaseResource[] = [
+      new Named("role", {
+        config: { name: "app", path: "/", description: "wanted" } as any,
+      }),
+    ];
+    const runtime = createRuntime(resources, "replacement-reclaim");
+    await runtime.run("deploy-1");
+
+    control.failAfterCreate = new ResourceCreationUnknownError(
+      "socket timed out",
+    );
+    resources[0] = new Named("role", {
+      config: { name: "app", path: "/other/", description: "wanted" } as any,
+    });
+    await expect(runtime.run("deploy-2")).resolves.toMatchObject({
+      status: "suspended",
+    });
+    runtime.advance(1_000);
+    await runtime.run("deploy-2");
+
+    const replaced = [
+      "create:app",
+      "delete:app",
+      "create:app",
+      'update:app:{"description":"wanted"}',
+    ];
+    expect(calls).toEqual(replaced);
+    expect(remote.get("app")).toMatchObject({ path: "/other/" });
+    expect(await runtime.state.get("role")).toMatchObject({
+      lastOperation: "update",
+      params: { name: "app", path: "/other/", description: "wanted" },
+    });
+
+    const recorded = await runtime.state.snapshot("role");
+    await runtime.run("deploy-3");
+
+    expect(calls).toEqual(replaced);
+    expect(await runtime.state.snapshot("role")).toEqual(recorded);
     runtime.close();
   });
 });
