@@ -1,82 +1,41 @@
+import * as v from "valibot";
 import { CloudflareApiError, cloudflare } from "./client";
 
 /** Cloudflare's error code for a container application that doesn't exist. */
 const APPLICATION_NOT_FOUND = 1609;
 
-/** The Durable Object namespace already has a container application. */
-const NAMESPACE_HAS_APPLICATION = 1608;
-
-/** The Worker doesn't declare the namespace's class as a container class. */
-const NAMESPACE_NOT_CONTAINER_ENABLED = 1607;
-
 export const isApplicationNotFound = (error: unknown): boolean =>
   error instanceof CloudflareApiError && error.hasCode(APPLICATION_NOT_FOUND);
 
-export const isNamespaceTaken = (error: unknown): boolean =>
-  error instanceof CloudflareApiError &&
-  error.hasCode(NAMESPACE_HAS_APPLICATION);
+const assignIpSchema = v.picklist(["none", "predefined"]);
 
-export const isNamespaceNotContainerEnabled = (error: unknown): boolean =>
-  error instanceof CloudflareApiError &&
-  error.hasCode(NAMESPACE_NOT_CONTAINER_ENABLED);
+// Cloudflare rejects a configuration with a key it doesn't know, so the
+// object is strict and a misspelt key fails before the request.
+export const configurationSchema = v.strictObject({
+  image: v.string(),
+  instance_type: v.optional(v.string()),
+  vcpu: v.optional(v.number()),
+  memory_mib: v.optional(v.number()),
+  environment_variables: v.optional(
+    v.array(v.strictObject({ name: v.string(), value: v.string() })),
+  ),
+  network: v.optional(
+    v.strictObject({
+      /** `predefined` makes the container public, and can't be combined with `mode: "private"`. */
+      assign_ipv4: v.optional(assignIpSchema),
+      assign_ipv6: v.optional(assignIpSchema),
+      mode: v.optional(v.picklist(["private", "public"])),
+    }),
+  ),
+});
 
-// This error has no code of its own. Cloudflare returns it for a while
-// after a Worker upload creates the namespace.
-export const isNamespaceNotVisibleYet = (error: unknown): boolean =>
-  error instanceof CloudflareApiError &&
-  error.status === 400 &&
-  error.hasMessage(/Durable Object namespace was not found/i);
+export type ContainerConfiguration = v.InferOutput<typeof configurationSchema>;
 
-// This error has no code of its own. The same request succeeds when it is
-// sent again.
-export const isCreateUnavailable = (error: unknown): boolean =>
-  error instanceof CloudflareApiError &&
-  error.hasMessage(/can't create application at this time/i);
-
-export type Json =
-  string | number | boolean | null | Json[] | { [key: string]: Json };
-
-export type JsonObject = { [key: string]: Json };
-
-export type ContainerConfiguration = {
-  image: string;
-  instance_type?: string;
-  vcpu?: number;
-  memory?: string;
-  memory_mib?: number;
-  disk?: JsonObject;
-  environment_variables?: { name: string; value: string }[];
-  secrets?: JsonObject[];
-  labels?: JsonObject[];
-  ports?: JsonObject[];
-  network?: {
-    assign_ipv4?: "none" | "predefined";
-    assign_ipv6?: "none" | "predefined";
-    mode?: "private" | "public";
-  };
-  command?: string[];
-  entrypoint?: string[];
-  observability?: JsonObject;
-  checks?: JsonObject[];
-  dns?: JsonObject;
-  ssh_public_key_ids?: string[];
-};
-
-/** The settings of an application that `PATCH` can change. */
-export type ApplicationSettings = {
-  max_instances?: number;
-  instances?: number;
-  rollout_active_grace_period?: number;
-  constraints?: JsonObject;
-  affinities?: JsonObject;
-};
-
-export type CreateApplication = ApplicationSettings & {
+export type CreateApplication = {
   name: string;
   max_instances: number;
   configuration: ContainerConfiguration;
   durable_objects: { namespace_id: string };
-  jobs?: boolean;
 };
 
 /** The members of an application that the resources read. */
@@ -84,8 +43,6 @@ export type Application = {
   id: string;
   name: string;
   max_instances?: number | null;
-  instances?: number | null;
-  rollout_active_grace_period?: number | null;
   durable_objects?: { namespace_id: string } | null;
 };
 
@@ -132,7 +89,7 @@ export async function getApplication(
 export async function updateApplication(
   account: string,
   applicationId: string,
-  settings: ApplicationSettings,
+  settings: { max_instances: number },
 ): Promise<void> {
   await cloudflare("PATCH", applicationPath(account, applicationId), settings);
 }
@@ -166,14 +123,21 @@ export async function deleteApplication(
   await cloudflare("DELETE", applicationPath(account, applicationId));
 }
 
-export type RegistryKind = "ECR" | "DockerHub" | "GAR";
+export const registryKindSchema = v.picklist(["ECR", "DockerHub", "GAR"]);
 
-export type RegistryAuth = {
+export type RegistryKind = v.InferOutput<typeof registryKindSchema>;
+
+export const registryAuthSchema = v.object({
   /** The Secrets Store secret that holds the private part of the credential. */
-  private_credential: { store_id: string; secret_name: string };
+  private_credential: v.object({
+    store_id: v.string(),
+    secret_name: v.string(),
+  }),
   /** An AWS access key ID, a Docker Hub username, or a service account email. */
-  public_credential: string;
-};
+  public_credential: v.string(),
+});
+
+export type RegistryAuth = v.InferOutput<typeof registryAuthSchema>;
 
 export type Registry = {
   domain: string;

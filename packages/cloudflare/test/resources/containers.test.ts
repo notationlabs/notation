@@ -58,7 +58,6 @@ describe("ContainerApplication", () => {
       image: "registry.cloudflare.com/acc/sandbox:1",
       instance_type: "lite",
     },
-    Instances: 0,
   };
 
   const key = { AccountId: "acc", ApplicationId: "app1" };
@@ -78,7 +77,6 @@ describe("ContainerApplication", () => {
           durable_objects: { namespace_id: "ns1" },
           configuration: params.Configuration,
           max_instances: 5,
-          instances: 0,
         },
       },
     ]);
@@ -135,11 +133,11 @@ describe("ContainerApplication", () => {
     );
   });
 
-  it("tries again when Cloudflare can't create an application at this time", async () => {
+  it("reports a 500 that says Cloudflare can't create the application at this time as unknown", async () => {
     mockFetch(() => fail(500, 1000, "can't create application at this time"));
 
     await expect(application.create(params)).rejects.toBeInstanceOf(
-      ResourceOperationPendingError,
+      ResourceCreationUnknownError,
     );
   });
 
@@ -165,14 +163,12 @@ describe("ContainerApplication", () => {
     },
   );
 
-  it("reads the settings, without nulls", async () => {
+  it("reads the settings", async () => {
     mockFetch(() =>
       ok({
         id: "app1",
         name: params.Name,
         max_instances: 5,
-        instances: 0,
-        rollout_active_grace_period: null,
         durable_objects: { namespace_id: "ns1" },
         configuration: { image: params.Configuration.image, vcpu: 0.0625 },
       }),
@@ -184,8 +180,6 @@ describe("ContainerApplication", () => {
       Name: params.Name,
       DurableObjectNamespaceId: "ns1",
       MaxInstances: 5,
-      Instances: 0,
-      RolloutActiveGracePeriod: undefined,
     });
     expect(calls[0]!.url).toBe(`${API}/applications/app1`);
   });
@@ -243,27 +237,35 @@ describe("ContainerApplication", () => {
     ]);
   });
 
-  it("only rolls out when only the configuration changed", async () => {
+  it("only rolls out the patch's configuration when only the configuration changed", async () => {
     mockFetch(() => ok({}));
+    const configuration = { image: "img:3" };
 
     await application.update!(
       key,
-      { Configuration: params.Configuration } as any,
+      { Configuration: configuration } as any,
       params,
       {} as any,
     );
 
-    expect(calls.map((call) => call.method)).toEqual(["POST"]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: "POST",
+      body: { target_configuration: configuration },
+    });
   });
 
-  it("says to deploy again when the application to update is gone", async () => {
-    mockFetch(() => fail(404, 1609, "Container application not found"));
+  it("only patches when only the max instances changed", async () => {
+    mockFetch(() => ok({}));
 
-    await expect(
-      application.update!(key, { MaxInstances: 10 } as any, params, {} as any),
-    ).rejects.toThrow(
-      "It may have been deleted outside notation. Deploy again to create it.",
+    await application.update!(
+      key,
+      { MaxInstances: 10 } as any,
+      params,
+      {} as any,
     );
+
+    expect(calls.map((call) => call.method)).toEqual(["PATCH"]);
   });
 });
 
@@ -372,11 +374,19 @@ describe("ContainerApplication configuration", () => {
     expect(result.issues).toBeDefined();
   });
 
-  it("accepts a configuration with document values", async () => {
+  it("rejects a key that is not supported", async () => {
+    const result = await validate({ image: "img:1", disk: { size_mb: 2000 } });
+    expect(result.issues).toBeDefined();
+  });
+
+  it("accepts a configuration with every supported key", async () => {
     const result = await validate({
       image: "img:1",
-      disk: { size_mb: 2000 },
-      ports: [{ name: "http", port: 8080 }],
+      instance_type: "basic",
+      vcpu: 1,
+      memory_mib: 1024,
+      environment_variables: [{ name: "A", value: "1" }],
+      network: { assign_ipv4: "predefined", mode: "public" },
     });
     expect(result.issues).toBeUndefined();
   });
