@@ -22,7 +22,7 @@ The change decision comes from the resource schema, through `diffParams` in `@no
 
 An `undefined` param counts as absent, so an optional param left unset never looks changed. Drift compares only fields that both the desired params and the read output have: a read need not return every param, and it reports defaults for params left unset, and neither is drift.
 
-Replacement deletes the resource and then creates it again, because a resource usually takes its physical name from its params and the new one would collide with the old. Each half is durable: the delete removes the state record, and the create writes a new one with a new instance ID. A crash anywhere in between resumes where it stopped. If the create fails for good, the resource and its record are both gone, and the next deploy plans **create**.
+Replacement deletes the resource and then creates it again, because a resource usually takes its physical name from its params and the new one would collide with the old. Each half is durable: the delete removes the state record, and the create writes a new one with a new instance ID. A crash anywhere in between resumes where it stopped. If the create fails, the old resource and its record are gone, and the next deploy plans **create**. There is one exception. When deploy refuses the create because a resource with the replaced key still exists, it writes the record of the replaced resource back, and the next deploy plans **replace** again. See [Guard 1](#guard-1-a-replacement-does-not-take-over-a-resource-with-the-replaced-key).
 
 The dependents of a replaced resource stay in place. When deploy reaches each of them, it decides again with the outputs of the new resource. A dependent whose params change is updated, or replaced if a changed param forces replacement. For example, replacing a Lambda role updates the function's `Role`, and does not delete the function or its log group. A dependent whose type blocks the delete of the replaced resource is deleted first instead. See [Dependents of a replaced resource](#dependents-of-a-replaced-resource).
 
@@ -102,7 +102,7 @@ Deploy output prints a line for each takeover:
 Took over lambda:todos:role: it already existed, so deploy read it and now compares it with config
 ```
 
-The line follows the `create` lifecycle event that reports the success, which has the reason `reclaimed`.
+The line follows the `create` lifecycle event that reports the success, which has the reason `taken-over`.
 
 #### Taking a resource over
 
@@ -118,8 +118,8 @@ A drift-recreate is a create too. When a drift read reported a recorded resource
 
 In each case, deploy does three things:
 
-1. It reads the resource by its key, in the scope `create:reclaim`. If the read fails, the deploy fails, and the `creating` record stays.
-2. It writes a `create` record, under `state:persist:<id>:reclaimed`. The record's params are the values that the read returned for the params that config sets.
+1. It reads the resource by its key, in the scope `create:takeover`. If the read fails, the deploy fails, and the `creating` record stays.
+2. It writes a `create` record, under `state:persist:<id>:taken-over`. The record's params are the values that the read returned for the params that config sets.
 3. It compares the record with the desired params, as for any recorded resource, and updates the resource, replaces it, or leaves it as it is. It skips drift detection, because the record was just read.
 
 The read need not return every param. Step 2 handles a param that the read did not return in one of two ways:
@@ -127,20 +127,22 @@ The read need not return every param. Step 2 handles a param that the read did n
 - The param is left out of the record. Step 3 then sees a difference and updates the param.
 - If a difference in the param would replace the resource, the param is recorded with its desired value, so step 3 sees no difference. This applies to an immutable param, a key param, and every param of a class with no `update`. Deploy replaces a resource only for a difference that the read returned.
 
-Step 3 runs in the scope `reclaimed`, and its state writes add `:after-takeover` to their step keys, so they do not reuse the keys of the create that took the resource over. A create that replaces the resource in step 3 adds `/reclaimed` to the execution ID in its effect IDs. If that create ends in another takeover, step 3 runs again, and adds `:after-takeover` and `/reclaimed` once more.
+Step 3 runs in the scope `taken-over`, and its state writes add `:after-takeover` to their step keys, so they do not reuse the keys of the create that took the resource over. A create that replaces the resource in step 3 adds `/taken-over` to the execution ID in its effect IDs. If that create ends in another takeover, step 3 runs again, and adds `:after-takeover` and `/taken-over` once more.
 
-#### Guard 1: a replacement does not take over the resource it replaces
+#### Guard 1: a replacement does not take over a resource with the replaced key
 
-A replace deletes the resource and creates it again, usually with the same key. If the provider still holds the deleted resource when the create runs, a takeover would record the old resource as its own replacement. The create of a replacement compares the key of the existing resource with the key in the record of the replaced resource. When the keys are equal:
+A replace deletes the resource and creates it again, usually with the same key. If the provider still holds the deleted resource when the create runs, a takeover would record the old resource as its own replacement.
 
-| Case                                                              | What deploy does                                                                                                                                                                                                                                                                                                                |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create` throws `ResourceAlreadyExistsError`                      | The create made nothing, so the existing resource is the replaced one. Deploy writes the record of the replaced resource back and fails. The next deploy deletes the resource and creates the replacement again.                                                                                                                |
-| The lookup of a create with an unknown outcome finds the resource | The resource is the replaced one or the replacement, and deploy cannot tell which. Deploy takes it over, and leaves every param that the read did not return out of the record, except key params. Step 3 then updates those params, or replaces the resource again when one of them is immutable or the class has no `update`. |
+So the create of a replacement compares the key of an existing resource with the key in the record of the replaced resource. When the keys are equal, deploy refuses the resource: it writes the record of the replaced resource back, and fails. The next deploy deletes the resource and creates the replacement again.
+
+The rule is the same on both ways to an existing resource in that create:
+
+- `create` throws `ResourceAlreadyExistsError`. The create made nothing, so the existing resource is the replaced one.
+- The lookup of a create with an unknown outcome finds the resource. The resource is the replaced one or the replacement, and deploy cannot tell which. If it is the replacement, the next deploy replaces it once more.
 
 When the replacement has another key than the replaced resource, for example after a change of name, the existing resource is not the replaced one, and deploy takes it over as usual.
 
-A replace that stops between its delete and its create leaves a `creating` record or no record. The next deploy then plans a plain **create**, and this guard does not apply.
+The guard applies only inside the replace. It does not apply when a later deploy creates the resource from a `creating` record or from no record; see [Limits](#limits).
 
 #### Guard 2: no takeover by an attribute that is not unique
 
@@ -167,16 +169,17 @@ A `create` that makes more than one call must throw `ResourceCreationUnknownErro
 The orphan sweep and destroy handle a `creating` record like this:
 
 1. A class with `find` calls it with the record's params, in the step `delete:find`. When `find` throws `ResourceNotFoundError`, the create made nothing. Deploy removes only the record, and emits a `skip` lifecycle event with the reason `not-created`.
-2. Any other class uses the key in the record's output. The `creating` record of a drift-recreate keeps the output of the record that it was written over, so it still holds a key that the provider assigned.
+2. Any other class uses the key in the record's output.
 3. If a key field is still missing, because the provider assigns it and the class has no `find`, deploy removes only the record, and emits `skip` with the reason `key-unknown`.
 4. Otherwise deploy deletes the resource by its key. A missing resource counts as deleted.
 
 #### Limits
 
 - A class with a key that the provider assigns and no `find`, such as `LambdaIntegration`, can't be looked up. When a deploy stops after the provider made the resource and before deploy recorded its key, the next deploy creates a second one. The first stays in the provider, and state does not track it. A delete of the `creating` record removes only the record.
-- A takeover of a class with no `read` fails, because deploy cannot compare the resource's params with config. `LambdaRolePolicyAttachment` is the only such class in `@notation/aws`, and its `create` never throws `ResourceAlreadyExistsError`.
+- A takeover of a class with no `read` fails, because deploy cannot compare the resource's params with config. `LambdaRolePolicyAttachment` is the only such class in `@notation/aws`, and its `create` never throws `ResourceAlreadyExistsError`. The error says how to get past it: delete the existing resource, or run destroy, and deploy again.
 - When the `creating` record names another key than the desired one, for example after config changed the resource's name, deploy creates the resource under the new key. The resource that the unfinished create may have made under the old key stays in the provider, and state does not track it.
 - Deploy relies on the provider's "already exists" error, or on a check that `create` makes before its call. A provider whose reads are eventually consistent can report a resource as absent just after another create made it. `create` then makes a second resource when the provider does not keep the name unique, and a later `find` fails because two resources match.
+- A `creating` record does not say that its create was the create of a replacement. So guard 1 does not apply on the next deploy in two cases: the create of a replacement ended with an unknown outcome and left its `creating` record, or a replace stopped between its delete and its create. The next deploy plans a plain **create**, and takes over an existing resource as usual. It keeps the replaced resource as the replacement only when all of these hold: no create made the replacement, the provider reported the delete as done while the resource is still visible, and the read does not return the param that forced the replace. Deploy then records that param with its desired value, and the resource keeps the old value.
 - A takeover updates or replaces the existing resource to match config. Two deployments with the same app and stage in one provider account therefore write over each other's resources.
 
 ## Dependency cycles

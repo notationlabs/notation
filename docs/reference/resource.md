@@ -337,7 +337,7 @@ A `create` that makes more than one call should throw `ResourceCreationUnknownEr
 
 ### Resources that already exist
 
-A `create` handler throws `ResourceAlreadyExistsError` when the provider refuses the create because a resource with the same key exists, for example IAM's `EntityAlreadyExists`. The reconciler then takes the existing resource over, for every resource class: it reads the resource by its key, records it with the params that the read returned, and then updates, replaces or keeps it. The class must have a `read`.
+A `create` handler throws `ResourceAlreadyExistsError` when the provider refuses the create because a resource with the same key exists, for example IAM's `EntityAlreadyExists`. The reconciler then takes the existing resource over, for every resource class: it reads the resource by its key, records it with the params that the read returned, and then updates, replaces or keeps it. The class must have a `read`. The create of a replacement does not do this for a resource that has the key of the replaced resource. It fails instead; see [Guard 1](../internals/reconciler.md#guard-1-a-replacement-does-not-take-over-a-resource-with-the-replaced-key).
 
 ```ts
 create: awsCreate(
