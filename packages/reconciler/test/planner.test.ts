@@ -234,7 +234,7 @@ describe("createPlan", () => {
     ]);
   });
 
-  it("notes that deploy may take over an existing resource when its class can prove ownership", async () => {
+  it("notes a create that may take over an existing resource: one with a creating record and a class with ownership", async () => {
     const operations = {
       create: async () => undefined,
       delete: async () => undefined,
@@ -268,13 +268,15 @@ describe("createPlan", () => {
       creates: ["deploy-1"],
     });
     const state = new MemoryStateBackend({
+      "parent-recorded": creatingRecord("parent-recorded", ByParent.type),
       "token-recorded": creatingRecord("token-recorded", ByToken.type),
       unprovable: creatingRecord("unprovable", Unprovable.type),
     });
 
     const plan = await createPlan({
       resources: [
-        new ByParent("parent"),
+        new ByParent("parent-recorded"),
+        new ByParent("parent-new"),
         new ByToken("token-recorded"),
         new ByToken("token-new"),
         new Unprovable("unprovable"),
@@ -282,9 +284,9 @@ describe("createPlan", () => {
       state,
     });
 
-    // A token proves nothing without a record of an earlier create.
     expect(plan.nodes).toEqual([
-      expect.objectContaining({ id: "parent", mayTakeOver: true }),
+      expect.objectContaining({ id: "parent-recorded", mayTakeOver: true }),
+      expect.not.objectContaining({ mayTakeOver: true }),
       expect.objectContaining({ id: "token-recorded", mayTakeOver: true }),
       expect.not.objectContaining({ mayTakeOver: true }),
       expect.not.objectContaining({ mayTakeOver: true }),

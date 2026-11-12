@@ -104,7 +104,7 @@ The lookup of a create with an unknown outcome follows the same rule; see [Unkno
 
 #### Taking a resource over
 
-A new execution, after the old one was abandoned with `clearDeploymentHold`, can't read the old execution's journal. It finds the `creating` record instead, and plans **create**. Plan sets `mayTakeOver` on a create or drift-recreate node when the class has `ownership: "parent"`, and on a create node when the class has `ownership: "token"` and the record is a `creating` record. `notation plan` then prints `may take over an existing resource with the same key`.
+A new execution, after the old one was abandoned with `clearDeploymentHold`, can't read the old execution's journal. It finds the `creating` record instead, and plans **create**. Plan sets `mayTakeOver` on the create node when the class has `ownership`. `notation plan` then prints `taken over if an earlier deploy created it`. Plan does not note a create with no `creating` record, although a class with `ownership: "parent"` can take over an existing resource then too.
 
 Deploy takes the resource over in three cases:
 

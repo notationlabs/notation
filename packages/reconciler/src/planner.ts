@@ -176,7 +176,9 @@ export async function createPlan({
           }
         : {}),
       ...(placeholder ? { placeholder: true as const } : {}),
-      ...(mayTakeOver(resource, stateNode, decision)
+      ...(decision === "create" &&
+      resource.ownership !== undefined &&
+      isCreatingRecord(stateNode)
         ? { mayTakeOver: true as const }
         : {}),
       params,
@@ -272,16 +274,4 @@ export async function planKnownParams(
   const params = await resource.planParams();
   await validateParams(resource, params, point);
   return { stateNode, params };
-}
-
-function mayTakeOver(
-  resource: BaseResource,
-  stateNode: StateNode | undefined,
-  decision: ResourceAction["decision"],
-): boolean {
-  if (decision !== "create" && decision !== "drift-recreate") return false;
-  if (resource.ownership === "parent") return true;
-  // Only a "creating" record names executions whose tokens can prove that
-  // an existing resource is Notation's.
-  return resource.ownership === "token" && isCreatingRecord(stateNode);
 }
