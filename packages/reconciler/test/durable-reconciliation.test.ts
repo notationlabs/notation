@@ -1052,13 +1052,18 @@ describe("recoverable creates", () => {
     const { version: _, ...recorded } = (await runtime.state.get("role"))!;
 
     await driftRecreateEndsUnknown(runtime, control, "deploy-2");
+    const { output } = (await runtime.state.get("role"))!;
     await abandon(runtime, "drift-recreate-recorded-chain", "deploy-2");
     await driftRecreateEndsUnknown(runtime, control, "deploy-3");
-    expect(await runtime.state.get("role")).toMatchObject({
+    const chained = (await runtime.state.get("role"))!;
+    expect(chained).toMatchObject({
       lastOperation: "creating",
       creates: ["deploy-2", "deploy-3"],
       recorded,
     });
+    // A delete of the record needs the recorded output for a key that the
+    // provider assigned.
+    expect(chained.output).toEqual(output);
 
     await abandon(runtime, "drift-recreate-recorded-chain", "deploy-3");
     await expect(runtime.run("deploy-4")).rejects.toThrow(

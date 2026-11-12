@@ -21,7 +21,8 @@ export type StateNode = {
    * `creating` marks a record written before a create is attempted. It is
    * evidence that Notation tried to create the resource, so a later deploy
    * may take over a resource the provider reports as already existing. Its
-   * output holds only the key fields that params supply.
+   * output holds the key fields that params supply, and the output of the
+   * full record that it was written over, if any.
    */
   lastOperation: "creating" | "create" | "update";
   lastOperationAt: string;

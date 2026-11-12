@@ -365,7 +365,7 @@ A `create` handler throws `ResourceAlreadyExistsError` when the provider refuses
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `"token"`   | `create` records its `token` on the resource, for example as a tag, and `find(params, token)` checks it. The reconciler calls `find` with the token of each execution that the resource's `creating` record lists, and of the current execution.                         |
 | `"parent"`  | The resource lives inside another resource that Notation owns, such as a statement in a Lambda function's policy, so any resource with the desired key is Notation's. A `find` finds the resource inside its parent, and refuses it by throwing `ResourceNotFoundError`. |
-| not set     | None. The reconciler never takes the resource over, never looks up a create with an unknown outcome, and never deletes the resource of a `creating` record.                                                                                                              |
+| not set     | None. The reconciler never takes the resource over, never looks up a create with an unknown outcome, and never deletes the resource of a `creating` record, unless the record was written over a full record.                                                            |
 
 ```ts
 ownership: "token",
@@ -392,9 +392,9 @@ The reconciler checks the proof each time `create` throws `ResourceAlreadyExists
 
 Only a `creating` record lists executions. When a drift read reports a recorded resource as gone, and `create` then throws `ResourceAlreadyExistsError`, a class with `ownership: "token"` has only the current execution's token, so the deployment fails. See [Recoverable creates](../internals/reconciler.md#recoverable-creates).
 
-After a refusal, or any other error that isn't classified as unknown, the reconciler writes back the record that the deploy started from, or removes the `creating` record when the deploy started from none. A `create` that makes more than one call should throw `ResourceCreationUnknownError` when a later call fails after an earlier call made the resource, so that the record stays.
+After a refusal, or any other error that isn't classified as unknown, the reconciler writes back the record that the deploy started from, or removes the `creating` record when the deploy started from none. A refusal of a create from a `creating` record that was written over a full record writes the full record back. A `create` that makes more than one call should throw `ResourceCreationUnknownError` when a later call fails after an earlier call made the resource, so that the record stays.
 
-The orphan sweep and destroy delete the resource of a `creating` record only with the same proof. Otherwise they remove only the record.
+The orphan sweep and destroy delete the resource of a `creating` record only with the same proof. Otherwise they remove only the record, unless it was written over a full record. Then they delete the resource by the key in the full record.
 
 ## Dependencies
 

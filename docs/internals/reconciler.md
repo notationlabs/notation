@@ -96,7 +96,7 @@ Deploy takes over or deletes an existing resource only with proof that one of No
 
 - `token`: `create` records the create token on the resource, for example as a tag, and `find(params, token)` checks it. Deploy calls `find` with the token of each execution that the record lists, and of the current execution, and takes the resource over if one of them finds it. The calls run in one step, `create:prove`.
 - `parent`: the resource lives inside another resource that Notation owns, such as a statement in a Lambda function's policy, so any resource with the desired key is Notation's. A class with `find` uses it to find the resource's key, as API Gateway's `Route` finds a route by its route key. A `find` that throws `ResourceNotFoundError` refuses the resource. `LambdaLogGroup` has no `find`, so deploy takes over any log group with the function's log group name. Lambda makes that log group itself when the function first logs, and keeps it after the function is deleted.
-- No `ownership`: nothing proves it. Deploy never takes the resource over, never looks up a create with an unknown outcome, and never deletes the resource of a `creating` record.
+- No `ownership`: nothing proves it. Deploy never takes the resource over, never looks up a create with an unknown outcome, and never deletes the resource of a `creating` record, unless the record was written over a full record (see [Deleting the resource of a creating record](#deleting-the-resource-of-a-creating-record)).
 
 A class that defines `find` must set `ownership`, and a class with `ownership: "token"` must define `find`. `defineOperations` throws otherwise.
 
@@ -164,7 +164,7 @@ When the `creating` record names another key than the desired one, for example a
 
 When the provider assigns the key, the `creating` record of a drift-recreate can stand for two resources: the recorded one, if the drift read was wrong, and one that the create with an unknown outcome made. A takeover or a delete with the proof handles the second, and the first is left in the provider.
 
-A resource without `ownership` that an abandoned create made is left in the provider. The next deploy refuses it, and the orphan sweep and destroy don't delete it.
+A resource without `ownership` that an abandoned create made is left in the provider. The next deploy refuses it, and the orphan sweep and destroy don't delete it, unless the record was written over a full record.
 
 ## Dependency cycles
 

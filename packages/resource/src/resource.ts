@@ -775,7 +775,7 @@ export type ResourceOperationsOptions<
    *
    * Without it, deploy never takes over an existing resource, never looks
    * up a create with an unknown outcome, and never deletes the resource of
-   * a "creating" record.
+   * a "creating" record, unless the record was written over a full record.
    */
   ownership?: ResourceOwnership;
   /**

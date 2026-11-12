@@ -275,15 +275,16 @@ function refusalMessage(
  * `ownership: "parent"` and no `find` has no other way to get that key.
  */
 function creatingRecord(params: CreateResourceParams): PersistedResourceState {
-  const { resource, resourceParams, prior } = params;
+  const { resource, resourceParams } = params;
   const key = definedKey(resource, resourceParams);
-  const recorded = recordedBefore(prior);
+  const recorded = recordedBefore(params.prior);
   return resourceRecord(params, {
     lastOperation: "creating",
     params: resource.toState(resourceParams),
-    output: resource.toState(
-      prior && !isCreatingRecord(prior) ? { ...prior.output, ...key } : key,
-    ),
+    output: resource.toState({
+      ...(recorded?.output as Record<string, unknown> | undefined),
+      ...key,
+    }),
     creates: [...earlierExecutions(params), params.executionId],
     ...(recorded ? { recorded } : {}),
   });
