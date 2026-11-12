@@ -87,6 +87,7 @@ export async function createPlan({
   const planResource = async (
     resource: BaseResource,
     cycle: DeployUnit | undefined,
+    detectDrift = driftDetection,
   ): Promise<PlanNode> => {
     const { stateNode, params } = await planKnownParams(
       resource,
@@ -96,7 +97,7 @@ export async function createPlan({
     const action = await runOperation(
       applyDriftDetection(createStepRunner(), {
         action: decideAction({ resource, stateNode, params }),
-        driftDetection,
+        driftDetection: detectDrift,
         resource,
         resourceParams: params,
         persistedOutput: stateNode?.output,
@@ -178,13 +179,16 @@ export async function createPlan({
     if (!cycle) continue;
     // A member planned before a replaced member took the output of the old
     // resource from state. Deploy updates it with the unknown output of the
-    // replacement once it is created, so it is planned again.
+    // replacement once it is created, so it is planned again. The first plan
+    // read it for drift, so the second plan doesn't, and a member with drift
+    // keeps its first node.
     const isReplaced = (node: PlanNode) =>
       node.decision === "replace" || node.decision === "drift-replace";
     const last = nodes.slice(start).findLastIndex(isReplaced);
     for (let index = 0; index < last; index += 1) {
-      if (isReplaced(nodes[start + index]!)) continue;
-      nodes[start + index] = await planResource(members[index]!, cycle);
+      const node = nodes[start + index]!;
+      if (node.decision !== "noop" && node.decision !== "update") continue;
+      nodes[start + index] = await planResource(members[index]!, cycle, false);
     }
   }
 

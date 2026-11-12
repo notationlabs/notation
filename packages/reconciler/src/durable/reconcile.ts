@@ -62,10 +62,18 @@ export type ReconcileOptions = {
   onDecision?: (decision: ResourceAction["decision"]) => void;
   /** Runs before a replacement deletes the resource. */
   beforeReplace?: () => AsyncGenerator<any, void, any>;
-  /** Leaves out the contributions that depend on one of these. */
+  /**
+   * Leaves out the contributions that depend on one of these, to create or
+   * update the placeholder of a cycle. The decision event is marked as a
+   * placeholder.
+   */
   excludeContributionsFrom?: ReadonlySet<BaseResource>;
-  /** Marks the decision event as the placeholder of a cycle. */
-  placeholder?: boolean;
+  /**
+   * When deploy replaces the resource, creates it without the contributions
+   * that depend on one of these. A member of a cycle that refers to itself
+   * would otherwise be created with the output of the resource it replaces.
+   */
+  replaceWithout?: ReadonlySet<BaseResource>;
   /**
    * Decides drift-recreate without reading the remote: the caller has read
    * the resource and found it gone.
@@ -153,7 +161,9 @@ export async function* reconcileResource(
       ...("replaceFields" in action
         ? { replaceFields: action.replaceFields }
         : {}),
-      ...(options.placeholder ? { placeholder: true as const } : {}),
+      ...(options.excludeContributionsFrom
+        ? { placeholder: true as const }
+        : {}),
     });
   }
 
@@ -201,7 +211,14 @@ export async function* reconcileResource(
         );
       }
       if (options.beforeReplace) yield* options.beforeReplace();
-      yield* replaceResource(step, opts, session, shared);
+      yield* replaceResource(
+        step,
+        opts,
+        session,
+        options.replaceWithout
+          ? yield* withoutContributions(step, shared, options.replaceWithout)
+          : shared,
+      );
       return;
     case "noop":
       if (!session.node) return;
@@ -288,6 +305,30 @@ async function* rewriteRecord(
     group: (record.group ?? null) as ResourceGroupRef | null,
     dependsOn,
   });
+}
+
+/**
+ * `shared` with the params and edges of the resource without the
+ * contributions that depend on one of `excluded`.
+ */
+async function* withoutContributions(
+  step: DurableStepRunner,
+  shared: Omit<CreateResourceParams, "persist">,
+  excluded: ReadonlySet<BaseResource>,
+): AsyncGenerator<any, Omit<CreateResourceParams, "persist">, any> {
+  const { resource } = shared;
+  const params = yield* step.run("replace:params", () =>
+    resource.getParams({ excludeContributionsFrom: excluded }),
+  );
+  await validateParams(resource, params, "deploy");
+  return {
+    ...shared,
+    resourceParams: params,
+    dependsOn: getDependencyIds(
+      resource,
+      remainingDependencies(resource, excluded),
+    ),
+  };
 }
 
 /**

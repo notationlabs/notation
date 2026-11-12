@@ -4401,6 +4401,58 @@ describe("dependency cycles", () => {
     );
     runtime.close();
   });
+  it("replaces the placeholder of a cycle", async () => {
+    const { worker, bind, calls, remote } = defineWorkers();
+    const a = worker("a");
+    const b = worker("b");
+    bind(a, b);
+    bind(b, a);
+    const resources = [a, b];
+    const runtime = createRuntime(resources, "cycle-replace-placeholder");
+    await runtime.run("cycle-replace-placeholder-1");
+    calls.length = 0;
+
+    const nextA = worker("a", "a2");
+    const nextB = worker("b");
+    bind(nextA, nextB);
+    bind(nextB, nextA);
+    resources.splice(0, 2, nextA, nextB);
+    await runtime.run("cycle-replace-placeholder-2");
+
+    expect(calls).toEqual([
+      "update b []",
+      "delete a",
+      "create a2 [b]",
+      "update b [a2]",
+    ]);
+    expect(remote).toEqual(
+      new Map([
+        ["a2", ["b"]],
+        ["b", ["a2"]],
+      ]),
+    );
+    runtime.close();
+  });
+
+  it("replaces a resource that contributes its own output to itself", async () => {
+    const { worker, bind, calls, remote } = defineWorkers();
+    const a = worker("a");
+    bind(a, a);
+    const resources = [a];
+    const runtime = createRuntime(resources, "cycle-replace-self");
+    await runtime.run("cycle-replace-self-1");
+    calls.length = 0;
+
+    const nextA = worker("a", "a2");
+    bind(nextA, nextA);
+    resources.splice(0, 1, nextA);
+    await runtime.run("cycle-replace-self-2");
+
+    expect(calls).toEqual(["delete a", "create a2 []", "update a2 [a2]"]);
+    expect(remote).toEqual(new Map([["a2", ["a2"]]]));
+    runtime.close();
+  });
+
   it("deploys a resource that contributes its own output to itself", async () => {
     const { worker, bind, calls } = defineWorkers();
     const a = worker("a");

@@ -45,7 +45,8 @@ const CREATING_DECISIONS: ResourceAction["decision"][] = [
  *    a member, ends the deploy of the cycle.
  *
  * A cycle gets one pass after the first for each member, and at least two,
- * so that a member that refers to itself is updated and then checked. When
+ * so that a member that refers to itself is updated and then checked. Each
+ * replace of a member adds a pass. When
  * outputs still change in the last pass, deploy fails and names those
  * outputs. A dry run stops after the first pass, as it creates and updates
  * nothing. It also reconciles each placeholder that the first pass left as
@@ -68,11 +69,16 @@ export async function* reconcileCycle(
   // the first, so it would not run.
   const created = new Set<BaseResource>();
   const replaced: BaseResource[] = [];
+  // The passes after the first. A replace adds one.
+  let passes = 0;
   // The members that a replacement reverted in the current pass. Their
   // outputs changed outside their own reconcile, so the pass doesn't end the
   // deploy of the cycle.
   const reverted: BaseResource[] = [];
   const options = (resource: BaseResource): ReconcileOptions => ({
+    ...(refersToItself(resource)
+      ? { replaceWithout: new Set([resource]) }
+      : {}),
     onDecision: (decision) => {
       if (!CREATING_DECISIONS.includes(decision)) return;
       if (created.has(resource)) {
@@ -82,6 +88,10 @@ export async function* reconcileCycle(
     },
     beforeReplace: async function* () {
       replaced.push(resource);
+      // The replacement is created again, so the cycle gets one more pass
+      // for it to settle in. The guard above allows one replace of each
+      // member, so the number of passes stays bounded.
+      passes += 1;
       // The scope has no pass number: the guard above allows at most one
       // replace of each member in one execution.
       const revertStep = scope(resource, "revert");
@@ -160,7 +170,6 @@ export async function* reconcileCycle(
     yield* reconcileResource(placeholderStep, resource, opts, {
       ...options(resource),
       excludeContributionsFrom: members,
-      placeholder: true,
       recreate: record === "absent",
     });
   }
@@ -176,7 +185,7 @@ export async function* reconcileCycle(
     return;
   }
 
-  const passes = Math.max(2, cycle.members.length);
+  passes += Math.max(2, cycle.members.length);
   let changed: string[] = [];
   for (let pass = 1; pass <= passes; pass += 1) {
     changed = [];
@@ -384,6 +393,18 @@ async function* prepareRevert(
       persist: session.persist,
     });
   };
+}
+
+/**
+ * Whether `resource` refers to itself only through its contributions, and
+ * can be created without them and then updated with them.
+ */
+function refersToItself(resource: BaseResource): boolean {
+  return (
+    resource.getDependencies().includes(resource) &&
+    !resource.getFixedDependencies().includes(resource) &&
+    !placeholderParamsBlocker(resource, new Set([resource]))
+  );
 }
 
 /**
