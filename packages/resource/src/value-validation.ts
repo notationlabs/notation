@@ -1,7 +1,7 @@
 import type { Schema } from "./resource.schema";
 import type { StandardSchemaV1 } from "./standard-schema";
 import { isUnknownAfterApply } from "./diff-params";
-import { isPlainObject } from "./output-value";
+import { isPlainObject } from "./output-ref";
 
 /**
  * Where the engine validated a value:
@@ -106,7 +106,7 @@ export class SchemaStructureError extends Error {
  * or that has no schema item, is not validated.
  *
  * `isUnknown` marks values that stand for something not known yet, such as
- * output values or values unknown until apply. A value that is unknown as a
+ * output refs or values unknown until apply. A value that is unknown as a
  * whole is not validated. A value that holds unknowns is validated with them
  * in place, and the issues they could cause are dropped: an issue at or inside
  * an unknown, and an issue at a parent of one, such as a failed union or
@@ -178,7 +178,7 @@ function runValidator(
 ):
   StandardSchemaV1.Result<unknown> | Promise<StandardSchemaV1.Result<unknown>> {
   if (!hasUnknowns) return validator["~standard"].validate(value);
-  // A validator can throw on an output value or a marker, for example when
+  // A validator can throw on an output ref or a marker, for example when
   // it turns the value into a string.
   const valid = { value };
   try {

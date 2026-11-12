@@ -1,12 +1,12 @@
 import type { BaseResource } from "./resource";
 import { UNKNOWN_AFTER_APPLY } from "./diff-params";
 
-export class OutputValueStringError extends Error {
+export class OutputRefStringError extends Error {
   constructor(output: string) {
     super(
-      `Output ${output}: an output value can't be turned into a string; place it whole, or compute with it in a function that receives deps`,
+      `Output ${output}: an output ref can't be turned into a string; place it whole, or compute with it in a function that receives deps`,
     );
-    this.name = "OutputValueStringError";
+    this.name = "OutputRefStringError";
   }
 }
 
@@ -15,35 +15,35 @@ export class OutputValueStringError extends Error {
  * only be placed whole in config or in a contribution. Turning it into a
  * string throws, because the string would not hold the value.
  */
-export class OutputValue {
+export class OutputRef {
   constructor(
     readonly resource: BaseResource,
     readonly path: readonly string[],
   ) {}
 
   [Symbol.toPrimitive](): never {
-    throw new OutputValueStringError(describeOutputValue(this));
+    throw new OutputRefStringError(describeOutputRef(this));
   }
 
   toString(): never {
-    throw new OutputValueStringError(describeOutputValue(this));
+    throw new OutputRefStringError(describeOutputRef(this));
   }
 
   toJSON(): never {
-    throw new OutputValueStringError(describeOutputValue(this));
+    throw new OutputRefStringError(describeOutputRef(this));
   }
 }
 
 /**
- * Finds the value an output value stands for. `known: false` means the
+ * Finds the value an output ref stands for. `known: false` means the
  * output does not exist yet, so the value stays a token.
  */
 export type OutputLookup = (
-  token: OutputValue,
+  token: OutputRef,
 ) => { known: true; value: unknown } | { known: false };
 
-export function isOutputValue(value: unknown): value is OutputValue {
-  return value instanceof OutputValue;
+export function isOutputRef(value: unknown): value is OutputRef {
+  return value instanceof OutputRef;
 }
 
 export function isPlainObject(
@@ -54,45 +54,45 @@ export function isPlainObject(
   return prototype === Object.prototype || prototype === null;
 }
 
-/** Walks a value and calls `visit` for every output value in it. */
-export function forEachOutputValue(
+/** Walks a value and calls `visit` for every output ref in it. */
+export function forEachOutputRef(
   value: unknown,
-  visit: (token: OutputValue) => void,
+  visit: (token: OutputRef) => void,
 ): void {
-  if (isOutputValue(value)) return visit(value);
+  if (isOutputRef(value)) return visit(value);
   if (Array.isArray(value)) {
-    for (const entry of value) forEachOutputValue(entry, visit);
+    for (const entry of value) forEachOutputRef(entry, visit);
     return;
   }
   if (isPlainObject(value)) {
-    for (const entry of Object.values(value)) forEachOutputValue(entry, visit);
+    for (const entry of Object.values(value)) forEachOutputRef(entry, visit);
   }
 }
 
-export function containsOutputValue(value: unknown): boolean {
+export function containsOutputRef(value: unknown): boolean {
   let found = false;
-  forEachOutputValue(value, () => {
+  forEachOutputRef(value, () => {
     found = true;
   });
   return found;
 }
 
 /**
- * Copies a value, replacing every output value in it with the result of
+ * Copies a value, replacing every output ref in it with the result of
  * `onToken`.
  */
-export function mapOutputValues(
+export function mapOutputRefs(
   value: unknown,
-  onToken: (token: OutputValue) => unknown,
+  onToken: (token: OutputRef) => unknown,
 ): unknown {
-  if (isOutputValue(value)) return onToken(value);
+  if (isOutputRef(value)) return onToken(value);
   if (Array.isArray(value)) {
-    return value.map((entry) => mapOutputValues(entry, onToken));
+    return value.map((entry) => mapOutputRefs(entry, onToken));
   }
   if (isPlainObject(value)) {
     const mapped: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
-      mapped[key] = mapOutputValues(entry, onToken);
+      mapped[key] = mapOutputRefs(entry, onToken);
     }
     return mapped;
   }
@@ -100,36 +100,36 @@ export function mapOutputValues(
 }
 
 /**
- * Replaces every output value that `lookup` knows with its value. Output
+ * Replaces every output ref that `lookup` knows with its value. Output
  * values that `lookup` does not know are left in place.
  */
-export function resolveOutputValues(
+export function resolveOutputRefs(
   value: unknown,
   lookup: OutputLookup,
 ): unknown {
-  return mapOutputValues(value, (token) => {
+  return mapOutputRefs(value, (token) => {
     const found = lookup(token);
     return found.known ? found.value : token;
   });
 }
 
 /**
- * Finds output values in the resource's output. The output must exist: a
- * resource holding an output value depends on the resource it came from, so
+ * Finds output refs in the resource's output. The output must exist: a
+ * resource holding an output ref depends on the resource it came from, so
  * that resource has been deployed first.
  */
 export const deployLookup: OutputLookup = (token) => {
   const output = token.resource.output as Record<string, unknown> | null;
   if (output == null) {
     throw new Error(
-      `Output ${describeOutputValue(token)} was read before ${token.resource.id} was deployed`,
+      `Output ${describeOutputRef(token)} was read before ${token.resource.id} was deployed`,
     );
   }
   return { known: true, value: readPath(output, token.path) };
 };
 
 /**
- * Finds output values in the resource's output when it has one, such as the
+ * Finds output refs in the resource's output when it has one, such as the
  * output a plan reads from state, and leaves the rest unknown.
  */
 export const planLookup: OutputLookup = (token) => {
@@ -147,24 +147,24 @@ function readPath(output: unknown, path: readonly string[]): unknown {
   return value;
 }
 
-/** Replaces every output value with `UNKNOWN_AFTER_APPLY`, at its own path. */
-export function markUnknownOutputValues(value: unknown): unknown {
-  return mapOutputValues(value, () => UNKNOWN_AFTER_APPLY);
+/** Replaces every output ref with `UNKNOWN_AFTER_APPLY`, at its own path. */
+export function markUnknownOutputRefs(value: unknown): unknown {
+  return mapOutputRefs(value, () => UNKNOWN_AFTER_APPLY);
 }
 
 /**
- * Writes output values in a form that depends only on the resource ID and
+ * Writes output refs in a form that depends only on the resource ID and
  * path, so contributions sort the same whatever order code ran in, and
  * conflict messages can show them.
  */
-export function toCanonicalOutputValues(value: unknown): unknown {
-  return mapOutputValues(
+export function toCanonicalOutputRefs(value: unknown): unknown {
+  return mapOutputRefs(
     value,
-    (token) => `<output ${describeOutputValue(token)}>`,
+    (token) => `<output ${describeOutputRef(token)}>`,
   );
 }
 
-function describeOutputValue(token: OutputValue): string {
+function describeOutputRef(token: OutputRef): string {
   return [token.resource.id, ...token.path].join(".");
 }
 

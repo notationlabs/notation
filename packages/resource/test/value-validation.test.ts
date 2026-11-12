@@ -205,12 +205,12 @@ describe("validation at declaration", () => {
     });
   });
 
-  it("skips a value that holds an output value", () => {
+  it("skips a value that holds an output ref", () => {
     const source = new Role("source", {
       config: { RoleName: "source", MaxSessionDuration: 3600 },
     });
     new Role("holder", {
-      config: { RoleName: source.outputValue("Arn") },
+      config: { RoleName: source.outputRef("Arn") },
     });
   });
 
@@ -335,14 +335,14 @@ const PolicyHolder = resource<{
 describe("values that hold unknowns", () => {
   const source = new Role("source", { config: { RoleName: "source" } });
 
-  it("reports an invalid known value next to an output value at declaration", () => {
+  it("reports an invalid known value next to an output ref at declaration", () => {
     const error = catchError(
       () =>
         new PolicyHolder("holder", {
           config: {
             Name: "holder",
             Policy: {
-              Resource: [source.outputValue("Arn"), "arn:known"],
+              Resource: [source.outputRef("Arn"), "arn:known"],
               Limit: "ten" as any,
             },
           },
@@ -361,7 +361,7 @@ describe("values that hold unknowns", () => {
     new PolicyHolder("holder", {
       config: {
         Name: "holder",
-        Policy: { Resource: [source.outputValue("Arn")], Limit: 10 },
+        Policy: { Resource: [source.outputRef("Arn")], Limit: 10 },
       },
     });
     expect(() =>
@@ -407,7 +407,7 @@ describe("values that hold unknowns", () => {
       })
       .defineOperations(operations);
 
-    new Throwing("holder", { config: { RoleName: source.outputValue("Arn") } });
+    new Throwing("holder", { config: { RoleName: source.outputRef("Arn") } });
     expect(() => new Throwing("bad", { config: { RoleName: "" } })).toThrow(
       ValueValidationError,
     );

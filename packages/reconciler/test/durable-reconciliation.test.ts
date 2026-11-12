@@ -2804,8 +2804,8 @@ describe("replacement with dependents", () => {
   });
 });
 
-describe("contributions and output values", () => {
-  it("deploys a contributor first and fills in its output values", async () => {
+describe("contributions and output refs", () => {
+  it("deploys a contributor first and fills in its output refs", async () => {
     const created: Record<string, unknown>[] = [];
     const Queue = resource({ type: "test/durable/queue", provider: "test" })
       .defineSchema({
@@ -2852,7 +2852,7 @@ describe("contributions and output values", () => {
     // Listed before the queue, so only the implied edge orders the deploy.
     const fn = new Fn("fn", { config: { name: "f" } as any });
     const queue = new Queue("queue", { config: { name: "orders" } as any });
-    fn.contribute({ env: { QUEUE: (queue as any).outputValue("arn") } } as any);
+    fn.contribute({ env: { QUEUE: (queue as any).outputRef("arn") } } as any);
     const runtime = createRuntime([fn, queue], "contributions");
 
     await runtime.run("contributions-execution");
@@ -3029,7 +3029,7 @@ describe("value validation at deploy", () => {
     const Fn = defineFn(createFn, () => Number(undefined));
     const role = new Role("role", { config: { name: "role" } });
     const fn = new Fn("fn", {
-      config: { name: "fn", role: role.outputValue("arn") },
+      config: { name: "fn", role: role.outputRef("arn") },
       dependencies: { role },
     });
     const runtime = createRuntime([role, fn], "validate-known");
@@ -3088,7 +3088,7 @@ describe("value validation at deploy", () => {
     const declare = (boundary?: string) => {
       const role = new Role("role", { config: { name: "role", boundary } });
       const fn = new Fn("fn", {
-        config: { name: "fn", role: role.outputValue("arn") },
+        config: { name: "fn", role: role.outputRef("arn") },
         dependencies: { role },
       });
       resources.splice(0, resources.length, role, fn);
@@ -3123,7 +3123,7 @@ describe("value validation at deploy", () => {
     );
     const role = new Role("role", { config: { name: "role" } });
     const fn = new Fn("fn", {
-      config: { name: "fn", role: role.outputValue("arn") },
+      config: { name: "fn", role: role.outputRef("arn") },
       dependencies: { role },
     });
     const runtime = createRuntime([role, fn], "validate-output");

@@ -1,7 +1,7 @@
 import {
   assertRequiredOutputs,
   deployLookup,
-  resolveOutputValues,
+  resolveOutputRefs,
   type DurableObject,
 } from "@notation/resource";
 import {
@@ -87,8 +87,8 @@ export async function* updateResourceOperation(
       provider: params.resource.provider,
       lastOperation: "update",
       lastOperationAt: new Date().toISOString(),
-      // State records the real outputs in place of output values.
-      config: resolveOutputValues(
+      // State records the real outputs in place of output refs.
+      config: resolveOutputRefs(
         params.resource.config,
         deployLookup,
       ) as DurableObject,

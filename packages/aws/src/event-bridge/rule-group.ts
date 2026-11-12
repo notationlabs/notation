@@ -45,8 +45,8 @@ export class RuleGroup extends AwsResourceGroup<RuleOptions> {
             State: config.enabled === false ? "DISABLED" : "ENABLED",
             Targets: [
               {
-                Id: lambdaResource.outputValue("FunctionName"),
-                Arn: lambdaResource.outputValue("FunctionArn"),
+                Id: lambdaResource.outputRef("FunctionName"),
+                Arn: lambdaResource.outputRef("FunctionArn"),
                 ...(retry && { RetryPolicy: retryPolicy(retry) }),
               },
             ],
@@ -63,7 +63,7 @@ export class RuleGroup extends AwsResourceGroup<RuleOptions> {
           config: {
             Action: "lambda:InvokeFunction",
             Principal: "events.amazonaws.com",
-            SourceArn: this.rule.outputValue("Arn"),
+            SourceArn: this.rule.outputRef("Arn"),
           },
           dependencies: { lambda: lambdaResource },
         },

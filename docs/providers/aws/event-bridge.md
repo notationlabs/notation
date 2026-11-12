@@ -44,9 +44,9 @@ A bus has no schema. One bus carries events of many types, and each function dec
 
 ### `arn` and `name`
 
-`ordersBus.arn` and `ordersBus.name` are output values: they don't exist until AWS creates the bus, but you can place them in another resource's config now. Notation makes that resource depend on the bus and fills in the real value at deploy. See [Output values](../../reference/resource.md#output-values).
+`ordersBus.arn` and `ordersBus.name` are output refs: they don't exist until AWS creates the bus, but you can place them in another resource's config now. Notation makes that resource depend on the bus and fills in the real value at deploy. See [Output refs](../../reference/resource.md#output-refs).
 
-An output value can only be placed whole. Turning it into a string, for example in a template string, throws.
+An output ref can only be placed whole. Turning it into a string, for example in a template string, throws.
 
 ### `bus.grant(actions)`
 

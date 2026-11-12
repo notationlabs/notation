@@ -796,7 +796,7 @@ describe("createPlan", () => {
     });
   });
 
-  it("plans an unknown output value at its own path, and records the implied edge", async () => {
+  it("plans an unknown output ref at its own path, and records the implied edge", async () => {
     // Cast: see above.
     const Queue = resource({ type: "test/planner/queue", provider: "test" })
       .defineSchema({
@@ -839,7 +839,7 @@ describe("createPlan", () => {
     const queue = new Queue("queue", { config: { name: "orders" } as any });
     const fn = new Fn("fn", { config: { name: "f" } as any });
     fn.contribute({ env: { KEEP: "k" } } as any);
-    fn.contribute({ env: { QUEUE: (queue as any).outputValue("arn") } } as any);
+    fn.contribute({ env: { QUEUE: (queue as any).outputRef("arn") } } as any);
 
     const plan = await createPlan({
       resources: [fn, queue],
@@ -934,7 +934,7 @@ describe("createPlan", () => {
       });
     });
 
-    it("rejects an invalid known value next to an unknown output value", async () => {
+    it("rejects an invalid known value next to an unknown output ref", async () => {
       // Cast: see above.
       const Queue = resource({
         type: "test/planner/validated-queue",
@@ -982,7 +982,7 @@ describe("createPlan", () => {
       const queue = new Queue("queue", { config: { name: "orders" } as any });
       const env = new Env("env", { config: { name: "env" } as any });
       env.contribute({
-        env: { QUEUE: (queue as any).outputValue("arn") },
+        env: { QUEUE: (queue as any).outputRef("arn") },
       } as any);
       env.contribute({ env: { PORT: 8080 } } as any);
 

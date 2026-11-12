@@ -91,9 +91,9 @@ export class QueueGroup<
 > extends AwsResourceGroup<Omit<QueueConfig, "schema">> {
   readonly queue: aws.sqs.QueueInstance;
   readonly schema: S;
-  /** The queue's ARN. It is an output value, filled in at deploy. */
+  /** The queue's ARN. It is an output ref, which deploy replaces with the real value. */
   readonly arn: string;
-  /** The queue's URL. It is an output value, filled in at deploy. */
+  /** The queue's URL. It is an output ref, which deploy replaces with the real value. */
   readonly url: string;
 
   constructor({ schema, ...config }: QueueConfig<S>) {
@@ -132,8 +132,8 @@ export class QueueGroup<
         },
       }),
     );
-    this.arn = this.queue.outputValue("QueueArn");
-    this.url = this.queue.outputValue("QueueUrl");
+    this.arn = this.queue.outputRef("QueueArn");
+    this.url = this.queue.outputRef("QueueUrl");
   }
 
   /** A policy statement that allows the actions on this queue. */
@@ -167,7 +167,7 @@ export class QueueGroup<
       new aws.lambda.LambdaEventSourceMapping(id, {
         config: {
           EventSourceArn: this.arn,
-          FunctionName: lambdaGroup.fn.outputValue("FunctionName"),
+          FunctionName: lambdaGroup.fn.outputRef("FunctionName"),
           BatchSize: options.batchSize,
           MaximumBatchingWindowInSeconds: options.maximumBatchingWindow,
           FunctionResponseTypes: options.reportBatchItemFailures
@@ -244,7 +244,7 @@ function assertBatchOptions(
 
 // The type of a queue from queue() is in its config. A FIFO queue's name ends
 // in .fifo, so the ARN of another queue tells its type. The ARN of a queue
-// from queue() is an output value, which is not known until deploy, so it is
+// from queue() is an output ref, which is not known until deploy, so it is
 // not checked.
 function assertDeadLetterQueueType(
   id: string,

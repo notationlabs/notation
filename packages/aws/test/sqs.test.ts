@@ -59,7 +59,7 @@ const readStatement = (name: string) => ({
   Resource: queueArn(name),
 });
 
-// Stands in for a deploy of the queues, so their output values have values.
+// Stands in for a deploy of the queues, so their output refs have values.
 function deploy(...queues: ReturnType<typeof queue>[]) {
   for (const q of queues) {
     q.queue.setOutput({

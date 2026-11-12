@@ -261,12 +261,12 @@ describe("contribution lifetime", () => {
   });
 });
 
-describe("output values", () => {
-  it("places an output value whole in config and in a contribution", async () => {
+describe("output refs", () => {
+  it("places an output ref whole in config and in a contribution", async () => {
     const queue = new Queue("orders", { config: { QueueName: "orders" } });
     const policy = new Policy("policy", { config: { PolicyName: "p" } });
     policy.contribute({
-      PolicyDocument: { Statement: [grant(queue.outputValue("QueueArn"))] },
+      PolicyDocument: { Statement: [grant(queue.outputRef("QueueArn"))] },
     });
 
     expect(policy.getDependencies()).toEqual([queue]);
@@ -284,7 +284,7 @@ describe("output values", () => {
     ]);
   });
 
-  it("keeps an output value that is not a string whole", async () => {
+  it("keeps an output ref that is not a string whole", async () => {
     const Counter = resource({
       type: "test/contributions/counter",
       provider: "test",
@@ -298,39 +298,39 @@ describe("output values", () => {
       });
     const source = new Counter("source");
     const holder = new Counter("holder", {
-      config: { size: source.outputValue("size") } as any,
+      config: { size: source.outputRef("size") } as any,
     });
     source.setOutput({ size: 3 });
     expect(await holder.getParams()).toEqual({ size: 3 });
   });
 
-  it("throws when an output value is turned into a string", () => {
+  it("throws when an output ref is turned into a string", () => {
     const queue = new Queue("orders", { config: { QueueName: "orders" } });
-    const arn = queue.outputValue("QueueArn");
+    const arn = queue.outputRef("QueueArn");
     const message =
-      "an output value can't be turned into a string; place it whole, or compute with it in a function that receives deps";
+      "an output ref can't be turned into a string; place it whole, or compute with it in a function that receives deps";
     expect(() => `${arn}/*`).toThrow(message);
     expect(() => String(arn)).toThrow(message);
     expect(() => arn + "").toThrow(message);
     expect(() => JSON.stringify({ arn })).toThrow(message);
-    expect(() => `${arn}`).toThrow("Output orders.QueueArn: an output value");
+    expect(() => `${arn}`).toThrow("Output orders.QueueArn: an output ref");
   });
 
-  it("throws when an output value is a map key", () => {
+  it("throws when an output ref is a map key", () => {
     const queue = new Queue("orders", { config: { QueueName: "orders" } });
     const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
     expect(() =>
       fn.contribute({
-        Environment: { Variables: { [queue.outputValue("QueueArn")]: "x" } },
+        Environment: { Variables: { [queue.outputRef("QueueArn")]: "x" } },
       }),
     ).toThrow("can't be turned into a string");
   });
 
-  it("names output values in conflict messages", async () => {
+  it("names output refs in conflict messages", async () => {
     const queue = new Queue("orders", { config: { QueueName: "orders" } });
     const fn = new Fn("fn", { config: { FunctionName: "f", Role: "r" } });
     fn.contribute({
-      Environment: { Variables: { Q: queue.outputValue("QueueArn") } },
+      Environment: { Variables: { Q: queue.outputRef("QueueArn") } },
     });
     fn.contribute({ Environment: { Variables: { Q: "other" } } });
     queue.setOutput({ QueueUrl: "url", QueueName: "orders", QueueArn: "arn" });
@@ -339,7 +339,7 @@ describe("output values", () => {
     );
   });
 
-  it("sorts contributions holding output values the same whatever order tokens were made in", async () => {
+  it("sorts contributions holding output refs the same whatever order tokens were made in", async () => {
     const build = async (order: string[]) => {
       const queues = Object.fromEntries(
         order.map((name) => [
@@ -351,7 +351,7 @@ describe("output values", () => {
       for (const name of ["b", "a"]) {
         policy.contribute({
           PolicyDocument: {
-            Statement: [grant(queues[name]!.outputValue("QueueArn"))],
+            Statement: [grant(queues[name]!.outputRef("QueueArn"))],
           },
         });
       }
@@ -547,7 +547,7 @@ describe("plan params", () => {
     const fn = fnWith();
     fn.contribute({ Environment: { Variables: { KNOWN: "k" } } });
     fn.contribute({
-      Environment: { Variables: { QUEUE: queue.outputValue("QueueArn") } },
+      Environment: { Variables: { QUEUE: queue.outputRef("QueueArn") } },
     });
 
     expect(await fn.planParams()).toEqual({
@@ -566,7 +566,7 @@ describe("plan params", () => {
     });
     const fn = fnWith();
     fn.contribute({
-      Environment: { Variables: { QUEUE: queue.outputValue("QueueArn") } },
+      Environment: { Variables: { QUEUE: queue.outputRef("QueueArn") } },
     });
     expect((await fn.planParams()).Environment).toEqual({
       Variables: { QUEUE: "arn:q" },
@@ -578,10 +578,10 @@ describe("plan params", () => {
     const b = new Queue("b", { config: { QueueName: "b" } });
     const fn = fnWith();
     fn.contribute({
-      Environment: { Variables: { Q: a.outputValue("QueueArn") } },
+      Environment: { Variables: { Q: a.outputRef("QueueArn") } },
     });
     fn.contribute({
-      Environment: { Variables: { Q: b.outputValue("QueueArn") } },
+      Environment: { Variables: { Q: b.outputRef("QueueArn") } },
     });
     expect((await fn.planParams()).Environment).toEqual({
       Variables: { Q: UNKNOWN_AFTER_APPLY },

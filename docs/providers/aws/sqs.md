@@ -134,7 +134,7 @@ Notation doesn't check the ARN or that the queue exists. SQS rejects a bad ARN a
 
 The queue's `RedrivePolicy` holds the ARN of the dead-letter queue. When the dead-letter queue comes from `queue()`, the queue depends on the dead-letter queue, which deploys first. When you remove `deadLetterQueue`, Notation removes the policy from the queue, and leaves the dead-letter queue and its messages.
 
-A FIFO queue needs a FIFO dead-letter queue, and a standard queue needs a standard one. `queue()` throws when the two queues are of different types. For an ARN, `queue()` reads the type from the end of the ARN, because SQS requires the name of a FIFO queue to end in `.fifo`. When `queue` is the `arn` output value of a queue from `queue()`, the ARN is not known until deploy, so `queue()` doesn't check the type, and SQS rejects a mismatch at deploy.
+A FIFO queue needs a FIFO dead-letter queue, and a standard queue needs a standard one. `queue()` throws when the two queues are of different types. For an ARN, `queue()` reads the type from the end of the ARN, because SQS requires the name of a FIFO queue to end in `.fifo`. When `queue` is the `arn` output ref of a queue from `queue()`, the ARN is not known until deploy, so `queue()` doesn't check the type, and SQS rejects a mismatch at deploy.
 
 For a standard queue, a moved message keeps the time it was first sent, and the dead-letter queue's `messageRetentionPeriod` counts from that time. So give the dead-letter queue a longer `messageRetentionPeriod` than the queue.
 
@@ -142,9 +142,9 @@ To read the dead-letter queue, map it to a function as you would any other queue
 
 ### `arn` and `url`
 
-`orderQueue.arn` and `orderQueue.url` are output values: they don't exist until AWS creates the queue, but you can place them in another resource's config now. Notation makes that resource depend on the queue and fills in the real value at deploy. See [Output values](../../reference/resource.md#output-values).
+`orderQueue.arn` and `orderQueue.url` are output refs: they don't exist until AWS creates the queue, but you can place them in another resource's config now. Notation makes that resource depend on the queue and fills in the real value at deploy. See [Output refs](../../reference/resource.md#output-refs).
 
-An output value can only be placed whole. Turning it into a string, for example in a template string, throws. To build a value from the queue's ARN, contribute a function that receives `orderQueue.queue` as a dep; see [Function contributions](../../reference/resource.md#function-contributions).
+An output ref can only be placed whole. Turning it into a string, for example in a template string, throws. To build a value from the queue's ARN, contribute a function that receives `orderQueue.queue` as a dep; see [Function contributions](../../reference/resource.md#function-contributions).
 
 ## `sqs.bind(queue, options)`
 

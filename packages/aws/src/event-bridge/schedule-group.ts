@@ -37,8 +37,8 @@ export class ScheduleGroup extends AwsResourceGroup<ScheduleOptions> {
             EventBusName: "default",
             Targets: [
               {
-                Id: lambdaResource.outputValue("FunctionName"),
-                Arn: lambdaResource.outputValue("FunctionArn"),
+                Id: lambdaResource.outputRef("FunctionName"),
+                Arn: lambdaResource.outputRef("FunctionArn"),
               },
             ],
           },
@@ -56,7 +56,7 @@ export class ScheduleGroup extends AwsResourceGroup<ScheduleOptions> {
           config: {
             Action: "lambda:InvokeFunction",
             Principal: "events.amazonaws.com",
-            SourceArn: this.rule.outputValue("Arn"),
+            SourceArn: this.rule.outputRef("Arn"),
           },
           dependencies: { lambda: lambdaResource },
         },

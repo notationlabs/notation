@@ -2,10 +2,10 @@ import { sortedJson } from "@notation/utils";
 import type { DeepPartial } from "./types";
 import type { BaseResource } from "./resource";
 import {
-  containsOutputValue,
+  containsOutputRef,
   isPlainObject,
-  toCanonicalOutputValues,
-} from "./output-value";
+  toCanonicalOutputRefs,
+} from "./output-ref";
 
 /** What a collected param's `collect` receives besides the items. */
 export type CollectContext = {
@@ -52,7 +52,7 @@ export class ContributionConflictError extends Error {
 }
 
 function display(value: unknown): string {
-  return sortedJson.encode(toCanonicalOutputValues(value));
+  return sortedJson.encode(toCanonicalOutputRefs(value));
 }
 
 /**
@@ -171,7 +171,7 @@ export function sortContributions<T extends { contributor: string }>(
 ): T[] {
   const keyed = items.map((item) => ({
     item,
-    key: sortedJson.encode(toCanonicalOutputValues(valueOf(item))),
+    key: sortedJson.encode(toCanonicalOutputRefs(valueOf(item))),
   }));
   keyed.sort(
     (a, b) =>
@@ -198,9 +198,9 @@ function cloneMaps(value: unknown): unknown {
  * to different values conflict, and the error names both contributors. Any
  * value other than a map, including an array, is set whole.
  *
- * A value that holds an output value is not known yet, so it cannot be
+ * A value that holds an output ref is not known yet, so it cannot be
  * compared: the merge keeps it, and a conflict with it is found at deploy,
- * when the output values have been filled in.
+ * when the output refs have been filled in.
  */
 export function mergeContributions<T>(
   items: DeepPartial<T>[],
@@ -237,11 +237,11 @@ export function mergeContributions<T>(
         continue;
       }
       if (display(existing) === display(value)) continue;
-      if (containsOutputValue(value)) {
+      if (containsOutputRef(value)) {
         target[key] = value;
         continue;
       }
-      if (containsOutputValue(existing)) continue;
+      if (containsOutputRef(existing)) continue;
       throw new ContributionConflictError(
         context.resourceId,
         entryPath.join("."),

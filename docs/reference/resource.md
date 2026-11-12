@@ -171,13 +171,13 @@ The engine only checks values. It keeps the value it was given, not the validato
 
 The engine validates values at five points:
 
-| Point       | What is validated                                                                                                                                                                                                                   |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Declaration | The resource's config, in its constructor. [Output values](#output-values) are not known yet; see [Values that hold unknowns](#values-that-hold-unknowns). An async validator's result is awaited when `collectResourceGraph` ends. |
-| Plan        | Every param the plan knows. Values that are unknown until apply are treated as described in [Values that hold unknowns](#values-that-hold-unknowns).                                                                                |
-| Deploy      | Every param deploy knows, before it changes anything. Then each resource's full params, just before its own operation, which checks the values that come from other resources' outputs.                                             |
-| Create      | Every field of a `create` result. The reconciler records the resource, then fails the deploy.                                                                                                                                       |
-| Read        | Every field of a `read` result. A malformed read fails the plan or deploy, so that it is never compared with params.                                                                                                                |
+| Point       | What is validated                                                                                                                                                                                                                                         |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Declaration | The resource's config, in its constructor. The outputs that [output refs](#output-refs) point at are not known yet; see [Values that hold unknowns](#values-that-hold-unknowns). An async validator's result is awaited when `collectResourceGraph` ends. |
+| Plan        | Every param the plan knows. Values that are unknown until apply are treated as described in [Values that hold unknowns](#values-that-hold-unknowns).                                                                                                      |
+| Deploy      | Every param deploy knows, before it changes anything. Then each resource's full params, just before its own operation, which checks the values that come from other resources' outputs.                                                                   |
+| Create      | Every field of a `create` result. The reconciler records the resource, then fails the deploy.                                                                                                                                                             |
+| Read        | Every field of a `read` result. A malformed read fails the plan or deploy, so that it is never compared with params.                                                                                                                                      |
 
 An invalid value raises `ValueValidationError`. Its message names the resource, the field and the `file:line` that declared the resource, and its `issues` list what the validator reported. For a `sensitive` field, each issue keeps its path but has a generic message, because a validator's message can include the value. The `file:line` is the first frame of the call stack outside node_modules and the @notation packages, so a resource that a library helper declares is reported at the user's code that called the helper. The CLI bundles infra code with source maps and turns on Node's source map support, so the `file:line` names the user's source file, not the bundle.
 
@@ -194,7 +194,7 @@ The last two can only be found after the provider has made its change. So can an
 
 ### Values that hold unknowns
 
-At declaration, output values are not known yet. At plan, and before deploy changes anything, some values are unknown until apply. A field whose value is unknown as a whole is not validated. A field that holds unknowns, such as a policy document with one output ARN, is validated with the unknowns in place. The engine then drops each issue that the unknowns could cause:
+At declaration, the outputs that output refs point at are not known yet. At plan, and before deploy changes anything, some values are unknown until apply. A field whose value is unknown as a whole is not validated. A field that holds unknowns, such as a policy document with one output ARN, is validated with the unknowns in place. The engine then drops each issue that the unknowns could cause:
 
 - an issue whose path points at an unknown value, or inside one;
 - an issue whose path points at a parent of an unknown value, such as a failed union or object check;
@@ -364,9 +364,9 @@ Dependencies also determine deployment order: a resource is not created until al
 
 `resource.dependOn(other)` adds a dependency after construction. It orders the deploy and is recorded in state, but `deriveParams` does not receive it. Like `contribute`, it throws once evaluation ends; see [Lifetime](#lifetime).
 
-## Output values
+## Output refs
 
-An output, such as a queue's ARN, does not exist until the provider creates the resource. Infra code still needs to put it in another resource's config. `resource.outputValue(key)` returns a token that stands for the output, typed as the output:
+An output, such as a queue's ARN, does not exist until the provider creates the resource. Infra code still needs to put it in another resource's config. `resource.outputRef(key)` returns an output ref. This is an object that names the resource and one of its outputs. It does not hold the output. TypeScript types it as the output, so it fits where the output would go:
 
 ```ts [packages/aws/src/sqs/queue.ts]
 const queue = new aws.sqs.Queue("orders-queue", {
@@ -374,16 +374,16 @@ const queue = new aws.sqs.Queue("orders-queue", {
 });
 
 const mapping = new aws.lambda.LambdaEventSourceMapping("orders-mapping", {
-  config: { EventSourceArn: queue.outputValue("QueueArn") },
+  config: { EventSourceArn: queue.outputRef("QueueArn") },
 });
 ```
 
-The token has two effects:
+The ref has two effects:
 
 - `mapping` depends on `queue`, so the queue deploys first.
-- Deploy replaces the token with the queue's real ARN before it calls the provider for `mapping`. A token for a number becomes a number.
+- Deploy replaces the ref with the queue's real ARN before it calls the provider for `mapping`. A ref to a number becomes a number.
 
-**A token can only be placed whole.** Turning it into a string throws `OutputValueStringError`, whether in a template string, with `String()` or with `JSON.stringify`. This matters because a string such as `` `${arn}/*` `` would hide the token, and plan could not tell that the value is unknown. It follows that a token cannot be a map key: key the entry by something known now, and put the token inside it. To compute with an output, use `deriveParams` or a [function contribution](#function-contributions), which receive the real output at deploy.
+**A ref can only be placed whole.** Turning it into a string throws `OutputRefStringError`, whether in a template string, with `String()` or with `JSON.stringify`. This matters because a string such as `` `${arn}/*` `` would hide the ref, and plan could not tell that the value is unknown. It follows that a ref cannot be a map key: key the entry by something known now, and put the ref inside it. To compute with an output, use `deriveParams` or a [function contribution](#function-contributions), which receive the real output at deploy.
 
 ## Contributions
 
@@ -428,11 +428,11 @@ The rules for `collect`:
 Conflicting contributions to orders: infra/orders.ts:12 and infra/refunds.ts:8 both set Environment.Variables.QUEUE_URL, to "a" and "b"
 ```
 
-Library code that contributes a map entry for the user should key the entry by a name the user chose, such as a binding's ID. Two calls of the library code then never set the same key, and when the library conflicts with the user's code, the key path names the binding. A value that holds a token is not known at plan, so plan cannot find a conflict with it, and deploy fails instead.
+Library code that contributes a map entry for the user should key the entry by a name the user chose, such as a binding's ID. Two calls of the library code then never set the same key, and when the library conflicts with the user's code, the key path names the binding. A value that holds an output ref is not known at plan, so plan cannot find a conflict with it, and deploy fails instead.
 
 ### Function contributions
 
-A plain contribution cannot compute with an output value, because the output does not exist while infra is being evaluated. For example, to let a function send to every queue whose name starts with `orders-`, a policy statement needs the queue's ARN with `-*` appended. A function contribution receives the real output at deploy:
+A plain contribution cannot compute with an output ref, because the output does not exist while infra is being evaluated. For example, to let a function send to every queue whose name starts with `orders-`, a policy statement needs the queue's ARN with `-*` appended. A function contribution receives the real output at deploy:
 
 ```ts [infra/orders.ts]
 import { lambda } from "@notation/aws/lambda";

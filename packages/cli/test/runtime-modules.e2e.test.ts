@@ -98,7 +98,7 @@ it("deploys a declaration module as a lambda that reads its bound variables", as
   // deploy would give the lambda. A separate process gives the runtime bundle
   // a fresh environment and module cache.
   const script = `
-    import { collectResourceGraph, resolveOutputValues, deployLookup } from "@notation/resource";
+    import { collectResourceGraph, resolveOutputRefs, deployLookup } from "@notation/resource";
 
     const graph = await collectResourceGraph(() => import("./dist/infra/orders.mjs"));
     const ofType = (type) => graph.resources.filter((r) => r.type === type);

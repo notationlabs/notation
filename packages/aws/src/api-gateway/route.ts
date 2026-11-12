@@ -48,7 +48,7 @@ export class RouteGroup extends AwsResourceGroup {
         config: {
           Action: "lambda:InvokeFunction",
           Principal: "apigateway.amazonaws.com",
-          SourceArn: apiResource.outputValue("ExecuteApiSourceArn"),
+          SourceArn: apiResource.outputRef("ExecuteApiSourceArn"),
         },
         dependencies: { lambda: lambdaResource },
       },

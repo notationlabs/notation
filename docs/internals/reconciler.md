@@ -90,7 +90,7 @@ Before plan or deploy does anything else, `assertDependenciesPresent` (`packages
 
 - declared in its `dependencies`
 - added with `dependOn`
-- held as an output value in its config or contributions
+- held as an output ref in its config or contributions
 - named in the `deps` of a function contribution
 
 A dependency must be part of the deployment, because the graph ignores an edge to a resource that is not in it. Without the check, nothing would deploy the dependency, and the dependent would wait on an output that never arrives. So the check fails with:
@@ -112,7 +112,7 @@ Destroy does not run the check, so broken infra code cannot block a teardown.
 
 At plan, some resources have not been created yet, so their outputs do not exist. Plan marks a param that needs one of these outputs as unknown. **The rule from RFC 0002 decides every case below: plan may show more unknowns than deploy finds, but must never show a known value that deploy would change.**
 
-**Output values.** Plan fills in each output value from the outputs in state. When the resource has no output yet, plan marks the value unknown at its own path, and the rest of the map stays visible.
+**Output refs.** Plan fills in each output ref from the outputs in state. When the resource has no output yet, plan marks the value unknown at its own path, and the rest of the map stays visible.
 
 **`deriveParams`.** Plan calls `deriveParams` with a view of each dependency. Reading the view's `output` throws `PendingOutput` when the dependency has no output yet. Plan cannot tell which params depend on that output, so it handles each result like this:
 

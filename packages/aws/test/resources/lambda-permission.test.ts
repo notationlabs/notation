@@ -82,7 +82,7 @@ describe("LambdaPermission", () => {
     expect(params).not.toHaveProperty("SourceArn");
   });
 
-  it("places the source's output value as its SourceArn", async () => {
+  it("places the source's output ref as its SourceArn", async () => {
     let held!: InstanceType<typeof LambdaPermission>;
     let api!: InstanceType<typeof Api>;
     await collectResourceGraph(() => {
@@ -91,7 +91,7 @@ describe("LambdaPermission", () => {
         config: {
           Action: "lambda:InvokeFunction",
           Principal: "apigateway.amazonaws.com",
-          SourceArn: api.outputValue("ExecuteApiSourceArn"),
+          SourceArn: api.outputRef("ExecuteApiSourceArn"),
         },
         dependencies: { lambda: fn },
       });

@@ -5,7 +5,7 @@ import {
   assertComputedFields,
   assertRequiredOutputs,
   deployLookup,
-  resolveOutputValues,
+  resolveOutputRefs,
   validateValues,
   type BaseResource,
   type DurableObject,
@@ -96,8 +96,8 @@ export async function* createResourceOperation(
       provider: params.resource.provider,
       lastOperation: "create",
       lastOperationAt: new Date().toISOString(),
-      // State records the real outputs in place of output values.
-      config: resolveOutputValues(
+      // State records the real outputs in place of output refs.
+      config: resolveOutputRefs(
         params.resource.config,
         deployLookup,
       ) as DurableObject,

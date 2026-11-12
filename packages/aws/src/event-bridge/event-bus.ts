@@ -32,14 +32,14 @@ export abstract class EventBus<C extends Record<string, any> = {}>
   abstract readonly bus:
     aws.eventBridge.EventBusInstance | aws.eventBridge.DefaultEventBusInstance;
 
-  /** The bus's ARN. It is an output value, filled in at deploy. */
+  /** The bus's ARN. It is an output ref, which deploy replaces with the real value. */
   get arn(): string {
-    return this.bus.outputValue("Arn");
+    return this.bus.outputRef("Arn");
   }
 
-  /** The bus's name. It is an output value, filled in at deploy. */
+  /** The bus's name. It is an output ref, which deploy replaces with the real value. */
   get name(): string {
-    return this.bus.outputValue("Name");
+    return this.bus.outputRef("Name");
   }
 
   /** A policy statement that allows the actions on this bus. */

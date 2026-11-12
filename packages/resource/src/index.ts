@@ -29,13 +29,13 @@ export {
   type ContributionFunction,
 } from "./contributions";
 export {
-  OutputValue,
-  OutputValueStringError,
+  OutputRef,
+  OutputRefStringError,
   PendingOutput,
-  containsOutputValue,
-  isOutputValue,
-  resolveOutputValues,
+  containsOutputRef,
+  isOutputRef,
+  resolveOutputRefs,
   deployLookup,
   planLookup,
   type OutputLookup,
-} from "./output-value";
+} from "./output-ref";

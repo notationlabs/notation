@@ -31,16 +31,16 @@ import {
   type ContributionFunction,
 } from "./contributions";
 import {
-  OutputValue,
+  OutputRef,
   createPlanViews,
   deployLookup,
-  forEachOutputValue,
-  isOutputValue,
-  markUnknownOutputValues,
+  forEachOutputRef,
+  isOutputRef,
+  markUnknownOutputRefs,
   planLookup,
-  resolveOutputValues,
+  resolveOutputRefs,
   type PlanViews,
-} from "./output-value";
+} from "./output-ref";
 import { getActiveResourceCollection } from "./resource-collection";
 import { assertParamFields, validateValues } from "./value-validation";
 
@@ -171,7 +171,7 @@ export interface BaseResource {
   /**
    * Every resource this one depends on: its declared dependencies, those
    * added with `dependOn`, the deps of its function contributions, and the
-   * resources whose output values its config and contributions hold.
+   * resources whose output refs its config and contributions hold.
    */
   getDependencies(): BaseResource[];
   /**
@@ -180,7 +180,7 @@ export interface BaseResource {
    */
   planParams(): Promise<Record<string, unknown>>;
   /** A token for one of the resource's outputs, to place whole in config. */
-  outputValue(key: string): unknown;
+  outputRef(key: string): unknown;
 }
 
 export abstract class Resource<
@@ -252,7 +252,7 @@ export abstract class Resource<
 
   /**
    * Checks config when the resource is declared: every field is a param, and
-   * every value passes its validator. Output values are not known yet, so
+   * every value passes its validator. The outputs that output refs point at are not known yet, so
    * issues that they could cause are left to plan and deploy; see
    * `validateValues`. A subclass calls this at the end of its constructor,
    * when the schema has been set.
@@ -265,7 +265,7 @@ export abstract class Resource<
     if (this.#collection?.declarationChecks === false) return;
     const config = this.config as Record<string, unknown>;
     assertParamFields(this, config);
-    const pending = validateValues(this, config, "declaration", isOutputValue);
+    const pending = validateValues(this, config, "declaration", isOutputRef);
     if (!pending) return;
     // Handled now, so that a rejection before collection awaits it is not
     // reported as unhandled. Collection still fails with it.
@@ -328,10 +328,10 @@ export abstract class Resource<
    * it into a string throws: compute with the output in `deriveParams`, or
    * in a function contribution, which receive real outputs.
    */
-  outputValue<K extends keyof T["output"] & string>(
+  outputRef<K extends keyof T["output"] & string>(
     key: K,
   ): NonNullable<T["output"][K]> {
-    return new OutputValue(this, [key]) as any;
+    return new OutputRef(this, [key]) as any;
   }
 
   contribute(values: T["collected"]): void;
@@ -373,15 +373,15 @@ export abstract class Resource<
       if (dependency) found.add(dependency as BaseResource);
     }
     for (const dependency of this.#addedDependencies) found.add(dependency);
-    const addToken = (token: OutputValue) => found.add(token.resource);
-    forEachOutputValue(this.config, addToken);
+    const addToken = (token: OutputRef) => found.add(token.resource);
+    forEachOutputRef(this.config, addToken);
     for (const contribution of this.#contributions) {
       if ("compute" in contribution) {
         for (const dependency of Object.values(contribution.deps)) {
           found.add(dependency);
         }
       } else {
-        forEachOutputValue(contribution.values, addToken);
+        forEachOutputRef(contribution.values, addToken);
       }
     }
     return [...found];
@@ -419,7 +419,7 @@ export abstract class Resource<
     );
     if (derivedParams === undefined) return this.#cautiousPlanParams();
     const params = await this.#combineParams(derivedParams, true);
-    return markUnknownOutputValues(withoutUndefined(params)) as Record<
+    return markUnknownOutputRefs(withoutUndefined(params)) as Record<
       string,
       unknown
     >;
@@ -433,11 +433,11 @@ export abstract class Resource<
       if (item.propertyType === "computed") continue;
       const value = item.collect
         ? this.#collect(key, item.collect, config[key], contributions, true)
-        : resolveOutputValues(config[key], planLookup);
+        : resolveOutputRefs(config[key], planLookup);
       params[key] =
         value === undefined
           ? UNKNOWN_AFTER_APPLY
-          : markUnknownOutputValues(value);
+          : markUnknownOutputRefs(value);
     }
     return params;
   }
@@ -461,7 +461,7 @@ export abstract class Resource<
         plan,
       );
     }
-    return resolveOutputValues(
+    return resolveOutputRefs(
       params,
       plan ? planLookup : deployLookup,
     ) as Record<string, unknown>;
@@ -506,7 +506,7 @@ export abstract class Resource<
 
   /**
    * Combines a collected param's value from config with its contributions.
-   * Output values are filled in first, so that `collect` compares real
+   * Output refs are filled in first, so that `collect` compares real
    * values wherever they are known.
    */
   #collect(
@@ -535,7 +535,7 @@ export abstract class Resource<
     if (items.length === 0) return undefined;
     const lookup = plan ? planLookup : deployLookup;
     return collect(
-      items.map((item) => resolveOutputValues(item.value, lookup)),
+      items.map((item) => resolveOutputRefs(item.value, lookup)),
       {
         resourceId: this.id,
         param: key,

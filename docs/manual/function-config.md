@@ -89,7 +89,7 @@ Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. TypeS
 env: () => ({ ORDER_QUEUE_URL: orderQueue.url, LOG_LEVEL: "info" }),
 ```
 
-- Each value is a string. An output value such as `orderQueue.url` is typed `string`, and deploy fills in the real URL.
+- Each value is a string. An output ref such as `orderQueue.url` is typed `string`, and deploy fills in the real URL.
 - `lambda.env()` returns the values by name. In the function, it reads them from `process.env`, and throws when one is not set.
 - Lambda limits a function's environment variables to 4 KB in total. If the variables are over the limit, the deploy fails with an error that names the function.
 
