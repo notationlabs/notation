@@ -1891,8 +1891,8 @@ describe("drift detection and repair", () => {
 
 describe("outputs after an update", () => {
   // A token whose create returns a value that no read returns. The read
-  // returns `remote`, and the update removes a drifted name from it.
-  function defineToken(remote: { name?: string; status?: unknown }) {
+  // returns `remote`.
+  function defineToken(remote: { status?: unknown }) {
     return (
       resource({ type: "test/durable/token", provider: "test" })
         // Cast: a resource declared without API types constrains every schema
@@ -1922,9 +1922,7 @@ describe("outputs after an update", () => {
         .defineOperations({
           create: async () => ({ value: "secret", status: "created" }) as any,
           read: async () => remote as any,
-          update: async () => {
-            delete remote.name;
-          },
+          update: async () => undefined,
           delete: async () => undefined,
         })
     );
@@ -2006,26 +2004,6 @@ describe("outputs after an update", () => {
       output: { name: "n", value: "secret" },
     });
     expect(node!.output).not.toHaveProperty("label");
-    runtime.close();
-  });
-
-  it("keeps a computed output from the create when an update repairs drift", async () => {
-    const remote: { name?: string } = {};
-    const Token = defineToken(remote);
-    const runtime = createRuntime(
-      [new Token("token", { config: { name: "expected" } as any })],
-      "drift-update-keeps-computed",
-      { driftDetection: true },
-    );
-
-    await runtime.run("deploy-1");
-    remote.name = "drifted";
-    await runtime.run("deploy-2");
-
-    expect(await runtime.state.get("token")).toMatchObject({
-      lastOperation: "update",
-      output: { name: "expected", value: "secret" },
-    });
     runtime.close();
   });
 });

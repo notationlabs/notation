@@ -2,7 +2,6 @@ import {
   assertRequiredOutputs,
   deployLookup,
   resolveOutputRefs,
-  type BaseResource,
   type DurableObject,
 } from "@notation/resource";
 import {
@@ -49,9 +48,15 @@ export async function* updateResourceOperation(
 
     // An update starts from the computed outputs in state, because the read
     // may not return some of them, such as a value that only the create
-    // returns.
+    // returns. Params are left out, so that a param removed from the
+    // declaration is not kept from state.
+    const persistedComputedOutputs = Object.fromEntries(
+      Object.entries(params.persistedOutput ?? {}).filter(
+        ([field]) => params.resource.schema[field]?.propertyType === "computed",
+      ),
+    );
     params.resource.setOutput({
-      ...persistedComputedOutputs(params.resource, params.persistedOutput),
+      ...persistedComputedOutputs,
       ...params.resource.key,
       ...params.resourceParams,
     });
@@ -102,21 +107,4 @@ export async function* updateResourceOperation(
     yield* emitLifecycleEvent(params, "update", "error", getErrorDetails(err));
     throw err;
   }
-}
-
-/**
- * Returns the fields of `output` that the resource's schema marks computed.
- * Params are left out, so that a param removed from the declaration is not
- * kept from state.
- */
-function persistedComputedOutputs(
-  resource: BaseResource,
-  output: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  if (!output) return {};
-  return Object.fromEntries(
-    Object.entries(output).filter(
-      ([field]) => resource.schema[field]?.propertyType === "computed",
-    ),
-  );
 }
