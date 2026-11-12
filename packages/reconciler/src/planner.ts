@@ -1,9 +1,7 @@
 import {
   assertRequiredOutputs,
-  diffStateOnlyParams,
   validateParams,
   type BaseResource,
-  type ResourceClass,
 } from "@notation/resource";
 import type { StateBackend, StateNode } from "@notation/state";
 import {
@@ -14,6 +12,7 @@ import { isCycle, orderDeployUnits, type DeployUnit } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
+import { orphansDeployDeletes } from "./orphan-sweep";
 import {
   assertChangeAllowed,
   assertOrphanDeleteAllowed,
@@ -155,16 +154,12 @@ export async function createPlan({
     if (cascadeOnly && stateNode) {
       assertChangeAllowed(
         resource.id,
-        (resource.constructor as ResourceClass<any, any, any>).rejectChange,
+        resource.rejectChange,
         stateNode.params,
         params,
         { replace: true },
       );
     }
-    const stateChanged =
-      action.decision === "noop" && !cascadeOnly && stateNode
-        ? diffStateOnlyParams(resource.schema, stateNode.params, params)
-        : [];
     const placeholder =
       cycle?.placeholders.includes(resource) &&
       (action.decision === "create" || action.decision === "drift-recreate");
@@ -172,7 +167,6 @@ export async function createPlan({
       id: resource.id,
       type: resource.type,
       decision: cascadeOnly ? "replace" : action.decision,
-      ...(stateChanged.length > 0 ? { stateChanged } : {}),
       ...("diff" in action && !cascadeOnly ? { diff: action.diff } : {}),
       ...(replaceFields ? { replaceFields } : {}),
       ...(replacedDependency ? { replacedDependency } : {}),
@@ -213,9 +207,12 @@ export async function createPlan({
     }
   }
 
-  for (const stateNode of stateNodes) {
-    if (resourceById.has(stateNode.id)) continue;
+  const inCode = new Set(resourceById.keys());
+  for (const stateNode of orphansDeployDeletes(stateNodes, inCode, classes)) {
     assertOrphanDeleteAllowed(classes, stateNode);
+  }
+  for (const stateNode of stateNodes) {
+    if (inCode.has(stateNode.id)) continue;
     nodes.push({
       id: stateNode.id,
       type: stateNode.type,

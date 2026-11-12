@@ -214,19 +214,18 @@ const workerScriptSchema = workerScript.defineSchema({
   UnprotectedDurableObjects: {
     propertyType: "param",
     presence: "optional",
-    stateOnly: true,
     value: v.array(v.string()),
   },
   BoundDurableObjects: {
     propertyType: "param",
     presence: "optional",
-    stateOnly: true,
+    hidden: true,
     value: v.array(boundNamespaceSchema),
   },
   DurableObjectTransferSources: {
     propertyType: "param",
     presence: "optional",
-    stateOnly: true,
+    hidden: true,
     value: v.array(transferSourceSchema),
   },
 } as const);
@@ -241,7 +240,7 @@ export const WorkerScript = workerScriptSchema
           `A Worker named ${params.ScriptName} already exists in the Cloudflare account ${params.AccountId}`,
         );
       }
-      const transfers = await findTransfers(params, []);
+      const { transfers } = await findTransfers(params, []);
       if (transfers.length > 0) {
         throw new Error(newHostError(params, transfers));
       }
@@ -318,9 +317,9 @@ async function upload(
     bindings: params.Bindings ?? [],
     exports,
   };
-  const transfers = await findTransfers(params, previous);
+  const { transfers, account } = await findTransfers(params, previous);
   if (transfers.length > 0) {
-    await transferNamespaces(params, upload, transfers);
+    await transferNamespaces(params, upload, transfers, account);
     // The first upload of the transfer applied the renames and deletes.
     upload.exports = liveExports(exports);
   }
@@ -332,19 +331,17 @@ type Transfer = {
   className: string;
   /** The Worker that hosts the namespace before the transfer. */
   from: string;
-  /** The namespaces that `from` hosts. */
-  fromNamespaces: AccountNamespace[];
 };
 
 /**
  * Finds the hosted namespaces that are new to the Worker and that another
- * Worker of the deployment hosts now. Lists the account's namespaces only
- * when a new namespace has transfer sources.
+ * Worker of the deployment hosts now, with the account's namespaces. Lists
+ * the account's namespaces only when a new namespace has transfer sources.
  */
 async function findTransfers(
   params: WorkerScriptParams,
   previous: HostedNamespace[],
-): Promise<Transfer[]> {
+): Promise<{ transfers: Transfer[]; account: AccountNamespace[] }> {
   const sources = params.DurableObjectTransferSources ?? [];
   const arriving = (params.DurableObjectNamespaces ?? []).flatMap(
     (namespace) => {
@@ -355,7 +352,7 @@ async function findTransfers(
         : [];
     },
   );
-  if (arriving.length === 0) return [];
+  if (arriving.length === 0) return { transfers: [], account: [] };
   const account = await listAccountNamespaces(params.AccountId);
   const transfers: Transfer[] = [];
   for (const { namespace, scriptNames } of arriving) {
@@ -373,21 +370,17 @@ async function findTransfers(
     // stopped part way through has already moved it.
     if (hosts.length === 0) continue;
     const from = hosts[0]!.script;
-    const fromNamespaces = account.filter((other) => other.script === from);
-    const legacy = fromNamespaces.find((other) => !other.sqlite);
+    const legacy = account.find(
+      (other) => other.script === from && !other.sqlite,
+    );
     if (legacy) {
       throw new Error(
         `Cannot move the Durable Object namespace "${namespace.id}" from the Worker ${from}: ${from} also hosts the namespace of the class ${legacy.className}, which uses the key-value storage type. Notation supports only namespaces with SQLite storage.`,
       );
     }
-    transfers.push({
-      id: namespace.id,
-      className: namespace.className,
-      from,
-      fromNamespaces,
-    });
+    transfers.push({ id: namespace.id, className: namespace.className, from });
   }
-  return transfers;
+  return { transfers, account };
 }
 
 // A create that stopped part way through a transfer would be recorded as
@@ -409,6 +402,7 @@ async function transferNamespaces(
   params: WorkerScriptParams,
   upload: ScriptUpload,
   transfers: Transfer[],
+  account: AccountNamespace[],
 ): Promise<void> {
   const incoming = new Set(transfers.map((transfer) => transfer.className));
   const expecting: Record<string, DurableObjectExport> = { ...upload.exports };
@@ -432,18 +426,12 @@ async function transferNamespaces(
     ),
     exports: expecting,
   });
-  const sources = new Map<string, Transfer[]>();
-  for (const transfer of transfers) {
-    sources.set(transfer.from, [
-      ...(sources.get(transfer.from) ?? []),
-      transfer,
-    ]);
-  }
-  for (const [from, moving] of sources) {
+  for (const from of new Set(transfers.map((transfer) => transfer.from))) {
     const exports: Record<string, DurableObjectExport> = {};
-    for (const namespace of moving[0]!.fromNamespaces) {
-      exports[namespace.className] = moving.some(
-        (transfer) => transfer.className === namespace.className,
+    for (const namespace of account.filter((other) => other.script === from)) {
+      exports[namespace.className] = transfers.some(
+        (transfer) =>
+          transfer.from === from && transfer.className === namespace.className,
       )
         ? {
             type: "durable-object",
@@ -505,28 +493,18 @@ export function rejectNamespaceLoss(
     const declarations = lost
       .map((namespace) => `$durableObject({ id: "${namespace.id}" })`)
       .join(", ");
-    return `Deploy would delete the Durable Object namespaces ${lost.map(describeHosted).join(", ")} of the Worker ${previous.ScriptName}, with all their objects, which can't be undone. Deploy deletes a namespace when its Worker no longer hosts it, and deletes all of a Worker's namespaces when the Worker is removed or replaced, as when its id or name changes. To keep a namespace, keep its id and export its class from this Worker. A change of class alone keeps the namespace's objects. To move a namespace to another Worker with its objects, keep binding it from this Worker in the deploy that moves its class. To delete the namespaces, first deploy with \`protect: false\` on ${declarations}, while this Worker still hosts them. Then remove them, or the Worker, in a later deploy.`;
+    return `Deploy would delete the Durable Object namespaces ${lost.map(describeHosted).join(", ")} of the Worker ${previous.ScriptName}, with all their objects, which can't be undone. To delete them, first deploy \`protect: false\` on ${declarations} while this Worker still hosts them. To move a namespace to another Worker instead, keep binding it from this Worker.`;
   }
 
-  for (const namespace of hosted) {
+  // Cloudflare keys a namespace by its class name, and so does the move of a
+  // bound namespace from this Worker to its new host.
+  for (const namespace of [...hosted, ...bound]) {
     const taken = before.find(
       (other) =>
         other.className === namespace.className && other.id !== namespace.id,
     );
     if (taken) {
-      return `The Durable Object namespace "${namespace.id}" has the class ${taken.className}, which the namespace "${taken.id}" had before. Cloudflare keys a namespace by its class name, so "${namespace.id}" would get the objects of "${taken.id}". Give "${namespace.id}" another class, or deploy the change to "${taken.id}" first, and give its old class to "${namespace.id}" in a later deploy.`;
-    }
-  }
-
-  // The new host of a bound namespace moves the namespace of its class from
-  // this Worker.
-  for (const namespace of bound) {
-    const taken = before.find(
-      (other) =>
-        other.className === namespace.className && other.id !== namespace.id,
-    );
-    if (taken) {
-      return `The Durable Object namespace "${namespace.id}" on the Worker ${namespace.scriptName} has the class ${taken.className}, which the namespace "${taken.id}" had on the Worker ${previous.ScriptName} before. Deploy moves a namespace from a Worker that binds it by its class name, so "${namespace.id}" would get the objects of "${taken.id}". Give "${namespace.id}" another class, or deploy the change to "${taken.id}" first, and bind "${namespace.id}" from ${previous.ScriptName} in a later deploy.`;
+      return `The Durable Object namespace "${namespace.id}" would get the objects of "${taken.id}", which had the class ${taken.className} on the Worker ${previous.ScriptName}. Give "${namespace.id}" another class, or deploy the change to "${taken.id}" first, and give its old class to "${namespace.id}" in a later deploy.`;
     }
   }
   return undefined;

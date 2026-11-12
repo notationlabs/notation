@@ -52,17 +52,12 @@ export async function plan(
 }
 
 function printPlanSummary(result: Plan, logger: Logger) {
-  const changedNodes = result.nodes.filter(
-    (node) => node.decision !== "noop" || node.stateChanged,
-  );
+  const changedNodes = result.nodes.filter((node) => node.decision !== "noop");
 
   for (const node of changedNodes) {
     logger.info(
       `${decisionSymbols[node.decision]} ${node.decision} ${node.type} ${node.id}`,
     );
-    for (const name of node.stateChanged ?? []) {
-      logger.info(`    ${name} changes in state only`);
-    }
     for (const field of node.replaceFields ?? []) {
       logger.info(
         field.known

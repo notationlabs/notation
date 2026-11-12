@@ -188,7 +188,7 @@ Plan fails when:
 - the namespace that moves has the class of another namespace that the old host had before. The moved namespace would get that namespace's objects.
 - the old host no longer binds the namespace, and the namespace is protected in state. Without the binding, deploy doesn't know where the namespace moves to, and the old host's upload would delete it.
 
-Deploy fails, before it uploads the new host, when this deploy creates the new host. Deploy the new host without the namespace first. Deploy also fails when the old host hosts a namespace with key-value storage, which Notation doesn't support.
+Deploy fails, before it uploads the new host, when this deploy creates the new host. Deploy the new host without the namespace first. Deploy also fails when the old host hosts a namespace with key-value storage, which Notation doesn't support, or a namespace that Cloudflare's list doesn't show as SQLite.
 
 If a move stops part way through, the next deploy finishes it. The new host's state is updated only after the last upload, so the next deploy runs the move again. It finds the namespace on the old host, or on the new host if Cloudflare already moved it.
 
@@ -204,7 +204,7 @@ export const rooms = $durableObject({
 });
 ```
 
-This deploy saves the value in the state of the hosting Worker. It doesn't upload the Worker again or change the namespace. Plan lists the Worker as unchanged, with `UnprotectedDurableObjects changes in state only`.
+This deploy saves the value in the state of the hosting Worker. Plan lists the Worker as an update, and deploy uploads it again, without changing the namespace.
 
 In a later deploy, remove the declaration, its binding and its class. Deploy uploads a `deleted` entry for the namespace's class. The Worker's module must no longer export the class, or Cloudflare rejects the upload. In the same way, a later deploy can remove the hosting Worker, or change its `id` or `name`, once all its namespaces are unprotected in state.
 

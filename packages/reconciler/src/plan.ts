@@ -5,7 +5,6 @@ import {
   type RejectChange,
   type RejectChangeContext,
   type ReplaceField,
-  type ResourceClass,
   type ResourceType,
 } from "@notation/resource";
 import type { StateNode } from "@notation/state";
@@ -64,11 +63,6 @@ export type PlanNode = {
    * and updates it with them once the rest of its cycle exists.
    */
   placeholder?: true;
-  /**
-   * For a noop, the `stateOnly` params that changed. Deploy writes them to
-   * the state record without calling update.
-   */
-  stateChanged?: string[];
   params: Record<string, unknown>;
   dependsOn: string[];
 };
@@ -122,7 +116,7 @@ export function decideAction(opts: {
   );
   assertChangeAllowed(
     resource.id,
-    (resource.constructor as ResourceClass<any, any, any>).rejectChange,
+    resource.rejectChange,
     stateNode.params,
     params,
     { replace: replaceFields.length > 0 },

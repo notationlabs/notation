@@ -7,20 +7,18 @@ import {
   SchemaStructureError,
   assertRequiredOutputs,
   collectResourceGraph,
-  diffStateOnlyParams,
   validateParams,
   type BaseResource,
-  type DurableObject,
-  type ResourceClass,
   type ResourceGroupRef,
   type ResourceDeletion,
   type ResourceType,
 } from "@notation/resource";
 import { VersionConflict, type StateNode } from "@notation/state";
 import { remainingDependencies } from "../cycles";
-import { buildDepthLevels, collectDependents } from "../dependency-graph";
+import { collectDependents } from "../dependency-graph";
 import { createBlocksDelete } from "../delete-cascade";
 import type { OperationLifecycleEvent } from "../events";
+import { keep, orphanSweepSteps } from "../orphan-sweep";
 import { resolveResourceClass, workflowRegistry } from "../resource-registry";
 import { assertSameType } from "../resource-type";
 import {
@@ -242,11 +240,9 @@ export async function* reconcileResource(
       if (
         !opts.dryRun &&
         (!hasSameEdges(session.node, dependsOn) ||
-          session.node.provider !== resource.provider ||
-          diffStateOnlyParams(resource.schema, session.node.params, params)
-            .length > 0)
+          session.node.provider !== resource.provider)
       ) {
-        yield* rewriteRecord(session, resource, dependsOn, params);
+        yield* rewriteRecord(session, resource, dependsOn);
       }
       return;
   }
@@ -296,11 +292,6 @@ async function* recoverOutputs(
     const { version: _, ...record } = session.node;
     yield* session.persist({
       ...record,
-      params: withStateOnlyParams(
-        resource,
-        record.params,
-        shared.resourceParams,
-      ),
       group: (record.group ?? null) as ResourceGroupRef | null,
       output: resource.toState(resource.output),
       dependsOn: shared.dependsOn,
@@ -310,19 +301,17 @@ async function* recoverOutputs(
 }
 
 /**
- * Updates `dependsOn`, `provider` and the `stateOnly` params in the record,
- * without calling the resource's update operation.
+ * Updates `dependsOn` and `provider` in the record, without calling the
+ * resource's update operation.
  */
 async function* rewriteRecord(
   session: Extract<ResourceStateSession, { node: StateNode }>,
   resource: BaseResource,
   dependsOn: string[],
-  params: Record<string, unknown>,
 ): AsyncGenerator<any, void, any> {
   const { version: _, ...record } = session.node;
   yield* session.persist({
     ...record,
-    params: withStateOnlyParams(resource, record.params, params),
     provider: resource.provider,
     group: (record.group ?? null) as ResourceGroupRef | null,
     dependsOn,
@@ -450,7 +439,7 @@ async function* deleteBlockingDependents(
     }
     assertChangeAllowed(
       id,
-      (declared.constructor as ResourceClass<any, any, any>).rejectChange,
+      declared.rejectChange,
       record.params,
       await declared.planParams(),
       { replace: true },
@@ -592,44 +581,45 @@ export async function* sweepOrphans(
       const resource = resourceById.get(node.id);
       if (!resource || resource.type === node.type) continue;
       if (resolveResourceClass(registry, node.type as ResourceType)) continue;
-      yield* skipUnregistered(scope, opts, node, edgesById, kept, workflow);
+      const keptDependencies = keep(node, edgesById, kept);
+      yield* warnUnregistered(scope, opts, node, keptDependencies, workflow);
     }
   }
 
-  for (const node of orderOrphanDeletes(orphans)) {
-    const nodeScope = scope.scope(encodeURIComponent(node.id));
-
-    const Resource = resolveResourceClass(registry, node.type as ResourceType);
-    // An unregistered orphan warns even when another orphan already keeps
-    // it, so that the warnings name every type the sweep could not delete.
-    if (!Resource) {
-      yield* skipUnregistered(scope, opts, node, edgesById, kept, workflow);
+  for (const sweep of orphanSweepSteps(orphans, registry, edgesById, kept)) {
+    const { node } = sweep;
+    if (!sweep.Resource) {
+      yield* warnUnregistered(
+        scope,
+        opts,
+        node,
+        sweep.keptDependencies,
+        workflow,
+      );
       continue;
     }
-    if (kept.has(node.id)) continue;
     // Repeats the check of notation:validate, because the record may have
     // changed since validate ran before the hold.
     if (workflow === "deploy") assertOrphanDeleteAllowed(registry, node);
 
-    const resource = await instantiateRecord(Resource, node);
-    yield* deleteResource(nodeScope, resource, opts);
+    const resource = await instantiateRecord(sweep.Resource, node);
+    yield* deleteResource(
+      scope.scope(encodeURIComponent(node.id)),
+      resource,
+      opts,
+    );
   }
 
   return kept;
 }
 
-async function* skipUnregistered(
+async function* warnUnregistered(
   scope: DurableStepRunner,
   opts: DurableWorkflowOptions,
   node: StateNode,
-  edgesById: Map<string, string[]>,
-  kept: Set<string>,
+  keptDependencies: string[],
   workflow: "deploy" | "destroy",
 ): AsyncGenerator<any, void, any> {
-  const keptDependencies = collectDependencies(node, edgesById);
-  kept.add(node.id);
-  for (const id of keptDependencies) kept.add(id);
-
   const emit = durableEmitter(
     scope.scope(encodeURIComponent(node.id)),
     opts.emit,
@@ -664,44 +654,6 @@ async function instantiateRecord(
   );
   resource.setOutput(node.output);
   return resource;
-}
-
-/**
- * Orders orphans so that each is deleted before the orphans it depends on.
- * An edge to a resource that is not an orphan is ignored.
- *
- * A record with no edges was written before edges were recorded, and keeps
- * its storage order among the records it has no edges to. Orphans that form
- * a cycle, and the orphans that depend on them, cannot be ordered, and are
- * deleted first, in storage order.
- */
-function orderOrphanDeletes(orphans: StateNode[]): StateNode[] {
-  const { levels, unordered } = buildDepthLevels(
-    orphans,
-    (node) => node.id,
-    (node) => node.dependsOn ?? [],
-  );
-  return [...unordered, ...levels.reverse().flat()];
-}
-
-/**
- * The resources that `node` depends on, directly or through each other,
- * among those that `edgesById` holds edges for.
- */
-function collectDependencies(
-  node: StateNode,
-  edgesById: Map<string, string[]>,
-): string[] {
-  const found = new Set<string>();
-  const pending = [...(node.dependsOn ?? [])];
-  while (pending.length > 0) {
-    const id = pending.pop()!;
-    const edges = edgesById.get(id);
-    if (found.has(id) || id === node.id || !edges) continue;
-    found.add(id);
-    pending.push(...edges);
-  }
-  return [...found].sort();
 }
 
 /**
@@ -813,22 +765,4 @@ function removeResourceState(
       );
     }
   };
-}
-
-/**
- * Returns the params in the record, with the `stateOnly` params taken from
- * the params in code.
- */
-function withStateOnlyParams(
-  resource: BaseResource,
-  recorded: DurableObject,
-  params: Record<string, unknown>,
-): DurableObject {
-  const merged: Record<string, unknown> = { ...recorded };
-  for (const [name, item] of Object.entries(resource.schema)) {
-    if (item.propertyType !== "param" || !item.stateOnly) continue;
-    if (params[name] === undefined) delete merged[name];
-    else merged[name] = params[name];
-  }
-  return merged as DurableObject;
 }

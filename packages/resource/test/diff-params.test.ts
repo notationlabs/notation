@@ -1,10 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  UNKNOWN_AFTER_APPLY,
-  diffParams,
-  diffStateOnlyParams,
-  type Schema,
-} from "src";
+import { UNKNOWN_AFTER_APPLY, diffParams, type Schema } from "src";
 import { object, string } from "./validators";
 
 const schema: Schema = {
@@ -45,12 +40,6 @@ const schema: Schema = {
     value: string(),
     hidden: true,
   },
-  protect: {
-    propertyType: "param",
-    presence: "optional",
-    value: object<string[]>(),
-    stateOnly: true,
-  },
   arn: { propertyType: "computed", presence: "required", value: string() },
 };
 
@@ -62,7 +51,6 @@ const previous = {
   tags: { team: "a", env: "dev" },
   token: "t1",
   secret: "s1",
-  protect: ["a"],
   arn: "arn:1",
 };
 
@@ -206,29 +194,5 @@ describe("diffParams", () => {
     expect(
       diffParams(schema, previous, desired, { canUpdate: true }).replaceFields,
     ).toEqual([{ name: "path", known: false }]);
-  });
-});
-
-describe("diffStateOnlyParams", () => {
-  test("ignores a stateOnly param in diffParams, and lists it here", () => {
-    const desired = { ...previous, protect: ["a", "b"] };
-    expect(diffParams(schema, previous, desired, { canUpdate: true })).toEqual({
-      patch: {},
-      changed: [],
-      replaceFields: [],
-      diff: { added: {}, deleted: {}, updated: {} },
-    });
-    expect(diffStateOnlyParams(schema, previous, desired)).toEqual(["protect"]);
-  });
-
-  test("lists a stateOnly param that is added or removed, and no other param", () => {
-    const { protect: _, ...without } = previous;
-    expect(diffStateOnlyParams(schema, without, previous)).toEqual(["protect"]);
-    expect(
-      diffStateOnlyParams(schema, previous, { ...without, protect: undefined }),
-    ).toEqual(["protect"]);
-    expect(
-      diffStateOnlyParams(schema, previous, { ...previous, description: "x" }),
-    ).toEqual([]);
   });
 });

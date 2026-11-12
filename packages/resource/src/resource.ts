@@ -150,6 +150,8 @@ export interface BaseResource {
   ) => Promise<void>;
   /** See `DefineResourceMeta.deleteTakesDependents`. */
   readonly deleteTakesDependents?: boolean;
+  /** See `ResourceOperationsOptions.rejectChange`. */
+  readonly rejectChange?: RejectChange<any>;
   /**
    * The params the resource deploys with. Deploy creates the placeholder of
    * a dependency cycle before the other members exist, so it leaves out the
@@ -233,6 +235,7 @@ export abstract class Resource<
   abstract type: ResourceType;
   abstract provider: string;
   declare readonly deleteTakesDependents?: boolean;
+  declare readonly rejectChange?: RejectChange<T["params"]>;
   abstract schema: Schema;
   abstract create: (
     params: T["params"],
@@ -911,6 +914,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             static blocksDeleteOf = meta.blocksDeleteOf ?? [];
             deleteTakesDependents = meta.deleteTakesDependents ?? false;
             static rejectChange = opts.rejectChange;
+            rejectChange = opts.rejectChange;
             provider = meta.provider;
             schema = schema;
             create = opts.create;

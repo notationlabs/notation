@@ -39,13 +39,6 @@ export type SchemaItem<T = any> = {
 } & (
   | {
       propertyType: "param";
-      /**
-       * Saves the param in state without sending it to the cloud. A change
-       * to it doesn't update the resource: deploy writes the new value to
-       * the state record only. Use it for a setting that a later plan reads
-       * from state, such as consent to delete data.
-       */
-      stateOnly?: true;
       immutable?: true;
       primaryKey?: true;
       secondaryKey?: true;

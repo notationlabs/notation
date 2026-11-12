@@ -26,6 +26,7 @@ import { createWorkflowRouter, workflow } from "@notation/durable";
 import { describe, expect, it, vi } from "vitest";
 import * as durable from "../src/durable";
 import type { ReconcilerEvent } from "../src/events";
+import { createPlan } from "../src/planner";
 import {
   createResourceRegistry,
   type ResourceRegistry,
@@ -1172,7 +1173,7 @@ describe("rejectChange", () => {
     runtime.close();
   });
 
-  it("writes a stateOnly param to the record without an update, and reads it from state for a later delete", async () => {
+  it("reads consent from state, so a delete needs a deploy of the consent first", async () => {
     const calls: string[] = [];
     const Protected = resource<{
       Key: { name: string };
@@ -1191,7 +1192,6 @@ describe("rejectChange", () => {
         protect: {
           presence: "optional",
           propertyType: "param",
-          stateOnly: true,
           value: v.boolean(),
         },
       })
@@ -1207,7 +1207,7 @@ describe("rejectChange", () => {
     const resources: BaseResource[] = [
       new Protected("a", { config: { name: "a" } }),
     ];
-    const runtime = createRuntime(resources, "state-only", {
+    const runtime = createRuntime(resources, "consent-in-state", {
       registry: createResourceRegistry([Protected]),
     });
     await runtime.run("deploy-1");
@@ -1219,56 +1219,46 @@ describe("rejectChange", () => {
       new Protected("a", { config: { name: "a", protect: false } }),
     );
     await runtime.run("deploy-3");
-    expect(await runtime.state.get("a")).toMatchObject({
-      version: 2,
-      params: { name: "a", protect: false },
-    });
 
     resources.splice(0);
     await runtime.run("deploy-4");
-    expect(calls).toEqual(["create a", "delete a"]);
+    expect(calls).toEqual(["create a", "update a", "delete a"]);
     runtime.close();
   });
 
-  it("removes a stateOnly param from the record when code unsets it", async () => {
-    const Flagged = resource<{
-      Key: { name: string };
-      CreateParams: { name: string; flag?: boolean };
-      UpdateParams: { flag?: boolean };
-      ReadResult: {};
-    }>({ type: "test/durable/flagged", provider: "test" })
-      .defineSchema({
-        name: {
-          presence: "required",
-          propertyType: "param",
-          primaryKey: true,
-          immutable: true,
-          value: v.string(),
-        },
-        flag: {
-          presence: "optional",
-          propertyType: "param",
-          stateOnly: true,
-          value: v.boolean(),
-        },
-      })
+  it("doesn't check an orphan that the sweep keeps for an orphan with no class", async () => {
+    const calls: string[] = [];
+    const Guarded = defineGuarded(calls);
+    const Holder = resource({
+      type: "test/durable/guarded-holder" as ResourceType,
+      provider: "test",
+    })
+      .defineSchema({})
       .defineOperations({
         create: async () => undefined,
-        update: async () => undefined,
         delete: async () => undefined,
       });
+    const guarded = new Guarded("a", { config: { name: "a", keep: true } });
     const resources: BaseResource[] = [
-      new Flagged("a", { config: { name: "a", flag: true } }),
+      guarded,
+      new Holder("holder", { dependencies: { guarded } }),
     ];
-    const runtime = createRuntime(resources, "state-only-unset");
+    const runtime = createRuntime(resources, "reject-change-kept", {
+      registry: createResourceRegistry([Guarded]),
+    });
     await runtime.run("deploy-1");
 
-    resources[0] = new Flagged("a", { config: { name: "a" } });
+    resources.splice(0);
+    await createPlan({
+      resources,
+      state: runtime.state,
+      registry: createResourceRegistry([Guarded]),
+    });
     await runtime.run("deploy-2");
-
-    const record = await runtime.state.get("a");
-    expect(record?.version).toBe(2);
-    expect(record?.params).toEqual({ name: "a" });
+    expect(calls).toEqual(["create a"]);
+    expect((await runtime.state.values()).map((node) => node.id)).toEqual(
+      expect.arrayContaining(["a", "holder"]),
+    );
     runtime.close();
   });
 
@@ -3769,59 +3759,6 @@ describe("value validation at deploy", () => {
     expect(await runtime.state.get("fn")).toMatchObject({
       lastOperation: "create",
       params: { name: "fn", memory: 128, role: "arn:role" },
-    });
-    runtime.close();
-  });
-
-  it("writes a changed stateOnly param when it reads a resource again for a missing output", async () => {
-    let arn: string | undefined;
-    const Role = resource<{
-      Key: { name: string };
-      CreateParams: { name: string; protect?: boolean };
-      UpdateParams: { protect?: boolean };
-      ReadResult: { arn: string };
-    }>({ type: "test/durable/recover-state-only", provider: "test" })
-      .defineSchema({
-        name: {
-          propertyType: "param",
-          presence: "required",
-          primaryKey: true,
-          immutable: true,
-          value: v.string(),
-        },
-        protect: {
-          propertyType: "param",
-          presence: "optional",
-          stateOnly: true,
-          value: v.boolean(),
-        },
-        arn: {
-          propertyType: "computed",
-          presence: "required",
-          value: v.string(),
-        },
-      })
-      .defineOperations({
-        create: async () => ({}) as any,
-        read: async () => ({ arn }) as any,
-        update: async () => undefined,
-        delete: async () => undefined,
-      });
-    const resources: BaseResource[] = [
-      new Role("role", { config: { name: "role" } }),
-    ];
-    const runtime = createRuntime(resources, "recover-state-only");
-    await runtime.run("recover-state-only-1").catch(() => {});
-
-    arn = "arn:role";
-    resources[0] = new Role("role", {
-      config: { name: "role", protect: false },
-    });
-    await runtime.run("recover-state-only-2");
-
-    expect(await runtime.state.get("role")).toMatchObject({
-      params: { name: "role", protect: false },
-      output: { arn: "arn:role" },
     });
     runtime.close();
   });

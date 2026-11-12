@@ -175,7 +175,9 @@ export async function listAccountNamespaces(
       namespaces.push({
         script: item.script,
         className: item.class,
-        sqlite: item.use_sqlite !== false,
+        // The API marks the field optional. Without it, a namespace counts
+        // as key-value, which a move refuses.
+        sqlite: item.use_sqlite === true,
       });
     }
     if ((items ?? []).length < NAMESPACE_PAGE_SIZE) return namespaces;

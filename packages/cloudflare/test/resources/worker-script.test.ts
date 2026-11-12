@@ -455,21 +455,27 @@ describe("WorkerScript", () => {
       expect(calls.map(({ method }) => method)).toEqual(["PUT", "PUT"]);
     });
 
-    it("fails before any upload when the Worker it moves from has a key-value namespace", async () => {
-      mockFetch(
-        respondWith([
-          { script: "app--dev--web", class: "Room", use_sqlite: true },
-          { script: "app--dev--web", class: "Legacy", use_sqlite: false },
-        ]),
-      );
+    it.each([
+      ["false", { use_sqlite: false }],
+      ["missing", {}],
+    ])(
+      "fails before any upload when the Worker it moves from has a namespace whose use_sqlite is %s",
+      async (_, storage) => {
+        mockFetch(
+          respondWith([
+            { script: "app--dev--web", class: "Room", use_sqlite: true },
+            { script: "app--dev--web", class: "Legacy", ...storage },
+          ]),
+        );
 
-      await expect(
-        script.update!(key, {} as any, arriving, params),
-      ).rejects.toThrow(
-        /^Cannot move the Durable Object namespace "rooms" from the Worker app--dev--web: app--dev--web also hosts the namespace of the class Legacy, which uses the key-value storage type\./,
-      );
-      expect(calls.map(({ method }) => method)).toEqual(["GET"]);
-    });
+        await expect(
+          script.update!(key, {} as any, arriving, params),
+        ).rejects.toThrow(
+          /^Cannot move the Durable Object namespace "rooms" from the Worker app--dev--web: app--dev--web also hosts the namespace of the class Legacy, which uses the key-value storage type\./,
+        );
+        expect(calls.map(({ method }) => method)).toEqual(["GET"]);
+      },
+    );
 
     it("leaves a namespace that moved out of the exports of the Worker it moved from", async () => {
       mockFetch(() => ok({}));
@@ -788,7 +794,7 @@ describe("rejectChange", () => {
           { UnprotectedDurableObjects: ["rooms"] },
         ),
       ).toMatch(
-        /^The Durable Object namespace "lobbies" on the Worker app--dev--web has the class Room, which the namespace "rooms" had on the Worker app--dev--api before\./,
+        /^The Durable Object namespace "lobbies" would get the objects of "rooms", which had the class Room on the Worker app--dev--api\./,
       );
     });
 
@@ -814,7 +820,7 @@ describe("rejectChange", () => {
 
   it("rejects a protected namespace that the Worker no longer hosts", () => {
     expect(reject({ DurableObjectNamespaces: [counters] })).toBe(
-      `Deploy would delete the Durable Object namespaces "rooms" (class Room) of the Worker app--dev--api, with all their objects, which can't be undone. Deploy deletes a namespace when its Worker no longer hosts it, and deletes all of a Worker's namespaces when the Worker is removed or replaced, as when its id or name changes. To keep a namespace, keep its id and export its class from this Worker. A change of class alone keeps the namespace's objects. To move a namespace to another Worker with its objects, keep binding it from this Worker in the deploy that moves its class. To delete the namespaces, first deploy with \`protect: false\` on $durableObject({ id: "rooms" }), while this Worker still hosts them. Then remove them, or the Worker, in a later deploy.`,
+      `Deploy would delete the Durable Object namespaces "rooms" (class Room) of the Worker app--dev--api, with all their objects, which can't be undone. To delete them, first deploy \`protect: false\` on $durableObject({ id: "rooms" }) while this Worker still hosts them. To move a namespace to another Worker instead, keep binding it from this Worker.`,
     );
   });
 
@@ -843,7 +849,7 @@ describe("rejectChange", () => {
         { UnprotectedDurableObjects: ["rooms"] },
       ),
     ).toMatch(
-      /^The Durable Object namespace "lobbies" has the class Room, which the namespace "rooms" had before\./,
+      /^The Durable Object namespace "lobbies" would get the objects of "rooms", which had the class Room on the Worker app--dev--api\./,
     );
   });
 
@@ -883,10 +889,24 @@ describe("rejectChange", () => {
         params: { ...previous, ...desired },
       });
 
-    it("doesn't upload the Worker again when only protection changes", () => {
-      expect(decide({ UnprotectedDurableObjects: ["rooms"] })).toEqual({
-        decision: "noop",
+    it("updates the Worker when only protection changes", () => {
+      expect(decide({ UnprotectedDurableObjects: ["rooms"] })).toMatchObject({
+        decision: "update",
+        patch: { UnprotectedDurableObjects: ["rooms"] },
       });
+    });
+
+    it("doesn't update the Worker when only the bound namespaces or the transfer sources change", () => {
+      expect(
+        decide({
+          BoundDurableObjects: [
+            { id: "lobbies", className: "Lobby", scriptName: "app--dev--web" },
+          ],
+          DurableObjectTransferSources: [
+            { id: "rooms", scriptNames: ["app--dev--web"] },
+          ],
+        }),
+      ).toEqual({ decision: "noop" });
     });
 
     it("rejects the delete of a protected namespace in the deploy that unprotects it", () => {

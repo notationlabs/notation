@@ -390,57 +390,6 @@ describe("createPlan", () => {
     ).toMatchObject({ decision: "replace" });
   });
 
-  it("plans a noop that lists the stateOnly params that changed", async () => {
-    const Store = resource({
-      type: "test/planner/state-only",
-      provider: "test",
-    })
-      .defineSchema({
-        name: {
-          presence: "required",
-          propertyType: "param",
-          primaryKey: true,
-          value: v.string(),
-        },
-        protect: {
-          presence: "optional",
-          propertyType: "param",
-          stateOnly: true,
-          value: v.boolean(),
-        },
-      } as any)
-      .defineOperations({
-        create: async () => undefined,
-        update: async () => undefined,
-        delete: async () => undefined,
-      });
-    const plan = (config: Record<string, unknown>) =>
-      createPlan({
-        resources: [new Store("store", { config: config as any })],
-        state: new MemoryStateBackend({
-          store: {
-            version: 1,
-            id: "store",
-            type: Store.type,
-            provider: "test",
-            config: {},
-            params: { name: "app" },
-            output: { name: "app" },
-            lastOperation: "create",
-            lastOperationAt: "2026-07-22T00:00:00.000Z",
-          },
-        }),
-        driftDetection: false,
-      });
-
-    expect((await plan({ name: "app", protect: false })).nodes[0]).toEqual(
-      expect.objectContaining({ decision: "noop", stateChanged: ["protect"] }),
-    );
-    expect((await plan({ name: "app" })).nodes[0]).not.toHaveProperty(
-      "stateChanged",
-    );
-  });
-
   describe("rejectChange", () => {
     const Store = resource<{
       Key: { name: string };
@@ -513,6 +462,34 @@ describe("createPlan", () => {
           registry: new Map([[Store.type, Store]]),
         }),
       ).rejects.toThrow("store: would drop a, b");
+    });
+
+    it("allows an orphan that an orphan with no class keeps in place", async () => {
+      const store = await state().get("store");
+      const plan = await createPlan({
+        resources: [],
+        state: new MemoryStateBackend({
+          store: store!,
+          holder: {
+            version: 1,
+            id: "holder",
+            type: "test/planner/unregistered",
+            provider: "test",
+            config: {},
+            params: {},
+            output: {},
+            dependsOn: ["store"],
+            lastOperation: "create",
+            lastOperationAt: "2026-07-22T00:00:00.000Z",
+          },
+        }),
+        driftDetection: false,
+        registry: new Map([[Store.type, Store]]),
+      });
+      expect(plan.nodes.map((node) => node.decision)).toEqual([
+        "delete-orphan",
+        "delete-orphan",
+      ]);
     });
 
     describe("passes whether deploy replaces the resource", () => {

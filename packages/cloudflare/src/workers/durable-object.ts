@@ -24,8 +24,7 @@ export type DurableObjectDeclarationConfig<
    * Defaults to `true`: plan fails when a change would delete the namespace
    * and its objects. Plan reads the value saved when the hosting Worker was
    * last deployed, so deploy `protect: false` first. A later deploy can then
-   * remove the namespace or its Worker. Changing only this value doesn't
-   * upload the Worker.
+   * remove the namespace or its Worker.
    */
   protect?: boolean;
 };

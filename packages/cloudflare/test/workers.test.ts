@@ -108,6 +108,8 @@ describe("$worker", () => {
       CompatibilityFlags: ["nodejs_compat"],
       Bindings: [],
       DurableObjectNamespaces: [],
+      BoundDurableObjects: [],
+      DurableObjectTransferSources: [],
     });
     expect(api.subdomain?.dependencies.script).toBe(api.script);
   });
@@ -271,8 +273,8 @@ describe("$worker", () => {
     expect(web.BoundDurableObjects).toEqual([
       { id: "counters", className: "Counter", scriptName: "shop--dev--api" },
     ]);
-    expect(web.DurableObjectTransferSources).toBeUndefined();
-    expect(api.BoundDurableObjects).toBeUndefined();
+    expect(web.DurableObjectTransferSources).toEqual([]);
+    expect(api.BoundDurableObjects).toEqual([]);
     expect(api.DurableObjectTransferSources).toEqual([
       {
         id: "counters",

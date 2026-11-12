@@ -50,9 +50,9 @@ export type WorkerGroupConfig = {
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotectedNamespaces?: string[];
   /** The namespaces that the Worker binds on other Workers. */
-  boundNamespaces?: cloudflare.workers.BoundNamespace[];
+  boundNamespaces: cloudflare.workers.BoundNamespace[];
   /** For each hosted namespace, the other Workers that bind it. */
-  transferSources?: cloudflare.workers.TransferSource[];
+  transferSources: cloudflare.workers.TransferSource[];
   url: boolean;
 };
 
@@ -213,15 +213,11 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
         namespaces: resolved.namespaces,
         // Undefined when empty, so that the params of a Worker deployed
         // before this option existed don't change.
-        unprotectedNamespaces: resolved.unprotected.length
-          ? resolved.unprotected.sort()
+        unprotectedNamespaces: resolved.unprotected.size
+          ? [...resolved.unprotected].sort()
           : undefined,
-        boundNamespaces: resolved.bound.length
-          ? resolved.bound.sort((a, b) => a.id.localeCompare(b.id))
-          : undefined,
-        transferSources: resolved.transferSources.length
-          ? resolved.transferSources.sort((a, b) => a.id.localeCompare(b.id))
-          : undefined,
+        boundNamespaces: resolved.bound,
+        transferSources: resolved.transferSources,
         url: config.url ?? true,
       });
       for (const script of after) group.script.dependOn(script);
@@ -292,7 +288,7 @@ type ResolvedBindings = {
   bindings: cloudflare.workers.WorkerBinding[];
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
-  unprotected: string[];
+  unprotected: Set<string>;
   bound: cloudflare.workers.BoundNamespace[];
   transferSources: cloudflare.workers.TransferSource[];
   /** The hosts of the namespaces that the Worker binds on another Worker. */
@@ -309,7 +305,7 @@ function resolveBindings(self: Entry): ResolvedBindings {
   const resolved: ResolvedBindings = {
     bindings: [],
     namespaces: [],
-    unprotected: [],
+    unprotected: new Set(),
     bound: [],
     transferSources: [],
     dependsOn: [],
@@ -326,9 +322,7 @@ function resolveBindings(self: Entry): ResolvedBindings {
       const host = hostOf(self, ns, namespace.className, name);
       if (host === self) {
         addHosted(self, resolved.namespaces, ns, namespace.className);
-        if (!namespace.protect && !resolved.unprotected.includes(ns.id)) {
-          resolved.unprotected.push(ns.id);
-        }
+        if (!namespace.protect) resolved.unprotected.add(ns.id);
         addTransferSources(self, resolved.transferSources, ns);
         resolved.bindings.push({
           type: "durable_object_namespace",
