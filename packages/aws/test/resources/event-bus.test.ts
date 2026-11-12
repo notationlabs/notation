@@ -35,7 +35,7 @@ describe("EventBridge event bus", () => {
   it("creates the bus with its name", async () => {
     const send = mockSend(() => ({ EventBusArn: arn }));
 
-    await bus.create({ Name: "orders" }, undefined, "token");
+    await bus.create({ Name: "orders" });
 
     const command = send.mock.calls[0]![0] as sdk.CreateEventBusCommand;
     expect(command).toBeInstanceOf(sdk.CreateEventBusCommand);
@@ -47,9 +47,9 @@ describe("EventBridge event bus", () => {
       throw Object.assign(new Error("timed out"), { name: "TimeoutError" });
     });
 
-    await expect(
-      bus.create({ Name: "orders" }, undefined, "token"),
-    ).rejects.toBeInstanceOf(ResourceCreationUnknownError);
+    await expect(bus.create({ Name: "orders" })).rejects.toBeInstanceOf(
+      ResourceCreationUnknownError,
+    );
   });
 
   it("reports a bus that already exists as ResourceAlreadyExistsError", async () => {
@@ -60,9 +60,9 @@ describe("EventBridge event bus", () => {
       });
     });
 
-    await expect(
-      bus.create({ Name: "orders" }, undefined, "token"),
-    ).rejects.toBeInstanceOf(ResourceAlreadyExistsError);
+    await expect(bus.create({ Name: "orders" })).rejects.toBeInstanceOf(
+      ResourceAlreadyExistsError,
+    );
   });
 
   it("reads the bus's name and ARN", async () => {
@@ -103,7 +103,7 @@ describe("EventBridge default event bus", () => {
       Arn: "arn:aws:events:eu-west-2:123456789012:event-bus/default",
     }));
 
-    await defaultBus.create({ Name: "default" }, undefined, "token");
+    await defaultBus.create({ Name: "default" });
 
     expect(send.mock.calls.map(([command]) => command.constructor)).toEqual([
       sdk.DescribeEventBusCommand,

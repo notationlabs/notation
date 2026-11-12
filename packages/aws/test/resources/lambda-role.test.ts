@@ -145,9 +145,9 @@ describe("LambdaIamRole create", () => {
       config: { RoleName: "app-role" },
     });
 
-    await expect(
-      role.create(await role.getParams(), undefined, "token"),
-    ).rejects.toSatisfy(ResourceAlreadyExistsError.is);
+    await expect(role.create(await role.getParams())).rejects.toSatisfy(
+      ResourceAlreadyExistsError.is,
+    );
   });
 
   it("reports a create that may have taken effect as unknown", async () => {
@@ -158,9 +158,9 @@ describe("LambdaIamRole create", () => {
       config: { RoleName: "app-role" },
     });
 
-    await expect(
-      role.create(await role.getParams(), undefined, "token"),
-    ).rejects.toSatisfy(ResourceCreationUnknownError.is);
+    await expect(role.create(await role.getParams())).rejects.toSatisfy(
+      ResourceCreationUnknownError.is,
+    );
   });
 });
 

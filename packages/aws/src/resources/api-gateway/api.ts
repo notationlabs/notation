@@ -155,6 +155,7 @@ export const Api = apiSchema.defineOperations({
       return {
         RouteKey: "",
         ...result,
+        Tags: withoutCreateTokenTag(result.Tags),
         ExecuteApiSourceArn: await executeApiSourceArn(key.ApiId!),
       };
     } catch (error) {
@@ -181,3 +182,16 @@ export const Api = apiSchema.defineOperations({
 });
 
 export type ApiInstance = InstanceType<typeof Api>;
+
+// Earlier versions tagged each API they created with this tag. Read leaves
+// it out, so that it is not compared with `Tags` in config, which would
+// replace the API.
+const CREATE_TOKEN_TAG = "notation:create-token";
+
+function withoutCreateTokenTag(
+  tags: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!tags || !(CREATE_TOKEN_TAG in tags)) return tags;
+  const { [CREATE_TOKEN_TAG]: _, ...rest } = tags;
+  return Object.keys(rest).length > 0 ? rest : undefined;
+}

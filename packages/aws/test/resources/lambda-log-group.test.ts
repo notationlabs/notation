@@ -128,7 +128,7 @@ describe("LambdaLogGroup create", () => {
       },
     );
 
-    await expect(logGroup.create(params, undefined, "token")).rejects.toSatisfy(
+    await expect(logGroup.create(params)).rejects.toSatisfy(
       ResourceCreationUnknownError.is,
     );
   });
@@ -141,7 +141,7 @@ describe("LambdaLogGroup create", () => {
       });
     });
 
-    await expect(logGroup.create(params, undefined, "token")).rejects.toSatisfy(
+    await expect(logGroup.create(params)).rejects.toSatisfy(
       ResourceAlreadyExistsError.is,
     );
   });
@@ -149,10 +149,6 @@ describe("LambdaLogGroup create", () => {
 
 describe("LambdaLogGroup read", () => {
   const key = { logGroupName: "/aws/lambda/app" };
-
-  it("proves ownership by its parent, the Lambda function", () => {
-    expect(logGroup.ownership).toBe("parent");
-  });
 
   it("reads the log group with the exact name, not one that shares its prefix", async () => {
     vi.spyOn(cloudWatchLogsClient(), "send").mockImplementation(async () => ({

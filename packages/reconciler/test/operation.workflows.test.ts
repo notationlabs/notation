@@ -115,7 +115,6 @@ describe("operation workflows", () => {
         lastOperation: "creating",
         params: {},
         output: {},
-        creates: ["test-execution"],
       }),
       "creating",
     );
@@ -135,13 +134,11 @@ describe("operation workflows", () => {
       1,
       await testResource.getParams(),
       undefined,
-      "notation:create:test-execution:test-create",
     );
     expect(createMock).toHaveBeenNthCalledWith(
       2,
       await testResource.getParams(),
       { operationId: "create-123" },
-      "notation:create:test-execution:test-create",
     );
     expect(testResource.output).toEqual({ remoteId: "abc", status: "ready" });
     expect(events.map((event) => `${event.operation}:${event.status}`)).toEqual(

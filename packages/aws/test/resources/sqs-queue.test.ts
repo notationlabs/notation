@@ -41,11 +41,11 @@ describe("SQS queue", () => {
   it("creates the queue with its attributes as strings", async () => {
     const send = mockSend(respondToCreate);
 
-    const key = await queue.create(
-      { QueueName: "orders", VisibilityTimeout: 60, FifoQueue: false },
-      undefined,
-      "token",
-    );
+    const key = await queue.create({
+      QueueName: "orders",
+      VisibilityTimeout: 60,
+      FifoQueue: false,
+    });
 
     expect(key).toEqual({ QueueUrl: url });
     const command = send.mock.calls[1]![0] as sdk.CreateQueueCommand;
@@ -58,18 +58,14 @@ describe("SQS queue", () => {
   it("creates the redrive policy as JSON and the FIFO attributes as strings", async () => {
     const send = mockSend(respondToCreate);
 
-    await queue.create(
-      {
-        QueueName: "orders.fifo",
-        FifoQueue: true,
-        ContentBasedDeduplication: true,
-        DeduplicationScope: "messageGroup",
-        MaximumMessageSize: 2_048,
-        RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 3 },
-      },
-      undefined,
-      "token",
-    );
+    await queue.create({
+      QueueName: "orders.fifo",
+      FifoQueue: true,
+      ContentBasedDeduplication: true,
+      DeduplicationScope: "messageGroup",
+      MaximumMessageSize: 2_048,
+      RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 3 },
+    });
 
     const command = send.mock.calls[1]![0] as sdk.CreateQueueCommand;
     expect(command.input.Attributes).toEqual({
@@ -87,16 +83,12 @@ describe("SQS queue", () => {
   it("creates the queue without the empty redrive policies", async () => {
     const send = mockSend(respondToCreate);
 
-    await queue.create(
-      {
-        QueueName: "orders",
-        VisibilityTimeout: 60,
-        RedrivePolicy: "",
-        RedriveAllowPolicy: "",
-      },
-      undefined,
-      "token",
-    );
+    await queue.create({
+      QueueName: "orders",
+      VisibilityTimeout: 60,
+      RedrivePolicy: "",
+      RedriveAllowPolicy: "",
+    });
 
     const command = send.mock.calls[1]![0] as sdk.CreateQueueCommand;
     expect(command.input.Attributes).toEqual({ VisibilityTimeout: "60" });
@@ -105,17 +97,13 @@ describe("SQS queue", () => {
   it("creates the redrive allow policy as JSON", async () => {
     const send = mockSend(respondToCreate);
 
-    await queue.create(
-      {
-        QueueName: "orders-dlq",
-        RedriveAllowPolicy: {
-          redrivePermission: "byQueue",
-          sourceQueueArns: [sourceArn],
-        },
+    await queue.create({
+      QueueName: "orders-dlq",
+      RedriveAllowPolicy: {
+        redrivePermission: "byQueue",
+        sourceQueueArns: [sourceArn],
       },
-      undefined,
-      "token",
-    );
+    });
 
     const command = send.mock.calls[1]![0] as sdk.CreateQueueCommand;
     expect(command.input.Attributes).toEqual({
@@ -129,7 +117,7 @@ describe("SQS queue", () => {
   it("reports a queue that exists already as ResourceAlreadyExistsError", async () => {
     const send = mockSend(() => ({ QueueUrl: url }));
 
-    const created = queue.create({ QueueName: "orders" }, undefined, "token");
+    const created = queue.create({ QueueName: "orders" });
     await expect(created).rejects.toThrow(
       "An SQS queue named orders already exists",
     );
@@ -143,17 +131,17 @@ describe("SQS queue", () => {
       throw new sdk.QueueNameExists({ message: "exists", $metadata: {} });
     });
 
-    await expect(
-      queue.create({ QueueName: "orders" }, undefined, "token"),
-    ).rejects.toSatisfy(ResourceAlreadyExistsError.is);
+    await expect(queue.create({ QueueName: "orders" })).rejects.toSatisfy(
+      ResourceAlreadyExistsError.is,
+    );
   });
 
   it("finds the URL of the queue that has the name", async () => {
     const send = mockSend(() => ({ QueueUrl: url }));
 
-    await expect(
-      queue.find!({ QueueName: "orders" }, "token"),
-    ).resolves.toEqual({ QueueUrl: url });
+    await expect(queue.find!({ QueueName: "orders" })).resolves.toEqual({
+      QueueUrl: url,
+    });
     expect(send).toHaveBeenCalledTimes(1);
   });
 
@@ -162,9 +150,9 @@ describe("SQS queue", () => {
       throw queueDoesNotExist();
     });
 
-    await expect(
-      queue.find!({ QueueName: "orders" }, "token"),
-    ).rejects.toSatisfy(ResourceNotFoundError.is);
+    await expect(queue.find!({ QueueName: "orders" })).rejects.toSatisfy(
+      ResourceNotFoundError.is,
+    );
   });
 
   it("reads the attributes as numbers", async () => {

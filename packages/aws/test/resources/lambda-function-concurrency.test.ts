@@ -53,7 +53,7 @@ describe("LambdaFunctionConcurrency", () => {
     const resource = concurrency();
     const params = await resource.getParams();
 
-    await resource.create(params, undefined, "token");
+    await resource.create(params);
     await resource.update!(key, params, params, {} as any);
 
     expect(send).toHaveBeenCalledTimes(2);
@@ -76,10 +76,6 @@ describe("LambdaFunctionConcurrency", () => {
     expect((command as sdk.DeleteFunctionConcurrencyCommand).input).toEqual(
       key,
     );
-  });
-
-  it("proves its ownership by its parent, the Lambda function", () => {
-    expect(concurrency().ownership).toBe("parent");
   });
 
   it("reads the reserved concurrency", async () => {

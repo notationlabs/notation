@@ -167,7 +167,7 @@ describe("LambdaPermission", () => {
       throw { $metadata: { httpStatusCode: 503 } };
     });
     await expect(
-      permission().create(await permission().getParams(), undefined, "token"),
+      permission().create(await permission().getParams()),
     ).rejects.toSatisfy(ResourceCreationUnknownError.is);
   });
 
@@ -180,12 +180,8 @@ describe("LambdaPermission", () => {
       });
     });
     await expect(
-      permission().create(await permission().getParams(), undefined, "token"),
+      permission().create(await permission().getParams()),
     ).rejects.toSatisfy(ResourceAlreadyExistsError.is);
-  });
-
-  it("proves its ownership by its parent, the function's policy", () => {
-    expect(permission().ownership).toBe("parent");
   });
 
   it("keeps a conflict that is not about an existing statement as it is", async () => {
@@ -196,7 +192,7 @@ describe("LambdaPermission", () => {
       });
     });
     await expect(
-      permission().create(await permission().getParams(), undefined, "token"),
+      permission().create(await permission().getParams()),
     ).rejects.toBeInstanceOf(sdk.ResourceConflictException);
   });
 });

@@ -47,11 +47,7 @@ describe("resource creation", () => {
     const params = await testResource.getParams();
     const persistedOutput = testResource.toState(readResult);
 
-    expect(createMock.mock.calls[0]).toEqual([
-      params,
-      undefined,
-      "notation:create:test-execution:test-resource",
-    ]);
+    expect(createMock.mock.calls[0]).toEqual([params, undefined]);
     expect(persisted).toMatchObject({
       id: testResource.id,
       output: persistedOutput,

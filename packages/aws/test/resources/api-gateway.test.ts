@@ -10,18 +10,13 @@ import { createPlan } from "@notation/reconciler";
 import { MemoryStateBackend } from "@notation/state";
 import { apiGatewayClient } from "src/resources/utils/aws-clients";
 import { Api } from "src/resources/api-gateway/api";
+import { RouteAuth } from "src/resources/api-gateway/auth";
 import { Route } from "src/resources/api-gateway/route";
-import {
-  CREATE_TOKEN_TAG,
-  createTokenTagValue,
-} from "src/resources/utils/create-token";
 import { awsCallMayHaveTakenEffect } from "src/resources/utils/errors";
 
 vi.mock("src/resources/context", () => ({
   getAwsAccountId: async () => "123456789012",
 }));
-
-const TOKEN = "notation:create:execution-1:api:0";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -44,11 +39,7 @@ describe("API Gateway API", () => {
       throw serverError;
     });
 
-    const created = api.create(
-      { Name: "app", ProtocolType: "HTTP" } as any,
-      undefined,
-      TOKEN,
-    );
+    const created = api.create({ Name: "app", ProtocolType: "HTTP" } as any);
 
     await expect(created).rejects.toSatisfy(ResourceCreationUnknownError.is);
     await expect(created).rejects.toMatchObject({ cause: serverError });
@@ -61,71 +52,51 @@ describe("API Gateway API", () => {
     });
 
     await expect(
-      api.create(
-        { Name: "app", ProtocolType: "HTTP" } as any,
-        undefined,
-        TOKEN,
-      ),
+      api.create({ Name: "app", ProtocolType: "HTTP" } as any),
     ).rejects.toBe(clientError);
   });
 
-  it("tags the API with the hash of the create token", async () => {
-    const send = mockSend(() => ({ ApiId: "api-1" }));
-
-    await api.create(
-      { Name: "app", ProtocolType: "HTTP", Tags: { team: "web" } } as any,
-      undefined,
-      TOKEN,
-    );
-
-    const command = send.mock.calls[0]![0] as sdk.CreateApiCommand;
-    expect(command.input.Tags).toEqual({
-      team: "web",
-      [CREATE_TOKEN_TAG]: createTokenTagValue(TOKEN),
-    });
-  });
-
-  it("finds the API with the create token on a later page", async () => {
+  it("finds the API with the name on a later page", async () => {
     mockSend((command) => {
       const { NextToken } = (command as sdk.GetApisCommand).input;
       if (!NextToken) {
-        return { Items: [{ ApiId: "other", Tags: {} }], NextToken: "page-2" };
+        return {
+          Items: [{ ApiId: "other", Name: "other" }],
+          NextToken: "page-2",
+        };
       }
-      return {
-        Items: [
-          {
-            ApiId: "api-1",
-            Tags: { [CREATE_TOKEN_TAG]: createTokenTagValue(TOKEN) },
-          },
-        ],
-      };
+      return { Items: [{ ApiId: "api-1", Name: "app" }] };
     });
 
-    await expect(api.find!({} as any, TOKEN)).resolves.toEqual({
+    await expect(api.find!({ Name: "app" } as any)).resolves.toEqual({
       ApiId: "api-1",
     });
   });
 
-  it("reports no API when none has the create token", async () => {
-    mockSend(() => ({ Items: [{ ApiId: "other", Tags: {} }] }));
+  it("reports no API when none has the name", async () => {
+    mockSend(() => ({ Items: [{ ApiId: "other", Name: "other" }] }));
 
-    await expect(api.find!({} as any, TOKEN)).rejects.toSatisfy(
+    await expect(api.find!({ Name: "app" } as any)).rejects.toSatisfy(
       ResourceNotFoundError.is,
     );
   });
 
-  it("reads the tags without the create token", async () => {
-    mockSend(() => ({
-      ApiId: "api-1",
-      Tags: { team: "web", [CREATE_TOKEN_TAG]: "hash" },
-    }));
-    const tagged = (await api.read!({ ApiId: "api-1" })) as { Tags: unknown };
-    expect(tagged.Tags).toEqual({ team: "web" });
+  it("fails to find the API when several have the name, and names them", async () => {
+    mockSend((command) => {
+      const { NextToken } = (command as sdk.GetApisCommand).input;
+      if (!NextToken) {
+        return { Items: [{ ApiId: "api-1", Name: "app" }], NextToken: "p2" };
+      }
+      return { Items: [{ ApiId: "api-2", Name: "app" }] };
+    });
 
-    vi.restoreAllMocks();
-    mockSend(() => ({ ApiId: "api-1", Tags: { [CREATE_TOKEN_TAG]: "hash" } }));
-    const untagged = (await api.read!({ ApiId: "api-1" })) as { Tags: unknown };
-    expect(untagged.Tags).toBeUndefined();
+    const found = api.find!({ Name: "app" } as any);
+
+    await expect(found).rejects.toThrow(
+      "Found 2 resources for API Gateway API named app, so cannot tell " +
+        "which one to use: api-1, api-2. Delete all but one.",
+    );
+    await expect(found).rejects.not.toSatisfy(ResourceNotFoundError.is);
   });
 
   it("reads an API in the shape its validators accept", async () => {
@@ -136,7 +107,7 @@ describe("API Gateway API", () => {
       Name: "app",
       ProtocolType: "HTTP",
       CorsConfiguration: { AllowOrigins: ["*"], MaxAge: 300 },
-      Tags: { team: "web", [CREATE_TOKEN_TAG]: "hash" },
+      Tags: { team: "web", "notation:create-token": "hash" },
       $metadata: {},
     }));
     const result = await api.read!({ ApiId: "api-1" });
@@ -159,6 +130,86 @@ describe("API Gateway API", () => {
   });
 });
 
+describe("API Gateway API with the create token tag of an earlier version", () => {
+  const api = new Api("api", {
+    config: { Name: "app", ProtocolType: "HTTP" },
+  });
+
+  it("reads the tags without the tag", async () => {
+    mockSend(() => ({
+      ApiId: "api-1",
+      Tags: { team: "web", "notation:create-token": "hash" },
+    }));
+    const tagged = (await api.read!({ ApiId: "api-1" })) as { Tags: unknown };
+    expect(tagged.Tags).toEqual({ team: "web" });
+
+    vi.restoreAllMocks();
+    mockSend(() => ({
+      ApiId: "api-1",
+      Tags: { "notation:create-token": "hash" },
+    }));
+    const untagged = (await api.read!({ ApiId: "api-1" })) as { Tags: unknown };
+    expect(untagged.Tags).toBeUndefined();
+  });
+});
+
+describe("API Gateway authorizer", () => {
+  const auth = new RouteAuth("auth", {
+    config: { Name: "jwt" } as any,
+    dependencies: {} as any,
+  });
+  const params = { ApiId: "api-1", Name: "jwt" } as any;
+
+  it("finds the authorizer with the name in the API", async () => {
+    const send = mockSend(() => ({
+      Items: [
+        { AuthorizerId: "a-1", Name: "other" },
+        { AuthorizerId: "a-2", Name: "jwt" },
+      ],
+    }));
+
+    await expect(auth.find!(params)).resolves.toEqual({ AuthorizerId: "a-2" });
+    expect((send.mock.calls[0]![0] as sdk.GetAuthorizersCommand).input).toEqual(
+      { ApiId: "api-1", NextToken: undefined },
+    );
+  });
+
+  it("reports no authorizer when none has the name", async () => {
+    mockSend(() => ({ Items: [{ AuthorizerId: "a-1", Name: "other" }] }));
+
+    await expect(auth.find!(params)).rejects.toSatisfy(
+      ResourceNotFoundError.is,
+    );
+  });
+
+  it("reports no authorizer when the API does not exist", async () => {
+    mockSend(() => {
+      throw new sdk.NotFoundException({
+        message: "Invalid API identifier specified",
+        $metadata: {},
+      });
+    });
+
+    await expect(auth.find!(params)).rejects.toSatisfy(
+      ResourceNotFoundError.is,
+    );
+  });
+
+  it("fails to find the authorizer when several have the name, and names them", async () => {
+    mockSend(() => ({
+      Items: [
+        { AuthorizerId: "a-1", Name: "jwt" },
+        { AuthorizerId: "a-2", Name: "jwt" },
+      ],
+    }));
+
+    const found = auth.find!(params);
+
+    await expect(found).rejects.toThrow("a-1, a-2");
+    await expect(found).rejects.not.toSatisfy(ResourceNotFoundError.is);
+  });
+});
+
 describe("API Gateway API drift", () => {
   it.each([
     ["no Tags", {}],
@@ -171,7 +222,7 @@ describe("API Gateway API drift", () => {
       ApiId: "api-1",
       Name: "app",
       ProtocolType: "HTTP",
-      Tags: { [CREATE_TOKEN_TAG]: createTokenTagValue(TOKEN) },
+      Tags: { "notation:create-token": "hash" },
     }));
 
     const plan = await createPlan({
@@ -210,7 +261,7 @@ describe("API Gateway route", () => {
     }));
 
     await expect(
-      route.find!({ ApiId: "api-1", RouteKey: "GET /todos" }, TOKEN),
+      route.find!({ ApiId: "api-1", RouteKey: "GET /todos" }),
     ).resolves.toEqual({ RouteId: "r-2" });
     expect((send.mock.calls[0]![0] as sdk.GetRoutesCommand).input).toEqual({
       ApiId: "api-1",
@@ -222,7 +273,7 @@ describe("API Gateway route", () => {
     mockSend(() => ({ Items: [{ RouteId: "r-1", RouteKey: "POST /todos" }] }));
 
     await expect(
-      route.find!({ ApiId: "api-1", RouteKey: "GET /todos" }, TOKEN),
+      route.find!({ ApiId: "api-1", RouteKey: "GET /todos" }),
     ).rejects.toSatisfy(ResourceNotFoundError.is);
   });
 
@@ -235,10 +286,7 @@ describe("API Gateway route", () => {
       throw notFound;
     });
 
-    const found = route.find!(
-      { ApiId: "api-1", RouteKey: "GET /todos" },
-      TOKEN,
-    );
+    const found = route.find!({ ApiId: "api-1", RouteKey: "GET /todos" });
 
     await expect(found).rejects.toSatisfy(ResourceNotFoundError.is);
     await expect(found).rejects.toMatchObject({ cause: notFound });

@@ -234,61 +234,37 @@ describe("createPlan", () => {
     ]);
   });
 
-  it("notes a create that may take over an existing resource: one with a creating record and a class with ownership", async () => {
-    const operations = {
-      create: async () => undefined,
-      delete: async () => undefined,
-    };
-    const ByParent = resource({ type: "test/planner/parent", provider: "test" })
-      .defineSchema({})
-      .defineOperations({ ...operations, ownership: "parent" });
-    const ByToken = resource({ type: "test/planner/token", provider: "test" })
-      .defineSchema({})
-      .defineOperations({
-        ...operations,
-        ownership: "token",
-        find: async () => undefined,
-      });
-    const Unprovable = resource({
-      type: "test/planner/unprovable",
+  it("notes a create that may take over an existing resource: one with a creating record", async () => {
+    const TestResource = resource({
+      type: "test/planner/take-over",
       provider: "test",
     })
       .defineSchema({})
-      .defineOperations(operations);
-    const creatingRecord = (id: string, type: string) => ({
-      version: 1,
-      id,
-      type,
-      provider: "test",
-      config: {},
-      params: {},
-      output: {},
-      lastOperation: "creating" as const,
-      lastOperationAt: "2026-07-22T00:00:00.000Z",
-      creates: ["deploy-1"],
-    });
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+      });
     const state = new MemoryStateBackend({
-      "parent-recorded": creatingRecord("parent-recorded", ByParent.type),
-      "token-recorded": creatingRecord("token-recorded", ByToken.type),
-      unprovable: creatingRecord("unprovable", Unprovable.type),
+      recorded: {
+        version: 1,
+        id: "recorded",
+        type: TestResource.type,
+        provider: "test",
+        config: {},
+        params: {},
+        output: {},
+        lastOperation: "creating",
+        lastOperationAt: "2026-07-22T00:00:00.000Z",
+      },
     });
 
     const plan = await createPlan({
-      resources: [
-        new ByParent("parent-recorded"),
-        new ByParent("parent-new"),
-        new ByToken("token-recorded"),
-        new ByToken("token-new"),
-        new Unprovable("unprovable"),
-      ],
+      resources: [new TestResource("recorded"), new TestResource("new")],
       state,
     });
 
     expect(plan.nodes).toEqual([
-      expect.objectContaining({ id: "parent-recorded", mayTakeOver: true }),
-      expect.not.objectContaining({ mayTakeOver: true }),
-      expect.objectContaining({ id: "token-recorded", mayTakeOver: true }),
-      expect.not.objectContaining({ mayTakeOver: true }),
+      expect.objectContaining({ id: "recorded", mayTakeOver: true }),
       expect.not.objectContaining({ mayTakeOver: true }),
     ]);
   });

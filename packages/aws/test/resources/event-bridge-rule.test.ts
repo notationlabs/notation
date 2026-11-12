@@ -21,7 +21,6 @@ const rule = new EventBridgeRule("rule", {
 });
 
 const key = { Name: "daily", EventBusName: "default" };
-const token = "notation:create:deploy-1:rule";
 
 /** Answers the calls that create makes before PutTargets, for a rule that does not exist yet. */
 function createCalls(command: any) {
@@ -158,9 +157,7 @@ test("create fails when a target could not be put", async () => {
   mockFailedEntries(sdk.PutTargetsCommand);
   const params = { ...key, Targets: [{ Id: "bad-fn", Arn: "arn:bad-fn" }] };
 
-  await expect(rule.create!(params, undefined, token)).rejects.toThrow(
-    failureMessage,
-  );
+  await expect(rule.create!(params)).rejects.toThrow(failureMessage);
   expect(sentCommands().map((c) => c.constructor)).toEqual([
     sdk.DescribeRuleCommand,
     sdk.PutRuleCommand,
@@ -174,7 +171,7 @@ test("create leaves the targets out of PutRule", async () => {
   mockFailedEntries(class Never {});
   const params = { ...key, Targets: [{ Id: "fn", Arn: "arn:fn" }] };
 
-  await rule.create!(params, undefined, token);
+  await rule.create!(params);
 
   const putRule = sentCommands().find((c) => c instanceof sdk.PutRuleCommand);
   expect(putRule!.input).toEqual(key);
@@ -189,7 +186,7 @@ test("create refuses a rule that exists, without changing it", async () => {
   });
   const params = { ...key, Targets: [{ Id: "fn", Arn: "arn:fn" }] };
 
-  await expect(rule.create!(params, undefined, token)).rejects.toSatisfy(
+  await expect(rule.create!(params)).rejects.toSatisfy(
     ResourceAlreadyExistsError.is,
   );
   expect(sentCommands().map((c) => c.constructor)).toEqual([
@@ -207,9 +204,7 @@ test("create deletes the rule, removing the targets that were put, when another 
     ],
   };
 
-  await expect(rule.create!(params, undefined, token)).rejects.toThrow(
-    /the rule was deleted/,
-  );
+  await expect(rule.create!(params)).rejects.toThrow(/the rule was deleted/);
   expect(sentCommands().map((c) => c.constructor)).toEqual([
     sdk.DescribeRuleCommand,
     sdk.PutRuleCommand,
@@ -234,11 +229,10 @@ test("create reports an unknown outcome, naming both failures, when the rule cou
     return {};
   });
 
-  const created = rule.create!(
-    { ...key, Targets: [{ Id: "fn", Arn: "arn:fn" }] },
-    undefined,
-    token,
-  );
+  const created = rule.create!({
+    ...key,
+    Targets: [{ Id: "fn", Arn: "arn:fn" }],
+  });
   await expect(created).rejects.toThrow(
     /access denied to the target.*could not be deleted: access denied to the rule/,
   );
@@ -279,7 +273,7 @@ test("create succeeds when no targets failed", async () => {
   mockFailedEntries(class Never {});
   const params = { ...key, Targets: [{ Id: "fn", Arn: "arn:fn" }] };
 
-  await expect(rule.create!(params, undefined, token)).resolves.toBeUndefined();
+  await expect(rule.create!(params)).resolves.toBeUndefined();
 });
 
 test("read returns the event pattern in compact form", async () => {

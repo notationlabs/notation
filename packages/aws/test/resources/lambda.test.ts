@@ -202,7 +202,7 @@ describe("Lambda code", () => {
       .spyOn(lambdaClient(), "send")
       .mockImplementation(async () => ({}));
 
-    await lambda.create(await lambda.getParams(), undefined, "token");
+    await lambda.create(await lambda.getParams());
 
     const command = send.mock.calls[0]![0] as sdk.CreateFunctionCommand;
     expect(command).toBeInstanceOf(sdk.CreateFunctionCommand);
@@ -219,7 +219,7 @@ describe("Lambda code", () => {
       .spyOn(lambdaClient(), "send")
       .mockImplementation(async () => ({}));
 
-    await lambda.create(await lambda.getParams(), undefined, "token");
+    await lambda.create(await lambda.getParams());
 
     const command = send.mock.calls[0]![0] as sdk.CreateFunctionCommand;
     expect(command.input.Environment).toEqual({
@@ -236,9 +236,9 @@ describe("Lambda code", () => {
       });
     });
 
-    await expect(
-      lambda.create(await lambda.getParams(), undefined, "token"),
-    ).rejects.toSatisfy(ResourceAlreadyExistsError.is);
+    await expect(lambda.create(await lambda.getParams())).rejects.toSatisfy(
+      ResourceAlreadyExistsError.is,
+    );
   });
 
   it("does not create the function when the archive changed after params were computed", async () => {
@@ -248,7 +248,7 @@ describe("Lambda code", () => {
     const changedSha256 = await sha256Base64(filePath);
     const send = vi.spyOn(lambdaClient(), "send");
 
-    await expect(lambda.create(params, undefined, "token")).rejects.toThrow(
+    await expect(lambda.create(params)).rejects.toThrow(
       `Lambda code at ${filePath} has SHA-256 ${changedSha256}, but this deploy expects ${params.CodeSha256}`,
     );
     expect(send).not.toHaveBeenCalled();

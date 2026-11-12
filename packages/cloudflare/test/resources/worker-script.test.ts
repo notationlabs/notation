@@ -105,7 +105,7 @@ describe("WorkerScript", () => {
       call.method === "GET" ? fail(404, 10007, "not found") : ok({}),
     );
 
-    await script.create(params, undefined, "token");
+    await script.create(params);
 
     const put = calls[1]!;
     expect(put.method).toBe("PUT");
@@ -127,11 +127,7 @@ describe("WorkerScript", () => {
   it("leaves exports out for a Worker that hosts no namespace", async () => {
     mockFetch((call) => (call.method === "GET" ? fail(404, 10007) : ok({})));
 
-    await script.create(
-      { ...params, DurableObjectNamespaces: [] },
-      undefined,
-      "token",
-    );
+    await script.create({ ...params, DurableObjectNamespaces: [] });
 
     const { metadata } = await uploadedMetadata(calls[1]!);
     expect(metadata).not.toHaveProperty("exports");
@@ -140,7 +136,7 @@ describe("WorkerScript", () => {
   it("reports a Worker that exists already as ResourceAlreadyExistsError", async () => {
     mockFetch(() => ok({ compatibility_date: "2026-01-01" }));
 
-    const created = script.create(params, undefined, "token");
+    const created = script.create(params);
     await expect(created).rejects.toThrow(
       "A Worker named app--dev--api already exists in the Cloudflare account acc",
     );
@@ -152,7 +148,7 @@ describe("WorkerScript", () => {
     mockFetch(() => fail(404, 10007));
 
     await expect(
-      script.create({ ...params, CodeSha256: "other" }, undefined, "token"),
+      script.create({ ...params, CodeSha256: "other" }),
     ).rejects.toThrow("The file changed after the deploy computed its params");
   });
 
@@ -161,17 +157,15 @@ describe("WorkerScript", () => {
       call.method === "GET" ? fail(404, 10007) : fail(502, 0, "bad gateway"),
     );
 
-    await expect(
-      script.create(params, undefined, "token"),
-    ).rejects.toBeInstanceOf(ResourceCreationUnknownError);
+    await expect(script.create(params)).rejects.toBeInstanceOf(
+      ResourceCreationUnknownError,
+    );
   });
 
   it("fails, and doesn't report the create as unknown, when the check for an existing Worker fails", async () => {
     mockFetch(() => fail(502, 0, "bad gateway"));
 
-    const error = await script
-      .create(params, undefined, "token")
-      .catch((e) => e);
+    const error = await script.create(params).catch((e) => e);
     expect(error).not.toBeInstanceOf(ResourceCreationUnknownError);
     expect(error.message).toContain("failed with status 502");
     expect(calls).toHaveLength(1);
@@ -183,9 +177,7 @@ describe("WorkerScript", () => {
       throw new DOMException("The operation timed out.", "TimeoutError");
     });
 
-    const error = await script
-      .create(params, undefined, "token")
-      .catch((e) => e);
+    const error = await script.create(params).catch((e) => e);
     expect(error).toBeInstanceOf(ResourceCreationUnknownError);
     expect(error.message).toContain("got no response within 120 seconds");
   });
@@ -200,9 +192,7 @@ describe("WorkerScript", () => {
       return response;
     });
 
-    const error = await script
-      .create(params, undefined, "token")
-      .catch((e) => e);
+    const error = await script.create(params).catch((e) => e);
     expect(error).toBeInstanceOf(ResourceCreationUnknownError);
     expect(error.message).toContain("got no response within 120 seconds");
   });
@@ -213,9 +203,7 @@ describe("WorkerScript", () => {
       throw new TypeError("fetch failed");
     });
 
-    const error = await script
-      .create(params, undefined, "token")
-      .catch((e) => e);
+    const error = await script.create(params).catch((e) => e);
     expect(error).toBeInstanceOf(ResourceCreationUnknownError);
     expect(error.message).toContain("failed on the network: fetch failed");
   });
@@ -229,9 +217,7 @@ describe("WorkerScript", () => {
       throw new TypeError("x is not a function");
     });
 
-    const error = await script
-      .create(params, undefined, "token")
-      .catch((e) => e);
+    const error = await script.create(params).catch((e) => e);
     expect(error).not.toBeInstanceOf(ResourceCreationUnknownError);
     expect(error).toBeInstanceOf(TypeError);
   });
@@ -272,7 +258,7 @@ describe("WorkerScript", () => {
     async (code) => {
       mockFetch(() => fail(404, code, "Worker app--dev--api has no versions"));
 
-      await expect(script.create(params, undefined, "token")).rejects.toThrow(
+      await expect(script.create(params)).rejects.toThrow(
         "A Worker named app--dev--api already exists",
       );
       expect(calls).toHaveLength(1);
@@ -580,7 +566,7 @@ describe("WorkerSubdomain", () => {
         : ok({ enabled: true, previews_enabled: false }),
     );
 
-    await subdomain.create(key, undefined, "token");
+    await subdomain.create(key);
     expect(calls[0]).toMatchObject({ method: "POST" });
     expect(JSON.parse(calls[0]!.body as string)).toEqual({ enabled: true });
     await expect(subdomain.read!(key)).resolves.toEqual({
