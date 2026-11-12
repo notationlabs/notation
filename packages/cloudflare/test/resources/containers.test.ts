@@ -154,6 +154,39 @@ describe("ContainerApplication", () => {
     });
   });
 
+  it("skips the namespaces of previews and of dispatch namespaces with the same script and class", async () => {
+    mockApi(
+      () => ok({ id: "app1" }),
+      [
+        {
+          id: "preview",
+          class: "Sandbox",
+          script: "app--dev--api",
+          preview: {},
+        },
+        {
+          id: "dispatched",
+          class: "Sandbox",
+          script: "app--dev--api",
+          dispatch_namespace: "tenants",
+        },
+        { id: "ns1", class: "Sandbox", script: "app--dev--api" },
+        {
+          id: "preview-after",
+          class: "Sandbox",
+          script: "app--dev--api",
+          preview: {},
+        },
+      ],
+    );
+
+    await application.create(params);
+
+    expect(calls[1]!.body).toMatchObject({
+      durable_objects: { namespace_id: "ns1" },
+    });
+  });
+
   it("reports a create whose response was a server error as unknown", async () => {
     mockApi(() => fail(502, undefined, "bad gateway"));
 
@@ -487,14 +520,14 @@ describe("ContainerRegistry", () => {
 });
 
 describe("ContainerApplication namespace", () => {
-  function deployedPair(hostedNamespaceId = "sandboxes") {
+  function deployedPair(hostedNamespaceId = "sandboxes", container = true) {
     const script = new WorkerScript("worker:api", {
       config: {
         ScriptName: "app--dev--api",
         CompatibilityDate: "2026-10-12",
         DurableObjectNamespaces: [
           { id: "counters", className: "Counter" },
-          { id: "sandboxes", className: "Sandbox", container: true },
+          { id: "sandboxes", className: "Sandbox", container },
         ],
       },
       dependencies: {} as any,
@@ -539,6 +572,16 @@ describe("ContainerApplication namespace", () => {
     await expect(application.getParams()).rejects.toThrow(
       'The Worker app--dev--api hosts no Durable Object namespace with the id "rooms"',
     );
+  });
+
+  it("throws, before any request, when the hosted namespace doesn't set container", async () => {
+    mockFetch(() => ok());
+    const { application } = deployedPair("sandboxes", false);
+
+    await expect(application.getParams()).rejects.toThrow(
+      'The Durable Object namespace for the class Sandbox can\'t run containers. Set `container: true` on the entry "sandboxes"',
+    );
+    expect(calls).toEqual([]);
   });
 });
 
