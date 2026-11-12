@@ -246,9 +246,16 @@ export function createPlanViews() {
   };
 
   const pendingView = (dep: BaseResource): BaseResource => {
+    // A ref taken from the view names the dependency, so plan reads the
+    // dependency's output rather than the view's, which throws, and the
+    // dependent's dependency edge points at the dependency.
+    const outputRef = { value: (key: string) => new OutputRef(dep, [key]) };
     const output = dep.output as Record<string, unknown> | null;
     if (output == null) {
-      return Object.create(dep, { output: { get: () => throwPending(dep) } });
+      return Object.create(dep, {
+        output: { get: () => throwPending(dep) },
+        outputRef,
+      });
     }
     // Deploy fails when a required output is missing, so each one is present
     // at deploy. Each missing one is a getter, so that `in`, `Object.hasOwn`
@@ -264,7 +271,10 @@ export function createPlanViews() {
         ]),
       ),
     );
-    return Object.create(dep, { output: { get: () => viewedOutput } });
+    return Object.create(dep, {
+      output: { get: () => viewedOutput },
+      outputRef,
+    });
   };
 
   return views;
