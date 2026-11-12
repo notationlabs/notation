@@ -9,8 +9,10 @@ import {
   isNotFound,
   isTitleTaken,
   jurisdictionSchema,
+  modeSchema,
   renameNamespace,
   type Jurisdiction,
+  type Mode,
 } from "src/api/kv";
 
 export type KVNamespaceSchema = {
@@ -19,7 +21,7 @@ export type KVNamespaceSchema = {
     AccountId: string;
     Title: string;
     Jurisdiction?: Jurisdiction;
-    Mode?: "instant";
+    Mode?: Mode;
   };
   UpdateParams: { Title: string };
   ReadResult: {};
@@ -71,7 +73,7 @@ const kvNamespaceSchema = kvNamespace.defineSchema({
     immutable: true,
     rejectReplace: (previous, desired) =>
       `The mode of this KV namespace is ${previous ?? "classic"}, and the code sets it to ${desired ?? "classic"}. Cloudflare sets the mode only when it creates a namespace, so the change would replace the namespace and delete its keys. ${recreateSteps}`,
-    value: v.literal("instant"),
+    value: modeSchema,
   },
 } as const);
 

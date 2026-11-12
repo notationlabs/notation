@@ -107,6 +107,20 @@ describe("WorkerScript", () => {
     });
   });
 
+  it("uploads a KV namespace binding", async () => {
+    mockFetch((call) => (call.method === "GET" ? fail(404, 10007) : ok({})));
+    const binding = {
+      type: "kv_namespace" as const,
+      name: "CACHE",
+      namespace_id: "ns1",
+    };
+
+    await script.create({ ...params, Bindings: [binding] });
+
+    const { metadata } = await uploadedMetadata(calls[1]!);
+    expect(metadata.bindings).toEqual([binding]);
+  });
+
   it("leaves exports out for a Worker that hosts no namespace", async () => {
     mockFetch(untilUploaded());
 

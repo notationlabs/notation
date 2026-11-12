@@ -14,15 +14,21 @@ export const jurisdictionSchema = v.picklist(["eu", "fedramp", "us"]);
 
 export type Jurisdiction = v.InferOutput<typeof jurisdictionSchema>;
 
+export const modeSchema = v.literal("instant");
+
+export type Mode = v.InferOutput<typeof modeSchema>;
+
 export type Namespace = {
   id: string;
   title: string;
   jurisdiction?: Jurisdiction | null;
-  mode?: "instant" | null;
+  mode?: Mode | null;
 };
 
 export type NamespaceCreate = {
-  [K in keyof Omit<Namespace, "id">]: NonNullable<Namespace[K]>;
+  title: string;
+  jurisdiction?: Jurisdiction;
+  mode?: Mode;
 };
 
 export const isNotFound = (error: unknown): boolean =>
@@ -73,7 +79,7 @@ export async function findNamespaceByTitle(
   for (let page = 1; ; page++) {
     const namespaces = await cloudflare<Namespace[]>(
       "GET",
-      `${namespacesPath(account)}?page=${page}&per_page=${LIST_PAGE_SIZE}`,
+      `${namespacesPath(account)}?page=${page}&per_page=${LIST_PAGE_SIZE}&order=id&direction=asc`,
     );
     const found = namespaces.find((namespace) => namespace.title === title);
     if (found) return found;

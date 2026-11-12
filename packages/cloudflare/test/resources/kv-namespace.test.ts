@@ -62,10 +62,20 @@ describe("KVNamespace", () => {
     ).resolves.toEqual({ NamespaceId: "ns1" });
 
     expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
-      `GET ${API}/storage/kv/namespaces?page=1&per_page=1000`,
+      `GET ${API}/storage/kv/namespaces?page=1&per_page=1000&order=id&direction=asc`,
       `POST ${API}/storage/kv/namespaces`,
     ]);
     expect(calls[1]!.body).toEqual({ title: params.Title, jurisdiction: "eu" });
+  });
+
+  it("sends only the title when the code sets no jurisdiction or mode", async () => {
+    mockFetch((call) =>
+      isList(call) ? ok([]) : ok({ id: "ns1", title: params.Title }),
+    );
+
+    await namespace.create(params);
+
+    expect(calls[1]!.body).toEqual({ title: params.Title });
   });
 
   it("doesn't take over a namespace that has the title already", async () => {
@@ -120,8 +130,8 @@ describe("KVNamespace", () => {
       NamespaceId: "ns1",
     });
     expect(calls.map((call) => call.url)).toEqual([
-      `${API}/storage/kv/namespaces?page=1&per_page=1000`,
-      `${API}/storage/kv/namespaces?page=2&per_page=1000`,
+      `${API}/storage/kv/namespaces?page=1&per_page=1000&order=id&direction=asc`,
+      `${API}/storage/kv/namespaces?page=2&per_page=1000&order=id&direction=asc`,
     ]);
   });
 
@@ -228,6 +238,18 @@ describe("KVNamespace", () => {
 
     expect(Jurisdiction.rejectReplace?.(undefined, "eu")).toMatch(
       /The jurisdiction of this KV namespace is not set, and the code sets it to eu/,
+    );
+    expect(Jurisdiction.rejectReplace?.("eu", undefined)).toMatch(
+      /The jurisdiction of this KV namespace is eu, and the code sets it to nothing/,
+    );
+  });
+
+  it("rejects a replacement when the mode changes", () => {
+    const { Mode } = namespace.schema;
+    if (Mode.propertyType !== "param") throw new Error("not a param");
+
+    expect(Mode.rejectReplace?.("instant", undefined)).toMatch(
+      /The mode of this KV namespace is instant, and the code sets it to classic\. .*remove the namespace from your code and deploy/,
     );
   });
 });
