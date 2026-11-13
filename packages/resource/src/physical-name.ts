@@ -66,16 +66,9 @@ export function physicalName(
 }
 
 /**
- * Makes a generated physical name: `<app>--<stage>--<base>-<instance>`. The
- * base is the result of `rule.base` for the resource ID, or the resource ID
- * without `rule.base`. It is put in lower case, with each run of characters
- * other than `a-z` and `0-9` replaced by one `-`. So the base holds no `--`,
- * and the name is valid where only lower-case letters, digits and hyphens
- * are allowed, if the app, the stage and the instance are.
- *
- * When the name is longer than `rule.maxLength`, the part before the
- * instance is cut short, and the instance stays whole. The name ends with
- * the result of `rule.ending` for `params`, after the instance.
+ * Makes a generated physical name: `<app>--<stage>--<base>-<instance>`, the
+ * result of `generatedNameBody` followed by `-<instance>` and the result of
+ * `rule.ending` for `params`.
  */
 export function generatedPhysicalName(
   scope: NameScope,
@@ -85,20 +78,47 @@ export function generatedPhysicalName(
   params: Record<string, unknown>,
 ): string {
   const ending = rule.ending?.(params) ?? "";
+  const body = generatedNameBody(
+    scope,
+    resourceId,
+    rule,
+    instance.length + 1 + ending.length,
+  );
+  return `${body}-${instance}${ending}`;
+}
+
+/**
+ * Makes the part of a generated physical name before `-<instance>`:
+ * `<app>--<stage>--<base>`. The base is the result of `rule.base` for the
+ * resource ID, or the resource ID without `rule.base`. It is put in lower
+ * case, with each run of characters other than `a-z` and `0-9` replaced by
+ * one `-`. So the base holds no `--`, and the name is valid where only
+ * lower-case letters, digits and hyphens are allowed, if the app, the stage
+ * and the instance are.
+ *
+ * The result is cut short to leave room for `suffixLength` characters
+ * within `rule.maxLength`.
+ * @param suffixLength The length of `-<instance>` and the ending.
+ */
+export function generatedNameBody(
+  scope: NameScope,
+  resourceId: string,
+  rule: PhysicalNameRule,
+  suffixLength: number,
+): string {
   const base = (rule.base ? rule.base(resourceId) : resourceId)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
-  const room = rule.maxLength - ending.length - instance.length - 1;
+  const room = rule.maxLength - suffixLength;
   if (room < 1) {
     throw new Error(
       `A maximum length of ${rule.maxLength} leaves no room for a generated name`,
     );
   }
-  const body = `${scope.app}--${scope.stage}--${base}`
+  return `${scope.app}--${scope.stage}--${base}`
     .slice(0, room)
     .replace(/-+$/, "");
-  return `${body}-${instance}${ending}`;
 }
 
 /**
@@ -118,17 +138,17 @@ export function scopedPhysicalName(
  * param, until deploy or plan fills in the name. It is a plain object, so
  * the step that records the params can hold it.
  */
-export type OwnPhysicalName = { $physicalName: string };
+export type OwnPhysicalName = { "~physicalName": string };
 
 export function ownPhysicalName(field: string): OwnPhysicalName {
-  return { $physicalName: field };
+  return { "~physicalName": field };
 }
 
 export function isOwnPhysicalName(value: unknown): value is OwnPhysicalName {
   return (
     isPlainObject(value) &&
     Object.keys(value).length === 1 &&
-    typeof value.$physicalName === "string"
+    typeof value["~physicalName"] === "string"
   );
 }
 
@@ -142,10 +162,11 @@ export function fillPhysicalNames(
 ): Record<string, unknown> {
   const fill = (value: unknown): unknown => {
     if (isOwnPhysicalName(value)) {
-      if (!(value.$physicalName in names)) {
-        throw new Error(`No name was given for ${value.$physicalName}`);
+      const field = value["~physicalName"];
+      if (!(field in names)) {
+        throw new Error(`No name was given for ${field}`);
       }
-      return names[value.$physicalName];
+      return names[field];
     }
     if (Array.isArray(value)) return value.map(fill);
     if (isPlainObject(value)) {

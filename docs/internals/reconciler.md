@@ -100,7 +100,7 @@ A param whose schema item has `physicalName` holds the resource's physical name.
 2. If the params of the state record hold the name, deploy uses that name. A `creating` record counts.
 3. Otherwise deploy generates a name, in the step `physical-names`, so that a replay of the execution gets the same name.
 
-A ref from the resource to one of its own `physicalName` params is not a dependency. `getParams` leaves it as an `OwnPhysicalName`, `{ $physicalName: "<param>" }`, which the step `params` can record. `fillPhysicalNames` in `packages/resource/src/physical-name.ts` then sets each name and replaces each `OwnPhysicalName` with the name of its param. A replace fills in the new names in the same way, from the params before the old names were filled in.
+A ref from the resource to one of its own `physicalName` params is not a dependency. `getParams` leaves it as an `OwnPhysicalName`, `{ "~physicalName": "<param>" }`, which the step `params` can record. `fillPhysicalNames` in `packages/resource/src/physical-name.ts` then sets each name and replaces each `OwnPhysicalName` with the name of its param. A replace fills in the new names in the same way, from the params before the old names were filled in.
 
 `generatedPhysicalName` in `packages/resource/src/physical-name.ts` makes the name, `<app>--<stage>--<base>-<instance>`:
 
@@ -341,7 +341,7 @@ At plan, some resources have not been created yet, so their outputs do not exist
 
 **Output refs.** Plan fills in each output ref from the outputs in state. When the resource has no output yet, plan marks the value unknown at its own path, and the rest of the map stays visible.
 
-**State refs.** Plan resolves each [state ref](../reference/resource.md#state-refs) from the outputs in state, as deploy does at its start, so the value is never unknown. A target with no record gives no value.
+**State refs.** Plan resolves each [state ref](../reference/resource.md#state-refs) from the outputs in state, as deploy does at its start, so the value is never unknown. A target with no record gives `undefined`.
 
 **`deriveParams`.** Plan calls `deriveParams` with a view of each dependency. Reading the view's `output` throws `PendingOutput` when the dependency has no output yet. Plan cannot tell which params depend on that output, so it handles each result like this:
 

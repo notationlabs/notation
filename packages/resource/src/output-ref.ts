@@ -45,26 +45,26 @@ export class OutputRef {
 export class StateOutputRef extends OutputRef {}
 
 /**
- * The outputs that `~state` refs read, from the state records at the start
- * of the deploy or plan. Each target of a `~state` ref has an entry, which
- * is null when the target has no full record.
+ * The outputs of the targets of `~state` refs, from their state records at
+ * the start of the deploy or plan. Each target has an entry, which is null
+ * when the target has no full record.
  */
 export type RecordedOutputs = { [id: string]: DurableObject | null };
 
-// The keys that `~state` refs read, by target. Deploy reads them from state
-// once, at the start, so it needs to know them before any params exist.
-const stateReads = new WeakMap<BaseResource, Set<string>>();
+// Deploy reads the outputs of these resources from state once, at the start,
+// so it needs to know them before any params exist.
+const stateRefTargets = new WeakSet<BaseResource>();
 
-/** The outputs of `resource` that `~state` refs read. */
-export function stateReadsOf(resource: BaseResource): string[] {
-  return [...(stateReads.get(resource) ?? [])];
+/** Whether a `~state` ref names `resource`. */
+export function isStateRefTarget(resource: BaseResource): boolean {
+  return stateRefTargets.has(resource);
 }
 
 /**
  * Makes a `~state` ref. Throws unless only a replace changes the output: a
  * param that is `immutable`, `primaryKey` or `secondaryKey`, or that has
- * `physicalName`, or a computed `primaryKey`. An output that an update
- * changes would be read one deploy late, with no error.
+ * `physicalName`. An output that an update changes would be read one
+ * deploy late, with no error.
  */
 export function stateOutputRef(
   resource: BaseResource,
@@ -72,62 +72,36 @@ export function stateOutputRef(
 ): StateOutputRef {
   const item = resource.schema[key];
   const readable =
-    item !== undefined &&
-    (item.primaryKey ||
-      (item.propertyType === "param" &&
-        (item.immutable || item.secondaryKey || item.physicalName)));
+    item?.propertyType === "param" &&
+    (item.immutable ||
+      item.primaryKey ||
+      item.secondaryKey ||
+      item.physicalName);
   if (!readable) {
     throw new Error(
       `Cannot read ${key} of ${resource.id} from state: ~state can read only an output that only a replace changes, which is a param that is immutable, primaryKey or secondaryKey, or that has physicalName`,
     );
   }
-  let keys = stateReads.get(resource);
-  if (!keys) stateReads.set(resource, (keys = new Set()));
-  keys.add(key);
+  stateRefTargets.add(resource);
   return new StateOutputRef(resource, [key]);
 }
 
 /**
- * Replaces each `~state` ref in `value` with the recorded output. A ref
- * whose target has no record resolves to undefined, and is left out of the
- * array that holds it.
+ * Finds `~state` refs in `recorded`. A ref whose target has no record
+ * resolves to undefined.
  */
-export function resolveStateOutputRefs(
-  value: unknown,
+export function recordedLookup(
   recorded: RecordedOutputs | undefined,
-): unknown {
-  if (value instanceof StateOutputRef) {
-    return readRecordedOutput(value, recorded);
-  }
-  if (Array.isArray(value)) {
-    return value.flatMap((entry) => {
-      const resolved = resolveStateOutputRefs(entry, recorded);
-      return entry instanceof StateOutputRef && resolved === undefined
-        ? []
-        : [resolved];
-    });
-  }
-  if (isPlainObject(value)) {
-    const mapped: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) {
-      mapped[key] = resolveStateOutputRefs(entry, recorded);
+): OutputLookup {
+  return (token) => {
+    const { id } = token.resource;
+    if (!recorded || !(id in recorded)) {
+      throw new Error(
+        `Output ${describeOutputRef(token)} is read from state, but the outputs in state were not read for ${id}. Make each ~state ref while infra is evaluated.`,
+      );
     }
-    return mapped;
-  }
-  return value;
-}
-
-function readRecordedOutput(
-  token: StateOutputRef,
-  recorded: RecordedOutputs | undefined,
-): unknown {
-  const { id } = token.resource;
-  if (!recorded || !(id in recorded)) {
-    throw new Error(
-      `Output ${describeOutputRef(token)} is read from state, but the outputs in state were not read for ${id}. Make each ~state ref while infra is evaluated.`,
-    );
-  }
-  return readPath(recorded[id], token.path);
+    return { known: true, value: readPath(recorded[id], token.path) };
+  };
 }
 
 /**
@@ -312,10 +286,9 @@ export function markUnknownOutputRefs(value: unknown): unknown {
  * conflict messages can show them.
  */
 export function toCanonicalOutputRefs(value: unknown): unknown {
-  return mapOutputRefs(value, (token) =>
-    token instanceof StateOutputRef
-      ? `<state output ${describeOutputRef(token)}>`
-      : `<output ${describeOutputRef(token)}>`,
+  return mapOutputRefs(
+    value,
+    (token) => `<output ${describeOutputRef(token)}>`,
   );
 }
 

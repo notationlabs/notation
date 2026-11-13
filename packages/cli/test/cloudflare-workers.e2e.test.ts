@@ -64,7 +64,7 @@ function workerParams(): Record<string, ScriptParams> {
     import {
       collectResourceGraph,
       fillPhysicalNames,
-      stateReadsOf,
+      isStateRefTarget,
     } from "@notation/resource";
 
     const graph = await collectResourceGraph(() => import("./dist/infra/main.mjs"), {
@@ -82,7 +82,7 @@ function workerParams(): Record<string, ScriptParams> {
     const recordedOutputs = {};
     for (const resource of scripts) {
       resource.setOutput({ ScriptName: nameOf(resource) });
-      if (stateReadsOf(resource).length > 0) {
+      if (isStateRefTarget(resource)) {
         recordedOutputs[resource.id] = { ScriptName: nameOf(resource) };
       }
     }
@@ -253,15 +253,11 @@ it("deploys a Worker that hosts a namespace, and a Worker that binds it and call
       BoundDurableObjects: [],
       DurableObjectTransferSources: [
         {
-          id: "counters",
-          workers: [
-            {
-              id: "reports",
-              scriptName: "shop--dev--reports-1a2b3c4d",
-              nameBody: "shop--dev--reports",
-              fixedName: "shop--dev--reports",
-            },
-          ],
+          namespaceId: "counters",
+          workerId: "reports",
+          scriptName: "shop--dev--reports-1a2b3c4d",
+          nameBody: "shop--dev--reports",
+          fixedName: "shop--dev--reports",
         },
       ],
     },

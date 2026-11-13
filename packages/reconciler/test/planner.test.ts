@@ -2044,7 +2044,9 @@ describe("createPlan with refs that add no dependency", () => {
         propertyType: "param",
         presence: "optional",
         value: v.array(v.string()),
-        collect: (items: string[][]) => items.flat(),
+        // A ~state ref to a target with no record resolves to undefined.
+        collect: (items: (string | undefined)[][]) =>
+          items.flat().filter((name) => name !== undefined),
       },
     } as any)
     .defineOperations({

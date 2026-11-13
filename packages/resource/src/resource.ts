@@ -46,7 +46,8 @@ import {
   markUnknownOutputRefs,
   planLookup,
   resolveOutputRefs,
-  resolveStateOutputRefs,
+  recordedLookup,
+  StateOutputRef,
   stateOutputRef,
   type OutputLookup,
   type PlanViews,
@@ -391,14 +392,14 @@ export abstract class Resource<
    * Reads outputs from the resource's state record, for the code of a
    * resource package. `outputRef(key)` returns a token that resolves to the
    * output in the record at the start of the deploy or plan, or to
-   * undefined when there is no full record. A token in an array that
-   * resolves to undefined is left out of the array. The resource holding the
-   * token does not depend on this one. A resumed deploy uses the params that
-   * it recorded.
+   * undefined when there is no full record. The resource holding the token
+   * does not depend on this one. A resumed deploy uses the params that it
+   * recorded. The token can only be placed in a contribution:
+   * `getDependencies` throws when config holds one.
    *
    * `outputRef` throws unless only a replace changes the output: a param
    * that is `immutable`, `primaryKey` or `secondaryKey`, or that has
-   * `physicalName`, or a computed `primaryKey`.
+   * `physicalName`.
    */
   get "~state"(): {
     outputRef<K extends keyof T["output"] & string>(
@@ -458,7 +459,14 @@ export abstract class Resource<
     }
     for (const dependency of this.#addedDependencies) found.add(dependency);
     forEachOutputRef(this.config, (token) => {
-      if (isDependencyRef(this, token)) found.add(token.resource);
+      // Create and update resolve config with the live output of each ref,
+      // which a `~state` ref's target may not have yet.
+      if (token instanceof StateOutputRef) {
+        throw new Error(
+          `The config of ${this.id} holds a ~state ref to ${token.resource.id}. A ~state ref can only be placed in a contribution.`,
+        );
+      }
+      found.add(token.resource);
     });
     return [...found];
   }
@@ -618,10 +626,10 @@ export abstract class Resource<
     recordedOutputs: RecordedOutputs | undefined,
   ): unknown {
     const lookup: OutputLookup = plan ? planLookup : deployLookup;
-    return resolveOutputRefs(
-      resolveStateOutputRefs(value, recordedOutputs),
-      (token) =>
-        isOwnNameRef(this, token)
+    return resolveOutputRefs(value, (token) =>
+      token instanceof StateOutputRef
+        ? recordedLookup(recordedOutputs)(token)
+        : isOwnNameRef(this, token)
           ? { known: true, value: ownPhysicalName(token.path[0]!) }
           : lookup(token),
     );

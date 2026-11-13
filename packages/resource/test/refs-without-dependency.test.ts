@@ -4,7 +4,7 @@ import {
   isOwnPhysicalName,
   ownPhysicalName,
   resource,
-  stateReadsOf,
+  isStateRefTarget,
 } from "src";
 import { object, string } from "./validators";
 
@@ -72,12 +72,12 @@ describe("~state refs", () => {
     >();
   });
 
-  it("reads a param that only a replace changes, or a computed primary key", () => {
+  it("reads a param that only a replace changes, and marks its target", () => {
     const binder = new Worker("binder", { config: { Path: "/" } });
+    expect(isStateRefTarget(binder)).toBe(false);
     binder["~state"].outputRef("Name");
     binder["~state"].outputRef("Path");
-    binder["~state"].outputRef("Id");
-    expect(stateReadsOf(binder).sort()).toEqual(["Id", "Name", "Path"]);
+    expect(isStateRefTarget(binder)).toBe(true);
   });
 
   it("throws for an output that an update can change", () => {
@@ -88,9 +88,12 @@ describe("~state refs", () => {
     expect(() => binder["~state"].outputRef("Etag")).toThrow(
       "Cannot read Etag of binder from state",
     );
+    expect(() => binder["~state"].outputRef("Id")).toThrow(
+      "Cannot read Id of binder from state",
+    );
   });
 
-  it("adds no dependency, and resolves from the recorded outputs, leaving out one with no record", async () => {
+  it("adds no dependency, and resolves from the recorded outputs, to undefined for one with no record", async () => {
     const host = new Worker("host", { config: { Path: "/" } });
     const binder = new Worker("binder", { config: { Path: "/" } });
     const absent = new Worker("absent", { config: { Path: "/" } });
@@ -104,11 +107,22 @@ describe("~state refs", () => {
     expect(host.getDependencies()).toEqual([]);
     const recordedOutputs = { binder: { Name: "binder-1" }, absent: null };
     expect(await host.getParams({ recordedOutputs })).toMatchObject({
-      Sources: ["binder-1"],
+      Sources: ["binder-1", undefined],
     });
     expect(await host.planParams({ recordedOutputs })).toMatchObject({
-      Sources: ["binder-1"],
+      Sources: ["binder-1", undefined],
     });
+  });
+
+  it("throws when config holds one", () => {
+    const binder = new Worker("binder", { config: { Path: "/" } });
+    const host = new Worker("host", {
+      config: { Path: "/", Sources: [binder["~state"].outputRef("Name")!] },
+    });
+
+    expect(() => host.getDependencies()).toThrow(
+      "The config of host holds a ~state ref to binder. A ~state ref can only be placed in a contribution.",
+    );
   });
 
   it("throws when the outputs in state were not read for the target", async () => {

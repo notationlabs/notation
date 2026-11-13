@@ -316,7 +316,8 @@ describe("WorkerScript", () => {
       class_name: "Room",
     };
     const web = {
-      id: "web",
+      namespaceId: "rooms",
+      workerId: "web",
       scriptName: "app--dev--web",
       nameBody: "app--dev--web",
       fixedName: "app--dev--web",
@@ -325,7 +326,7 @@ describe("WorkerScript", () => {
       ...params,
       Bindings: [...params.Bindings, roomsBinding],
       DurableObjectNamespaces: [...params.DurableObjectNamespaces, rooms],
-      DurableObjectTransferSources: [{ id: "rooms", workers: [web] }],
+      DurableObjectTransferSources: [web],
     };
     const namespacesPage = (page: number) =>
       `https://api.cloudflare.com/client/v4/accounts/acc/workers/durable_objects/namespaces?page=${page}&per_page=1000`;
@@ -496,13 +497,14 @@ describe("WorkerScript", () => {
 
     describe("from a Worker with no state record", () => {
       const lostWeb = {
-        id: "web",
+        namespaceId: "rooms",
+        workerId: "web",
         nameBody: "app--dev--web",
         fixedName: "app--dev--web-legacy",
       };
       const lost = {
         ...arriving,
-        DurableObjectTransferSources: [{ id: "rooms", workers: [lostWeb] }],
+        DurableObjectTransferSources: [lostWeb],
       };
 
       it.each([
@@ -583,17 +585,13 @@ describe("WorkerScript", () => {
           {
             ...lost,
             DurableObjectTransferSources: [
+              lostWeb,
               {
-                id: "rooms",
-                workers: [
-                  lostWeb,
-                  {
-                    id: "web-2",
-                    scriptName: "app--dev--web-5e6f7a8b",
-                    nameBody: "app--dev--web-2",
-                    fixedName: "app--dev--web-2",
-                  },
-                ],
+                namespaceId: "rooms",
+                workerId: "web-2",
+                scriptName: "app--dev--web-5e6f7a8b",
+                nameBody: "app--dev--web-2",
+                fixedName: "app--dev--web-2",
               },
             ],
           },
@@ -621,12 +619,7 @@ describe("WorkerScript", () => {
             {} as any,
             {
               ...lost,
-              DurableObjectTransferSources: [
-                {
-                  id: "rooms",
-                  workers: [{ ...lostWeb, nameBody: body }],
-                },
-              ],
+              DurableObjectTransferSources: [{ ...lostWeb, nameBody: body }],
             },
             params,
           ),
@@ -1001,15 +994,11 @@ describe("rejectChange", () => {
       const sources = {
         DurableObjectTransferSources: [
           {
-            id: "lobbies",
-            workers: [
-              {
-                id: "web",
-                scriptName: "app--dev--web",
-                nameBody: "app--dev--web",
-                fixedName: "app--dev--web",
-              },
-            ],
+            namespaceId: "lobbies",
+            workerId: "web",
+            scriptName: "app--dev--web",
+            nameBody: "app--dev--web",
+            fixedName: "app--dev--web",
           },
         ],
       };
@@ -1168,15 +1157,11 @@ describe("rejectChange", () => {
           ],
           DurableObjectTransferSources: [
             {
-              id: "rooms",
-              workers: [
-                {
-                  id: "web",
-                  scriptName: "app--dev--web",
-                  nameBody: "app--dev--web",
-                  fixedName: "app--dev--web",
-                },
-              ],
+              namespaceId: "rooms",
+              workerId: "web",
+              scriptName: "app--dev--web",
+              nameBody: "app--dev--web",
+              fixedName: "app--dev--web",
             },
           ],
         }),

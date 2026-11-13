@@ -225,15 +225,10 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
             script.contribute({
               DurableObjectTransferSources: [
                 {
-                  id,
-                  workers: [
-                    {
-                      id: binder.id,
-                      scriptName:
-                        bound.script["~state"].outputRef("ScriptName"),
-                      ...workerNames(binder.id),
-                    },
-                  ],
+                  namespaceId: id,
+                  workerId: binder.id,
+                  scriptName: bound.script["~state"].outputRef("ScriptName"),
+                  ...workerNames(binder.id),
                 },
               ],
             }),

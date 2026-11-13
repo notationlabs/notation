@@ -516,17 +516,23 @@ An output ref always adds a dependency. Sometimes a resource needs an output of 
 ```ts
 host.contribute({
   DurableObjectTransferSources: [
-    binder.script["~state"].outputRef("ScriptName"),
+    {
+      namespaceId: "rooms",
+      workerId: "web",
+      scriptName: binder.script["~state"].outputRef("ScriptName"),
+      ...workerNames("web"),
+    },
   ],
 });
 ```
 
-A state ref differs from an output ref in four ways:
+A state ref differs from an output ref in five ways:
 
 - **It adds no dependency.** `host` does not depend on `binder.script`, so the graph and the deploy order stay the same.
 - **It resolves to the output in the target's state record at the start of the deploy.** Deploy reads these outputs once, after it takes the deployment hold, in the step `notation:recorded-outputs`. A resumed deploy uses the outputs that this step recorded. Plan reads the same outputs from state, so the value is known at plan.
-- **It resolves to nothing when the target has no record**, or only a `creating` record. In an array, the entry is left out. In an object, the property is `undefined`. TypeScript types the ref as the output or `undefined`.
-- **It reads only an output that only a replace changes.** `outputRef(key)` throws unless the output is a param that is `immutable`, `primaryKey` or `secondaryKey`, or that has `physicalName`, or a computed `primaryKey`. An output that an update changes would be read one deploy late, with no error.
+- **It resolves to `undefined` when the target has no record**, or only a `creating` record. TypeScript types the ref as the output or `undefined`.
+- **It reads only an output that only a replace changes.** `outputRef(key)` throws unless the output is a param that is `immutable`, `primaryKey` or `secondaryKey`, or that has `physicalName`. An output that an update changes would be read one deploy late, with no error.
+- **It can only be placed in a contribution.** `create` and `update` read the refs in config from the live outputs of their targets, which a state ref's target may not have yet. `getDependencies()` throws when config holds a state ref.
 
 Make each state ref while infra is evaluated. Deploy reads the outputs of the resources that state refs name before it resolves any params, and a state ref made later fails at deploy.
 
@@ -633,8 +639,14 @@ When you delete a `contribute` call, the collected value changes, and the resour
 A resource in `config` or `dependencies` must already be constructed, so two resources can only depend on each other through `contribute` or `dependOn`. For example, two Workers that call each other each contribute a service binding to the other:
 
 ```ts
-const a = new WorkerScript("worker:a", { config: configA, dependencies: depsA });
-const b = new WorkerScript("worker:b", { config: configB, dependencies: depsB });
+const a = new WorkerScript("worker:a", {
+  config: configA,
+  dependencies: depsA,
+});
+const b = new WorkerScript("worker:b", {
+  config: configB,
+  dependencies: depsB,
+});
 a.contribute({
   Bindings: [
     { type: "service", name: "B", service: b.outputRef("ScriptName") },

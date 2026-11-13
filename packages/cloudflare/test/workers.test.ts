@@ -13,7 +13,7 @@ import {
   collectResourceGraph,
   declaredIn,
   ownPhysicalName,
-  stateReadsOf,
+  isStateRefTarget,
   type BaseResource,
   type RecordedOutputs,
   type ResourceGraph,
@@ -107,7 +107,7 @@ async function deployParams(
     }
     const recordedOutputs: RecordedOutputs = {};
     for (const resource of collectedScripts) {
-      if (stateReadsOf(resource).length === 0) continue;
+      if (!isStateRefTarget(resource)) continue;
       const found = recorded.find((other) => other.script === resource);
       recordedOutputs[resource.id] = found
         ? { ScriptName: nameOf(found.id) }
@@ -320,21 +320,18 @@ describe("$worker", () => {
         .DurableObjectTransferSources,
     ).toEqual([
       {
-        id: "counters",
-        workers: [
-          {
-            id: "reports",
-            scriptName: undefined,
-            nameBody: "shop--dev--reports",
-            fixedName: "shop--dev--reports",
-          },
-          {
-            id: "web",
-            scriptName: nameOf("web"),
-            nameBody: "shop--dev--web",
-            fixedName: "shop--dev--web",
-          },
-        ],
+        namespaceId: "counters",
+        workerId: "reports",
+        scriptName: undefined,
+        nameBody: "shop--dev--reports",
+        fixedName: "shop--dev--reports",
+      },
+      {
+        namespaceId: "counters",
+        workerId: "web",
+        scriptName: nameOf("web"),
+        nameBody: "shop--dev--web",
+        fixedName: "shop--dev--web",
       },
     ]);
   });
@@ -798,7 +795,7 @@ describe("plan", () => {
       const state = { get: async (id: string) => records[id] };
       const recordedOutputs: RecordedOutputs = {};
       for (const resource of graph.resources) {
-        if (stateReadsOf(resource).length === 0) continue;
+        if (!isStateRefTarget(resource)) continue;
         recordedOutputs[resource.id] =
           (records[resource.id]?.output as any) ?? null;
       }
@@ -846,14 +843,10 @@ describe("plan", () => {
       ],
       DurableObjectTransferSources: [
         {
-          id: "counters",
-          workers: [
-            {
-              id: "web",
-              nameBody: "shop--dev--web",
-              fixedName: "shop--dev--web",
-            },
-          ],
+          namespaceId: "counters",
+          workerId: "web",
+          nameBody: "shop--dev--web",
+          fixedName: "shop--dev--web",
         },
       ],
     });
@@ -904,12 +897,11 @@ describe("plan", () => {
         { type: "service", name: "SELF", service: apiName },
       ],
       DurableObjectTransferSources: [
-        {
-          id: "counters",
-          workers: [
-            expect.objectContaining({ id: "web", scriptName: webName }),
-          ],
-        },
+        expect.objectContaining({
+          namespaceId: "counters",
+          workerId: "web",
+          scriptName: webName,
+        }),
       ],
     });
     expect(params.web).toMatchObject({

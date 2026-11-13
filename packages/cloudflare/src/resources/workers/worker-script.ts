@@ -53,51 +53,21 @@ const boundNamespaceSchema = v.object({
 /** A Durable Object namespace that the Worker binds on another Worker. */
 export type BoundNamespace = v.InferOutput<typeof boundNamespaceSchema>;
 
-const transferWorkerSchema = v.object({
-  /** The `$worker` id. */
-  id: v.string(),
-  /** The Worker's name in its state record, if it has one. */
+const transferSourceSchema = v.object({
+  /** The id of a namespace that the Worker hosts. */
+  namespaceId: v.string(),
+  /** The `$worker` id of another Worker that binds the namespace. */
+  workerId: v.string(),
+  /** That Worker's name in its state record, if it has one. */
   scriptName: v.optional(v.string()),
-  /** The Worker's generated name without its instance. */
+  /** That Worker's generated name without its instance. */
   nameBody: v.string(),
-  /** The name that the Worker got before deploy generated its name. */
+  /** The name that Worker got before deploy generated its name. */
   fixedName: v.string(),
 });
 
 /** A Worker that binds a namespace that this Worker hosts. */
-export type TransferWorker = v.InferOutput<typeof transferWorkerSchema>;
-
-const transferSourceSchema = v.object({
-  /** The id of a namespace that the Worker hosts. */
-  id: v.string(),
-  /** The other Workers that bind the namespace, sorted by id. */
-  workers: v.array(transferWorkerSchema),
-});
-
 export type TransferSource = v.InferOutput<typeof transferSourceSchema>;
-
-/**
- * Merges the transfer sources that each Worker that binds a namespace
- * contributes, into one entry for each namespace.
- */
-function mergeTransferSources(items: TransferSource[][]): TransferSource[] {
-  const byId = new Map<string, TransferWorker[]>();
-  for (const source of items.flat()) {
-    const workers = byId.get(source.id) ?? [];
-    for (const worker of source.workers) {
-      if (!workers.some((other) => other.id === worker.id)) {
-        workers.push(worker);
-      }
-    }
-    byId.set(source.id, workers);
-  }
-  return [...byId]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([id, workers]) => ({
-      id,
-      workers: workers.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
-    }));
-}
 
 type WorkerScriptParams = {
   AccountId: string;
@@ -270,8 +240,7 @@ const workerScriptSchema = workerScript.defineSchema({
     presence: "optional",
     hidden: true,
     value: v.array(transferSourceSchema),
-    collect: (items: unknown[]) =>
-      mergeTransferSources(items as TransferSource[][]),
+    collect: (items: unknown[]) => items.flat() as TransferSource[],
   },
 } as const);
 
@@ -400,10 +369,10 @@ async function findTransfers(
   const arriving = (params.DurableObjectNamespaces ?? []).flatMap(
     (namespace) => {
       if (previous.some((before) => before.id === namespace.id)) return [];
-      const from = sources.find((source) => source.id === namespace.id);
-      return from && from.workers.length > 0
-        ? [{ namespace, workers: from.workers }]
-        : [];
+      const workers = sources.filter(
+        (source) => source.namespaceId === namespace.id,
+      );
+      return workers.length > 0 ? [{ namespace, workers }] : [];
     },
   );
   if (arriving.length === 0) return { transfers: [], account: [] };
@@ -458,10 +427,10 @@ async function findTransfers(
 const lostRecordError = (
   params: WorkerScriptParams,
   namespace: HostedNamespace,
-  worker: TransferWorker,
+  worker: TransferSource,
   script: string,
 ) =>
-  `The Durable Object namespace "${namespace.id}" is new to the Worker ${params.ScriptName}. The Worker "${worker.id}" binds it and has no state record, and the Worker ${script} in the Cloudflare account hosts a namespace with its class ${namespace.className}. ${script} has a name that deploy gives the Worker "${worker.id}", so it may be that Worker, with its state record lost. Deploy moves a namespace only from a Worker in state, and would otherwise start an empty namespace while ${script} keeps the objects. If ${script} is that Worker, restore its state record, so that deploy moves the namespace from it. If it is not, give the Worker "${worker.id}" another id.`;
+  `The Durable Object namespace "${namespace.id}" is new to the Worker ${params.ScriptName}. The Worker "${worker.workerId}" binds it and has no state record, and the Worker ${script} in the Cloudflare account hosts a namespace with its class ${namespace.className}. ${script} has a name that deploy gives the Worker "${worker.workerId}", so it may be that Worker, with its state record lost. Deploy moves a namespace only from a Worker in state, and would otherwise start an empty namespace while ${script} keeps the objects. If ${script} is that Worker, restore its state record, so that deploy moves the namespace from it. If it is not, give the Worker "${worker.workerId}" another id.`;
 
 // A create that stopped part way through a transfer would be recorded as
 // done, and the next deploy would not finish the transfer.
@@ -617,8 +586,8 @@ export function rejectNamespaceLoss(
       (!Array.isArray(sources) ||
         sources.some(
           (source) =>
-            source.id === namespace.id &&
-            source.workers.some((worker) => worker.scriptName !== undefined),
+            source.namespaceId === namespace.id &&
+            source.scriptName !== undefined,
         )),
   );
   const migrating = Object.entries(

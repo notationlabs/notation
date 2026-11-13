@@ -18,6 +18,7 @@ export {
 } from "./resource-collection";
 export {
   fillPhysicalNames,
+  generatedNameBody,
   generatedPhysicalName,
   isOwnPhysicalName,
   ownPhysicalName,
@@ -38,7 +39,7 @@ export {
   OutputRefStringError,
   PendingOutput,
   StateOutputRef,
-  stateReadsOf,
+  isStateRefTarget,
   containsOutputRef,
   isOutputRef,
   resolveOutputRefs,

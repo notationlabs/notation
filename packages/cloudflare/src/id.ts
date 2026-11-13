@@ -1,5 +1,5 @@
 import {
-  generatedPhysicalName,
+  generatedNameBody,
   getActiveResourceCollection,
   scopedPhysicalName,
   type PhysicalNameRule,
@@ -79,13 +79,12 @@ export function workerNames(id: string): {
 } {
   const scope = getActiveResourceCollection()?.scope;
   const nameBody = scope
-    ? generatedPhysicalName(
+    ? generatedNameBody(
         scope,
         workerResourceId(id),
-        "0".repeat(INSTANCE_LENGTH),
         workerNameRule,
-        {},
-      ).slice(0, -(INSTANCE_LENGTH + 1))
+        INSTANCE_LENGTH + 1,
+      )
     : id;
   const fixedName = scopedPhysicalName(id, {
     maxLength: FIXED_WORKER_NAME_MAX_LENGTH,

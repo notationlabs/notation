@@ -82,10 +82,7 @@ export async function createPlan({
   assertDependenciesPresent(resources);
 
   const stateNodes = await state.values();
-  const stateById = new Map(stateNodes.map((node) => [node.id, node]));
-  const recordedOutputs = await readRecordedOutputs(resources, {
-    get: async (id) => stateById.get(id),
-  });
+  const recordedOutputs = await readRecordedOutputs(resources, state);
   // The edges in state as deploy finds them when it replaces a resource.
   // Deploy writes the edges in code for each resource it reaches, so a
   // resource takes those once it is planned.
