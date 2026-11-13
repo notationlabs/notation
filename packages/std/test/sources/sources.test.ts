@@ -13,7 +13,6 @@ import {
 import { collectResourceGraph, type BaseResource } from "@notation/resource";
 import { clearSecretValues } from "@notation/utils";
 import { Redacted, dotenv, env, getValue, isValueSupplied } from "src/sources";
-import { parseDotenv } from "src/sources/dotenv";
 
 const context = { stage: "dev" };
 let directory: string;
@@ -68,8 +67,9 @@ describe("dotenv", () => {
     );
   });
 
-  it("parses comments, export, quotes and values that span lines", () => {
-    const parsed = parseDotenv(
+  it("parses comments, export, quotes and values that span lines", async () => {
+    await writeFile(
+      path.join(directory, ".env"),
       [
         "# a comment",
         "export A=1",
@@ -82,8 +82,18 @@ describe("dotenv", () => {
         "B=override",
       ].join("\r\n"),
     );
+    const source = dotenv(".env");
+    const read = async (key: string) =>
+      (await source.get(key, context)).unwrap();
 
-    expect(Object.fromEntries(parsed)).toEqual({
+    expect({
+      A: await read("A"),
+      B: await read("B"),
+      C: await read("C"),
+      D: await read("D"),
+      E: await read("E"),
+      F: await read("F"),
+    }).toEqual({
       A: "1",
       B: "override",
       C: "single # not a comment",
