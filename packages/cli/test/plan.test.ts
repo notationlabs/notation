@@ -241,6 +241,40 @@ it("prints the delete of a retired instance, and counts it in the summary", asyn
   ]);
 });
 
+it("prints the delete of a retired instance before a delete-first replace of its record", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "role",
+        type: "test/plan/role",
+        decision: "delete-retired",
+        retiredAt: "2026-11-13T00:00:00.000Z",
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "role",
+        type: "test/plan/role",
+        decision: "replace",
+        replaceFields: [{ name: "path", known: true }],
+        replaceOrder: "delete-first",
+        params: {},
+        dependsOn: [],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 3)).toEqual([
+    "- delete-retired test/plan/role role",
+    "    the instance that a replace retired at 2026-11-13T00:00:00.000Z, deleted before the resource is replaced",
+  ]);
+});
+
 it("writes the order of a replace in the JSON plan", async () => {
   const node = {
     id: "role",

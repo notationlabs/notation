@@ -34,6 +34,8 @@ Until deploy deletes it, the old resource is retired: it is listed in the state 
     the instance that a replace retired at 2026-11-13T09:12:44.120Z, deleted at the end of the deploy
 ```
 
+When deploy replaces the resource delete-first, it deletes the retired resources with it. The plan then shows them just before the replace, and prints `deleted before the resource is replaced`.
+
 The summary counts it among the deletes.
 
 For resources that depend on each other, the plan prints a line under the resource that deploy creates first, without the contributions that refer to the others:

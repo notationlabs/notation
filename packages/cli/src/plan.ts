@@ -60,6 +60,22 @@ export async function plan(
   printPlanSummary(result, logger);
 }
 
+// A delete-first replace of the record deletes its retired instances with
+// the resource. When the replace is only possible, the sweep deletes them if
+// deploy does not replace the resource.
+function retiredDeleteTime(result: Plan, id: string): string {
+  const replace = result.nodes.find(
+    (node) => node.id === id && node.replaceOrder === "delete-first",
+  );
+  if (!replace) return "deleted at the end of the deploy";
+  const forcing = replace.replacedDependency
+    ? result.nodes.find((node) => node.id === replace.replacedDependency)
+    : replace;
+  return forcing?.replaceFields?.some((field) => field.known)
+    ? "deleted before the resource is replaced"
+    : "deleted before the resource is replaced, or at the end of the deploy if it is not replaced";
+}
+
 function printPlanSummary(result: Plan, logger: Logger) {
   const changedNodes = result.nodes.filter((node) => node.decision !== "noop");
 
@@ -70,7 +86,7 @@ function printPlanSummary(result: Plan, logger: Logger) {
     );
     if (node.retiredAt) {
       logger.info(
-        `    the instance that a replace retired at ${node.retiredAt}, deleted at the end of the deploy`,
+        `    the instance that a replace retired at ${node.retiredAt}, ${retiredDeleteTime(result, node.id)}`,
       );
     }
     for (const field of node.replaceFields ?? []) {

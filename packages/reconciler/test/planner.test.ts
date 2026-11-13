@@ -2129,6 +2129,161 @@ describe("createPlan with a generated physical name", () => {
     ]);
   });
 
+  it("plans the deletes of the retired instances and the orphans in the order of the sweep", async () => {
+    const plan = await createPlan({
+      resources: [queue("orders", { path: "/" })],
+      state: new MemoryStateBackend({
+        access: record("access", {
+          name: "shop--prod--access-00000002",
+          path: "/",
+        }),
+        orders: {
+          ...record("orders", { name, path: "/" }),
+          retired: [
+            {
+              config: {},
+              params: { name: "shop--prod--orders-00000001", path: "/" },
+              output: { name: "shop--prod--orders-00000001" },
+              dependsOn: ["access"],
+              retiredAt: "2026-07-20T00:00:00.000Z",
+            },
+          ],
+        },
+      }),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes.map(({ id, decision }) => `${decision} ${id}`)).toEqual([
+      "noop orders",
+      "delete-retired orders",
+      "delete-orphan access",
+    ]);
+  });
+
+  describe("for a class with no generated name", () => {
+    // The type of Queue, without a physicalName param, as for a class that
+    // has lost it.
+    const Fixed = resource({ type: Queue.type, provider: "test" })
+      // Cast: as for Queue.
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          primaryKey: true,
+          value: v.string(),
+        },
+        path: {
+          propertyType: "param",
+          presence: "required",
+          immutable: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+      });
+    const Rule = resource({
+      type: "test/planner/fixed-rule",
+      provider: "test",
+      blocksDeleteOf: [Queue.type],
+    })
+      // Cast: as for Queue.
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          primaryKey: true,
+          value: v.string(),
+        },
+        parent: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+      })
+      .requireDependencies<{ parent: BaseResource }>()
+      .deriveParams(({ deps }) => ({
+        parent: (deps.parent.output as any).name,
+      }));
+    const instance = (instanceName: string, dependsOn: string[]) => ({
+      config: {},
+      params: { name: instanceName, path: "/" },
+      output: { name: instanceName },
+      dependsOn,
+      retiredAt: "2026-07-20T00:00:00.000Z",
+    });
+
+    it("plans the delete of the retired instances just before a delete-first replace, and not at the end", async () => {
+      const plan = await createPlan({
+        resources: [
+          new Fixed("orders", { config: { name, path: "/new/" } as any }),
+        ],
+        state: new MemoryStateBackend({
+          orders: {
+            ...record("orders", { name, path: "/" }),
+            retired: [instance("shop--prod--orders-00000001", [])],
+          },
+        }),
+        driftDetection: false,
+      });
+
+      expect(plan.nodes.map(({ id, decision }) => `${decision} ${id}`)).toEqual(
+        ["delete-retired orders", "replace orders"],
+      );
+      expect(plan.nodes[1]).toMatchObject({ replaceOrder: "delete-first" });
+    });
+
+    it("plans the delete of a dependent whose retired instance blocks a delete-first replace", async () => {
+      const orders = new Fixed("orders", {
+        config: { name, path: "/new/" } as any,
+      });
+      const other = new Fixed("other", {
+        config: { name: "other", path: "/" } as any,
+      });
+      const rule = new Rule("rule", {
+        config: { name: "rule" } as any,
+        dependencies: { parent: other },
+      });
+
+      const plan = await createPlan({
+        resources: [orders, other, rule],
+        state: new MemoryStateBackend({
+          orders: record("orders", { name, path: "/" }),
+          other: record("other", { name: "other", path: "/" }),
+          rule: {
+            ...record("rule", { name: "rule", parent: "other" }),
+            type: Rule.type,
+            dependsOn: ["other"],
+            retired: [
+              {
+                ...instance("rule-1", ["orders"]),
+                params: { name: "rule-1", parent: name },
+              },
+            ],
+          },
+        }),
+        driftDetection: false,
+      });
+
+      expect(plan.nodes[3]).toMatchObject({
+        id: "rule",
+        decision: "replace",
+        replacedDependency: "orders",
+        replaceOrder: "delete-first",
+      });
+      expect(plan.nodes.map(({ id, decision }) => `${decision} ${id}`)).toEqual(
+        ["replace orders", "noop other", "delete-retired rule", "replace rule"],
+      );
+    });
+  });
+
   it("plans an update with the recorded name when a dependency has no output yet", async () => {
     const Fn = resource({ type: "test/planner/named-fn", provider: "test" })
       // Cast: as for Queue.
