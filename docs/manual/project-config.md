@@ -120,10 +120,10 @@ Each stage has the same set of resources. To keep the stages apart in one AWS ac
 
 Every resource that you declare has an `id`, such as `todos` or `orders`. The `id` keys the resource in state. The rest of the AWS name depends on whether the declaration has a `name`:
 
-| Declaration                                     | AWS name                                  | Made                                       |
-| ----------------------------------------------- | ----------------------------------------- | ------------------------------------------ |
-| `queue({ id: "orders" })`                       | `my-app--prod--sqs-queue-orders-1a2b3c4d` | by deploy, when it first creates the queue |
-| `queue({ id: "orders", name: "order-events" })` | `my-app--prod--order-events`              | from `name`, when the infra code runs      |
+| Declaration                                     | AWS name                        | Made                                       |
+| ----------------------------------------------- | ------------------------------- | ------------------------------------------ |
+| `queue({ id: "orders" })`                       | `my-app--prod--orders-1a2b3c4d` | by deploy, when it first creates the queue |
+| `queue({ id: "orders", name: "order-events" })` | `my-app--prod--order-events`    | from `name`, when the infra code runs      |
 
 **State keys have a type prefix.** Notation keys each resource in state with a prefix for its type and the IDs that it belongs to, joined with `:`, such as `lambda:todos:role` or `sqs-mapping:orders:process-orders`. An ID can't contain `:`, so resources of different types with the same ID, or of IDs that contain hyphens, never get the same key.
 
@@ -131,34 +131,34 @@ Every resource that you declare has an `id`, such as `todos` or `orders`. The `i
 
 Without a `name`, deploy generates the AWS name: `<app>--<stage>--<base>-<instance>`.
 
-- The base is the resource's state key in lower case, with each run of characters other than `a-z` and `0-9` turned into one `-`. The state key `lambda:todos:role` gives the base `lambda-todos-role`.
+- The base is the resource's state key without its type prefix, in lower case, with each run of characters other than `a-z` and `0-9` turned into one `-`. The state key `lambda:todos:role` gives the base `todos-role`. A function and a queue with the same `id` get the same base, and their names differ in the instance.
 - The instance is 8 random hex characters.
 
 For example, the starter app has a Lambda function with the ID `todos`:
 
-| Stage  | Lambda function                       | IAM role                                   |
-| ------ | ------------------------------------- | ------------------------------------------ |
-| `dev`  | `my-app--dev--lambda-todos-5e0c91b7`  | `my-app--dev--lambda-todos-role-a41f6d02`  |
-| `prod` | `my-app--prod--lambda-todos-c27d3f48` | `my-app--prod--lambda-todos-role-09be6a15` |
+| Stage  | Lambda function                | IAM role                            |
+| ------ | ------------------------------ | ----------------------------------- |
+| `dev`  | `my-app--dev--todos-5e0c91b7`  | `my-app--dev--todos-role-a41f6d02`  |
+| `prod` | `my-app--prod--todos-c27d3f48` | `my-app--prod--todos-role-09be6a15` |
 
 Deploy generates these names:
 
-| Resource               | Generated name                                             | Longest name |
-| ---------------------- | ---------------------------------------------------------- | ------------ |
-| Lambda function        | `<app>--<stage>--lambda-<id>-<instance>`                   | 64           |
-| IAM role of a function | `<app>--<stage>--lambda-<id>-role-<instance>`              | 64           |
-| SQS queue              | `<app>--<stage>--sqs-queue-<id>-<instance>`                | 80           |
-| SQS FIFO queue         | `<app>--<stage>--sqs-queue-<id>-<instance>.fifo`           | 80           |
-| EventBridge rule       | `<app>--<stage>--eventbridge-pattern-rule-<id>-<instance>` | 64           |
-| EventBridge schedule   | `<app>--<stage>--eventbridge-rule-<id>-<instance>`         | 64           |
-| EventBridge event bus  | `<app>--<stage>--eventbridge-bus-<id>-<instance>`          | 256          |
-| API Gateway API        | `<app>--<stage>--api-<id>-<instance>`                      | 128          |
+| Resource               | Generated name                         | Longest name |
+| ---------------------- | -------------------------------------- | ------------ |
+| Lambda function        | `<app>--<stage>--<id>-<instance>`      | 64           |
+| IAM role of a function | `<app>--<stage>--<id>-role-<instance>` | 64           |
+| SQS queue              | `<app>--<stage>--<id>-<instance>`      | 80           |
+| SQS FIFO queue         | `<app>--<stage>--<id>-<instance>.fifo` | 80           |
+| EventBridge rule       | `<app>--<stage>--<id>-<instance>`      | 64           |
+| EventBridge schedule   | `<app>--<stage>--<id>-<instance>`      | 64           |
+| EventBridge event bus  | `<app>--<stage>--<id>-<instance>`      | 256          |
+| API Gateway API        | `<app>--<stage>--<id>-<instance>`      | 128          |
 
 **Deploy generates a name once, and keeps it in state.** Deploy writes the name to state before it asks AWS to create the resource, and every later deploy reads the name from state. The name changes only when deploy replaces the resource: the replacement gets a new name, with a new instance. `notation plan` shows a generated name as unknown until the resource exists.
 
 The infra code can't know a generated name. To pass a name to a function, bind an output ref of the resource in `env`, such as `ordersBus.name`.
 
-**A generated name that is too long is cut before the instance.** For example, the function with the ID `warehouse-processIncomingOrderNotificationsFromSuppliers` is named `my-app--prod--lambda-warehouse-processincomingordernoti-1a2b3c4d`, which has the 64 characters that Lambda allows. The instance stays whole, so two cut names still differ. With a long app name and a long stage name, the cut removes the whole id, and can remove the end of the stage. For example, app `customer-billing-platform` with stage `preview-pull-request-1234` names every function `customer-billing-platform--preview-pull-request-1234--l-<instance>`. Such names differ only in the instance, so the name doesn't say which function it is.
+**A generated name that is too long is cut before the instance.** For example, the function with the ID `warehouse-processIncomingOrderNotificationsFromSuppliers` is named `my-app--prod--warehouse-processincomingordernotificatio-1a2b3c4d`, which has the 64 characters that Lambda allows. The instance stays whole, so two cut names still differ. A function's name keeps the whole `id` when the app, the stage and the `id` together have at most 51 characters. With a long app name and a long stage name, the cut removes most or all of the `id`, and can remove the end of the stage. For example, app `customer-billing-platform` with stage `preview-pull-request-1234` leaves room for one character of the `id`, so the function `todos` is named `customer-billing-platform--preview-pull-request-1234--t-<instance>`. Such names differ in little more than the instance, so the name doesn't say which function it is.
 
 **A generated name is only in state.** If the state record of a resource with a generated name is lost, deploy can't find the resource again. The next deploy generates a new name and creates a second resource, and the first one stays in AWS. There is one exception: a deploy that stops while it creates the resource has already written the name to state, so the next deploy uses the same name and finds the resource.
 

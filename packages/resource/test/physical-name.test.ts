@@ -107,6 +107,23 @@ it("generates a name from the app, stage, resource ID and instance", () => {
   ).toBe("orders-app--prod--lambda-get-orders-role-1a2b3c4d");
 });
 
+it("takes the base of a generated name from the rule's base", () => {
+  const rule = {
+    maxLength: 64,
+    base: (resourceId: string) => resourceId.replace(/^lambda:/, ""),
+  };
+  const generate = (resourceId: string) =>
+    generatedPhysicalName(scope, resourceId, "1a2b3c4d", rule, {});
+
+  expect(generate("lambda:get-orders")).toBe(
+    "orders-app--prod--get-orders-1a2b3c4d",
+  );
+  // The result of base is made valid as a resource ID is.
+  expect(generate("lambda:Get_Orders:role")).toBe(
+    "orders-app--prod--get-orders-role-1a2b3c4d",
+  );
+});
+
 it("generates a name of lower-case letters, digits and single hyphens from any resource ID", () => {
   expect(
     generatedPhysicalName(

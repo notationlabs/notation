@@ -39,11 +39,11 @@ type QueueConfig = {
 };
 ```
 
-`id` keys the queue in state, so changing it replaces the queue. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the queue's AWS name when it first creates the queue, and keeps the name in state. The name is `<app>--<stage>--sqs-queue-<id>-<instance>`, such as `my-app--prod--sqs-queue-orders-1a2b3c4d`, where the instance is 8 random hex characters.
+`id` keys the queue in state, so changing it replaces the queue. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the queue's AWS name when it first creates the queue, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--orders-1a2b3c4d`, where the instance is 8 random hex characters.
 
 `name` sets the AWS name in place of a generated one, so `queue({ id: "orders", name: "order-events" })` is named `my-app--prod--order-events`. Changing `name` also replaces the queue. See [AWS names](../../manual/project-config.md#aws-names).
 
-`fifo: true` makes a FIFO queue. The AWS name of a FIFO queue ends in `.fifo`, as SQS requires. A generated name ends in it, such as `my-app--prod--sqs-queue-ledger-1a2b3c4d.fifo`, and Notation adds it to a `name`, so `queue({ id: "ledger", name: "ledger", fifo: true })` is named `my-app--prod--ledger.fifo`. `fifo` can't change after the queue is created, so changing it replaces the queue, and the replacement gets a name with the right ending.
+`fifo: true` makes a FIFO queue. The AWS name of a FIFO queue ends in `.fifo`, as SQS requires. A generated name ends in it, such as `my-app--prod--ledger-1a2b3c4d.fifo`, and Notation adds it to a `name`, so `queue({ id: "ledger", name: "ledger", fifo: true })` is named `my-app--prod--ledger.fifo`. `fifo` can't change after the queue is created, so changing it replaces the queue, and the replacement gets a name with the right ending.
 
 There is one case where the ending is wrong. If the create of a queue without `name` ends with an unknown outcome, state keeps the generated name for the next deploy. If you turn `fifo` on before that deploy, the name in state has no `.fifo`, and each deploy fails until you turn `fifo` off again. Turn `fifo` on after a deploy has created the queue.
 

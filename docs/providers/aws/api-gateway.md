@@ -27,7 +27,7 @@ type ApiConfig = {
 };
 ```
 
-`id` keys the API in state, so changing it replaces the API. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the API's AWS name when it first creates the API, and keeps the name in state. The name is `<app>--<stage>--api-<id>-<instance>`, such as `my-app--prod--api-todo-api-1a2b3c4d`, where the instance is 8 random hex characters.
+`id` keys the API in state, so changing it replaces the API. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the API's AWS name when it first creates the API, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--todo-api-1a2b3c4d`, where the instance is 8 random hex characters.
 
 `name` sets the AWS name in place of a generated one, so `api({ id: "todo-api", name: "todos" })` is named `my-app--prod--todos`. See [AWS names](../../manual/project-config.md#aws-names).
 

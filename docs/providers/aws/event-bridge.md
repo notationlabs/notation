@@ -34,7 +34,7 @@ type EventBusConfig = {
 };
 ```
 
-`id` keys the bus in state, so changing it replaces the bus. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the bus's AWS name when it first creates the bus, and keeps the name in state. The name is `<app>--<stage>--eventbridge-bus-<id>-<instance>`, such as `my-app--prod--eventbridge-bus-orders-1a2b3c4d`, where the instance is 8 random hex characters.
+`id` keys the bus in state, so changing it replaces the bus. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the bus's AWS name when it first creates the bus, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--orders-1a2b3c4d`, where the instance is 8 random hex characters.
 
 `name` sets the AWS name in place of a generated one, so `eventBus({ id: "orders", name: "shop" })` is named `my-app--prod--shop`. Changing `name` also replaces the bus. AWS does not delete a bus that has rules, so the deploy first deletes the rules on the bus. Then it deletes the bus, creates the new bus, and creates the rules again. Until they exist again, events sent to the bus do not reach their functions. Other resources that depend on the bus stay in place, and the deploy updates them with the new bus's outputs. A function whose `env` holds the bus's `arn` or `name` is updated, and a role policy with a `grant()` of the bus is updated too. The new rules have new ARNs, so the deploy replaces the Lambda permission of each rule. See [AWS names](../../manual/project-config.md#aws-names).
 
@@ -145,7 +145,7 @@ type RetryOptions = {
 };
 ```
 
-`id` keys the rule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the rule's AWS name when it first creates the rule, and keeps the name in state. The name is `<app>--<stage>--eventbridge-pattern-rule-<id>-<instance>`, such as `my-app--prod--eventbridge-pattern-rule-order-placed-1a2b3c4d`, where the instance is 8 random hex characters. `name` sets the rule's AWS name in place of a generated one: the rule is named `<app>--<stage>--<name>`. Changing `name` also replaces the rule.
+`id` keys the rule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the rule's AWS name when it first creates the rule, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--order-placed-1a2b3c4d`, where the instance is 8 random hex characters. `name` sets the rule's AWS name in place of a generated one: the rule is named `<app>--<stage>--<name>`. Changing `name` also replaces the rule.
 
 AWS lets two buses have rules with the same name, but Notation doesn't: in one deployment, no two rules or schedules can set the same `name`.
 
@@ -346,7 +346,7 @@ type ScheduleConfig = {
 
 The rule sends the EventBridge event to the function as it is.
 
-`id` keys the schedule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the AWS name of the EventBridge rule when it first creates the rule, and keeps the name in state. The name is `<app>--<stage>--eventbridge-rule-<id>-<instance>`, such as `my-app--prod--eventbridge-rule-log-every-minute-1a2b3c4d`, where the instance is 8 random hex characters.
+`id` keys the schedule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the AWS name of the EventBridge rule when it first creates the rule, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--log-every-minute-1a2b3c4d`, where the instance is 8 random hex characters.
 
 `name` sets the rule's AWS name in place of a generated one, so `name: "every-minute"` names the rule `my-app--prod--every-minute`. Changing `name` also replaces the rule. See [AWS names](../../manual/project-config.md#aws-names).
 

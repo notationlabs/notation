@@ -77,7 +77,7 @@ The declaration needs no export unless another module refers to it. In practice 
 
 `id` is required. It keys the function, its IAM role and its log group in state. The ID doesn't depend on the module's path, so you can move or rename the module and keep its function. Changing the ID replaces the function.
 
-Without a `name`, deploy generates the function's AWS name from the app, the stage and the `id`, such as `my-app--prod--lambda-orders-1a2b3c4d`. Deploy generates the name when it first creates the function, and keeps it in state. See [Generated names](./project-config.md#generated-names).
+Without a `name`, deploy generates the function's AWS name from the app, the stage and the `id`, such as `my-app--prod--orders-1a2b3c4d`. Deploy generates the name when it first creates the function, and keeps it in state. See [Generated names](./project-config.md#generated-names).
 
 Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. TypeScript reports an ID that breaks the rule, and `$lambda` throws on one when the infra code runs. Two Lambda functions in one deployment can't share an ID. See [Lambda IDs](../providers/aws/lambda.md#ids).
 

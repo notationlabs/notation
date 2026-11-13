@@ -19,6 +19,11 @@ export type PhysicalNameRule = {
    * `requiredEnding` when the resource's params hold `true` for it.
    */
   requiredEndingWhen?: string;
+  /**
+   * Maps the resource ID to the base of a generated name. Without it, the
+   * base is the whole resource ID.
+   */
+  base?: (resourceId: string) => string;
 };
 
 const HASH_LENGTH = 8;
@@ -70,10 +75,11 @@ export function physicalName(
 
 /**
  * Makes a generated physical name: `<app>--<stage>--<base>-<instance>`. The
- * base is the resource ID in lower case, with each run of characters other
- * than `a-z` and `0-9` replaced by one `-`. So the base holds no `--`, and
- * the name is valid where only lower-case letters, digits and hyphens are
- * allowed, if the app, the stage and the instance are.
+ * base is the result of `rule.base` for the resource ID, or the resource ID
+ * without `rule.base`. It is put in lower case, with each run of characters
+ * other than `a-z` and `0-9` replaced by one `-`. So the base holds no `--`,
+ * and the name is valid where only lower-case letters, digits and hyphens
+ * are allowed, if the app, the stage and the instance are.
  *
  * When the name is longer than `rule.maxLength`, the part before the
  * instance is cut short, and the instance stays whole. The name ends with
@@ -92,7 +98,7 @@ export function generatedPhysicalName(
       params[rule.requiredEndingWhen] === true &&
       rule.requiredEnding) ||
     "";
-  const base = resourceId
+  const base = (rule.base ? rule.base(resourceId) : resourceId)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");

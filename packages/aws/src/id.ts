@@ -115,3 +115,11 @@ export function assertName(caller: string, name: unknown): void {
 export function resourceId(type: string, ...ids: string[]): string {
   return [type, ...ids].join(":");
 }
+
+/**
+ * The base of a resource's generated AWS name: the resource id without the
+ * type prefix that `resourceId` adds, such as `orders:role`.
+ */
+export function nameBase(resourceId: string): string {
+  return resourceId.slice(resourceId.indexOf(":") + 1);
+}

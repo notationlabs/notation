@@ -72,7 +72,7 @@ Every Lambda function has an ID. It keys the function and the resources that sup
 
 In a runtime module, the ID is the declaration's `id`. The ID doesn't come from the module's path, so you can move or rename the module and keep its function.
 
-Deploy generates the AWS names of the function and of its role when it first creates them, and keeps the names in state. The function is named `<app>--<stage>--lambda-<id>-<instance>` and its role `<app>--<stage>--lambda-<id>-role-<instance>`, where the instance is 8 random hex characters. For example, `$lambda({ id: "orders" })` is named `my-app--prod--lambda-orders-1a2b3c4d`. Each name has at most 64 characters, and a longer one is cut before the instance. See [Generated names](../../manual/project-config.md#generated-names).
+Deploy generates the AWS names of the function and of its role when it first creates them, and keeps the names in state. The function is named `<app>--<stage>--<id>-<instance>` and its role `<app>--<stage>--<id>-role-<instance>`, where the instance is 8 random hex characters. For example, `$lambda({ id: "orders" })` is named `my-app--prod--orders-1a2b3c4d`. Each name has at most 64 characters, and a longer one is cut before the instance. See [Generated names](../../manual/project-config.md#generated-names).
 
 `name` sets the function's AWS name in place of a generated one. For example, `$lambda({ id: "orders", name: "order-handler" })` is named `<app>--<stage>--order-handler`. Deploy still generates the role's name, and the `id` stays the state key. Changing `name` replaces the function, because Lambda can't rename a function. When you remove `name`, the function keeps its name until deploy next replaces it. See [`name`](../../manual/project-config.md#name).
 

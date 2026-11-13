@@ -3,6 +3,7 @@ import {
   scopedPhysicalName,
   type PhysicalNameRule,
 } from "@notation/resource";
+import { nameBase } from "src/id";
 
 /**
  * The rules of the AWS names that Notation makes from a `name` option and
@@ -12,19 +13,22 @@ import {
  */
 export const nameRules = {
   // [a-zA-Z0-9-_]
-  lambdaFunction: { maxLength: 64 },
+  lambdaFunction: { maxLength: 64, base: nameBase },
+  // [\w+=,.@-]
+  iamRole: { maxLength: 64, base: nameBase },
   // [a-zA-Z0-9-_], a FIFO queue's name ends in .fifo
   sqsQueue: {
     maxLength: 80,
     requiredEnding: ".fifo",
     requiredEndingWhen: "FifoQueue",
+    base: nameBase,
   },
   // [.\-_A-Za-z0-9], unique per event bus
-  eventBridgeRule: { maxLength: 64 },
+  eventBridgeRule: { maxLength: 64, base: nameBase },
   // [/.\-_A-Za-z0-9]
-  eventBridgeBus: { maxLength: 256 },
+  eventBridgeBus: { maxLength: 256, base: nameBase },
   // any characters, and not unique
-  apiGatewayApi: { maxLength: 128 },
+  apiGatewayApi: { maxLength: 128, base: nameBase },
 } satisfies Record<string, PhysicalNameRule>;
 
 /**

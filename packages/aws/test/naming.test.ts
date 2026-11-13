@@ -4,7 +4,13 @@ import {
   generatedPhysicalName,
 } from "@notation/resource";
 import { api } from "src/api-gateway";
-import { rate, schedule, ScheduleGroup } from "src/event-bridge";
+import {
+  eventBus,
+  rate,
+  rule,
+  schedule,
+  ScheduleGroup,
+} from "src/event-bridge";
 import { lambda } from "src/lambda";
 import { queue } from "src/sqs";
 import { Unknown } from "./declare";
@@ -121,12 +127,53 @@ test("the name that deploy generates for a queue ends in .fifo only for a FIFO q
     );
   };
 
-  expect(await generate(true)).toBe(
-    "orders-app--prod--sqs-queue-orders-1a2b3c4d.fifo",
+  expect(await generate(true)).toBe("orders-app--prod--orders-1a2b3c4d.fifo");
+  expect(await generate(false)).toBe("orders-app--prod--orders-1a2b3c4d");
+});
+
+test("a generated AWS name leaves out the type prefix of the resource id", async () => {
+  const graph = await collectResourceGraph(
+    () => {
+      const fn = lambda({ id: "orders", code });
+      const bus = eventBus({ id: "orders" });
+      queue({ id: "orders", schema: Unknown });
+      queue({ id: "ledger", fifo: true, schema: Unknown });
+      api({ id: "orders" });
+      rule({
+        id: "orders",
+        bus,
+        pattern: { source: ["shop.orders"] },
+        target: fn,
+      });
+      schedule({ id: "orders", schedule: rate(1, "day"), target: fn });
+    },
+    { scope: { app: "shop", stage: "prod" } },
   );
-  expect(await generate(false)).toBe(
-    "orders-app--prod--sqs-queue-orders-1a2b3c4d",
-  );
+
+  const names: Record<string, string> = {};
+  for (const resource of graph.resources) {
+    for (const item of Object.values(resource.schema)) {
+      if (item.propertyType !== "param" || !item.physicalName) continue;
+      names[resource.id] = generatedPhysicalName(
+        { app: "shop", stage: "prod" },
+        resource.id,
+        "1a2b3c4d",
+        item.physicalName,
+        resource.config,
+      );
+    }
+  }
+
+  expect(names).toEqual({
+    "lambda:orders": "shop--prod--orders-1a2b3c4d",
+    "lambda:orders:role": "shop--prod--orders-role-1a2b3c4d",
+    "sqs-queue:orders": "shop--prod--orders-1a2b3c4d",
+    "sqs-queue:ledger": "shop--prod--ledger-1a2b3c4d.fifo",
+    "api:orders": "shop--prod--orders-1a2b3c4d",
+    "eventbridge-bus:orders": "shop--prod--orders-1a2b3c4d",
+    "eventbridge-pattern-rule:orders": "shop--prod--orders-1a2b3c4d",
+    "eventbridge-rule:orders": "shop--prod--orders-1a2b3c4d",
+  });
 });
 
 test("a shortened FIFO queue name still ends in .fifo", async () => {

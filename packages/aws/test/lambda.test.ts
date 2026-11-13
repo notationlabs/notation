@@ -64,9 +64,9 @@ test("the policy's role name is unknown at plan before the role is deployed", as
   expect(await group.policy.planParams()).toMatchObject({
     RoleName: UNKNOWN_AFTER_APPLY,
   });
-  group.role.setOutput({ RoleName: "lambda-get-todos-role-1a2b3c4d" } as any);
+  group.role.setOutput({ RoleName: "get-todos-role-1a2b3c4d" } as any);
   expect(await group.policy.planParams()).toMatchObject({
-    RoleName: "lambda-get-todos-role-1a2b3c4d",
+    RoleName: "get-todos-role-1a2b3c4d",
   });
   expect(group.policy.getDependencies()).toContain(group.role);
 });

@@ -27,7 +27,7 @@ export default defineConfig({
 - `watch` exits when the config file changes.
 - `--execution-id` reads the stage from the execution, so `notation deploy --execution-id <id>` resumes a deploy to any stage. The command prints this resume command with the execution ID.
 - The state key is `<app>:<stage>`.
-- AWS names start with `<app>--<stage>--`, such as `my-app--prod--lambda-todos-1a2b3c4d`. If a name that you set with a `name` option is longer than AWS allows, Notation cuts it and ends it with an 8-character hash. Notation does not change a name that you set directly on an `@notation/aws/resources` resource, such as `QueueName`.
+- AWS names start with `<app>--<stage>--`, such as `my-app--prod--todos-1a2b3c4d`. If a name that you set with a `name` option is longer than AWS allows, Notation cuts it and ends it with an 8-character hash. Notation does not change a name that you set directly on an `@notation/aws/resources` resource, such as `QueueName`.
 - Lambda IDs can have up to 64 characters, up from 59.
 
 API changes:

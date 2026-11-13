@@ -182,29 +182,36 @@ QueueName: {
   presence: "required",
   immutable: true,
   value: v.string(),
-  physicalName: { maxLength: 80, requiredEnding: ".fifo", requiredEndingWhen: "FifoQueue" },
+  physicalName: {
+    maxLength: 80,
+    requiredEnding: ".fifo",
+    requiredEndingWhen: "FifoQueue",
+    // "sqs-queue:orders" gives "orders"
+    base: (resourceId) => resourceId.slice(resourceId.indexOf(":") + 1),
+  },
 },
 ```
 
 The rule is a `PhysicalNameRule` from `@notation/resource`:
 
-| Field                | Required | Meaning                                                                                                                                                                         |
-| -------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `maxLength`          | yes      | The longest name the provider accepts.                                                                                                                                          |
-| `requiredEnding`     | no       | An ending that the provider requires on some names, such as `.fifo`.                                                                                                            |
-| `requiredEndingWhen` | no       | The name of a boolean param, such as `FifoQueue`. A generated name gets `requiredEnding` when the resource's params hold `true` for it. Without it, no generated name gets one. |
+| Field                | Required | Meaning                                                                                                                                                                                                 |
+| -------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxLength`          | yes      | The longest name the provider accepts.                                                                                                                                                                  |
+| `requiredEnding`     | no       | An ending that the provider requires on some names, such as `.fifo`.                                                                                                                                    |
+| `requiredEndingWhen` | no       | The name of a boolean param, such as `FifoQueue`. A generated name gets `requiredEnding` when the resource's params hold `true` for it. Without it, no generated name gets one.                         |
+| `base`               | no       | A function that takes the resource ID and returns the base of a generated name. Use it to leave a part of the ID out of the name, such as a type prefix. Without it, the base is the whole resource ID. |
 
 A param with `physicalName` is optional in config, also when its `presence` is `required`:
 
 ```ts
 new aws.sqs.Queue("sqs-queue:orders", { config: { FifoQueue: true } });
-// deploy names the queue my-app--prod--sqs-queue-orders-1a2b3c4d.fifo
+// deploy names the queue my-app--prod--orders-1a2b3c4d.fifo
 
 new aws.sqs.Queue("sqs-queue:orders", { config: { QueueName: "orders" } });
 // the queue is named orders
 ```
 
-When config leaves the param out, deploy generates the name, `<app>--<stage>--<base>-<instance>`, from the app, the stage, the resource ID and 8 random hex characters. Deploy keeps the name in the state record, so later deploys use the same name, and a replacement gets a new one. The params that an operation receives always hold the name. Plan shows the name as unknown until the resource exists. See [Generated names](../internals/reconciler.md#generated-names) for the steps and their limits.
+When config leaves the param out, deploy generates the name, `<app>--<stage>--<base>-<instance>`, from the app, the stage, the base and 8 random hex characters. The base is the result of the rule's `base`, or the resource ID, in lower case, with each run of characters other than `a-z` and `0-9` turned into one `-`. Deploy keeps the name in the state record, so later deploys use the same name, and a replacement gets a new one. The params that an operation receives always hold the name. Plan shows the name as unknown until the resource exists. See [Generated names](../internals/reconciler.md#generated-names) for the steps and their limits.
 
 **Only config supplies a `physicalName` param.** When config leaves the param out and `deriveParams` returns a value for it, plan and deploy throw. Deploy decides from config alone whether to generate the name, and a generated or recorded name would replace the derived one.
 
