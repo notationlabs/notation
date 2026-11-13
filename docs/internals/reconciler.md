@@ -100,6 +100,8 @@ A param whose schema item has `physicalName` holds the resource's physical name.
 2. If the params of the state record hold the name, deploy uses that name. A `creating` record counts.
 3. Otherwise deploy generates a name, in the step `physical-names`, so that a replay of the execution gets the same name.
 
+A ref from the resource to one of its own `physicalName` params is not a dependency. `getParams` leaves it as an `OwnPhysicalName`, `{ $physicalName: "<param>" }`, which the step `params` can record. `fillPhysicalNames` in `packages/resource/src/physical-name.ts` then sets each name and replaces each `OwnPhysicalName` with the name of its param. A replace fills in the new names in the same way, from the params before the old names were filled in.
+
 `generatedPhysicalName` in `packages/resource/src/physical-name.ts` makes the name, `<app>--<stage>--<base>-<instance>`:
 
 | Part       | Value                                                                                                                                                                                                                                                |
@@ -118,7 +120,7 @@ From here on the name is one of the resource's params. Deploy validates it, writ
 
 A replace generates the names again, for every `physicalName` param, in the step `physical-names` of the scope `replace:create`. So a replacement never gets the name of the resource that it replaces. The replace still deletes first.
 
-Plan fills in the same params without generating anything. It throws in the same way when the params supply the param. It takes the name from the state record when the record has one, and marks the name unknown otherwise. For a resource that plan decides to replace, plan marks the name unknown in the node's `params`.
+Plan fills in the same params without generating anything. It throws in the same way when the params supply the param. It takes the name from the state record when the record has one, and marks the name unknown otherwise. For a resource that plan decides to replace, plan marks the name unknown in the node's `params`. A ref to the resource's own name gets the same value as the name.
 
 #### The takeover rule
 
@@ -315,7 +317,7 @@ Before plan or deploy does anything else, `assertDependenciesPresent` (`packages
 
 - declared in its `dependencies`
 - added with `dependOn`
-- held as an output ref in its config or contributions
+- held as an output ref in its config or contributions, except a [state ref](../reference/resource.md#state-refs) and a ref to the resource's own `physicalName` param
 - named in the `deps` of a function contribution
 
 A dependency must be part of the deployment, because the graph ignores an edge to a resource that is not in it. Without the check, nothing would deploy the dependency, and the dependent would wait on an output that never arrives. So the check fails with:
@@ -338,6 +340,8 @@ Destroy does not run the check, so broken infra code cannot block a teardown.
 At plan, some resources have not been created yet, so their outputs do not exist. Plan marks a param that needs one of these outputs as unknown. **The rule from RFC 0002 decides every case below: plan may show more unknowns than deploy finds, but must never show a known value that deploy would change.**
 
 **Output refs.** Plan fills in each output ref from the outputs in state. When the resource has no output yet, plan marks the value unknown at its own path, and the rest of the map stays visible.
+
+**State refs.** Plan resolves each [state ref](../reference/resource.md#state-refs) from the outputs in state, as deploy does at its start, so the value is never unknown. A target with no record gives no value.
 
 **`deriveParams`.** Plan calls `deriveParams` with a view of each dependency. Reading the view's `output` throws `PendingOutput` when the dependency has no output yet. Plan cannot tell which params depend on that output, so it handles each result like this:
 
