@@ -86,7 +86,7 @@ notation deploy                          # uses notation.config.ts
 notation deploy --config jobs.config.ts  # uses jobs.config.ts
 ```
 
-**Each config needs its own `app`.** If two configs use the same app, a deploy of one config to a stage uses the same state key and AWS names as a deploy of the other config to that stage. Each deploy then sees the other config's resources in state but not in its entry file, and deletes them as orphans.
+**Each config needs its own `app`.** If two configs use the same app, a deploy of one config to a stage uses the same state key and the same `<app>--<stage>--` prefix for AWS names as a deploy of the other config to that stage. Each deploy then sees the other config's resources in state but not in its entry file, and deletes them as orphans.
 
 ## Stages
 
@@ -116,46 +116,70 @@ The key contains no file paths, so you can move the entry file and keep its stat
 
 ## AWS names
 
-Each stage has the same set of resources. To keep the stages apart in one AWS account, Notation starts each AWS name with the app and the stage: `<app>--<stage>--<id>`.
+Each stage has the same set of resources. To keep the stages apart in one AWS account, each AWS name starts with the app and the stage, as `<app>--<stage>--`. The parts are joined with `--`, because app and stage names can't contain `--`. With a single `-`, app `my-app` with stage `prod-eu` and app `my-app-prod` with stage `eu` would get the same names.
 
-For example, the starter app has a Lambda function with the ID `todos`:
+Every resource that you declare has an `id`, such as `todos` or `orders`. The `id` keys the resource in state. The rest of the AWS name depends on whether the declaration has a `name`:
 
-| Stage  | Lambda function       | IAM role                   |
-| ------ | --------------------- | -------------------------- |
-| `dev`  | `my-app--dev--todos`  | `my-app--dev--todos-role`  |
-| `prod` | `my-app--prod--todos` | `my-app--prod--todos-role` |
-
-The parts are joined with `--`, because app and stage names can't contain `--`. With a single `-`, app `my-app` with stage `prod-eu` and app `my-app-prod` with stage `eu` would get the same names.
-
-Every resource that you declare has an `id`, such as `todos` or `orders`. The `id` keys the resource in state, and Notation builds the AWS name from it:
-
-| Resource               | AWS name                    | Longest name |
-| ---------------------- | --------------------------- | ------------ |
-| Lambda function        | `<app>--<stage>--<id>`      | 64           |
-| IAM role of a function | `<app>--<stage>--<id>-role` | 64           |
-| SQS queue              | `<app>--<stage>--<id>`      | 80           |
-| SQS FIFO queue         | `<app>--<stage>--<id>.fifo` | 80           |
-| EventBridge rule       | `<app>--<stage>--<id>`      | 64           |
-| EventBridge event bus  | `<app>--<stage>--<id>`      | 256          |
-| API Gateway API        | `<app>--<stage>--<id>`      | 128          |
-| JWT authorizer         | `<id>`, inside its API      | 128          |
-
-Names that only need to be unique inside another resource have no prefix. For example, a role's inline policy is `<id>-role-policy`, and an authorizer's name only needs to be unique inside its API. A function's log group is `/aws/lambda/<function name>`, so it contains the app and the stage already.
-
-**`name` replaces the `id` in the AWS name, and keeps the prefix.** A Lambda function, a queue, an API, an authorizer, an EventBridge rule and an EventBridge event bus take an optional `name`. The other resources have no AWS name of their own, so they take no `name`. For example, a queue declared with `queue({ id: "orders", name: "order-events" })` is named `my-app--prod--order-events`, and its state key stays `sqs-queue:orders`. The prefix stays because two stages in one account would otherwise try to create two queues with the same name. An `id` and a `name` each have 1 to 64 letters, digits, hyphens or underscores, and the `id` must be a string literal so that TypeScript can check it. Notation adds `.fifo` to a FIFO queue's name. A function's `name` sets the function's name only, so its role keeps `<app>--<stage>--<id>-role`.
-
-**AWS names must be unique.** In one deployment, two Lambda functions, two queues, two APIs, two EventBridge event buses or two EventBridge rules can't have the same AWS name, even rules on different buses, and two authorizers of one API can't either. Notation checks this when infra runs, and the error names both declarations. For example, `$lambda({ id: "a", name: "b" })` and `$lambda({ id: "b" })` both name a function `<app>--<stage>--b`, so they throw.
+| Declaration                                     | AWS name                                  | Made                                       |
+| ----------------------------------------------- | ----------------------------------------- | ------------------------------------------ |
+| `queue({ id: "orders" })`                       | `my-app--prod--sqs-queue-orders-1a2b3c4d` | by deploy, when it first creates the queue |
+| `queue({ id: "orders", name: "order-events" })` | `my-app--prod--order-events`              | from `name`, when the infra code runs      |
 
 **State keys have a type prefix.** Notation keys each resource in state with a prefix for its type and the IDs that it belongs to, joined with `:`, such as `lambda:todos:role` or `sqs-mapping:orders:process-orders`. An ID can't contain `:`, so resources of different types with the same ID, or of IDs that contain hyphens, never get the same key.
 
-**Long names are shortened.** If a name is longer than the service allows, Notation cuts it and adds `-` and an 8-character hash of the full name. For example, `my-app--prod--warehouse-processIncomingOrderNotificationsFromSuppliers` has 70 characters, and Lambda allows 64:
+### Generated names
 
-| Resource        | AWS name                                                           |
-| --------------- | ------------------------------------------------------------------ |
-| Lambda function | `my-app--prod--warehouse-processIncomingOrderNotificatio-9bed4260` |
-| IAM role        | `my-app--prod--warehouse-processIncomingOrderNotificatio-cf8fdd43` |
+Without a `name`, deploy generates the AWS name: `<app>--<stage>--<base>-<instance>`.
 
-Notation computes the hash from the full name, so a shortened name is the same on every deploy. A FIFO queue's name keeps its `.fifo` ending.
+- The base is the resource's state key in lower case, with each run of characters other than `a-z` and `0-9` turned into one `-`. The state key `lambda:todos:role` gives the base `lambda-todos-role`.
+- The instance is 8 random hex characters.
+
+For example, the starter app has a Lambda function with the ID `todos`:
+
+| Stage  | Lambda function                       | IAM role                                   |
+| ------ | ------------------------------------- | ------------------------------------------ |
+| `dev`  | `my-app--dev--lambda-todos-5e0c91b7`  | `my-app--dev--lambda-todos-role-a41f6d02`  |
+| `prod` | `my-app--prod--lambda-todos-c27d3f48` | `my-app--prod--lambda-todos-role-09be6a15` |
+
+Deploy generates these names:
+
+| Resource               | Generated name                                             | Longest name |
+| ---------------------- | ---------------------------------------------------------- | ------------ |
+| Lambda function        | `<app>--<stage>--lambda-<id>-<instance>`                   | 64           |
+| IAM role of a function | `<app>--<stage>--lambda-<id>-role-<instance>`              | 64           |
+| SQS queue              | `<app>--<stage>--sqs-queue-<id>-<instance>`                | 80           |
+| SQS FIFO queue         | `<app>--<stage>--sqs-queue-<id>-<instance>.fifo`           | 80           |
+| EventBridge rule       | `<app>--<stage>--eventbridge-pattern-rule-<id>-<instance>` | 64           |
+| EventBridge schedule   | `<app>--<stage>--eventbridge-rule-<id>-<instance>`         | 64           |
+| EventBridge event bus  | `<app>--<stage>--eventbridge-bus-<id>-<instance>`          | 256          |
+| API Gateway API        | `<app>--<stage>--api-<id>-<instance>`                      | 128          |
+
+**Deploy generates a name once, and keeps it in state.** Deploy writes the name to state before it asks AWS to create the resource, and every later deploy reads the name from state. The name changes only when deploy replaces the resource: the replacement gets a new name, with a new instance. `notation plan` shows a generated name as unknown until the resource exists.
+
+The infra code can't know a generated name. To pass a name to a function, bind an output ref of the resource in `env`, such as `ordersBus.name`.
+
+**A generated name that is too long is cut before the instance.** For example, the function with the ID `warehouse-processIncomingOrderNotificationsFromSuppliers` is named `my-app--prod--lambda-warehouse-processincomingordernoti-1a2b3c4d`, which has the 64 characters that Lambda allows. The instance stays whole, so two cut names still differ. With a long app name and a long stage name, the cut removes the whole id, and can remove the end of the stage. For example, app `customer-billing-platform` with stage `preview-pull-request-1234` names every function `customer-billing-platform--preview-pull-request-1234--l-<instance>`. Such names differ only in the instance, so the name doesn't say which function it is.
+
+**A generated name is only in state.** If the state record of a resource with a generated name is lost, deploy can't find the resource again. The next deploy generates a new name and creates a second resource, and the first one stays in AWS. There is one exception: a deploy that stops while it creates the resource has already written the name to state, so the next deploy uses the same name and finds the resource.
+
+### `name`
+
+**`name` sets the AWS name, after the prefix.** A Lambda function, a queue, an API, an authorizer, an EventBridge rule, a schedule and an EventBridge event bus take an optional `name`. The other resources take no `name`. For example, a queue declared with `queue({ id: "orders", name: "order-events" })` is named `my-app--prod--order-events`, and its state key stays `sqs-queue:orders`. The prefix stays because two stages in one account would otherwise try to create two queues with the same name. An `id` and a `name` each have 1 to 64 letters, digits, hyphens or underscores, and the `id` must be a string literal so that TypeScript can check it. Notation adds `.fifo` to a FIFO queue's name. A function's `name` sets the function's name only, so deploy still generates the name of its role.
+
+Some names have no prefix, because they only need to be unique inside another resource. An authorizer is named after its `id`, or its `name`, inside its API. A role's inline policy is `<id>-role-policy`. A function's log group is `/aws/lambda/<function name>`, so it contains the app and the stage already.
+
+**When you remove `name`, the resource keeps its name.** Deploy reads the name from state, as it does for a generated name. The resource gets a generated name when deploy next replaces it.
+
+**Two declarations can't set the same name.** In one deployment, two Lambda functions, two queues, two APIs, two EventBridge event buses or two EventBridge rules can't get the same AWS name from `name`, even rules on different buses, and two authorizers of one API can't either. Notation checks this when infra runs, and the error names both declarations. For example, `$lambda({ id: "a", name: "b" })` and `$lambda({ id: "c", name: "b" })` both name a function `<app>--<stage>--b`, so they throw. A declaration without a `name` is not part of the check, because its generated name has its own instance. So `$lambda({ id: "a", name: "b" })` and `$lambda({ id: "b" })` are allowed.
+
+**The check reads the declarations, and not state.** State can hold a name of the form `<app>--<stage>--<name>` for a resource whose declaration has no `name`:
+
+- the declaration had a `name`, and you removed it;
+- a version of Notation before generated names created the resource, and named it `<app>--<stage>--<id>`.
+
+If another declaration then sets that name, the check passes. Deploy finds the existing resource under the name and takes it over, and two state records then manage one AWS resource. For example, a queue that an earlier version created with `queue({ id: "orders" })` is named `my-app--prod--orders`, and `queue({ id: "sales", name: "orders" })` gets the same name. Give the new declaration another name.
+
+**A name from `name` that is too long is shortened.** If the name is longer than the service allows, Notation cuts it and adds `-` and an 8-character hash of the full name. For example, with `name: "warehouse-processIncomingOrderNotificationsFromSuppliers"`, the full name `my-app--prod--warehouse-processIncomingOrderNotificationsFromSuppliers` has 70 characters, and Lambda allows 64. The function is named `my-app--prod--warehouse-processIncomingOrderNotificatio-9bed4260`. Notation computes the hash from the full name, so a shortened name is the same on every deploy. A FIFO queue's name keeps its `.fifo` ending.
 
 ## Name rules
 

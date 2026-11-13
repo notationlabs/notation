@@ -39,11 +39,13 @@ type QueueConfig = {
 };
 ```
 
-`id` keys the queue in state, so changing it replaces the queue. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. In AWS, the queue is named `<app>--<stage>--<id>`, such as `my-app--prod--orders`.
+`id` keys the queue in state, so changing it replaces the queue. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the queue's AWS name when it first creates the queue, and keeps the name in state. The name is `<app>--<stage>--sqs-queue-<id>-<instance>`, such as `my-app--prod--sqs-queue-orders-1a2b3c4d`, where the instance is 8 random hex characters.
 
-`name` replaces the `id` in the AWS name, so `queue({ id: "orders", name: "order-events" })` is named `my-app--prod--order-events`. Changing `name` also replaces the queue. See [AWS names](../../manual/project-config.md#aws-names).
+`name` sets the AWS name in place of a generated one, so `queue({ id: "orders", name: "order-events" })` is named `my-app--prod--order-events`. Changing `name` also replaces the queue. See [AWS names](../../manual/project-config.md#aws-names).
 
-`fifo: true` makes a FIFO queue. Notation adds `.fifo` to its AWS name, as SQS requires, so `queue({ id: "ledger", fifo: true })` is named `my-app--prod--ledger.fifo`. `fifo` can't change after the queue is created.
+`fifo: true` makes a FIFO queue. The AWS name of a FIFO queue ends in `.fifo`, as SQS requires. A generated name ends in it, such as `my-app--prod--sqs-queue-ledger-1a2b3c4d.fifo`, and Notation adds it to a `name`, so `queue({ id: "ledger", name: "ledger", fifo: true })` is named `my-app--prod--ledger.fifo`. `fifo` can't change after the queue is created, so changing it replaces the queue, and the replacement gets a name with the right ending.
+
+There is one case where the ending is wrong. If the create of a queue without `name` ends with an unknown outcome, state keeps the generated name for the next deploy. If you turn `fifo` on before that deploy, the name in state has no `.fifo`, and each deploy fails until you turn `fifo` off again. Turn `fifo` on after a deploy has created the queue.
 
 `schema` is a [Standard Schema](https://standardschema.dev) for the message bodies. AWS doesn't see it. A function that reads the queue with `sqs.bind(queue)` validates each message with it; see [Validating messages](#validating-messages). A function declared with `sqs.schema()` that infra maps the queue to must be given the same schema; see [`eventSourceMapping(config)`](#eventsourcemappingconfig).
 
@@ -87,7 +89,7 @@ For high throughput, set `deduplicationScope: "messageGroup"` and `fifoThroughpu
 
 SQS encrypts a new queue with keys that SQS owns (SSE-SQS). Notation doesn't set the encryption attributes, so a queue keeps this default.
 
-SQS doesn't let you reuse a deleted queue's name for 60 seconds, so a replacement waits and retries the create until SQS accepts the name.
+SQS doesn't let you reuse a deleted queue's name for 60 seconds. The replacement of a queue with a generated name gets a new name, so it doesn't wait. The replacement of a queue that keeps its `name` waits and retries the create until SQS accepts the name.
 
 ### Dead-letter queues
 

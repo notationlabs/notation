@@ -72,11 +72,11 @@ Every Lambda function has an ID. It keys the function and the resources that sup
 
 In a runtime module, the ID is the declaration's `id`. The ID doesn't come from the module's path, so you can move or rename the module and keep its function.
 
-In AWS, the function is named `<app>--<stage>--<id>` and its role `<app>--<stage>--<id>-role`. If a name is longer than 64 characters, Notation shortens it. See [AWS names](../../manual/project-config.md#aws-names).
+Deploy generates the AWS names of the function and of its role when it first creates them, and keeps the names in state. The function is named `<app>--<stage>--lambda-<id>-<instance>` and its role `<app>--<stage>--lambda-<id>-role-<instance>`, where the instance is 8 random hex characters. For example, `$lambda({ id: "orders" })` is named `my-app--prod--lambda-orders-1a2b3c4d`. Each name has at most 64 characters, and a longer one is cut before the instance. See [Generated names](../../manual/project-config.md#generated-names).
 
-`name` replaces the `id` in the function's AWS name. For example, `$lambda({ id: "orders", name: "order-handler" })` is named `<app>--<stage>--order-handler`. The role and the other resources keep names from the `id`, and the `id` stays the state key. Changing `name` replaces the function, because Lambda can't rename a function.
+`name` sets the function's AWS name in place of a generated one. For example, `$lambda({ id: "orders", name: "order-handler" })` is named `<app>--<stage>--order-handler`. Deploy still generates the role's name, and the `id` stays the state key. Changing `name` replaces the function, because Lambda can't rename a function. When you remove `name`, the function keeps its name until deploy next replaces it. See [`name`](../../manual/project-config.md#name).
 
-IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. `$lambda` and `lambda()` only accept string literals that follow this rule, and throw at runtime if they get anything else. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, count as the same, because IAM role names ignore case. Two Lambda functions can't share an AWS name either, so `$lambda({ id: "a", name: "b" })` and `$lambda({ id: "b" })` in one deployment throw.
+IDs must be name-safe: 1 to 64 letters (`A-Z`, `a-z`), digits, hyphens or underscores. These are the characters AWS allows in Lambda function names. `$lambda` and `lambda()` only accept string literals that follow this rule, and throw at runtime if they get anything else. Two Lambda functions in one deployment can't share an ID. IDs that differ only in case, like `myFn` and `myfn`, are two IDs. Two Lambda functions can't set the same `name` either, so `$lambda({ id: "a", name: "b" })` and `$lambda({ id: "c", name: "b" })` in one deployment throw.
 
 ## `lambda(config)`
 

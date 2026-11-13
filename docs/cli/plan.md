@@ -46,6 +46,8 @@ When an earlier deploy started the create of a resource and did not finish it, s
 
 If the earlier create made the resource, deploy takes it over: it reads the resource, and then updates, replaces or keeps it. Otherwise deploy creates the resource. See [Recoverable creates](../internals/reconciler.md#recoverable-creates).
 
+Deploy generates the AWS name of a resource whose declaration has no `name`, when it first creates the resource. In the JSON output, the `params` of such a resource show the name as `{ "$unknown": "after-apply" }` until the resource exists. The same holds for a resource that deploy replaces, because the replacement gets a new name. The plan of a replace does not list the name among the fields that change. See [Generated names](../manual/project-config.md#generated-names).
+
 ## JSON output
 
 `--json` writes the complete plan to stdout. Build output and diagnostics move to stderr.

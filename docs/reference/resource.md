@@ -166,10 +166,51 @@ All schema items carry these fields:
 - `rejectReplace` – a function `(previous, desired) => string`. When a change to the param would replace the resource, plan and deploy fail with the returned message. Use it for a param that the user can change by accident, on a resource whose delete loses data.
 - `primaryKey` / `secondaryKey` – together form the compound key used for read/update/delete.
 - `collect` – makes the param collected, and combines what is contributed to it. See [Contributions](#contributions).
+- `physicalName` – marks the param as the resource's physical name, with the rule of the provider's names. Config can leave the param out, and deploy then generates the name. See [Physical names](#physical-names).
 
 **`computed`**
 
 - `primaryKey` – identifies the resource (e.g. `FunctionArn` returned by `create`).
+
+### Physical names
+
+A resource's physical name is its name in the provider, such as a queue's `QueueName`. Mark the param that holds it with `physicalName`, and give it the rule of the provider's names:
+
+```ts
+QueueName: {
+  propertyType: "param",
+  presence: "required",
+  immutable: true,
+  value: v.string(),
+  physicalName: { maxLength: 80, requiredEnding: ".fifo", requiredEndingWhen: "FifoQueue" },
+},
+```
+
+The rule is a `PhysicalNameRule` from `@notation/resource`:
+
+| Field                | Required | Meaning                                                                                                                                                                         |
+| -------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxLength`          | yes      | The longest name the provider accepts.                                                                                                                                          |
+| `requiredEnding`     | no       | An ending that the provider requires on some names, such as `.fifo`.                                                                                                            |
+| `requiredEndingWhen` | no       | The name of a boolean param, such as `FifoQueue`. A generated name gets `requiredEnding` when the resource's params hold `true` for it. Without it, no generated name gets one. |
+
+A param with `physicalName` is optional in config, also when its `presence` is `required`:
+
+```ts
+new aws.sqs.Queue("sqs-queue:orders", { config: { FifoQueue: true } });
+// deploy names the queue my-app--prod--sqs-queue-orders-1a2b3c4d.fifo
+
+new aws.sqs.Queue("sqs-queue:orders", { config: { QueueName: "orders" } });
+// the queue is named orders
+```
+
+When config leaves the param out, deploy generates the name, `<app>--<stage>--<base>-<instance>`, from the app, the stage, the resource ID and 8 random hex characters. Deploy keeps the name in the state record, so later deploys use the same name, and a replacement gets a new one. The params that an operation receives always hold the name. Plan shows the name as unknown until the resource exists. See [Generated names](../internals/reconciler.md#generated-names) for the steps and their limits.
+
+**Only config supplies a `physicalName` param.** When config leaves the param out and `deriveParams` returns a value for it, plan and deploy throw. Deploy decides from config alone whether to generate the name, and a generated or recorded name would replace the derived one.
+
+**A dependent reads the name through an output ref.** `resource.config` does not hold a generated name, so another resource can't copy the name from it. It takes `role.outputRef("RoleName")` instead, which deploy fills in once the role exists; see [Output refs](#output-refs). At plan the ref is unknown until then. A construct that wants plan to know a name that config does provide can pass the config value when there is one, as the EventBridge rule does with `bus.bus.config.Name ?? bus.name`.
+
+**Use `scopedPhysicalName` for a name that the user provides.** A construct that takes a `name` option from the user builds the physical name with `scopedPhysicalName(name, rule)` from `@notation/resource`, and puts the result in config, so deploy generates nothing. It returns `<app>--<stage>--<name>`, shortened with a hash when it is longer than `rule.maxLength`. This name is the same on every deploy, and two declarations with the same `name` get the same one, so the construct must check that no two declarations provide the same name. `scopedPhysicalName` is also the tool for a name on a resource class whose param has no `physicalName`, as `@notation/cloudflare` names a Worker.
 
 ### Value types
 
@@ -350,7 +391,7 @@ create: awsCreate(
 
 When the provider's create call overwrites or returns an existing resource instead of failing, as `PutRule` and `CreateQueue` do, `create` must check for the resource first and throw `ResourceAlreadyExistsError` itself.
 
-**Name each resource with `scopedPhysicalName`.** The reconciler does not check who made the existing resource. It takes over any resource with the same key, and then updates or replaces it to match config. This is only safe when no other deployment can use the key. `scopedPhysicalName(name, rule)` from `@notation/resource` returns `<app>--<stage>--<name>`, shortened with a hash when it is longer than `rule.maxLength`, so a resource with that name belongs to the same app and stage. A resource that lives inside another resource, such as a route in an API, needs no prefix when its parent's name has one.
+**Start each resource's name with the app and the stage.** The reconciler does not check who made the existing resource. It takes over any resource with the same key, and then updates or replaces it to match config. This is only safe when no other deployment can use the key. A name that deploy generates for a `physicalName` param starts with `<app>--<stage>--`, and so does a name from `scopedPhysicalName`, so a resource with either name belongs to the same app and stage. See [Physical names](#physical-names). A resource that lives inside another resource, such as a route in an API, needs no prefix when its parent's name has one.
 
 See [Recoverable creates](../internals/reconciler.md#recoverable-creates) for the takeover steps and their limits.
 
