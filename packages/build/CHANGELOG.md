@@ -1,5 +1,11 @@
 # @notation/build
 
+## 0.18.0
+
+### Patch Changes
+
+- @notation/core@0.18.0
+
 ## 0.17.0
 
 ### Minor Changes
