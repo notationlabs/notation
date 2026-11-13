@@ -1,7 +1,7 @@
 {
   "type": "module",
   "name": "@notation/resource",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

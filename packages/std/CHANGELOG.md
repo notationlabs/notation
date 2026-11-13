@@ -1,5 +1,93 @@
 # @notation/std
 
+## 0.17.0
+
+### Minor Changes
+
+- e4f4157: `resource()` now requires `provider`, the name of the package that exports the resource class. Each state record stores it, so that deploy and destroy can delete a record whose type is no longer in code.
+
+  ```ts
+  const queue = resource<QueueSchema>({
+    type: "aws/sqs/Queue",
+    provider: "@notation/aws/resources",
+  });
+  ```
+
+  This breaks every resource class outside this repository: a class without `provider` fails type checking.
+
+  - A provider is a package or a package subpath that exports resource classes, or namespaces of them. Its entry has a `default` condition in `exports`, so that it can be resolved with `require` conditions. `@notation/aws/resources` and `@notation/std/resources` do both.
+  - `planApp`, `deployApp` and `destroyApp` in `@notation/core` load the provider packages of the state records whose type has no class in code. A package that can't be resolved or that throws on import is skipped with a `reconciler.provider.load-failed` warning, and its records stay in state.
+  - Before, an orphan whose type was no longer in code was left in place. Deploy now deletes it through the class of its provider package. This removes the limit on renaming an EventBridge bus in the deploy that removes its last rule.
+  - A resource whose ID is that of a state record of another type fails plan, deploy and destroy with `ResourceTypeChangedError`, before any change. A provider that changes a resource's type must give it a new ID.
+  - State written by an earlier version is not supported, as its records have no `provider`. Destroy the stack with the earlier version before you upgrade.
+
+- 1cce9df: The AWS resource classes move from `@notation/aws.iac` to `@notation/aws/resources`. The standard resource classes move from `@notation/std.iac` to `@notation/std/resources`. `@notation/aws.iac` and `@notation/std.iac` are no longer published.
+
+  ```ts
+  import { lambda, sqs } from "@notation/aws/resources";
+  import { fs } from "@notation/std/resources";
+  ```
+
+  - A provider is a package or a package subpath, such as `@notation/aws/resources`. Deploy and destroy register each resource class among the entry's exports and among the values of each exported namespace, if the class declares that provider. Other exports are ignored.
+  - A provider name can contain only letters, digits, `_`, `.`, `~` and `-`, with `@` before a scope and `/` between segments. A segment can't start with a dot.
+  - `resourceClasses` is removed from both packages, and `resourceClassesIn` is removed from `@notation/resource`.
+  - `@notation/aws/shared` is removed. The handler types, such as `ApiGatewayHandler`, `SqsHandler` and `APIGatewayJWTProxyEventV2`, are exported from `@notation/aws/lambda`. `AwsResourceGroup` is no longer exported.
+
+- 6cec012: Every schema item has a required `value` validator (RFC 0006). It can be any Standard Schema, such as a valibot, Zod, ArkType or Effect schema. The engine calls only `~standard.validate`.
+
+  ```ts
+  MaxSessionDuration: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.number(),
+  },
+  ```
+
+  The validator's output type is the field's type, and TypeScript checks it against the API schema's type for the field. `value` replaces `valueType`, and `typed` is removed.
+
+  The engine validates config when a resource is declared, known params at plan, known params before deploy changes anything, each resource's full params just before its operation, and every `create` and `read` result. An invalid value raises `ValueValidationError`, which names the resource, the field and the call site that declared the resource. A malformed read fails the plan or deploy. A value that holds an unknown, such as a policy document with one output ARN, is validated with the unknown in place, and only the issues that the unknown could cause are dropped.
+
+  The engine also raises `SchemaStructureError` when params hold a field that is not a param, when `create` returns a field that is not computed, when params leave out a required param, or when a required computed field is missing after create or update. A later deploy that finds the output missing from the record reads the resource again, and fails while the output is still missing.
+
+  The resources in `@notation/aws/resources` now reject values that AWS would reject: a value not in the SDK's list for an enum field, an SQS queue attribute outside its range, a `TimeoutInMillis` that is not an integer, and a role policy document that does not follow the IAM policy grammar. `InvocationType` is removed from `LambdaApiPermission` and `LambdaEventBridgeRulePermission`, because `AddPermission` does not accept it and the SDK dropped it.
+
+  Known limit: string-union fields are checked against the SDK's list of values. A value that AWS adds after the pinned SDK version, such as a new Lambda runtime, fails validation. A read that returns such a value fails the plan. It also fails every deploy of the stack, including a deploy with no changes, because drift detection reads each unchanged resource. This lasts until the SDK is bumped, or until RFC 0009 makes malformed reads recoverable. Destroy still works, because delete does not read.
+
+### Patch Changes
+
+- ae3d823: The packages are built with tsdown instead of tsup. The entry points and their types are at the same paths. Shared code sits in chunks with different names, and imports of Node built-ins keep their `node:` prefix. The `@notation/aws` entry points now share chunks instead of each bundling its own copy, so they share module state.
+- 3fefade: `@notation/aws`, `@notation/std`, `@notation/resource` and `@notation/utils` declare `"sideEffects": false`. A bundler can now drop these packages from a Lambda bundle when the runtime code doesn't use them.
+
+  `@notation/aws/resources` constructs each AWS SDK client when it is first used, not when the module loads. `@notation/aws/resources` and `@notation/std/resources` import the project path helpers from the new `@notation/core/paths` subpath, so they no longer load the deploy engine, esbuild, pino and yieldstar.
+
+  The starter template sets `"types": ["node"]` and installs `@types/node`. It used to get the Node types through `@notation/core`.
+
+- Updated dependencies [ae3d823]
+- Updated dependencies [614ce3f]
+- Updated dependencies [ce76cd5]
+- Updated dependencies [ce76cd5]
+- Updated dependencies [d93d65a]
+- Updated dependencies [d00b769]
+- Updated dependencies [9d669fc]
+- Updated dependencies [35206ce]
+- Updated dependencies [8839f28]
+- Updated dependencies [f490162]
+- Updated dependencies [e9da750]
+- Updated dependencies [e4f4157]
+- Updated dependencies [f490162]
+- Updated dependencies [7eb8766]
+- Updated dependencies [1cce9df]
+- Updated dependencies [ce76cd5]
+- Updated dependencies [3fefade]
+- Updated dependencies [ce76cd5]
+- Updated dependencies [121442b]
+- Updated dependencies [4776f9f]
+- Updated dependencies [6cec012]
+- Updated dependencies [f490162]
+  - @notation/core@0.17.0
+  - @notation/resource@0.17.0
+  - @notation/utils@0.17.0
+
 ## 0.16.0
 
 ### Minor Changes
