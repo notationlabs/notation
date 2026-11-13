@@ -35,19 +35,26 @@ const TOKENS = "/client/v4/accounts/acc/tokens";
 const SECRETS = "/client/v4/accounts/acc/secrets_store/stores/store/secrets";
 const VALUE = "token-value-sentinel";
 
-const policies = [
-  {
-    effect: "allow" as const,
-    permissionGroups: ["Workers Scripts Write"],
-    resources: { "com.cloudflare.api.account.acc": "*" },
+const policy = (permissionGroups: string[], resources = ACCOUNT) => ({
+  effect: "allow" as const,
+  permissionGroups,
+  resources,
+});
+
+const ACCOUNT = { "com.cloudflare.api.account.acc": "*" };
+const ZONES = {
+  "com.cloudflare.api.account.acc": {
+    "com.cloudflare.api.account.zone.*": "*",
   },
-];
+};
+
+const policies = [policy(["Workers Scripts Write"])];
 
 const params = {
   AccountId: "acc",
   StoreId: "store",
   Name: "shop--dev--deploy",
-  Policies: policies,
+  Policies: [policy(["g1"])],
 };
 
 const key = {
@@ -57,13 +64,31 @@ const key = {
   TokenId: "t1",
 };
 
-const token = new AccountToken("token:deploy", {
-  config: { Name: params.Name, Policies: policies },
-  dependencies: {} as any,
-});
+const tokenWith = (Policies: ReturnType<typeof policy>[]) =>
+  new AccountToken("token:deploy", {
+    config: { Name: params.Name, Policies },
+    dependencies: {
+      store: { output: { AccountId: "acc", StoreId: "store" } },
+    } as any,
+  });
+
+const token = tokenWith(policies);
+
+const LOGS_WRITE = [
+  {
+    id: "g-account",
+    name: "Logs Write",
+    scopes: ["com.cloudflare.api.account"],
+  },
+  {
+    id: "g-zone",
+    name: "Logs Write",
+    scopes: ["com.cloudflare.api.account.zone"],
+  },
+];
 
 type Routes = {
-  groups?: () => Response;
+  groups?: (name: string) => Response;
   createToken?: () => Response;
   getToken?: () => Response;
   listTokens?: (page: string) => Response;
@@ -79,8 +104,15 @@ function route(routes: Routes) {
     if (path === `${TOKENS}/permission_groups`) {
       return (
         routes.groups ??
-        (() => ok([{ id: "g1", name: "Workers Scripts Write" }]))
-      )();
+        (() =>
+          ok([
+            {
+              id: "g1",
+              name: "Workers Scripts Write",
+              scopes: ["com.cloudflare.api.account"],
+            },
+          ]))
+      )(call.url.searchParams.get("name")!);
     }
     if (path === TOKENS && call.method === "GET") {
       return (routes.listTokens ?? (() => ok([])))(
@@ -129,8 +161,6 @@ describe("AccountToken", () => {
 
     await expect(token.create(params)).resolves.toEqual({ TokenId: "t1" });
 
-    const groups = calls[0]!;
-    expect(groups.url.searchParams.get("name")).toBe("Workers Scripts Write");
     expect(calls.find((c) => c.url.pathname === TOKENS)).toMatchObject({
       method: "POST",
       body: {
@@ -172,15 +202,67 @@ describe("AccountToken", () => {
     expect(JSON.stringify(result)).not.toContain(VALUE);
   });
 
-  it("fails for a permission group that Cloudflare doesn't have, before it creates the token", async () => {
-    route({
-      groups: () => ok([{ id: "g2", name: "Workers Scripts Write Plus" }]),
+  describe("permission groups", () => {
+    it("replaces each name with the group's ID, and sorts the groups", async () => {
+      route({
+        groups: (name) =>
+          ok([{ id: name === "Workers Scripts Write" ? "g2" : "g1", name }]),
+      });
+
+      const params = await tokenWith([
+        policy(["Workers Scripts Write", "Account Settings Read"]),
+      ]).getParams();
+
+      expect(params.Policies).toEqual([policy(["g1", "g2"])]);
+      expect(calls.map((c) => c.url.searchParams.get("name")).sort()).toEqual([
+        "Account Settings Read",
+        "Workers Scripts Write",
+      ]);
     });
 
-    await expect(token.create(params)).rejects.toThrow(
-      `Cloudflare has no API token permission group named "Workers Scripts Write".`,
-    );
-    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    it("fails for a name that Cloudflare doesn't have", async () => {
+      route({
+        groups: () => ok([{ id: "g2", name: "Workers Scripts Write Plus" }]),
+      });
+
+      await expect(token.getParams()).rejects.toThrow(
+        `Cloudflare has no API token permission group named "Workers Scripts Write".`,
+      );
+    });
+
+    it("picks the group of a shared name by the scope of the resources", async () => {
+      route({ groups: () => ok(LOGS_WRITE) });
+
+      const account = await tokenWith([policy(["Logs Write"])]).getParams();
+      const zones = await tokenWith([
+        policy(["Logs Write"], ZONES as any),
+      ]).getParams();
+
+      expect(account.Policies[0]!.permissionGroups).toEqual(["g-account"]);
+      expect(zones.Policies[0]!.permissionGroups).toEqual(["g-zone"]);
+    });
+
+    it("lists the groups of a shared name that the scope doesn't pick", async () => {
+      route({ groups: () => ok(LOGS_WRITE) });
+      const both = { ...ACCOUNT, "com.cloudflare.api.account.zone.z1": "*" };
+
+      await expect(
+        tokenWith([policy(["Logs Write"], both)]).getParams(),
+      ).rejects.toThrow(
+        `More than one API token permission group is named "Logs Write", and the scope of the policy's resources doesn't pick one: g-account (com.cloudflare.api.account), g-zone (com.cloudflare.api.account.zone). Give each scope its own policy.`,
+      );
+    });
+
+    it("adds the permission it needs to a 403", async () => {
+      route({
+        groups: () =>
+          fail(403, 9109, "Unauthorized to access requested resource"),
+      });
+
+      await expect(token.getParams()).rejects.toThrow(
+        "it needs the Account API Tokens: Edit permission",
+      );
+    });
   });
 
   it("deletes the new token when its value can't be written", async () => {
@@ -243,7 +325,7 @@ describe("AccountToken", () => {
     ).toEqual([`${TOKENS}/lost-1`, `${TOKENS}/lost-2`]);
   });
 
-  it("reads the policies by name, and the ID of the secret", async () => {
+  it("reads the policies by group ID, and the ID of the secret", async () => {
     route({
       getToken: () =>
         ok({
@@ -252,7 +334,7 @@ describe("AccountToken", () => {
             {
               id: "p1",
               effect: "allow",
-              permission_groups: [{ id: "g1", name: "Workers Scripts Write" }],
+              permission_groups: [{ id: "g1" }],
               resources: { "com.cloudflare.api.account.acc": "*" },
             },
           ],
@@ -264,7 +346,7 @@ describe("AccountToken", () => {
     await expect(token.read!(key)).resolves.toEqual({
       ...key,
       SecretId: "s1",
-      Policies: policies,
+      Policies: params.Policies,
     });
   });
 
@@ -311,29 +393,10 @@ describe("AccountToken", () => {
     ]);
   });
 
-  it("adds the permission it needs to a 403", async () => {
-    route({
-      groups: () =>
-        fail(403, 9109, "Unauthorized to access requested resource"),
-    });
-
-    await expect(token.create(params)).rejects.toThrow(
-      "it needs the Account API Tokens: Edit permission",
-    );
-  });
-
   describe("drift", () => {
     const twoGroups = [
-      {
-        effect: "allow" as const,
-        permissionGroups: ["Workers Scripts Write", "Account Settings Read"],
-        resources: { "com.cloudflare.api.account.acc": "*" },
-      },
-      {
-        effect: "deny" as const,
-        permissionGroups: ["Workers KV Storage Write"],
-        resources: { "com.cloudflare.api.account.acc": "*" },
-      },
+      policy(["g2", "g1"]),
+      { ...policy(["g3"]), effect: "deny" as const },
     ];
 
     const readPolicies = (policies: typeof twoGroups) => {
@@ -343,10 +406,7 @@ describe("AccountToken", () => {
             name: params.Name,
             policies: policies.map((policy) => ({
               effect: policy.effect,
-              permission_groups: policy.permissionGroups.map((name) => ({
-                id: name,
-                name,
-              })),
+              permission_groups: policy.permissionGroups.map((id) => ({ id })),
               resources: policy.resources,
             })),
           }),

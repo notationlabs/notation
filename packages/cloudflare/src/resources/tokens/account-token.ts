@@ -15,8 +15,7 @@ import {
   findTokensByName,
   getToken,
   updateToken,
-  type Token,
-  type TokenPolicyRequest,
+  type TokenResources,
 } from "src/api/tokens";
 import type { SecretsStoreInstance } from "src/resources/secrets-store";
 
@@ -26,7 +25,7 @@ const policySchema = v.strictObject({
   effect: v.picklist(["allow", "deny"]),
   /**
    * The names of the permission groups, as Cloudflare lists them, such as
-   * `Workers Scripts Write`.
+   * `Workers Scripts Write`. `deriveParams` replaces each name with its ID.
    */
   permissionGroups: v.pipe(
     v.array(v.pipe(v.string(), v.nonEmpty())),
@@ -120,9 +119,8 @@ const accountTokenSchema = accountToken.defineSchema({
  * Create writes the new token's value into the secret in the same step,
  * because Cloudflare returns the value only in the create's response. A
  * create with an unknown outcome deletes the tokens with the name, and runs
- * again. A
- * change to the policies updates the token in place, and the token keeps
- * its value. Delete deletes the token and its secret.
+ * again. A change to the policies updates the token in place, and the token
+ * keeps its value. Delete deletes the token and its secret.
  *
  * Read fails when the secret is missing, as the value can't be fetched
  * again. The token has to be rotated.
@@ -130,10 +128,9 @@ const accountTokenSchema = accountToken.defineSchema({
 export const AccountToken = accountTokenSchema
   .defineOperations({
     create: async (params) => {
-      const policies = await policyRequests(params.AccountId, params.Policies);
       const token = await cloudflareCreate(createToken)(params.AccountId, {
         name: params.Name,
-        policies,
+        policies: policyRequests(params.Policies),
       });
       recordSecretValue(token.value);
       try {
@@ -187,18 +184,23 @@ export const AccountToken = accountTokenSchema
           `The secret ${key.Name}, which holds the value of the API token ${key.TokenId}, isn't in the Secrets Store ${key.StoreId}. Cloudflare returns a token's value only when it creates the token, so the secret can't be written again. Rotate the token: change the id of its accountToken() declaration, and deploy.`,
         );
       }
-      const policies = readPolicies(token);
       return {
         ...key,
         SecretId: secret.id,
-        ...(policies ? { Policies: policies } : {}),
+        Policies: sortedPolicies(
+          token.policies.map((policy) => ({
+            effect: policy.effect,
+            permissionGroups: policy.permission_groups.map(({ id }) => id),
+            resources: policy.resources,
+          })),
+        ),
       };
     },
 
     update: async (key, _patch, params) => {
       await updateToken(key.AccountId, key.TokenId, {
         name: params.Name,
-        policies: await policyRequests(params.AccountId, params.Policies),
+        policies: policyRequests(params.Policies),
       });
     },
 
@@ -208,60 +210,65 @@ export const AccountToken = accountTokenSchema
     },
   })
   .requireDependencies<AccountTokenDependencies>()
-  .deriveParams(async ({ deps }) => ({
-    AccountId: deps.store.output.AccountId,
-    StoreId: deps.store.output.StoreId,
-  }));
+  .deriveParams(async ({ config, deps }) => {
+    const { AccountId, StoreId } = deps.store.output;
+    const Policies = await resolvePolicies(AccountId, config.Policies);
+    // The cast keeps Policies in the config, where the groups have names.
+    return { AccountId, StoreId, Policies } as typeof deps.store.output;
+  });
 
 export type AccountTokenInstance = InstanceType<typeof AccountToken>;
 
-/** The policies of a request, with each permission group by ID. */
-async function policyRequests(
-  account: string,
-  policies: AccountTokenPolicy[],
-): Promise<TokenPolicyRequest[]> {
-  const names = [...new Set(policies.flatMap((p) => p.permissionGroups))];
-  const ids = new Map<string, string[]>();
-  await Promise.all(
-    names.map(async (name) => {
-      const groups = await findPermissionGroups(account, name);
-      if (groups.length === 0) {
-        throw new Error(
-          `Cloudflare has no API token permission group named "${name}". Use the name that the dashboard shows when you create a token, such as "Workers Scripts Write".`,
-        );
-      }
-      ids.set(
-        name,
-        groups.map((group) => group.id),
-      );
-    }),
-  );
-  return policies.map((policy) => ({
+const policyRequests = (policies: AccountTokenPolicy[]) =>
+  policies.map((policy) => ({
     effect: policy.effect,
-    permission_groups: policy.permissionGroups.flatMap((name) =>
-      ids.get(name)!.map((id) => ({ id })),
-    ),
+    permission_groups: policy.permissionGroups.map((id) => ({ id })),
     resources: policy.resources,
   }));
+
+/** The policies, with each permission group's name replaced by its ID. */
+async function resolvePolicies(
+  account: string,
+  policies: AccountTokenPolicy[],
+): Promise<AccountTokenPolicy[]> {
+  const resolved = policies.map(async (policy) => ({
+    ...policy,
+    permissionGroups: await Promise.all(
+      policy.permissionGroups.map((name) =>
+        groupId(account, name, policy.resources),
+      ),
+    ),
+  }));
+  return sortedPolicies(await Promise.all(resolved));
 }
 
 /**
- * The token's policies in the form of the params, or `undefined` when a
- * permission group has no name, as the policies then can't be compared.
+ * A name can belong to one group for each scope. A resource's scope is its
+ * key without the last part, or for an account that holds zones, the scope
+ * of the zones.
  */
-function readPolicies(token: Token): AccountTokenPolicy[] | undefined {
-  if (!token.policies) return undefined;
-  const policies: AccountTokenPolicy[] = [];
-  for (const policy of token.policies) {
-    const names = policy.permission_groups.map((group) => group.name);
-    if (names.some((name) => name === undefined)) return undefined;
-    policies.push({
-      effect: policy.effect,
-      permissionGroups: names as string[],
-      resources: policy.resources,
-    });
+async function groupId(
+  account: string,
+  name: string,
+  resources: TokenResources,
+): Promise<string> {
+  const groups = await findPermissionGroups(account, name);
+  const scopes = Object.entries(resources)
+    .flatMap(([key, value]) =>
+      typeof value === "object" ? Object.keys(value) : [key],
+    )
+    .map((key) => key.slice(0, key.lastIndexOf(".")));
+  const fits = groups.filter((group) =>
+    scopes.every((scope) => group.scopes?.includes(scope)),
+  );
+  if (groups.length === 1 || fits.length === 1) {
+    return (fits[0] ?? groups[0])!.id;
   }
-  return sortedPolicies(policies);
+  throw new Error(
+    groups.length === 0
+      ? `Cloudflare has no API token permission group named "${name}". Use the name that the dashboard shows when you create a token, such as "Workers Scripts Write".`
+      : `More than one API token permission group is named "${name}", and the scope of the policy's resources doesn't pick one: ${groups.map((group) => `${group.id} (${group.scopes?.join(", ")})`).join(", ")}. Give each scope its own policy.`,
+  );
 }
 
 /**

@@ -98,6 +98,7 @@ export const worker = $worker({
 | `policies` | What the token can do. Each policy has an `effect`, `allow` or `deny`, the names of its `permissionGroups` as the dashboard shows them, and the `resources` it applies to. A change updates the token in place. |
 
 - A change to the policies updates the token, which keeps its value.
+- Plan looks up the ID of each permission group by its name, and compares the IDs with the token's. A name can belong to more than one group, one for each scope. Then the scope of the policy's `resources` picks the group: `com.cloudflare.api.account.<account id>` picks the account group, and `com.cloudflare.api.account.zone.<zone id>` picks the zone group. If the resources have more than one scope, plan fails and lists the groups. Give each scope its own policy.
 - If the token's secret is deleted, plan fails, because the value can't be fetched again. Rotate the token by changing its `id`.
 - Destroy deletes the token and its secret.
 - `notation secret set` and `notation secret delete` refuse a token's secret.

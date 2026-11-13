@@ -18,7 +18,7 @@ const isNotFound = (error: unknown): boolean =>
  */
 export type TokenResources = Record<string, string | Record<string, string>>;
 
-export type TokenPolicyRequest = {
+export type TokenPolicy = {
   effect: "allow" | "deny";
   permission_groups: { id: string }[];
   resources: TokenResources;
@@ -26,20 +26,13 @@ export type TokenPolicyRequest = {
 
 export type TokenRequest = {
   name: string;
-  policies: TokenPolicyRequest[];
+  policies: TokenPolicy[];
 };
 
 /** The fields of a token that the read uses. */
-export type Token = {
-  name: string;
-  policies?: {
-    effect: "allow" | "deny";
-    permission_groups: { id: string; name?: string }[];
-    resources: TokenResources;
-  }[];
-};
+export type Token = { policies: TokenPolicy[] };
 
-export type PermissionGroup = { id: string; name: string };
+export type PermissionGroup = { id: string; name: string; scopes?: string[] };
 
 const tokensPath = (account: string) =>
   `/accounts/${encodeURIComponent(account)}/tokens`;
