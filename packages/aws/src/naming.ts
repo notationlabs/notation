@@ -14,8 +14,7 @@ export const nameRules = {
   // [a-zA-Z0-9-_], a FIFO queue's name ends in .fifo
   sqsQueue: {
     maxLength: 80,
-    requiredEnding: ".fifo",
-    requiredEndingWhen: "FifoQueue",
+    ending: (params) => (params.FifoQueue === true ? ".fifo" : ""),
     base: nameBase,
   },
   // [.\-_A-Za-z0-9], unique per event bus

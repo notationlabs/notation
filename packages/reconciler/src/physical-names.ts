@@ -59,7 +59,7 @@ export function recordedNames(
  * Makes a name with a new random instance for each of `fields`. The result
  * differs on every call, so deploy calls this inside a step.
  * @param params The resource's params, which decide a name's ending when
- * its rule has `requiredEndingWhen`.
+ * its rule has `ending`.
  */
 export function generateNames(
   resource: BaseResource,

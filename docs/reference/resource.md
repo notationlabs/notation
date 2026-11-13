@@ -184,8 +184,7 @@ QueueName: {
   value: v.string(),
   physicalName: {
     maxLength: 80,
-    requiredEnding: ".fifo",
-    requiredEndingWhen: "FifoQueue",
+    ending: (params) => (params.FifoQueue === true ? ".fifo" : ""),
     // "sqs-queue:orders" gives "orders"
     base: (resourceId) => resourceId.slice(resourceId.indexOf(":") + 1),
   },
@@ -194,12 +193,11 @@ QueueName: {
 
 The rule is a `PhysicalNameRule` from `@notation/resource`:
 
-| Field                | Required | Meaning                                                                                                                                                                                                 |
-| -------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `maxLength`          | yes      | The longest name the provider accepts.                                                                                                                                                                  |
-| `requiredEnding`     | no       | An ending that the provider requires on some names, such as `.fifo`.                                                                                                                                    |
-| `requiredEndingWhen` | no       | The name of a boolean param, such as `FifoQueue`. A generated name gets `requiredEnding` when the resource's params hold `true` for it. Without it, no generated name gets one.                         |
-| `base`               | no       | A function that takes the resource ID and returns the base of a generated name. Use it to leave a part of the ID out of the name, such as a type prefix. Without it, the base is the whole resource ID. |
+| Field       | Required | Meaning                                                                                                                                                                                                 |
+| ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxLength` | yes      | The longest name the provider accepts.                                                                                                                                                                  |
+| `ending`    | no       | A function that takes the resource's params and returns the ending that the provider requires on the name, such as `.fifo`, or `""` for none. Without it, a generated name has no ending.               |
+| `base`      | no       | A function that takes the resource ID and returns the base of a generated name. Use it to leave a part of the ID out of the name, such as a type prefix. Without it, the base is the whole resource ID. |
 
 **The reconciler owns the physical name.** A resource class declares all of the provider's fields, including the name field, such as `FunctionName`, `RoleName` or `QueueName`. The reconciler generates the value of the name field from the resource ID. Config cannot set it: the config type leaves the param out, also when its `presence` is `required`. The params, the state record and the outputs still hold it.
 

@@ -10,15 +10,11 @@ export type PhysicalNameRule = {
   /** The longest name the service accepts. */
   maxLength: number;
   /**
-   * An ending the service requires, such as `.fifo`. When the name ends with
-   * it, the ending stays at the end after the name is shortened.
+   * Returns the ending that the service requires on a generated name, such
+   * as `.fifo`, or `""` for none. It takes the resource's params. Without
+   * it, a generated name has no ending.
    */
-  requiredEnding?: string;
-  /**
-   * The name of a boolean param, such as `FifoQueue`. A generated name gets
-   * `requiredEnding` when the resource's params hold `true` for it.
-   */
-  requiredEndingWhen?: string;
+  ending?: (params: Record<string, unknown>) => string;
   /**
    * Maps the resource ID to the base of a generated name. Without it, the
    * base is the whole resource ID.
@@ -54,23 +50,18 @@ export function physicalName(
   name: string,
   rule: PhysicalNameRule,
 ): string {
-  const ending =
-    rule.requiredEnding && name.endsWith(rule.requiredEnding)
-      ? rule.requiredEnding
-      : "";
   const full = scope ? `${scope.app}--${scope.stage}--${name}` : name;
   if (full.length <= rule.maxLength) return full;
 
-  const body = full.slice(0, full.length - ending.length);
   const hash = fnv1a(full);
-  const room = rule.maxLength - ending.length - HASH_LENGTH - 1;
+  const room = rule.maxLength - HASH_LENGTH - 1;
   if (room < 1) {
     throw new Error(
       `A maximum length of ${rule.maxLength} leaves no room for a shortened name`,
     );
   }
-  const prefix = body.slice(0, room).replace(/[-_.]+$/, "");
-  return `${prefix}-${hash}${ending}`;
+  const prefix = full.slice(0, room).replace(/[-_.]+$/, "");
+  return `${prefix}-${hash}`;
 }
 
 /**
@@ -83,8 +74,7 @@ export function physicalName(
  *
  * When the name is longer than `rule.maxLength`, the part before the
  * instance is cut short, and the instance stays whole. The name ends with
- * `rule.requiredEnding`, after the instance, when `params` hold `true` for
- * `rule.requiredEndingWhen`.
+ * the result of `rule.ending` for `params`, after the instance.
  */
 export function generatedPhysicalName(
   scope: NameScope,
@@ -93,11 +83,7 @@ export function generatedPhysicalName(
   rule: PhysicalNameRule,
   params: Record<string, unknown>,
 ): string {
-  const ending =
-    (rule.requiredEndingWhen &&
-      params[rule.requiredEndingWhen] === true &&
-      rule.requiredEnding) ||
-    "";
+  const ending = rule.ending?.(params) ?? "";
   const base = (rule.base ? rule.base(resourceId) : resourceId)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")

@@ -61,16 +61,6 @@ it("does not leave a separator before the hash", () => {
   expect(result).toMatch(/^orders-app--prod--ab-[0-9a-f]{8}$/);
 });
 
-it("keeps a required ending at the end of a shortened name", () => {
-  const name = `${"q".repeat(80)}.fifo`;
-  const result = physicalName(scope, name, {
-    maxLength: 80,
-    requiredEnding: ".fifo",
-  });
-  expect(result).toHaveLength(80);
-  expect(result).toMatch(/^orders-app--prod--q+-[0-9a-f]{8}\.fifo$/);
-});
-
 it("scopes names by the app and stage of the active collection", async () => {
   let name = "";
   await collectResourceGraph(
@@ -160,11 +150,11 @@ it("does not end the shortened part of a generated name with a hyphen", () => {
   expect(result).toBe("orders-app--prod--lambda-1a2b3c4d");
 });
 
-it("ends a generated name with the required ending when the rule's param is true", () => {
+it("ends a generated name with the result of the rule's ending for the params", () => {
   const rule = {
     maxLength: 80,
-    requiredEnding: ".fifo",
-    requiredEndingWhen: "FifoQueue",
+    ending: (params: Record<string, unknown>) =>
+      params.FifoQueue === true ? ".fifo" : "",
   };
   const generate = (params: Record<string, unknown>, maxLength = 80) =>
     generatedPhysicalName(

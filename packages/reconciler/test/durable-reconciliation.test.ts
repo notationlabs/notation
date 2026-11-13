@@ -6509,8 +6509,8 @@ describe("generated physical names", () => {
           value: v.string(),
           physicalName: {
             maxLength: 64,
-            requiredEnding: ".fifo",
-            requiredEndingWhen: "fifo",
+            ending: (params: Record<string, unknown>) =>
+              params.fifo === true ? ".fifo" : "",
           },
         },
         path: {
