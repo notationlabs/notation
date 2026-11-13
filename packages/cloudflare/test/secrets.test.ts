@@ -8,7 +8,13 @@ import {
   vi,
 } from "vitest";
 import type * as cf from "@cloudflare/workers-types";
-import { setConfigFile } from "@notation/core";
+import {
+  Redacted,
+  runWithSecretContext,
+  secretContext,
+  setConfigFile,
+  type Source,
+} from "@notation/core";
 import {
   collectResourceGraph,
   declaredIn,
@@ -52,6 +58,12 @@ const worker = (graph: ResourceGraph, id: string): WorkerGroup =>
     (g) => isWorkerGroup(g) && g.id === id,
   ) as WorkerGroup;
 
+const vault: Source = {
+  name: "vault",
+  has: async () => true,
+  get: async () => new Redacted("x"),
+};
+
 const policies = [
   {
     effect: "allow" as const,
@@ -80,7 +92,9 @@ describe("secret", () => {
     expect(group.secret.config).toEqual({
       Name: "shop--dev--stripe-key",
       StageScoped: true,
+      ValueFrom: { Secret: "stripe-key", Source: "prompt" },
     });
+    expect(group.value).toBeUndefined();
     expect(group.secret.dependencies.store).toBe(store.store);
     expect(store.store.id).toBe("secrets-store");
   });
@@ -91,7 +105,7 @@ describe("secret", () => {
     });
     const group = groupOf<SecretGroup>(graph, "cloudflare/secret", "sentry");
 
-    expect(group.secret.config).toEqual({
+    expect(group.secret.config).toMatchObject({
       Name: "SENTRY_DSN",
       StageScoped: false,
     });
@@ -135,7 +149,75 @@ describe("secret", () => {
       StoreId: "store",
       Name: "shop--dev--stripe-key",
       StageScoped: true,
+      ValueFrom: { Secret: "stripe-key", Source: "prompt" },
     });
+  });
+
+  it("records its source and key in a SourceValue, and takes the version from it", async () => {
+    const graph = await collect(() => {
+      secret({ id: "stripe-key", source: vault, key: "STRIPE_KEY" });
+    });
+    const group = groupOf<SecretGroup>(
+      graph,
+      "cloudflare/secret",
+      "stripe-key",
+    );
+
+    expect(group.value!.id).toBe("value:stripe-key");
+    expect(group.value!.config).toEqual({ Source: "vault", Key: "STRIPE_KEY" });
+    expect(group.secret.getDependencies()).toContain(group.value);
+
+    group.secret.dependencies.store.setOutput({
+      AccountId: "acc",
+      StoreId: "store",
+    });
+    group.value!.setOutput({
+      Source: "vault",
+      Key: "STRIPE_KEY",
+      Version: "14",
+    });
+    expect((await group.secret.getParams()).ValueFrom).toEqual({
+      Secret: "stripe-key",
+      Source: "vault",
+      Key: "STRIPE_KEY",
+      Version: "14",
+    });
+  });
+
+  it("fails for a source without a key, or a key without a source", () => {
+    expect(() => secret({ id: "stripe-key", source: vault } as any)).toThrow(
+      `secret({ id: "stripe-key" }) has a source but no key. Give source and key together, or leave both out.`,
+    );
+    expect(() =>
+      secret({ id: "stripe-key", key: "STRIPE_KEY" } as any),
+    ).toThrow("has a key but no source");
+  });
+
+  it("declares secrets and tokens by id, and refuses to set a token's secret", async () => {
+    const declared = await runWithSecretContext(
+      { stage: "dev", runId: "run" },
+      async () => {
+        await collect(() => {
+          secret({ id: "stripe-key", source: vault, key: "STRIPE_KEY" });
+          secret({ id: "sentry", name: "SENTRY_DSN" });
+          accountToken({ id: "deploy", policies });
+        });
+        return secretContext()!.declared;
+      },
+    );
+
+    expect([...declared.keys()]).toEqual(["stripe-key", "sentry", "deploy"]);
+    expect(declared.get("stripe-key")).toMatchObject({
+      source: vault,
+      key: "STRIPE_KEY",
+    });
+    expect(declared.get("stripe-key")!.resource.id).toBe("secret:stripe-key");
+    expect(declared.get("sentry")!.refuseDelete).toContain(
+      "has the explicit name SENTRY_DSN",
+    );
+    expect(declared.get("deploy")!.refuseSet).toContain(
+      "is the secret of an API token",
+    );
   });
 
   it("fails for a name with a dot", async () => {
@@ -263,6 +345,7 @@ describe("secretsStore.bind", () => {
       StoreId: "store",
       Name: "shop--dev--stripe-key",
       StageScoped: true,
+      ValueFrom: { Secret: "stripe-key", Source: "prompt" },
       SecretId: "s1",
     });
     deployToken.setOutput({

@@ -3,6 +3,14 @@ import {
   ResourceCreationUnknownError,
   ResourceNotFoundError,
 } from "@notation/resource";
+import {
+  declareSecret,
+  Redacted,
+  runWithSecretContext,
+  type SecretContextOptions,
+  type Source,
+} from "@notation/core";
+import { collectResourceGraph } from "@notation/resource";
 import { SecretsStore, SecretsStoreSecret } from "src/resources/secrets-store";
 
 type Call = { method: string; url: URL; body: unknown };
@@ -122,15 +130,29 @@ describe("SecretsStore", () => {
 
 describe("SecretsStoreSecret", () => {
   const resource = new SecretsStoreSecret("secret:stripe-key", {
-    config: { Name: "shop--dev--stripe-key", StageScoped: true },
+    config: {
+      Name: "shop--dev--stripe-key",
+      StageScoped: true,
+      ValueFrom: { Secret: "stripe-key", Source: "prompt" },
+    },
     dependencies: {} as any,
   });
 
-  const params = {
+  const sourced = {
     AccountId: "acc",
     StoreId: "store",
     Name: "shop--dev--stripe-key",
     StageScoped: true,
+    ValueFrom: {
+      Secret: "stripe-key",
+      Source: "vault",
+      Key: "STRIPE_KEY",
+      Version: "14",
+    },
+  };
+  const params = {
+    ...sourced,
+    ValueFrom: { Secret: "stripe-key", Source: "prompt" },
   };
   const key = { AccountId: "acc", StoreId: "store", Name: params.Name };
 
@@ -141,36 +163,125 @@ describe("SecretsStoreSecret", () => {
     ...fields,
   });
 
-  it("finds a secret that exists, by name", async () => {
-    mockFetch(() =>
-      ok([listed({ id: "other", name: `${params.Name}-old` }), listed()]),
+  const vault: Source = {
+    name: "vault",
+    has: async () => true,
+    get: async () => new Redacted("sk_from_vault"),
+  };
+
+  // Runs `fn` as deploy does: with the secret declared, with a source or
+  // without one.
+  function deploying<T>(
+    fn: () => Promise<T>,
+    options: Partial<SecretContextOptions> & { source?: Source } = {},
+  ): Promise<T> {
+    const { source, ...context } = options;
+    return runWithSecretContext(
+      { stage: "dev", runId: "run", ...context },
+      async () => {
+        await collectResourceGraph(() =>
+          declareSecret({
+            id: "stripe-key",
+            resource,
+            ...(source ? { source, key: "STRIPE_KEY" } : {}),
+          }),
+        );
+        return fn();
+      },
     );
+  }
 
-    await resource.create(params);
+  const writes = () =>
+    calls
+      .filter((call) => call.method !== "GET")
+      .map(({ method, url, body }) => ({ method, path: url.pathname, body }));
 
-    expect(calls).toHaveLength(1);
+  it("creates a missing secret with its source's value, scoped to Workers", async () => {
+    mockFetch((call) => (call.method === "GET" ? ok([]) : ok([listed()])));
+
+    await deploying(() => resource.create(sourced), { source: vault });
+
     expect(calls[0]!.url.pathname).toBe(`${STORES}/store/secrets`);
     expect(Object.fromEntries(calls[0]!.url.searchParams)).toMatchObject({
       search: params.Name,
       page: "1",
     });
+    expect(writes()).toEqual([
+      {
+        method: "POST",
+        path: `${STORES}/store/secrets`,
+        body: [
+          { name: params.Name, value: "sk_from_vault", scopes: ["workers"] },
+        ],
+      },
+    ]);
   });
 
-  it("fails with the command that sets a secret that doesn't exist", async () => {
-    mockFetch(() => ok([listed({ status: "deleted" })]));
-
-    await expect(resource.create(params)).rejects.toThrow(
-      "The secret shop--dev--stripe-key isn't in the Secrets Store store of the Cloudflare account acc. Notation doesn't write secret values yet. Create the secret with `wrangler secrets-store secret create store --name shop--dev--stripe-key --scopes workers --remote`",
+  it("overwrites the value of a secret that exists, from its source", async () => {
+    mockFetch((call) =>
+      call.method === "GET"
+        ? ok([listed({ id: "other", name: `${params.Name}-old` }), listed()])
+        : ok(listed()),
     );
+
+    await deploying(() => resource.update!(key, sourced, sourced, {} as any), {
+      source: vault,
+    });
+
+    expect(writes()).toEqual([
+      {
+        method: "PATCH",
+        path: `${STORES}/store/secrets/s1`,
+        body: { value: "sk_from_vault" },
+      },
+    ]);
   });
 
-  it("fails before any request when the secret has a ValueFrom", async () => {
-    mockFetch(() => ok([listed()]));
+  it("asks for the value of a missing secret without a source", async () => {
+    mockFetch((call) =>
+      call.method === "GET" ? ok([listed({ status: "deleted" })]) : ok([]),
+    );
+    const prompt = vi.fn(async () => "hunter2");
 
-    await expect(
-      resource.create({ ...params, ValueFrom: { Source: "prompt" } }),
-    ).rejects.toThrow("can't write a secret's value");
-    expect(calls).toHaveLength(0);
+    await deploying(() => resource.create(params), { prompt });
+
+    expect(prompt).toHaveBeenCalledWith({ id: "stripe-key", stage: "dev" });
+    expect(writes()).toMatchObject([
+      { method: "POST", body: [{ name: params.Name, value: "hunter2" }] },
+    ]);
+  });
+
+  it("records a secret without a source that exists, without asking", async () => {
+    mockFetch(() => ok([listed()]));
+    const prompt = vi.fn(async () => "hunter2");
+
+    await deploying(() => resource.create(params), { prompt });
+    await deploying(() => resource.update!(key, params, params, {} as any), {
+      prompt,
+    });
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(writes()).toEqual([]);
+  });
+
+  it("overwrites a secret without a source with the value that notation secret set supplied", async () => {
+    mockFetch((call) => (call.method === "GET" ? ok([listed()]) : ok()));
+    const supplied = { id: "stripe-key", value: new Redacted("sk_set") };
+
+    await deploying(() => resource.create(params), { supplied });
+
+    expect(writes()).toMatchObject([
+      { method: "PATCH", body: { value: "sk_set" } },
+    ]);
+  });
+
+  it("fails with the command to run for a missing secret when no one can be asked", async () => {
+    mockFetch(() => ok([]));
+
+    await expect(deploying(() => resource.create(params))).rejects.toThrow(
+      "Secret `stripe-key` isn't set for stage dev. Run `notation secret set stripe-key --stage dev`.",
+    );
+    expect(writes()).toEqual([]);
   });
 
   it("reads the secret's ID by its name", async () => {

@@ -1,3 +1,4 @@
+import { declareSecret } from "@notation/core";
 import { ResourceGroup, scopedPhysicalName } from "@notation/resource";
 import * as cloudflare from "src/resources";
 import { sortedPolicies } from "src/resources/tokens/account-token";
@@ -40,6 +41,13 @@ export class AccountTokenGroup
         dependencies: { store: secretsStoreGroup().store },
       }),
     );
+    const refusal = `\`${config.id}\` is the secret of an API token, and only the token's create writes its value. To get a new value, rotate the token: change the id of its accountToken() declaration, and deploy.`;
+    declareSecret({
+      id: config.id,
+      resource: this.token,
+      refuseSet: refusal,
+      refuseDelete: refusal,
+    });
   }
 
   "~secret"() {

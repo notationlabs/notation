@@ -1,9 +1,20 @@
 import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
-import { deleteSecretByName, findSecretByName } from "src/api/secrets-store";
+import { getValue, isValueSupplied } from "@notation/std/sources";
+import {
+  createSecret,
+  deleteSecretByName,
+  findSecretByName,
+  setSecretValue,
+} from "src/api/secrets-store";
 import type { SecretsStoreInstance } from "./secrets-store";
 
+/** The `Source` of a secret whose value comes from the prompt. */
+export const PROMPT_SOURCE = "prompt";
+
 const valueFromSchema = v.object({
+  /** The id of the secret's declaration, which `getValue` takes. */
+  Secret: v.string(),
   /** The name of the source, such as `infisical`, or `prompt`. */
   Source: v.string(),
   /** The key that the source is asked for. */
@@ -24,7 +35,7 @@ type SecretsStoreSecretParams = {
    * secret. A secret with an explicit name was adopted, so delete leaves it.
    */
   StageScoped: boolean;
-  ValueFrom?: SecretValueFrom;
+  ValueFrom: SecretValueFrom;
 };
 
 export type SecretsStoreSecretSchema = {
@@ -73,7 +84,7 @@ const secretsStoreSecretSchema = secretsStoreSecret.defineSchema({
   },
   ValueFrom: {
     propertyType: "param",
-    presence: "optional",
+    presence: "required",
     value: valueFromSchema,
   },
   SecretId: {
@@ -83,38 +94,45 @@ const secretsStoreSecretSchema = secretsStoreSecret.defineSchema({
   },
 } as const);
 
-function missingSecretError(params: SecretsStoreSecretParams): Error {
-  return new Error(
-    `The secret ${params.Name} isn't in the Secrets Store ${params.StoreId} of the Cloudflare account ${params.AccountId}. Notation doesn't write secret values yet. Create the secret with \`wrangler secrets-store secret create ${params.StoreId} --name ${params.Name} --scopes workers --remote\`, or on the Secrets Store page of the Cloudflare dashboard, then deploy again.`,
-  );
-}
-
-// Writing a value needs the value sources of RFC 0017, which this version
-// doesn't have.
-function valueFromError(params: SecretsStoreSecretParams): Error {
-  return new Error(
-    `The secret ${params.Name} takes its value from ${params.ValueFrom?.Source}, but this version of @notation/cloudflare can't write a secret's value. Set the secret with wrangler or in the Cloudflare dashboard, and remove its ValueFrom.`,
-  );
+/**
+ * Writes the secret's value, fetched with `getValue`. It creates the secret,
+ * or overwrites the value of the one that exists. A secret whose value comes
+ * from the prompt is written only when it is missing, so that a value set
+ * with `notation secret set` before the first deploy is kept, unless
+ * `notation secret set` is the caller.
+ */
+async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
+  const { AccountId, StoreId, Name, ValueFrom } = params;
+  const existing = await findSecretByName(AccountId, StoreId, Name);
+  if (
+    existing &&
+    ValueFrom.Source === PROMPT_SOURCE &&
+    !isValueSupplied(ValueFrom.Secret)
+  ) {
+    return;
+  }
+  const value = (await getValue(ValueFrom.Secret)).unwrap();
+  if (existing) {
+    await setSecretValue(AccountId, StoreId, existing.id, value);
+  } else {
+    await createSecret(AccountId, StoreId, Name, value);
+  }
 }
 
 /**
  * A reference to a secret in a Cloudflare Secrets Store. Its record holds
- * where the secret is, and never its value.
+ * where the secret is and where its value comes from, and never the value.
  *
- * Create only finds a secret that already exists, and fails if there is
- * none. Read finds the secret by name, so a secret recreated outside
- * notation shows as a changed `SecretId`, and a deleted one as drift.
+ * Create and update write the value. A change to `ValueFrom`, such as a new
+ * version from the source, updates the secret. Read finds the secret by
+ * name, so a secret recreated outside notation shows as a changed
+ * `SecretId`, and a deleted one as drift, which the next deploy creates
+ * again.
  */
 export const SecretsStoreSecret = secretsStoreSecretSchema
   .defineOperations({
     create: async (params) => {
-      if (params.ValueFrom) throw valueFromError(params);
-      const secret = await findSecretByName(
-        params.AccountId,
-        params.StoreId,
-        params.Name,
-      );
-      if (!secret) throw missingSecretError(params);
+      await writeValue(params);
     },
 
     read: async (key) => {
@@ -130,7 +148,7 @@ export const SecretsStoreSecret = secretsStoreSecretSchema
     },
 
     update: async (_key, _patch, params) => {
-      if (params.ValueFrom) throw valueFromError(params);
+      await writeValue(params);
     },
 
     delete: async (key, state) => {
