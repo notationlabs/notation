@@ -23,15 +23,14 @@ export const todoApi = api({ id: "todo-api" });
 ```ts [@notation/aws/api-gateway]
 type ApiConfig = {
   id: string;
-  name?: string;
 };
 ```
 
-`id` keys the API in state, so changing it replaces the API. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. In AWS, the API is named `<app>--<stage>--<id>`, such as `my-app--prod--todo-api`.
+`id` keys the API in state, so changing it replaces the API. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the API's AWS name when it first creates the API, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--todo-api-1a2b3c4d`, where the instance is 8 random hex characters.
 
-`name` replaces the `id` in the AWS name, so `api({ id: "todo-api", name: "todos" })` is named `my-app--prod--todos`. See [AWS names](../../manual/project-config.md#aws-names).
+You can't set the API's AWS name. See [AWS names](../../manual/project-config.md#aws-names).
 
-The routes, integrations and permissions of an API take their state keys from the IDs that they connect. A route is keyed `api-route:<api id>:<METHOD> <path>`, such as `api-route:todo-api:POST /todos`, an integration `api-integration:<api id>:<lambda id>`, and a permission `api-permission:<api id>:<lambda id>`. So a change of `name` leaves them as they are.
+The routes, integrations and permissions of an API take their state keys from the IDs that they connect. A route is keyed `api-route:<api id>:<METHOD> <path>`, such as `api-route:todo-api:POST /todos`, an integration `api-integration:<api id>:<lambda id>`, and a permission `api-permission:<api id>:<lambda id>`.
 
 `api()` also makes the `$default` stage, which deploys each change.
 
@@ -348,18 +347,18 @@ In AWS, the authorizer is named after its `id`, such as `user-auth`, or after `n
 
 The authorizer owns its API Gateway authorizer resource. Each route of the authorizer requires its `scopes`.
 
-## Integrations and authorizers after an unknown create
+## Integrations after an unknown create
 
-After a create with an unknown outcome, Notation looks the resource up before it creates it again. An API is found by its `notation:create-token` tag, a route by its route key and a Lambda function by its name and the tag. An integration or authorizer has no tag and no unique key, so Notation cannot look it up. It is created again in two cases:
+Notation looks for an API, an authorizer or a route before it creates one, and takes over the one that it finds. After a create with an unknown outcome, it looks the resource up again before it creates it again. An API and an authorizer are found by name, and a route by its route key. An integration has no name and no unique key, so Notation cannot look it up. It is created again in two cases:
 
-1. The process stops after AWS creates the integration or authorizer and before Notation records it. The next run creates it again.
-2. `CreateIntegration` or `CreateAuthorizer` times out or gets a server error after AWS has created it. The deploy fails, and the next deploy creates it again.
+1. The process stops after AWS creates the integration and before Notation records it. The next run creates it again.
+2. `CreateIntegration` times out or gets a server error after AWS has created it. The deploy fails, and the next deploy creates it again.
 
-The extra integration or authorizer has no route pointing at it, so traffic is unaffected. Notation does not record it and does not delete it. Deleting the API deletes it.
+The extra integration has no route pointing at it, so traffic is unaffected. Notation does not record it and does not delete it. Deleting the API deletes it. An extra integration counts toward the quota of 300 integrations per API. Delete an extra one in the console if an API reaches its quota.
 
-An extra authorizer counts toward the quota of 10 authorizers per HTTP API, and an extra integration counts toward the quota of 300 integrations per API. Delete an extra one in the console if an API reaches its quota.
+An API can also be created twice, because AWS does not keep an API's name unique. Notation looks for the API's name with `GetApis` one second after a create with an unknown outcome, which is a `CreateApi` call that timed out or got a server error, or a process that stopped before Notation recorded the API. If AWS created the API and `GetApis` does not list it yet, Notation creates a second API. Notation records the second API and does not delete the first. A later lookup by name then fails, and its error lists the IDs of the APIs with the name. Delete all but one. The same holds for an authorizer, with `CreateAuthorizer` and `GetAuthorizers`.
 
-An API can also be created twice. Notation looks for the API's tag with `GetApis` one second after an unknown create. If AWS created the API and `GetApis` does not list it yet, Notation creates a second API. Notation records the second API and does not delete the first. A route created twice fails the deploy on its duplicate route key instead.
+A route is not created twice. API Gateway refuses a second route with the same route key, and deploy then finds the existing route by its route key and takes it over.
 
 ## Full example
 

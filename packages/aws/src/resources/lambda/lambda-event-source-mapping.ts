@@ -6,12 +6,12 @@ import {
 } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-lambda";
 import { lambdaClient } from "src/resources/utils/aws-clients";
-import {
-  CREATE_TOKEN_TAG,
-  createTokenTagValue,
-} from "src/resources/utils/create-token";
 import { awsCreate } from "src/resources/utils/errors";
-import { runLambdaMutation } from "src/resources/utils/lambda-mutation";
+import {
+  isLambdaAlreadyExists,
+  runLambdaMutation,
+} from "src/resources/utils/lambda-mutation";
+import { findOnlyInPages } from "src/resources/utils/paginate";
 import { AwsSchema } from "src/resources/utils/types";
 import type { LambdaRolePolicyInstance } from "./lambda-role-policy";
 
@@ -143,46 +143,45 @@ const TRANSITIONAL_STATES = new Set([
 
 export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
   .defineOperations({
-    // AWS assigns the UUID, so create tags the mapping with the create
-    // attempt, and `find` searches for that tag.
-    create: awsCreate(async (params, _context, token) => {
-      const command = new sdk.CreateEventSourceMappingCommand({
-        ...params,
-        Tags: token
-          ? { [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
-          : undefined,
-      });
-      const result = await runMappingMutation(() =>
-        lambdaClient().send(command),
-      );
-      return { UUID: result.UUID! };
-    }),
-
-    find: async (params, token) => {
-      const value = createTokenTagValue(token);
-      let Marker: string | undefined;
-      do {
-        const page = await lambdaClient().send(
-          new sdk.ListEventSourceMappingsCommand({
-            EventSourceArn: params.EventSourceArn,
-            FunctionName: params.FunctionName,
-            Marker,
-          }),
+    // Lambda refuses a second mapping of an SQS queue to the same function.
+    create: awsCreate(
+      async (params) => {
+        const command = new sdk.CreateEventSourceMappingCommand(params);
+        const result = await runMappingMutation(() =>
+          lambdaClient().send(command),
         );
-        for (const mapping of page.EventSourceMappings ?? []) {
-          const { Tags } = await lambdaClient().send(
-            new sdk.ListTagsCommand({
-              Resource: mapping.EventSourceMappingArn,
+        return { UUID: result.UUID! };
+      },
+      { alreadyExists: isLambdaAlreadyExists },
+    ),
+
+    // AWS assigns the UUID, so `find` matches on the function and the event
+    // source. This class supports one mapping per function and source.
+    // Lambda allows several mappings of one stream to one function, and
+    // `find` fails when it finds more than one. A mapping that is being
+    // deleted still shows in the list for a while, and is left out, so that
+    // a create that follows a delete does not take it over.
+    find: async (params) => {
+      const mapping = await findOnlyInPages(
+        async (Marker) => {
+          const page = await lambdaClient().send(
+            new sdk.ListEventSourceMappingsCommand({
+              EventSourceArn: params.EventSourceArn,
+              FunctionName: params.FunctionName,
+              Marker,
             }),
           );
-          if (Tags?.[CREATE_TOKEN_TAG] === value)
-            return { UUID: mapping.UUID! };
-        }
-        Marker = page.NextMarker;
-      } while (Marker);
-      throw new ResourceNotFoundError(
-        "No event source mapping has the create token",
+          return {
+            Items: page.EventSourceMappings,
+            NextToken: page.NextMarker,
+          };
+        },
+        (item) => item.State !== "Deleting",
+        `event source mapping from ${params.EventSourceArn} to the ` +
+          `function ${params.FunctionName}`,
+        (item) => item.UUID!,
       );
+      return { UUID: mapping.UUID! };
     },
 
     read: async (key) => {

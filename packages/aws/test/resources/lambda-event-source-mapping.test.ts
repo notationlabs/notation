@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-lambda";
 import {
+  ResourceAlreadyExistsError,
+  ResourceNotFoundError,
   ResourceOperationPendingError,
   ValueValidationError,
 } from "@notation/resource";
@@ -38,6 +40,101 @@ describe("LambdaEventSourceMapping", () => {
     await expect(
       createMapping().create({ EventSourceArn: queueArn, FunctionName: "app" }),
     ).rejects.toBeInstanceOf(ResourceOperationPendingError);
+  });
+
+  it("reports a second mapping of a queue to the function as already existing", async () => {
+    mockSend(() => {
+      throw new sdk.ResourceConflictException({
+        message:
+          'An event source mapping with SQS arn (" ' +
+          queueArn +
+          ' ") and function (" app ") already exists. Please update or ' +
+          "delete the existing mapping with UUID uuid-1",
+        $metadata: {},
+      });
+    });
+
+    await expect(
+      createMapping().create({ EventSourceArn: queueArn, FunctionName: "app" }),
+    ).rejects.toSatisfy(ResourceAlreadyExistsError.is);
+  });
+
+  it("creates the mapping with the params and nothing else", async () => {
+    const send = mockSend(() => ({ UUID: "uuid-1" }));
+
+    await createMapping().create({
+      EventSourceArn: queueArn,
+      FunctionName: "app",
+    });
+
+    expect(
+      (send.mock.calls[0]![0] as sdk.CreateEventSourceMappingCommand).input,
+    ).toEqual({ EventSourceArn: queueArn, FunctionName: "app" });
+  });
+
+  it("finds the mapping from the event source to the function", async () => {
+    const send = mockSend((command) => {
+      const { Marker } = (command as sdk.ListEventSourceMappingsCommand).input;
+      return Marker
+        ? { EventSourceMappings: [{ UUID: "uuid-1" }] }
+        : { EventSourceMappings: [], NextMarker: "page-2" };
+    });
+
+    await expect(
+      createMapping().find!({ EventSourceArn: queueArn, FunctionName: "app" }),
+    ).resolves.toEqual({ UUID: "uuid-1" });
+    expect(
+      (send.mock.calls[0]![0] as sdk.ListEventSourceMappingsCommand).input,
+    ).toEqual({
+      EventSourceArn: queueArn,
+      FunctionName: "app",
+      Marker: undefined,
+    });
+  });
+
+  it("reports no mapping when the function has none from the event source", async () => {
+    mockSend(() => ({ EventSourceMappings: [] }));
+
+    await expect(
+      createMapping().find!({ EventSourceArn: queueArn, FunctionName: "app" }),
+    ).rejects.toSatisfy(ResourceNotFoundError.is);
+  });
+
+  it("fails to find the mapping when the function has several from the event source, and names them", async () => {
+    mockSend(() => ({
+      EventSourceMappings: [{ UUID: "uuid-1" }, { UUID: "uuid-2" }],
+    }));
+
+    const found = createMapping().find!({
+      EventSourceArn: queueArn,
+      FunctionName: "app",
+    });
+
+    await expect(found).rejects.toThrow("uuid-1, uuid-2");
+    await expect(found).rejects.not.toSatisfy(ResourceNotFoundError.is);
+  });
+
+  it("does not find a mapping that is being deleted", async () => {
+    mockSend(() => ({
+      EventSourceMappings: [{ UUID: "uuid-1", State: "Deleting" }],
+    }));
+
+    await expect(
+      createMapping().find!({ EventSourceArn: queueArn, FunctionName: "app" }),
+    ).rejects.toSatisfy(ResourceNotFoundError.is);
+  });
+
+  it("finds the mapping beside one that is being deleted", async () => {
+    mockSend(() => ({
+      EventSourceMappings: [
+        { UUID: "uuid-1", State: "Deleting" },
+        { UUID: "uuid-2", State: "Creating" },
+      ],
+    }));
+
+    await expect(
+      createMapping().find!({ EventSourceArn: queueArn, FunctionName: "app" }),
+    ).resolves.toEqual({ UUID: "uuid-2" });
   });
 
   it("waits while the mapping is being created", async () => {

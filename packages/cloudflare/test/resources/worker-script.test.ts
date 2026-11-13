@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setConfigFile } from "@notation/core";
 import {
+  ResourceAlreadyExistsError,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
@@ -130,12 +131,14 @@ describe("WorkerScript", () => {
     expect(metadata).not.toHaveProperty("exports");
   });
 
-  it("doesn't take over a Worker that exists already", async () => {
+  it("reports a Worker that exists already as ResourceAlreadyExistsError", async () => {
     mockFetch(() => ok({ compatibility_date: "2026-01-01" }));
 
-    await expect(script.create(params)).rejects.toThrow(
+    const created = script.create(params);
+    await expect(created).rejects.toThrow(
       "A Worker named app--dev--api already exists in the Cloudflare account acc",
     );
+    await expect(created).rejects.toSatisfy(ResourceAlreadyExistsError.is);
     expect(calls).toHaveLength(1);
   });
 
@@ -292,6 +295,7 @@ describe("WorkerScript", () => {
       },
     );
 
+    expect(calls).toHaveLength(1);
     const { metadata } = await uploadedMetadata(calls[0]!);
     expect(metadata.exports).toEqual({
       Tally: { type: "durable-object", storage: "sqlite" },

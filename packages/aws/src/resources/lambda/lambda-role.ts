@@ -2,7 +2,9 @@ import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-iam";
 import { iamClient } from "src/resources/utils/aws-clients";
+import { awsCreate } from "src/resources/utils/errors";
 import { AwsSchema } from "src/resources/utils/types";
+import { nameBase } from "src/id";
 import { lambdaTrustPolicy } from "src/resources/templates/iam.policy";
 
 export type LambdaIamRoleSchema = AwsSchema<{
@@ -35,6 +37,8 @@ const lambdaIamRoleSchema = lambdaIamRole.defineSchema({
     presence: "required",
     value: v.string(),
     primaryKey: true,
+    // [\w+=,.@-]
+    physicalName: { maxLength: 64, base: nameBase },
   },
   Arn: {
     propertyType: "computed",
@@ -91,10 +95,16 @@ const lambdaIamRoleSchema = lambdaIamRole.defineSchema({
 } as const);
 
 export const LambdaIamRole = lambdaIamRoleSchema.defineOperations({
-  create: async (params) => {
-    const command = new sdk.CreateRoleCommand(params);
-    await iamClient().send(command);
-  },
+  create: awsCreate(
+    async (params) => {
+      const command = new sdk.CreateRoleCommand(params);
+      await iamClient().send(command);
+    },
+    {
+      alreadyExists: (error) =>
+        error instanceof sdk.EntityAlreadyExistsException,
+    },
+  ),
   read: async (key) => {
     try {
       const command = new sdk.GetRoleCommand(key);

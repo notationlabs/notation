@@ -37,6 +37,17 @@ When deploy replaces a resource that others refer to, and the provider can force
 
 If the deploy fails between the delete and those updates, the references stay broken until a later deploy succeeds. See [Deleting a Worker that other Workers bind](../providers/cloudflare/workers.md#deleting-a-worker-that-other-workers-bind).
 
+When an earlier deploy started the create of a resource and did not finish it, state holds a `creating` record for the resource. The plan prints a line under the create:
+
+```
++ create aws/lambda/LambdaIamRole lambda:todos:role
+    recovers a create that an earlier deploy did not finish
+```
+
+If the earlier create made the resource, deploy takes it over: it reads the resource, and then updates, replaces or keeps it. Otherwise deploy creates the resource. See [Recoverable creates](../internals/reconciler.md#recoverable-creates).
+
+Deploy generates the AWS name of a resource, such as a function or a queue, when it first creates the resource. In the JSON output, the `params` of such a resource show the name as `{ "$unknown": "after-apply" }` until the resource exists. The same holds for a resource that deploy replaces, because the replacement gets a new name. The plan of a replace does not list the name among the fields that change. See [Generated names](../manual/project-config.md#generated-names).
+
 ## JSON output
 
 `--json` writes the complete plan to stdout. Build output and diagnostics move to stderr.

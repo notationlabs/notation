@@ -4,6 +4,7 @@ import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/resources/utils/aws-clients";
 import { awsCreate } from "src/resources/utils/errors";
 import { AwsSchema } from "src/resources/utils/types";
+import { nameBase } from "src/id";
 
 export type EventBusSchema = AwsSchema<{
   Key: { Name: string };
@@ -22,6 +23,8 @@ const eventBusSchema = eventBus.defineSchema({
     presence: "required",
     primaryKey: true,
     value: v.string(),
+    // [/.\-_A-Za-z0-9]
+    physicalName: { maxLength: 256, base: nameBase },
   },
   Arn: {
     propertyType: "computed",
@@ -32,11 +35,17 @@ const eventBusSchema = eventBus.defineSchema({
 
 /** A custom event bus. */
 export const EventBus = eventBusSchema.defineOperations({
-  create: awsCreate(async (params) => {
-    await eventBridgeClient().send(
-      new sdk.CreateEventBusCommand({ Name: params.Name }),
-    );
-  }),
+  create: awsCreate(
+    async (params) => {
+      await eventBridgeClient().send(
+        new sdk.CreateEventBusCommand({ Name: params.Name }),
+      );
+    },
+    {
+      alreadyExists: (error) =>
+        error instanceof sdk.ResourceAlreadyExistsException,
+    },
+  ),
 
   read: async (key) => describeEventBus(key.Name),
 

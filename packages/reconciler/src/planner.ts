@@ -1,9 +1,14 @@
 import {
+  UNKNOWN_AFTER_APPLY,
   assertRequiredOutputs,
   validateParams,
   type BaseResource,
 } from "@notation/resource";
-import type { StateBackend, StateNode } from "@notation/state";
+import {
+  isCreatingRecord,
+  type StateBackend,
+  type StateNode,
+} from "@notation/state";
 import {
   assertDependenciesPresent,
   collectDependents,
@@ -23,18 +28,24 @@ import {
   type PlanNode,
 } from "./plan";
 import { workflowRegistry, type ResourceRegistry } from "./resource-registry";
+import {
+  assertNamesNotSupplied,
+  recordedNames,
+  nameFields,
+} from "./physical-names";
 import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
 
 /**
  * Throws if a resource with no `read` lacks a required output in its state
- * record. Does nothing for a resource with no record or with a `read`.
+ * record. Does nothing for a resource with no record, a "creating" record, or
+ * a `read`.
  */
 export function assertOutputsRecoverable(
   resource: BaseResource,
   stateNode: StateNode | undefined,
 ): void {
-  if (!stateNode || resource.read) return;
+  if (!stateNode || isCreatingRecord(stateNode) || resource.read) return;
   assertRequiredOutputs(
     resource,
     stateNode.output,
@@ -145,6 +156,10 @@ export async function createPlan({
       // so its dependents plan against unknown params, as they would for a
       // resource with no state.
       resource.setOutput(null as any);
+      // Deploy generates a new name for the resource that it creates again.
+      for (const { field } of nameFields(resource)) {
+        params[field] = UNKNOWN_AFTER_APPLY;
+      }
     }
     edgesById.set(resource.id, dependsOn);
 
@@ -163,10 +178,11 @@ export async function createPlan({
     const placeholder =
       cycle?.placeholders.includes(resource) &&
       (action.decision === "create" || action.decision === "drift-recreate");
+    const decision = cascadeOnly ? "replace" : action.decision;
     return {
       id: resource.id,
       type: resource.type,
-      decision: cascadeOnly ? "replace" : action.decision,
+      decision,
       ...("diff" in action && !cascadeOnly ? { diff: action.diff } : {}),
       ...(replaceFields ? { replaceFields } : {}),
       ...(replacedDependency ? { replacedDependency } : {}),
@@ -179,6 +195,9 @@ export async function createPlan({
           }
         : {}),
       ...(placeholder ? { placeholder: true as const } : {}),
+      ...(decision === "create" && isCreatingRecord(stateNode)
+        ? { mayTakeOver: true as const }
+        : {}),
       params,
       dependsOn,
     };
@@ -250,7 +269,11 @@ async function loadOutput(
 ): Promise<StateNode | undefined> {
   const stateNode = await state.get(resource.id);
   assertSameType(resource, stateNode);
-  if (stateNode) resource.setOutput(stateNode.output);
+  // A "creating" record holds no outputs, so dependents plan against unknown
+  // outputs, as for a resource with no record.
+  if (stateNode && !isCreatingRecord(stateNode)) {
+    resource.setOutput(stateNode.output);
+  }
   return stateNode;
 }
 
@@ -259,6 +282,10 @@ async function loadOutput(
  * params that plan knows. Throws if the state record has a different type.
  * Outputs in state stand in for the outputs of dependencies, so the
  * dependencies must be loaded first.
+ *
+ * A `physicalName` param takes its value from the state record, as in
+ * deploy. Without a record, deploy generates the name, so it is unknown
+ * here.
  */
 export async function planKnownParams(
   resource: BaseResource,
@@ -269,7 +296,16 @@ export async function planKnownParams(
   params: Record<string, unknown>;
 }> {
   const stateNode = await loadOutput(resource, state);
-  const params = await resource.planParams();
+  const names = nameFields(resource);
+  const planned = await resource.planParams();
+  assertNamesNotSupplied(resource, names, planned);
+  const params = {
+    ...planned,
+    ...Object.fromEntries(
+      names.map(({ field }) => [field, UNKNOWN_AFTER_APPLY]),
+    ),
+    ...recordedNames(names, stateNode),
+  };
   await validateParams(resource, params, point);
   return { stateNode, params };
 }

@@ -3,6 +3,7 @@ import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { ApiInstance } from "./api";
 import { apiGatewayClient } from "src/resources/utils/aws-clients";
+import { awsCreate } from "src/resources/utils/errors";
 import { AwsSchema } from "src/resources/utils/types";
 
 export type StageSchema = AwsSchema<{
@@ -97,10 +98,13 @@ const stageSchema = stage.defineSchema({
 
 export const Stage = stageSchema
   .defineOperations({
-    create: async (params) => {
-      const command = new sdk.CreateStageCommand(params);
-      await apiGatewayClient().send(command);
-    },
+    create: awsCreate(
+      async (params) => {
+        const command = new sdk.CreateStageCommand(params);
+        await apiGatewayClient().send(command);
+      },
+      { alreadyExists: (error) => error instanceof sdk.ConflictException },
+    ),
     read: async (key) => {
       try {
         const command = new sdk.GetStageCommand(key);

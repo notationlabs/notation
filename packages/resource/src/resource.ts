@@ -12,6 +12,7 @@ import type {
   ComputedPrimaryKey,
   CompoundKey,
   Contributions,
+  PhysicalNames,
 } from "./resource.schema";
 import type {
   OptionalIfAllPropertiesOptional,
@@ -81,6 +82,7 @@ export type ResourceTypes = {
   state: any;
   output: any;
   collected: any;
+  named: any;
 };
 
 export type InferResourceTypes<S extends ResolvedSchema> = {
@@ -91,20 +93,23 @@ export type InferResourceTypes<S extends ResolvedSchema> = {
   state: State<S>;
   output: Output<S>;
   collected: Contributions<S>;
+  named: PhysicalNames<S>;
 };
 
 /**
- * The config a resource takes: its params less `Omitted`. Collected params
- * are optional, because contributions can supply them.
+ * The config a resource takes: its params less `Omitted` and less the params
+ * with `physicalName`, which deploy generates. Collected params are
+ * optional, because contributions can supply them.
  */
 export type ConfigParams<
   T extends ResourceTypes,
   Omitted extends PropertyKey = never,
-> = Omit<T["params"], Omitted | keyof T["collected"]> &
+> = Omit<T["params"], Omitted | keyof T["collected"] | keyof T["named"]> &
   Partial<
     Pick<
       T["params"],
-      Exclude<keyof T["collected"], Omitted> & keyof T["params"]
+      Exclude<keyof T["collected"], Omitted | keyof T["named"]> &
+        keyof T["params"]
     >
   >;
 
@@ -131,9 +136,8 @@ export interface BaseResource {
   create: (
     params: any,
     context?: ResourceOperationContext,
-    token?: string,
   ) => Promise<{} | void>;
-  find?: (params: any, token: string) => Promise<{} | void>;
+  find?: (params: any) => Promise<{}>;
   read?: (key: any, context?: ResourceOperationContext) => Promise<{}>;
   update?: (
     key: any,
@@ -239,9 +243,8 @@ export abstract class Resource<
   abstract create: (
     params: T["params"],
     context?: ResourceOperationContext,
-    token?: string,
   ) => Promise<T["primaryKey"]>;
-  find?: (params: T["params"], token: string) => Promise<T["primaryKey"]>;
+  find?: (params: T["params"]) => Promise<T["primaryKey"] & {}>;
   abstract read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,
@@ -763,25 +766,28 @@ export type ResourceOperationsOptions<
   IntrinsicParams extends Partial<T["params"]>,
 > = {
   /**
-   * Creates the resource. `token` is unique to the attempt. A resource that
-   * defines `find` with a token records it on the remote resource, for
-   * example as a tag.
+   * Creates the resource. Throws `ResourceAlreadyExistsError` when the
+   * provider refuses the create because a resource with the same key exists.
    */
   create: (
     params: T["params"],
     context?: ResourceOperationContext,
-    token?: string,
   ) => Promise<T["primaryKey"]>;
   /**
-   * Finds the resource that a create attempt with `token` made, and returns
-   * what that create would have returned. Throws `ResourceNotFoundError` when
-   * the attempt made no resource.
+   * Finds the resource that a create with `params` makes, and returns what
+   * that create would have returned. A class defines it when the provider
+   * assigns the key, or part of it.
    *
-   * The reconciler calls it after a create attempt with an unknown outcome.
-   * Without it, the reconciler reads a resource whose key is made of params,
-   * and creates again a resource whose key the provider assigns.
+   * It must match on an attribute that is unique, such as a name. It throws
+   * `ResourceNotFoundError` when no resource matches. When the provider does
+   * not keep the attribute unique and several resources match, it throws an
+   * error that names them, so that deploy never takes over one of several.
+   *
+   * Deploy calls it to get the key of a resource that it takes over, to look
+   * up a create with an unknown outcome, and to delete the resource of a
+   * "creating" record.
    */
-  find?: (params: T["params"], token: string) => Promise<T["primaryKey"]>;
+  find?: (params: T["params"]) => Promise<T["primaryKey"] & {}>;
   read?: (
     key: T["compoundKey"],
     context?: ResourceOperationContext,

@@ -1,4 +1,5 @@
 import {
+  ResourceAlreadyExistsError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
   SchemaStructureError,
@@ -17,6 +18,7 @@ registerErrorClass(
   ResourceOperationPendingError,
 );
 registerErrorClass("ResourceNotFoundError", ResourceNotFoundError);
+registerErrorClass("ResourceAlreadyExistsError", ResourceAlreadyExistsError);
 registerErrorClass("ValueValidationError", ValueValidationError);
 registerErrorClass("SchemaStructureError", SchemaStructureError);
 registerErrorClass("ResourceTypeChangedError", ResourceTypeChangedError);

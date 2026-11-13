@@ -3,7 +3,7 @@ import { resource, ResourceNotFoundError } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { apiGatewayClient } from "src/resources/utils/aws-clients";
 import { awsCreate } from "src/resources/utils/errors";
-import { findInPages } from "src/resources/utils/paginate";
+import { findOnlyInPages } from "src/resources/utils/paginate";
 import { ApiInstance, LambdaIntegrationInstance } from ".";
 import { AwsSchema } from "src/resources/utils/types";
 import { AuthInstance } from "./auth";
@@ -106,24 +106,40 @@ export const routeSchema = route.defineSchema({
 
 export const Route = routeSchema
   .defineOperations({
-    create: awsCreate(async (params) => {
-      const command = new sdk.CreateRouteCommand(params);
-      const result = await apiGatewayClient().send(command);
+    create: awsCreate(
+      async (params) => {
+        const command = new sdk.CreateRouteCommand(params);
+        const result = await apiGatewayClient().send(command);
 
-      return { RouteId: result.RouteId! };
-    }),
-    // A route key is unique within an API, so it finds the route that a
-    // create attempt made.
+        return { RouteId: result.RouteId! };
+      },
+      { alreadyExists: (error) => error instanceof sdk.ConflictException },
+    ),
+    // A route key is unique within an API, so `find` matches on it.
     find: async (params) => {
-      const route = await findInPages(
-        (NextToken) =>
-          apiGatewayClient().send(
-            new sdk.GetRoutesCommand({ ApiId: params.ApiId, NextToken }),
-          ),
-        (item) => item.RouteKey === params.RouteKey,
-      );
-      if (route) return { RouteId: route.RouteId! };
-      throw new ResourceNotFoundError("No API Gateway route has the route key");
+      let route;
+      try {
+        route = await findOnlyInPages(
+          (NextToken) =>
+            apiGatewayClient().send(
+              new sdk.GetRoutesCommand({ ApiId: params.ApiId, NextToken }),
+            ),
+          (item) => item.RouteKey === params.RouteKey,
+          `API Gateway route ${params.RouteKey} in API ${params.ApiId}`,
+          (item) => item.RouteId!,
+        );
+      } catch (error) {
+        // GetRoutes throws this when the API does not exist, and then the
+        // route does not exist either.
+        if (error instanceof sdk.NotFoundException) {
+          throw new ResourceNotFoundError(
+            "The API of the API Gateway route was not found",
+            { cause: error },
+          );
+        }
+        throw error;
+      }
+      return { RouteId: route.RouteId! };
     },
     read: async (key) => {
       try {

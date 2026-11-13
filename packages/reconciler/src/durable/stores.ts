@@ -32,8 +32,9 @@ const resourceRecordSchema = v.objectWithRest(
     // Optional, because a record written before edges were recorded has none.
     dependsOn: v.optional(v.array(v.string())),
     // Only the operations that leave a record behind: delete removes the
-    // store, and drift repair persists as "update".
-    lastOperation: v.picklist(["create", "update"]),
+    // store, and drift repair persists as "update". "creating" is written
+    // before a create is attempted.
+    lastOperation: v.picklist(["creating", "create", "update"]),
     lastOperationAt: v.string(),
   },
   durableValue,

@@ -1,8 +1,15 @@
 import * as v from "valibot";
-import { resource, ResourceNotFoundError } from "@notation/resource";
+import {
+  resource,
+  ResourceAlreadyExistsError,
+  ResourceCreationUnknownError,
+  ResourceNotFoundError,
+} from "@notation/resource";
 import { AwsSchema } from "src/resources/utils/types";
+import { nameBase } from "src/id";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/resources/utils/aws-clients";
+import { awsCreate } from "src/resources/utils/errors";
 import { LambdaFunctionInstance } from "../lambda";
 import {
   EventBus,
@@ -197,6 +204,8 @@ const eventBridgeRuleSchema = eventBridgeRule.defineSchema({
     primaryKey: true,
     propertyType: "param",
     value: v.string(),
+    // [.\-_A-Za-z0-9], unique per event bus
+    physicalName: { maxLength: 64, base: nameBase },
   },
   EventBusName: {
     presence: "required",
@@ -265,21 +274,35 @@ export const EventBridgeRule = eventBridgeRuleSchema
       }
     },
 
-    create: async (params) => {
-      const createRuleCommand = new sdk.PutRuleCommand(params);
-      const createTargetsCommand = new sdk.PutTargetsCommand({
-        Rule: params.Name,
-        EventBusName: params.EventBusName,
-        Targets: params.Targets,
-      });
-
-      await eventBridgeClient().send(createRuleCommand);
-      assertNoFailedTargets(
-        "put",
-        params.Name,
-        await eventBridgeClient().send(createTargetsCommand),
-      );
-    },
+    // PutRule overwrites an existing rule instead of failing, so create
+    // checks for the rule first.
+    create: awsCreate(async (params) => {
+      const key = { Name: params.Name, EventBusName: params.EventBusName };
+      if (await describeRule(key)) {
+        throw new ResourceAlreadyExistsError(
+          `EventBridge rule "${params.Name}" already exists`,
+        );
+      }
+      const { Targets, ...ruleConfig } = params;
+      await eventBridgeClient().send(new sdk.PutRuleCommand(ruleConfig));
+      try {
+        assertNoFailedTargets(
+          "put",
+          params.Name,
+          await eventBridgeClient().send(
+            new sdk.PutTargetsCommand({
+              Rule: params.Name,
+              EventBusName: params.EventBusName,
+              Targets,
+            }),
+          ),
+        );
+      } catch (error) {
+        // The create failed, so it leaves no rule. A rule kept without its
+        // targets would match events and deliver them nowhere.
+        await deleteCreatedRule(key, errorMessage(error));
+      }
+    }),
     update: async (key, patch, params) => {
       // PutRule replaces the rule's settings, so it is sent the whole rule,
       // not just the changed fields.
@@ -332,36 +355,7 @@ export const EventBridgeRule = eventBridgeRuleSchema
         );
       }
     },
-    delete: async (key) => {
-      try {
-        // The targets must be deleted first, otherwise the API will return an error response
-        const existingTargets = await eventBridgeClient().send(
-          new sdk.ListTargetsByRuleCommand({
-            Rule: key.Name,
-            EventBusName: key.EventBusName,
-          }),
-        );
-
-        if (existingTargets.Targets && existingTargets.Targets.length > 0) {
-          const deleteTargetsCommand = new sdk.RemoveTargetsCommand({
-            Rule: key.Name,
-            EventBusName: key.EventBusName,
-            Ids: existingTargets.Targets.map((target) => target.Id!),
-          });
-
-          assertNoFailedTargets(
-            "remove",
-            key.Name,
-            await eventBridgeClient().send(deleteTargetsCommand),
-          );
-        }
-
-        const deleteRuleCommand = new sdk.DeleteRuleCommand(key);
-        await eventBridgeClient().send(deleteRuleCommand);
-      } catch (error) {
-        if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
-      }
-    },
+    delete: async (key) => deleteRule(key),
   })
   .requireDependencies<EventBridgeRuleDependencies>()
   .deriveParams(({ config }) => {
@@ -373,6 +367,72 @@ export const EventBridgeRule = eventBridgeRuleSchema
         : { EventPattern: compactJson(config.EventPattern) };
     return derived;
   });
+
+/** Deletes the rule, then throws. */
+async function deleteCreatedRule(
+  key: sdk.DescribeRuleCommandInput,
+  message: string,
+): Promise<never> {
+  try {
+    await deleteRule(key);
+  } catch (error) {
+    throw new ResourceCreationUnknownError(
+      `The targets of EventBridge rule "${key.Name}" were not put ` +
+        `(${message}), and the rule could not be deleted: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
+  throw new Error(
+    `The targets of EventBridge rule "${key.Name}" were not put, so the ` +
+      `rule was deleted: ${message}`,
+  );
+}
+
+async function describeRule(
+  key: sdk.DescribeRuleCommandInput,
+): Promise<sdk.DescribeRuleCommandOutput | undefined> {
+  try {
+    return await eventBridgeClient().send(new sdk.DescribeRuleCommand(key));
+  } catch (error) {
+    if (error instanceof sdk.ResourceNotFoundException) return undefined;
+    throw error;
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function deleteRule(key: sdk.DescribeRuleCommandInput) {
+  try {
+    // The targets must be deleted first, otherwise the API will return an error response
+    const existingTargets = await eventBridgeClient().send(
+      new sdk.ListTargetsByRuleCommand({
+        Rule: key.Name,
+        EventBusName: key.EventBusName,
+      }),
+    );
+
+    if (existingTargets.Targets && existingTargets.Targets.length > 0) {
+      const deleteTargetsCommand = new sdk.RemoveTargetsCommand({
+        Rule: key.Name,
+        EventBusName: key.EventBusName,
+        Ids: existingTargets.Targets.map((target) => target.Id!),
+      });
+
+      assertNoFailedTargets(
+        "remove",
+        key.Name,
+        await eventBridgeClient().send(deleteTargetsCommand),
+      );
+    }
+
+    const deleteRuleCommand = new sdk.DeleteRuleCommand(key);
+    await eventBridgeClient().send(deleteRuleCommand);
+  } catch (error) {
+    if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
+  }
+}
 
 // The pattern is compared as a string, so the configured pattern and the
 // pattern that is read are both put in the compact form that JSON.stringify

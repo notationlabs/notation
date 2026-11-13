@@ -108,8 +108,17 @@ describe("operation workflows", () => {
     );
 
     expect(createAttempts).toBe(2);
-    expect(persist).toHaveBeenCalledOnce();
-    expect(persist).toHaveBeenCalledWith({
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        lastOperation: "creating",
+        params: {},
+        output: {},
+      }),
+      "creating",
+    );
+    expect(persist).toHaveBeenLastCalledWith({
       id: "test-create",
       group: testResource.group,
       type: TestResource.type,
@@ -125,13 +134,11 @@ describe("operation workflows", () => {
       1,
       await testResource.getParams(),
       undefined,
-      "notation:create:test-execution:test-create:0",
     );
     expect(createMock).toHaveBeenNthCalledWith(
       2,
       await testResource.getParams(),
       { operationId: "create-123" },
-      "notation:create:test-execution:test-create:1",
     );
     expect(testResource.output).toEqual({ remoteId: "abc", status: "ready" });
     expect(events.map((event) => `${event.operation}:${event.status}`)).toEqual(
@@ -261,7 +268,12 @@ describe("operation workflows", () => {
         }),
       ),
     ).rejects.toThrowError("resource is absent");
-    expect(persist).not.toHaveBeenCalled();
+    // Only the "creating" record.
+    expect(persist).toHaveBeenCalledOnce();
+    expect(persist).toHaveBeenCalledWith(
+      expect.objectContaining({ lastOperation: "creating" }),
+      "creating",
+    );
   });
 
   it("delete treats an already-absent remote as success through its idempotent resource contract", async () => {

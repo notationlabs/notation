@@ -7,7 +7,7 @@ import {
   type ReplaceField,
   type ResourceType,
 } from "@notation/resource";
-import type { StateNode } from "@notation/state";
+import { isCreatingRecord, type StateNode } from "@notation/state";
 import {
   resolveResourceClass,
   type ResourceRegistry,
@@ -63,6 +63,12 @@ export type PlanNode = {
    * and updates it with them once the rest of its cycle exists.
    */
   placeholder?: true;
+  /**
+   * Set for a create of a resource that has a "creating" record. An earlier
+   * deploy did not finish the create, so if the resource exists, deploy
+   * takes it over.
+   */
+  mayTakeOver?: true;
   params: Record<string, unknown>;
   dependsOn: string[];
 };
@@ -104,7 +110,10 @@ export function decideAction(opts: {
   params: Record<string, unknown>;
 }): ResourceAction {
   const { resource, stateNode, params } = opts;
-  if (!stateNode) {
+  // A create that left a "creating" record may or may not have made the
+  // resource. Create runs again, and takes the resource over if the provider
+  // reports that it already exists.
+  if (!stateNode || isCreatingRecord(stateNode)) {
     return { decision: "create" };
   }
 

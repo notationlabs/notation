@@ -63,6 +63,7 @@ export async function deployApp({
         dryRun,
         driftDetection,
         maxOperationAttempts,
+        nameScope: { app: deployment.app, stage: deployment.stage },
       });
     },
   );

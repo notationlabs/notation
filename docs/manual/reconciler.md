@@ -25,6 +25,7 @@ export const deploy = workflow(async function* (step, event) {
     executionId: event.executionId,
     resources,
     state,
+    nameScope: { app: "my-application", stage: "prod" },
   });
 });
 
@@ -49,6 +50,8 @@ const dispatcher = new ExecutionDispatcher(runtime, {
 });
 dispatcher.start();
 ```
+
+`nameScope` is required in `deploy`. It holds the app and the stage that start each physical name that deploy generates, as `<app>--<stage>--`. See [Generated names](../internals/reconciler.md#generated-names).
 
 The outer workflow supplies durable step execution, timers, shared stores, waiting, and scheduling. Checkpointed provider results are replayed from the heap after a crash, retryable provider conditions suspend on a durable timer, and conditional state writes use `@notation/durable` store identity and version. A provider call and its checkpoint are not atomic. After a crash between them, replay repeats the call, so update and delete operations must be idempotent, and event consumers must accept duplicate events. Before it repeats a create, the reconciler looks the resource up; see [Unknown create outcomes](../reference/resource.md#unknown-create-outcomes).
 

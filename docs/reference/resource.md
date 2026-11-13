@@ -166,10 +166,55 @@ All schema items carry these fields:
 - `rejectReplace` – a function `(previous, desired) => string`. When a change to the param would replace the resource, plan and deploy fail with the returned message. Use it for a param that the user can change by accident, on a resource whose delete loses data.
 - `primaryKey` / `secondaryKey` – together form the compound key used for read/update/delete.
 - `collect` – makes the param collected, and combines what is contributed to it. See [Contributions](#contributions).
+- `physicalName` – marks the param as the resource's physical name, with the rule of the provider's names. Deploy always generates the name, and config cannot set it. See [Physical names](#physical-names).
 
 **`computed`**
 
 - `primaryKey` – identifies the resource (e.g. `FunctionArn` returned by `create`).
+
+### Physical names
+
+A resource's physical name is its name in the provider, such as a queue's `QueueName`. Mark the param that holds it with `physicalName`, and give it the rule of the provider's names:
+
+```ts
+QueueName: {
+  propertyType: "param",
+  presence: "required",
+  immutable: true,
+  value: v.string(),
+  physicalName: {
+    maxLength: 80,
+    ending: (params) => (params.FifoQueue === true ? ".fifo" : ""),
+    // "sqs-queue:orders" gives "orders"
+    base: (resourceId) => resourceId.slice(resourceId.indexOf(":") + 1),
+  },
+},
+```
+
+The rule is a `PhysicalNameRule` from `@notation/resource`:
+
+| Field       | Required | Meaning                                                                                                                                                                                                 |
+| ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxLength` | yes      | The longest name the provider accepts.                                                                                                                                                                  |
+| `ending`    | no       | A function that takes the resource's params and returns the ending that the provider requires on the name, such as `.fifo`, or `""` for none. Without it, a generated name has no ending.               |
+| `base`      | no       | A function that takes the resource ID and returns the base of a generated name. Use it to leave a part of the ID out of the name, such as a type prefix. Without it, the base is the whole resource ID. |
+
+**The reconciler owns the physical name.** A resource class declares all of the provider's fields, including the name field, such as `FunctionName`, `RoleName` or `QueueName`. The reconciler generates the value of the name field from the resource ID. Config cannot set it: the config type leaves the param out, also when its `presence` is `required`. The params, the state record and the outputs still hold it.
+
+```ts
+new aws.sqs.Queue("sqs-queue:orders", { config: { FifoQueue: true } });
+// deploy names the queue my-app--prod--orders-1a2b3c4d.fifo
+```
+
+There is no way to set an exact name for now. If a resource needs one later, an override will be added then.
+
+Deploy generates the name, `<app>--<stage>--<base>-<instance>`, from the app, the stage, the base and 8 random hex characters. The base is the result of the rule's `base`, or the resource ID, in lower case, with each run of characters other than `a-z` and `0-9` turned into one `-`. Deploy keeps the name in the state record, so later deploys use the same name, and a replacement gets a new one. The params that an operation receives always hold the name. Plan shows the name as unknown until the resource exists. See [Generated names](../internals/reconciler.md#generated-names) for the steps and their limits.
+
+**Nothing else supplies a `physicalName` param.** When `deriveParams` returns a value for the param, or untyped config holds one, plan and deploy throw. A generated or recorded name would replace the value.
+
+**A dependent reads the name through an output ref.** `resource.config` does not hold the name, so another resource can't copy the name from it. It takes `role.outputRef("RoleName")` instead, which deploy fills in once the role exists; see [Output refs](#output-refs). At plan the ref is unknown until then.
+
+**`scopedPhysicalName` makes a fixed name on a class without `physicalName`.** `scopedPhysicalName(name, rule)` from `@notation/resource` returns `<app>--<stage>--<name>`, shortened with a hash when it is longer than `rule.maxLength`. It is the same on every deploy. A construct puts the result in config. `@notation/cloudflare` names a Worker this way. Two declarations with the same `name` get the same result, so the construct must check that no two declarations give the same name.
 
 ### Value types
 
@@ -234,15 +279,15 @@ An issue in a statement that holds an unknown is still dropped, because the stat
 
 `defineOperations` accepts CRUD handlers and parameter derivation:
 
-| Field          | Required | Signature / Description                                                                                                                                                                                       |
-| -------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create`       | yes      | `(params, context?, token?) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key. `token` is unique to the attempt.                                                              |
-| `find`         | no       | `(params, token) => Promise<ComputedPrimaryKey<S>>` – find the resource that the create attempt with `token` made, or throw `ResourceNotFoundError`. See [Unknown create outcomes](#unknown-create-outcomes). |
-| `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                                                                          |
-| `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                                                            |
-| `delete`       | yes      | `(key, state, context?, deletion?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone.                                             |
-| `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                                                                         |
-| `rejectChange` | no       | `(previous, desired, { replace }) => string \| undefined` – return a message to fail plan and deploy with. See [Rejecting a change](#rejecting-a-change).                                                     |
+| Field          | Required | Signature / Description                                                                                                                                           |
+| -------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`       | yes      | `(params, context?) => Promise<ComputedPrimaryKey<S>>` – create the resource, return its computed key.                                                            |
+| `find`         | no       | `(params) => Promise<ComputedPrimaryKey<S>>` – find the resource that a create with `params` makes, and return its computed key. See [`find`](#find).             |
+| `read`         | no       | `(key, context?) => Promise<Result<S>>` – return the remote object or throw `ResourceNotFoundError`.                                                              |
+| `update`       | no       | `(key, patch, params, state, context?) => Promise<void>` – apply a partial update.                                                                                |
+| `delete`       | yes      | `(key, state, context?, deletion?) => Promise<void>` – ensure the resource is absent. Implementations must also succeed when the remote resource is already gone. |
+| `deriveParams` | no       | Computes intrinsic derived params from config (not dependency-aware).                                                                                             |
+| `rejectChange` | no       | `(previous, desired, { replace }) => string \| undefined` – return a message to fail plan and deploy with. See [Rejecting a change](#rejecting-a-change).         |
 
 The reconciler records params, results and state, so each must be a durable value as `@notation/durable` 0.9.0 defines it: `null`, a boolean, number, string or `bigint`, `undefined`, a `Date`, an `Error`, or an array, `Map`, `Set` or plain object of these. From the result of `create` and `read`, the reconciler keeps only the properties the schema declares. A `Buffer` or another class instance in a schema value type becomes `never`, so a handler that returns one does not compile. Return a file as its path and hash instead of its bytes.
 
@@ -260,6 +305,7 @@ Import the errors from `@notation/resource`:
 
 ```ts
 import {
+  ResourceAlreadyExistsError,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
@@ -279,6 +325,8 @@ new ResourceOperationPendingError(message: string, {
 });
 
 new ResourceCreationUnknownError(message: string, options?: { cause?: unknown });
+
+new ResourceAlreadyExistsError(message: string, options?: { cause?: unknown });
 ```
 
 | Handler result                                                                        | Meaning                                                                                   | What the reconciler does                                                                                                                                                                                                                            |
@@ -287,6 +335,7 @@ new ResourceCreationUnknownError(message: string, options?: { cause?: unknown })
 | `throw new ResourceNotFoundError(message, { cause })`                                 | `read` or `delete` found no resource for the given key.                                   | From `read`, treats the resource as absent during planning and drift detection; a read after create or update fails because that operation claimed to have finished. From `delete`, treats the delete as complete, since absence is its goal state. |
 | `throw new ResourceOperationPendingError(message, { retryAfterMs, callbackContext })` | The operation has not finished.                                                           | Waits for `retryAfterMs`, then calls the same handler again. It passes `callbackContext` as the handler's final argument.                                                                                                                           |
 | `throw new ResourceCreationUnknownError(message, { cause })`                          | `create` cannot tell whether the provider made the resource, for example after a timeout. | Looks the resource up, as described in [Unknown create outcomes](#unknown-create-outcomes).                                                                                                                                                         |
+| `throw new ResourceAlreadyExistsError(message, { cause })`                            | `create` was refused because a resource with the same key already exists.                 | Takes the existing resource over, as described in [Resources that already exist](#resources-that-already-exist).                                                                                                                                    |
 | Throw any other error                                                                 | The operation failed.                                                                     | Stops the deployment.                                                                                                                                                                                                                               |
 
 `ResourceNotFoundError` means the resource is absent wherever it is thrown. A `delete` handler may either catch the provider's missing-resource error and return normally, or translate it to `ResourceNotFoundError`; both count as success.
@@ -328,36 +377,71 @@ read: async (key, context) => {
 
 The outcome of a create attempt is unknown when the process stops after `create` returns and before the reconciler records the result, or when `create` throws `ResourceCreationUnknownError`. The reconciler then looks the resource up before it calls `create` again:
 
-1. A resource with `find` is found by the attempt's token. `create` must record the token on the remote resource, for example as a tag, so that `find` can search for it.
+1. A resource with `find` is looked up with `find`.
 2. A resource with `read`, whose key is made of params, is read by the key it would have. A read that throws `ResourceOperationPendingError` finds the resource, because a pending read means that the resource exists. A read that throws a throttled `ResourceOperationPendingError` doesn't.
 3. Any other resource cannot be found. The reconciler calls `create` again after a stopped process, and fails the deployment on a `ResourceCreationUnknownError`.
 
-When a lookup finds the resource, the reconciler uses what it found as the result of `create`. When it throws, the reconciler looks again after one second. When the outcome is still unknown after 10 attempts, or after `maxOperationAttempts` when it is lower, the deployment fails with a `WorkflowEffectError` with code `EFFECT_OUTCOME_UNKNOWN`.
+When a lookup finds the resource, the reconciler takes it over, as described in [Resources that already exist](#resources-that-already-exist). When the lookup throws, the reconciler looks again after one second. When the outcome is still unknown after 10 attempts, or after `maxOperationAttempts` when it is lower, the deployment fails with a `WorkflowEffectError` with code `EFFECT_OUTCOME_UNKNOWN`.
 
 A lookup must not report a resource as absent while a create for it can still finish. A provider whose reads are eventually consistent can break this rule.
 
+In `@notation/aws/resources`, `awsCreate` wraps a `create` handler and throws `ResourceCreationUnknownError` when an AWS call times out, loses its connection or gets a server error. Its `alreadyExists` option takes a function that returns `true` for the provider's "already exists" error, which `awsCreate` then throws as `ResourceAlreadyExistsError`.
+
+A `create` that makes more than one call should throw `ResourceCreationUnknownError` when a later call fails after an earlier call made the resource, so that the resource's `creating` record stays.
+
+### Resources that already exist
+
+A `create` handler throws `ResourceAlreadyExistsError` when the provider refuses the create because a resource with the same key exists, for example IAM's `EntityAlreadyExists`. The reconciler then takes the existing resource over, for every resource class: it reads the resource by its key, records it with the params that the read returned, and then updates, replaces or keeps it. The class must have a `read`. The create of a replacement does not do this for a resource that has the key of the replaced resource. It fails instead; see [Guard 1](../internals/reconciler.md#guard-1-a-replacement-does-not-take-over-a-resource-with-the-replaced-key).
+
 ```ts
-create: async (params, _context, token) => {
-  try {
-    const result = await client.send(
-      new CreateApiCommand({ ...params, Tags: { ...params.Tags, [TOKEN_TAG]: token! } }),
-    );
-    return { ApiId: result.ApiId! };
-  } catch (error) {
-    if (isTimeout(error)) {
-      throw new ResourceCreationUnknownError("CreateApi timed out", { cause: error });
-    }
-    throw error;
+create: awsCreate(
+  async (params) => {
+    await iam.send(new CreateRoleCommand(params));
+  },
+  { alreadyExists: (error) => error instanceof EntityAlreadyExistsException },
+),
+```
+
+When the provider's create call overwrites or returns an existing resource instead of failing, as `PutRule` and `CreateQueue` do, `create` must check for the resource first and throw `ResourceAlreadyExistsError` itself.
+
+**Start each resource's name with the app and the stage.** The reconciler does not check who made the existing resource. It takes over any resource with the same key, and then updates or replaces it to match config. This is only safe when no other deployment can use the key. A name that deploy generates for a `physicalName` param starts with `<app>--<stage>--`, and so does a name from `scopedPhysicalName`, so a resource with either name belongs to the same app and stage. See [Physical names](#physical-names). A resource that lives inside another resource, such as a route in an API, needs no prefix when its parent's name has one.
+
+See [Recoverable creates](../internals/reconciler.md#recoverable-creates) for the takeover steps and their limits.
+
+### `find`
+
+Define `find` when the provider assigns the resource's key, or part of it. The reconciler cannot compute such a key from params, so it calls `find(params)` to get it:
+
+- before every `create`, to take over a resource that exists instead of making a second one
+- to look up a create with an unknown outcome
+- after `create` throws `ResourceAlreadyExistsError`
+- to delete the resource of a `creating` record
+
+`find` matches on an attribute that is unique, such as a name:
+
+| Matches | `find` must                                                                                 |
+| ------- | ------------------------------------------------------------------------------------------- |
+| One     | Return what `create` would have returned: the computed key.                                 |
+| None    | Throw `ResourceNotFoundError`.                                                              |
+| Several | Throw another error that names the matches. The reconciler never takes over one of several. |
+
+`find` should not match a resource that the provider reports as being deleted. The reconciler calls `find` before the create of a replacement too, just after the delete. If `find` returns the deleted resource there, the replace fails.
+
+The third row applies when the provider does not keep the attribute unique. API Gateway allows two APIs with the same name, so `Api`'s `find` reads every page of `GetApis` before it returns:
+
+```ts
+find: async (params) => {
+  const apis = await listAllApis();
+  const found = apis.filter((api) => api.Name === params.Name);
+  if (found.length === 0) throw new ResourceNotFoundError("No API has the name");
+  if (found.length > 1) {
+    throw new Error(`Found ${found.length} APIs named ${params.Name}. Delete all but one.`);
   }
-},
-find: async (_params, token) => {
-  const api = await findApiByTag(TOKEN_TAG, token);
-  if (!api) throw new ResourceNotFoundError("No API has the token");
-  return { ApiId: api.ApiId! };
+  return { ApiId: found[0].ApiId! };
 },
 ```
 
-In `@notation/aws/resources`, `awsCreate` wraps a `create` handler and throws `ResourceCreationUnknownError` when an AWS call times out, loses its connection or gets a server error.
+A class with a key that the provider assigns and no `find` cannot be looked up. A create of it that stops before the reconciler records the key leaves a duplicate in the provider.
 
 ## Dependencies
 
@@ -396,7 +480,7 @@ An output, such as a queue's ARN, does not exist until the provider creates the 
 
 ```ts [packages/aws/src/sqs/queue.ts]
 const queue = new aws.sqs.Queue("orders-queue", {
-  config: { QueueName: "orders" },
+  config: { VisibilityTimeout: 60 },
 });
 
 const mapping = new aws.lambda.LambdaEventSourceMapping("orders-mapping", {
@@ -576,7 +660,7 @@ A group's constructor takes `(type, id, config?)`:
 - `id` – identifies the group across deployments. It must be unique among groups of the same type: declaring two groups with the same type and ID in one graph throws.
 - `config` – the group's configuration, stored as `group.config`. Defaults to `{}`.
 
-Each declared resource takes an `id` from the user. The group's ID is that `id`, and its resource IDs are built from it, so the group's identity changes exactly when its resources' identities do. A group that links two others builds its ID from their IDs. A group that belongs to an API, such as a route or an authorizer, builds its ID from the API's `id` and its own. No group ID depends on a setting or on an AWS name, so changing a setting such as an authorizer's issuer, or the `name` that overrides an AWS name, keeps every ID:
+Each declared resource takes an `id` from the user. The group's ID is that `id`, and its resource IDs are built from it, so the group's identity changes exactly when its resources' identities do. A group that links two others builds its ID from their IDs. A group that belongs to an API, such as a route or an authorizer, builds its ID from the API's `id` and its own. No group ID depends on a setting or on an AWS name, so changing a setting, such as an authorizer's issuer or its `name`, keeps every ID:
 
 | Group                | ID                                   | Example                             |
 | -------------------- | ------------------------------------ | ----------------------------------- |

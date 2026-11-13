@@ -20,9 +20,7 @@ const refunds: PolicyStatement = {
   Resource: "arn:aws:sqs:eu-west-2:123456789012:refunds",
 };
 
-function createPolicy(
-  role = new LambdaIamRole("app-role", { config: { RoleName: "app-role" } }),
-) {
+function createPolicy(role = new LambdaIamRole("app-role")) {
   return new LambdaRolePolicy("app-role-policy", {
     config: { RoleName: "app-role", PolicyName: "app-role-policy" },
     dependencies: { role },
@@ -118,9 +116,7 @@ describe("LambdaRolePolicy drift detection", () => {
       }
       throw new Error("unexpected command");
     });
-    const role = new LambdaIamRole("app-role", {
-      config: { RoleName: "app-role" },
-    });
+    const role = new LambdaIamRole("app-role");
     const policy = createPolicy(role);
     policy.contribute({ PolicyDocument: { Statement: [orders] } });
     const params = await policy.getParams();

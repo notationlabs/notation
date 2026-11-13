@@ -61,23 +61,6 @@ test("each schedule on a lambda gets its own invoke permission", async () => {
   ]);
 });
 
-test("a schedule whose AWS name is another schedule's throws, and names both declarations", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      const fn = declareLambda();
-      schedule({ id: "daily", schedule: rate(1, "day"), target: fn });
-      schedule({
-        id: "nightly",
-        name: "daily",
-        schedule: rate(1, "day"),
-        target: fn,
-      });
-    }),
-  ).rejects.toThrow(
-    'schedule({ id: "daily" }) and schedule({ id: "nightly", name: "daily" }) give two EventBridge rules the same AWS name, "daily".',
-  );
-});
-
 test("a schedule group is identified by its name", async () => {
   const graph = await collectResourceGraph(() => {
     schedule({

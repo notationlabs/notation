@@ -10,13 +10,13 @@ import { fromProjectRoot } from "@notation/core/paths";
 import crypto from "node:crypto";
 import * as nodeFs from "node:fs/promises";
 import { lambdaClient } from "src/resources/utils/aws-clients";
-import {
-  CREATE_TOKEN_TAG,
-  createTokenTagValue,
-} from "src/resources/utils/create-token";
 import { awsCreate } from "src/resources/utils/errors";
-import { runLambdaMutation } from "src/resources/utils/lambda-mutation";
+import {
+  isLambdaAlreadyExists,
+  runLambdaMutation,
+} from "src/resources/utils/lambda-mutation";
 import { AwsSchema } from "src/resources/utils/types";
+import { nameBase } from "src/id";
 import { fs } from "@notation/std/resources";
 import { LambdaIamRoleInstance } from "./";
 
@@ -78,6 +78,8 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
     presence: "required",
     value: v.string(),
     primaryKey: true,
+    // [a-zA-Z0-9-_]
+    physicalName: { maxLength: 64, base: nameBase },
   },
   Architectures: {
     propertyType: "param",
@@ -263,37 +265,19 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
 
 export const LambdaFunction = lambdaFunctionSchema
   .defineOperations({
-    // The create attempt is recorded as a tag, so `find` can tell this
-    // deploy's function from another with the same name.
-    create: awsCreate(async (params, _context, token) => {
-      const { CodeFilePath, Environment, ...functionParams } = params;
-      const command = new sdk.CreateFunctionCommand({
-        ...functionParams,
-        Environment: encodeEnvironment(params.FunctionName, Environment),
-        Tags: token
-          ? { ...params.Tags, [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
-          : params.Tags,
-        Code: { ZipFile: await readCode(CodeFilePath, params.CodeSha256) },
-      });
+    create: awsCreate(
+      async (params) => {
+        const { CodeFilePath, Environment, ...functionParams } = params;
+        const command = new sdk.CreateFunctionCommand({
+          ...functionParams,
+          Environment: encodeEnvironment(params.FunctionName, Environment),
+          Code: { ZipFile: await readCode(CodeFilePath, params.CodeSha256) },
+        });
 
-      await runLambdaMutation(() => lambdaClient().send(command));
-    }),
-
-    // A function without the token was not made by the attempt. Reporting it
-    // as not found makes create fail on the name, instead of taking it over.
-    find: async (params, token) => {
-      try {
-        const { Tags } = await lambdaClient().send(
-          new sdk.GetFunctionCommand({ FunctionName: params.FunctionName }),
-        );
-        if (Tags?.[CREATE_TOKEN_TAG] === createTokenTagValue(token)) return;
-      } catch (error) {
-        if (!(error instanceof sdk.ResourceNotFoundException)) throw error;
-      }
-      throw new ResourceNotFoundError(
-        "No Lambda function has the name and the create token",
-      );
-    },
+        await runLambdaMutation(() => lambdaClient().send(command));
+      },
+      { alreadyExists: isLambdaAlreadyExists },
+    ),
 
     read: async (key) => {
       try {
@@ -428,5 +412,5 @@ function encodeEnvironment(
 }
 
 export type LambdaFunctionConfig = NonNullable<
-  ConstructorParameters<typeof LambdaFunction>[1]
->["config"];
+  NonNullable<ConstructorParameters<typeof LambdaFunction>[1]>["config"]
+>;

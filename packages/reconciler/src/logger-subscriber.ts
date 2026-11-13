@@ -23,5 +23,14 @@ export function createLoggerReconcilerSubscriber(
     }
 
     logger.info(event.event, event);
+    if (
+      event.event === "reconciler.operation.lifecycle" &&
+      event.reason === "taken-over"
+    ) {
+      logger.info(
+        `Took over ${event.resourceId}: it already existed, so deploy ` +
+          `read it and now compares it with config`,
+      );
+    }
   };
 }

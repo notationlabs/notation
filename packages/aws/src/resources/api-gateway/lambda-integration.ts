@@ -5,6 +5,7 @@ import { ApiInstance } from "./api";
 import { LambdaFunctionInstance } from "../lambda";
 import { getLambdaInvocationUri } from "src/resources/templates/arn";
 import { apiGatewayClient } from "src/resources/utils/aws-clients";
+import { awsCreate } from "src/resources/utils/errors";
 import { AwsSchema } from "src/resources/utils/types";
 
 export type LambdaIntegrationSchema = AwsSchema<{
@@ -133,11 +134,11 @@ const integrationSchema = integration.defineSchema({
 
 export const LambdaIntegration = integrationSchema
   .defineOperations({
-    create: async (params) => {
+    create: awsCreate(async (params) => {
       const command = new sdk.CreateIntegrationCommand(params);
       const result = await apiGatewayClient().send(command);
       return { IntegrationId: result.IntegrationId! };
-    },
+    }),
     read: async (key) => {
       try {
         const command = new sdk.GetIntegrationCommand(key);

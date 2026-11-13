@@ -15,6 +15,7 @@ export type OperationLifecycleEvent = {
   /**
    * `dependency-replaced`: the delete of a dependent that blocks the delete
    * of a replaced resource.
+   * `taken-over`: a create that took over a resource that already existed.
    */
   reason?: string;
   /**

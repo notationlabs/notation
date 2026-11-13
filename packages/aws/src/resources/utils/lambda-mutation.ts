@@ -22,6 +22,19 @@ export async function runLambdaMutation<T>(
   }
 }
 
+/**
+ * Returns true for Lambda's refusal to create a function, a policy
+ * statement or an event source mapping that already exists. Lambda reports
+ * other conflicts, such as an update in progress, with the same exception,
+ * so the message is checked too.
+ */
+export function isLambdaAlreadyExists(error: unknown): boolean {
+  return (
+    error instanceof sdk.ResourceConflictException &&
+    /already exist/i.test(error.message)
+  );
+}
+
 function isIamPropagationFailure(
   error: unknown,
 ): error is sdk.InvalidParameterValueException {

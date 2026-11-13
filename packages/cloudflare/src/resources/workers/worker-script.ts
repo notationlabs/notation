@@ -5,6 +5,7 @@ import path from "node:path";
 import { fromProjectRoot } from "@notation/core/paths";
 import {
   resource,
+  ResourceAlreadyExistsError,
   ResourceNotFoundError,
   type RejectChangeContext,
   type ResourceDeletion,
@@ -236,7 +237,7 @@ export const WorkerScript = workerScriptSchema
     // check is outside `cloudflareCreate`: if it throws, nothing was created.
     create: async (params) => {
       if (await getScriptSettings(params.AccountId, params.ScriptName)) {
-        throw new Error(
+        throw new ResourceAlreadyExistsError(
           `A Worker named ${params.ScriptName} already exists in the Cloudflare account ${params.AccountId}`,
         );
       }

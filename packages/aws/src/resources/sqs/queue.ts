@@ -1,17 +1,15 @@
 import * as v from "valibot";
 import {
   resource,
+  ResourceAlreadyExistsError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
 } from "@notation/resource";
 import * as sdk from "@aws-sdk/client-sqs";
 import { sqsClient } from "src/resources/utils/aws-clients";
-import {
-  CREATE_TOKEN_TAG,
-  createTokenTagValue,
-} from "src/resources/utils/create-token";
 import { awsCreate } from "src/resources/utils/errors";
 import { AwsSchema } from "src/resources/utils/types";
+import { nameBase } from "src/id";
 
 /** The queue attributes that can be changed after the queue is created. */
 type QueueAttributeParams = {
@@ -123,6 +121,12 @@ const queueSchema = queue.defineSchema({
     presence: "required",
     immutable: true,
     value: v.string(),
+    // [a-zA-Z0-9-_], a FIFO queue's name ends in .fifo
+    physicalName: {
+      maxLength: 80,
+      ending: (params) => (params.FifoQueue === true ? ".fifo" : ""),
+      base: nameBase,
+    },
   },
   FifoQueue: {
     propertyType: "param",
@@ -217,51 +221,45 @@ const queueSchema = queue.defineSchema({
 } as const);
 
 export const Queue = queueSchema.defineOperations({
-  // CreateQueue returns an existing queue of the same name, so a queue that
-  // exists already is reported, instead of being taken over. The create
-  // attempt is recorded as a tag, so `find` can tell this deploy's queue
-  // from another with the same name.
-  create: awsCreate(async (params, _context, token) => {
-    if (await getQueueUrl(params.QueueName)) {
-      throw new Error(`An SQS queue named ${params.QueueName} already exists`);
-    }
-    const { QueueName, FifoQueue, ...attributes } = params;
-    const command = new sdk.CreateQueueCommand({
-      QueueName,
-      Attributes: {
-        ...toAttributes(attributes),
-        ...(FifoQueue ? { FifoQueue: "true" } : {}),
-      },
-      tags: token
-        ? { [CREATE_TOKEN_TAG]: createTokenTagValue(token) }
-        : undefined,
-    });
-    try {
-      const result = await sqsClient().send(command);
-      return { QueueUrl: result.QueueUrl! };
-    } catch (error) {
-      if (error instanceof sdk.QueueDeletedRecently) {
-        throw new ResourceOperationPendingError(
-          "Waiting to reuse the name of a recently deleted queue",
-          { retryAfterMs: 5_000, cause: error },
+  // CreateQueue returns an existing queue of the same name instead of
+  // failing, so create checks for the queue first.
+  create: awsCreate(
+    async (params) => {
+      if (await getQueueUrl(params.QueueName)) {
+        throw new ResourceAlreadyExistsError(
+          `An SQS queue named ${params.QueueName} already exists`,
         );
       }
-      throw error;
-    }
-  }),
-
-  find: async (params, token) => {
-    const QueueUrl = await getQueueUrl(params.QueueName);
-    if (QueueUrl) {
-      const { Tags } = await sqsClient().send(
-        new sdk.ListQueueTagsCommand({ QueueUrl }),
-      );
-      if (Tags?.[CREATE_TOKEN_TAG] === createTokenTagValue(token)) {
-        return { QueueUrl };
+      const { QueueName, FifoQueue, ...attributes } = params;
+      const command = new sdk.CreateQueueCommand({
+        QueueName,
+        Attributes: {
+          ...toAttributes(attributes),
+          ...(FifoQueue ? { FifoQueue: "true" } : {}),
+        },
+      });
+      try {
+        const result = await sqsClient().send(command);
+        return { QueueUrl: result.QueueUrl! };
+      } catch (error) {
+        if (error instanceof sdk.QueueDeletedRecently) {
+          throw new ResourceOperationPendingError(
+            "Waiting to reuse the name of a recently deleted queue",
+            { retryAfterMs: 5_000, cause: error },
+          );
+        }
+        throw error;
       }
-    }
+    },
+    { alreadyExists: (error) => error instanceof sdk.QueueNameExists },
+  ),
+
+  // The queue's key is its URL, which a takeover has to look up by name.
+  find: async (params) => {
+    const QueueUrl = await getQueueUrl(params.QueueName);
+    if (QueueUrl) return { QueueUrl };
     throw new ResourceNotFoundError(
-      "No SQS queue has the name and the create token",
+      `No SQS queue is named ${params.QueueName}`,
     );
   },
 

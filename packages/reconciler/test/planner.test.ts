@@ -197,6 +197,48 @@ describe("createPlan", () => {
     });
   });
 
+  it("plans a create for a creating record without a read, and notes that it may take over an existing resource", async () => {
+    const TestResource = resource({
+      type: "test/planner/creating",
+      provider: "test",
+    })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        read: async () => {
+          throw new Error("a creating record is not read at plan");
+        },
+        delete: async () => undefined,
+      });
+    const state = new MemoryStateBackend({
+      creating: {
+        version: 1,
+        id: "creating",
+        type: TestResource.type,
+        provider: "test",
+        config: {},
+        params: {},
+        output: {},
+        lastOperation: "creating",
+        lastOperationAt: "2026-07-22T00:00:00.000Z",
+      },
+    });
+
+    const plan = await createPlan({
+      resources: [new TestResource("creating"), new TestResource("new")],
+      state,
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({
+        id: "creating",
+        decision: "create",
+        mayTakeOver: true,
+      }),
+      expect.not.objectContaining({ mayTakeOver: true }),
+    ]);
+  });
+
   it("waits for a pending read before planning", async () => {
     let attempts = 0;
     const TestResource = resource({
@@ -1741,6 +1783,236 @@ describe("dependency cycles", () => {
 
     expect(plan.nodes.find(({ id }) => id === "b")).not.toHaveProperty(
       "brokenDependents",
+    );
+  });
+});
+
+describe("createPlan with a generated physical name", () => {
+  const Queue = resource({ type: "test/planner/named", provider: "test" })
+    // Cast: a resource declared without API types constrains every schema
+    // key to be a key of an `any` API schema, which no named key satisfies.
+    .defineSchema({
+      name: {
+        propertyType: "param",
+        presence: "required",
+        primaryKey: true,
+        value: v.string(),
+        physicalName: { maxLength: 64 },
+      },
+      path: {
+        propertyType: "param",
+        presence: "required",
+        immutable: true,
+        value: v.string(),
+      },
+      target: {
+        propertyType: "param",
+        presence: "optional",
+        value: v.string(),
+      },
+    } as any)
+    .defineOperations({
+      create: async () => undefined,
+      update: async () => undefined,
+      delete: async () => undefined,
+    });
+  const queue = (id: string, config: Record<string, unknown>): BaseResource =>
+    new Queue(id, { config: config as any });
+  const record = (
+    id: string,
+    params: Record<string, DurableObject[string]>,
+    lastOperation: "create" | "creating" = "create",
+  ) => ({
+    version: 1,
+    id,
+    type: Queue.type,
+    provider: "test",
+    config: {},
+    params,
+    output: { name: params.name! },
+    lastOperation,
+    lastOperationAt: "2026-07-22T00:00:00.000Z",
+  });
+  const name = "shop--prod--orders-1a2b3c4d";
+
+  it("plans a noop with the name in the state record", async () => {
+    const plan = await createPlan({
+      resources: [queue("orders", { path: "/" })],
+      state: new MemoryStateBackend({
+        orders: record("orders", { name, path: "/" }),
+      }),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({
+        id: "orders",
+        decision: "noop",
+        params: { name, path: "/" },
+      }),
+    ]);
+  });
+
+  it("throws when deriveParams supplies the name", async () => {
+    const Derived = resource({ type: "test/planner/derived", provider: "test" })
+      // Cast: as for Queue.
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          primaryKey: true,
+          value: v.string(),
+          physicalName: { maxLength: 64 },
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+      })
+      .requireDependencies<{}>()
+      .deriveParams(({ id }) => ({ name: `derived-${id}` }));
+
+    await expect(
+      createPlan({
+        resources: [new Derived("orders", { config: {} as any })],
+        state: new MemoryStateBackend({}),
+        driftDetection: false,
+      }),
+    ).rejects.toThrow(
+      'Resource "orders" (test/planner/derived): the params supply "name", which has physicalName in the schema. Deploy generates a physicalName param from the resource ID, so neither config nor deriveParams can supply it.',
+    );
+  });
+
+  it("plans a create with an unknown name for a resource with no record", async () => {
+    const orders = queue("orders", { path: "/" });
+    const mirror = queue("mirror", { path: "/" });
+    mirror.config.target = orders.outputRef("name");
+
+    const plan = await createPlan({
+      resources: [orders, mirror],
+      state: new MemoryStateBackend({}),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({
+        id: "orders",
+        decision: "create",
+        params: { name: UNKNOWN_AFTER_APPLY, path: "/" },
+      }),
+      expect.objectContaining({
+        id: "mirror",
+        decision: "create",
+        params: {
+          name: UNKNOWN_AFTER_APPLY,
+          path: "/",
+          target: UNKNOWN_AFTER_APPLY,
+        },
+      }),
+    ]);
+  });
+
+  it("plans a create with the name in a creating record", async () => {
+    const plan = await createPlan({
+      resources: [queue("orders", { path: "/" })],
+      state: new MemoryStateBackend({
+        orders: record("orders", { name, path: "/" }, "creating"),
+      }),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({
+        id: "orders",
+        decision: "create",
+        mayTakeOver: true,
+        params: { name, path: "/" },
+      }),
+    ]);
+  });
+
+  it("plans a replace with an unknown name, and an update of a dependent that takes the name", async () => {
+    const orders = queue("orders", { path: "/new/" });
+    const mirror = queue("mirror", { path: "/" });
+    mirror.config.target = orders.outputRef("name");
+    const mirrorName = "shop--prod--mirror-5e6f7a8b";
+
+    const plan = await createPlan({
+      resources: [orders, mirror],
+      state: new MemoryStateBackend({
+        orders: record("orders", { name, path: "/" }),
+        mirror: record("mirror", { name: mirrorName, path: "/", target: name }),
+      }),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({
+        id: "orders",
+        decision: "replace",
+        params: { name: UNKNOWN_AFTER_APPLY, path: "/new/" },
+      }),
+      expect.objectContaining({
+        id: "mirror",
+        decision: "update",
+        params: { name: mirrorName, path: "/", target: UNKNOWN_AFTER_APPLY },
+      }),
+    ]);
+  });
+
+  it("plans an update with the recorded name when a dependency has no output yet", async () => {
+    const Fn = resource({ type: "test/planner/named-fn", provider: "test" })
+      // Cast: as for Queue.
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          primaryKey: true,
+          value: v.string(),
+          physicalName: { maxLength: 64 },
+        },
+        role: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+      })
+      .requireDependencies<{ role: BaseResource }>()
+      .deriveParams(({ deps }) => ({ role: (deps.role.output as any).name }));
+    const role = queue("role", { path: "/" });
+
+    const plan = await createPlan({
+      resources: [role, new Fn("fn", { dependencies: { role } })],
+      state: new MemoryStateBackend({
+        fn: {
+          ...record("fn", { name, role: "old-role" }),
+          type: Fn.type,
+        },
+      }),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes[1]).toMatchObject({
+      id: "fn",
+      decision: "update",
+      params: { name, role: UNKNOWN_AFTER_APPLY },
+    });
+  });
+
+  it("throws when config supplies the name", async () => {
+    await expect(
+      createPlan({
+        resources: [queue("orders", { name: "orders", path: "/" })],
+        state: new MemoryStateBackend({}),
+        driftDetection: false,
+      }),
+    ).rejects.toThrow(
+      'Resource "orders" (test/planner/named): the params supply "name", which has physicalName in the schema.',
     );
   });
 });

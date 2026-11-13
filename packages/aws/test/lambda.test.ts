@@ -1,10 +1,10 @@
 import { test, expect } from "vitest";
-import { collectResourceGraph } from "@notation/resource";
+import { UNKNOWN_AFTER_APPLY, collectResourceGraph } from "@notation/resource";
 import { lambda, type NameSafe } from "src/lambda";
 
 const code = { type: "file", path: "src/fns/handler.fn.js" } as const;
 
-test("resource ids and names embed the id", () => {
+test("resource ids embed the id", () => {
   const group = lambda({ id: "get-todos", code });
   expect(group.resources.map((r) => r.id).sort()).toEqual(
     [
@@ -15,7 +15,6 @@ test("resource ids and names embed the id", () => {
       "lambda:get-todos:zip",
     ].sort(),
   );
-  expect(group.fn.config.FunctionName).toBe("get-todos");
 });
 
 test("the function calls the bundle's `handler` export", () => {
@@ -47,7 +46,7 @@ test("a function without concurrency has no reserved concurrency", () => {
   ).toBeUndefined();
 });
 
-test("the policy's role name is known at plan before the role is deployed", async () => {
+test("the policy's role name is unknown at plan before the role is deployed", async () => {
   const group = lambda({ id: "get-todos", code });
   group.policy.contribute({
     PolicyDocument: {
@@ -55,7 +54,11 @@ test("the policy's role name is known at plan before the role is deployed", asyn
     },
   });
   expect(await group.policy.planParams()).toMatchObject({
-    RoleName: "get-todos-role",
+    RoleName: UNKNOWN_AFTER_APPLY,
+  });
+  group.role.setOutput({ RoleName: "get-todos-role-1a2b3c4d" } as any);
+  expect(await group.policy.planParams()).toMatchObject({
+    RoleName: "get-todos-role-1a2b3c4d",
   });
   expect(group.policy.getDependencies()).toContain(group.role);
 });
@@ -110,35 +113,16 @@ test("two lambdas with the same id in one deployment throw", async () => {
   ).rejects.toThrow('Duplicate lambda() id "fn"');
 });
 
-test("ids that differ only in case clash, as IAM role names ignore case", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      lambda({ id: "myFn", code });
-      lambda({ id: "myfn", code });
-    }),
-  ).rejects.toThrow(/Duplicate lambda\(\) id "myfn": it clashes with "myFn"/);
-});
-
-test("a name that is another Lambda's id throws, and names both declarations", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      lambda({ id: "b", code });
-      lambda({ id: "a", name: "b", code });
-    }),
-  ).rejects.toThrow(
-    'lambda({ id: "b" }) and lambda({ id: "a", name: "b" }) give two Lambda functions the same AWS name, "b". Give one of them another name.',
-  );
-});
-
-test("two Lambdas in different collections can have the same name", async () => {
-  await collectResourceGraph(() => {
-    lambda({ id: "a", name: "b", code });
+test("ids that differ only in case do not clash", async () => {
+  const graph = await collectResourceGraph(() => {
+    lambda({ id: "myFn", code });
+    lambda({ id: "myfn", code });
   });
-  await expect(
-    collectResourceGraph(() => {
-      lambda({ id: "b", code });
-    }),
-  ).resolves.toBeDefined();
+
+  expect(graph.resourceGroups.map((group) => group.id)).toEqual([
+    "myFn",
+    "myfn",
+  ]);
 });
 
 test("distinct ids in one deployment are fine", async () => {

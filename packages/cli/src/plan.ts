@@ -71,6 +71,11 @@ function printPlanSummary(result: Plan, logger: Logger) {
         `    the references from ${node.brokenDependents.join(", ")} are broken until deploy updates them${certain ? "" : ", if it is replaced"}`,
       );
     }
+    if (node.mayTakeOver) {
+      logger.info(
+        `    recovers a create that an earlier deploy did not finish`,
+      );
+    }
     if (node.replacedDependency) {
       const replaced = result.nodes.find(
         ({ id }) => id === node.replacedDependency,

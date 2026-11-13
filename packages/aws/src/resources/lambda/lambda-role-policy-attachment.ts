@@ -42,8 +42,11 @@ export const LambdaRolePolicyAttachment = lambdaRolePolicyAttachmentSchema
       await iamClient().send(command);
     },
     delete: async (key) => {
-      const command = new sdk.DetachRolePolicyCommand(key);
-      await iamClient().send(command);
+      try {
+        await iamClient().send(new sdk.DetachRolePolicyCommand(key));
+      } catch (error) {
+        if (!(error instanceof sdk.NoSuchEntityException)) throw error;
+      }
     },
   })
   .requireDependencies<LambdaRolePolicyAttachmentDependencies>()

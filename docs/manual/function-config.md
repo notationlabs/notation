@@ -7,7 +7,6 @@ A runtime module declares the Lambda function that it deploys as with `$lambda` 
 ```ts [@notation/aws/lambda]
 type LambdaDeclarationConfig = {
   id: string; // name-safe string literal
-  name?: string; // the function's AWS name, in place of the id
   event?: () => SqsEvent | ApiGatewayEvent | EventBridgeRuleEvent;
   env?: () => Record<string, string>;
   policy?: () => PolicyStatement[];
@@ -20,7 +19,7 @@ type LambdaDeclarationConfig = {
 
 | Option        | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`          | Names the function and its role, zip, policy and log group, and keys them in state. See [`id`](#id).                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `id`          | Keys the function and its role, zip, policy and log group in state. See [`id`](#id).                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `event`       | The events that the function receives: `sqs.bind(queue, options?)`, `sqs.schema(schema)`, `apiGateway.bind(api).defineRoute(options)`, `apiGateway.schema(body)`, `apiGateway.schema(body).authSchema(claims?)`, `eventBridge.bind(bus).defineRule(options)`, `eventBridge.defineSchedule(options)` or `eventBridge.schema(detail)`. An API Gateway `body` is a schema, or `null` for requests with no body. An EventBridge `detail` is a schema, or `null` for scheduled events.                                                     |
 | `env`         | Values that the function reads, by name. Deploy sets each one as an environment variable of the function.                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `policy`      | Statements to add to the function role's inline policy.                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -75,11 +74,11 @@ The declaration needs no export unless another module refers to it. In practice 
 
 ## `id`
 
-`id` is required. It names the function, its IAM role and its log group, and keys them in state. The ID doesn't depend on the module's path, so you can move or rename the module and keep its function. Changing the ID replaces the function.
+`id` is required. It keys the function, its IAM role and its log group in state. The ID doesn't depend on the module's path, so you can move or rename the module and keep its function. Changing the ID replaces the function.
+
+Deploy generates the function's AWS name from the app, the stage and the `id`, such as `my-app--prod--orders-1a2b3c4d`. Deploy generates the name when it first creates the function, and keeps it in state. You can't set the name. See [Generated names](./project-config.md#generated-names).
 
 Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. TypeScript reports an ID that breaks the rule, and `$lambda` throws on one when the infra code runs. Two Lambda functions in one deployment can't share an ID. See [Lambda IDs](../providers/aws/lambda.md#ids).
-
-`name` sets the function's AWS name in place of the `id`, and keeps the `<app>--<stage>--` prefix. The `id` still keys the function in state. The runtime build removes `name`, as it removes the other options that the function doesn't read.
 
 ## `env`
 

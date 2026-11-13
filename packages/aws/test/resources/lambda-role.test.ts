@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-iam";
 import { createPlan } from "@notation/reconciler";
-import type { DurableObject } from "@notation/resource";
+import {
+  ResourceAlreadyExistsError,
+  ResourceCreationUnknownError,
+  type DurableObject,
+} from "@notation/resource";
 import { MemoryStateBackend } from "@notation/state";
 import { iamClient } from "src/resources/utils/aws-clients";
 import { LambdaIamRole } from "src/resources/lambda/lambda-role";
@@ -47,7 +51,7 @@ function mockGetRole(response: sdk.GetRoleResponse) {
 // Plans a role whose state matches its config, as after a successful create.
 async function planUnchangedRole(config: DurableObject) {
   const role = new LambdaIamRole("role", { config: config as any });
-  const params = await role.getParams();
+  const params = { ...(await role.getParams()), RoleName: "app-role" };
   const plan = await createPlan({
     resources: [role],
     state: new MemoryStateBackend({
@@ -74,16 +78,13 @@ afterEach(() => {
 describe("LambdaIamRole drift detection", () => {
   it("does not report an unchanged role as drifted", async () => {
     mockGetRole(getRoleResponse());
-    const node = await planUnchangedRole({ RoleName: "app-role" });
+    const node = await planUnchangedRole({});
     expect(node).toMatchObject({ decision: "noop" });
   });
 
   it("does not report an unchanged permissions boundary as drifted", async () => {
     mockGetRole(getRoleResponse());
-    const node = await planUnchangedRole({
-      RoleName: "app-role",
-      PermissionsBoundary: boundaryArn,
-    });
+    const node = await planUnchangedRole({ PermissionsBoundary: boundaryArn });
     expect(node).toMatchObject({ decision: "noop" });
   });
 
@@ -102,7 +103,7 @@ describe("LambdaIamRole drift detection", () => {
         AssumeRolePolicyDocument: encodeURIComponent(JSON.stringify(changed)),
       }),
     );
-    const node = await planUnchangedRole({ RoleName: "app-role" });
+    const node = await planUnchangedRole({});
     expect(node).toMatchObject({
       decision: "drift-replace",
       replaceFields: [{ name: "AssumeRolePolicyDocument", known: true }],
@@ -118,14 +119,38 @@ describe("LambdaIamRole drift detection", () => {
         },
       }),
     );
-    const node = await planUnchangedRole({
-      RoleName: "app-role",
-      PermissionsBoundary: boundaryArn,
-    });
+    const node = await planUnchangedRole({ PermissionsBoundary: boundaryArn });
     expect(node).toMatchObject({
       decision: "drift-replace",
       replaceFields: [{ name: "PermissionsBoundary", known: true }],
     });
+  });
+});
+
+describe("LambdaIamRole create", () => {
+  it("reports a role that already exists as ResourceAlreadyExistsError", async () => {
+    vi.spyOn(iamClient(), "send").mockImplementation(async () => {
+      throw new sdk.EntityAlreadyExistsException({
+        message: "Role with name app-role already exists.",
+        $metadata: {},
+      });
+    });
+    const role = new LambdaIamRole("role");
+
+    await expect(
+      role.create({ ...(await role.getParams()), RoleName: "app-role" }),
+    ).rejects.toSatisfy(ResourceAlreadyExistsError.is);
+  });
+
+  it("reports a create that may have taken effect as unknown", async () => {
+    vi.spyOn(iamClient(), "send").mockImplementation(async () => {
+      throw { $metadata: { httpStatusCode: 503 } };
+    });
+    const role = new LambdaIamRole("role");
+
+    await expect(
+      role.create({ ...(await role.getParams()), RoleName: "app-role" }),
+    ).rejects.toSatisfy(ResourceCreationUnknownError.is);
   });
 });
 
@@ -140,9 +165,7 @@ describe("LambdaIamRole result", () => {
         Tags: [{ Key: "team", Value: "platform" }],
       }),
     );
-    const role = new LambdaIamRole("role", {
-      config: { RoleName: "app-role" },
-    });
+    const role = new LambdaIamRole("role");
 
     const result = role.toResult(await role.read!({ RoleName: "app-role" }));
 

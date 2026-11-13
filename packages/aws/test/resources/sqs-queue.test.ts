@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-sqs";
 import {
+  ResourceAlreadyExistsError,
   ResourceNotFoundError,
   validateValues,
   ValueValidationError,
@@ -8,10 +9,6 @@ import {
 import { decideDriftAction } from "@notation/reconciler";
 import { sqsClient } from "src/resources/utils/aws-clients";
 import { Queue } from "src/resources/sqs/queue";
-import {
-  CREATE_TOKEN_TAG,
-  createTokenTagValue,
-} from "src/resources/utils/create-token";
 
 const url = "https://sqs.eu-west-2.amazonaws.com/123456789012/orders";
 
@@ -19,7 +16,7 @@ const dlqArn = "arn:aws:sqs:eu-west-2:123456789012:orders-dlq";
 
 const sourceArn = "arn:aws:sqs:eu-west-2:123456789012:orders";
 
-const queue = new Queue("orders-queue", { config: { QueueName: "orders" } });
+const queue = new Queue("orders-queue");
 
 const queueDoesNotExist = () =>
   new sdk.QueueDoesNotExist({ message: "missing", $metadata: {} });
@@ -30,37 +27,36 @@ function mockSend(respond: (command: unknown) => unknown) {
     .mockImplementation(async (command) => respond(command));
 }
 
+/** Answers the calls of a create of a queue that does not exist yet. */
+function respondToCreate(command: unknown) {
+  if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
+  return { QueueUrl: url };
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("SQS queue", () => {
-  it("creates the queue with its attributes as strings and the create token", async () => {
-    const send = mockSend((command) => {
-      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
-      return { QueueUrl: url };
-    });
+  it("creates the queue with its attributes as strings", async () => {
+    const send = mockSend(respondToCreate);
 
-    const key = await queue.create(
-      { QueueName: "orders", VisibilityTimeout: 60, FifoQueue: false },
-      undefined,
-      "token",
-    );
+    const key = await queue.create({
+      QueueName: "orders",
+      VisibilityTimeout: 60,
+      FifoQueue: false,
+    });
 
     expect(key).toEqual({ QueueUrl: url });
     const command = send.mock.calls[1]![0] as sdk.CreateQueueCommand;
     expect(command.input).toEqual({
       QueueName: "orders",
       Attributes: { VisibilityTimeout: "60" },
-      tags: { [CREATE_TOKEN_TAG]: createTokenTagValue("token") },
     });
   });
 
   it("creates the redrive policy as JSON and the FIFO attributes as strings", async () => {
-    const send = mockSend((command) => {
-      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
-      return { QueueUrl: url };
-    });
+    const send = mockSend(respondToCreate);
 
     await queue.create({
       QueueName: "orders.fifo",
@@ -85,10 +81,7 @@ describe("SQS queue", () => {
   });
 
   it("creates the queue without the empty redrive policies", async () => {
-    const send = mockSend((command) => {
-      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
-      return { QueueUrl: url };
-    });
+    const send = mockSend(respondToCreate);
 
     await queue.create({
       QueueName: "orders",
@@ -102,10 +95,7 @@ describe("SQS queue", () => {
   });
 
   it("creates the redrive allow policy as JSON", async () => {
-    const send = mockSend((command) => {
-      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
-      return { QueueUrl: url };
-    });
+    const send = mockSend(respondToCreate);
 
     await queue.create({
       QueueName: "orders-dlq",
@@ -124,35 +114,45 @@ describe("SQS queue", () => {
     });
   });
 
-  it("does not take over a queue that exists already", async () => {
+  it("reports a queue that exists already as ResourceAlreadyExistsError", async () => {
     const send = mockSend(() => ({ QueueUrl: url }));
 
-    await expect(queue.create({ QueueName: "orders" })).rejects.toThrow(
+    const created = queue.create({ QueueName: "orders" });
+    await expect(created).rejects.toThrow(
       "An SQS queue named orders already exists",
     );
+    await expect(created).rejects.toSatisfy(ResourceAlreadyExistsError.is);
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it("finds the queue that has the create token", async () => {
+  it("reports a queue whose attributes differ from an existing one as ResourceAlreadyExistsError", async () => {
     mockSend((command) => {
-      if (command instanceof sdk.GetQueueUrlCommand) return { QueueUrl: url };
-      return { Tags: { [CREATE_TOKEN_TAG]: createTokenTagValue("token") } };
+      if (command instanceof sdk.GetQueueUrlCommand) throw queueDoesNotExist();
+      throw new sdk.QueueNameExists({ message: "exists", $metadata: {} });
     });
 
-    await expect(
-      queue.find!({ QueueName: "orders" }, "token"),
-    ).resolves.toEqual({ QueueUrl: url });
+    await expect(queue.create({ QueueName: "orders" })).rejects.toSatisfy(
+      ResourceAlreadyExistsError.is,
+    );
   });
 
-  it("reports a queue without the create token as not found", async () => {
-    mockSend((command) => {
-      if (command instanceof sdk.GetQueueUrlCommand) return { QueueUrl: url };
-      return { Tags: {} };
+  it("finds the URL of the queue that has the name", async () => {
+    const send = mockSend(() => ({ QueueUrl: url }));
+
+    await expect(queue.find!({ QueueName: "orders" })).resolves.toEqual({
+      QueueUrl: url,
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a missing queue as not found by find", async () => {
+    mockSend(() => {
+      throw queueDoesNotExist();
     });
 
-    await expect(
-      queue.find!({ QueueName: "orders" }, "token"),
-    ).rejects.toSatisfy(ResourceNotFoundError.is);
+    await expect(queue.find!({ QueueName: "orders" })).rejects.toSatisfy(
+      ResourceNotFoundError.is,
+    );
   });
 
   it("reads the attributes as numbers", async () => {
@@ -193,7 +193,6 @@ describe("SQS queue", () => {
   it("finds drift when the dead-letter queue was removed outside Notation", async () => {
     const withDlq = new Queue("orders-with-dlq", {
       config: {
-        QueueName: "orders",
         RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 3 },
       },
     });
@@ -301,7 +300,7 @@ describe("SQS queue", () => {
     expect(
       () =>
         new Queue("bad-queue", {
-          config: { QueueName: "bad", VisibilityTimeout: 50_000 },
+          config: { VisibilityTimeout: 50_000 },
         }),
     ).toThrow(ValueValidationError);
   });
@@ -356,7 +355,6 @@ describe("SQS queue", () => {
       () =>
         new Queue("bad-queue", {
           config: {
-            QueueName: "bad",
             RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 0 },
           },
         }),
@@ -368,7 +366,6 @@ describe("SQS queue", () => {
       () =>
         new Queue("bad-queue", {
           config: {
-            QueueName: "bad",
             RedriveAllowPolicy: {
               redrivePermission: "byQueue",
               sourceQueueArns: [],

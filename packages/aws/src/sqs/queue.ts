@@ -3,22 +3,16 @@ import { AwsResourceGroup } from "src/resource-group";
 import type { LambdaGroup } from "src/lambda/lambda";
 import type { SqsOptions } from "src/lambda/declaration";
 import type { StandardSchemaV1 } from "@notation/resource";
-import { awsName, claimAwsName, describeDeclaration } from "src/naming";
-import { assertId, assertName, resourceId, type IdOption } from "src/id";
+import { assertId, resourceId, type IdOption } from "src/id";
 
 export type QueueConfig<S extends StandardSchemaV1 = StandardSchemaV1> = {
   /**
-   * Keys the queue in state. Changing the id replaces the queue, so keep it
-   * stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
+   * Keys the queue in state. Deploy generates the queue's name in AWS from
+   * the app, the stage and the id. Changing the id replaces the queue, so
+   * keep it stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
    * underscores.
    */
   id: string;
-  /**
-   * The queue's name in AWS, in place of the id. The queue is named
-   * `<app>--<stage>--<name>`. Changing the name replaces the queue. Must be
-   * name-safe.
-   */
-  name?: string;
   /**
    * Makes a FIFO queue. Its AWS name ends in `.fifo`, which Notation adds.
    * It can't change after the queue is created.
@@ -98,21 +92,12 @@ export class QueueGroup<
 
   constructor({ schema, ...config }: QueueConfig<S>) {
     assertId("queue()", config.id);
-    assertName("queue()", config.name);
     assertQueueOptions(config);
-    const name = config.name ?? config.id;
-    const queueName = awsName("sqsQueue", config.fifo ? `${name}.fifo` : name);
     super("aws/sqs/queue", config.id, config);
-    claimAwsName(
-      "SQS queues",
-      queueName,
-      describeDeclaration("queue()", config.id, config.name),
-    );
     this.schema = schema;
     this.queue = this.add(
       new aws.sqs.Queue(resourceId("sqs-queue", config.id), {
         config: {
-          QueueName: queueName,
           FifoQueue: config.fifo,
           VisibilityTimeout: config.visibilityTimeout,
           MessageRetentionPeriod: config.messageRetentionPeriod,

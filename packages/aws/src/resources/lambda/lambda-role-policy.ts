@@ -109,8 +109,6 @@ const lambdaRolePolicySchema = lambdaRolePolicy.defineSchema({
   },
 } as const);
 
-// RoleName is config rather than derived from the role's output, so a plan
-// knows the primary key before the role is deployed.
 export const LambdaRolePolicy = lambdaRolePolicySchema
   .defineOperations({
     create: async (params) => {

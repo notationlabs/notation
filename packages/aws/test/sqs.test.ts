@@ -322,26 +322,6 @@ test("eventSourceMapping after evaluation has ended throws", async () => {
   );
 });
 
-test("a queue whose AWS name is another queue's throws, and names both declarations", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      queue({ id: "orders", schema: Unknown });
-      queue({ id: "sales", name: "orders", schema: Unknown });
-    }),
-  ).rejects.toThrow(
-    'queue({ id: "orders" }) and queue({ id: "sales", name: "orders" }) give two SQS queues the same AWS name, "orders".',
-  );
-});
-
-test("a FIFO queue and a standard queue can share a name", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      queue({ id: "orders", schema: Unknown });
-      queue({ id: "sales", name: "orders", fifo: true, schema: Unknown });
-    }),
-  ).resolves.toBeDefined();
-});
-
 test("a queue with a dead-letter queue depends on it and sets its redrive policy", async () => {
   let orders!: ReturnType<typeof queue>;
   let dlq!: ReturnType<typeof queue>;
@@ -506,7 +486,6 @@ test("a FIFO queue passes its FIFO options and message size to the queue", async
   });
 
   expect(await ledger.queue.getParams()).toMatchObject({
-    QueueName: expect.stringMatching(/ledger\.fifo$/),
     FifoQueue: true,
     MaximumMessageSize: 2_048,
     ContentBasedDeduplication: true,
@@ -598,7 +577,7 @@ test("a batchSize over 10 on a FIFO queue throws", async () => {
       eventSourceMapping({ source: ledger, target: fn, batchSize: 20 });
     }),
   ).rejects.toThrow(
-    'sets batchSize: 20, but Lambda allows at most 10 for a FIFO queue.',
+    "sets batchSize: 20, but Lambda allows at most 10 for a FIFO queue.",
   );
 });
 

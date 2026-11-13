@@ -30,13 +30,14 @@ export const ordersBus = eventBus({ id: "orders" });
 ```ts [@notation/aws/event-bridge]
 type EventBusConfig = {
   id: string;
-  name?: string;
 };
 ```
 
-`id` keys the bus in state, so changing it replaces the bus. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. In AWS, the bus is named `<app>--<stage>--<id>`, such as `my-app--prod--orders`.
+`id` keys the bus in state, so changing it replaces the bus. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the bus's AWS name when it first creates the bus, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--orders-1a2b3c4d`, where the instance is 8 random hex characters.
 
-`name` replaces the `id` in the AWS name, so `eventBus({ id: "orders", name: "shop" })` is named `my-app--prod--shop`. Changing `name` also replaces the bus. AWS does not delete a bus that has rules, so the deploy first deletes the rules on the bus. Then it deletes the bus, creates the new bus, and creates the rules again. Until they exist again, events sent to the bus do not reach their functions. Other resources that depend on the bus stay in place, and the deploy updates them with the new bus's outputs. A function whose `env` holds the bus's `arn` or `name` is updated, and a role policy with a `grant()` of the bus is updated too. The new rules have new ARNs, so the deploy replaces the Lambda permission of each rule. See [AWS names](../../manual/project-config.md#aws-names).
+You can't set the bus's AWS name. See [AWS names](../../manual/project-config.md#aws-names).
+
+AWS does not delete a bus that has rules. When a deploy deletes a bus, it deletes the rules on the bus first.
 
 This also works when the same deploy removes the last EventBridge rule in your code. Notation loads the class of the old rule from the provider package that its state record names, so it knows to delete the rule before the bus.
 
@@ -128,7 +129,6 @@ The infra module only declares the bus. When infra has finished loading, the dec
 ```ts [@notation/aws/lambda]
 type RuleOptions = {
   id: string;
-  name?: string;
   pattern: EventPattern;
   enabled?: boolean;
   retry?: RetryOptions;
@@ -145,9 +145,7 @@ type RetryOptions = {
 };
 ```
 
-`id` keys the rule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. In AWS, the rule is named `<app>--<stage>--<id>`, such as `my-app--prod--order-placed`. `name` replaces the `id` in the rule's AWS name. Changing `name` also replaces the rule.
-
-AWS lets two buses have rules with the same name, but Notation doesn't: in one deployment, no two rules or schedules can have the same AWS name.
+`id` keys the rule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the rule's AWS name when it first creates the rule, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--order-placed-1a2b3c4d`, where the instance is 8 random hex characters. You can't set the rule's AWS name.
 
 `pattern` is the [event pattern](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns.html) that the rule matches. Each field holds a list of values, and the field matches when the event's field has one of them. A value can also be a content filter, such as `{ prefix: "order-" }` or `{ numeric: [">", 100] }`. `detail` holds a pattern for the event's detail, field by field:
 
@@ -288,12 +286,11 @@ The runtime build keeps the options. `@notation/aws/event-bridge` sets `"sideEff
 ```ts [@notation/aws/lambda]
 type ScheduleOptions = {
   id: string;
-  name?: string;
   schedule: Schedule;
 };
 ```
 
-`id` and `name` work as they do for [`schedule()`](#scheduleconfig).
+`id` works as it does for [`schedule()`](#scheduleconfig).
 
 ## `schedule(config)`
 
@@ -336,7 +333,6 @@ A scheduled event has no detail, so its function declares `eventBridge.schema(nu
 ```ts [@notation/aws/event-bridge]
 type ScheduleConfig = {
   id: string;
-  name?: string;
   schedule: Schedule;
   target: ScheduleTarget; // RuleTarget<null>: () => declaration, or a Lambda group
 };
@@ -346,9 +342,9 @@ type ScheduleConfig = {
 
 The rule sends the EventBridge event to the function as it is.
 
-`id` keys the schedule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. In AWS, the EventBridge rule is named `<app>--<stage>--<id>`, such as `my-app--prod--log-every-minute`.
+`id` keys the schedule in state, so changing it replaces the rule. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the AWS name of the EventBridge rule when it first creates the rule, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--log-every-minute-1a2b3c4d`, where the instance is 8 random hex characters.
 
-`name` replaces the `id` in the rule's AWS name, so `name: "every-minute"` names the rule `my-app--prod--every-minute`. Changing `name` also replaces the rule. See [AWS names](../../manual/project-config.md#aws-names).
+You can't set the rule's AWS name. See [AWS names](../../manual/project-config.md#aws-names).
 
 ## Schedule types
 

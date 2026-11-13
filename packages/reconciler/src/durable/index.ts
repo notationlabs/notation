@@ -19,6 +19,8 @@
  *   notation:destroy:<id>:*    per-resource deletion steps
  *   notation:orphans:list      the orphan sweep's one read of persisted state
  *   notation:orphans:<id>:*    orphan sweep, per persisted record
+ *   *:physical-names           the names that deploy generates for a
+ *                              resource, or for its replacement
  *   *:create:remote:effect:<n> one create attempt, as a step.effect
  *   *:remote:attempt:<n>       one read, update or delete attempt
  *   *:remote:retry-delay:<n>   the wait between two attempts
@@ -26,21 +28,42 @@
  *   notation:hold:*            deployment hold: inspect/acquire/release
  *   state:persist:<id>         conditional create or update of a resource
  *                              record
+ *   state:persist:<id>:creating   conditional write of the "creating"
+ *                              record, before a create is attempted
+ *   state:persist:<id>:taken-over conditional write of the record of a
+ *                              resource that create took over
+ *   state:persist:<id>:restored   conditional write of the record that a
+ *                              failed create started from or that the
+ *                              replaced resource had, or removal of the
+ *                              "creating" record if there is none
  *   state:delete:<id>          conditional removal of one
- *   state:create:<id>          unconditional write of a record removed
- *                              earlier in the same execution
  *   state:<write>:<id>:settle:<n>        a write in pass <n> over a cycle
+ *   state:<write>:<id>[:<stage>]:after-takeover   a write that follows a
+ *                              takeover, with one :after-takeover for each
+ *                              takeover it follows
  *   state:delete:<id>:replace:<replaced id>   the removal of a dependent
  *                              that blocks the delete of <replaced id>
  *   *:replace:delete:*         replacement, first half: the delete
- *   *:replace:create:*         replacement, second half: the create, ending
- *                              in state:create
+ *   *:replace:create:*         replacement, second half: a read of the
+ *                              removed record, then the create
+ *   *:create:find              the find, before a create, of a resource
+ *                              that already exists
+ *   *:create:existing          the find of a resource that the provider
+ *                              reported as already existing
+ *   *:delete:find              the find of the resource of a "creating"
+ *                              record, before a delete
+ *   *:create:takeover:read:*   the read of a resource that create took over
+ *   *:taken-over:*             the decision and change that follow a
+ *                              takeover
  *
  * Opening a store has no step key.
  *
  * Effect IDs are persisted in the same way. A create attempt's effect ID is
  * notation:create:<execution id>:<resource id>:<n>, with both IDs
- * URI-encoded. The resource receives it as the attempt's token.
+ * URI-encoded. A create that follows a takeover in the same execution adds
+ * /taken-over to the execution ID of the create that took the resource over,
+ * so a create after a second takeover uses
+ * <execution id>/taken-over/taken-over.
  *
  * An <id> inside a scope is URI-encoded, so the `:` delimiter is unambiguous.
  * The state: keys are store-handle keys and so are not scope-prefixed: a

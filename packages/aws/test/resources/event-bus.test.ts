@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import {
+  ResourceAlreadyExistsError,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
 } from "@notation/resource";
@@ -48,6 +49,19 @@ describe("EventBridge event bus", () => {
 
     await expect(bus.create({ Name: "orders" })).rejects.toBeInstanceOf(
       ResourceCreationUnknownError,
+    );
+  });
+
+  it("reports a bus that already exists as ResourceAlreadyExistsError", async () => {
+    mockSend(() => {
+      throw new sdk.ResourceAlreadyExistsException({
+        message: "Event bus orders already exists.",
+        $metadata: {},
+      });
+    });
+
+    await expect(bus.create({ Name: "orders" })).rejects.toBeInstanceOf(
+      ResourceAlreadyExistsError,
     );
   });
 

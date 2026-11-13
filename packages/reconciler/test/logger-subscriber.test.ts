@@ -55,4 +55,26 @@ describe("logger reconciler subscriber", () => {
     );
     expect(error).toHaveBeenCalledOnce();
   });
+
+  it("prints a line for a create that took over an existing resource", async () => {
+    const info = vi.fn();
+    const emit = createLoggerReconcilerSubscriber({
+      logger: { info, warn: vi.fn(), error: vi.fn() },
+    });
+
+    await emit({
+      level: "info",
+      event: "reconciler.operation.lifecycle",
+      operation: "create",
+      status: "success",
+      reason: "taken-over",
+      resourceId: "resource-1",
+      resourceType: "test/service/subscriber",
+    });
+
+    expect(info).toHaveBeenLastCalledWith(
+      "Took over resource-1: it already existed, so deploy read it and now " +
+        "compares it with config",
+    );
+  });
 });

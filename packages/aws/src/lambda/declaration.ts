@@ -323,34 +323,24 @@ export type EventBusSource = {
 
 export type ScheduleOptions = {
   /**
-   * Keys the rule in state. Changing the id replaces the rule, so keep it
+   * Keys the rule in state. Deploy generates the rule's name in AWS from the
+   * app, the stage and the id. Changing the id replaces the rule, so keep it
    * stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
    * underscores.
    */
   id: string;
-  /**
-   * The rule's name in AWS, in place of the id. The rule is named
-   * `<app>--<stage>--<name>`. Changing the name replaces the rule. Must be
-   * name-safe.
-   */
-  name?: string;
   /** When the rule invokes the function, such as `rate(1, "day")`. */
   schedule: Schedule;
 };
 
 export type RuleOptions = {
   /**
-   * Keys the rule in state. Changing the id replaces the rule, so keep it
+   * Keys the rule in state. Deploy generates the rule's name in AWS from the
+   * app, the stage and the id. Changing the id replaces the rule, so keep it
    * stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
    * underscores.
    */
   id: string;
-  /**
-   * The rule's name in AWS, in place of the id. The rule is named
-   * `<app>--<stage>--<name>`. Changing the name replaces the rule. Must be
-   * name-safe.
-   */
-  name?: string;
   /**
    * The events that the rule sends to the function, such as
    * `{ source: ["shop"], "detail-type": ["OrderPlaced"] }`.

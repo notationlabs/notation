@@ -17,10 +17,23 @@ export type StateNode = {
    * written before edges were recorded.
    */
   dependsOn?: string[];
-  lastOperation: "create" | "update";
+  /**
+   * `creating` marks a record written before a create is attempted. The
+   * create may or may not have made the resource. Its output holds the key
+   * fields that params supply.
+   */
+  lastOperation: "creating" | "create" | "update";
   lastOperationAt: string;
   [key: string]: DurableValue;
 };
+
+// The predicate names the "creating" operation, so that a false result
+// leaves `node` as a record with another operation, not as undefined.
+export function isCreatingRecord(
+  node: StateNode | undefined,
+): node is StateNode & { lastOperation: "creating" } {
+  return node?.lastOperation === "creating";
+}
 
 /**
  * Read-only: state writes happen inside the durable workflow, through the

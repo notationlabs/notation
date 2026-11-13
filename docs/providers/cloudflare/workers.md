@@ -238,4 +238,4 @@ Deploy reads two environment variables:
 
 A Worker can't move to another account. If `CLOUDFLARE_ACCOUNT_ID` changes, plan and deploy fail, because replacing each Worker would delete the objects of the namespaces that it hosts. To deploy to another account, first run `notation destroy` with the old account, or deploy to another stage.
 
-A Worker that exists already in the account, with the same name, is not taken over. The create fails.
+When a Worker with the same name already exists in the account, deploy takes it over: it reads the Worker, and then updates or replaces it to match config. See [Recoverable creates](../../internals/reconciler.md#recoverable-creates).
