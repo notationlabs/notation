@@ -63,8 +63,8 @@ export type PlanNode = {
    */
   replacedDependency?: string;
   /**
-   * Set when deploy replaces the resource and passes dependents to its
-   * delete (`deleteTakesDependents`): the IDs of the declared resources whose
+   * Set when deploy replaces the resource delete-first and passes
+   * dependents to its delete (`deleteTakesDependents`): the IDs of the declared resources whose
    * records depend on it and that deploy does not delete first. The delete
    * can break their references to it, which stay broken until deploy updates
    * each of them.
