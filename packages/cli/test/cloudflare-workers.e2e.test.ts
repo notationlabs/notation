@@ -235,6 +235,10 @@ it("deploys a Worker that hosts a namespace, and a Worker that binds it and call
         { type: "plain_text", name: "GREETING", text: "hello" },
       ],
       DurableObjectNamespaces: [{ id: "counters", className: "Counter" }],
+      BoundDurableObjects: [],
+      DurableObjectTransferSources: [
+        { id: "counters", scriptNames: ["shop--dev--reports"] },
+      ],
     },
     "worker:reports": {
       AccountId: "account",
@@ -254,6 +258,10 @@ it("deploys a Worker that hosts a namespace, and a Worker that binds it and call
         { type: "service", name: "API", service: "shop--dev--api" },
       ],
       DurableObjectNamespaces: [],
+      BoundDurableObjects: [
+        { id: "counters", className: "Counter", scriptName: "shop--dev--api" },
+      ],
+      DurableObjectTransferSources: [],
     },
   });
 

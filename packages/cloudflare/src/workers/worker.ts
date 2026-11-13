@@ -47,6 +47,12 @@ export type WorkerGroupConfig = {
   compatibilityFlags: string[];
   bindings: cloudflare.workers.WorkerBinding[];
   namespaces: cloudflare.workers.HostedNamespace[];
+  /** The ids of the hosted namespaces that set `protect: false`. */
+  unprotectedNamespaces?: string[];
+  /** The namespaces that the Worker binds on other Workers. */
+  boundNamespaces: cloudflare.workers.BoundNamespace[];
+  /** For each hosted namespace, the other Workers that bind it. */
+  transferSources: cloudflare.workers.TransferSource[];
   url: boolean;
 };
 
@@ -77,6 +83,9 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
           CompatibilityFlags: config.compatibilityFlags,
           Bindings: config.bindings,
           DurableObjectNamespaces: config.namespaces,
+          UnprotectedDurableObjects: config.unprotectedNamespaces,
+          BoundDurableObjects: config.boundNamespaces,
+          DurableObjectTransferSources: config.transferSources,
         },
         dependencies: { code: this.code },
       }),
@@ -202,6 +211,13 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
         ]),
         bindings: resolved.bindings,
         namespaces: resolved.namespaces,
+        // Undefined when empty, so that the params of a Worker deployed
+        // before this option existed don't change.
+        unprotectedNamespaces: resolved.unprotected.size
+          ? [...resolved.unprotected].sort()
+          : undefined,
+        boundNamespaces: resolved.bound,
+        transferSources: resolved.transferSources,
         url: config.url ?? true,
       });
       for (const script of after) group.script.dependOn(script);
@@ -271,6 +287,10 @@ function claimName(scriptName: string, declaration: string) {
 type ResolvedBindings = {
   bindings: cloudflare.workers.WorkerBinding[];
   namespaces: cloudflare.workers.HostedNamespace[];
+  /** The ids of the hosted namespaces that set `protect: false`. */
+  unprotected: Set<string>;
+  bound: cloudflare.workers.BoundNamespace[];
+  transferSources: cloudflare.workers.TransferSource[];
   /** The hosts of the namespaces that the Worker binds on another Worker. */
   dependsOn: Entry[];
   /** The other Workers that the Worker binds as services. */
@@ -285,6 +305,9 @@ function resolveBindings(self: Entry): ResolvedBindings {
   const resolved: ResolvedBindings = {
     bindings: [],
     namespaces: [],
+    unprotected: new Set(),
+    bound: [],
+    transferSources: [],
     dependsOn: [],
     services: [],
   };
@@ -299,6 +322,8 @@ function resolveBindings(self: Entry): ResolvedBindings {
       const host = hostOf(self, ns, namespace.className, name);
       if (host === self) {
         addHosted(self, resolved.namespaces, ns, namespace.className);
+        if (!namespace.protect) resolved.unprotected.add(ns.id);
+        addTransferSources(self, resolved.transferSources, ns);
         resolved.bindings.push({
           type: "durable_object_namespace",
           name,
@@ -311,6 +336,13 @@ function resolveBindings(self: Entry): ResolvedBindings {
           class_name: namespace.className,
           script_name: host.scriptName,
         });
+        if (!resolved.bound.some((bound) => bound.id === ns.id)) {
+          resolved.bound.push({
+            id: ns.id,
+            className: namespace.className,
+            scriptName: host.scriptName,
+          });
+        }
         resolved.dependsOn.push(host);
       }
       continue;
@@ -349,6 +381,24 @@ function addHosted(
     );
   }
   namespaces.push({ id: namespace.id, className });
+}
+
+// A Worker that binds a namespace on its host may have hosted it before. It
+// doesn't export the class, or it would host the namespace too.
+function addTransferSources(
+  self: Entry,
+  sources: cloudflare.workers.TransferSource[],
+  namespace: DurableObjectDeclaration,
+) {
+  if (sources.some((source) => source.id === namespace.id)) return;
+  const scriptNames = active(declaredWorkers, "Workers")
+    .filter(
+      (entry) =>
+        entry !== self && Object.values(entry.bindings()).includes(namespace),
+    )
+    .map((entry) => entry.scriptName)
+    .sort();
+  if (scriptNames.length > 0) sources.push({ id: namespace.id, scriptNames });
 }
 
 function hostOf(

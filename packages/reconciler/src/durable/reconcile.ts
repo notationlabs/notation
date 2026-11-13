@@ -9,15 +9,17 @@ import {
   collectResourceGraph,
   validateParams,
   type BaseResource,
+  type DurableObject,
   type ResourceGroupRef,
   type ResourceDeletion,
   type ResourceType,
 } from "@notation/resource";
 import { VersionConflict, type StateNode } from "@notation/state";
 import { remainingDependencies } from "../cycles";
-import { buildDepthLevels, collectDependents } from "../dependency-graph";
+import { collectDependents } from "../dependency-graph";
 import { createBlocksDelete } from "../delete-cascade";
 import type { OperationLifecycleEvent } from "../events";
+import { keep, orphanRecords, orphanSweepSteps } from "../orphan-sweep";
 import { resolveResourceClass, workflowRegistry } from "../resource-registry";
 import { assertSameType } from "../resource-type";
 import {
@@ -31,6 +33,8 @@ import {
   type RemoveState,
 } from "../operations";
 import {
+  assertChangeAllowed,
+  assertOrphanDeleteAllowed,
   decideAction,
   decideDriftAction,
   getDependencyIds,
@@ -425,6 +429,26 @@ async function* deleteBlockingDependents(
     createBlocksDelete(records, registry),
   );
 
+  // Checks each one before it deletes any, so that a rejected change fails
+  // before the cascade changes anything.
+  for (const id of dependents) {
+    const record = recordById.get(id)!;
+    const declared = resourceById.get(id);
+    if (!declared) {
+      assertOrphanDeleteAllowed(registry, record);
+      continue;
+    }
+    if (!declared.rejectChange) continue;
+    // A step, as deriveParams is user code and need not be deterministic.
+    const params = yield* step.run(
+      `params:${encodeURIComponent(id)}`,
+      () => declared.planParams() as Promise<DurableObject>,
+    );
+    assertChangeAllowed(id, declared.rejectChange, record.params, params, {
+      replace: true,
+    });
+  }
+
   for (const id of dependents) {
     const record = recordById.get(id)!;
     yield* deleteResource(
@@ -541,9 +565,9 @@ export async function* sweepOrphans(
   const persisted = yield* scope.run("list", () => opts.state.values());
   const registry = workflowRegistry(opts);
 
-  const orphans = persisted.filter((node) => !resourceById.has(node.id));
-  const edgesById = new Map(
-    orphans.map((node) => [node.id, node.dependsOn ?? []]),
+  const { orphans, edgesById } = orphanRecords(
+    persisted,
+    new Set(resourceById.keys()),
   );
   // Destroy deletes the desired set after the sweep, so an edge from a
   // skipped orphan to a desired resource keeps that resource too. Deploy does
@@ -560,41 +584,45 @@ export async function* sweepOrphans(
       const resource = resourceById.get(node.id);
       if (!resource || resource.type === node.type) continue;
       if (resolveResourceClass(registry, node.type as ResourceType)) continue;
-      yield* skipUnregistered(scope, opts, node, edgesById, kept, workflow);
+      const keptDependencies = keep(node, edgesById, kept);
+      yield* warnUnregistered(scope, opts, node, keptDependencies, workflow);
     }
   }
 
-  for (const node of orderOrphanDeletes(orphans)) {
-    const nodeScope = scope.scope(encodeURIComponent(node.id));
-
-    const Resource = resolveResourceClass(registry, node.type as ResourceType);
-    // An unregistered orphan warns even when another orphan already keeps
-    // it, so that the warnings name every type the sweep could not delete.
-    if (!Resource) {
-      yield* skipUnregistered(scope, opts, node, edgesById, kept, workflow);
+  for (const sweep of orphanSweepSteps(orphans, registry, edgesById, kept)) {
+    const { node } = sweep;
+    if (!sweep.Resource) {
+      yield* warnUnregistered(
+        scope,
+        opts,
+        node,
+        sweep.keptDependencies,
+        workflow,
+      );
       continue;
     }
-    if (kept.has(node.id)) continue;
+    // Repeats the check of notation:validate, because the record may have
+    // changed since validate ran before the hold.
+    if (workflow === "deploy") assertOrphanDeleteAllowed(registry, node);
 
-    const resource = await instantiateRecord(Resource, node);
-    yield* deleteResource(nodeScope, resource, opts);
+    const resource = await instantiateRecord(sweep.Resource, node);
+    yield* deleteResource(
+      scope.scope(encodeURIComponent(node.id)),
+      resource,
+      opts,
+    );
   }
 
   return kept;
 }
 
-async function* skipUnregistered(
+async function* warnUnregistered(
   scope: DurableStepRunner,
   opts: DurableWorkflowOptions,
   node: StateNode,
-  edgesById: Map<string, string[]>,
-  kept: Set<string>,
+  keptDependencies: string[],
   workflow: "deploy" | "destroy",
 ): AsyncGenerator<any, void, any> {
-  const keptDependencies = collectDependencies(node, edgesById);
-  kept.add(node.id);
-  for (const id of keptDependencies) kept.add(id);
-
   const emit = durableEmitter(
     scope.scope(encodeURIComponent(node.id)),
     opts.emit,
@@ -629,44 +657,6 @@ async function instantiateRecord(
   );
   resource.setOutput(node.output);
   return resource;
-}
-
-/**
- * Orders orphans so that each is deleted before the orphans it depends on.
- * An edge to a resource that is not an orphan is ignored.
- *
- * A record with no edges was written before edges were recorded, and keeps
- * its storage order among the records it has no edges to. Orphans that form
- * a cycle, and the orphans that depend on them, cannot be ordered, and are
- * deleted first, in storage order.
- */
-function orderOrphanDeletes(orphans: StateNode[]): StateNode[] {
-  const { levels, unordered } = buildDepthLevels(
-    orphans,
-    (node) => node.id,
-    (node) => node.dependsOn ?? [],
-  );
-  return [...unordered, ...levels.reverse().flat()];
-}
-
-/**
- * The resources that `node` depends on, directly or through each other,
- * among those that `edgesById` holds edges for.
- */
-function collectDependencies(
-  node: StateNode,
-  edgesById: Map<string, string[]>,
-): string[] {
-  const found = new Set<string>();
-  const pending = [...(node.dependsOn ?? [])];
-  while (pending.length > 0) {
-    const id = pending.pop()!;
-    const edges = edgesById.get(id);
-    if (found.has(id) || id === node.id || !edges) continue;
-    found.add(id);
-    pending.push(...edges);
-  }
-  return [...found].sort();
 }
 
 /**

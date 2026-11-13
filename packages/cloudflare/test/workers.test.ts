@@ -108,6 +108,8 @@ describe("$worker", () => {
       CompatibilityFlags: ["nodejs_compat"],
       Bindings: [],
       DurableObjectNamespaces: [],
+      BoundDurableObjects: [],
+      DurableObjectTransferSources: [],
     });
     expect(api.subdomain?.dependencies.script).toBe(api.script);
   });
@@ -233,6 +235,89 @@ describe("$worker", () => {
     expect(reports.script.getDependencies()).toContain(
       group(graph, "api").script,
     );
+  });
+
+  it("passes the namespaces that a Worker binds on other Workers, and the Workers that bind each hosted namespace", async () => {
+    const graph = await collect(() => {
+      const counters = inModule(
+        $durableObject({ id: "counters", class: Counter }),
+        "runtime/counter.ts",
+      );
+      const rooms = inModule(
+        $durableObject({ id: "rooms", class: Room }),
+        "runtime/room.ts",
+      );
+      for (const id of ["web", "reports"]) {
+        inWorker(
+          $worker({
+            id,
+            compatibilityDate,
+            bindings: () => ({ COUNTERS: counters }),
+          }),
+          `runtime/${id}.ts`,
+        );
+      }
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, ROOMS: rooms }),
+        }),
+        "runtime/api.ts",
+        ["Counter", "Room"],
+      );
+    });
+    const api = group(graph, "api").script.config;
+    const web = group(graph, "web").script.config;
+
+    expect(web.BoundDurableObjects).toEqual([
+      { id: "counters", className: "Counter", scriptName: "shop--dev--api" },
+    ]);
+    expect(web.DurableObjectTransferSources).toEqual([]);
+    expect(api.BoundDurableObjects).toEqual([]);
+    expect(api.DurableObjectTransferSources).toEqual([
+      {
+        id: "counters",
+        scriptNames: ["shop--dev--reports", "shop--dev--web"],
+      },
+    ]);
+  });
+
+  it("passes the ids of hosted namespaces that set protect: false, and undefined when there are none", async () => {
+    const graph = await collect(() => {
+      const counters = inModule(
+        $durableObject({ id: "counters", class: Counter }),
+        "runtime/counter.ts",
+      );
+      const rooms = inModule(
+        $durableObject({ id: "rooms", class: Room, protect: false }),
+        "runtime/room.ts",
+      );
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, ROOMS: rooms }),
+        }),
+        "runtime/api.ts",
+        ["Counter", "Room"],
+      );
+      inWorker(
+        $worker({
+          id: "web",
+          compatibilityDate,
+          bindings: () => ({ ROOMS: rooms }),
+        }),
+        "runtime/web.ts",
+      );
+    });
+
+    expect(group(graph, "api").script.config.UnprotectedDurableObjects).toEqual(
+      ["rooms"],
+    );
+    expect(
+      group(graph, "web").script.config.UnprotectedDurableObjects,
+    ).toBeUndefined();
   });
 
   it("fails for a namespace that no Worker that binds it exports the class of", async () => {
