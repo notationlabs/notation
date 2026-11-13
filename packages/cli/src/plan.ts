@@ -27,17 +27,13 @@ const decisionSymbols: Record<PlanNode["decision"], string> = {
   noop: " ",
 };
 
-function symbolOf(node: PlanNode) {
-  return node.replaceOrder === "create-first"
-    ? "+/-"
-    : decisionSymbols[node.decision];
-}
-
-function orderOf(node: PlanNode) {
-  if (node.replaceOrder === "create-first") return " (create, then delete)";
-  if (node.replaceOrder === "delete-first") return " (delete, then create)";
-  return "";
-}
+const replaceOrders: Record<
+  NonNullable<PlanNode["replaceOrder"]>,
+  { symbol: string; label: string }
+> = {
+  "create-first": { symbol: "+/-", label: " (create, then delete)" },
+  "delete-first": { symbol: "-/+", label: " (delete, then create)" },
+};
 
 export async function plan(
   deployment: Deployment,
@@ -68,8 +64,9 @@ function printPlanSummary(result: Plan, logger: Logger) {
   const changedNodes = result.nodes.filter((node) => node.decision !== "noop");
 
   for (const node of changedNodes) {
+    const order = node.replaceOrder && replaceOrders[node.replaceOrder];
     logger.info(
-      `${symbolOf(node)} ${node.decision} ${node.type} ${node.id}${orderOf(node)}`,
+      `${order?.symbol ?? decisionSymbols[node.decision]} ${node.decision} ${node.type} ${node.id}${order?.label ?? ""}`,
     );
     if (node.retiredAt) {
       logger.info(
