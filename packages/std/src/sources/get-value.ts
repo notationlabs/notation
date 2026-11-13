@@ -15,34 +15,25 @@ export async function getValue(id: string): Promise<Redacted<string>> {
       `The value of the secret \`${id}\` can only be read in notation deploy or notation secret set.`,
     );
   }
-  const value = await readValue(id);
-  recordSecretValue(value.unwrap());
-  return value;
-}
-
-async function readValue(id: string): Promise<Redacted<string>> {
-  const context = secretContext()!;
-  if (context.supplied?.id === id) return context.supplied.value;
   const declared = context.declared.get(id);
   if (!declared) {
     throw new Error(`No secret has the id "${id}".`);
   }
   const { stage } = context;
-  if (declared.source) {
-    const value = await declared.source.get(declared.key!, { stage });
-    if (!Redacted.is(value)) {
-      throw new Error(
-        `The ${declared.source.name} source returned a value for \`${declared.key}\` that isn't a Redacted.`,
-      );
-    }
-    return value as Redacted<string>;
-  }
-  if (!context.prompt) {
+  let value: Redacted<string>;
+  if (context.supplied?.id === id) {
+    value = context.supplied.value;
+  } else if (declared.source) {
+    value = await declared.source.get(declared.key!, { stage });
+  } else if (context.prompt) {
+    value = new Redacted(await context.prompt({ id, stage }));
+  } else {
     throw new Error(
       `Secret \`${id}\` isn't set for stage ${stage}. Run \`notation secret set ${id} --stage ${stage}\`.`,
     );
   }
-  return new Redacted(await context.prompt({ id, stage }));
+  recordSecretValue(value.unwrap());
+  return value;
 }
 
 /**

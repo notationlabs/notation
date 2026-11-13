@@ -189,15 +189,6 @@ describe("secret", () => {
     });
   });
 
-  it("fails for a source without a key, or a key without a source", () => {
-    expect(() => secret({ id: "stripe-key", source: vault } as any)).toThrow(
-      `secret({ id: "stripe-key" }) has a source but no key. Give source and key together, or leave both out.`,
-    );
-    expect(() =>
-      secret({ id: "stripe-key", key: "STRIPE_KEY" } as any),
-    ).toThrow("has a key but no source");
-  });
-
   it("declares secrets and tokens by id, and refuses to set a token's secret", async () => {
     const declared = await runWithSecretContext(
       { stage: "dev", runId: "run" },

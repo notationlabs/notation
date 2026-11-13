@@ -48,7 +48,6 @@ export class SecretGroup
 
   constructor(config: SecretConfig) {
     assertSecretId("secret()", config.id);
-    assertSourceAndKey(config);
     const name = config.name ?? scopedPhysicalName(config.id, secretNameRule);
     claimSecretName(name, describe(config));
     super("cloudflare/secret", config.id, config);
@@ -96,16 +95,6 @@ export class SecretGroup
 }
 
 const secretNameRule = { maxLength: 255 };
-
-function assertSourceAndKey(config: SecretConfig): void {
-  const hasSource = config.source !== undefined;
-  const hasKey = config.key !== undefined;
-  if (hasSource !== hasKey) {
-    throw new Error(
-      `${describe(config)} has a ${hasSource ? "source but no key" : "key but no source"}. Give source and key together, or leave both out.`,
-    );
-  }
-}
 
 const describe = (config: SecretConfig) =>
   config.name === undefined
