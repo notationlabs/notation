@@ -5,8 +5,8 @@ import {
   type ReconcilerEventEmitter,
   type ResourceRegistry,
 } from "@notation/reconciler";
-import type { Deployment } from "src/config/deployment";
 import { randomUUID } from "node:crypto";
+import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
 import { runWithSecretContext } from "src/secrets/context";
 import {
@@ -27,7 +27,15 @@ export type PlanAppOptions = {
   emit?: ReconcilerEventEmitter;
 };
 
-export async function planApp({
+export function planApp(opts: PlanAppOptions): Promise<Plan> {
+  // Plan never asks for a secret's value, so it has no prompt.
+  return runWithSecretContext(
+    { stage: opts.deployment.stage, runId: randomUUID() },
+    () => plan(opts),
+  );
+}
+
+async function plan({
   deployment,
   // Defaulted in one place: the reconciler's drift gate treats absent as on.
   driftDetection,
@@ -37,32 +45,26 @@ export async function planApp({
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: PlanAppOptions): Promise<Plan> {
-  // Plan never asks for a secret's value, so it has no prompt.
-  return runWithSecretContext(
-    { stage: deployment.stage, runId: randomUUID() },
-    async () => {
-      const graph = await getResourceGraph(deployment.entryPoint, {
-        app: deployment.app,
-        stage: deployment.stage,
-      });
-      return withRuntime(
-        { deployment, runtime: suppliedRuntime, databasePath },
-        async (runtime) => {
-          const providerRegistry = await loadPlanProviderRegistry(
-            runtime.state,
-            graph.resources,
-            emit,
-          );
-          return createPlan({
-            resources: graph.resources,
-            state: runtime.state,
-            driftDetection,
-            emit,
-            maxOperationAttempts,
-            registry: mergeResourceRegistries(providerRegistry, registry),
-          });
-        },
+  const graph = await getResourceGraph(deployment.entryPoint, {
+    app: deployment.app,
+    stage: deployment.stage,
+  });
+  return withRuntime(
+    { deployment, runtime: suppliedRuntime, databasePath },
+    async (runtime) => {
+      const providerRegistry = await loadPlanProviderRegistry(
+        runtime.state,
+        graph.resources,
+        emit,
       );
+      return createPlan({
+        resources: graph.resources,
+        state: runtime.state,
+        driftDetection,
+        emit,
+        maxOperationAttempts,
+        registry: mergeResourceRegistries(providerRegistry, registry),
+      });
     },
   );
 }

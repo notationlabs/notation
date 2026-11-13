@@ -6,7 +6,6 @@ import {
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
-import { runWithSecretContext } from "src/secrets/context";
 import {
   loadStateProviderRegistry,
   mergeResourceRegistries,
@@ -37,39 +36,28 @@ export async function destroyApp({
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: DestroyAppOptions) {
-  await runWithSecretContext(
-    { stage: deployment.stage, runId: executionId },
-    async () => {
-      const graph = await getResourceGraph(
-        deployment.entryPoint,
-        { app: deployment.app, stage: deployment.stage },
-        { declarationChecks: false },
+  const graph = await getResourceGraph(
+    deployment.entryPoint,
+    { app: deployment.app, stage: deployment.stage },
+    { declarationChecks: false },
+  );
+  await runDurableWorkflow(
+    { deployment, workflowId: "destroy", runtime, databasePath, executionId },
+    async function* (step, executionId, runtime) {
+      const providerRegistry = yield* loadStateProviderRegistry(
+        step,
+        runtime.state,
+        graph.resources,
+        emit,
       );
-      await runDurableWorkflow(
-        {
-          deployment,
-          workflowId: "destroy",
-          runtime,
-          databasePath,
-          executionId,
-        },
-        async function* (step, executionId, runtime) {
-          const providerRegistry = yield* loadStateProviderRegistry(
-            step,
-            runtime.state,
-            graph.resources,
-            emit,
-          );
-          yield* durable.destroy(step, {
-            executionId,
-            resources: graph.resources,
-            state: runtime.state,
-            registry: mergeResourceRegistries(providerRegistry, registry),
-            emit,
-            maxOperationAttempts,
-          });
-        },
-      );
+      yield* durable.destroy(step, {
+        executionId,
+        resources: graph.resources,
+        state: runtime.state,
+        registry: mergeResourceRegistries(providerRegistry, registry),
+        emit,
+        maxOperationAttempts,
+      });
     },
   );
 }

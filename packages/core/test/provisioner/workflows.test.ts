@@ -42,7 +42,7 @@ it("destroyApp evaluates infra without declaration checks", async () => {
   });
 });
 
-it("evaluates infra in a secret context with the stage, the run ID and the prompt", async () => {
+it("deploys and plans in a secret context with the stage, the run ID and the prompt", async () => {
   const contexts: unknown[] = [];
   getResourceGraph.mockImplementation(async () => {
     const { stage, runId, prompt } = secretContext()!;
@@ -55,7 +55,6 @@ it("evaluates infra in a secret context with the stage, the run ID and the promp
     deployApp({ deployment, executionId: "e1", promptSecret }),
   ).rejects.toThrow();
   await expect(planApp({ deployment })).rejects.toThrow();
-  await expect(destroyApp({ deployment, executionId: "e2" })).rejects.toThrow();
 
   expect(contexts).toEqual([
     {
@@ -68,7 +67,6 @@ it("evaluates infra in a secret context with the stage, the run ID and the promp
       runId: expect.any(String),
       prompt: undefined,
     },
-    { stage: "prod", runId: "e2", prompt: undefined },
   ]);
   expect(secretContext()).toBeUndefined();
 });
