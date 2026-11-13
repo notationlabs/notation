@@ -6262,7 +6262,6 @@ describe("dependency cycles", () => {
 });
 
 describe("generated physical names", () => {
-  const nameScope = { app: "shop", stage: "prod" };
   const GENERATED = /^shop--prod--queue-orders-[0-9a-f]{8}$/;
 
   /**
@@ -6334,7 +6333,6 @@ describe("generated physical names", () => {
     const runtime = createRuntime(
       [new Generated("queue:orders", { config: { path: "/" } as any })],
       "name-generated",
-      { nameScope },
     );
     let creating: Awaited<ReturnType<typeof runtime.state.get>>;
     control.beforeCreate = async () => {
@@ -6359,21 +6357,6 @@ describe("generated physical names", () => {
     runtime.close();
   });
 
-  it("generates a name with no app and stage when deploy has no name scope", async () => {
-    const { Generated, remote } = defineGenerated("test/durable/name-unscoped");
-    const runtime = createRuntime(
-      [new Generated("queue:orders", { config: { path: "/" } as any })],
-      "name-unscoped",
-    );
-
-    await runtime.run("deploy-1");
-
-    expect([...remote.keys()]).toEqual([
-      expect.stringMatching(/^queue-orders-[0-9a-f]{8}$/),
-    ]);
-    runtime.close();
-  });
-
   it("uses a name that config provides", async () => {
     const { Generated, remote } = defineGenerated("test/durable/name-provided");
     const runtime = createRuntime(
@@ -6383,7 +6366,6 @@ describe("generated physical names", () => {
         }),
       ],
       "name-provided",
-      { nameScope },
     );
 
     await runtime.run("deploy-1");
@@ -6400,7 +6382,7 @@ describe("generated physical names", () => {
     const runtime = createRuntime(
       [new Generated("queue:orders", { config: { path: "/" } as any })],
       "name-kept",
-      { nameScope, emit: (event) => void events.push(event) },
+      { emit: (event) => void events.push(event) },
     );
 
     await runtime.run("deploy-1");
@@ -6428,7 +6410,7 @@ describe("generated physical names", () => {
         config: { name: "shop--prod--orders", path: "/" } as any,
       }),
     ];
-    const runtime = createRuntime(resources, "name-from-config", { nameScope });
+    const runtime = createRuntime(resources, "name-from-config");
 
     await runtime.run("deploy-1");
     resources[0] = new Generated("queue:orders", {
@@ -6449,7 +6431,6 @@ describe("generated physical names", () => {
       [new Generated("queue:orders", { config: { path: "/" } as any })],
       "name-replay",
       {
-        nameScope,
         crashAfterStep: `notation:deploy:${encodeURIComponent("queue:orders")}:physical-names`,
       },
     );
@@ -6478,7 +6459,6 @@ describe("generated physical names", () => {
       new Generated("queue:orders", { config: { path: "/" } as any }),
     ];
     const runtime = createRuntime(resources, "name-crash", {
-      nameScope,
       crashAfterStep: `notation:deploy:${encodeURIComponent("queue:orders")}:create:remote:effect:0`,
     });
     await expect(runtime.run("deploy-1")).rejects.toThrow(
@@ -6513,7 +6493,7 @@ describe("generated physical names", () => {
     const resources = [
       new Generated("queue:orders", { config: { path: "/" } as any }),
     ];
-    const runtime = createRuntime(resources, "name-replace", { nameScope });
+    const runtime = createRuntime(resources, "name-replace");
 
     await runtime.run("deploy-1");
     const [first] = [...remote.keys()];
@@ -6547,7 +6527,7 @@ describe("generated physical names", () => {
         config: { path: "/", fifo: true } as any,
       }),
     ];
-    const runtime = createRuntime(resources, "name-ending", { nameScope });
+    const runtime = createRuntime(resources, "name-ending");
     const FIFO = /^shop--prod--queue-orders-[0-9a-f]{8}\.fifo$/;
 
     await runtime.run("deploy-1");
@@ -6617,7 +6597,6 @@ describe("generated physical names", () => {
     });
     const events: ReconcilerEvent[] = [];
     const runtime = createRuntime([bus, rule], "name-key", {
-      nameScope,
       emit: (event) => void events.push(event),
     });
 
@@ -6686,7 +6665,6 @@ describe("generated physical names", () => {
         },
       });
     const runtime = createRuntime([new Api("api:orders")], "name-find", {
-      nameScope,
       crashAfterStep: `notation:deploy:${encodeURIComponent("api:orders")}:create:remote:effect:0`,
     });
 
@@ -6725,9 +6703,7 @@ describe("generated physical names", () => {
         config: { name: "orders", path: "/" } as any,
       }),
     ];
-    const runtime = createRuntime(resources, "name-replace-provided", {
-      nameScope,
-    });
+    const runtime = createRuntime(resources, "name-replace-provided", {});
 
     await runtime.run("deploy-1");
     resources[0] = new Generated("queue:orders", {
@@ -6777,7 +6753,7 @@ describe("generated physical names", () => {
     const b: BaseResource = new Worker("b");
     a.contribute({ bindings: [b.outputRef("name")] } as any);
     b.contribute({ bindings: [a.outputRef("name")] } as any);
-    const runtime = createRuntime([a, b], "name-cycle", { nameScope });
+    const runtime = createRuntime([a, b], "name-cycle");
 
     await runtime.run("deploy-1");
 
@@ -6806,9 +6782,7 @@ describe("generated physical names", () => {
     const resources = [
       new Generated("queue:orders", { config: { path: "/" } as any }),
     ];
-    const runtime = createRuntime(resources, "name-takeover-replace", {
-      nameScope,
-    });
+    const runtime = createRuntime(resources, "name-takeover-replace", {});
     // The record of a create that an earlier deploy did not finish. The
     // provider made the resource, with another path than config has now.
     const name = "shop--prod--queue-orders-0a1b2c3d";
@@ -6856,7 +6830,6 @@ function createRuntime(
     driftDetection?: boolean;
     dryRun?: boolean;
     emit?: (event: ReconcilerEvent) => void;
-    nameScope?: { app: string; stage: string };
   } = {},
 ) {
   const database = createSqliteDb({ path: ":memory:" });
@@ -6889,7 +6862,7 @@ function createRuntime(
       dryRun: options.dryRun,
       emit: options.emit,
       maxOperationAttempts: options.maxOperationAttempts,
-      nameScope: options.nameScope,
+      nameScope: { app: "shop", stage: "prod" },
     });
   });
   const destroy = workflow(async function* (step, event) {

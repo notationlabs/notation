@@ -62,6 +62,9 @@ export type SchemaItem<T = any> = {
        * it out, and deploy then fills it with a generated name that fits
        * the rule. The name is kept in state, so later deploys use the same
        * one. The params that an operation receives always hold the field.
+       * `deriveParams` must not supply this param: deploy decides from
+       * config alone whether to generate the name, and a generated or
+       * recorded name replaces a derived one.
        */
       physicalName?: PhysicalNameRule;
     }

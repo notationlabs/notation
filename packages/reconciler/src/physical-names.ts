@@ -2,24 +2,27 @@ import {
   generatedPhysicalName,
   type BaseResource,
   type NameScope,
+  type PhysicalNameRule,
 } from "@notation/resource";
 import type { StateNode } from "@notation/state";
 
 const INSTANCE_BYTES = 4;
 
-/** The `physicalName` params of the resource that `params` leave out. */
-export function unnamedFields(
-  resource: BaseResource,
-  params: Record<string, unknown>,
-): string[] {
-  return Object.entries(resource.schema)
-    .filter(
-      ([field, item]) =>
-        item.propertyType === "param" &&
-        item.physicalName &&
-        params[field] === undefined,
-    )
-    .map(([field]) => field);
+type NameField = { field: string; rule: PhysicalNameRule };
+
+/**
+ * The `physicalName` params that the resource's config leaves out, each with
+ * its rule. Config decides, not the params: at plan, the params can hold an
+ * unknown value for a param that config leaves out.
+ */
+export function unnamedFields(resource: BaseResource): NameField[] {
+  return Object.entries(resource.schema).flatMap(([field, item]) =>
+    item.propertyType === "param" &&
+    item.physicalName &&
+    resource.config[field] === undefined
+      ? [{ field, rule: item.physicalName }]
+      : [],
+  );
 }
 
 /**
@@ -27,12 +30,12 @@ export function unnamedFields(
  * counts, so a create that an earlier deploy did not finish keeps its name.
  */
 export function recordedNames(
-  fields: string[],
+  fields: NameField[],
   stateNode: StateNode | undefined,
 ): Record<string, unknown> {
   return Object.fromEntries(
     fields
-      .map((field) => [field, stateNode?.params[field]] as const)
+      .map(({ field }) => [field, stateNode?.params[field]] as const)
       .filter(([, value]) => value !== undefined),
   );
 }
@@ -45,26 +48,15 @@ export function recordedNames(
  */
 export function generateNames(
   resource: BaseResource,
-  fields: string[],
-  scope: NameScope | undefined,
+  fields: NameField[],
+  scope: NameScope,
   params: Record<string, unknown>,
 ): Record<string, string> {
   return Object.fromEntries(
-    fields.map((field) => {
-      const item = resource.schema[field]!;
-      const rule =
-        item.propertyType === "param" ? item.physicalName : undefined;
-      return [
-        field,
-        generatedPhysicalName(
-          scope,
-          resource.id,
-          randomInstance(),
-          rule!,
-          params,
-        ),
-      ];
-    }),
+    fields.map(({ field, rule }) => [
+      field,
+      generatedPhysicalName(scope, resource.id, randomInstance(), rule, params),
+    ]),
   );
 }
 

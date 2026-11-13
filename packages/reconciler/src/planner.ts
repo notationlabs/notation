@@ -91,7 +91,7 @@ export async function createPlan({
     cycle: DeployUnit | undefined,
     detectDrift = driftDetection,
   ): Promise<PlanNode> => {
-    const { stateNode, params, unnamed } = await planKnownParams(
+    const { stateNode, params } = await planKnownParams(
       resource,
       state,
       "plan",
@@ -152,7 +152,9 @@ export async function createPlan({
       // resource with no state.
       resource.setOutput(null as any);
       // Deploy generates a new name for the resource that it creates again.
-      for (const field of unnamed) params[field] = UNKNOWN_AFTER_APPLY;
+      for (const { field } of unnamedFields(resource)) {
+        params[field] = UNKNOWN_AFTER_APPLY;
+      }
     }
     edgesById.set(resource.id, dependsOn);
 
@@ -263,9 +265,9 @@ async function loadOutput(
  * Outputs in state stand in for the outputs of dependencies, so the
  * dependencies must be loaded first.
  *
- * `unnamed` lists the `physicalName` params that config leaves out. Each
- * takes its value from the state record, as in deploy. Without one, deploy
- * generates the name, so it is unknown here.
+ * A `physicalName` param that config leaves out takes its value from the
+ * state record, as in deploy. Without one, deploy generates the name, so it
+ * is unknown here.
  */
 export async function planKnownParams(
   resource: BaseResource,
@@ -274,16 +276,16 @@ export async function planKnownParams(
 ): Promise<{
   stateNode: StateNode | undefined;
   params: Record<string, unknown>;
-  unnamed: string[];
 }> {
   const stateNode = await loadOutput(resource, state);
-  const configParams = await resource.planParams();
-  const unnamed = unnamedFields(resource, configParams);
+  const unnamed = unnamedFields(resource);
   const params = {
-    ...configParams,
-    ...Object.fromEntries(unnamed.map((field) => [field, UNKNOWN_AFTER_APPLY])),
+    ...(await resource.planParams()),
+    ...Object.fromEntries(
+      unnamed.map(({ field }) => [field, UNKNOWN_AFTER_APPLY]),
+    ),
     ...recordedNames(unnamed, stateNode),
   };
   await validateParams(resource, params, point);
-  return { stateNode, params, unnamed };
+  return { stateNode, params };
 }

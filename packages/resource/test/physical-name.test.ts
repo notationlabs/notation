@@ -97,18 +97,14 @@ it("uses a hash that does not change between releases", () => {
 
 it("generates a name from the app, stage, resource ID and instance", () => {
   expect(
-    generatedPhysicalName(scope, "lambda:get-orders:role", "1a2b3c4d", {
-      maxLength: 64,
-    }),
+    generatedPhysicalName(
+      scope,
+      "lambda:get-orders:role",
+      "1a2b3c4d",
+      { maxLength: 64 },
+      {},
+    ),
   ).toBe("orders-app--prod--lambda-get-orders-role-1a2b3c4d");
-});
-
-it("generates a name with no app and stage when there is no scope", () => {
-  expect(
-    generatedPhysicalName(undefined, "lambda:get-orders:role", "1a2b3c4d", {
-      maxLength: 64,
-    }),
-  ).toBe("lambda-get-orders-role-1a2b3c4d");
 });
 
 it("generates a name of lower-case letters, digits and single hyphens from any resource ID", () => {
@@ -117,9 +113,8 @@ it("generates a name of lower-case letters, digits and single hyphens from any r
       scope,
       ":Route:GET /Orders/{id}__v2--x:",
       "1a2b3c4d",
-      {
-        maxLength: 64,
-      },
+      { maxLength: 64 },
+      {},
     ),
   ).toBe("orders-app--prod--route-get-orders-id-v2-x-1a2b3c4d");
 });
@@ -130,6 +125,7 @@ it("shortens a generated name before the instance", () => {
     `lambda:${"x".repeat(60)}:role`,
     "1a2b3c4d",
     { maxLength: 64 },
+    {},
   );
   expect(result).toHaveLength(64);
   expect(result).toMatch(/^orders-app--prod--lambda-x+-1a2b3c4d$/);
@@ -137,20 +133,14 @@ it("shortens a generated name before the instance", () => {
 
 it("does not end the shortened part of a generated name with a hyphen", () => {
   // The cut falls just after the hyphen that follows "lambda".
-  const result = generatedPhysicalName(scope, "lambda:orders", "1a2b3c4d", {
-    maxLength: "orders-app--prod--lambda-".length + 9,
-  });
+  const result = generatedPhysicalName(
+    scope,
+    "lambda:orders",
+    "1a2b3c4d",
+    { maxLength: "orders-app--prod--lambda-".length + 9 },
+    {},
+  );
   expect(result).toBe("orders-app--prod--lambda-1a2b3c4d");
-});
-
-it("puts the instance of a generated name before a required ending", () => {
-  const rule = { maxLength: 40, requiredEnding: ".fifo" };
-  expect(
-    generatedPhysicalName(scope, "sqs-queue:orders.fifo", "1a2b3c4d", rule),
-  ).toBe("orders-app--prod--sqs-queu-1a2b3c4d.fifo");
-  expect(
-    generatedPhysicalName(undefined, "sqs-queue:orders", "1a2b3c4d", rule),
-  ).toBe("sqs-queue-orders-1a2b3c4d");
 });
 
 it("ends a generated name with the required ending when the rule's param is true", () => {
@@ -159,7 +149,7 @@ it("ends a generated name with the required ending when the rule's param is true
     requiredEnding: ".fifo",
     requiredEndingWhen: "FifoQueue",
   };
-  const generate = (params?: Record<string, unknown>, maxLength = 80) =>
+  const generate = (params: Record<string, unknown>, maxLength = 80) =>
     generatedPhysicalName(
       scope,
       "sqs-queue:orders",
@@ -178,12 +168,11 @@ it("ends a generated name with the required ending when the rule's param is true
     "orders-app--prod--sqs-queue-orders-1a2b3c4d",
   );
   expect(generate({})).toBe("orders-app--prod--sqs-queue-orders-1a2b3c4d");
-  expect(generate()).toBe("orders-app--prod--sqs-queue-orders-1a2b3c4d");
 });
 
 it("throws when the maximum length leaves no room before the instance", () => {
   expect(() =>
-    generatedPhysicalName(scope, "role", "1a2b3c4d", { maxLength: 9 }),
+    generatedPhysicalName(scope, "role", "1a2b3c4d", { maxLength: 9 }, {}),
   ).toThrow("A maximum length of 9 leaves no room for a generated name");
 });
 

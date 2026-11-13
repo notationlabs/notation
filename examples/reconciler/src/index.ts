@@ -30,6 +30,7 @@ const deploy = workflow(async function* (step, event) {
     executionId: event.executionId,
     resources,
     state: runtime.state,
+    nameScope: { app: "example", stage: "dev" },
     registry: createResourceRegistry([StaticSite]),
   });
 });

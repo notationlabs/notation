@@ -15,9 +15,6 @@ export type DurableWorkflowOptions = {
 
 export type DurableDeployOptions = DurableWorkflowOptions & {
   driftDetection?: boolean;
-  /**
-   * The app and stage that start each generated physical name. Without it,
-   * a generated name has no such prefix.
-   */
-  nameScope?: NameScope;
+  /** The app and stage that start each generated physical name. */
+  nameScope: NameScope;
 };

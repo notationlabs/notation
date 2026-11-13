@@ -49,6 +49,7 @@ describe("NodeDurableRuntime", () => {
         state: runtime.state,
         driftDetection: false,
         maxOperationAttempts: 3,
+        nameScope: { app: "test", stage: "test" },
       });
     });
 
@@ -90,6 +91,7 @@ describe("NodeDurableRuntime", () => {
           resources: [interrupted],
           state,
           driftDetection: false,
+          nameScope: { app: "test", stage: "test" },
         });
       });
 

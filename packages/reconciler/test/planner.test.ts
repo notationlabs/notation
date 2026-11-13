@@ -1710,6 +1710,50 @@ describe("createPlan with a generated physical name", () => {
     ]);
   });
 
+  it("plans an update with the recorded name when a dependency has no output yet", async () => {
+    const Fn = resource({ type: "test/planner/named-fn", provider: "test" })
+      // Cast: as for Queue.
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          primaryKey: true,
+          value: v.string(),
+          physicalName: { maxLength: 64 },
+        },
+        role: {
+          propertyType: "param",
+          presence: "required",
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+      })
+      .requireDependencies<{ role: BaseResource }>()
+      .deriveParams(({ deps }) => ({ role: (deps.role.output as any).name }));
+    const role = queue("role", { path: "/" });
+
+    const plan = await createPlan({
+      resources: [role, new Fn("fn", { dependencies: { role } })],
+      state: new MemoryStateBackend({
+        fn: {
+          ...record("fn", { name, role: "old-role" }),
+          type: Fn.type,
+        },
+      }),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes[1]).toMatchObject({
+      id: "fn",
+      decision: "update",
+      params: { name, role: UNKNOWN_AFTER_APPLY },
+    });
+  });
+
   it("plans a noop with a name that config provides", async () => {
     const plan = await createPlan({
       resources: [queue("orders", { name: "orders", path: "/" })],
