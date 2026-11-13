@@ -10,7 +10,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-it("gives a SourceValue its version, and getValue its value, from one fetch", async () => {
+it("gives a SourceValue its version, and getValue its value, from one listing of the folder", async () => {
   vi.stubEnv("INFISICAL_TOKEN", "st.token");
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     Response.json({
@@ -66,5 +66,6 @@ it("gives a SourceValue its version, and getValue its value, from one fetch", as
     },
     value: "sk_live_sentinel",
   });
-  expect(fetch).toHaveBeenCalledTimes(1);
+  // One listing with references expanded, and one without.
+  expect(fetch).toHaveBeenCalledTimes(2);
 });

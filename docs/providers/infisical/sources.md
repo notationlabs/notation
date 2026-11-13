@@ -37,6 +37,7 @@ export const stripeKey = secret({
 - The source lists the folder's secrets once in each plan or deploy, and answers every key from that one response. `notation watch` lists the folder again on each deploy.
 - Secret references in values are expanded. Secrets imported into the folder, secrets in its subfolders, and personal overrides aren't read.
 - The version of a key is the secret's ID and its Infisical version, such as `9c41…:14`. A secret is written to its store when the version changes. The ID is part of the version because a secret that is deleted and added again starts again at version 1.
+- A secret whose value references another secret, such as `${DB_PASSWORD}`, has no version, because its Infisical version doesn't change when the referenced secret changes. It is written on every deploy, like a secret from `env` or `dotenv`. To find these secrets, the source lists the folder a second time with references not expanded.
 - Plan and deploy fail when the folder doesn't have the key, and deploy fails when the identity can't read secret values.
 
 ## Credentials

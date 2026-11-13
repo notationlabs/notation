@@ -51,7 +51,7 @@ A secret is written when its version changes:
 | `env`, `dotenv`                        | the deploy's execution ID | on every deploy                                      |
 | none (prompt)                          | none                      | when the secret is created, or recreated after drift |
 
-`env` and `dotenv` have no versions, so plan shows an update of their `SourceValue` on every run. A move from one source to another writes the secret from the new source.
+`env` and `dotenv` have no versions, so plan shows an update of their `SourceValue` on every run. The same applies to a key that a versioned source gives no version, such as an `infisical()` secret that references another secret. A move from one source to another writes the secret from the new source.
 
 A value changed in the store by hand stays until the next write.
 
@@ -82,12 +82,15 @@ type Source = {
   /** True if the source has a value for the key. */
   has(key: string, context: { stage: string }): Promise<boolean>;
   /** The key's version. Left out by sources that have no versions. */
-  version?(key: string, context: { stage: string }): Promise<string>;
+  version?(
+    key: string,
+    context: { stage: string },
+  ): Promise<string | undefined>;
   get(key: string, context: { stage: string }): Promise<Redacted<string>>;
 };
 ```
 
-- `version` returns a number or ID that the source assigns, such as a secrets manager's version of the key. It must never be a hash of the value.
+- `version` returns a number or ID that the source assigns, such as a secrets manager's version of the key. It must never be a hash of the value. It returns `undefined` for a key that has no stable version. The deploy's execution ID is then used, so the secret is written on every deploy.
 - `get` returns the value in a `Redacted`, from `@notation/std/sources`.
 - A source may cache within one process. For example, it can fetch a folder once and answer every call from that response.
 - A source reads its own credentials from `process.env`.

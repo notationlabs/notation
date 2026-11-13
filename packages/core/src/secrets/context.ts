@@ -17,9 +17,11 @@ export type Source = {
   has(key: string, context: SourceContext): Promise<boolean>;
   /**
    * The key's version, a number or ID that the source assigns. It is never
-   * derived from the value. Left out by sources that have no versions.
+   * derived from the value. Left out by sources that have no versions, and
+   * `undefined` for a key that has none. Without a version, the run ID
+   * stands in, so the value is written on every deploy.
    */
-  version?(key: string, context: SourceContext): Promise<string>;
+  version?(key: string, context: SourceContext): Promise<string | undefined>;
   get(key: string, context: SourceContext): Promise<Redacted<string>>;
 };
 

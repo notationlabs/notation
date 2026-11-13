@@ -25,7 +25,15 @@ type InfisicalSecret = {
   secretValueHidden?: boolean;
 };
 
-type Folder = Map<string, InfisicalSecret>;
+type FolderSecret = InfisicalSecret & {
+  /** True when the raw value holds a reference to another secret. */
+  referencing: boolean;
+};
+
+type Folder = Map<string, FolderSecret>;
+
+// Infisical's reference syntax: `${KEY}`, `${env.KEY}`, `${env.folder.KEY}`.
+const REFERENCE = /\$\{[^}]+\}/;
 
 /**
  * Reads secret values from one folder of an Infisical project. The folder is
@@ -67,28 +75,39 @@ export function infisical(options: InfisicalOptions): Source {
       `folder ${site} ${options.projectId} ${env} ${path}`,
       async () => {
         const token = await cached(`token ${site}`, () => accessToken(site));
-        const url = apiUrl(site, "/api/v4/secrets");
-        url.search = new URLSearchParams({
-          projectId: options.projectId,
-          environment: env,
-          secretPath: path,
-          viewSecretValue: "true",
-          expandSecretReferences: "true",
-          includeImports: "false",
-          includePersonalOverrides: "false",
-          recursive: "false",
-        }).toString();
-        const response = await request<{ secrets: InfisicalSecret[] }>(
-          "GET",
-          url,
-          { token },
+        const list = async (expand: boolean) => {
+          const url = apiUrl(site, "/api/v4/secrets");
+          url.search = new URLSearchParams({
+            projectId: options.projectId,
+            environment: env,
+            secretPath: path,
+            viewSecretValue: "true",
+            expandSecretReferences: String(expand),
+            includeImports: "false",
+            includePersonalOverrides: "false",
+            recursive: "false",
+          }).toString();
+          const response = await request<{ secrets: InfisicalSecret[] }>(
+            "GET",
+            url,
+            { token },
+          );
+          // A personal override belongs to one user. It must never be
+          // written to a shared store, so it is dropped even if the API
+          // returns one.
+          return response.secrets.filter((s) => s.type === "shared");
+        };
+        const [expanded, raw] = await Promise.all([list(true), list(false)]);
+        const referencing = new Set(
+          raw
+            .filter((s) => REFERENCE.test(s.secretValue))
+            .map((s) => s.secretKey),
         );
-        // A personal override belongs to one user. It must never be written
-        // to a shared store, so it is dropped even if the API returns one.
         return new Map(
-          response.secrets
-            .filter((s) => s.type === "shared")
-            .map((s) => [s.secretKey, s]),
+          expanded.map((s) => [
+            s.secretKey,
+            { ...s, referencing: referencing.has(s.secretKey) },
+          ]),
         );
       },
     );
@@ -125,9 +144,12 @@ export function infisical(options: InfisicalOptions): Source {
       return true;
     },
     // The secret's ID is part of the version, because a secret that is
-    // deleted and added again starts again at version 1.
+    // deleted and added again starts again at version 1. A secret that
+    // references others has no version, because its version doesn't change
+    // when a referenced secret changes. It is written on every deploy.
     version: async (key, context) => {
       const found = await secret(key, context);
+      if (found.referencing) return undefined;
       return `${found.id}:${found.version}`;
     },
     get: async (key, context) => {

@@ -41,8 +41,8 @@ const sourceValueSchema = sourceValueResource.defineSchema({
     value: v.string(),
   },
   /**
-   * The source's version of the key, or the run's ID for a source with no
-   * versions. It is never derived from the value.
+   * The source's version of the key, or the run's ID for a source or key
+   * with no version. It is never derived from the value.
    */
   Version: {
     propertyType: "param",
@@ -54,7 +54,7 @@ const sourceValueSchema = sourceValueResource.defineSchema({
 /**
  * Records where a secret's value comes from: a source and a key. It never
  * holds the value. Its `Version` changes when the source's version of the key
- * changes, or on every run for a source with no versions, and the secret that
+ * changes, or on every run for a source or key with no version, and the secret that
  * depends on it writes its value then.
  *
  * It finds the source in the secret's declaration. Plan and deploy fail when
@@ -80,9 +80,8 @@ export const SourceValue = sourceValueSchema.defineOperations({
         `\`${Key}\` isn't in the ${source.name} source of \`${Secret}\`.`,
       );
     }
-    const Version = source.version
-      ? await source.version(Key, sourceContext)
-      : context.runId;
+    const Version =
+      (await source.version?.(Key, sourceContext)) ?? context.runId;
     return { Version };
   },
   create: async () => {},

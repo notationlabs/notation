@@ -56,6 +56,13 @@ describe("SourceValue", () => {
     });
   });
 
+  it("takes the run's ID as the version of a key that the source gives no version", async () => {
+    const source: Source = { ...unversioned, version: async () => undefined };
+    await expect(paramsOf(source)).resolves.toMatchObject({
+      Version: "exec-1",
+    });
+  });
+
   it("fails when the source doesn't have the key", async () => {
     const source = versioned(false);
     await expect(

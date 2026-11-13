@@ -89,8 +89,9 @@ describe("infisical", () => {
       );
     });
 
-    expect(calls).toHaveLength(1);
-    const [call] = calls;
+    expect(calls).toHaveLength(2);
+    const [call, raw] = calls;
+    expect(raw!.url.searchParams.get("expandSecretReferences")).toBe("false");
     expect(call!.method).toBe("GET");
     expect(call!.url.origin).toBe("https://app.infisical.com");
     expect(call!.url.pathname).toBe("/api/v4/secrets");
@@ -120,7 +121,7 @@ describe("infisical", () => {
     await expect(
       inRun(() => source().version!("STRIPE_KEY", context)),
     ).resolves.toBe("id-STRIPE_KEY:2");
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(4);
   });
 
   it("takes the environment from a function of the stage", async () => {
@@ -139,9 +140,39 @@ describe("infisical", () => {
 
     expect(calls.map((c) => c.url.searchParams.get("environment"))).toEqual([
       "prod",
+      "prod",
+      "dev",
       "dev",
     ]);
     expect(calls[0]!.url.searchParams.get("secretPath")).toBe("/orders");
+  });
+
+  it("gives no version to a secret whose raw value references another, so that it is written on every deploy", async () => {
+    vi.stubEnv("INFISICAL_TOKEN", "st.token");
+    mockFetch((call) =>
+      call.url.searchParams.get("expandSecretReferences") === "true"
+        ? folder(
+            secret("DB_URL", "postgres://u:pw@host", 3),
+            secret("DB_PASSWORD", "pw", 7),
+          )
+        : folder(
+            secret("DB_URL", "postgres://u:${DB_PASSWORD}@host", 3),
+            secret("DB_PASSWORD", "pw", 7),
+          ),
+    );
+    const source = infisical({ projectId: "proj", environment: "dev" });
+
+    await inRun(async () => {
+      await expect(source.version!("DB_URL", context)).resolves.toBe(
+        undefined,
+      );
+      await expect(source.version!("DB_PASSWORD", context)).resolves.toBe(
+        "id-DB_PASSWORD:7",
+      );
+      expect((await source.get("DB_URL", context)).unwrap()).toBe(
+        "postgres://u:pw@host",
+      );
+    });
   });
 
   it("ignores a personal override, and reads the shared secret", async () => {
@@ -232,6 +263,7 @@ describe("infisical", () => {
     ).toEqual([
       "POST https://example.com/infisical/api/v1/auth/universal-auth/login",
       "GET https://example.com/infisical/api/v4/secrets",
+      "GET https://example.com/infisical/api/v4/secrets",
     ]);
   });
 
@@ -285,6 +317,8 @@ describe("authentication", () => {
       "POST /api/v1/auth/universal-auth/login",
       "GET /api/v4/secrets",
       "GET /api/v4/secrets",
+      "GET /api/v4/secrets",
+      "GET /api/v4/secrets",
     ]);
     expect(calls[0]!.body).toEqual({
       clientId: "client",
@@ -301,7 +335,10 @@ describe("authentication", () => {
 
     await inRun(() => source().has("A", context));
 
-    expect(calls.map((c) => c.url.pathname)).toEqual(["/api/v4/secrets"]);
+    expect(calls.map((c) => c.url.pathname)).toEqual([
+      "/api/v4/secrets",
+      "/api/v4/secrets",
+    ]);
   });
 
   it("fails when only one of the client ID and secret is set", async () => {
