@@ -1,4 +1,5 @@
 import {
+  GENERATED_INSTANCE_LENGTH,
   UNKNOWN_AFTER_APPLY,
   generatedPhysicalName,
   isUnknownAfterApply,
@@ -7,8 +8,6 @@ import {
   type PhysicalNameRule,
 } from "@notation/resource";
 import type { StateNode } from "@notation/state";
-
-const INSTANCE_BYTES = 4;
 
 type NameField = { field: string; rule: PhysicalNameRule };
 
@@ -87,6 +86,8 @@ export function generateNames(
 }
 
 function randomInstance(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(INSTANCE_BYTES));
+  const bytes = crypto.getRandomValues(
+    new Uint8Array(GENERATED_INSTANCE_LENGTH / 2),
+  );
   return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

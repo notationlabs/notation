@@ -18,6 +18,7 @@ export {
 } from "./resource-collection";
 export {
   fillPhysicalNames,
+  GENERATED_INSTANCE_LENGTH,
   generatedNameBody,
   generatedPhysicalName,
   isOwnPhysicalName,

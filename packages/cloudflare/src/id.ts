@@ -1,4 +1,5 @@
 import {
+  GENERATED_INSTANCE_LENGTH,
   generatedNameBody,
   getActiveResourceCollection,
   scopedPhysicalName,
@@ -14,9 +15,6 @@ const WORKER_NAME_MAX_LENGTH = 54;
 const FIXED_WORKER_NAME_MAX_LENGTH = 63;
 
 const WORKER_ID_MAX_LENGTH = 63;
-
-// The length of the random instance at the end of a generated name.
-const INSTANCE_LENGTH = 8;
 
 const WORKER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const WORKER_ID_RULE = `1 to ${WORKER_ID_MAX_LENGTH} lowercase letters, digits or hyphens, not starting or ending with a hyphen`;
@@ -87,7 +85,7 @@ export function workerNames(id: string): {
         scope,
         workerResourceId(id),
         workerNameRule,
-        INSTANCE_LENGTH + 1,
+        GENERATED_INSTANCE_LENGTH + 1,
       )
     : id;
   const fixedName = scopedPhysicalName(id, {
@@ -108,7 +106,7 @@ export function matchesWorkerNames(
   const prefix = `${names.nameBody}-`;
   return (
     scriptName.startsWith(prefix) &&
-    new RegExp(`^[0-9a-f]{${INSTANCE_LENGTH}}$`).test(
+    new RegExp(`^[0-9a-f]{${GENERATED_INSTANCE_LENGTH}}$`).test(
       scriptName.slice(prefix.length),
     )
   );

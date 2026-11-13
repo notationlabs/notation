@@ -523,7 +523,7 @@ async function* replaceResource(
     opts,
     shared.resource,
     nameFields(shared.resource),
-    shared.resourceParams,
+    shared.unnamedParams,
   );
   const renamed = {
     ...shared,

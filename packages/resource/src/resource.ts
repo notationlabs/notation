@@ -398,9 +398,10 @@ export abstract class Resource<
    * Reads outputs from the resource's state record, for the code of a
    * resource package. `outputRef(key)` returns a token that resolves to the
    * output in the record at the start of the deploy or plan, or to
-   * undefined when there is no full record. The resource holding the token
-   * does not depend on this one. A resumed deploy uses the params that it
-   * recorded. The token can only be placed in a contribution:
+   * undefined when there is no full record. When the deploy replaces this
+   * resource, the token resolves to the output from before the replace. The
+   * resource holding the token does not depend on this one. A resumed deploy
+   * uses the params that it recorded. The token can only be placed in a contribution:
    * `getDependencies` throws when config holds one.
    *
    * `outputRef` can read only a param that is `immutable`, `primaryKey` or

@@ -47,7 +47,8 @@ export class StateOutputRef extends OutputRef {}
 /**
  * The outputs of the targets of `~state` refs, from their state records at
  * the start of the deploy or plan. Each target has an entry, which is null
- * when the target has no full record.
+ * when the target has no full record. When the deploy replaces a target, its
+ * entry still holds the outputs from before the replace.
  */
 export type RecordedOutputs = { [id: string]: DurableObject | null };
 

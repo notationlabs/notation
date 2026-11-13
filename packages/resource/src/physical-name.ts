@@ -25,6 +25,9 @@ export type PhysicalNameRule = {
 
 const HASH_LENGTH = 8;
 
+/** The number of hex characters in the instance of a generated name. */
+export const GENERATED_INSTANCE_LENGTH = 8;
+
 // 32-bit FNV-1a, as 8 hex characters. This package does not depend on Node,
 // so it cannot use node:crypto.
 function fnv1a(text: string): string {
