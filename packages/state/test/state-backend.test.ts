@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { MemoryStateBackend, type StateNode } from "src/state";
+import {
+  MemoryStateBackend,
+  hasRetiredInstances,
+  type StateNode,
+} from "src/state";
 
 function createStateNode(
   id: string,
@@ -57,5 +61,35 @@ describe("MemoryStateBackend", () => {
     await expect(backend.get(node.id)).resolves.toMatchObject({
       output: { name: "resource-a-output" },
     });
+  });
+});
+
+describe("retired instances", () => {
+  const instance = {
+    config: {},
+    params: { name: "old" },
+    output: { name: "old" },
+    dependsOn: ["role"],
+    retiredAt: "2027-01-01T00:00:00.000Z",
+  };
+
+  it("are read back with the record", async () => {
+    const node = createStateNode("resource-a", { retired: [instance] });
+    const backend = new MemoryStateBackend({ [node.id]: node });
+
+    await expect(backend.get(node.id)).resolves.toMatchObject({
+      retired: [instance],
+    });
+  });
+
+  it("are found only in a record whose list has an instance", () => {
+    expect(hasRetiredInstances(undefined)).toBe(false);
+    expect(hasRetiredInstances(createStateNode("a"))).toBe(false);
+    expect(hasRetiredInstances(createStateNode("a", { retired: [] }))).toBe(
+      false,
+    );
+    expect(
+      hasRetiredInstances(createStateNode("a", { retired: [instance] })),
+    ).toBe(true);
   });
 });
