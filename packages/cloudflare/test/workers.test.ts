@@ -12,8 +12,17 @@ import { setConfigFile } from "@notation/core";
 import {
   collectResourceGraph,
   declaredIn,
+  ownPhysicalName,
+  stateReadsOf,
+  type BaseResource,
+  type RecordedOutputs,
   type ResourceGraph,
+  generatedPhysicalName,
+  UNKNOWN_AFTER_APPLY,
 } from "@notation/resource";
+import { matchesWorkerNames, workerNameRule, workerNames } from "src/id";
+import { decideAction, planKnownParams } from "@notation/reconciler";
+import { WorkerScript } from "src/resources/workers/worker-script";
 import {
   $durableObject,
   $worker,
@@ -59,16 +68,32 @@ function group(graph: ResourceGraph, id: string): WorkerGroup {
   return found as WorkerGroup;
 }
 
-const collect = (evaluate: () => unknown) =>
-  collectResourceGraph(evaluate, { scope: { app: "shop", stage: "dev" } });
+// The scripts of the graph that `collect` collected last.
+let collectedScripts: BaseResource[] = [];
+
+const collect = async (evaluate: () => unknown) => {
+  const graph = await collectResourceGraph(evaluate, {
+    scope: { app: "shop", stage: "dev" },
+  });
+  collectedScripts = graph.resources.filter(
+    (resource) => resource.type === WorkerScript.type,
+  );
+  return graph;
+};
+
+// The name that deploy generated for a Worker in these tests.
+const nameOf = (id: string) => `shop--dev--${id}-1a2b3c4d`;
 
 // The params of a Worker's script at deploy, once its bundle and the Workers
 // it binds exist. With `peers`, the params without the contributions that
-// depend on them.
+// depend on them. `recorded` lists the Workers that have a state record.
 async function deployParams(
   worker: WorkerGroup,
   bound: WorkerGroup[],
-  { peers }: { peers?: WorkerGroup[] } = {},
+  {
+    peers,
+    recorded = [],
+  }: { peers?: WorkerGroup[]; recorded?: WorkerGroup[] } = {},
 ) {
   vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "account");
   try {
@@ -78,15 +103,21 @@ async function deployParams(
       fileSha256: "sha",
     });
     for (const other of bound) {
-      other.script.setOutput({
-        ScriptName: other.script.config.ScriptName,
-      } as any);
+      other.script.setOutput({ ScriptName: nameOf(other.id) } as any);
     }
-    return await worker.script.getParams(
-      peers && {
-        excludeContributionsFrom: new Set(peers.map((peer) => peer.script)),
-      },
-    );
+    const recordedOutputs: RecordedOutputs = {};
+    for (const resource of collectedScripts) {
+      if (stateReadsOf(resource).length === 0) continue;
+      const found = recorded.find((other) => other.script === resource);
+      recordedOutputs[resource.id] = found
+        ? { ScriptName: nameOf(found.id) }
+        : null;
+    }
+    return await worker.script.getParams({
+      recordedOutputs,
+      excludeContributionsFrom:
+        peers && new Set(peers.map((peer) => peer.script)),
+    });
   } finally {
     vi.unstubAllEnvs();
   }
@@ -103,23 +134,20 @@ describe("$worker", () => {
       filePath: "dist/runtime/api/index.mjs",
     });
     expect(api.script.config).toEqual({
-      ScriptName: "shop--dev--api",
       CompatibilityDate: "2026-10-12",
       CompatibilityFlags: ["nodejs_compat"],
       Bindings: [],
       DurableObjectNamespaces: [],
       BoundDurableObjects: [],
-      DurableObjectTransferSources: [],
     });
     expect(api.subdomain?.dependencies.script).toBe(api.script);
   });
 
-  it("applies the name, compatibility settings and url options", async () => {
+  it("applies the compatibility settings and url options", async () => {
     const graph = await collect(() => {
       inWorker(
         $worker({
           id: "api",
-          name: "public-api",
           compatibilityDate: "2026-01-01",
           compatibilityFlags: ["nodejs_compat", "streams_enable_constructors"],
           url: false,
@@ -130,7 +158,6 @@ describe("$worker", () => {
     const api = group(graph, "api");
 
     expect(api.script.config).toMatchObject({
-      ScriptName: "shop--dev--public-api",
       CompatibilityDate: "2026-01-01",
       CompatibilityFlags: ["nodejs_compat", "streams_enable_constructors"],
     });
@@ -162,7 +189,7 @@ describe("$worker", () => {
     expect(await deployParams(api, [auth])).toMatchObject({
       Bindings: [
         { type: "plain_text", name: "GREETING", text: "hello" },
-        { type: "service", name: "AUTH", service: "shop--dev--auth" },
+        { type: "service", name: "AUTH", service: nameOf("auth") },
       ],
     });
   });
@@ -222,19 +249,23 @@ describe("$worker", () => {
       );
     });
     const reports = group(graph, "reports");
+    const api = group(graph, "api");
 
-    expect(reports.script.config.Bindings).toEqual([
-      {
-        type: "durable_object_namespace",
-        name: "COUNTERS",
-        class_name: "Counter",
-        script_name: "shop--dev--api",
-      },
-    ]);
     expect(reports.script.config.DurableObjectNamespaces).toEqual([]);
-    expect(reports.script.getDependencies()).toContain(
-      group(graph, "api").script,
-    );
+    expect(reports.script.getFixedDependencies()).toContain(api.script);
+    expect(await deployParams(reports, [api])).toMatchObject({
+      Bindings: [
+        {
+          type: "durable_object_namespace",
+          name: "COUNTERS",
+          class_name: "Counter",
+          script_name: nameOf("api"),
+        },
+      ],
+      BoundDurableObjects: [
+        { id: "counters", className: "Counter", scriptName: nameOf("api") },
+      ],
+    });
   });
 
   it("passes the namespaces that a Worker binds on other Workers, and the Workers that bind each hosted namespace", async () => {
@@ -267,18 +298,43 @@ describe("$worker", () => {
         ["Counter", "Room"],
       );
     });
-    const api = group(graph, "api").script.config;
-    const web = group(graph, "web").script.config;
+    const api = group(graph, "api");
+    const web = group(graph, "web");
+    const reports = group(graph, "reports");
 
-    expect(web.BoundDurableObjects).toEqual([
-      { id: "counters", className: "Counter", scriptName: "shop--dev--api" },
-    ]);
-    expect(web.DurableObjectTransferSources).toEqual([]);
-    expect(api.BoundDurableObjects).toEqual([]);
-    expect(api.DurableObjectTransferSources).toEqual([
+    expect(await deployParams(web, [api])).toMatchObject({
+      BoundDurableObjects: [
+        { id: "counters", className: "Counter", scriptName: nameOf("api") },
+      ],
+    });
+    expect(
+      (await deployParams(web, [api])).DurableObjectTransferSources,
+    ).toBeUndefined();
+    expect(api.script.config.BoundDurableObjects).toEqual([]);
+    // The Workers that bind the namespace depend on its host, so the host
+    // reads their names from state, with no dependency.
+    expect(api.script.getDependencies()).not.toContain(web.script);
+    expect(api.script.getDependencies()).not.toContain(reports.script);
+    expect(
+      (await deployParams(api, [], { recorded: [web] }))
+        .DurableObjectTransferSources,
+    ).toEqual([
       {
         id: "counters",
-        scriptNames: ["shop--dev--reports", "shop--dev--web"],
+        workers: [
+          {
+            id: "reports",
+            scriptName: undefined,
+            nameBody: "shop--dev--reports",
+            fixedName: "shop--dev--reports",
+          },
+          {
+            id: "web",
+            scriptName: nameOf("web"),
+            nameBody: "shop--dev--web",
+            fixedName: "shop--dev--web",
+          },
+        ],
       },
     ]);
   });
@@ -421,7 +477,7 @@ describe("$worker", () => {
     });
     expect(await deployParams(api, [reports])).toMatchObject({
       Bindings: [
-        { type: "service", name: "REPORTS", service: "shop--dev--reports" },
+        { type: "service", name: "REPORTS", service: nameOf("reports") },
       ],
     });
   });
@@ -490,7 +546,7 @@ describe("$worker", () => {
     expect(api.script.getDependencies()).toContain(reports.script);
     expect(await deployParams(api, [reports])).toMatchObject({
       Bindings: expect.arrayContaining([
-        { type: "service", name: "REPORTS", service: "shop--dev--reports" },
+        { type: "service", name: "REPORTS", service: nameOf("reports") },
       ]),
     });
   });
@@ -585,9 +641,20 @@ describe("$worker", () => {
         "runtime/api.ts",
       );
     });
-    expect(group(graph, "api").script.config.Bindings).toEqual([
-      { type: "service", name: "SELF", service: "shop--dev--api" },
-    ]);
+    const api = group(graph, "api");
+
+    // A ref to the Worker's own name is no dependency. Deploy fills it in
+    // with the name before it creates the Worker.
+    expect(api.script.getDependencies()).not.toContain(api.script);
+    expect(await deployParams(api, [])).toMatchObject({
+      Bindings: [
+        {
+          type: "service",
+          name: "SELF",
+          service: ownPhysicalName("ScriptName"),
+        },
+      ],
+    });
   });
 
   it("fails for a binding that a Worker can't bind", async () => {
@@ -643,6 +710,34 @@ describe("$worker", () => {
     ).rejects.toThrow(`The Worker "api" has no module.`);
   });
 
+  it("has no name option", () => {
+    // @ts-expect-error deploy generates the Worker's name
+    runtime.$worker({ id: "api", compatibilityDate, name: "public-api" });
+  });
+
+  it("describes a long id's generated name by the body that deploy cuts it to", async () => {
+    const id = "a-very-long-worker-id-that-is-cut-to-fit-the-limit";
+    let names: ReturnType<typeof workerNames> | undefined;
+    await collect(() => {
+      names = workerNames(id);
+    });
+    const generated = generatedPhysicalName(
+      { app: "shop", stage: "dev" },
+      `worker:${id}`,
+      "1a2b3c4d",
+      workerNameRule,
+      {},
+    );
+
+    expect(generated.length).toBeLessThanOrEqual(54);
+    expect(generated).not.toContain(id);
+    expect(names).toEqual({
+      nameBody: generated.slice(0, -9),
+      fixedName: `shop--dev--${id}`,
+    });
+    expect(matchesWorkerNames(generated, names!)).toBe(true);
+  });
+
   it("fails for an id that is not a valid Worker name", async () => {
     await expect(
       collect(() => {
@@ -650,17 +745,177 @@ describe("$worker", () => {
       }),
     ).rejects.toThrow(`Invalid $worker id "Orders_API"`);
   });
+});
 
-  it("fails when two Workers get the same name", async () => {
-    await expect(
-      collect(() => {
-        inWorker($worker({ id: "api", compatibilityDate }), "runtime/api.ts");
-        inWorker(
-          $worker({ id: "other", compatibilityDate, name: "api" }),
-          "runtime/other.ts",
+describe("plan", () => {
+  const record = (resource: BaseResource, params: Record<string, unknown>) => ({
+    version: 1,
+    id: resource.id,
+    type: resource.type,
+    provider: resource.provider,
+    config: {},
+    params: params as any,
+    output: params as any,
+    lastOperation: "create" as const,
+    lastOperationAt: "2026-10-12T00:00:00.000Z",
+  });
+
+  // A Worker "api" that hosts counters and binds itself, and a Worker "web"
+  // that binds counters on it.
+  const declare = () =>
+    collect(() => {
+      const counters = inModule(
+        $durableObject({ id: "counters", class: Counter }),
+        "runtime/counter.ts",
+      );
+      const api: unknown = inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, SELF: api as any }),
+        }),
+        "runtime/api.ts",
+        ["Counter"],
+      );
+      inWorker(
+        $worker({
+          id: "web",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters }),
+        }),
+        "runtime/web.ts",
+      );
+    });
+
+  // Plans the scripts in their order, as the planner does, with the bundles
+  // known, and returns the params of each.
+  async function plan(
+    graph: ResourceGraph,
+    records: Record<string, ReturnType<typeof record>>,
+  ) {
+    vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "account");
+    try {
+      const state = { get: async (id: string) => records[id] };
+      const recordedOutputs: RecordedOutputs = {};
+      for (const resource of graph.resources) {
+        if (stateReadsOf(resource).length === 0) continue;
+        recordedOutputs[resource.id] =
+          (records[resource.id]?.output as any) ?? null;
+      }
+      const params: Record<string, Record<string, unknown>> = {};
+      for (const id of ["api", "web"]) {
+        const worker = group(graph, id);
+        worker.code.setOutput({
+          filePath: `dist/runtime/${id}/index.mjs`,
+          sourceSha256: "hex",
+          fileSha256: "sha",
+        });
+        const known = await planKnownParams(
+          worker.script,
+          state,
+          "plan",
+          recordedOutputs,
         );
+        expect(() =>
+          decideAction({
+            resource: worker.script,
+            stateNode: known.stateNode,
+            params: known.params,
+          }),
+        ).not.toThrow();
+        params[id] = known.params;
+      }
+      return params;
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  }
+
+  it("shows the names of Workers that deploy creates as unknown, in each param that holds them", async () => {
+    const params = await plan(await declare(), {});
+
+    expect(params.api).toMatchObject({
+      ScriptName: UNKNOWN_AFTER_APPLY,
+      Bindings: [
+        {
+          type: "durable_object_namespace",
+          name: "COUNTERS",
+          class_name: "Counter",
+        },
+        { type: "service", name: "SELF", service: UNKNOWN_AFTER_APPLY },
+      ],
+      DurableObjectTransferSources: [
+        {
+          id: "counters",
+          workers: [
+            {
+              id: "web",
+              nameBody: "shop--dev--web",
+              fixedName: "shop--dev--web",
+            },
+          ],
+        },
+      ],
+    });
+    expect(params.web).toMatchObject({
+      ScriptName: UNKNOWN_AFTER_APPLY,
+      Bindings: [
+        {
+          type: "durable_object_namespace",
+          name: "COUNTERS",
+          class_name: "Counter",
+          script_name: UNKNOWN_AFTER_APPLY,
+        },
+      ],
+      BoundDurableObjects: [
+        {
+          id: "counters",
+          className: "Counter",
+          scriptName: UNKNOWN_AFTER_APPLY,
+        },
+      ],
+    });
+  });
+
+  it("reads the names of Workers in state, and the names of the Workers that bind a namespace, from state", async () => {
+    const graph = await declare();
+    const api = group(graph, "api").script;
+    const web = group(graph, "web").script;
+    const apiName = nameOf("api");
+    const webName = "shop--dev--web";
+
+    const params = await plan(graph, {
+      [api.id]: record(api, {
+        AccountId: "account",
+        ScriptName: apiName,
+        CompatibilityDate: compatibilityDate,
       }),
-    ).rejects.toThrow(`give two Workers the same name, "shop--dev--api"`);
+      [web.id]: record(web, {
+        AccountId: "account",
+        ScriptName: webName,
+        CompatibilityDate: compatibilityDate,
+      }),
+    });
+
+    expect(params.api).toMatchObject({
+      ScriptName: apiName,
+      Bindings: [
+        expect.anything(),
+        { type: "service", name: "SELF", service: apiName },
+      ],
+      DurableObjectTransferSources: [
+        {
+          id: "counters",
+          workers: [
+            expect.objectContaining({ id: "web", scriptName: webName }),
+          ],
+        },
+      ],
+    });
+    expect(params.web).toMatchObject({
+      ScriptName: webName,
+      BoundDurableObjects: [expect.objectContaining({ scriptName: apiName })],
+    });
   });
 });
 

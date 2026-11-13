@@ -61,7 +61,11 @@ type ScriptParams = {
 // returns the params of each Worker's upload.
 function workerParams(): Record<string, ScriptParams> {
   const script = `
-    import { collectResourceGraph } from "@notation/resource";
+    import {
+      collectResourceGraph,
+      fillPhysicalNames,
+      stateReadsOf,
+    } from "@notation/resource";
 
     const graph = await collectResourceGraph(() => import("./dist/infra/main.mjs"), {
       scope: { app: "shop", stage: "dev" },
@@ -70,14 +74,25 @@ function workerParams(): Record<string, ScriptParams> {
     const scripts = graph.resources.filter(
       (resource) => resource.type === "cloudflare/workers/WorkerScript",
     );
-    // A service binding takes the name of the bound Worker from its output.
+    // Each Worker is in state with a name that deploy generated. A binding
+    // to another Worker takes the name from its output, and a host takes
+    // the names of the Workers that bind its namespaces from state.
+    const nameOf = (resource) =>
+      \`shop--dev--\${resource.id.replace("worker:", "")}-1a2b3c4d\`;
+    const recordedOutputs = {};
     for (const resource of scripts) {
-      resource.setOutput({ ScriptName: resource.config.ScriptName });
+      resource.setOutput({ ScriptName: nameOf(resource) });
+      if (stateReadsOf(resource).length > 0) {
+        recordedOutputs[resource.id] = { ScriptName: nameOf(resource) };
+      }
     }
     for (const resource of scripts) {
       const code = resource.dependencies.code;
       code.setOutput({ ...code.config, sourceSha256: "hex", fileSha256: "sha" });
-      params[resource.id] = await resource.getParams();
+      params[resource.id] = fillPhysicalNames(
+        await resource.getParams({ recordedOutputs }),
+        { ScriptName: nameOf(resource) },
+      );
     }
     console.log(JSON.stringify(params));
   `;
@@ -220,7 +235,7 @@ it("deploys a Worker that hosts a namespace, and a Worker that binds it and call
   expect(params).toEqual({
     "worker:api": {
       AccountId: "account",
-      ScriptName: "shop--dev--api",
+      ScriptName: "shop--dev--api-1a2b3c4d",
       MainModule: "index.mjs",
       CodeFilePath: "dist/runtime/api/index.mjs",
       CodeSha256: "sha",
@@ -237,12 +252,22 @@ it("deploys a Worker that hosts a namespace, and a Worker that binds it and call
       DurableObjectNamespaces: [{ id: "counters", className: "Counter" }],
       BoundDurableObjects: [],
       DurableObjectTransferSources: [
-        { id: "counters", scriptNames: ["shop--dev--reports"] },
+        {
+          id: "counters",
+          workers: [
+            {
+              id: "reports",
+              scriptName: "shop--dev--reports-1a2b3c4d",
+              nameBody: "shop--dev--reports",
+              fixedName: "shop--dev--reports",
+            },
+          ],
+        },
       ],
     },
     "worker:reports": {
       AccountId: "account",
-      ScriptName: "shop--dev--reports",
+      ScriptName: "shop--dev--reports-1a2b3c4d",
       MainModule: "index.mjs",
       CodeFilePath: "dist/runtime/reports/index.mjs",
       CodeSha256: "sha",
@@ -253,15 +278,18 @@ it("deploys a Worker that hosts a namespace, and a Worker that binds it and call
           type: "durable_object_namespace",
           name: "COUNTERS",
           class_name: "Counter",
-          script_name: "shop--dev--api",
+          script_name: "shop--dev--api-1a2b3c4d",
         },
-        { type: "service", name: "API", service: "shop--dev--api" },
+        { type: "service", name: "API", service: "shop--dev--api-1a2b3c4d" },
       ],
       DurableObjectNamespaces: [],
       BoundDurableObjects: [
-        { id: "counters", className: "Counter", scriptName: "shop--dev--api" },
+        {
+          id: "counters",
+          className: "Counter",
+          scriptName: "shop--dev--api-1a2b3c4d",
+        },
       ],
-      DurableObjectTransferSources: [],
     },
   });
 

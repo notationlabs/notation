@@ -64,7 +64,6 @@ const params = {
 
 const script = new WorkerScript("worker:api", {
   config: {
-    ScriptName: params.ScriptName,
     CompatibilityDate: params.CompatibilityDate,
   },
   dependencies: {} as any,
@@ -316,13 +315,17 @@ describe("WorkerScript", () => {
       name: "ROOMS",
       class_name: "Room",
     };
+    const web = {
+      id: "web",
+      scriptName: "app--dev--web",
+      nameBody: "app--dev--web",
+      fixedName: "app--dev--web",
+    };
     const arriving = {
       ...params,
       Bindings: [...params.Bindings, roomsBinding],
       DurableObjectNamespaces: [...params.DurableObjectNamespaces, rooms],
-      DurableObjectTransferSources: [
-        { id: "rooms", scriptNames: ["app--dev--web"] },
-      ],
+      DurableObjectTransferSources: [{ id: "rooms", workers: [web] }],
     };
     const namespacesPage = (page: number) =>
       `https://api.cloudflare.com/client/v4/accounts/acc/workers/durable_objects/namespaces?page=${page}&per_page=1000`;
@@ -489,6 +492,146 @@ describe("WorkerScript", () => {
       );
 
       expect(calls.map(({ method }) => method)).toEqual(["PUT", "PUT"]);
+    });
+
+    describe("from a Worker with no state record", () => {
+      const lostWeb = {
+        id: "web",
+        nameBody: "app--dev--web",
+        fixedName: "app--dev--web-legacy",
+      };
+      const lost = {
+        ...arriving,
+        DurableObjectTransferSources: [{ id: "rooms", workers: [lostWeb] }],
+      };
+
+      it.each([
+        ["a generated name", "app--dev--web-1a2b3c4d"],
+        [
+          "its fixed name from before names were generated",
+          "app--dev--web-legacy",
+        ],
+      ])(
+        "fails before any upload when a Worker with %s hosts the class, and names it",
+        async (_, found) => {
+          mockFetch(
+            respondWith([{ script: found, class: "Room", use_sqlite: true }]),
+          );
+
+          await expect(
+            script.update!(key, {} as any, lost, params),
+          ).rejects.toThrow(
+            `The Durable Object namespace "rooms" is new to the Worker app--dev--api. The Worker "web" binds it and has no state record, and the Worker ${found} in the Cloudflare account hosts a namespace with its class Room.`,
+          );
+          expect(calls.some(({ method }) => method === "PUT")).toBe(false);
+        },
+      );
+
+      it("fails a create too", async () => {
+        mockFetch((call) =>
+          isListing(call)
+            ? respondWith([
+                {
+                  script: "app--dev--web-1a2b3c4d",
+                  class: "Room",
+                  use_sqlite: true,
+                },
+              ])(call)
+            : fail(404, 10007, "not found"),
+        );
+
+        await expect(script.create(lost)).rejects.toThrow(
+          "the Worker app--dev--web-1a2b3c4d in the Cloudflare account hosts",
+        );
+        expect(calls.some(({ method }) => method === "PUT")).toBe(false);
+      });
+
+      it.each([
+        ["another Worker's name", "app--dev--webhooks-1a2b3c4d"],
+        ["an ending that isn't an instance", "app--dev--web-1a2b3c4"],
+      ])(
+        "creates the namespace when the Worker that hosts the class has %s",
+        async (_, found) => {
+          mockFetch(
+            respondWith([{ script: found, class: "Room", use_sqlite: true }]),
+          );
+
+          await script.update!(key, {} as any, lost, params);
+
+          expect(calls.map(({ method }) => method)).toEqual([
+            "GET",
+            "GET",
+            "PUT",
+          ]);
+        },
+      );
+
+      it("moves the namespace from a Worker in state whose name the Worker with no record could have", async () => {
+        mockFetch(
+          respondWith([
+            {
+              script: "app--dev--web-5e6f7a8b",
+              class: "Room",
+              use_sqlite: true,
+            },
+          ]),
+        );
+
+        await script.update!(
+          key,
+          {} as any,
+          {
+            ...lost,
+            DurableObjectTransferSources: [
+              {
+                id: "rooms",
+                workers: [
+                  lostWeb,
+                  {
+                    id: "web-2",
+                    scriptName: "app--dev--web-5e6f7a8b",
+                    nameBody: "app--dev--web-2",
+                    fixedName: "app--dev--web-2",
+                  },
+                ],
+              },
+            ],
+          },
+          params,
+        );
+
+        expect(calls.map(({ method }) => method).slice(2)).toEqual([
+          "PUT",
+          "PATCH",
+          "PUT",
+        ]);
+      });
+
+      it("matches a name that was cut to fit the limit by its cut body", async () => {
+        const body = "app--dev--a-very-long-worker-id-that-is-cut-he";
+        mockFetch(
+          respondWith([
+            { script: `${body}-0badf00d`, class: "Room", use_sqlite: true },
+          ]),
+        );
+
+        await expect(
+          script.update!(
+            key,
+            {} as any,
+            {
+              ...lost,
+              DurableObjectTransferSources: [
+                {
+                  id: "rooms",
+                  workers: [{ ...lostWeb, nameBody: body }],
+                },
+              ],
+            },
+            params,
+          ),
+        ).rejects.toThrow(`the Worker ${body}-0badf00d in the Cloudflare`);
+      });
     });
 
     it.each([
@@ -822,6 +965,21 @@ describe("rejectChange", () => {
       );
     });
 
+    it("allows a move at plan to a Worker whose name is unknown, and names it as another Worker", () => {
+      const unknown = { $unknown: "after-apply" } as never;
+      const toNew = (className: string) => ({
+        BoundDurableObjects: [{ id: "rooms", className, scriptName: unknown }],
+      });
+      expect(
+        reject({ DurableObjectNamespaces: [counters], ...toNew("Room") }),
+      ).toBeUndefined();
+      expect(
+        reject({ DurableObjectNamespaces: [counters], ...toNew("Lobby") }),
+      ).toMatch(
+        /^The Durable Object namespace "rooms" would move from the Worker app--dev--api to another Worker, and its class would change/,
+      );
+    });
+
     it("rejects a bound namespace that takes the class of another namespace of this Worker", () => {
       expect(
         reject(
@@ -842,7 +1000,17 @@ describe("rejectChange", () => {
       const lobbies = { id: "lobbies", className: "Lobby" };
       const sources = {
         DurableObjectTransferSources: [
-          { id: "lobbies", scriptNames: ["app--dev--web"] },
+          {
+            id: "lobbies",
+            workers: [
+              {
+                id: "web",
+                scriptName: "app--dev--web",
+                nameBody: "app--dev--web",
+                fixedName: "app--dev--web",
+              },
+            ],
+          },
         ],
       };
 
@@ -999,7 +1167,17 @@ describe("rejectChange", () => {
             { id: "lobbies", className: "Lobby", scriptName: "app--dev--web" },
           ],
           DurableObjectTransferSources: [
-            { id: "rooms", scriptNames: ["app--dev--web"] },
+            {
+              id: "rooms",
+              workers: [
+                {
+                  id: "web",
+                  scriptName: "app--dev--web",
+                  nameBody: "app--dev--web",
+                  fixedName: "app--dev--web",
+                },
+              ],
+            },
           ],
         }),
       ).toEqual({ decision: "noop" });
