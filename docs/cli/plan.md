@@ -50,6 +50,7 @@ See [Dependency cycles](../internals/reconciler.md#dependency-cycles).
 When deploy replaces a resource delete-first, and the provider can force its delete while others refer to it, the plan names the resources whose references are broken from the delete until deploy updates them:
 
 ```
+-/+ replace <type> <id> (delete, then create)
     the references from worker:reports are broken until deploy updates them
 ```
 
