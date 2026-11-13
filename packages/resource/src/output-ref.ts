@@ -141,7 +141,10 @@ export function isOwnNameRef(owner: BaseResource, token: OutputRef): boolean {
 }
 
 /** Whether the holder of `token` depends on the resource it names. */
-export function isDependencyRef(holder: BaseResource, token: OutputRef): boolean {
+export function isDependencyRef(
+  holder: BaseResource,
+  token: OutputRef,
+): boolean {
   return !(token instanceof StateOutputRef) && !isOwnNameRef(holder, token);
 }
 

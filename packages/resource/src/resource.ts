@@ -699,9 +699,7 @@ export abstract class Resource<
     }
     if (items.length === 0) return undefined;
     return collect(
-      items.map((item) =>
-        this.#resolveRefs(item.value, plan, recordedOutputs),
-      ),
+      items.map((item) => this.#resolveRefs(item.value, plan, recordedOutputs)),
       {
         resourceId: this.id,
         param: key,

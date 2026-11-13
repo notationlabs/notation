@@ -317,4 +317,3 @@ export async function planKnownParams(
   await validateParams(resource, params, point);
   return { stateNode, params, unnamed };
 }
-
