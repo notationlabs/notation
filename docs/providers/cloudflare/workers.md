@@ -136,7 +136,7 @@ The host is found by the export's name only. A Worker that binds the namespace a
 A new namespace uses SQLite storage. Deploy uploads Cloudflare's declarative `exports` map of the hosting Worker, with each namespace that the Worker hosted before. Cloudflare keys a namespace by its Worker and its class name, and deleting a namespace deletes all its objects, which can't be undone. So plan and deploy fail, before deploy changes anything, for a change that would delete a namespace that is protected in state:
 
 - When a namespace's `class` changes and its `id` stays the same, deploy renames the class, and the namespace keeps its objects.
-- A namespace's `id` can't change. Plan fails, and says to change the id back. This holds when the `class` changes too.
+- A namespace's `id` can't change. Plan fails, and says to change the id back. When the `class` changes too, plan can't pair the old and new namespaces, so it fails with the message for a deleted namespace, which also says to change the id back if it changed.
 - When the hosting Worker no longer hosts a namespace, plan fails, unless the namespace is unprotected in state. See [Deleting a namespace](#deleting-a-namespace).
 - When a namespace's class export moves to another Worker, and the old host still binds the namespace, deploy moves the namespace and its objects to the new host. See [Moving a namespace](#moving-a-namespace). When the old host no longer binds the namespace, plan fails, unless the namespace is unprotected in state.
 - When a Worker is removed or replaced, as when its `id` or `name` changes, deploy deletes all its namespaces. Plan fails unless each of them is unprotected in state.
@@ -148,29 +148,45 @@ A new namespace uses SQLite storage. Deploy uploads Cloudflare's declarative `ex
 
 To move a namespace to another Worker, export its class from the new host's module, and stop exporting it from the old host's module. Keep binding the namespace from the old host in the same deploy:
 
-```ts [infra/web.ts]
-import { $worker } from "@notation/cloudflare";
-import { rooms } from "../runtime/rooms";
+::code-group
 
-// runtime/web.ts no longer exports Room.
-export const web = $worker({
+```ts [runtime/web.ts]
+import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+import { rooms } from "./rooms";
+// No longer exports Room.
+
+export const worker = $worker({
   id: "web",
   compatibilityDate: "2026-10-12",
   bindings: () => ({ ROOMS: rooms }),
 });
+
+export default {
+  async fetch(request, env) {
+    return new Response(env.ROOMS.idFromName("lobby").toString());
+  },
+} satisfies WorkerHandler<typeof worker>;
 ```
 
-```ts [infra/api.ts]
-import { $worker } from "@notation/cloudflare";
-import { rooms } from "../runtime/rooms";
+```ts [runtime/api.ts]
+import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+import { rooms } from "./rooms";
+export { Room } from "./rooms";
 
-// runtime/api.ts exports Room.
-export const api = $worker({
+export const worker = $worker({
   id: "api",
   compatibilityDate: "2026-10-12",
   bindings: () => ({ ROOMS: rooms }),
 });
+
+export default {
+  async fetch(request, env) {
+    return new Response(env.ROOMS.idFromName("lobby").toString());
+  },
+} satisfies WorkerHandler<typeof worker>;
 ```
+
+::
 
 The old host now binds the namespace on the new host, so deploy uploads the new host first. That upload moves the namespace in three steps:
 

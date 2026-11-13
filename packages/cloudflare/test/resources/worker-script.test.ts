@@ -905,16 +905,27 @@ describe("rejectChange", () => {
     );
   });
 
-  it("rejects a change of id, with or without a change of class", () => {
-    for (const className of ["Counter", "Tally"]) {
-      expect(
-        reject({
-          DurableObjectNamespaces: [{ id: "tallies", className }, rooms],
-        }),
-      ).toMatch(
-        /^Deploy would delete the Durable Object namespaces "counters" \(class Counter\) of the Worker app--dev--api,/,
-      );
-    }
+  it("rejects a change of id, and says to change the id back", () => {
+    expect(
+      reject({
+        DurableObjectNamespaces: [
+          { id: "tallies", className: "Counter" },
+          rooms,
+        ],
+      }),
+    ).toBe(
+      `The id of the Durable Object namespace "counters" (class Counter) of the Worker app--dev--api would change to "tallies". A namespace's id can't change: deploy would delete the namespace with all its objects, which can't be undone. Change the id back to "counters".`,
+    );
+  });
+
+  it("rejects a change of id and class, and says to change the id back if it changed", () => {
+    expect(
+      reject({
+        DurableObjectNamespaces: [{ id: "tallies", className: "Tally" }, rooms],
+      }),
+    ).toMatch(
+      /^Deploy would delete the Durable Object namespaces "counters" \(class Counter\) of the Worker app--dev--api, with all their objects, which can't be undone\. If the id of a namespace changed, change it back\. To delete them,/,
+    );
   });
 
   it("rejects a namespace that takes the class of an unprotected one", () => {

@@ -492,10 +492,27 @@ export function rejectNamespaceLoss(
       !bound.some((now) => now.id === namespace.id),
   );
   if (lost.length > 0) {
+    const added = hosted.filter(
+      (now) => !before.some((other) => other.id === now.id),
+    );
+    // A new namespace with the class of a lost one is taken as a change of
+    // id. When the class changed too, the two can't be paired.
+    for (const namespace of lost) {
+      const renamed = added.find(
+        (now) => now.className === namespace.className,
+      );
+      if (renamed) {
+        return `The id of the Durable Object namespace ${describeHosted(namespace)} of the Worker ${previous.ScriptName} would change to "${renamed.id}". A namespace's id can't change: deploy would delete the namespace with all its objects, which can't be undone. Change the id back to "${namespace.id}".`;
+      }
+    }
     const declarations = lost
       .map((namespace) => `$durableObject({ id: "${namespace.id}" })`)
       .join(", ");
-    return `Deploy would delete the Durable Object namespaces ${lost.map(describeHosted).join(", ")} of the Worker ${previous.ScriptName}, with all their objects, which can't be undone. To delete them, first deploy \`protect: false\` on ${declarations} while this Worker still hosts them. To move a namespace to another Worker instead, keep binding it from this Worker.`;
+    const idHint =
+      added.length > 0
+        ? ` If the id of a namespace changed, change it back.`
+        : "";
+    return `Deploy would delete the Durable Object namespaces ${lost.map(describeHosted).join(", ")} of the Worker ${previous.ScriptName}, with all their objects, which can't be undone.${idHint} To delete them, first deploy \`protect: false\` on ${declarations} while this Worker still hosts them. To move a namespace to another Worker instead, keep binding it from this Worker.`;
   }
 
   // Cloudflare keys a namespace by its class name, and so does the move of a
