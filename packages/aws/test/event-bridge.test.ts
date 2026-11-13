@@ -61,18 +61,6 @@ test("each schedule on a lambda gets its own invoke permission", async () => {
   ]);
 });
 
-test("a schedule passes no name", async () => {
-  const graph = await collectResourceGraph(() => {
-    schedule({
-      id: "daily",
-      schedule: rate(1, "day"),
-      target: declareLambda(),
-    });
-  });
-
-  expect(scheduleGroup(graph, "daily").rule.config).not.toHaveProperty("Name");
-});
-
 test("a schedule group is identified by its name", async () => {
   const graph = await collectResourceGraph(() => {
     schedule({

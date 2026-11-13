@@ -83,24 +83,6 @@ test("a bus's grant allows the actions on the bus's ARN", () => {
   });
 });
 
-test("a bus and a rule pass no name", async () => {
-  let orders!: ReturnType<typeof eventBus>;
-  const graph = await collectResourceGraph(() => {
-    orders = eventBus({ id: "orders" });
-    rule({
-      id: "order-placed",
-      bus: orders,
-      pattern,
-      target: lambda({ id: "fulfil", code }),
-    });
-  });
-
-  expect(orders.bus.config).not.toHaveProperty("Name");
-  expect(ruleGroup(graph, "order-placed").rule.config).not.toHaveProperty(
-    "Name",
-  );
-});
-
 test("a rule takes its bus name from the bus's Name output", async () => {
   let orders!: ReturnType<typeof eventBus>;
   const graph = await collectResourceGraph(() => {

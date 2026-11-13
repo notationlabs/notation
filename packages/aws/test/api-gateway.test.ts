@@ -216,15 +216,6 @@ test("a second authorizer with the same id throws", async () => {
   );
 });
 
-test("an api passes no name", async () => {
-  let todos!: ReturnType<typeof api>;
-  await collect(() => {
-    todos = api({ id: "todos" });
-  });
-
-  expect(todos.api.config).not.toHaveProperty("Name");
-});
-
 test("an authorizer whose AWS name is another's on the same api throws, and names both declarations", async () => {
   await expect(
     collect(() => {

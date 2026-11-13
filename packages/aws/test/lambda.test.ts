@@ -4,7 +4,7 @@ import { lambda, type NameSafe } from "src/lambda";
 
 const code = { type: "file", path: "src/fns/handler.fn.js" } as const;
 
-test("resource ids embed the id, and the function is given no name", () => {
+test("resource ids embed the id", () => {
   const group = lambda({ id: "get-todos", code });
   expect(group.resources.map((r) => r.id).sort()).toEqual(
     [
@@ -15,8 +15,6 @@ test("resource ids embed the id, and the function is given no name", () => {
       "lambda:get-todos:zip",
     ].sort(),
   );
-  // Deploy generates the function's name.
-  expect(group.fn.config).not.toHaveProperty("FunctionName");
 });
 
 test("the function calls the bundle's `handler` export", () => {

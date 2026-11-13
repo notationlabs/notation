@@ -78,14 +78,13 @@ test("runtime, timeout, memory and concurrency are applied to the function", asy
   ).toEqual({ ReservedConcurrentExecutions: 10 });
 });
 
-test("the id keys the function in state, and the function passes no name", async () => {
+test("the id keys the function in state", async () => {
   const graph = await collectResourceGraph(() => {
     inModule($lambda({ id: "orders" }));
   });
   const group = lambdaGroup(graph, "orders");
 
   expect(group.fn.id).toBe("lambda:orders");
-  expect(group.fn.config).not.toHaveProperty("FunctionName");
 });
 
 test("env is set as the function's environment variables", async () => {

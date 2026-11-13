@@ -9,6 +9,7 @@ import {
   eventBus,
   rate,
   rule,
+  RuleGroup,
   schedule,
   ScheduleGroup,
 } from "src/event-bridge";
@@ -51,11 +52,19 @@ test("a declaration passes no AWS name", async () => {
   let fn!: ReturnType<typeof lambda>;
   let ordersApi!: ReturnType<typeof api>;
   let ordersQueue!: ReturnType<typeof queue>;
+  let ordersBus!: ReturnType<typeof eventBus>;
   const graph = await collectResourceGraph(
     () => {
       fn = lambda({ id: "get-orders", code });
       ordersApi = api({ id: "orders-api" });
       ordersQueue = queue({ id: "orders", schema: Unknown });
+      ordersBus = eventBus({ id: "orders" });
+      rule({
+        id: "order-placed",
+        bus: ordersBus,
+        pattern: { source: ["shop.orders"] },
+        target: fn,
+      });
       schedule({ id: "nightly", schedule: rate(1, "day"), target: fn });
     },
     { scope },
@@ -63,10 +72,15 @@ test("a declaration passes no AWS name", async () => {
   const nightly = graph.resourceGroups.find(
     (g): g is ScheduleGroup => g instanceof ScheduleGroup,
   )!;
+  const orderPlaced = graph.resourceGroups.find(
+    (g): g is RuleGroup => g instanceof RuleGroup,
+  )!;
   const declared = {
     fn,
     api: ordersApi,
     queue: ordersQueue,
+    bus: ordersBus,
+    rule: orderPlaced,
     schedule: nightly,
   };
 
@@ -75,6 +89,8 @@ test("a declaration passes no AWS name", async () => {
   expect(declared.fn.role.config).not.toHaveProperty("RoleName");
   expect(declared.api.api.config).not.toHaveProperty("Name");
   expect(declared.queue.queue.config).not.toHaveProperty("QueueName");
+  expect(declared.bus.bus.config).not.toHaveProperty("Name");
+  expect(declared.rule.rule.config).not.toHaveProperty("Name");
   expect(declared.schedule.rule.config).not.toHaveProperty("Name");
 });
 
@@ -86,15 +102,15 @@ test("resource ids do not change with the stage", async () => {
   expect(staging.resources.map((r) => r.id)).toEqual(
     prod.resources.map((r) => r.id),
   );
-  expect(
-    await generatedName(staging.fn, { ...scope, stage: "staging" }),
-  ).not.toBe(await generatedName(prod.fn));
+  expect(generatedName(staging.fn, { ...scope, stage: "staging" })).not.toBe(
+    generatedName(prod.fn),
+  );
 });
 
 test("a generated function name from a long id is cut to 64 characters", async () => {
   const id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
   const fn = await collect(() => lambda({ id, code }));
-  const name = await generatedName(fn.fn);
+  const name = generatedName(fn.fn);
 
   expect(name).toHaveLength(64);
   expect(name).toMatch(/^orders-app--prod--x+-1a2b3c4d$/);
@@ -182,7 +198,7 @@ test("a generated FIFO queue name that is cut short still ends in .fifo", async 
   const declared = await collect(() =>
     queue({ id, fifo: true, schema: Unknown }),
   );
-  const name = await generatedName(declared.queue);
+  const name = generatedName(declared.queue);
 
   expect(name).toHaveLength(80);
   expect(name).toMatch(/^orders-app--prod--q+-1a2b3c4d\.fifo$/);

@@ -322,18 +322,6 @@ test("eventSourceMapping after evaluation has ended throws", async () => {
   );
 });
 
-test("a queue passes no name", async () => {
-  let orders!: ReturnType<typeof queue>;
-  let ledger!: ReturnType<typeof queue>;
-  await collectResourceGraph(() => {
-    orders = queue({ id: "orders", schema: Unknown });
-    ledger = queue({ id: "ledger", fifo: true, schema: Unknown });
-  });
-
-  expect(orders.queue.config).not.toHaveProperty("QueueName");
-  expect(ledger.queue.config).not.toHaveProperty("QueueName");
-});
-
 test("a queue with a dead-letter queue depends on it and sets its redrive policy", async () => {
   let orders!: ReturnType<typeof queue>;
   let dlq!: ReturnType<typeof queue>;
