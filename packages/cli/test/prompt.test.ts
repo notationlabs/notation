@@ -1,11 +1,6 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import {
-  canPrompt,
-  confirm,
-  promptHidden,
-  readStdin,
-} from "../src/prompt";
+import { canPrompt, confirm, promptHidden, readStdin } from "../src/prompt";
 
 function terminal() {
   const input = Object.assign(new PassThrough(), {

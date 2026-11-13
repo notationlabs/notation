@@ -1,8 +1,4 @@
-import {
-  deleteSecret,
-  setSecret,
-  type Deployment,
-} from "@notation/core";
+import { deleteSecret, setSecret, type Deployment } from "@notation/core";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
 import {
