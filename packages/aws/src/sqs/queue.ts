@@ -10,14 +10,14 @@ export type QueueConfig<S extends StandardSchemaV1 = StandardSchemaV1> = {
   /**
    * Keys the queue in state. Without `name`, deploy generates the queue's
    * name in AWS from the app, the stage and the id. Changing the id replaces
-   * the queue, so keep it stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
-   * underscores.
+   * the queue, so keep it stable. Must be name-safe: 1 to 64 letters,
+   * digits, hyphens or underscores.
    */
   id: string;
   /**
    * The queue's name in AWS, in place of a generated one. The queue is named
-   * `<app>--<stage>--<name>`. Changing the name replaces the queue. Must be
-   * name-safe.
+   * `<app>--<stage>--<name>`. Changing the name replaces the queue.
+   * Removing it keeps the name. Must be name-safe.
    */
   name?: string;
   /**

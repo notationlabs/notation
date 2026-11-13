@@ -31,7 +31,7 @@ export type LambdaDeclarationConfig<
   /**
    * The function's name in AWS, in place of a generated one. The function is
    * named `<app>--<stage>--<name>`. Changing the name replaces the function.
-   * Must be name-safe.
+   * Removing it keeps the name. Must be name-safe.
    */
   name?: string;
   /**

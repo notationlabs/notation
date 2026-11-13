@@ -19,8 +19,8 @@ export type LambdaConfig = {
   /**
    * The function's name in AWS, in place of a generated one. The function is
    * named `<app>--<stage>--<name>`. Changing the name replaces the function.
-   * The role and the other resources keep names from the id. Must be
-   * name-safe.
+   * Removing it keeps the name. The role and the other resources keep names
+   * from the id. Must be name-safe.
    */
   name?: string;
   /**

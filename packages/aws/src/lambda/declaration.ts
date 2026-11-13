@@ -331,8 +331,8 @@ export type ScheduleOptions = {
   id: string;
   /**
    * The rule's name in AWS, in place of a generated one. The rule is named
-   * `<app>--<stage>--<name>`. Changing the name replaces the rule. Must be
-   * name-safe.
+   * `<app>--<stage>--<name>`. Changing the name replaces the rule.
+   * Removing it keeps the name. Must be name-safe.
    */
   name?: string;
   /** When the rule invokes the function, such as `rate(1, "day")`. */
@@ -349,8 +349,8 @@ export type RuleOptions = {
   id: string;
   /**
    * The rule's name in AWS, in place of a generated one. The rule is named
-   * `<app>--<stage>--<name>`. Changing the name replaces the rule. Must be
-   * name-safe.
+   * `<app>--<stage>--<name>`. Changing the name replaces the rule.
+   * Removing it keeps the name. Must be name-safe.
    */
   name?: string;
   /**

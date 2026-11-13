@@ -17,8 +17,8 @@ export type EventBusConfig = {
   id: string;
   /**
    * The bus's name in AWS, in place of a generated one. The bus is named
-   * `<app>--<stage>--<name>`. Changing the name replaces the bus. Must be
-   * name-safe.
+   * `<app>--<stage>--<name>`. Changing the name replaces the bus.
+   * Removing it keeps the name. Must be name-safe.
    */
   name?: string;
 };
