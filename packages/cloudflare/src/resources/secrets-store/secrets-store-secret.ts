@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import { PROMPT_SOURCE } from "@notation/core";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { getValue, isValueSupplied } from "@notation/std/sources";
 import {
@@ -7,9 +8,6 @@ import {
   writeSecret,
 } from "src/api/secrets-store";
 import type { SecretsStoreInstance } from "./secrets-store";
-
-/** The `Source` of a secret whose value comes from the prompt. */
-export const PROMPT_SOURCE = "prompt";
 
 const valueFromSchema = v.object({
   /** The id of the secret's declaration, which `getValue` takes. */

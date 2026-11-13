@@ -15,6 +15,7 @@ const { planApp } = vi.hoisted(() => ({
 vi.mock("@notation/core", () => ({
   createLoggerReconcilerSubscriber: () => () => undefined,
   planApp,
+  PROMPT_SOURCE: "prompt",
   resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}`,
 }));
 vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));

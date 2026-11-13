@@ -1,6 +1,7 @@
 import {
   createLoggerReconcilerSubscriber,
   planApp,
+  PROMPT_SOURCE,
   resolveDeploymentId,
   type Deployment,
   type Plan,
@@ -159,9 +160,11 @@ const creatingDecisions = new Set<PlanNode["decision"]>([
   "drift-recreate",
 ]);
 
-// A secret without a source has `ValueFrom: { Source: "prompt" }`. Plan
+// A secret without a source has `ValueFrom: { Source: PROMPT_SOURCE }`. Plan
 // never asks for the value, so it says that deploy will.
 function promptsForValue(node: PlanNode): boolean {
   const valueFrom = node.params.ValueFrom as { Source?: unknown } | undefined;
-  return creatingDecisions.has(node.decision) && valueFrom?.Source === "prompt";
+  return (
+    creatingDecisions.has(node.decision) && valueFrom?.Source === PROMPT_SOURCE
+  );
 }

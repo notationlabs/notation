@@ -1,9 +1,8 @@
-import { declareSecret } from "@notation/core";
+import { declareSecret, PROMPT_SOURCE } from "@notation/core";
 import { ResourceGroup, scopedPhysicalName } from "@notation/resource";
 import * as std from "@notation/std/resources";
 import type { Source } from "@notation/std/sources";
 import * as cloudflare from "src/resources";
-import { PROMPT_SOURCE } from "src/resources/secrets-store";
 import type { BindableSecret } from "src/workers/declaration";
 import { assertSecretId, claimSecretName, secretsStoreGroup } from "./store";
 

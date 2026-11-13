@@ -23,6 +23,12 @@ export type Source = {
   get(key: string, context: SourceContext): Promise<Redacted<string>>;
 };
 
+/**
+ * The source name that a secret without a source records, as its value comes
+ * from the prompt.
+ */
+export const PROMPT_SOURCE = "prompt";
+
 /** A secret that the infra declares, by its id. */
 export type DeclaredSecret = {
   id: string;
