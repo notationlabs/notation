@@ -1,10 +1,7 @@
 import { declareSecret } from "@notation/core";
 import { ResourceGroup, scopedPhysicalName } from "@notation/resource";
 import * as cloudflare from "src/resources";
-import {
-  sortedPolicies,
-  TOKEN_NAME_MAX_LENGTH,
-} from "src/resources/tokens/account-token";
+import { TOKEN_NAME_MAX_LENGTH } from "src/resources/tokens/account-token";
 import {
   assertSecretId,
   claimSecretName,
@@ -42,7 +39,7 @@ export class AccountTokenGroup
     super("cloudflare/accountToken", config.id, config);
     this.token = this.add(
       new cloudflare.tokens.AccountToken(`token:${config.id}`, {
-        config: { Name: name, Policies: sortedPolicies(config.policies) },
+        config: { Name: name, Policies: config.policies },
         dependencies: { store: secretsStoreGroup().store },
       }),
     );

@@ -22,13 +22,13 @@ notation secret set admin-password --stage prod
 op read op://prod/admin/password | notation secret set admin-password --stage prod
 ```
 
-`set` compiles the infra, and finds the secret's location from its params and from state. It writes the value with the secret's own create or update. It doesn't run the reconciler, and records nothing.
+`set` compiles the infra, finds the secret's declaration, and writes the value to the store. It doesn't read state, run the reconciler, or record anything, so it works before the first deploy. For a Cloudflare secret, it creates the account's Secrets Store if the account has none.
 
 Run `set` before a deploy without a terminal, such as in CI, for each secret that has no source. If the secret has a source, the source wins at its next write: on the next deploy for `env` and `dotenv`, and when the version changes for a versioned source.
 
 ## `delete`
 
-`delete` deletes a secret from its store, with the secret's own delete. It succeeds if the secret is already gone. It asks for confirmation on a terminal, and needs `--yes` without one.
+`delete` deletes a secret from its store. It succeeds if the secret is already gone. It asks for confirmation on a terminal, and needs `--yes` without one.
 
 The next `notation deploy` finds the secret missing and creates it again, from its source or from the prompt. `notation watch` deploys without drift detection, so it doesn't create the secret again. Until `notation deploy` runs, an upload of a Worker that binds the secret fails with Cloudflare error 10182.
 
@@ -37,12 +37,6 @@ The next `notation deploy` finds the secret missing and creates it again, from i
 Both commands fail when:
 
 - No secret has the id. The message lists the declared ids.
-- The secret's location depends on a resource that hasn't been deployed:
-
-  ```text
-  `admin-password`'s location depends on `secrets-store`, which hasn't been deployed. Run `notation deploy`.
-  ```
-
 - The id is an API token's, whose value only the token's create can write.
 
 `delete` also refuses a secret that a provider adopted rather than created, such as a Cloudflare secret with an explicit `name`.
