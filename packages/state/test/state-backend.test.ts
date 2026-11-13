@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  MemoryStateBackend,
-  hasRetiredInstances,
-  type StateNode,
-} from "src/state";
+import { MemoryStateBackend, type StateNode } from "src/state";
 
 function createStateNode(
   id: string,
@@ -80,16 +76,5 @@ describe("retired instances", () => {
     await expect(backend.get(node.id)).resolves.toMatchObject({
       retired: [instance],
     });
-  });
-
-  it("are found only in a record whose list has an instance", () => {
-    expect(hasRetiredInstances(undefined)).toBe(false);
-    expect(hasRetiredInstances(createStateNode("a"))).toBe(false);
-    expect(hasRetiredInstances(createStateNode("a", { retired: [] }))).toBe(
-      false,
-    );
-    expect(
-      hasRetiredInstances(createStateNode("a", { retired: [instance] })),
-    ).toBe(true);
   });
 });

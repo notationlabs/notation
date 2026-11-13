@@ -1,5 +1,5 @@
 import type { ResourceClass, ResourceType } from "@notation/resource";
-import { hasRetiredInstances, type StateNode } from "@notation/state";
+import type { StateNode } from "@notation/state";
 import { buildDepthLevels } from "./dependency-graph";
 import {
   resolveResourceClass,
@@ -64,7 +64,7 @@ export function sweptRecords(
   inCode: ReadonlySet<string>,
 ): { swept: SweptRecord[]; edgesById: Map<string, string[]> } {
   const swept = records
-    .filter((node) => !inCode.has(node.id) || hasRetiredInstances(node))
+    .filter((node) => !inCode.has(node.id) || node.retired?.length)
     .map((node) => ({ node, orphan: !inCode.has(node.id) }));
   return {
     swept,

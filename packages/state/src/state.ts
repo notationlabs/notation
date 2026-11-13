@@ -47,10 +47,6 @@ export type RetiredInstance = {
   retiredAt: string;
 };
 
-export function hasRetiredInstances(node: StateNode | undefined): boolean {
-  return (node?.retired?.length ?? 0) > 0;
-}
-
 // The predicate names the "creating" operation, so that a false result
 // leaves `node` as a record with another operation, not as undefined.
 export function isCreatingRecord(
