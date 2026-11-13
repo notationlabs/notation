@@ -5,7 +5,7 @@ import {
   type NameScope,
   type PhysicalNameRule,
 } from "@notation/resource";
-import { isCreatingRecord, type StateNode } from "@notation/state";
+import type { StateNode } from "@notation/state";
 
 const INSTANCE_BYTES = 4;
 
@@ -49,8 +49,6 @@ export function assertNamesNotDerived(
 /**
  * The values that the state record holds for `fields`. A "creating" record
  * counts, so a create that an earlier deploy did not finish keeps its name.
- * When the params of another record lack a field, the value comes from the
- * record's output, so the resource that exists keeps its name.
  */
 export function recordedNames(
   fields: NameField[],
@@ -58,16 +56,7 @@ export function recordedNames(
 ): Record<string, unknown> {
   return Object.fromEntries(
     fields
-      .map(
-        ({ field }) =>
-          [
-            field,
-            stateNode?.params[field] ??
-              (isCreatingRecord(stateNode)
-                ? undefined
-                : stateNode?.output[field]),
-          ] as const,
-      )
+      .map(({ field }) => [field, stateNode?.params[field]] as const)
       .filter(([, value]) => value !== undefined),
   );
 }

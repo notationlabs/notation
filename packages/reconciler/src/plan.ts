@@ -5,7 +5,6 @@ import {
   type ReplaceField,
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
-import { recordedNames, unnamedFields } from "./physical-names";
 
 export {
   UNKNOWN_AFTER_APPLY,
@@ -111,21 +110,15 @@ export function decideAction(opts: {
     return { decision: "create" };
   }
 
-  // `params` take a name that the record's params lack from the record's
-  // output. The same name goes here, so that it is not a change.
-  const previous = {
-    ...stateNode.params,
-    ...recordedNames(unnamedFields(resource), stateNode),
-  };
   const { patch, diff, replaceFields } = diffParams(
     resource.schema,
-    previous,
+    stateNode.params,
     params,
     { canUpdate: Boolean(resource.update) },
   );
 
   if (replaceFields.length > 0) {
-    assertReplaceAllowed(resource, previous, params, replaceFields);
+    assertReplaceAllowed(resource, stateNode.params, params, replaceFields);
     return { decision: "replace", patch, diff, replaceFields };
   }
   if (Object.keys(patch).length > 0) {
