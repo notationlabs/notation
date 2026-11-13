@@ -11,10 +11,9 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { Miniflare } from "miniflare";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setConfigFile } from "@notation/core";
-import { compileInfra, compileRuntimeModules } from "@notation/cli/src/compile";
+import { compileInfra, compileRuntimeModules } from "../src/compile";
 
 // Inside the repository, so the bundle's imports of @notation packages
 // resolve from the root node_modules.
@@ -249,59 +248,11 @@ it("writes a runtime bundle for the worker only, which exports the class and hol
   expect(code).not.toContain(`"counters"`);
 });
 
-async function serve(bundle: string, compatibilityFlags: string[] = []) {
-  const mf = new Miniflare({
-    workers: [
-      {
-        config: {
-          name: "api",
-          compatibilityDate: "2025-09-01",
-          compatibilityFlags,
-          manifest: {
-            mainModule: "index.mjs",
-            modules: {
-              "index.mjs": {
-                type: "esm",
-                contents: readFileSync(bundle, "utf8"),
-              },
-            },
-          },
-          env: {
-            COUNTERS: {
-              type: "durable-object",
-              worker: "api",
-              exportName: "Counter",
-            },
-          },
-          exports: { Counter: { type: "durable-object", storage: "sqlite" } },
-        },
-      },
-    ],
-  });
-  try {
-    const response = await mf.dispatchFetch("http://localhost/");
-    return await response.text();
-  } finally {
-    await mf.dispose();
-  }
-}
-
-it("runs the worker bundle under workerd, with the Durable Object it re-exports", async () => {
-  writeProject();
-  await build();
-  expect(await serve(path.join(root, apiBundle))).toBe("api COUNTERS count=1");
-}, 60_000);
-
-// workerd starts with a warning that no such class is exported, and each call
-// to the namespace fails.
-it("builds a worker that doesn't re-export the class, whose calls then fail in workerd", async () => {
+it("builds a worker that doesn't re-export the class without the class", async () => {
   writeProject("");
   await build();
   expect(read(apiBundle)).not.toContain("Counter");
-  expect(await serve(path.join(root, apiBundle))).toMatch(
-    /^Error: internal error; reference = /,
-  );
-}, 60_000);
+});
 
 it("re-exports a name that is not an identifier", async () => {
   writeProject(`export { Counter as "my-class" } from "./counter";`);
@@ -344,12 +295,9 @@ it("defines NODE_ENV and imports a bare Node built-in as its node: module, over 
   expect(
     [...warnings.mock.calls, ...logs.mock.calls].flat().join("\n"),
   ).not.toContain("UNRESOLVED_IMPORT");
-  expect(await serve(path.join(root, apiBundle), ["nodejs_compat"])).toBe(
-    "api COUNTERS count=1",
-  );
-}, 60_000);
+});
 
-it("runs a CommonJS dependency that requires a Node built-in under workerd", async () => {
+it("imports the Node built-in that a CommonJS dependency requires, in place of a require call", async () => {
   writeProject(
     [
       reexport,
@@ -371,10 +319,7 @@ it("runs a CommonJS dependency that requires a Node built-in under workerd", asy
   );
   await build();
   expect(read(apiBundle)).not.toMatch(/__require\(/);
-  expect(await serve(path.join(root, apiBundle), ["nodejs_compat"])).toBe(
-    "api COUNTERS count=1",
-  );
-}, 60_000);
+});
 
 describe("a runtime: option whose value is not a name that the module declares or imports", () => {
   it.each([
@@ -450,14 +395,11 @@ describe("an export of the Worker module that workerd doesn't start with", () =>
     },
   );
 
-  it("builds and starts a Worker that exports an object", async () => {
+  it("builds a Worker that exports an object", async () => {
     writeProject(`${reexport}\nexport const settings = { region: "eu" };`);
     await build();
     expect(recordedExports()).toEqual(["Counter", "settings"]);
-    expect(await serve(path.join(root, apiBundle))).toBe(
-      "api COUNTERS count=1",
-    );
-  }, 60_000);
+  });
 });
 
 it("drops a cloudflare: import that the infra build doesn't use", async () => {

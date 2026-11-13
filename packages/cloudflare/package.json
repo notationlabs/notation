@@ -31,7 +31,6 @@
   },
   "devDependencies": {
     "@notation/cli": "workspace:*",
-    "@notation/reconciler": "workspace:*",
-    "miniflare": "5.20261012.0-beta"
+    "@notation/reconciler": "workspace:*"
   }
 }

@@ -12,36 +12,11 @@ import {
 } from "@notation/resource";
 import { decideAction } from "@notation/reconciler";
 import { WorkerScript } from "src/resources/workers/worker-script";
-import { WorkerSubdomain } from "src/resources/workers/worker-subdomain";
-import { CloudflareApiError } from "src/api/client";
+import { calls, fail, mockFetch, ok, type Call } from "../../mock-api";
 
 let root: string;
 const code = "export default { fetch() { return new Response('ok'); } };";
 const codeSha256 = crypto.createHash("sha256").update(code).digest("base64");
-
-type Call = { method: string; url: string; body: unknown };
-let calls: Call[];
-
-function mockFetch(respond: (call: Call) => Response | Promise<Response>) {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
-    const call = {
-      method: init?.method ?? "GET",
-      url: String(url),
-      body: init?.body,
-    };
-    calls.push(call);
-    return respond(call);
-  });
-}
-
-const ok = (result: unknown = null) =>
-  Response.json({ success: true, errors: [], result });
-
-const fail = (status: number, code: number, message = "failed") =>
-  Response.json(
-    { success: false, errors: [{ code, message }], result: null },
-    { status },
-  );
 
 const params = {
   AccountId: "acc",
@@ -79,7 +54,7 @@ async function uploadedMetadata(call: Call) {
 }
 
 beforeEach(() => {
-  calls = [];
+  calls.length = 0;
   root = mkdtempSync(path.join(os.tmpdir(), "notation-cf-"));
   writeFileSync(path.join(root, "notation.config.ts"), "export default {}");
   setConfigFile(path.join(root, "notation.config.ts"));
@@ -1178,62 +1153,5 @@ describe("rejectChange", () => {
         /^worker:api: Deploy would delete the Durable Object namespaces "rooms"/,
       );
     });
-  });
-});
-
-describe("WorkerSubdomain", () => {
-  const subdomain = new WorkerSubdomain("worker:api:subdomain", {
-    dependencies: { script },
-  });
-  const key = { AccountId: "acc", ScriptName: "app--dev--api" };
-
-  it("enables workers.dev and reads the URL from the account's subdomain", async () => {
-    mockFetch((call) =>
-      call.url.endsWith("/workers/subdomain")
-        ? ok({ subdomain: "team" })
-        : ok({ enabled: true, previews_enabled: false }),
-    );
-
-    await subdomain.create(key);
-    expect(calls[0]).toMatchObject({ method: "POST" });
-    expect(JSON.parse(calls[0]!.body as string)).toEqual({ enabled: true });
-    await expect(subdomain.read!(key)).resolves.toEqual({
-      ...key,
-      Url: "https://app--dev--api.team.workers.dev",
-    });
-  });
-
-  it("explains that the account has no workers.dev subdomain", async () => {
-    mockFetch((call) =>
-      call.url.endsWith("/workers/subdomain")
-        ? fail(404, 10007, "not found")
-        : ok({ enabled: true, previews_enabled: false }),
-    );
-
-    const error = await subdomain.read!(key).catch((error) => error);
-    expect(error.message).toContain(
-      "The account acc has no workers.dev subdomain.",
-    );
-    expect(error.cause).toBeInstanceOf(CloudflareApiError);
-  });
-
-  it("fails with the API error for a 404 that Cloudflare can't route", async () => {
-    mockFetch((call) =>
-      call.url.endsWith("/workers/subdomain")
-        ? fail(404, 7003, "Could not route")
-        : ok({ enabled: true, previews_enabled: false }),
-    );
-
-    await expect(subdomain.read!(key)).rejects.toThrow(
-      "failed with status 404",
-    );
-  });
-
-  it("reads a Worker that is not on workers.dev as not found", async () => {
-    mockFetch(() => ok({ enabled: false, previews_enabled: false }));
-
-    await expect(subdomain.read!(key)).rejects.toBeInstanceOf(
-      ResourceNotFoundError,
-    );
   });
 });

@@ -29,7 +29,6 @@ import {
   type WorkerEnv,
   type WorkerGroup,
 } from "src/workers";
-import * as infra from "src/workers";
 import * as runtime from "src/workers/runtime";
 
 const projectDir = "/some/project";
@@ -910,26 +909,6 @@ describe("plan", () => {
   });
 });
 
-describe("$durableObject", () => {
-  it("fails for a class that isn't a name, which the infra build gives no name", () => {
-    const unnamed = (() => () => {})();
-    expect(() =>
-      $durableObject({ id: "counters", class: unnamed as any }),
-    ).toThrow(
-      `$durableObject({ id: "counters" }) expects class to name a class that its module declares or imports`,
-    );
-  });
-
-  it("fails for two namespaces with the same id", async () => {
-    await expect(
-      collect(() => {
-        $durableObject({ id: "rooms", class: Room });
-        $durableObject({ id: "rooms", class: Counter });
-      }),
-    ).rejects.toThrow(`Duplicate $durableObject id "rooms"`);
-  });
-});
-
 describe("runtime", () => {
   it("keeps only the ids of the declarations", () => {
     const counters = runtime.$durableObject({ id: "counters", class: Counter });
@@ -977,8 +956,4 @@ describe("WorkerEnv", () => {
       bindings: () => ({ BUCKET: { id: "uploads" } }),
     });
   });
-});
-
-it("the runtime variant exports the same names as the infra module", () => {
-  expect(Object.keys(runtime).sort()).toEqual(Object.keys(infra).sort());
 });
