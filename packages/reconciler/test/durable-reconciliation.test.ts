@@ -7224,7 +7224,12 @@ describe("create-first replacement", () => {
       generated: true,
       immutableParent: false,
     });
-    return { calls, live, label, control, Bus, Rule, Permission, Fn };
+    // The bus class after it has lost its physicalName param. Its name
+    // comes from config, so a replace of it deletes first.
+    const PlainBus = resource({ type: Bus.type, provider: "test" })
+      .defineSchema({ name: name(false), path } as any)
+      .defineOperations(operations(false) as any);
+    return { calls, live, label, control, Bus, PlainBus, Rule, Permission, Fn };
   }
 
   type NamedWorld = ReturnType<typeof defineNamedWorld>;
@@ -7803,6 +7808,105 @@ describe("create-first replacement", () => {
     await expect(runtime.destroy("destroy-1")).rejects.toThrow(
       "Cannot delete a retired instance of bus: bus#1 is still in use. The instance and its record stay in state, and the next destroy tries to delete them again.",
     );
+    expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
+    runtime.close();
+  });
+
+  it("deletes the retired instances of a class that has lost its physicalName param before a delete-first replace of the resource", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-lost-physical-name");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/2/"));
+    world.control.failUpdate = () => new Error("update rejected");
+    await expect(runtime.run("deploy-2")).rejects.toThrow("update rejected");
+    expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
+
+    await clearHold(runtime, "cbd-lost-physical-name", "deploy-2");
+    world.control.failUpdate = undefined;
+    const bus = new world.PlainBus("bus", {
+      config: { name: "plain-bus", path: "/3/" } as any,
+    });
+    const fn = new world.Fn("fn", {
+      config: {} as any,
+      dependencies: { parent: bus },
+    });
+    resources.splice(0, resources.length, bus, fn);
+    world.calls.length = 0;
+    await runtime.run("deploy-3");
+
+    expect(world.calls).toEqual([
+      "delete bus#1",
+      "delete bus#2",
+      "create plain-bus",
+      "update fn#1",
+    ]);
+    expect(await runtime.state.get("bus")).not.toHaveProperty("retired");
+    runtime.close();
+  });
+
+  it("deletes a dependent that blocks a delete-first replace through the edge of its retired instance, with its retired instances", async () => {
+    const world = defineNamedWorld();
+    // The old rule is on the bus, and the new rule is on the function.
+    const declare = (busPath: string, onBus: boolean) => {
+      const bus = new world.PlainBus("bus", {
+        config: { name: "plain-bus", path: busPath } as any,
+      });
+      const fn = new world.Fn("fn", {
+        config: {} as any,
+        dependencies: { parent: bus },
+      });
+      const rule = new world.Rule("rule", {
+        config: {} as any,
+        dependencies: { parent: onBus ? bus : fn },
+      });
+      return [bus, fn, rule];
+    };
+    const resources = declare("/", true);
+    const runtime = createRuntime(resources, "cbd-cascade-retired-edge");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declare("/", false));
+    world.control.failDelete = (label) =>
+      label === "rule#1" ? new Error("rule#1 is busy") : undefined;
+    await expect(runtime.run("deploy-2")).rejects.toThrow("rule#1 is busy");
+    expect(await retiredNames(runtime, world, "rule")).toEqual(["rule#1"]);
+
+    await clearHold(runtime, "cbd-cascade-retired-edge", "deploy-2");
+    world.control.failDelete = undefined;
+    resources.splice(0, resources.length, ...declare("/new/", false));
+    world.calls.length = 0;
+    await runtime.run("deploy-3");
+
+    // Without the cascade, the provider refuses the delete of the bus, as
+    // the old rule names it as its parent.
+    expect(world.calls).toEqual([
+      "delete rule#1",
+      "delete rule#2",
+      "delete plain-bus",
+      "create plain-bus",
+      "create rule#3",
+    ]);
+    expect(await runtime.state.get("rule")).not.toHaveProperty("retired");
+    runtime.close();
+  });
+
+  it("keeps the retired instances of a record in code that an orphan with no class depends on", async () => {
+    const world = defineNamedWorld();
+    const resources = declareAll(world, "/");
+    const runtime = createRuntime(resources, "cbd-kept-by-unregistered", {
+      registry: createResourceRegistry([]),
+    });
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    world.calls.length = 0;
+    await runtime.run("deploy-2");
+
+    // The rule and the permission have no class. The rule depends on the
+    // bus, so the sweep keeps the old bus, which the rule still uses.
+    expect(world.calls).toEqual(["create bus#2", "update fn#1"]);
     expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
     runtime.close();
   });
