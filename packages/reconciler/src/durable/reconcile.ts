@@ -632,7 +632,6 @@ async function* replaceDeleteFirst(
   // The delete removed the store instance that `session` read, so a write
   // against it would conflict. The record is read again for the create.
   const recreated = yield* openStateSession(createStep, opts, shared.resource);
-  const { retired: _, ...replaced } = session.node;
   const { tookOver } = yield* createResourceOperation(createStep, {
     ...created,
     emit: durableEmitter(createStep, opts.emit),
@@ -641,7 +640,7 @@ async function* replaceDeleteFirst(
     // The record was removed with the resource it describes.
     prior: undefined,
     // Without the retired instances, which the delete has deleted.
-    replaces: replaced as StateNode,
+    replaces: { ...session.node, retired: [] },
     persist: recreated.persist,
   });
   // No `replaceWithout`: the params in `created` already leave out the
@@ -1128,7 +1127,7 @@ function persistResourceState(
     const { current } = ref;
     if (next === null) assertNoRetired(resource, current);
     const record =
-      next === null || "retired" in next
+      next === null || next.retired !== undefined
         ? next
         : { ...next, retired: current.state?.retired };
     const result = yield* store.updateFrom(

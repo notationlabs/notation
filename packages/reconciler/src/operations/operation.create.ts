@@ -345,15 +345,12 @@ function isOutcomeUnknown(error: unknown): boolean {
  * from the record alone.
  */
 function creatingRecord(params: CreateResourceParams): PersistedResourceState {
-  const { resource, resourceParams, retired } = params;
-  return {
-    ...resourceRecord(params, {
-      lastOperation: "creating",
-      params: resource.toState(resourceParams),
-      output: resource.toState(definedKey(resource, resourceParams)),
-    }),
-    ...(retired ? { retired } : {}),
-  };
+  const { resource, resourceParams } = params;
+  return resourceRecord(params, {
+    lastOperation: "creating",
+    params: resource.toState(resourceParams),
+    output: resource.toState(definedKey(resource, resourceParams)),
+  });
 }
 
 function definedKey(
@@ -416,6 +413,9 @@ function resourceRecord(
     // State records the real outputs in place of output refs.
     config: resolveOutputRefs(resource.config, deployLookup) as DurableObject,
     dependsOn: params.dependsOn,
+    // A takeover through `find` writes no "creating" record, so each write
+    // carries the list of a create-first replace.
+    retired: params.retired,
     ...fields,
   };
 }

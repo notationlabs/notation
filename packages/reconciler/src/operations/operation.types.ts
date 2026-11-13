@@ -59,8 +59,8 @@ export type PersistedResourceState = Pick<
   // Required here, though optional on StateNode: every write records edges.
   dependsOn: string[];
   /**
-   * Left out to carry forward the list that the record holds. See
-   * `PersistState`.
+   * Left out, or `undefined`, to carry forward the list that the record
+   * holds. See `PersistState`.
    */
   retired?: RetiredInstance[];
   [key: string]: DurableValue;
@@ -89,9 +89,9 @@ export function toPersistedState(
  * write is made against the record the one before it left. `null` clears the
  * record.
  *
- * A write that leaves out `retired` keeps the retired instances that the
- * record lists. Neither `null` nor a removal may drop a record that lists
- * retired instances.
+ * A write whose `retired` is `undefined` keeps the retired instances that
+ * the record lists. Only an empty list clears them. Neither `null` nor a
+ * removal may drop a record that lists retired instances.
  */
 export type PersistState = (
   next: PersistedResourceState | null,

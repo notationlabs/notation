@@ -6914,6 +6914,86 @@ describe("generated physical names", () => {
     runtime.close();
   });
 
+  it("keeps the replaced resource retired when the create of a create-first replace takes over a resource that find finds", async () => {
+    const remote = new Map<string, { name: string; path: string }>();
+    const calls: string[] = [];
+    const Api = resource({
+      type: "test/durable/name-find-path",
+      provider: "test",
+    })
+      .defineSchema({
+        id: {
+          presence: "required",
+          propertyType: "computed",
+          primaryKey: true,
+          value: v.string(),
+        },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          value: v.string(),
+          physicalName: { maxLength: 64 },
+        },
+        path: {
+          presence: "required",
+          propertyType: "param",
+          immutable: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: (async (params: any) => {
+          const id = `api-${remote.size + 1}`;
+          remote.set(id, { name: params.name, path: params.path });
+          calls.push(`create ${id}`);
+          return { id };
+        }) as any,
+        update: (async (key: any, _patch: any, params: any) => {
+          remote.set(key.id, { name: params.name, path: params.path });
+          calls.push(`update ${key.id}`);
+        }) as any,
+        // Matches on the path, so that it finds a resource that another
+        // deploy made under another name.
+        find: (async (params: any) => {
+          const found = [...remote].find(
+            ([, item]) => item.path === params.path,
+          );
+          if (found) return { id: found[0] };
+          throw new ResourceNotFoundError(`nothing has ${params.path}`);
+        }) as any,
+        read: async (key: any) => {
+          const found = remote.get(key.id);
+          if (!found) throw new ResourceNotFoundError(`${key.id} not found`);
+          return { id: key.id, ...found };
+        },
+        delete: async (key: any) => {
+          remote.delete(key.id);
+          calls.push(`delete ${key.id}`);
+        },
+      });
+    const resources = [new Api("api", { config: { path: "/" } as any })];
+    const runtime = createRuntime(resources, "name-find-retired");
+
+    await runtime.run("deploy-1");
+    remote.set("api-2", { name: "shop--prod--api-00000000", path: "/new/" });
+    resources.splice(
+      0,
+      resources.length,
+      new Api("api", { config: { path: "/new/" } as any }),
+    );
+    await runtime.run("deploy-2");
+
+    // The takeover is followed by an update to the generated name.
+    expect(calls).toEqual(["create api-1", "update api-2", "delete api-1"]);
+    expect([...remote.keys()]).toEqual(["api-2"]);
+    expect(await runtime.state.get("api")).toMatchObject({
+      lastOperation: "update",
+      output: { id: "api-2" },
+    });
+    expect(await runtime.state.get("api")).not.toHaveProperty("retired");
+    runtime.close();
+  });
+
   it("creates the placeholder of a cycle with a generated name, and keeps the name in the later passes", async () => {
     const remote = new Map<string, string[]>();
     const calls: string[] = [];
