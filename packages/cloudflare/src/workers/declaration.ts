@@ -18,12 +18,30 @@ export interface DurableObjectDeclaration<
 }
 
 /**
+ * A secret that `secretsStore.bind()` binds, from `secret()` or
+ * `accountToken()`. The hook gives the resource whose outputs say where the
+ * secret is.
+ */
+export interface BindableSecret {
+  "~secret"(): {
+    outputRef(key: "StoreId" | "Name" | "SecretId"): string;
+  };
+}
+
+/** A Secrets Store secret binding, from `secretsStore.bind(secret)`. */
+export interface SecretsStoreSecretBinding {
+  readonly "~secretsStoreSecret": BindableSecret;
+}
+
+/**
  * A value that a Worker can bind: a Durable Object namespace, another Worker
- * (a service binding) or a string (plain text).
+ * (a service binding), a secret from `secretsStore.bind()` or a string
+ * (plain text).
  */
 export type BindingValue =
   | string
   | DurableObjectDeclaration<any>
+  | SecretsStoreSecretBinding
   | { readonly "~worker": { bindings: Bindings } };
 
 export type Bindings = Record<string, BindingValue>;
@@ -49,9 +67,11 @@ type ClassOf<V> = V extends DurableObjectDeclaration<infer C> ? C : never;
 type BindingType<V> =
   V extends DurableObjectDeclaration<any>
     ? NamespaceOf<ClassOf<V>>
-    : V extends { readonly "~worker": unknown }
-      ? cf.Fetcher
-      : string;
+    : V extends SecretsStoreSecretBinding
+      ? cf.SecretsStoreSecret
+      : V extends { readonly "~worker": unknown }
+        ? cf.Fetcher
+        : string;
 
 /** The `env` type of a Worker's handlers: `WorkerEnv<typeof worker>`. */
 export type WorkerEnv<

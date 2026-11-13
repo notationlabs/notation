@@ -10,3 +10,4 @@ export {
   type WorkerDeclarationConfig,
   type WorkerGroupConfig,
 } from "./worker";
+export { secretsStore } from "./secrets-store";

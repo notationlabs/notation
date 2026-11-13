@@ -11,6 +11,7 @@ import type { WorkerDeclarationConfig } from "./worker";
 // so it exports the same names as `index.ts`.
 
 export type * from "./declaration";
+export { secretsStore } from "./secrets-store";
 
 /** Declares nothing at runtime. The Worker reads its bindings from `env`. */
 export function $worker<const Id extends string, B extends Bindings = {}>(

@@ -11,6 +11,7 @@ import * as cloudflare from "src/resources";
 import { assertWorkerId, workerNames, workerResourceId } from "src/id";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
 import { describeNamespace, registeredNamespace } from "./durable-object";
+import { boundSecret } from "./secrets-store";
 
 // Always set: the build imports Node's built-in modules as `node:` modules,
 // which workerd only provides under this flag.
@@ -25,8 +26,8 @@ export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
   id: Id;
   /**
    * The values that the Worker reads from `env`: a `$durableObject`
-   * namespace, another Worker or a string. Return an object literal with no
-   * spread or computed keys.
+   * namespace, another Worker, a secret from `secretsStore.bind()` or a
+   * string. Return an object literal with no spread or computed keys.
    */
   bindings?: () => B;
   /** Such as `"2026-10-12"`. */
@@ -336,13 +337,32 @@ function resolveBindings(
       }
       continue;
     }
+    const secret = boundSecret(value);
+    if (secret) {
+      // The output refs make the Worker depend on the secret, so the secret
+      // exists when the Worker is uploaded. Cloudflare fails an upload that
+      // binds a missing secret.
+      const reference = secret["~secret"]();
+      resolved.bindings.push({
+        type: "secrets_store_secret",
+        name,
+        store_id: reference.outputRef("StoreId"),
+        secret_name: reference.outputRef("Name"),
+      });
+      continue;
+    }
     const worker = registeredWorker(value);
     if (worker) {
       resolved.services.push({ name, worker });
       continue;
     }
+    if (typeof value === "object" && value !== null && "~secret" in value) {
+      throw new Error(
+        `${self.describe()} binds ${name} to a secret directly. Bind it with \`${name}: secretsStore.bind(secret)\`.`,
+      );
+    }
     throw new Error(
-      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker, or a string.`,
+      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker, a secret with secretsStore.bind(), or a string.`,
     );
   }
   return resolved;
