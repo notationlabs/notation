@@ -798,24 +798,34 @@ async function* readDeletion(
   opts: DurableWorkflowOptions,
   resource: BaseResource,
   /**
-   * Leaves out the dependents in code, for the delete of a retired instance:
-   * they have moved to the replacement.
+   * For the delete of a retired instance. The dependents in code are left
+   * out, as they have moved to the replacement. The retired instances of
+   * other records that depend on the resource are added, as the sweep
+   * deletes them too. They are left when the retired instances depend on
+   * each other, as the retired members of a cycle do.
    */
-  orphansOnly = false,
+  retired = false,
 ): AsyncGenerator<any, ResourceDeletion | undefined, any> {
   if (!resource.deleteTakesDependents || opts.dryRun) return undefined;
   const resourceById = new Map(
     opts.resources.map((desired) => [desired.id, desired]),
   );
   const dependents = yield* step.run("dependents", async () =>
-    (await opts.state.values())
-      .filter(
-        (node) =>
-          node.id !== resource.id &&
-          !(orphansOnly && resourceById.has(node.id)) &&
-          recordedEdges(node, resourceById).includes(resource.id),
-      )
-      .map(({ id, type, params }) => ({ id, type, params })),
+    (await opts.state.values()).flatMap((node) => {
+      if (node.id === resource.id) return [];
+      const { id, type } = node;
+      const found =
+        !(retired && resourceById.has(id)) &&
+        recordedEdges(node, resourceById).includes(resource.id)
+          ? [{ id, type, params: node.params }]
+          : [];
+      if (!retired) return found;
+      for (const instance of node.retired ?? []) {
+        if (!instance.dependsOn.includes(resource.id)) continue;
+        found.push({ id, type, params: instance.params });
+      }
+      return found;
+    }),
   );
   return { dependents };
 }
@@ -839,11 +849,7 @@ async function* deleteRetiredInstances(
     ReturnType<typeof resolveResourceClass>
   >;
   for (const [index, instance] of instances.entries()) {
-    // The state key keeps the writes of the instances apart.
-    const scoped = step.scope(
-      `retired:${index}`,
-      [step.stateKey, `retired:${index}`].filter(Boolean).join(":"),
-    );
+    const scoped = step.scope(`retired:${index}`);
     const retired = await instantiateRecord(Resource, { ...node, ...instance });
     const emit = durableEmitter(scoped, opts.emit);
     try {
@@ -859,7 +865,7 @@ async function* deleteRetiredInstances(
               ...toPersistedState(node, node.dependsOn ?? []),
               retired: instances.slice(index + 1),
             },
-            "retired",
+            `retired:${index}`,
           ),
       });
     } catch (error) {

@@ -42,9 +42,8 @@
  *                              failed create started from or that the
  *                              replaced resource had, or removal of the
  *                              "creating" record if there is none
- *   state:persist:<id>:retired[:<state key>]:retired:<n>   conditional
- *                              write that removes retired instance <n>
- *                              from the record
+ *   state:persist:<id>:retired:<n>   conditional write that removes
+ *                              retired instance <n> from the record
  *   state:delete:<id>          conditional removal of one
  *   state:<write>:<id>:settle:<n>        a write in pass <n> over a cycle
  *   state:<write>:<id>[:<stage>]:after-takeover   a write that follows a

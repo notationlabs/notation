@@ -102,9 +102,11 @@ export type PersistState = (
 /**
  * `restored` writes back the record that a failed create started from, or
  * that the replaced resource had. It clears the record if there is none.
- * `retired` removes a retired instance that deploy has deleted.
+ * `retired:<n>` removes retired instance <n>, from 0, once deploy has deleted
+ * it.
  */
-export type PersistStage = "creating" | "taken-over" | "restored" | "retired";
+export type PersistStage =
+  "creating" | "taken-over" | "restored" | `retired:${number}`;
 
 export type RemoveState = () => AsyncGenerator<unknown, void, unknown>;
 
