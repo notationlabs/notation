@@ -346,23 +346,17 @@ describe("SecretsStoreSecret", () => {
     );
   });
 
-  it("deletes a stage-scoped secret by the ID in its record", async () => {
-    mockFetch(() => ok());
+  it("deletes a stage-scoped secret by the ID that its name has now, not the ID in its record", async () => {
+    mockFetch((call) =>
+      call.method === "GET" ? ok([listed({ id: "s2" })]) : ok(),
+    );
 
     await resource.delete(key, { ...params, SecretId: "s1" });
 
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({ method: "DELETE" });
-    expect(calls[0]!.url.pathname).toBe(`${STORES}/store/secrets/s1`);
-  });
-
-  it("finds the secret by name to delete it when its record has no ID", async () => {
-    mockFetch((call) => (call.method === "GET" ? ok([listed()]) : ok()));
-
-    await resource.delete(key, params as any);
-
-    expect(calls[1]).toMatchObject({ method: "DELETE" });
-    expect(calls[1]!.url.pathname).toBe(`${STORES}/store/secrets/s1`);
+    expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([
+      `GET ${STORES}/store/secrets`,
+      `DELETE ${STORES}/store/secrets/s2`,
+    ]);
   });
 
   it("leaves a secret with an explicit name on delete", async () => {
@@ -377,8 +371,21 @@ describe("SecretsStoreSecret", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("does nothing on delete when the secret is already gone", async () => {
-    mockFetch(() => fail(404, 1001, "secret_not_found"));
+  it("does nothing on delete when no secret has the name", async () => {
+    mockFetch(() => ok([listed({ status: "deleted" })]));
+
+    await expect(
+      resource.delete(key, { ...params, SecretId: "s1" }),
+    ).resolves.toBeUndefined();
+    expect(calls.filter((c) => c.method === "DELETE")).toHaveLength(0);
+  });
+
+  it("does nothing on delete when the secret is deleted after it is found", async () => {
+    mockFetch((call) =>
+      call.method === "GET"
+        ? ok([listed()])
+        : fail(404, 1001, "secret_not_found"),
+    );
 
     await expect(
       resource.delete(key, { ...params, SecretId: "s1" }),

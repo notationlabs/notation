@@ -4,7 +4,7 @@ import { resource, ResourceNotFoundError } from "@notation/resource";
 import { sortedJson } from "@notation/utils";
 import { cloudflareCreate } from "src/api/client";
 import {
-  deleteStoreSecret,
+  deleteSecret,
   findSecretByName,
   writeSecret,
 } from "src/api/secrets-store";
@@ -202,9 +202,9 @@ export const AccountToken = accountTokenSchema
       });
     },
 
-    delete: async (key, state) => {
+    delete: async (key) => {
       await deleteToken(key.AccountId, key.TokenId);
-      await deleteStoreSecret(key, state.SecretId);
+      await deleteSecret(key.AccountId, key.StoreId, key.Name);
     },
   })
   .requireDependencies<AccountTokenDependencies>()

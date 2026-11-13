@@ -151,31 +151,23 @@ export async function writeSecret(
   }
 }
 
-/** Does nothing if the secret or its store doesn't exist. */
+/**
+ * Deletes the secret named `name`. The ID is looked up by name each time,
+ * because an ID in a record goes stale when the secret is deleted and
+ * created again outside a deploy. Does nothing if the secret or its store
+ * doesn't exist.
+ */
 export async function deleteSecret(
   account: string,
   store: string,
-  secretId: string,
+  name: string,
 ): Promise<void> {
+  const secret = await findSecretByName(account, store, name);
+  if (!secret) return;
   try {
-    await cloudflare("DELETE", secretPath(account, store, secretId));
+    await cloudflare("DELETE", secretPath(account, store, secret.id));
   } catch (error) {
     if (isSecretNotFound(error) || isStoreNotFound(error)) return;
     throw error;
   }
-}
-
-/**
- * Deletes the secret by the ID that its record holds. A record written when
- * the read after create failed has no ID, so the secret is found by name.
- * Does nothing if the secret doesn't exist.
- */
-export async function deleteStoreSecret(
-  key: { AccountId: string; StoreId: string; Name: string },
-  secretId: string | undefined,
-): Promise<void> {
-  const id =
-    secretId ??
-    (await findSecretByName(key.AccountId, key.StoreId, key.Name))?.id;
-  if (id) await deleteSecret(key.AccountId, key.StoreId, id);
 }

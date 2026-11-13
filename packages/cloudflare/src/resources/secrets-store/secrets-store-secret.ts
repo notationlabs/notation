@@ -4,7 +4,7 @@ import { resource, ResourceNotFoundError } from "@notation/resource";
 import { getValue, isValueSupplied } from "@notation/std/sources";
 import {
   createSecret,
-  deleteStoreSecret,
+  deleteSecret,
   findSecretByName,
   setSecretValue,
 } from "src/api/secrets-store";
@@ -151,7 +151,7 @@ export const SecretsStoreSecret = secretsStoreSecretSchema
 
     delete: async (key, state) => {
       if (!state.StageScoped) return;
-      await deleteStoreSecret(key, state.SecretId);
+      await deleteSecret(key.AccountId, key.StoreId, key.Name);
     },
   })
   .requireDependencies<SecretsStoreSecretDependencies>()
