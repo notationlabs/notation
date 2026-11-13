@@ -33,6 +33,7 @@ import {
   assertNamesNotSupplied,
   recordedNames,
   nameFields,
+  replaceOrder,
   unknownNames,
 } from "./physical-names";
 import { readRecordedOutputs } from "./recorded-outputs";
@@ -125,6 +126,9 @@ export async function createPlan({
       "replaceFields" in action ? action.replaceFields : undefined;
     const replacedDependency = cascaded.get(resource.id);
     const replaced = Boolean(replaceFields || replacedDependency);
+    // A resource deleted in a cascade is deleted before it is created again,
+    // whatever its class.
+    const order = replacedDependency ? "delete-first" : replaceOrder(resource);
 
     // A resource with no `read` can't recover a missing output, and update
     // doesn't write one. A replace, including one that is only possible,
@@ -132,7 +136,8 @@ export async function createPlan({
     // known.
     if (!replaced) assertOutputsRecoverable(resource, stateNode);
 
-    if (replaceFields) {
+    // A create-first replace deletes no dependent in advance.
+    if (replaceFields && order === "delete-first") {
       for (const id of collectDependents(
         resource.id,
         edgesById,
@@ -145,8 +150,12 @@ export async function createPlan({
 
     // As deploy lists them for the delete: by the edges in state for a
     // resource it has not reached, and by the edges in code for one it has.
+    // A create-first replace deletes the resource after deploy has moved its
+    // dependents in code to the replacement.
     const brokenDependents =
-      replaceFields && resource.deleteTakesDependents
+      replaceFields &&
+      order === "delete-first" &&
+      resource.deleteTakesDependents
         ? [...edgesById]
             .filter(
               ([id, edges]) =>
@@ -190,6 +199,7 @@ export async function createPlan({
       decision,
       ...("diff" in action && !cascadeOnly ? { diff: action.diff } : {}),
       ...(replaceFields ? { replaceFields } : {}),
+      ...(replaced ? { replaceOrder: order } : {}),
       ...(replacedDependency ? { replacedDependency } : {}),
       ...(brokenDependents.length > 0 ? { brokenDependents } : {}),
       ...(cycle
@@ -235,7 +245,18 @@ export async function createPlan({
   for (const stateNode of orphansDeployDeletes(stateNodes, inCode, classes)) {
     assertOrphanDeleteAllowed(classes, stateNode);
   }
+  // Deploy deletes a record's retired instances just before the record.
   for (const stateNode of stateNodes) {
+    for (const instance of stateNode.retired ?? []) {
+      nodes.push({
+        id: stateNode.id,
+        type: stateNode.type,
+        decision: "delete-retired",
+        retiredAt: instance.retiredAt,
+        params: instance.params,
+        dependsOn: instance.dependsOn,
+      });
+    }
     if (inCode.has(stateNode.id)) continue;
     nodes.push({
       id: stateNode.id,

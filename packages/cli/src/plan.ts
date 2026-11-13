@@ -23,6 +23,7 @@ const decisionSymbols: Record<PlanNode["decision"], string> = {
   "drift-replace": "-/+",
   "drift-recreate": "±",
   "delete-orphan": "-",
+  "delete-retired": "-",
   noop: " ",
 };
 
