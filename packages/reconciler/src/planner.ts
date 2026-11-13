@@ -17,7 +17,10 @@ import { isCycle, orderDeployUnits, type DeployUnit } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
+import { orphansDeployDeletes } from "./orphan-sweep";
 import {
+  assertChangeAllowed,
+  assertOrphanDeleteAllowed,
   decideAction,
   getDependencyIds,
   recordedEdges,
@@ -82,10 +85,8 @@ export async function createPlan({
   const edgesById = new Map(
     stateNodes.map((node) => [node.id, recordedEdges(node, resourceById)]),
   );
-  const blocksDelete = createBlocksDelete(
-    stateNodes,
-    workflowRegistry({ resources, registry }),
-  );
+  const classes = workflowRegistry({ resources, registry });
+  const blocksDelete = createBlocksDelete(stateNodes, classes);
   // The resources that deploy deletes before a replaced resource, by ID, with
   // the ID of the replaced resource.
   const cascaded = new Map<string, string>();
@@ -165,6 +166,15 @@ export async function createPlan({
     // A resource deleted in a cascade is created again, so a diff of an
     // update does not apply to it.
     const cascadeOnly = replacedDependency && !replaceFields;
+    if (cascadeOnly && stateNode) {
+      assertChangeAllowed(
+        resource.id,
+        resource.rejectChange,
+        stateNode.params,
+        params,
+        { replace: true },
+      );
+    }
     const placeholder =
       cycle?.placeholders.includes(resource) &&
       (action.decision === "create" || action.decision === "drift-recreate");
@@ -216,8 +226,12 @@ export async function createPlan({
     }
   }
 
+  const inCode = new Set(resourceById.keys());
+  for (const stateNode of orphansDeployDeletes(stateNodes, inCode, classes)) {
+    assertOrphanDeleteAllowed(classes, stateNode);
+  }
   for (const stateNode of stateNodes) {
-    if (resourceById.has(stateNode.id)) continue;
+    if (inCode.has(stateNode.id)) continue;
     nodes.push({
       id: stateNode.id,
       type: stateNode.type,

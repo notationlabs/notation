@@ -1,5 +1,55 @@
 # @notation/state
 
+## 0.18.0
+
+### Patch Changes
+
+- Updated dependencies [968e03d]
+  - @notation/resource@0.18.0
+
+## 0.17.0
+
+### Minor Changes
+
+- e4f4157: `resource()` now requires `provider`, the name of the package that exports the resource class. Each state record stores it, so that deploy and destroy can delete a record whose type is no longer in code.
+
+  ```ts
+  const queue = resource<QueueSchema>({
+    type: "aws/sqs/Queue",
+    provider: "@notation/aws/resources",
+  });
+  ```
+
+  This breaks every resource class outside this repository: a class without `provider` fails type checking.
+
+  - A provider is a package or a package subpath that exports resource classes, or namespaces of them. Its entry has a `default` condition in `exports`, so that it can be resolved with `require` conditions. `@notation/aws/resources` and `@notation/std/resources` do both.
+  - `planApp`, `deployApp` and `destroyApp` in `@notation/core` load the provider packages of the state records whose type has no class in code. A package that can't be resolved or that throws on import is skipped with a `reconciler.provider.load-failed` warning, and its records stay in state.
+  - Before, an orphan whose type was no longer in code was left in place. Deploy now deletes it through the class of its provider package. This removes the limit on renaming an EventBridge bus in the deploy that removes its last rule.
+  - A resource whose ID is that of a state record of another type fails plan, deploy and destroy with `ResourceTypeChangedError`, before any change. A provider that changes a resource's type must give it a new ID.
+  - State written by an earlier version is not supported, as its records have no `provider`. Destroy the stack with the earlier version before you upgrade.
+
+### Patch Changes
+
+- ae3d823: The packages are built with tsdown instead of tsup. The entry points and their types are at the same paths. Shared code sits in chunks with different names, and imports of Node built-ins keep their `node:` prefix. The `@notation/aws` entry points now share chunks instead of each bundling its own copy, so they share module state.
+- Updated dependencies [ae3d823]
+- Updated dependencies [614ce3f]
+- Updated dependencies [ce76cd5]
+- Updated dependencies [d00b769]
+- Updated dependencies [8839f28]
+- Updated dependencies [f490162]
+- Updated dependencies [e9da750]
+- Updated dependencies [e4f4157]
+- Updated dependencies [f490162]
+- Updated dependencies [7eb8766]
+- Updated dependencies [1cce9df]
+- Updated dependencies [3fefade]
+- Updated dependencies [ce76cd5]
+- Updated dependencies [121442b]
+- Updated dependencies [4776f9f]
+- Updated dependencies [6cec012]
+- Updated dependencies [f490162]
+  - @notation/resource@0.17.0
+
 ## 0.16.0
 
 ### Minor Changes

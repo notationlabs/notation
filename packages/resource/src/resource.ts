@@ -154,6 +154,8 @@ export interface BaseResource {
   ) => Promise<void>;
   /** See `DefineResourceMeta.deleteTakesDependents`. */
   readonly deleteTakesDependents?: boolean;
+  /** See `ResourceOperationsOptions.rejectChange`. */
+  readonly rejectChange?: RejectChange<any>;
   /**
    * The params the resource deploys with. Deploy creates the placeholder of
    * a dependency cycle before the other members exist, so it leaves out the
@@ -734,6 +736,31 @@ export type DefineResourceMeta = {
   provider: string;
 };
 
+/**
+ * Returns a message to fail plan and deploy with, or `undefined` to allow
+ * the change. `previous` holds the params in state, as they were recorded:
+ * a record written before a param existed lacks that param, and state holds
+ * no `hidden` param. `desired` holds the params in code, or is `undefined`
+ * when deploy would delete the resource because it is no longer in code. At
+ * plan, a value in `desired` that comes from an output that doesn't exist
+ * yet is `UNKNOWN_AFTER_APPLY`. So is such a value in deploy's check before
+ * the deployment hold, for a resource whose dependencies have no state.
+ */
+export type RejectChange<Params> = (
+  previous: Partial<Params>,
+  desired: Params | undefined,
+  context: RejectChangeContext,
+) => string | undefined;
+
+export type RejectChangeContext = {
+  /**
+   * True when deploy deletes the resource and creates it again: a param
+   * that forces replacement changed, or a resource that it depends on is
+   * replaced and its type blocks that resource's delete.
+   */
+  replace: boolean;
+};
+
 export type ResourceOperationsOptions<
   T extends ResourceTypes,
   IntrinsicParams extends Partial<T["params"]>,
@@ -781,6 +808,14 @@ export type ResourceOperationsOptions<
   deriveParams?: (opts: {
     config: Partial<T["params"]>;
   }) => IntrinsicParams | Promise<IntrinsicParams>;
+  /**
+   * Checks a change to a resource that has a state record, before deploy
+   * changes anything. Plan and deploy call it for each such resource, and
+   * for each resource of this type in state that is no longer in code.
+   * `notation destroy` doesn't call it. Use it for a change that would lose
+   * data, which a single param's `rejectReplace` can't see.
+   */
+  rejectChange?: RejectChange<T["params"]>;
 };
 
 export type ResourceDependenciesBuilder<
@@ -812,6 +847,8 @@ export type ResourceClass<
   /** See `DefineResourceMeta.blocksDeleteOf`. */
   readonly blocksDeleteOf: readonly ResourceType[];
   readonly provider: string;
+  /** See `ResourceOperationsOptions.rejectChange`. */
+  readonly rejectChange?: RejectChange<T["params"]>;
   requireDependencies: <
     Dependencies extends Record<string, BaseResource | void>,
   >() => ResourceDependenciesBuilder<T, IntrinsicParams, Dependencies>;
@@ -881,6 +918,10 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             type = meta.type;
             static blocksDeleteOf = meta.blocksDeleteOf ?? [];
             deleteTakesDependents = meta.deleteTakesDependents ?? false;
+            static rejectChange = opts.rejectChange;
+            get rejectChange() {
+              return SimpleResource.rejectChange;
+            }
             provider = meta.provider;
             schema = schema;
             create = opts.create;

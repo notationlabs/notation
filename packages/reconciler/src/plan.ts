@@ -2,9 +2,16 @@ import {
   diffParams,
   type BaseResource,
   type ParamsDiffDisplay,
+  type RejectChange,
+  type RejectChangeContext,
   type ReplaceField,
+  type ResourceType,
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
+import {
+  resolveResourceClass,
+  type ResourceRegistry,
+} from "./resource-registry";
 
 export {
   UNKNOWN_AFTER_APPLY,
@@ -116,6 +123,13 @@ export function decideAction(opts: {
     params,
     { canUpdate: Boolean(resource.update) },
   );
+  assertChangeAllowed(
+    resource.id,
+    resource.rejectChange,
+    stateNode.params,
+    params,
+    { replace: replaceFields.length > 0 },
+  );
 
   if (replaceFields.length > 0) {
     assertReplaceAllowed(resource, stateNode.params, params, replaceFields);
@@ -147,6 +161,36 @@ function assertReplaceAllowed(
       `${resource.id}: ${item.rejectReplace(previous[name], desired[name])}`,
     );
   }
+}
+
+/** Throws the message of `rejectChange`, if it returns one. */
+export function assertChangeAllowed(
+  id: string,
+  rejectChange: RejectChange<any> | undefined,
+  previous: Record<string, unknown>,
+  desired: Record<string, unknown> | undefined,
+  context: RejectChangeContext,
+): void {
+  const message = rejectChange?.(previous, desired, context);
+  if (message !== undefined) throw new Error(`${id}: ${message}`);
+}
+
+/**
+ * Throws if the `rejectChange` of the orphan's class rejects its delete. An
+ * orphan whose class isn't registered is skipped: the sweep keeps it.
+ */
+export function assertOrphanDeleteAllowed(
+  registry: ResourceRegistry,
+  stateNode: StateNode,
+): void {
+  assertChangeAllowed(
+    stateNode.id,
+    resolveResourceClass(registry, stateNode.type as ResourceType)
+      ?.rejectChange,
+    stateNode.params,
+    undefined,
+    { replace: false },
+  );
 }
 
 /**

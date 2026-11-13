@@ -432,6 +432,226 @@ describe("createPlan", () => {
     ).toMatchObject({ decision: "replace" });
   });
 
+  describe("rejectChange", () => {
+    const Store = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; tables: string[] };
+      UpdateParams: { tables: string[] };
+      ReadResult: {};
+    }>({ type: "test/planner/guarded", provider: "test" })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          immutable: true,
+          value: v.string(),
+        },
+        tables: {
+          presence: "required",
+          propertyType: "param",
+          value: v.array(v.string()),
+        },
+      })
+      .defineOperations({
+        create: async () => undefined,
+        update: async () => undefined,
+        delete: async () => undefined,
+        rejectChange: (previous, desired) => {
+          const dropped = (previous.tables ?? []).filter(
+            (table) => !desired?.tables.includes(table),
+          );
+          return dropped.length > 0
+            ? `would drop ${dropped.join(", ")}`
+            : undefined;
+        },
+      });
+    const state = () =>
+      new MemoryStateBackend({
+        store: {
+          version: 1,
+          id: "store",
+          type: Store.type,
+          provider: "test",
+          config: {},
+          params: { name: "app", tables: ["a", "b"] },
+          output: { name: "app", tables: ["a", "b"] },
+          lastOperation: "create",
+          lastOperationAt: "2026-07-22T00:00:00.000Z",
+        },
+      });
+
+    it("fails the plan with the message, and allows a change it returns nothing for", async () => {
+      const plan = (tables: string[]) =>
+        createPlan({
+          resources: [new Store("store", { config: { name: "app", tables } })],
+          state: state(),
+          driftDetection: false,
+        });
+
+      await expect(plan(["a"])).rejects.toThrow("store: would drop b");
+      expect((await plan(["a", "b", "c"])).nodes[0]).toMatchObject({
+        decision: "update",
+      });
+    });
+
+    it("fails the plan for an orphan whose delete it rejects", async () => {
+      await expect(
+        createPlan({
+          resources: [],
+          state: state(),
+          driftDetection: false,
+          registry: new Map([[Store.type, Store]]),
+        }),
+      ).rejects.toThrow("store: would drop a, b");
+    });
+
+    it("allows an orphan that an orphan with no class keeps in place", async () => {
+      const store = await state().get("store");
+      const plan = await createPlan({
+        resources: [],
+        state: new MemoryStateBackend({
+          store: store!,
+          holder: {
+            version: 1,
+            id: "holder",
+            type: "test/planner/unregistered",
+            provider: "test",
+            config: {},
+            params: {},
+            output: {},
+            dependsOn: ["store"],
+            lastOperation: "create",
+            lastOperationAt: "2026-07-22T00:00:00.000Z",
+          },
+        }),
+        driftDetection: false,
+        registry: new Map([[Store.type, Store]]),
+      });
+      expect(plan.nodes.map((node) => node.decision)).toEqual([
+        "delete-orphan",
+        "delete-orphan",
+      ]);
+    });
+
+    describe("passes whether deploy replaces the resource", () => {
+      // Each rejectChange records the name and the replace flag it receives.
+      const seen: string[] = [];
+      const name = {
+        presence: "required",
+        propertyType: "param",
+        primaryKey: true,
+        immutable: true,
+        value: v.string(),
+      } as const;
+      const Parent = resource<{
+        Key: { name: string };
+        CreateParams: { name: string; region: string };
+        UpdateParams: {};
+        ReadResult: {};
+      }>({ type: "test/planner/guarded-parent", provider: "test" })
+        .defineSchema({
+          name,
+          region: {
+            presence: "required",
+            propertyType: "param",
+            immutable: true,
+            value: v.string(),
+          },
+        })
+        .defineOperations({
+          create: async () => undefined,
+          delete: async () => undefined,
+          rejectChange: (previous, _desired, { replace }) =>
+            void seen.push(`${previous.name}:${replace}`),
+        });
+      // Rejects its replacement. Blocks the delete of its parent, so deploy
+      // deletes it and creates it again when the parent is replaced.
+      const Child = resource<{
+        Key: { name: string };
+        CreateParams: { name: string; parent: string };
+        UpdateParams: { parent: string };
+        ReadResult: {};
+      }>({
+        type: "test/planner/guarded-child",
+        provider: "test",
+        blocksDeleteOf: [Parent.type],
+      })
+        .defineSchema({
+          name,
+          parent: {
+            presence: "required",
+            propertyType: "param",
+            value: v.string(),
+          },
+        })
+        .defineOperations({
+          create: async () => undefined,
+          update: async () => undefined,
+          delete: async () => undefined,
+          rejectChange: (previous, _desired, { replace }) => {
+            seen.push(`${previous.name}:${replace}`);
+            return replace ? `${previous.name} would be replaced` : undefined;
+          },
+        })
+        .requireDependencies<{ parent: BaseResource }>()
+        .deriveParams(({ deps }) => ({
+          parent: (deps.parent.output as { name: string }).name,
+        }));
+      const record = (
+        id: string,
+        type: string,
+        params: DurableObject,
+        dependsOn: string[],
+      ) => ({
+        version: 1,
+        id,
+        type,
+        provider: "test",
+        config: {},
+        params,
+        output: params,
+        dependsOn,
+        lastOperation: "create" as const,
+        lastOperationAt: "2026-07-22T00:00:00.000Z",
+      });
+      const declare = (region: string) => {
+        const parent = new Parent("parent", {
+          config: { name: "p", region },
+        });
+        const child = new Child("child", {
+          config: { name: "c" },
+          dependencies: { parent },
+        });
+        return [parent, child];
+      };
+
+      it("for a change of a field that is not a key, and for a cascade", async () => {
+        seen.length = 0;
+        const state = new MemoryStateBackend({
+          parent: record(
+            "parent",
+            Parent.type,
+            { name: "p", region: "eu" },
+            [],
+          ),
+          child: record("child", Child.type, { name: "c", parent: "p" }, [
+            "parent",
+          ]),
+        });
+
+        await expect(
+          createPlan({
+            resources: declare("us"),
+            state,
+            driftDetection: false,
+          }),
+        ).rejects.toThrow("child: c would be replaced");
+        expect(seen).toEqual(["p:true", "c:false", "c:true"]);
+      });
+    });
+  });
+
   describe("replaces the dependents that block the delete of a replaced resource", () => {
     // A bus whose name is its key, as AWS names an event bus.
     const name = {

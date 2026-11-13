@@ -9,6 +9,7 @@ const build = "pnpm exec turbo run build";
 const framework: ReleasePackage[] = [
   { file: "packages/aws/package.json", build },
   { file: "packages/cli/package.json", build },
+  { file: "packages/cloudflare/package.json", build },
   { file: "packages/core/package.json", build },
   { file: "packages/dashboard/package.json", build },
   { file: "packages/build/package.json", build },

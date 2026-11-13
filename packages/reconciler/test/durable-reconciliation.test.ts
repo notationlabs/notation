@@ -27,6 +27,7 @@ import { createWorkflowRouter, workflow } from "@notation/durable";
 import { describe, expect, it, vi } from "vitest";
 import * as durable from "../src/durable";
 import type { ReconcilerEvent } from "../src/events";
+import { createPlan } from "../src/planner";
 import {
   createResourceRegistry,
   type ResourceRegistry,
@@ -2492,6 +2493,229 @@ describe("orphan deletion", () => {
     expect((await runtime.state.values()).map((node) => node.id)).toEqual([
       "kept",
     ]);
+    runtime.close();
+  });
+});
+
+describe("rejectChange", () => {
+  function defineGuarded(calls: string[]) {
+    return resource<{
+      Key: { name: string };
+      CreateParams: { name: string; keep: boolean };
+      UpdateParams: { keep: boolean };
+      ReadResult: {};
+    }>({ type: "test/durable/guarded", provider: "test" })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          immutable: true,
+          value: v.string(),
+        },
+        keep: {
+          presence: "required",
+          propertyType: "param",
+          value: v.boolean(),
+        },
+      })
+      .defineOperations({
+        create: async (params) => void calls.push(`create ${params.name}`),
+        update: async (key) => void calls.push(`update ${key.name}`),
+        delete: async (key) => void calls.push(`delete ${key.name}`),
+        rejectChange: (previous, desired) =>
+          previous.keep && desired?.keep !== true
+            ? `${previous.name} is kept`
+            : undefined,
+      });
+  }
+
+  it("fails deploy before any change, for a resource in code or an orphan", async () => {
+    const calls: string[] = [];
+    const Guarded = defineGuarded(calls);
+    const resources: BaseResource[] = [
+      new Guarded("a", { config: { name: "a", keep: false } }),
+      new Guarded("b", { config: { name: "b", keep: true } }),
+    ];
+    const runtime = createRuntime(resources, "reject-change", {
+      registry: createResourceRegistry([Guarded]),
+    });
+    await runtime.run("deploy-1");
+    calls.length = 0;
+
+    resources[0] = new Guarded("a", { config: { name: "a", keep: true } });
+    resources[1] = new Guarded("b", { config: { name: "b", keep: false } });
+    await expect(runtime.run("deploy-2")).rejects.toThrow("b: b is kept");
+
+    resources.splice(1);
+    await expect(runtime.run("deploy-3")).rejects.toThrow("b: b is kept");
+    expect(calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("reads consent from state, so a delete needs a deploy of the consent first", async () => {
+    const calls: string[] = [];
+    const Protected = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; protect?: boolean };
+      UpdateParams: { protect?: boolean };
+      ReadResult: {};
+    }>({ type: "test/durable/protected", provider: "test" })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          immutable: true,
+          value: v.string(),
+        },
+        protect: {
+          presence: "optional",
+          propertyType: "param",
+          value: v.boolean(),
+        },
+      })
+      .defineOperations({
+        create: async (params) => void calls.push(`create ${params.name}`),
+        update: async (key) => void calls.push(`update ${key.name}`),
+        delete: async (key) => void calls.push(`delete ${key.name}`),
+        rejectChange: (previous, desired) =>
+          previous.protect !== false && !desired
+            ? `${previous.name} is protected`
+            : undefined,
+      });
+    const resources: BaseResource[] = [
+      new Protected("a", { config: { name: "a" } }),
+    ];
+    const runtime = createRuntime(resources, "consent-in-state", {
+      registry: createResourceRegistry([Protected]),
+    });
+    await runtime.run("deploy-1");
+
+    resources.splice(0);
+    await expect(runtime.run("deploy-2")).rejects.toThrow("a: a is protected");
+
+    resources.push(
+      new Protected("a", { config: { name: "a", protect: false } }),
+    );
+    await runtime.run("deploy-3");
+
+    resources.splice(0);
+    await runtime.run("deploy-4");
+    expect(calls).toEqual(["create a", "update a", "delete a"]);
+    runtime.close();
+  });
+
+  it("doesn't check an orphan that the sweep keeps for an orphan with no class", async () => {
+    const calls: string[] = [];
+    const Guarded = defineGuarded(calls);
+    const Holder = resource({
+      type: "test/durable/guarded-holder" as ResourceType,
+      provider: "test",
+    })
+      .defineSchema({})
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+      });
+    const guarded = new Guarded("a", { config: { name: "a", keep: true } });
+    const resources: BaseResource[] = [
+      guarded,
+      new Holder("holder", { dependencies: { guarded } }),
+    ];
+    const runtime = createRuntime(resources, "reject-change-kept", {
+      registry: createResourceRegistry([Guarded]),
+    });
+    await runtime.run("deploy-1");
+
+    resources.splice(0);
+    await createPlan({
+      resources,
+      state: runtime.state,
+      registry: createResourceRegistry([Guarded]),
+    });
+    await runtime.run("deploy-2");
+    expect(calls).toEqual(["create a"]);
+    expect((await runtime.state.values()).map((node) => node.id)).toEqual(
+      expect.arrayContaining(["a", "holder"]),
+    );
+    runtime.close();
+  });
+
+  it("fails deploy before a cascade deletes a dependent whose replacement it rejects", async () => {
+    const calls: string[] = [];
+    const name = {
+      presence: "required",
+      propertyType: "param",
+      primaryKey: true,
+      immutable: true,
+      value: v.string(),
+    } as const;
+    const Parent = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; region: string };
+      UpdateParams: {};
+      ReadResult: {};
+    }>({ type: "test/durable/guarded-parent", provider: "test" })
+      .defineSchema({
+        name,
+        region: {
+          presence: "required",
+          propertyType: "param",
+          immutable: true,
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create: async (params) => void calls.push(`create ${params.name}`),
+        delete: async (key) => void calls.push(`delete ${key.name}`),
+      });
+    const Child = resource<{
+      Key: { name: string };
+      CreateParams: { name: string; parent: string };
+      UpdateParams: { parent: string };
+      ReadResult: {};
+    }>({
+      type: "test/durable/guarded-child",
+      provider: "test",
+      blocksDeleteOf: [Parent.type],
+    })
+      .defineSchema({
+        name,
+        parent: {
+          presence: "required",
+          propertyType: "param",
+          value: v.string(),
+        },
+      })
+      .defineOperations({
+        create: async (params) => void calls.push(`create ${params.name}`),
+        update: async (key) => void calls.push(`update ${key.name}`),
+        delete: async (key) => void calls.push(`delete ${key.name}`),
+        rejectChange: (previous, _desired, { replace }) =>
+          replace ? `${previous.name} would be replaced` : undefined,
+      })
+      .requireDependencies<{ parent: BaseResource }>()
+      .deriveParams(({ deps }) => ({
+        parent: (deps.parent.output as { name: string }).name,
+      }));
+    const declare = (region: string) => {
+      const parent = new Parent("parent", { config: { name: "p", region } });
+      return [
+        parent,
+        new Child("child", { config: { name: "c" }, dependencies: { parent } }),
+      ];
+    };
+    const resources: BaseResource[] = declare("eu");
+    const runtime = createRuntime(resources, "reject-cascade");
+    await runtime.run("deploy-1");
+    calls.length = 0;
+
+    resources.splice(0, 2, ...declare("us"));
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "child: c would be replaced",
+    );
+    expect(calls).toEqual([]);
     runtime.close();
   });
 });

@@ -1,7 +1,7 @@
 {
   "type": "module",
   "name": "@notation/aws",
-  "version": "0.16.0",
+  "version": "0.18.0",
   "sideEffects": false,
   "exports": {
     "./lambda": {

@@ -1,0 +1,75 @@
+# @notation/cloudflare
+
+## 0.18.0
+
+### Minor Changes
+
+- 968e03d: A Durable Object namespace is deleted only when it is unprotected in state. Plan and deploy fail, before deploy changes anything, for a change that would delete a protected namespace.
+
+  - `$durableObject({ id, class, protect })` takes `protect`, which defaults to `true`. Plan reads it from the state of the hosting Worker. To delete a namespace, deploy `protect: false` first, which updates the Worker. A later deploy can remove the declaration, remove the Worker, or change the Worker's `id` or `name`.
+  - Plan fails when a Worker no longer hosts a protected namespace that it hosted. This covers a removed declaration, and a changed `id`, with or without a changed `class`. Before, deploy deleted the namespace.
+  - Deploy moves a namespace, with its objects, when its class export moves to another Worker and the old host still binds the namespace. The new host's upload moves it, using Cloudflare's `expecting-transfer` and `transferred` exports entries. Plan fails when the old host no longer binds a protected namespace whose class moved, when the move also changes the class, and when the new host gets a namespace that another Worker binds in the deploy that renames or deletes another of its namespaces. Deploy fails before any upload when the new host is created in the same deploy, which plan doesn't catch, and when the old host hosts a namespace that Cloudflare doesn't list as SQLite. Before, deploy deleted the namespace on the old host, and the new host got a new, empty namespace.
+  - Plan fails when a Worker that hosts protected namespaces is removed or replaced, as when its `id` or `name` changes. Before, deploy deleted the Worker with its namespaces.
+  - The check that a namespace doesn't take another namespace's class runs at plan, not during the Worker's upload.
+  - `defineOperations` takes `rejectChange(previous, desired, { replace })`. It returns a message to fail plan and deploy with. The resource class and its instances expose it. Plan and deploy call it for each resource that has a state record, and for each orphan that the orphan sweep deletes, with `desired` undefined. `replace` is true when deploy deletes the resource and creates it again, also when a replaced dependency's delete needs it deleted first. `notation destroy` doesn't call it.
+  - Deploy now fails with a param's `rejectReplace` message before it changes any resource, when the param's value is known before deploy. Before, deploy failed just before the resource's operation.
+
+### Patch Changes
+
+- Updated dependencies [968e03d]
+  - @notation/resource@0.18.0
+  - @notation/core@0.18.0
+  - @notation/std@0.18.0
+
+## 0.17.0
+
+### Minor Changes
+
+- f490162: New package. `@notation/cloudflare/workers` declares Cloudflare Workers and Durable Object namespaces, in runtime modules, as RFC 0015 describes.
+
+  - `$worker({ id, bindings, compatibilityDate, compatibilityFlags, url })` declares the Worker that its module deploys as. The module has a default export. `bindings` binds a namespace from `$durableObject` as a Durable Object namespace, another Worker as a service binding, and a string as plain text. `WorkerEnv<typeof worker>` and `WorkerHandler<typeof worker>` type `env` and the default export. The Worker is named `<app>--<stage>--<id>`, and is served on workers.dev unless `url` is `false`. `compatibilityDate` is required. `nodejs_compat` is always added to the compatibility flags.
+  - `$durableObject({ id, class })` declares a namespace. The Worker that binds the namespace and exports its class hosts it. Other Workers that bind it bind it on that Worker, and are uploaded after it. Plan fails, naming the Worker's module, when no Worker that binds the namespace exports the class, or when two do.
+  - The user exports the class from the Worker's module, under its own name. Deploy doesn't add the export.
+  - A new namespace uses SQLite storage. Deploy uploads Cloudflare's declarative `exports` map. A namespace whose class changes, with the same `id`, is renamed and keeps its objects. A namespace whose declaration is removed is deleted, with its objects.
+  - `@notation/cloudflare/resources` exports the resources `cloudflare/workers/WorkerScript`, which uploads a Worker with its bindings and namespaces, and `cloudflare/workers/WorkerSubdomain`, which serves it on workers.dev. They read `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. The account is stored in state. Plan and deploy fail when `CLOUDFLARE_ACCOUNT_ID` differs from the account in state.
+
+- 614ce3f: Deploy resources that depend on each other through contributions, as RFC 0011 describes. Before, plan and deploy failed on any dependency cycle.
+
+  - In each loop, deploy picks a placeholder: a member that depends on the others only through its contributions, whose params that those contributions set are optional and don't force a replacement, and whose type has `update`. Deploy creates it without the contributions that refer to the other members, creates the other members, and then updates it with its full params. With drift detection, a placeholder that no longer exists is created again in the first pass. A dry run stops after the first pass, and then reports the decision for each placeholder that has a record.
+  - Deploy then applies every member again until no output changes, for at most one pass per member, and at least two. If an output still changes, deploy fails with `ResourceCycleError`, naming the outputs that changed. When no member of a loop can be the placeholder, plan and deploy fail with `ResourceCycleError`, which says why for each member.
+  - Deploy replaces a member of a cycle as it replaces any resource, and destroy deletes the members of a cycle in the reverse of their order in deploy. In both, a member is deleted while another member still refers to it, and the orphan sweep does the same for orphans that refer to each other. Each replace of a member adds a pass. A replaced member is created without its contributions that refer to itself, or to a member that the replacement deleted because it blocks the delete, and a later pass updates it. A placeholder's record leaves out the edges to the members it was created without.
+  - A type can set `deleteTakesDependents`. Its `delete` then gets a fourth argument, `{ dependents }`: the resources whose state records depend on the deleted resource, which deploy updates or deletes in the same run. A provider that refuses to delete a resource that others refer to can force the delete when every reference comes from a dependent. Exports `ResourceDeletion` from `@notation/resource`.
+  - The removal of the record of a dependent that blocks the delete of a replaced resource has the state write key `state:delete:<id>:replace:<replaced id>`, so that two replacements in one deploy can each delete the same dependent.
+  - Plan nodes have `cycle` and `placeholder`. Plan plans a member that comes before a replaced member again, so that it shows the update that deploy makes, and `notation plan` prints a line for a placeholder. Plan nodes have `brokenDependents` for a replaced resource whose type sets `deleteTakesDependents`: the declared resources whose records depend on it and that deploy does not delete first. `notation plan` prints them, as their references to the resource are broken from the delete until deploy updates them.
+  - Resources have `getFixedDependencies()` and `getContributedParams({ from })`, and `getParams({ excludeContributionsFrom })` returns the params without the contributions that depend on the given resources. Exports `changedKeys` and `forcesReplacement` from `@notation/resource`.
+  - `@notation/cloudflare`: a Worker's service binding to another Worker is a contribution to its script's `Bindings`, which is now a collected param. Two Workers can bind each other as services. Cloudflare refuses to delete a Worker that another Worker binds as a service, or whose Durable Object namespace another Worker binds. `WorkerScript` now forces that delete when every Worker that refers to it is a dependent in the deployment, and fails with an error that names the other Workers when one is not. So a Worker that other Workers of the app bind can be renamed, and two Workers that bind each other can be destroyed or removed from code. Workers that each bind a namespace that the other hosts still fail plan. The service bindings now come after the bindings in config, so a Worker whose service bindings came before other bindings is updated once on the next deploy.
+
+### Patch Changes
+
+- 57460fa: - A `WorkerScript` read or delete treats the Worker as not found only when Cloudflare returns error code 10007. Any other 404 fails with the API error, so a delete no longer drops a Worker from state while it still runs.
+  - A `WorkerSubdomain` read on an account with no workers.dev subdomain (code 10007) fails with a message that says how to set one up. Any other 404 still fails with the API error.
+- Updated dependencies [ae3d823]
+- Updated dependencies [614ce3f]
+- Updated dependencies [ce76cd5]
+- Updated dependencies [ce76cd5]
+- Updated dependencies [d93d65a]
+- Updated dependencies [d00b769]
+- Updated dependencies [9d669fc]
+- Updated dependencies [35206ce]
+- Updated dependencies [8839f28]
+- Updated dependencies [f490162]
+- Updated dependencies [e9da750]
+- Updated dependencies [e4f4157]
+- Updated dependencies [f490162]
+- Updated dependencies [7eb8766]
+- Updated dependencies [1cce9df]
+- Updated dependencies [ce76cd5]
+- Updated dependencies [3fefade]
+- Updated dependencies [ce76cd5]
+- Updated dependencies [121442b]
+- Updated dependencies [4776f9f]
+- Updated dependencies [6cec012]
+- Updated dependencies [f490162]
+  - @notation/core@0.17.0
+  - @notation/resource@0.17.0
+  - @notation/std@0.17.0

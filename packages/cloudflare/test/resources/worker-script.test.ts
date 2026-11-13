@@ -10,10 +10,8 @@ import {
   ResourceNotFoundError,
   ResourceOperationPendingError,
 } from "@notation/resource";
-import {
-  durableObjectExports,
-  WorkerScript,
-} from "src/resources/workers/worker-script";
+import { decideAction } from "@notation/reconciler";
+import { WorkerScript } from "src/resources/workers/worker-script";
 import { WorkerSubdomain } from "src/resources/workers/worker-subdomain";
 import { CloudflareApiError } from "src/api/client";
 
@@ -310,6 +308,241 @@ describe("WorkerScript", () => {
     });
   });
 
+  describe("move of a namespace to another Worker", () => {
+    const key = { AccountId: "acc", ScriptName: "app--dev--api" };
+    const rooms = { id: "rooms", className: "Room" };
+    const roomsBinding = {
+      type: "durable_object_namespace" as const,
+      name: "ROOMS",
+      class_name: "Room",
+    };
+    const arriving = {
+      ...params,
+      Bindings: [...params.Bindings, roomsBinding],
+      DurableObjectNamespaces: [...params.DurableObjectNamespaces, rooms],
+      DurableObjectTransferSources: [
+        { id: "rooms", scriptNames: ["app--dev--web"] },
+      ],
+    };
+    const namespacesPage = (page: number) =>
+      `https://api.cloudflare.com/client/v4/accounts/acc/workers/durable_objects/namespaces?page=${page}&per_page=1000`;
+    const namespacesUrl = namespacesPage(1);
+    const isListing = ({ method, url }: Call) =>
+      method === "GET" && url.includes("/durable_objects/namespaces?");
+    // Lists the namespaces on the first page, and none on later pages.
+    const respondWith = (namespaces: unknown[]) => (call: Call) =>
+      isListing(call)
+        ? ok(call.url === namespacesUrl ? namespaces : [])
+        : ok({});
+
+    it("transfers a new namespace that a Worker which binds it hosts", async () => {
+      mockFetch(
+        respondWith([
+          { script: "app--dev--web", class: "Room", use_sqlite: true },
+          { script: "app--dev--web", class: "Lobby", use_sqlite: true },
+          { script: "app--dev--other", class: "Room", use_sqlite: true },
+          { script: "app--dev--api", class: "Counter", use_sqlite: true },
+        ]),
+      );
+
+      await script.update!(key, {} as any, arriving, params);
+
+      expect(calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${namespacesUrl}`,
+        `GET ${namespacesPage(2)}`,
+        "PUT https://api.cloudflare.com/client/v4/accounts/acc/workers/scripts/app--dev--api",
+        "PATCH https://api.cloudflare.com/client/v4/accounts/acc/workers/scripts/app--dev--web/settings",
+        "PUT https://api.cloudflare.com/client/v4/accounts/acc/workers/scripts/app--dev--api",
+      ]);
+      const expecting = (await uploadedMetadata(calls[2]!)).metadata;
+      expect(expecting.bindings).toEqual(params.Bindings);
+      expect(expecting.exports).toEqual({
+        Counter: { type: "durable-object", storage: "sqlite" },
+        Room: {
+          type: "durable-object",
+          storage: "sqlite",
+          state: "expecting-transfer",
+          transfer_from: "app--dev--web",
+        },
+      });
+      const settings = (calls[3]!.body as FormData).get("settings") as string;
+      expect(JSON.parse(settings)).toEqual({
+        exports: {
+          Room: {
+            type: "durable-object",
+            state: "transferred",
+            transferred_to: "app--dev--api",
+          },
+          Lobby: { type: "durable-object", storage: "sqlite" },
+        },
+      });
+      const settled = (await uploadedMetadata(calls[4]!)).metadata;
+      expect(settled.bindings).toEqual(arriving.Bindings);
+      expect(settled.exports).toEqual({
+        Counter: { type: "durable-object", storage: "sqlite" },
+        Room: { type: "durable-object", storage: "sqlite" },
+      });
+    });
+
+    it("fails before any upload when the Worker that a namespace moves to is created in this deploy", async () => {
+      mockFetch((call) =>
+        isListing(call)
+          ? respondWith([
+              { script: "app--dev--web", class: "Room", use_sqlite: true },
+            ])(call)
+          : fail(404, 10007, "not found"),
+      );
+
+      await expect(script.create(arriving)).rejects.toThrow(
+        'Deploy would move the Durable Object namespaces "rooms" from the Worker app--dev--web to the Worker app--dev--api, which this deploy creates. Deploy can move a namespace only to a Worker that exists. Deploy app--dev--api first without the namespaces, and move them in a later deploy.',
+      );
+      expect(calls.some(({ method }) => method === "PUT")).toBe(false);
+    });
+
+    it("lists the account's namespaces once in a create, and uploads once", async () => {
+      mockFetch((call) =>
+        isListing(call)
+          ? ok([])
+          : call.method === "PUT"
+            ? ok({})
+            : fail(404, 10007, "not found"),
+      );
+
+      await script.create(arriving);
+
+      expect(calls.filter(isListing)).toHaveLength(1);
+      expect(calls.filter(({ method }) => method !== "GET")).toHaveLength(1);
+    });
+
+    it("fails when the list of the account's namespaces doesn't end", async () => {
+      mockFetch((call) =>
+        isListing(call)
+          ? ok([
+              { script: "app--dev--other", class: "Lobby", use_sqlite: true },
+            ])
+          : ok({}),
+      );
+
+      await expect(
+        script.update!(key, {} as any, arriving, params),
+      ).rejects.toThrow(
+        "Cloudflare listed more than 100 pages of Durable Object namespaces in the account acc, so deploy stopped listing them.",
+      );
+      expect(calls.filter(isListing)).toHaveLength(100);
+    });
+
+    it("creates the namespace when no Worker that binds it hosts its class", async () => {
+      mockFetch(
+        respondWith([
+          { script: "app--dev--other", class: "Room", use_sqlite: true },
+        ]),
+      );
+
+      await script.update!(key, {} as any, arriving, params);
+
+      expect(calls.map(({ method }) => method)).toEqual(["GET", "GET", "PUT"]);
+      const { metadata } = await uploadedMetadata(calls[2]!);
+      expect(metadata.exports.Room).toEqual({
+        type: "durable-object",
+        storage: "sqlite",
+      });
+    });
+
+    it("lists the account's namespaces until a page is empty, as a page can have fewer than asked for", async () => {
+      mockFetch((call) => {
+        if (!isListing(call)) return ok({});
+        if (call.url === namespacesPage(1)) {
+          return ok([
+            { script: "app--dev--other", class: "Lobby", use_sqlite: true },
+          ]);
+        }
+        if (call.url === namespacesPage(2)) {
+          return ok([
+            { script: "app--dev--web", class: "Room", use_sqlite: true },
+          ]);
+        }
+        return ok([]);
+      });
+
+      await script.update!(key, {} as any, arriving, params);
+
+      expect(calls.filter(isListing)).toHaveLength(3);
+      expect(calls.map(({ method }) => method).slice(3)).toEqual([
+        "PUT",
+        "PATCH",
+        "PUT",
+      ]);
+    });
+
+    it("doesn't list the account's namespaces when no new namespace has a Worker that binds it", async () => {
+      mockFetch(() => ok({}));
+
+      await script.update!(key, {} as any, arriving, {
+        ...params,
+        DurableObjectNamespaces: arriving.DurableObjectNamespaces,
+      });
+      await script.update!(
+        key,
+        {} as any,
+        { ...arriving, DurableObjectTransferSources: undefined },
+        params,
+      );
+
+      expect(calls.map(({ method }) => method)).toEqual(["PUT", "PUT"]);
+    });
+
+    it.each([
+      ["false", { use_sqlite: false }],
+      ["missing", {}],
+    ])(
+      "fails before any upload when the Worker it moves from has a namespace whose use_sqlite is %s",
+      async (_, storage) => {
+        mockFetch(
+          respondWith([
+            { script: "app--dev--web", class: "Room", use_sqlite: true },
+            { script: "app--dev--web", class: "Legacy", ...storage },
+          ]),
+        );
+
+        await expect(
+          script.update!(key, {} as any, arriving, params),
+        ).rejects.toThrow(
+          /^Cannot move the Durable Object namespace "rooms" from the Worker app--dev--web: app--dev--web also hosts the namespace of the class Legacy, which Cloudflare's namespace list doesn't show as using SQLite storage\. Notation can move a namespace only from a Worker whose namespaces all use SQLite\.$/,
+        );
+        expect(calls.map(({ method }) => method)).toEqual(["GET", "GET"]);
+      },
+    );
+
+    it("leaves a namespace that moved out of the exports of the Worker it moved from", async () => {
+      mockFetch(() => ok({}));
+
+      await script.update!(
+        { AccountId: "acc", ScriptName: "app--dev--web" },
+        {} as any,
+        {
+          ...params,
+          ScriptName: "app--dev--web",
+          Bindings: [{ ...roomsBinding, script_name: "app--dev--api" }],
+          DurableObjectNamespaces: [],
+          BoundDurableObjects: [{ ...rooms, scriptName: "app--dev--api" }],
+        },
+        {
+          ...params,
+          ScriptName: "app--dev--web",
+          DurableObjectNamespaces: [
+            { id: "counters", className: "Counter" },
+            rooms,
+          ],
+        },
+      );
+
+      const { metadata } = await uploadedMetadata(calls[0]!);
+      expect(metadata.exports).toEqual({
+        Counter: { type: "durable-object", state: "deleted" },
+      });
+    });
+  });
+
   it("reads the compatibility settings, with the flags sorted", async () => {
     mockFetch(() =>
       ok({
@@ -531,25 +764,257 @@ describe("WorkerScript", () => {
   });
 });
 
-describe("durableObjectExports", () => {
-  it.each([
-    [
-      "whose namespace was removed, or had its id changed",
-      [{ id: "b", className: "Counter" }],
-      [{ id: "a", className: "Counter" }],
-    ],
-    [
-      "whose namespace now has another class",
-      [
-        { id: "a", className: "Counter2" },
-        { id: "b", className: "Counter" },
-      ],
-      [{ id: "a", className: "Counter" }],
-    ],
-  ])("fails when a new namespace takes a class %s", (_, hosted, previous) => {
-    expect(() => durableObjectExports(hosted, previous)).toThrow(
-      `The Durable Object namespace "b" has the class Counter, which the namespace "a" had before.`,
+describe("rejectChange", () => {
+  const counters = { id: "counters", className: "Counter" };
+  const rooms = { id: "rooms", className: "Room" };
+  const previous = { ...params, DurableObjectNamespaces: [counters, rooms] };
+  type Params = NonNullable<
+    Parameters<NonNullable<typeof WorkerScript.rejectChange>>[1]
+  >;
+  const reject = (
+    desired: Partial<Params> | undefined,
+    replace = false,
+    before: Partial<Params> = {},
+  ) =>
+    WorkerScript.rejectChange?.(
+      { ...previous, ...before },
+      desired && { ...previous, ...desired },
+      { replace },
     );
+  const lost =
+    /^Deploy would delete the Durable Object namespaces "counters" \(class Counter\), "rooms" \(class Room\) of the Worker app--dev--api,/;
+
+  it("allows a change of class, and the delete of a namespace that is unprotected in state", () => {
+    expect(
+      reject(
+        { DurableObjectNamespaces: [{ id: "counters", className: "Tally" }] },
+        false,
+        { UnprotectedDurableObjects: ["rooms"] },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("reads protection from state, not from code", () => {
+    expect(
+      reject({
+        DurableObjectNamespaces: [counters],
+        UnprotectedDurableObjects: ["rooms"],
+      }),
+    ).toMatch(/^Deploy would delete the Durable Object namespaces "rooms"/);
+  });
+
+  describe("move to another Worker", () => {
+    const bound = (className = "Room", id = "rooms") => ({
+      BoundDurableObjects: [{ id, className, scriptName: "app--dev--web" }],
+    });
+
+    it("allows a protected namespace that the Worker binds on another Worker now", () => {
+      expect(
+        reject({ DurableObjectNamespaces: [counters], ...bound() }),
+      ).toBeUndefined();
+    });
+
+    it("rejects a move that also changes the class", () => {
+      expect(
+        reject({ DurableObjectNamespaces: [counters], ...bound("Lobby") }),
+      ).toBe(
+        `The Durable Object namespace "rooms" would move from the Worker app--dev--api to app--dev--web, and its class would change from Room to Lobby. Deploy can't move a namespace and change its class at once. Move it with the class Room, and change the class in a later deploy.`,
+      );
+    });
+
+    it("rejects a bound namespace that takes the class of another namespace of this Worker", () => {
+      expect(
+        reject(
+          { DurableObjectNamespaces: [counters], ...bound("Room", "lobbies") },
+          false,
+          { UnprotectedDurableObjects: ["rooms"] },
+        ),
+      ).toMatch(
+        /^The Durable Object namespace "lobbies" has the class Room, which "rooms" had on the Worker app--dev--api, so "lobbies" could get the objects of "rooms"\./,
+      );
+    });
+
+    it("rejects the delete or the replacement of the Worker that a namespace moves from", () => {
+      expect(reject({ ...bound() }, true)).toMatch(lost);
+    });
+
+    describe("to this Worker", () => {
+      const lobbies = { id: "lobbies", className: "Lobby" };
+      const sources = {
+        DurableObjectTransferSources: [
+          { id: "lobbies", scriptNames: ["app--dev--web"] },
+        ],
+      };
+
+      it("rejects a namespace that may move here in the deploy that renames or deletes another one", () => {
+        expect(
+          reject({
+            DurableObjectNamespaces: [
+              { id: "counters", className: "Tally" },
+              rooms,
+              lobbies,
+            ],
+            ...sources,
+          }),
+        ).toBe(
+          `Deploy may move the Durable Object namespaces "lobbies" (class Lobby) to the Worker app--dev--api from another Worker that binds them, and would also rename or delete the classes Counter of app--dev--api. Deploy can't do both in one deploy. Make the two changes in separate deploys.`,
+        );
+        expect(
+          reject(
+            { DurableObjectNamespaces: [counters, lobbies], ...sources },
+            false,
+            { UnprotectedDurableObjects: ["rooms"] },
+          ),
+        ).toMatch(/^Deploy may move .* the classes Room of app--dev--api\./);
+      });
+
+      it("allows a namespace that may move here, or one that no other Worker binds, alone", () => {
+        expect(
+          reject({
+            DurableObjectNamespaces: [counters, rooms, lobbies],
+            ...sources,
+          }),
+        ).toBeUndefined();
+        expect(
+          reject({
+            DurableObjectNamespaces: [
+              { id: "counters", className: "Tally" },
+              rooms,
+              lobbies,
+            ],
+          }),
+        ).toBeUndefined();
+      });
+    });
+  });
+
+  it("leaves the check to deploy when the list is unknown at plan", () => {
+    const unknown = { $unknown: "after-apply" } as never;
+    expect(reject({ DurableObjectNamespaces: unknown })).toBeUndefined();
+  });
+
+  it("allows any change to a Worker that hosted no namespace", () => {
+    expect(
+      WorkerScript.rejectChange?.(
+        { ...params, DurableObjectNamespaces: [] },
+        undefined,
+        { replace: false },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("rejects a protected namespace that the Worker no longer hosts", () => {
+    expect(reject({ DurableObjectNamespaces: [counters] })).toBe(
+      `Deploy would delete the Durable Object namespaces "rooms" (class Room) of the Worker app--dev--api, with all their objects, which can't be undone. To delete them, first deploy \`protect: false\` on $durableObject({ id: "rooms" }) while this Worker still hosts them. To move a namespace to another Worker instead, keep binding it from this Worker.`,
+    );
+  });
+
+  it("rejects a change of id, and says to change the id back", () => {
+    expect(
+      reject({
+        DurableObjectNamespaces: [
+          { id: "tallies", className: "Counter" },
+          rooms,
+        ],
+      }),
+    ).toBe(
+      `The id of the Durable Object namespace "counters" (class Counter) of the Worker app--dev--api would change to "tallies". A namespace's id can't change: deploy would delete the namespace with all its objects, which can't be undone. Change the id back to "counters".`,
+    );
+  });
+
+  it("rejects a change of id and class, and says to change the id back if it changed", () => {
+    expect(
+      reject({
+        DurableObjectNamespaces: [{ id: "tallies", className: "Tally" }, rooms],
+      }),
+    ).toMatch(
+      /^Deploy would delete the Durable Object namespaces "counters" \(class Counter\) of the Worker app--dev--api, with all their objects, which can't be undone\. If the id of a namespace changed, change it back\. To delete them,/,
+    );
+  });
+
+  it("rejects a namespace that takes the class of an unprotected one", () => {
+    expect(
+      reject(
+        {
+          DurableObjectNamespaces: [
+            counters,
+            { id: "lobbies", className: "Room" },
+          ],
+        },
+        false,
+        { UnprotectedDurableObjects: ["rooms"] },
+      ),
+    ).toMatch(
+      /^The Durable Object namespace "lobbies" has the class Room, which "rooms" had on the Worker app--dev--api, so "lobbies" could get the objects of "rooms"\./,
+    );
+  });
+
+  it("rejects the delete or the replacement of a Worker with protected namespaces", () => {
+    expect(reject(undefined)).toMatch(lost);
+    expect(reject({ ScriptName: "app--dev--api2" }, true)).toMatch(lost);
+    expect(reject({}, true)).toMatch(lost);
+    expect(
+      reject(undefined, false, { UnprotectedDurableObjects: ["counters"] }),
+    ).toMatch(/^Deploy would delete the Durable Object namespaces "rooms"/);
+  });
+
+  it("allows the delete or the replacement of a Worker whose namespaces are all unprotected in state", () => {
+    const before = { UnprotectedDurableObjects: ["counters", "rooms"] };
+    expect(reject(undefined, false, before)).toBeUndefined();
+    expect(
+      reject({ ScriptName: "app--dev--api2" }, true, before),
+    ).toBeUndefined();
+  });
+
+  describe("through decideAction", () => {
+    const stateNode = {
+      version: 1,
+      id: "worker:api",
+      type: WorkerScript.type,
+      provider: WorkerScript.provider,
+      config: {},
+      params: previous,
+      output: previous,
+      lastOperation: "create" as const,
+      lastOperationAt: "2026-10-12T00:00:00.000Z",
+    };
+    const decide = (desired: Partial<Params>) =>
+      decideAction({
+        resource: script,
+        stateNode,
+        params: { ...previous, ...desired },
+      });
+
+    it("updates the Worker when only protection changes", () => {
+      expect(decide({ UnprotectedDurableObjects: ["rooms"] })).toMatchObject({
+        decision: "update",
+        patch: { UnprotectedDurableObjects: ["rooms"] },
+      });
+    });
+
+    it("doesn't update the Worker when only the bound namespaces or the transfer sources change", () => {
+      expect(
+        decide({
+          BoundDurableObjects: [
+            { id: "lobbies", className: "Lobby", scriptName: "app--dev--web" },
+          ],
+          DurableObjectTransferSources: [
+            { id: "rooms", scriptNames: ["app--dev--web"] },
+          ],
+        }),
+      ).toEqual({ decision: "noop" });
+    });
+
+    it("rejects the delete of a protected namespace in the deploy that unprotects it", () => {
+      expect(() =>
+        decide({
+          DurableObjectNamespaces: [counters],
+          UnprotectedDurableObjects: ["rooms"],
+        }),
+      ).toThrow(
+        /^worker:api: Deploy would delete the Durable Object namespaces "rooms"/,
+      );
+    });
   });
 });
 
