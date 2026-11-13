@@ -7,6 +7,7 @@ import {
   SchemaStructureError,
   assertRequiredOutputs,
   collectResourceGraph,
+  fillPhysicalNames,
   validateParams,
   type BaseResource,
   type DurableObject,
@@ -55,6 +56,7 @@ import {
   generateNames,
   recordedNames,
   nameFields,
+  unknownNames,
 } from "../physical-names";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
@@ -62,7 +64,7 @@ import {
   toStateNode,
   type ResourceSnapshot,
 } from "./stores";
-import type { DurableDeployOptions, DurableWorkflowOptions } from "./types";
+import type { DeployContext, DurableWorkflowOptions } from "./types";
 import type { DurableStep } from "./sdk";
 
 /**
@@ -75,6 +77,14 @@ export type ResourceStateSession =
   | { node: StateNode; persist: PersistState; remove: RemoveState };
 
 type SnapshotRef = { current: ResourceSnapshot };
+
+type SharedParams = Omit<CreateResourceParams, "persist"> & {
+  /**
+   * The params before the names are filled in, so that a replacement can
+   * fill in its new names, also where a param refers to one.
+   */
+  unnamedParams: Record<string, unknown>;
+};
 
 export type ReconcileOptions = {
   /** Leaves out the decision event when the decision is noop. */
@@ -110,7 +120,7 @@ export type ReconcileOptions = {
 export async function* reconcileResource(
   step: DurableStepRunner,
   resource: BaseResource,
-  opts: DurableDeployOptions,
+  opts: DeployContext,
   options: ReconcileOptions = {},
 ): AsyncGenerator<any, void, any> {
   const emit = durableEmitter(step, opts.emit);
@@ -129,6 +139,7 @@ export async function* reconcileResource(
   const configParams = yield* step.run("params", () =>
     resource.getParams({
       excludeContributionsFrom: options.excludeContributionsFrom,
+      recordedOutputs: opts.recordedOutputs,
     }),
   );
   const names = nameFields(resource);
@@ -136,8 +147,7 @@ export async function* reconcileResource(
   // A name in the record wins over a new one, so that a resource that
   // exists, or that an earlier deploy started to create, is not renamed.
   const recorded = recordedNames(names, session.node);
-  const params = {
-    ...configParams,
+  const params = fillPhysicalNames(configParams, {
     ...recorded,
     ...(yield* generateNamesStep(
       step,
@@ -146,7 +156,7 @@ export async function* reconcileResource(
       names.filter(({ field }) => !(field in recorded)),
       configParams,
     )),
-  };
+  });
   await validateParams(resource, params, "deploy");
   // A placeholder's record leaves out the edges to the peers that its params
   // leave out, as those may not exist yet.
@@ -220,6 +230,7 @@ export async function* reconcileResource(
     {
       executionId: opts.executionId,
       resource,
+      unnamedParams: configParams,
       resourceParams: params,
       persistedOutput: recordedOutput,
       dependsOn,
@@ -258,10 +269,10 @@ async function* emitDecision(
  */
 async function* applyAction(
   step: DurableStepRunner,
-  opts: DurableDeployOptions,
+  opts: DeployContext,
   session: ResourceStateSession,
   action: ResourceAction,
-  shared: Omit<CreateResourceParams, "persist">,
+  shared: SharedParams,
   replaceWithout?: ReconcileOptions["replaceWithout"],
 ): AsyncGenerator<any, void, any> {
   const { resource, dependsOn } = shared;
@@ -317,7 +328,7 @@ async function* applyAction(
  */
 async function* generateNamesStep(
   step: DurableStepRunner,
-  opts: DurableDeployOptions,
+  opts: DeployContext,
   resource: BaseResource,
   fields: ReturnType<typeof nameFields>,
   params: Record<string, unknown>,
@@ -337,8 +348,8 @@ async function* generateNamesStep(
  */
 async function* reconcileTakenOver(
   parent: DurableStepRunner,
-  opts: DurableDeployOptions,
-  shared: Omit<CreateResourceParams, "persist">,
+  opts: DeployContext,
+  shared: SharedParams,
   replaceWithout?: ReconcileOptions["replaceWithout"],
 ): AsyncGenerator<any, void, any> {
   // The state key keeps the writes that follow a takeover apart from the
@@ -400,9 +411,9 @@ function findMissingOutputs(
  */
 async function* recoverOutputs(
   step: DurableStepRunner,
-  opts: DurableDeployOptions,
+  opts: DeployContext,
   session: Extract<ResourceStateSession, { node: StateNode }>,
-  shared: Omit<CreateResourceParams, "persist">,
+  shared: SharedParams,
 ): AsyncGenerator<any, void, any> {
   const { resource } = shared;
   const readStep = step.scope("output-read");
@@ -447,20 +458,23 @@ async function* rewriteRecord(
  */
 async function* withoutContributions(
   step: DurableStepRunner,
-  shared: Omit<CreateResourceParams, "persist">,
+  opts: DeployContext,
+  shared: SharedParams,
   excluded: ReadonlySet<BaseResource>,
   names: Record<string, string>,
-): AsyncGenerator<any, Omit<CreateResourceParams, "persist">, any> {
+): AsyncGenerator<any, SharedParams, any> {
   const { resource } = shared;
-  const params = {
-    ...(yield* step.run("replace:params", () =>
-      resource.getParams({ excludeContributionsFrom: excluded }),
-    )),
-    ...names,
-  };
+  const unnamed = yield* step.run("replace:params", () =>
+    resource.getParams({
+      excludeContributionsFrom: excluded,
+      recordedOutputs: opts.recordedOutputs,
+    }),
+  );
+  const params = fillPhysicalNames(unnamed, names);
   await validateParams(resource, params, "deploy");
   return {
     ...shared,
+    unnamedParams: unnamed,
     resourceParams: params,
     dependsOn: getDependencyIds(
       resource,
@@ -482,9 +496,9 @@ async function* withoutContributions(
  */
 async function* replaceResource(
   step: DurableStepRunner,
-  opts: DurableDeployOptions,
+  opts: DeployContext,
   session: Extract<ResourceStateSession, { node: StateNode }>,
-  shared: Omit<CreateResourceParams, "persist">,
+  shared: SharedParams,
   replaceWithout?: ReconcileOptions["replaceWithout"],
 ): AsyncGenerator<any, void, any> {
   const deleted = yield* deleteBlockingDependents(
@@ -513,11 +527,11 @@ async function* replaceResource(
   );
   const renamed = {
     ...shared,
-    resourceParams: { ...shared.resourceParams, ...names },
+    resourceParams: fillPhysicalNames(shared.unnamedParams, names),
   };
   const excluded = replaceWithout?.(new Set(deleted));
   const created = excluded?.size
-    ? yield* withoutContributions(step, renamed, excluded, names)
+    ? yield* withoutContributions(step, opts, renamed, excluded, names)
     : renamed;
   // The delete removed the store instance that `session` read, so a write
   // against it would conflict. The record is read again for the create.
@@ -553,7 +567,7 @@ async function* replaceResource(
  */
 async function* deleteBlockingDependents(
   step: DurableStepRunner,
-  opts: DurableDeployOptions,
+  opts: DeployContext,
   resource: BaseResource,
 ): AsyncGenerator<any, string[], any> {
   const registry = workflowRegistry(opts);
@@ -589,7 +603,12 @@ async function* deleteBlockingDependents(
     // A step, as deriveParams is user code and need not be deterministic.
     const params = yield* step.run(
       `params:${encodeURIComponent(id)}`,
-      () => declared.planParams() as Promise<DurableObject>,
+      async () =>
+        // The dependent is created again, with a new name.
+        fillPhysicalNames(
+          await declared.planParams({ recordedOutputs: opts.recordedOutputs }),
+          unknownNames(declared),
+        ) as DurableObject,
     );
     assertChangeAllowed(id, declared.rejectChange, record.params, params, {
       replace: true,

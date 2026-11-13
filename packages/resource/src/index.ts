@@ -17,10 +17,14 @@ export {
   type ResourceGraph,
 } from "./resource-collection";
 export {
+  fillPhysicalNames,
   generatedPhysicalName,
+  isOwnPhysicalName,
+  ownPhysicalName,
   physicalName,
   scopedPhysicalName,
   type NameScope,
+  type OwnPhysicalName,
   type PhysicalNameRule,
 } from "./physical-name";
 export {
@@ -33,10 +37,13 @@ export {
   OutputRef,
   OutputRefStringError,
   PendingOutput,
+  StateOutputRef,
+  stateReadsOf,
   containsOutputRef,
   isOutputRef,
   resolveOutputRefs,
   deployLookup,
   planLookup,
   type OutputLookup,
+  type RecordedOutputs,
 } from "./output-ref";

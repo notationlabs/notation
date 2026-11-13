@@ -1,4 +1,5 @@
 import { getActiveResourceCollection } from "./resource-collection";
+import { isPlainObject } from "./output-ref";
 
 /** The part of a deployment's identity that scopes physical names. */
 export type NameScope = {
@@ -110,4 +111,49 @@ export function scopedPhysicalName(
   rule: PhysicalNameRule,
 ): string {
   return physicalName(getActiveResourceCollection()?.scope, name, rule);
+}
+
+/**
+ * Stands in the params for a ref from a resource to its own `physicalName`
+ * param, until deploy or plan fills in the name. It is a plain object, so
+ * the step that records the params can hold it.
+ */
+export type OwnPhysicalName = { $physicalName: string };
+
+export function ownPhysicalName(field: string): OwnPhysicalName {
+  return { $physicalName: field };
+}
+
+export function isOwnPhysicalName(value: unknown): value is OwnPhysicalName {
+  return (
+    isPlainObject(value) &&
+    Object.keys(value).length === 1 &&
+    typeof value.$physicalName === "string"
+  );
+}
+
+/**
+ * Copies `params`, setting each name in `names` and replacing each
+ * `OwnPhysicalName` with the name of its field.
+ */
+export function fillPhysicalNames(
+  params: Record<string, unknown>,
+  names: Record<string, unknown>,
+): Record<string, unknown> {
+  const fill = (value: unknown): unknown => {
+    if (isOwnPhysicalName(value)) {
+      if (!(value.$physicalName in names)) {
+        throw new Error(`No name was given for ${value.$physicalName}`);
+      }
+      return names[value.$physicalName];
+    }
+    if (Array.isArray(value)) return value.map(fill);
+    if (isPlainObject(value)) {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [key, fill(entry)]),
+      );
+    }
+    return value;
+  };
+  return { ...(fill(params) as Record<string, unknown>), ...names };
 }

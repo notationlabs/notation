@@ -11,6 +11,8 @@
  *                              fails to load
  *   notation:validate          deploy's check of known params, before
  *                              any change
+ *   notation:recorded-outputs  the outputs that `~state` refs read, from
+ *                              state at the start of the deploy
  *   notation:deploy:<id>:*     per-resource reconciliation steps
  *   notation:deploy:<id>:placeholder:*   the first pass over a cycle, for
  *                              a placeholder

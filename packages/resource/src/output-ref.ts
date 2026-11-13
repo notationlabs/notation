@@ -1,5 +1,6 @@
 import type { BaseResource } from "./resource";
 import type { Schema } from "./resource.schema";
+import type { DurableObject } from "./durable-value";
 import { UNKNOWN_AFTER_APPLY } from "./diff-params";
 
 export class OutputRefStringError extends Error {
@@ -33,6 +34,115 @@ export class OutputRef {
   toJSON(): never {
     throw new OutputRefStringError(describeOutputRef(this));
   }
+}
+
+/**
+ * Stands for an output in the target's state record at the start of the
+ * deploy or plan. Made by `resource["~state"].outputRef`. Unlike an output
+ * ref, it adds no dependency, and it resolves to undefined when the target
+ * has no record.
+ */
+export class StateOutputRef extends OutputRef {}
+
+/**
+ * The outputs that `~state` refs read, from the state records at the start
+ * of the deploy or plan. Each target of a `~state` ref has an entry, which
+ * is null when the target has no full record.
+ */
+export type RecordedOutputs = { [id: string]: DurableObject | null };
+
+// The keys that `~state` refs read, by target. Deploy reads them from state
+// once, at the start, so it needs to know them before any params exist.
+const stateReads = new WeakMap<BaseResource, Set<string>>();
+
+/** The outputs of `resource` that `~state` refs read. */
+export function stateReadsOf(resource: BaseResource): string[] {
+  return [...(stateReads.get(resource) ?? [])];
+}
+
+/**
+ * Makes a `~state` ref. Throws unless only a replace changes the output: a
+ * param that is `immutable`, `primaryKey` or `secondaryKey`, or that has
+ * `physicalName`, or a computed `primaryKey`. An output that an update
+ * changes would be read one deploy late, with no error.
+ */
+export function stateOutputRef(
+  resource: BaseResource,
+  key: string,
+): StateOutputRef {
+  const item = resource.schema[key];
+  const readable =
+    item !== undefined &&
+    (item.primaryKey ||
+      (item.propertyType === "param" &&
+        (item.immutable || item.secondaryKey || item.physicalName)));
+  if (!readable) {
+    throw new Error(
+      `Cannot read ${key} of ${resource.id} from state: ~state can read only an output that only a replace changes, which is a param that is immutable, primaryKey or secondaryKey, or that has physicalName`,
+    );
+  }
+  let keys = stateReads.get(resource);
+  if (!keys) stateReads.set(resource, (keys = new Set()));
+  keys.add(key);
+  return new StateOutputRef(resource, [key]);
+}
+
+/**
+ * Replaces each `~state` ref in `value` with the recorded output. A ref
+ * whose target has no record resolves to undefined, and is left out of the
+ * array that holds it.
+ */
+export function resolveStateOutputRefs(
+  value: unknown,
+  recorded: RecordedOutputs | undefined,
+): unknown {
+  if (value instanceof StateOutputRef) {
+    return readRecordedOutput(value, recorded);
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => {
+      const resolved = resolveStateOutputRefs(entry, recorded);
+      return entry instanceof StateOutputRef && resolved === undefined
+        ? []
+        : [resolved];
+    });
+  }
+  if (isPlainObject(value)) {
+    const mapped: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      mapped[key] = resolveStateOutputRefs(entry, recorded);
+    }
+    return mapped;
+  }
+  return value;
+}
+
+function readRecordedOutput(
+  token: StateOutputRef,
+  recorded: RecordedOutputs | undefined,
+): unknown {
+  const { id } = token.resource;
+  if (!recorded || !(id in recorded)) {
+    throw new Error(
+      `Output ${describeOutputRef(token)} is read from state, but the outputs in state were not read for ${id}. Make each ~state ref while infra is evaluated.`,
+    );
+  }
+  return readPath(recorded[id], token.path);
+}
+
+/**
+ * Whether a ref is from `owner` to its own `physicalName` param. Deploy
+ * fills such a ref in when it fills in the name, so it is no dependency.
+ */
+export function isOwnNameRef(owner: BaseResource, token: OutputRef): boolean {
+  if (token.resource !== owner || token.path.length !== 1) return false;
+  const item = owner.schema[token.path[0]!];
+  return item?.propertyType === "param" && Boolean(item.physicalName);
+}
+
+/** Whether the holder of `token` depends on the resource it names. */
+export function isDependencyRef(holder: BaseResource, token: OutputRef): boolean {
+  return !(token instanceof StateOutputRef) && !isOwnNameRef(holder, token);
 }
 
 /**
@@ -199,9 +309,10 @@ export function markUnknownOutputRefs(value: unknown): unknown {
  * conflict messages can show them.
  */
 export function toCanonicalOutputRefs(value: unknown): unknown {
-  return mapOutputRefs(
-    value,
-    (token) => `<output ${describeOutputRef(token)}>`,
+  return mapOutputRefs(value, (token) =>
+    token instanceof StateOutputRef
+      ? `<state output ${describeOutputRef(token)}>`
+      : `<output ${describeOutputRef(token)}>`,
   );
 }
 

@@ -3,12 +3,13 @@ import { assertDependenciesPresent } from "../dependency-graph";
 import { orphansDeployDeletes } from "../orphan-sweep";
 import { assertOrphanDeleteAllowed, decideAction } from "../plan";
 import { loadUnit, planKnownParams } from "../planner";
+import { readRecordedOutputs } from "../recorded-outputs";
 import { workflowRegistry } from "../resource-registry";
 import { reconcileCycle } from "./cycle";
 import { withDeploymentHold } from "./deployment-hold";
 import { reconcileResource, sweepOrphans } from "./reconcile";
 import { scopeStep } from "./step";
-import type { DurableDeployOptions } from "./types";
+import type { DeployContext, DurableDeployOptions } from "./types";
 import type { DurableStep } from "./sdk";
 
 export async function* deploy(
@@ -23,22 +24,31 @@ export async function* deploy(
     return null;
   });
   yield* withDeploymentHold(step, opts, async function* () {
+    // Read once, inside the hold, so that every `~state` ref reads the
+    // records as they were at the start of the deploy, and a resumed deploy
+    // reads the same ones.
+    const deployOpts: DeployContext = {
+      ...opts,
+      recordedOutputs: yield* step.run("notation:recorded-outputs", () =>
+        readRecordedOutputs(opts.resources, opts.state),
+      ),
+    };
     // Reconcile in dependency order, so a resource only runs once its
     // dependencies have converged.
     for (const unit of orderDeployUnits(opts.resources)) {
       if (isCycle(unit)) {
-        yield* reconcileCycle(step, unit, opts);
+        yield* reconcileCycle(step, unit, deployOpts);
         continue;
       }
       const [resource] = unit.members;
       yield* reconcileResource(
         scopeStep(step, `notation:deploy:${encodeURIComponent(resource!.id)}`),
         resource!,
-        opts,
+        deployOpts,
       );
     }
 
-    yield* sweepOrphans(step, opts, "deploy");
+    yield* sweepOrphans(step, deployOpts, "deploy");
   });
 }
 
@@ -57,12 +67,14 @@ export async function* deploy(
  * still checks before any change.
  */
 async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
+  const recordedOutputs = await readRecordedOutputs(opts.resources, opts.state);
   for (const unit of orderDeployUnits(opts.resources)) {
     for (const resource of await loadUnit(unit, opts.state)) {
       const { stateNode, params } = await planKnownParams(
         resource,
         opts.state,
         "deploy",
+        recordedOutputs,
       );
       if (stateNode) decideAction({ resource, stateNode, params });
     }

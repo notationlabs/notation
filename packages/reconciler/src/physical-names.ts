@@ -1,4 +1,5 @@
 import {
+  UNKNOWN_AFTER_APPLY,
   generatedPhysicalName,
   isUnknownAfterApply,
   type BaseResource,
@@ -38,6 +39,16 @@ export function assertNamesNotSupplied(
       `Resource "${resource.id}" (${resource.type}): the params supply "${field}", which has physicalName in the schema. Deploy generates a physicalName param from the resource ID, so neither config nor deriveParams can supply it.`,
     );
   }
+}
+
+/**
+ * `UNKNOWN_AFTER_APPLY` for each of the resource's `physicalName` params,
+ * for a plan of a resource whose name deploy generates.
+ */
+export function unknownNames(resource: BaseResource): Record<string, unknown> {
+  return Object.fromEntries(
+    nameFields(resource).map(({ field }) => [field, UNKNOWN_AFTER_APPLY]),
+  );
 }
 
 /**
