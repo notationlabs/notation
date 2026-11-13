@@ -149,8 +149,9 @@ export type AccountNamespace = {
 const NAMESPACE_PAGE_SIZE = 1000;
 
 /**
- * Lists the account's Durable Object namespaces. Leaves out the namespaces
- * of Worker previews and of Workers in dispatch namespaces.
+ * Lists the account's Durable Object namespaces, one page after another
+ * until a page is empty. Leaves out the namespaces of Worker previews and of
+ * Workers in dispatch namespaces.
  */
 export async function listAccountNamespaces(
   account: string,
@@ -180,7 +181,9 @@ export async function listAccountNamespaces(
         sqlite: item.use_sqlite === true,
       });
     }
-    if ((items ?? []).length < NAMESPACE_PAGE_SIZE) return namespaces;
+    // Cloudflare may return fewer items than asked for on a page that isn't
+    // the last, so only an empty page ends the list.
+    if (!items?.length) return namespaces;
   }
 }
 

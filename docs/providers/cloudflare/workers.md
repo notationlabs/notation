@@ -180,6 +180,8 @@ The old host now binds the namespace on the new host, so deploy uploads the new 
 
 Then deploy uploads the old host, with its binding on the new host. A later deploy can remove that binding.
 
+Between steps 1 and 3, the new host's `env` has no binding to the namespace, so a request on the new host that uses it fails. From step 2 until deploy uploads the old host, the old host's deployed version still binds the class as its own, so a request on the old host that uses it fails too. If step 2 fails, the namespace and its objects stay on the old host, and the new host's class waits for them. The next deploy runs the move again.
+
 To find the old host, deploy lists the account's namespaces when a Worker hosts a namespace that is new to it, and another Worker binds that namespace. If one of those Workers hosts a namespace with the same class, deploy moves it. If none does, the namespace is new.
 
 Plan fails when:
@@ -187,8 +189,9 @@ Plan fails when:
 - the namespace's `class` also changes. Move the namespace first, and change the class in a later deploy.
 - the namespace that moves has the class of another namespace that the old host had before. The moved namespace would get that namespace's objects.
 - the old host no longer binds the namespace, and the namespace is protected in state. Without the binding, deploy doesn't know where the namespace moves to, and the old host's upload would delete it.
+- the new host gets a namespace that another Worker binds, and the same deploy renames or deletes another namespace of the new host. The first upload of a move would apply the rename or delete before the move is done. Plan can't tell whether the namespace moves or is new, so it fails in both cases. Make the two changes in separate deploys.
 
-Deploy fails, before it uploads the new host, when this deploy creates the new host. Deploy the new host without the namespace first. Deploy also fails when the old host hosts a namespace with key-value storage, which Notation doesn't support, or a namespace that Cloudflare's list doesn't show as SQLite.
+Deploy fails, before it uploads the new host, when this deploy creates the new host. Plan doesn't catch this, as plan doesn't list the account's namespaces. Deploy the new host without the namespace first. Deploy also fails when the old host hosts a namespace with key-value storage, which Notation doesn't support, or a namespace that Cloudflare's list doesn't show as SQLite.
 
 If a move stops part way through, the next deploy finishes it. The new host's state is updated only after the last upload, so the next deploy runs the move again. It finds the namespace on the old host, or on the new host if Cloudflare already moved it.
 

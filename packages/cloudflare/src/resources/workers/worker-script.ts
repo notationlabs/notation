@@ -459,8 +459,9 @@ const describeHosted = (namespace: HostedNamespace) =>
  * class name, so the namespace is deleted when the Worker stops hosting it,
  * is replaced or is deleted. Protection is read from state only, so
  * `protect: false` must be deployed before the change that deletes the
- * namespace. Also returns a message when a namespace would get the objects
- * of another namespace.
+ * namespace. Also returns a message when a namespace could get the objects
+ * of another namespace, and when a namespace may move to the Worker in the
+ * deploy that renames or deletes another of its namespaces.
  */
 export function rejectNamespaceLoss(
   previous: Partial<WorkerScriptParams>,
@@ -497,15 +498,35 @@ export function rejectNamespaceLoss(
   }
 
   // Cloudflare keys a namespace by its class name, and so does the move of a
-  // bound namespace from this Worker to its new host.
+  // bound namespace from this Worker to its new host. A bound namespace may
+  // not move, as this Worker may never have hosted it.
   for (const namespace of [...hosted, ...bound]) {
     const taken = before.find(
       (other) =>
         other.className === namespace.className && other.id !== namespace.id,
     );
     if (taken) {
-      return `The Durable Object namespace "${namespace.id}" would get the objects of "${taken.id}", which had the class ${taken.className} on the Worker ${previous.ScriptName}. Give "${namespace.id}" another class, or deploy the change to "${taken.id}" first, and give its old class to "${namespace.id}" in a later deploy.`;
+      return `The Durable Object namespace "${namespace.id}" has the class ${taken.className}, which "${taken.id}" had on the Worker ${previous.ScriptName}, so "${namespace.id}" could get the objects of "${taken.id}". Deploy the change to "${taken.id}" first, and this change in a later deploy, or give "${namespace.id}" another class.`;
     }
+  }
+
+  // The first upload of a move would apply the renames and deletes. If the
+  // move then failed, the next deploy would send them again from the old
+  // state. Plan can't tell a move from a new namespace without the
+  // account's namespaces, so it rejects both.
+  const sources = kept?.DurableObjectTransferSources ?? [];
+  const arriving = hosted.filter(
+    (namespace) =>
+      !before.some((other) => other.id === namespace.id) &&
+      sources.some(
+        (source) => source.id === namespace.id && source.scriptNames.length > 0,
+      ),
+  );
+  const migrating = Object.entries(
+    durableObjectExports(hosted, before, bound),
+  ).filter(([, entry]) => "state" in entry);
+  if (arriving.length > 0 && migrating.length > 0) {
+    return `Deploy may move the Durable Object namespaces ${arriving.map(describeHosted).join(", ")} to the Worker ${previous.ScriptName} from another Worker that binds them, and would also rename or delete the classes ${migrating.map(([className]) => className).join(", ")} of ${previous.ScriptName}. Deploy can't do both in one deploy. Make the two changes in separate deploys.`;
   }
   return undefined;
 }

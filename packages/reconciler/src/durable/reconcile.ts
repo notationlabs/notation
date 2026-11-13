@@ -9,6 +9,7 @@ import {
   collectResourceGraph,
   validateParams,
   type BaseResource,
+  type DurableObject,
   type ResourceGroupRef,
   type ResourceDeletion,
   type ResourceType,
@@ -437,13 +438,14 @@ async function* deleteBlockingDependents(
       assertOrphanDeleteAllowed(registry, record);
       continue;
     }
-    assertChangeAllowed(
-      id,
-      declared.rejectChange,
-      record.params,
-      await declared.planParams(),
-      { replace: true },
+    // A step, as deriveParams is user code and need not be deterministic.
+    const params = yield* step.run(
+      `params:${encodeURIComponent(id)}`,
+      () => declared.planParams() as Promise<DurableObject>,
     );
+    assertChangeAllowed(id, declared.rejectChange, record.params, params, {
+      replace: true,
+    });
   }
 
   for (const id of dependents) {
