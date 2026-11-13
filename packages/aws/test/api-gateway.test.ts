@@ -219,12 +219,28 @@ test("a second authorizer with the same id throws", async () => {
 test("an api whose AWS name is another api's throws, and names both declarations", async () => {
   await expect(
     collect(() => {
-      api({ id: "todos" });
-      api({ id: "tasks", name: "todos" });
+      api({ id: "todos", name: "work" });
+      api({ id: "tasks", name: "work" });
     }),
   ).rejects.toThrow(
-    'api({ id: "todos" }) and api({ id: "tasks", name: "todos" }) give two API Gateway APIs the same AWS name',
+    'api({ id: "todos", name: "work" }) and api({ id: "tasks", name: "work" }) give two API Gateway APIs the same AWS name',
   );
+});
+
+test("an api with only an id passes no name, and a name passes the scoped name", async () => {
+  let todos!: ReturnType<typeof api>;
+  let tasks!: ReturnType<typeof api>;
+  await collect(
+    () => {
+      todos = api({ id: "todos" });
+      // The id "todos" claims no name, so this name is free.
+      tasks = api({ id: "tasks", name: "todos" });
+    },
+    { scope: { app: "shop", stage: "prod" } },
+  );
+
+  expect(todos.api.config.Name).toBeUndefined();
+  expect(tasks.api.config.Name).toBe("shop--prod--todos");
 });
 
 test("an authorizer whose AWS name is another's on the same api throws, and names both declarations", async () => {

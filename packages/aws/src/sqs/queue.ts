@@ -8,13 +8,14 @@ import { assertId, assertName, resourceId, type IdOption } from "src/id";
 
 export type QueueConfig<S extends StandardSchemaV1 = StandardSchemaV1> = {
   /**
-   * Keys the queue in state. Changing the id replaces the queue, so keep it
-   * stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
+   * Keys the queue in state. Without `name`, deploy generates the queue's
+   * name in AWS from the app, the stage and the id. Changing the id replaces
+   * the queue, so keep it stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
    * underscores.
    */
   id: string;
   /**
-   * The queue's name in AWS, in place of the id. The queue is named
+   * The queue's name in AWS, in place of a generated one. The queue is named
    * `<app>--<stage>--<name>`. Changing the name replaces the queue. Must be
    * name-safe.
    */
@@ -100,14 +101,22 @@ export class QueueGroup<
     assertId("queue()", config.id);
     assertName("queue()", config.name);
     assertQueueOptions(config);
-    const name = config.name ?? config.id;
-    const queueName = awsName("sqsQueue", config.fifo ? `${name}.fifo` : name);
+    // Without a name, deploy generates one, which no other queue has.
+    const queueName =
+      config.name === undefined
+        ? undefined
+        : awsName(
+            "sqsQueue",
+            config.fifo ? `${config.name}.fifo` : config.name,
+          );
     super("aws/sqs/queue", config.id, config);
-    claimAwsName(
-      "SQS queues",
-      queueName,
-      describeDeclaration("queue()", config.id, config.name),
-    );
+    if (queueName !== undefined) {
+      claimAwsName(
+        "SQS queues",
+        queueName,
+        describeDeclaration("queue()", config.id, config.name),
+      );
+    }
     this.schema = schema;
     this.queue = this.add(
       new aws.sqs.Queue(resourceId("sqs-queue", config.id), {

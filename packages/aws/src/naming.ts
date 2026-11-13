@@ -5,14 +5,14 @@ import {
 } from "@notation/resource";
 
 /**
- * The length limits of the AWS names that Notation generates. App, stage and
- * id characters are already valid in every one of them.
+ * The length limits of the AWS names that Notation makes from a `name`
+ * option. App, stage and name characters are already valid in every one of
+ * them. A name that deploy generates takes its limit from `physicalName` in
+ * the resource's schema.
  */
 const rules = {
   // [a-zA-Z0-9-_]
   lambdaFunction: { maxLength: 64 },
-  // [\w+=,.@-], unique regardless of case
-  iamRole: { maxLength: 64 },
   // [a-zA-Z0-9-_], a FIFO queue's name ends in .fifo
   sqsQueue: { maxLength: 80, requiredEnding: ".fifo" },
   // [.\-_A-Za-z0-9], unique per event bus
@@ -24,11 +24,12 @@ const rules = {
 } satisfies Record<string, PhysicalNameRule>;
 
 /**
- * Makes the AWS name of a resource from its id: `<app>--<stage>--<id>`,
- * shortened with a hash when it is too long for the service.
+ * Makes the AWS name of a resource from its `name` option:
+ * `<app>--<stage>--<name>`, shortened with a hash when it is too long for
+ * the service.
  */
-export function awsName(kind: keyof typeof rules, id: string): string {
-  return scopedPhysicalName(id, rules[kind]);
+export function awsName(kind: keyof typeof rules, name: string): string {
+  return scopedPhysicalName(name, rules[kind]);
 }
 
 /**

@@ -4,7 +4,7 @@ import { lambda, type NameSafe } from "src/lambda";
 
 const code = { type: "file", path: "src/fns/handler.fn.js" } as const;
 
-test("resource ids and names embed the id", () => {
+test("resource ids embed the id, and the function is given no name", () => {
   const group = lambda({ id: "get-todos", code });
   expect(group.resources.map((r) => r.id).sort()).toEqual(
     [
@@ -15,7 +15,14 @@ test("resource ids and names embed the id", () => {
       "lambda:get-todos:zip",
     ].sort(),
   );
-  expect(group.fn.config.FunctionName).toBe("get-todos");
+  // Deploy generates the function's name.
+  expect(group.fn.config.FunctionName).toBeUndefined();
+});
+
+test("name gives the function its name", () => {
+  const group = lambda({ id: "get-todos", name: "list-todos", code });
+  expect(group.fn.id).toBe("lambda:get-todos");
+  expect(group.fn.config.FunctionName).toBe("list-todos");
 });
 
 test("the function calls the bundle's `handler` export", () => {
@@ -123,15 +130,24 @@ test("ids that differ only in case clash, as IAM role names ignore case", async 
   ).rejects.toThrow(/Duplicate lambda\(\) id "myfn": it clashes with "myFn"/);
 });
 
-test("a name that is another Lambda's id throws, and names both declarations", async () => {
+test("a name that is another Lambda's name throws, and names both declarations", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      lambda({ id: "c", name: "b", code });
+      lambda({ id: "a", name: "b", code });
+    }),
+  ).rejects.toThrow(
+    'lambda({ id: "c", name: "b" }) and lambda({ id: "a", name: "b" }) give two Lambda functions the same AWS name, "b". Give one of them another name.',
+  );
+});
+
+test("a name can be another Lambda's id, as an id claims no name", async () => {
   await expect(
     collectResourceGraph(() => {
       lambda({ id: "b", code });
       lambda({ id: "a", name: "b", code });
     }),
-  ).rejects.toThrow(
-    'lambda({ id: "b" }) and lambda({ id: "a", name: "b" }) give two Lambda functions the same AWS name, "b". Give one of them another name.',
-  );
+  ).resolves.toBeDefined();
 });
 
 test("two Lambdas in different collections can have the same name", async () => {
@@ -140,7 +156,7 @@ test("two Lambdas in different collections can have the same name", async () => 
   });
   await expect(
     collectResourceGraph(() => {
-      lambda({ id: "b", code });
+      lambda({ id: "c", name: "b", code });
     }),
   ).resolves.toBeDefined();
 });

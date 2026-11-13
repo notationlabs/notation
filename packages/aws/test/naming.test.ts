@@ -1,5 +1,8 @@
 import { test, expect } from "vitest";
-import { collectResourceGraph } from "@notation/resource";
+import {
+  collectResourceGraph,
+  generatedPhysicalName,
+} from "@notation/resource";
 import { api } from "src/api-gateway";
 import { rate, schedule, ScheduleGroup } from "src/event-bridge";
 import { lambda } from "src/lambda";
@@ -19,7 +22,7 @@ const collect = <T>(declare: () => T, collectScope = scope) => {
   ).then(() => result);
 };
 
-test("AWS names start with the app and stage", async () => {
+test("a declaration with only an id passes no AWS name", async () => {
   let fn!: ReturnType<typeof lambda>;
   let ordersApi!: ReturnType<typeof api>;
   let ordersQueue!: ReturnType<typeof queue>;
@@ -42,24 +45,19 @@ test("AWS names start with the app and stage", async () => {
     schedule: nightly,
   };
 
-  expect(declared.fn.fn.config.FunctionName).toBe(
-    "orders-app--prod--get-orders",
-  );
-  // Deploy generates the role's name.
+  // Deploy generates each name.
+  expect(declared.fn.fn.config.FunctionName).toBeUndefined();
   expect(declared.fn.role.config.RoleName).toBeUndefined();
-  expect(declared.api.api.config.Name).toBe("orders-app--prod--orders-api");
-  expect(declared.queue.queue.config.QueueName).toBe(
-    "orders-app--prod--orders",
-  );
-  expect(declared.schedule.rule.config.Name).toBe("orders-app--prod--nightly");
+  expect(declared.api.api.config.Name).toBeUndefined();
+  expect(declared.queue.queue.config.QueueName).toBeUndefined();
+  expect(declared.schedule.rule.config.Name).toBeUndefined();
 });
 
 test("resource ids do not change with the stage", async () => {
-  const prod = await collect(() => lambda({ id: "get-orders", code }));
-  const staging = await collect(() => lambda({ id: "get-orders", code }), {
-    ...scope,
-    stage: "staging",
-  });
+  const declare = () =>
+    lambda({ id: "get-orders", name: "fetch-orders", code });
+  const prod = await collect(declare);
+  const staging = await collect(declare, { ...scope, stage: "staging" });
 
   expect(staging.resources.map((r) => r.id)).toEqual(
     prod.resources.map((r) => r.id),
@@ -68,8 +66,8 @@ test("resource ids do not change with the stage", async () => {
 });
 
 test("a long function name is shortened to 64 characters", async () => {
-  const id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
-  const fn = await collect(() => lambda({ id, code }));
+  const name = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+  const fn = await collect(() => lambda({ id: "get-orders", name, code }));
 
   expect(fn.fn.config.FunctionName).toHaveLength(64);
   expect(fn.fn.config.FunctionName).toMatch(
@@ -97,18 +95,44 @@ test("the policy's role name is the role's RoleName output", async () => {
   expect(fn.policy.config.PolicyName).toBe("get-orders-role-policy");
 });
 
-test("a FIFO queue's AWS name ends in .fifo", async () => {
+test("a named FIFO queue's AWS name ends in .fifo", async () => {
   const declared = await collect(() =>
-    queue({ id: "orders", fifo: true, schema: Unknown }),
+    queue({ id: "orders", name: "sales", fifo: true, schema: Unknown }),
   );
 
-  expect(declared.queue.config.QueueName).toBe("orders-app--prod--orders.fifo");
+  expect(declared.queue.config.QueueName).toBe("orders-app--prod--sales.fifo");
+});
+
+test("the name that deploy generates for a queue ends in .fifo only for a FIFO queue", async () => {
+  const generate = async (fifo: boolean) => {
+    const { queue: resource } = await collect(() =>
+      queue({ id: "orders", fifo, schema: Unknown }),
+    );
+    const item = resource.schema.QueueName!;
+    if (item.propertyType !== "param" || !item.physicalName) {
+      throw new Error("QueueName has no physicalName rule");
+    }
+    return generatedPhysicalName(
+      scope,
+      resource.id,
+      "1a2b3c4d",
+      item.physicalName,
+      await resource.getParams(),
+    );
+  };
+
+  expect(await generate(true)).toBe(
+    "orders-app--prod--sqs-queue-orders-1a2b3c4d.fifo",
+  );
+  expect(await generate(false)).toBe(
+    "orders-app--prod--sqs-queue-orders-1a2b3c4d",
+  );
 });
 
 test("a shortened FIFO queue name still ends in .fifo", async () => {
-  const id = "q".repeat(64) as "q";
+  const name = "q".repeat(64);
   const declared = await collect(() =>
-    queue({ id, fifo: true, schema: Unknown }),
+    queue({ id: "orders", name, fifo: true, schema: Unknown }),
   );
 
   expect(declared.queue.config.QueueName).toHaveLength(80);
@@ -117,7 +141,7 @@ test("a shortened FIFO queue name still ends in .fifo", async () => {
   );
 });
 
-test("the id keys each resource in state and is the base of its AWS name", async () => {
+test("the id keys each resource in state", async () => {
   let fn!: ReturnType<typeof lambda>;
   let ordersApi!: ReturnType<typeof api>;
   let ordersQueue!: ReturnType<typeof queue>;

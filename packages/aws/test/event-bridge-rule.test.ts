@@ -86,12 +86,65 @@ test("a bus's grant allows the actions on the bus's ARN", () => {
 test("a bus whose AWS name is another bus's throws, and names both declarations", async () => {
   await expect(
     collectResourceGraph(() => {
-      eventBus({ id: "orders" });
-      eventBus({ id: "shop", name: "orders" });
+      eventBus({ id: "orders", name: "events" });
+      eventBus({ id: "shop", name: "events" });
     }),
   ).rejects.toThrow(
-    'eventBus({ id: "orders" }) and eventBus({ id: "shop", name: "orders" }) give two EventBridge event buses the same AWS name',
+    'eventBus({ id: "orders", name: "events" }) and eventBus({ id: "shop", name: "events" }) give two EventBridge event buses the same AWS name',
   );
+});
+
+test("a bus with only an id passes no name, and a name passes the scoped name", async () => {
+  let orders!: ReturnType<typeof eventBus>;
+  let shop!: ReturnType<typeof eventBus>;
+  await collectResourceGraph(
+    () => {
+      orders = eventBus({ id: "orders" });
+      // The id "orders" claims no name, so this name is free.
+      shop = eventBus({ id: "shop", name: "orders" });
+    },
+    { scope: { app: "shop", stage: "prod" } },
+  );
+
+  expect(orders.bus.config.Name).toBeUndefined();
+  expect(shop.bus.config.Name).toBe("shop--prod--orders");
+});
+
+test("a rule with only an id passes no name, and a name passes the scoped name", async () => {
+  const graph = await collectResourceGraph(
+    () => {
+      const fn = lambda({ id: "fulfil", code });
+      const bus = defaultEventBus();
+      rule({ id: "order-placed", bus, pattern, target: fn });
+      // The id "order-placed" claims no name, so this name is free.
+      rule({ id: "placed", name: "order-placed", bus, pattern, target: fn });
+    },
+    { scope: { app: "shop", stage: "prod" } },
+  );
+
+  expect(ruleGroup(graph, "order-placed").rule.config.Name).toBeUndefined();
+  expect(ruleGroup(graph, "placed").rule.config.Name).toBe(
+    "shop--prod--order-placed",
+  );
+});
+
+test("a rule takes its bus name from the bus's Name output", async () => {
+  let orders!: ReturnType<typeof eventBus>;
+  const graph = await collectResourceGraph(() => {
+    orders = eventBus({ id: "orders" });
+    rule({
+      id: "order-placed",
+      bus: orders,
+      pattern,
+      target: lambda({ id: "fulfil", code }),
+    });
+  });
+  const fn = lambdaGroup(graph, "fulfil");
+  fn.fn.setOutput({ FunctionName: "fulfil", FunctionArn: "arn:fn" } as any);
+  orders.bus.setOutput({ Name: "shop--prod--orders-1a2b3c4d" } as any);
+
+  const params = await ruleGroup(graph, "order-placed").rule.getParams();
+  expect(params.EventBusName).toBe("shop--prod--orders-1a2b3c4d");
 });
 
 test("defaultEventBus() returns the same bus for each call", async () => {
@@ -123,7 +176,7 @@ test("rule() sends the events of a pattern on a bus to a declaration with eventB
 
   expect(placed.rule.id).toBe("eventbridge-pattern-rule:order-placed");
   expect(placed.rule.config).toMatchObject({
-    EventBusName: orders.bus.config.Name,
+    EventBusName: orders.name,
     EventPattern: JSON.stringify(pattern),
     State: "ENABLED",
   });
@@ -147,6 +200,7 @@ test("a rule targets the function, with the retry policy", async () => {
       retry: { maxAttempts: 3 },
       target: fn,
     });
+    defaultEventBus().bus.setOutput({ Name: "default" } as any);
   });
   fn.fn.setOutput({ FunctionName: "fulfil", FunctionArn: "arn:fn" } as any);
   const placed = ruleGroup(graph, "order-placed");
@@ -176,6 +230,7 @@ test("a rule with no retry option sends no retry policy", async () => {
       pattern,
       target: fn,
     });
+    defaultEventBus().bus.setOutput({ Name: "default" } as any);
   });
   fn.fn.setOutput({ FunctionName: "fulfil", FunctionArn: "arn:fn" } as any);
 
@@ -295,17 +350,22 @@ test("a rule whose AWS name is a schedule's throws", async () => {
   await expect(
     collectResourceGraph(() => {
       const fn = lambda({ id: "fn", code });
-      schedule({ id: "daily", schedule: rate(1, "day"), target: fn });
+      schedule({
+        id: "daily",
+        name: "report",
+        schedule: rate(1, "day"),
+        target: fn,
+      });
       rule({
         id: "orders",
-        name: "daily",
+        name: "report",
         bus: eventBus({ id: "orders" }),
         pattern,
         target: fn,
       });
     }),
   ).rejects.toThrow(
-    'schedule({ id: "daily" }) and rule({ id: "orders", name: "daily" }) give two EventBridge rules the same AWS name',
+    'schedule({ id: "daily", name: "report" }) and rule({ id: "orders", name: "report" }) give two EventBridge rules the same AWS name',
   );
 });
 
@@ -328,7 +388,7 @@ test("eventBridge.bind(bus).defineRule() in a declaration makes the rule and the
   const fn = lambdaGroup(graph, "fulfil");
   const placed = ruleGroup(graph, "order-placed");
 
-  expect(placed.rule.config.EventBusName).toBe(orders.bus.config.Name);
+  expect(placed.rule.config.EventBusName).toEqual(orders.name);
   expect(placed.rule.dependencies.lambda).toBe(fn.fn);
   expect(permissionsOf(fn)).toEqual([placed.rule]);
 });

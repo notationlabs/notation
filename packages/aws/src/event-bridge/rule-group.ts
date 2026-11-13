@@ -20,16 +20,22 @@ export class RuleGroup extends AwsResourceGroup<RuleOptions> {
     assertName(caller, config.name);
     assertPattern(caller, config.id, config.pattern);
     if (config.retry) assertRetry(caller, config.id, config.retry);
-    const ruleName = awsName("eventBridgeRule", config.name ?? config.id);
+    // Without a name, deploy generates one, which no other rule has.
+    const ruleName =
+      config.name === undefined
+        ? undefined
+        : awsName("eventBridgeRule", config.name);
     super("aws/eventBridge/rule", config.id, config);
     // AWS names rules uniquely on each bus, but the name is claimed across
     // buses, and schedules claim the same names. Nothing depends on this, so
     // the claim could be limited to each bus.
-    claimAwsName(
-      "EventBridge rules",
-      ruleName,
-      describeDeclaration(caller, config.id, config.name),
-    );
+    if (ruleName !== undefined) {
+      claimAwsName(
+        "EventBridge rules",
+        ruleName,
+        describeDeclaration(caller, config.id, config.name),
+      );
+    }
 
     const lambdaResource = lambdaGroup.fn;
     const { retry } = config;
@@ -40,7 +46,7 @@ export class RuleGroup extends AwsResourceGroup<RuleOptions> {
         {
           config: {
             Name: ruleName,
-            EventBusName: bus.bus.config.Name,
+            EventBusName: bus.name,
             EventPattern: JSON.stringify(config.pattern),
             State: config.enabled === false ? "DISABLED" : "ENABLED",
             Targets: [

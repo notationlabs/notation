@@ -120,6 +120,12 @@ const queueSchema = queue.defineSchema({
     presence: "required",
     immutable: true,
     value: v.string(),
+    // [a-zA-Z0-9-_], and a FIFO queue's name ends in .fifo
+    physicalName: {
+      maxLength: 80,
+      requiredEnding: ".fifo",
+      requiredEndingWhen: "FifoQueue",
+    },
   },
   FifoQueue: {
     propertyType: "param",

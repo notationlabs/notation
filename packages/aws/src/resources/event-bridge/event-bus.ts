@@ -22,6 +22,7 @@ const eventBusSchema = eventBus.defineSchema({
     presence: "required",
     primaryKey: true,
     value: v.string(),
+    physicalName: { maxLength: 256 },
   },
   Arn: {
     propertyType: "computed",

@@ -203,6 +203,7 @@ const eventBridgeRuleSchema = eventBridgeRule.defineSchema({
     primaryKey: true,
     propertyType: "param",
     value: v.string(),
+    physicalName: { maxLength: 64 },
   },
   EventBusName: {
     presence: "required",

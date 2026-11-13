@@ -77,6 +77,7 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
     presence: "required",
     value: v.string(),
     primaryKey: true,
+    physicalName: { maxLength: 64 },
   },
   Architectures: {
     propertyType: "param",
@@ -409,5 +410,5 @@ function encodeEnvironment(
 }
 
 export type LambdaFunctionConfig = NonNullable<
-  ConstructorParameters<typeof LambdaFunction>[1]
->["config"];
+  NonNullable<ConstructorParameters<typeof LambdaFunction>[1]>["config"]
+>;

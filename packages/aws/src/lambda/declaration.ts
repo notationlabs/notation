@@ -323,13 +323,14 @@ export type EventBusSource = {
 
 export type ScheduleOptions = {
   /**
-   * Keys the rule in state. Changing the id replaces the rule, so keep it
-   * stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
-   * underscores.
+   * Keys the rule in state. Without `name`, deploy generates the rule's name
+   * in AWS from the app, the stage and the id. Changing the id replaces the
+   * rule, so keep it stable. Must be name-safe: 1 to 64 letters, digits,
+   * hyphens or underscores.
    */
   id: string;
   /**
-   * The rule's name in AWS, in place of the id. The rule is named
+   * The rule's name in AWS, in place of a generated one. The rule is named
    * `<app>--<stage>--<name>`. Changing the name replaces the rule. Must be
    * name-safe.
    */
@@ -340,13 +341,14 @@ export type ScheduleOptions = {
 
 export type RuleOptions = {
   /**
-   * Keys the rule in state. Changing the id replaces the rule, so keep it
-   * stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
-   * underscores.
+   * Keys the rule in state. Without `name`, deploy generates the rule's name
+   * in AWS from the app, the stage and the id. Changing the id replaces the
+   * rule, so keep it stable. Must be name-safe: 1 to 64 letters, digits,
+   * hyphens or underscores.
    */
   id: string;
   /**
-   * The rule's name in AWS, in place of the id. The rule is named
+   * The rule's name in AWS, in place of a generated one. The rule is named
    * `<app>--<stage>--<name>`. Changing the name replaces the rule. Must be
    * name-safe.
    */

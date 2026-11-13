@@ -92,6 +92,7 @@ const apiSchema = api.defineSchema({
     propertyType: "param",
     presence: "required",
     value: v.string(),
+    physicalName: { maxLength: 128 },
   },
   ProtocolType: {
     propertyType: "param",

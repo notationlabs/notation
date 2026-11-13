@@ -9,13 +9,14 @@ import { RuleGroup } from "./rule-group";
 
 export type EventBusConfig = {
   /**
-   * Keys the bus in state. Changing the id replaces the bus, so keep it
-   * stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
+   * Keys the bus in state. Without `name`, deploy generates the bus's name in
+   * AWS from the app, the stage and the id. Changing the id replaces the bus,
+   * so keep it stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
    * underscores.
    */
   id: string;
   /**
-   * The bus's name in AWS, in place of the id. The bus is named
+   * The bus's name in AWS, in place of a generated one. The bus is named
    * `<app>--<stage>--<name>`. Changing the name replaces the bus. Must be
    * name-safe.
    */
@@ -71,13 +72,19 @@ export class EventBusGroup extends EventBus<EventBusConfig> {
   constructor(config: EventBusConfig) {
     assertId("eventBus()", config.id);
     assertName("eventBus()", config.name);
-    const busName = awsName("eventBridgeBus", config.name ?? config.id);
+    // Without a name, deploy generates one, which no other bus has.
+    const busName =
+      config.name === undefined
+        ? undefined
+        : awsName("eventBridgeBus", config.name);
     super("aws/eventBridge/eventBus", config.id, config);
-    claimAwsName(
-      "EventBridge event buses",
-      busName,
-      describeDeclaration("eventBus()", config.id, config.name),
-    );
+    if (busName !== undefined) {
+      claimAwsName(
+        "EventBridge event buses",
+        busName,
+        describeDeclaration("eventBus()", config.id, config.name),
+      );
+    }
     this.bus = this.add(
       new aws.eventBridge.EventBus(resourceId("eventbridge-bus", config.id), {
         config: { Name: busName },

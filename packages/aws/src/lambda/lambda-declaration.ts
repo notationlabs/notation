@@ -22,14 +22,16 @@ export type LambdaDeclarationConfig<
   Env extends EnvVars,
 > = {
   /**
-   * Names the function and its role, zip, policy and log group, and keys them
-   * in state. Changing the id replaces the function, so keep it stable.
+   * Keys the function and its role, zip, policy and log group in state.
+   * Without `name`, deploy generates the function's name in AWS from the app,
+   * the stage and the id. Changing the id replaces the function, so keep it
+   * stable.
    */
   id: NameSafe<Id>;
   /**
-   * The function's name in AWS, in place of the id. The function is named
-   * `<app>--<stage>--<name>`. Changing the name replaces the function. Must
-   * be name-safe.
+   * The function's name in AWS, in place of a generated one. The function is
+   * named `<app>--<stage>--<name>`. Changing the name replaces the function.
+   * Must be name-safe.
    */
   name?: string;
   /**

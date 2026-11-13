@@ -9,13 +9,14 @@ import { RouteGroup } from "./route";
 
 export type ApiConfig = {
   /**
-   * Keys the API in state. Changing the id replaces the API, so keep it
-   * stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
+   * Keys the API in state. Without `name`, deploy generates the API's name in
+   * AWS from the app, the stage and the id. Changing the id replaces the API,
+   * so keep it stable. Must be name-safe: 1 to 64 letters, digits, hyphens or
    * underscores.
    */
   id: string;
   /**
-   * The API's name in AWS, in place of the id. The API is named
+   * The API's name in AWS, in place of a generated one. The API is named
    * `<app>--<stage>--<name>`. Must be name-safe.
    */
   name?: string;
@@ -27,15 +28,21 @@ export class ApiGroup extends AwsResourceGroup<ApiConfig> implements ApiSource {
   constructor(config: ApiConfig) {
     assertId("api()", config.id);
     assertName("api()", config.name);
-    const apiName = awsName("apiGatewayApi", config.name ?? config.id);
+    // Without a name, deploy generates one, which no other API has.
+    const apiName =
+      config.name === undefined
+        ? undefined
+        : awsName("apiGatewayApi", config.name);
     super("API Gateway", config.id, config);
     // API Gateway does not keep API names unique, and the API is found by
     // its name.
-    claimAwsName(
-      "API Gateway APIs",
-      apiName,
-      describeDeclaration("api()", config.id, config.name),
-    );
+    if (apiName !== undefined) {
+      claimAwsName(
+        "API Gateway APIs",
+        apiName,
+        describeDeclaration("api()", config.id, config.name),
+      );
+    }
 
     this.api = this.add(
       new aws.apiGateway.Api(resourceId("api", config.id), {

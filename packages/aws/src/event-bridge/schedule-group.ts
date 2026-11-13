@@ -17,13 +17,19 @@ export class ScheduleGroup extends AwsResourceGroup<ScheduleOptions> {
   ) {
     assertId(caller, config.id);
     assertName(caller, config.name);
-    const ruleName = awsName("eventBridgeRule", config.name ?? config.id);
+    // Without a name, deploy generates one, which no other rule has.
+    const ruleName =
+      config.name === undefined
+        ? undefined
+        : awsName("eventBridgeRule", config.name);
     super("aws/eventBridge/schedule", config.id, config);
-    claimAwsName(
-      "EventBridge rules",
-      ruleName,
-      describeDeclaration(caller, config.id, config.name),
-    );
+    if (ruleName !== undefined) {
+      claimAwsName(
+        "EventBridge rules",
+        ruleName,
+        describeDeclaration(caller, config.id, config.name),
+      );
+    }
 
     const lambdaResource = lambdaGroup.fn;
 

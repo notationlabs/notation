@@ -65,16 +65,43 @@ test("a schedule whose AWS name is another schedule's throws, and names both dec
   await expect(
     collectResourceGraph(() => {
       const fn = declareLambda();
+      schedule({
+        id: "daily",
+        name: "report",
+        schedule: rate(1, "day"),
+        target: fn,
+      });
+      schedule({
+        id: "nightly",
+        name: "report",
+        schedule: rate(1, "day"),
+        target: fn,
+      });
+    }),
+  ).rejects.toThrow(
+    'schedule({ id: "daily", name: "report" }) and schedule({ id: "nightly", name: "report" }) give two EventBridge rules the same AWS name, "report".',
+  );
+});
+
+test("a schedule with only an id passes no name, and a name passes the scoped name", async () => {
+  const graph = await collectResourceGraph(
+    () => {
+      const fn = declareLambda();
       schedule({ id: "daily", schedule: rate(1, "day"), target: fn });
+      // The id "daily" claims no name, so this name is free.
       schedule({
         id: "nightly",
         name: "daily",
         schedule: rate(1, "day"),
         target: fn,
       });
-    }),
-  ).rejects.toThrow(
-    'schedule({ id: "daily" }) and schedule({ id: "nightly", name: "daily" }) give two EventBridge rules the same AWS name, "daily".',
+    },
+    { scope: { app: "shop", stage: "prod" } },
+  );
+
+  expect(scheduleGroup(graph, "daily").rule.config.Name).toBeUndefined();
+  expect(scheduleGroup(graph, "nightly").rule.config.Name).toBe(
+    "shop--prod--daily",
   );
 });
 

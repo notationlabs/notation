@@ -175,10 +175,10 @@ test("a $lambda whose AWS name is another Lambda's throws, with both modules", a
   await expect(
     collectResourceGraph(() => {
       inModule($lambda({ id: "a", name: "b" }), "runtime/a.ts");
-      inModule($lambda({ id: "b" }), "runtime/b.ts");
+      inModule($lambda({ id: "c", name: "b" }), "runtime/c.ts");
     }),
   ).rejects.toThrow(
-    '$lambda({ id: "a", name: "b" }) in runtime/a.ts and $lambda({ id: "b" }) in runtime/b.ts give two Lambda functions the same AWS name, "b".',
+    '$lambda({ id: "a", name: "b" }) in runtime/a.ts and $lambda({ id: "c", name: "b" }) in runtime/c.ts give two Lambda functions the same AWS name, "b".',
   );
 });
 

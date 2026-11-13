@@ -8,17 +8,19 @@ import { assertId, assertName, resourceId, type NameSafe } from "src/id";
 
 export type LambdaConfig = {
   /**
-   * Names the function and its role, zip, policy and log group, and keys them
-   * in state. The function is named `<app>--<stage>--<id>` in AWS. Changing the
-   * id replaces the function, so keep it stable.
+   * Keys the function and its role, zip, policy and log group in state.
+   * Without `name`, deploy generates the function's name in AWS from the app,
+   * the stage and the id. Changing the id replaces the function, so keep it
+   * stable.
    *
    * Must be name-safe: 1 to 64 letters, digits, hyphens or underscores.
    */
   id: string;
   /**
-   * The function's name in AWS, in place of the id. The function is named
-   * `<app>--<stage>--<name>`. Changing the name replaces the function. The
-   * role and the other resources keep names from the id. Must be name-safe.
+   * The function's name in AWS, in place of a generated one. The function is
+   * named `<app>--<stage>--<name>`. Changing the name replaces the function.
+   * The role and the other resources keep names from the id. Must be
+   * name-safe.
    */
   name?: string;
   /**
@@ -71,12 +73,18 @@ export class LambdaGroup extends AwsResourceGroup<LambdaConfig> {
     assertId(caller, config.id);
     assertName(caller, config.name);
     assertUniqueLambdaId(caller, config.id);
-    const functionName = awsName("lambdaFunction", config.name ?? config.id);
-    claimAwsName(
-      "Lambda functions",
-      functionName,
-      describeDeclaration(caller, config.id, config.name, where),
-    );
+    // Without a name, deploy generates one, which no other function has.
+    const functionName =
+      config.name === undefined
+        ? undefined
+        : awsName("lambdaFunction", config.name);
+    if (functionName !== undefined) {
+      claimAwsName(
+        "Lambda functions",
+        functionName,
+        describeDeclaration(caller, config.id, config.name, where),
+      );
+    }
     super("Lambda", config.id, config);
     const { fn, role } = build(this, config, functionName);
     this.fn = fn;
@@ -142,7 +150,7 @@ function assertUniqueLambdaId(caller: string, id: string) {
 const build = (
   functionGroup: LambdaGroup,
   config: LambdaConfig,
-  functionName: string,
+  functionName: string | undefined,
 ) => {
   const filePath = config.code.path;
   const lambdaId = config.id;
