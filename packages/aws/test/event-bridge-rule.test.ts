@@ -128,7 +128,30 @@ test("a rule with only an id passes no name, and a name passes the scoped name",
   );
 });
 
-test("a rule takes its bus name from the bus's Name output", async () => {
+test("a rule takes its bus name from the bus's config when the config has one", async () => {
+  const graph = await collectResourceGraph(
+    () => {
+      const fn = lambda({ id: "fulfil", code });
+      rule({ id: "aws-events", bus: defaultEventBus(), pattern, target: fn });
+      rule({
+        id: "order-placed",
+        bus: eventBus({ id: "orders", name: "orders" }),
+        pattern,
+        target: fn,
+      });
+    },
+    { scope: { app: "shop", stage: "prod" } },
+  );
+
+  expect(ruleGroup(graph, "aws-events").rule.config.EventBusName).toBe(
+    "default",
+  );
+  expect(ruleGroup(graph, "order-placed").rule.config.EventBusName).toBe(
+    "shop--prod--orders",
+  );
+});
+
+test("a rule on a bus with a generated name takes its bus name from the bus's Name output", async () => {
   let orders!: ReturnType<typeof eventBus>;
   const graph = await collectResourceGraph(() => {
     orders = eventBus({ id: "orders" });

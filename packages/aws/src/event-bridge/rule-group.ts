@@ -46,7 +46,9 @@ export class RuleGroup extends AwsResourceGroup<RuleOptions> {
         {
           config: {
             Name: ruleName,
-            EventBusName: bus.name,
+            // A name in the bus's config is known at plan. A generated
+            // name is known only once the bus exists.
+            EventBusName: bus.bus.config.Name ?? bus.name,
             EventPattern: JSON.stringify(config.pattern),
             State: config.enabled === false ? "DISABLED" : "ENABLED",
             Targets: [
