@@ -26,7 +26,7 @@ import { remainingDependencies } from "../cycles";
 import { collectDependents } from "../dependency-graph";
 import { createBlocksDelete } from "../delete-cascade";
 import type { EmitStep, OperationLifecycleEvent } from "../events";
-import { orphanSweepSteps, sweptRecords } from "../orphan-sweep";
+import { sweepSteps, sweptRecords } from "../orphan-sweep";
 import { resolveResourceClass, workflowRegistry } from "../resource-registry";
 import { assertSameType } from "../resource-type";
 import {
@@ -990,7 +990,7 @@ export async function* sweepOrphans(
     new Set(resourceById.keys()),
   );
 
-  for (const sweep of orphanSweepSteps(swept, registry, edgesById, new Set())) {
+  for (const sweep of sweepSteps(swept, registry, edgesById, new Set())) {
     const { node } = sweep;
     if (!sweep.Resource) {
       yield* warnUnregistered(

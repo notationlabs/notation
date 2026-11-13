@@ -1,6 +1,6 @@
 import type { ResourceType } from "@notation/resource";
 import { orderDeployUnits } from "../cycles";
-import { keep, orphanSweepSteps, sweptRecords } from "../orphan-sweep";
+import { keep, sweepSteps, sweptRecords } from "../orphan-sweep";
 import { getDependencyIds } from "../plan";
 import { resolveResourceClass, workflowRegistry } from "../resource-registry";
 import { withDeploymentHold } from "./deployment-hold";
@@ -69,13 +69,13 @@ export async function* destroy(
       const keptDependencies = keep(node, edgesById, kept);
       yield* warnUnregistered(scope, opts, node, keptDependencies, "destroy");
     }
-    const orphans = orphanSweepSteps(
+    const orphanSteps = sweepSteps(
       swept.filter((record) => record.orphan),
       registry,
       edgesById,
       kept,
     );
-    for (const sweep of orphans) {
+    for (const sweep of orphanSteps) {
       if (sweep.Resource) continue;
       yield* warnUnregistered(
         scope,
@@ -92,21 +92,29 @@ export async function* destroy(
       for (const member of unit.members) unitOf.set(member.id, unit);
     }
     const order = [
-      ...orphans.flatMap((sweep) => (sweep.Resource ? [sweep.node.id] : [])),
+      ...orphanSteps.flatMap((sweep) =>
+        sweep.Resource ? [sweep.node.id] : [],
+      ),
       ...units.flatMap((unit) =>
         [...unit.members].reverse().map((member) => member.id),
       ),
     ];
     // An orphan is a unit of its own.
     const unitOfId = (id: string) => unitOf.get(id) ?? id;
+    const dependentsById = new Map<string, string[]>();
+    for (const dependent of order) {
+      for (const id of new Set(edgesById.get(dependent))) {
+        if (unitOfId(dependent) === unitOfId(id)) continue;
+        dependentsById.set(id, [...(dependentsById.get(id) ?? []), dependent]);
+      }
+    }
 
     const done = new Set<string>();
     async function* visit(id: string): AsyncGenerator<any, void, any> {
       if (done.has(id) || kept.has(id)) return;
       done.add(id);
-      for (const dependent of order) {
-        if (unitOfId(dependent) === unitOfId(id)) continue;
-        if (edgesById.get(dependent)?.includes(id)) yield* visit(dependent);
+      for (const dependent of dependentsById.get(id) ?? []) {
+        yield* visit(dependent);
       }
       const resource = resourceById.get(id);
       if (resource) {

@@ -18,7 +18,7 @@ import { isCycle, orderDeployUnits, type DeployUnit } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
-import { orphanSweepSteps, sweptRecords } from "./orphan-sweep";
+import { sweepSteps, sweptRecords } from "./orphan-sweep";
 import {
   assertChangeAllowed,
   assertOrphanDeleteAllowed,
@@ -250,9 +250,9 @@ export async function createPlan({
   for (const unit of orderDeployUnits(resources)) {
     const cycle = isCycle(unit) ? unit : undefined;
     const members = await loadUnit(unit, state);
-    const planned: PlanNode[] = [];
+    const unitNodes: PlanNode[] = [];
     for (const resource of members) {
-      planned.push(await planResource(resource, cycle));
+      unitNodes.push(await planResource(resource, cycle));
     }
     if (cycle) {
       // A member planned before a replaced member took the output of the old
@@ -262,14 +262,14 @@ export async function createPlan({
       // drift keeps its first node.
       const isReplaced = (node: PlanNode) =>
         node.decision === "replace" || node.decision === "drift-replace";
-      const last = planned.findLastIndex(isReplaced);
+      const last = unitNodes.findLastIndex(isReplaced);
       for (let index = 0; index < last; index += 1) {
-        const node = planned[index]!;
+        const node = unitNodes[index]!;
         if (node.decision !== "noop" && node.decision !== "update") continue;
-        planned[index] = await planResource(members[index]!, cycle, false);
+        unitNodes[index] = await planResource(members[index]!, cycle, false);
       }
     }
-    for (const node of planned) {
+    for (const node of unitNodes) {
       if (node.replaceOrder === "delete-first") {
         deletedWithRecord.add(node.id);
         nodes.push(...retiredNodes(stateById.get(node.id)));
@@ -280,15 +280,15 @@ export async function createPlan({
 
   const inCode = new Set(resourceById.keys());
   const { swept, edgesById: sweptEdges } = sweptRecords(stateNodes, inCode);
-  const sweepSteps = orphanSweepSteps(swept, classes, sweptEdges, new Set());
-  for (const { node, orphan, Resource } of sweepSteps) {
+  const steps = sweepSteps(swept, classes, sweptEdges, new Set());
+  for (const { node, orphan, Resource } of steps) {
     if (orphan && Resource) assertOrphanDeleteAllowed(classes, node);
   }
   // The retired instances and the orphans, in the order of the sweep. An
   // orphan that the sweep keeps is still planned as a delete, after them.
-  const planned = new Set<string>();
+  const plannedOrphans = new Set<string>();
   const pushOrphan = (stateNode: StateNode) => {
-    planned.add(stateNode.id);
+    plannedOrphans.add(stateNode.id);
     nodes.push({
       id: stateNode.id,
       type: stateNode.type,
@@ -297,14 +297,14 @@ export async function createPlan({
       dependsOn: stateNode.dependsOn ?? [],
     });
   };
-  for (const { node, orphan, Resource } of sweepSteps) {
+  for (const { node, orphan, Resource } of steps) {
     if (Resource && !deletedWithRecord.has(node.id)) {
       nodes.push(...retiredNodes(node));
     }
     if (orphan) pushOrphan(node);
   }
   for (const stateNode of stateNodes) {
-    if (!inCode.has(stateNode.id) && !planned.has(stateNode.id)) {
+    if (!inCode.has(stateNode.id) && !plannedOrphans.has(stateNode.id)) {
       pushOrphan(stateNode);
     }
   }

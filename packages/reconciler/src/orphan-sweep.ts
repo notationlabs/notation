@@ -13,7 +13,7 @@ import {
  */
 export type SweptRecord = { node: StateNode; orphan: boolean };
 
-export type OrphanSweepStep = SweptRecord &
+export type SweepStep = SweptRecord &
   (
     | { Resource: ResourceClass<any, any, any> }
     | { Resource?: undefined; keptDependencies: string[] }
@@ -26,13 +26,13 @@ export type OrphanSweepStep = SweptRecord &
  * `kept` holds, or that an orphan with no class depends on, is left out.
  * `kept` gains each resource that the sweep keeps.
  */
-export function orphanSweepSteps(
+export function sweepSteps(
   swept: SweptRecord[],
   registry: ResourceRegistry,
   edgesById: Map<string, string[]>,
   kept: Set<string>,
-): OrphanSweepStep[] {
-  const steps: OrphanSweepStep[] = [];
+): SweepStep[] {
+  const steps: SweepStep[] = [];
   for (const record of orderSweep(swept, edgesById)) {
     const { node } = record;
     const Resource = resolveResourceClass(registry, node.type as ResourceType);
@@ -80,18 +80,6 @@ function sweptEdges(node: StateNode, orphan: boolean): string[] {
     for (const id of instance.dependsOn) edges.add(id);
   }
   return [...edges].sort();
-}
-
-/** The orphans that deploy's sweep deletes, in delete order. */
-export function orphansDeployDeletes(
-  records: StateNode[],
-  inCode: ReadonlySet<string>,
-  registry: ResourceRegistry,
-): StateNode[] {
-  const { swept, edgesById } = sweptRecords(records, inCode);
-  return orphanSweepSteps(swept, registry, edgesById, new Set())
-    .filter((step) => step.Resource && step.orphan)
-    .map((step) => step.node);
 }
 
 /**
