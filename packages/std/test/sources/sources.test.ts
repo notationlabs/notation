@@ -41,6 +41,12 @@ describe("env", () => {
       "https://key@sentry.io/1",
     );
   });
+
+  it("counts an empty value as missing", async () => {
+    vi.stubEnv("EMPTY", "");
+
+    await expect(env.has("EMPTY", context)).resolves.toBe(false);
+  });
 });
 
 describe("dotenv", () => {
@@ -65,6 +71,12 @@ describe("dotenv", () => {
     await expect(source.get("WEBHOOK_SECRET", context)).rejects.toThrow(
       "`WEBHOOK_SECRET` isn't in .env.missing.",
     );
+  });
+
+  it("counts an empty value as missing", async () => {
+    await writeFile(path.join(directory, ".env"), "EMPTY=\n");
+
+    await expect(dotenv(".env").has("EMPTY", context)).resolves.toBe(false);
   });
 
   it("parses comments, export, quotes and values that span lines", async () => {
@@ -155,6 +167,31 @@ describe("getValue", () => {
 
     expect(values).toEqual(["hunter2", "hunter2"]);
     expect(prompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails for an empty value from a source, and names the source and key", async () => {
+    const empty: Source = { ...source, get: async () => new Redacted("") };
+
+    await expect(
+      runWithSecretContext({ stage: "dev", runId: "run" }, async () => {
+        await collectResourceGraph(() => {
+          declareSecret({ id: "dsn", resource, source: empty, key: "DSN" });
+        });
+        return getValue("dsn");
+      }),
+    ).rejects.toThrow(
+      "The value of the secret `dsn` from vault key `DSN` is empty.",
+    );
+  });
+
+  it("fails for an empty answer from the prompt", async () => {
+    const prompt = vi.fn(async () => "");
+
+    await expect(
+      inContext({ prompt }, () => getValue("admin")),
+    ).rejects.toThrow(
+      "The value of the secret `admin` from the prompt is empty.",
+    );
   });
 
   it("fails with the command to run for a secret without a source and no prompt", async () => {

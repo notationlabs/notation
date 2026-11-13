@@ -18,7 +18,7 @@ export function dotenv(path: string): Source {
   };
   return {
     name: "dotenv",
-    has: async (key) => Object.hasOwn(await read(), key),
+    has: async (key) => Boolean((await read())[key]),
     get: async (key) => {
       const value = (await read())[key];
       if (value === undefined) {
