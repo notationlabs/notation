@@ -3,6 +3,7 @@
 "@notation/state": minor
 "@notation/resource": patch
 "@notation/cli": patch
+"@notation/dashboard": patch
 ---
 
 Deploy now creates the replacement of a resource with a generated name before it deletes the resource (RFC 0019). The AWS Lambda function, IAM role, SQS queue, EventBridge rule and bus, API Gateway API and the Cloudflare Worker have generated names.
@@ -16,6 +17,8 @@ Deploy now creates the replacement of a resource with a generated name before it
 - When the provider refuses to delete a retired instance, the deploy fails and names the resources in code that depend on the resource. The instance stays retired, and the next deploy tries to delete it again.
 - `notation destroy` deletes the retired instances first.
 - `@notation/state`: a state record gains an optional `retired` list. Each entry holds the old resource's `config`, `params`, `output` and `dependsOn`, and `retiredAt`. Every write to the record keeps the list, and a record that lists retired instances is not removed.
+- `notation plan` prints the order after each replace: `+/- replace ... (create, then delete)` for a create-first replace, and `-/+ replace ... (delete, then create)` for a delete-first one. It prints each retired instance that waits in state as `- delete-retired`, with the time when it was retired, and counts it among the deletes in the summary.
+- `@notation/dashboard`: the resource list marks a resource that has retired instances, and the resource view lists them with the time when each was retired.
 - `notation plan --json` adds `replaceOrder` (`"create-first"` or `"delete-first"`) to each `replace` and `drift-replace` node. A retired instance that waits in state is planned as a node with the decision `delete-retired`, the ID of its resource, its own params and edges, and `retiredAt`. The deploy decision event carries `replaceOrder` too, and the delete of a retired instance has the reason `retired`.
 - `@notation/resource`: for the delete of a retired instance, `ResourceDeletion.dependents` leaves out the dependents in code, and lists the retired instances of other resources that depend on it.
 - Two instances of a resource exist for part of a deploy, so a replace can fail on an account quota that it passed before. A queue that is replaced still loses its messages, at the end of the deploy instead of at the start.
