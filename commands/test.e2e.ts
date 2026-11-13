@@ -1,7 +1,7 @@
 import { defineCommand } from "@pokit/core";
 
 export const command = defineCommand({
-  label: "Run the end-to-end tests against a real Cloudflare account",
+  label: "Run the end-to-end tests against real provider accounts",
   run: async (r) => {
     // The tests run the built CLI, and their projects import the built packages.
     await r.exec("pnpm exec turbo run build");
