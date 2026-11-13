@@ -99,7 +99,10 @@ export function runWithSecretContext<T>(
   options: SecretContextOptions,
   fn: () => T,
 ): T {
-  return storage().run({ ...options, declared: new Map(), prompted: new Map() }, fn);
+  return storage().run(
+    { ...options, declared: new Map(), prompted: new Map() },
+    fn,
+  );
 }
 
 export function secretContext(): SecretContext | undefined {
