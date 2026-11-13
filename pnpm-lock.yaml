@@ -281,6 +281,12 @@ importers:
       '@notation/dashboard':
         specifier: workspace:*
         version: link:../dashboard
+      '@notation/resource':
+        specifier: workspace:*
+        version: link:../resource
+      '@notation/std':
+        specifier: workspace:*
+        version: link:../std
       chokidar:
         specifier: ^4.0.3
         version: 4.0.3
@@ -297,9 +303,9 @@ importers:
       '@notation/cloudflare':
         specifier: workspace:*
         version: link:../cloudflare
-      '@notation/resource':
+      '@notation/infisical':
         specifier: workspace:*
-        version: link:../resource
+        version: link:../infisical
       '@types/which-pm-runs':
         specifier: ^1.0.2
         version: 1.0.2
@@ -439,6 +445,19 @@ importers:
       vite:
         specifier: ^8.3.6
         version: 8.3.6(@types/node@22.20.5)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.1)
+
+  packages/infisical:
+    dependencies:
+      '@notation/core':
+        specifier: workspace:*
+        version: link:../core
+      '@notation/std':
+        specifier: workspace:*
+        version: link:../std
+    devDependencies:
+      '@types/node':
+        specifier: ^22.20.5
+        version: 22.20.5
 
   packages/reconciler:
     dependencies:
