@@ -45,15 +45,4 @@ export class Redacted<T = string> {
   [inspectCustom](): string {
     return REDACTED_PLACEHOLDER;
   }
-
-  static is(value: unknown): value is Redacted<unknown> {
-    // Checks the shape, not the class, so that a value from another copy of
-    // this package counts.
-    return (
-      typeof value === "object" &&
-      value !== null &&
-      typeof (value as { unwrap?: unknown }).unwrap === "function" &&
-      inspectCustom in value
-    );
-  }
 }
