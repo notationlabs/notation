@@ -1,9 +1,10 @@
-import { BaseResource, ResourceGroupRef } from "@notation/core";
+import { ResourceGroupRef } from "@notation/core";
+import type { DashboardResource } from "../hooks/remote-state";
 
 export function ResourceList(props: {
-  resources: BaseResource[];
+  resources: DashboardResource[];
   activeResourceId?: string;
-  onClick: (resource: BaseResource) => void;
+  onClick: (resource: DashboardResource) => void;
 }) {
   return (
     <div className="flex h-full bg-neutral-50 hover:overflow-auto">
@@ -25,6 +26,11 @@ export function ResourceList(props: {
                   onClick={() => props.onClick(resource)}
                 >
                   <code className="text-xs">{resource.id}</code>
+                  {resource.retired?.length ? (
+                    <span className="ml-2 text-xs text-amber-600">
+                      {resource.retired.length} retired
+                    </span>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -38,12 +44,12 @@ export function ResourceList(props: {
 type ResourceListGroup = {
   key: string;
   group: ResourceGroupRef | null;
-  resources: BaseResource[];
+  resources: DashboardResource[];
 };
 
 // group IDs are unique within a type, so a group is keyed by both; resources
 // in no group are listed last
-function aggregateResources(resources: BaseResource[]) {
+function aggregateResources(resources: DashboardResource[]) {
   const groups = new Map<string, ResourceListGroup>();
   resources.forEach((resource) => {
     const { group } = resource;

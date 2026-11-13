@@ -1,6 +1,6 @@
-import { BaseResource } from "@notation/core";
+import type { DashboardResource } from "../hooks/remote-state";
 
-export function Resource(props: { resource: BaseResource }) {
+export function Resource(props: { resource: DashboardResource }) {
   return (
     <div className="p-5 px-6">
       <div className="mb-8">
@@ -23,19 +23,20 @@ export function Resource(props: { resource: BaseResource }) {
         </div>
         {getMeta(props.resource)}
       </div>
+      <RetiredInstances resource={props.resource} />
     </div>
   );
 }
 
-const getHeading = (resource: BaseResource) => {
+const getHeading = (resource: DashboardResource) => {
   return `${resource.id}`;
 };
 
-const getSubHeading = (resource: BaseResource) => {
+const getSubHeading = (resource: DashboardResource) => {
   return resource.type;
 };
 
-const getConsoleUrl = (resource: BaseResource & { output: any }) => {
+const getConsoleUrl = (resource: DashboardResource & { output: any }) => {
   if (resource.type.includes("/apiGateway/")) {
     // The ARN is arn:aws:execute-api:<region>:<account>:<api id>/*/*.
     const region = resource.output.ExecuteApiSourceArn?.split(":")[3];
@@ -45,7 +46,7 @@ const getConsoleUrl = (resource: BaseResource & { output: any }) => {
   return "";
 };
 
-const getMeta = (resource: BaseResource & { output: any }) => {
+const getMeta = (resource: DashboardResource & { output: any }) => {
   if (resource.type.includes("/apiGateway/")) {
     return (
       <div>
@@ -60,3 +61,29 @@ const getMeta = (resource: BaseResource & { output: any }) => {
     );
   }
 };
+
+// A create-first replace keeps the replaced instance in the record until
+// deploy deletes it at the end of the deploy, or the next deploy does.
+function RetiredInstances(props: { resource: DashboardResource }) {
+  const retired = props.resource.retired ?? [];
+  if (retired.length === 0) return null;
+  return (
+    <div>
+      <div className="text-sm font-semibold mb-2">
+        Retired instances waiting to be deleted
+      </div>
+      <ul className="space-y-2">
+        {retired.map((instance, index) => (
+          <li key={index} className="text-xs">
+            <div className="text-stone-500">
+              Retired at {instance.retiredAt}
+            </div>
+            <pre className="bg-stone-100 p-2 overflow-auto">
+              {JSON.stringify(instance.output, null, 2)}
+            </pre>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
