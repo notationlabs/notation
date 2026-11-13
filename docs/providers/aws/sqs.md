@@ -24,7 +24,6 @@ export const orderQueue = queue({ id: "orders", schema: Order });
 ```ts [@notation/aws/sqs]
 type QueueConfig = {
   id: string;
-  name?: string;
   fifo?: boolean;
   schema: StandardSchemaV1;
   visibilityTimeout?: number;
@@ -89,7 +88,7 @@ For high throughput, set `deduplicationScope: "messageGroup"` and `fifoThroughpu
 
 SQS encrypts a new queue with keys that SQS owns (SSE-SQS). Notation doesn't set the encryption attributes, so a queue keeps this default.
 
-SQS doesn't let you reuse a deleted queue's name for 60 seconds. The replacement of a queue with a generated name gets a new name, so it doesn't wait. The replacement of a queue that keeps its `name` waits and retries the create until SQS accepts the name.
+SQS doesn't let you reuse a deleted queue's name for 60 seconds. The replacement of a queue gets a new name, so it doesn't wait. A queue that was deleted outside Notation is different: deploy creates it again under the name in state. If the queue was deleted less than 60 seconds before, deploy waits and retries the create until SQS accepts the name.
 
 ### Dead-letter queues
 

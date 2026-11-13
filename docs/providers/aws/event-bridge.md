@@ -290,7 +290,7 @@ type ScheduleOptions = {
 };
 ```
 
-`id` and `name` work as they do for [`schedule()`](#scheduleconfig).
+`id` works as it does for [`schedule()`](#scheduleconfig).
 
 ## `schedule(config)`
 

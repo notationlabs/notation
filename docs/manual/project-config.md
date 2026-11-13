@@ -163,7 +163,7 @@ The infra code can't know a generated name. To pass a name to a function, bind a
 
 Some names have no prefix, because they only need to be unique inside another resource. An authorizer is named after its `id`, or its `name`, inside its API. A role's inline policy is `<id>-role-policy`. A function's log group is `/aws/lambda/<function name>`, so it contains the app and the stage already.
 
-A state record made by a version of Notation before generated names holds a name of the form `<app>--<stage>--<id>`. Deploy reads the name from state and keeps it. The resource gets a generated name when deploy next replaces it.
+A state record made by a version of Notation before generated names holds a name of the form `<app>--<stage>--<id>`, or `<app>--<stage>--<name>` when the declaration set the `name` option that those versions had. Deploy reads the name from state and keeps it. The resource gets a generated name when deploy next replaces it.
 
 ## Name rules
 
