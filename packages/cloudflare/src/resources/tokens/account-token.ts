@@ -1,9 +1,11 @@
 import * as v from "valibot";
+import { recordSecretValue } from "@notation/core";
 import {
   resource,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
 } from "@notation/resource";
+import { sortedJson } from "@notation/utils";
 import { cloudflareCreate } from "src/api/client";
 import {
   deleteSecretByName,
@@ -139,6 +141,7 @@ export const AccountToken = accountTokenSchema
           { cause: error },
         );
       }
+      recordSecretValue(token.value);
       try {
         await writeSecret(
           params.AccountId,
@@ -260,19 +263,7 @@ export function sortedPolicies(
       ...policy,
       permissionGroups: [...new Set(policy.permissionGroups)].sort(),
     }))
-    .sort((a, b) => compare(stableJson(a), stableJson(b)));
+    .sort((a, b) => compare(sortedJson.encode(a), sortedJson.encode(b)));
 }
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-
-// JSON with the keys of each object sorted, so that two equal values give
-// the same string.
-function stableJson(value: unknown): string {
-  return JSON.stringify(value, (_, inner) =>
-    inner && typeof inner === "object" && !Array.isArray(inner)
-      ? Object.fromEntries(
-          Object.entries(inner).sort(([a], [b]) => compare(a, b)),
-        )
-      : inner,
-  );
-}

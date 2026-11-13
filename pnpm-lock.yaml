@@ -315,6 +315,9 @@ importers:
       '@notation/std':
         specifier: workspace:*
         version: link:../std
+      '@notation/utils':
+        specifier: workspace:*
+        version: link:../utils
       valibot:
         specifier: ^1.5.0
         version: 1.5.0(typescript@7.0.2)

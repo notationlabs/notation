@@ -4,6 +4,7 @@ import {
   ResourceNotFoundError,
 } from "@notation/resource";
 import { decideDriftAction } from "@notation/reconciler";
+import { clearSecretValues, scrubSecretValues } from "@notation/utils";
 import { AccountToken, sortedPolicies } from "src/resources/tokens";
 
 type Call = { method: string; url: URL; body: unknown };
@@ -109,6 +110,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  clearSecretValues();
 });
 
 describe("AccountToken", () => {
@@ -177,6 +179,13 @@ describe("AccountToken", () => {
     await expect(token.create(params)).rejects.toThrow("store_not_found");
     expect(calls.at(-1)).toMatchObject({ method: "DELETE" });
     expect(calls.at(-1)!.url.pathname).toBe(`${TOKENS}/t1`);
+  });
+
+  it("records the value, so that it is scrubbed from an error that echoes it", async () => {
+    route({ createSecret: () => fail(400, 1001, `bad value ${VALUE}`) });
+
+    const error = await token.create(params).catch((e) => e);
+    expect(scrubSecretValues(error.message)).not.toContain(VALUE);
   });
 
   it("reports a create whose response was a server error as unknown", async () => {

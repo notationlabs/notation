@@ -35,6 +35,7 @@
     "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/std": "workspace:*",
+    "@notation/utils": "workspace:*",
     "valibot": "^1.5.0"
   },
   "devDependencies": {
