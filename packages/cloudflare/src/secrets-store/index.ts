@@ -56,9 +56,7 @@ export class SecretGroup
     if (source) {
       this.value = this.add(
         new std.sources.SourceValue(`value:${id}`, {
-          config: { Source: source.name, Key: key! },
-          source,
-          secret: id,
+          config: { Secret: id, Source: source.name, Key: key! },
         }),
       );
     }

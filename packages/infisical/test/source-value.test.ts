@@ -43,9 +43,7 @@ it("gives a SourceValue its version, and getValue its value, from one fetch", as
         });
       });
       const value = new sources.SourceValue("value:stripe-key", {
-        config: { Source: source.name, Key: "STRIPE_KEY" },
-        source,
-        secret: "stripe-key",
+        config: { Secret: "stripe-key", Source: source.name, Key: "STRIPE_KEY" },
       });
       return {
         params: await value.getParams(),
@@ -55,7 +53,12 @@ it("gives a SourceValue its version, and getValue its value, from one fetch", as
   );
 
   expect(result).toEqual({
-    params: { Source: "infisical", Key: "STRIPE_KEY", Version: "sec-1:14" },
+    params: {
+      Secret: "stripe-key",
+      Source: "infisical",
+      Key: "STRIPE_KEY",
+      Version: "sec-1:14",
+    },
     value: "sk_live_sentinel",
   });
   expect(fetch).toHaveBeenCalledTimes(1);

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { runWithSecretContext, type Source } from "@notation/core";
+import {
+  declareSecret,
+  runWithSecretContext,
+  type Source,
+} from "@notation/core";
+import type { BaseResource } from "@notation/resource";
 import { Redacted } from "src/sources";
 import { SourceValue } from "src/resources/sources";
 
@@ -16,46 +21,59 @@ const unversioned: Source = {
   get: async () => new Redacted("x"),
 };
 
-const inContext = <T>(fn: () => Promise<T>) =>
-  runWithSecretContext({ stage: "dev", runId: "exec-1" }, fn);
+const inContext = <T>(source: Source, fn: () => Promise<T>) =>
+  runWithSecretContext({ stage: "dev", runId: "exec-1" }, () => {
+    declareSecret({
+      id: "stripe-key",
+      resource: {} as BaseResource,
+      source,
+      key: "STRIPE_KEY",
+    });
+    return fn();
+  });
 
 const valueOf = (source: Source) =>
   new SourceValue("value:stripe-key", {
-    config: { Source: source.name, Key: "STRIPE_KEY" },
-    source,
-    secret: "stripe-key",
+    config: { Secret: "stripe-key", Source: source.name, Key: "STRIPE_KEY" },
   });
+
+const paramsOf = (source: Source) =>
+  inContext(source, () => valueOf(source).getParams());
 
 describe("SourceValue", () => {
   it("takes its version from the source", async () => {
-    await expect(
-      inContext(() => valueOf(versioned(true)).getParams()),
-    ).resolves.toEqual({ Source: "vault", Key: "STRIPE_KEY", Version: "14" });
+    await expect(paramsOf(versioned(true))).resolves.toEqual({
+      Secret: "stripe-key",
+      Source: "vault",
+      Key: "STRIPE_KEY",
+      Version: "14",
+    });
   });
 
   it("takes the run's ID as the version of a source without versions", async () => {
-    await expect(
-      inContext(() => valueOf(unversioned).getParams()),
-    ).resolves.toMatchObject({ Version: "exec-1" });
+    await expect(paramsOf(unversioned)).resolves.toMatchObject({
+      Version: "exec-1",
+    });
   });
 
   it("fails when the source doesn't have the key", async () => {
+    const source = versioned(false);
     await expect(
-      inContext(() => valueOf(versioned(false)).planParams()),
+      inContext(source, () => valueOf(source).planParams()),
     ).rejects.toThrow(
       "`STRIPE_KEY` isn't in the vault source of `stripe-key`.",
     );
   });
 
   it("never holds the value", async () => {
-    const params = await inContext(() => valueOf(versioned(true)).getParams());
+    const params = await paramsOf(versioned(true));
 
     expect(JSON.stringify(params)).not.toContain('"x"');
   });
 
   it("can be made from its state record, to be deleted", async () => {
     const orphan = new SourceValue("value:old", {
-      config: { Source: "env", Key: "OLD" },
+      config: { Secret: "old", Source: "env", Key: "OLD" },
     });
 
     await expect(orphan.delete({}, {} as any)).resolves.toBeUndefined();

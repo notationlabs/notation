@@ -1,11 +1,18 @@
 import * as v from "valibot";
 import { resource } from "@notation/resource";
-import { secretContext, type Source } from "@notation/core";
+import { secretContext } from "@notation/core";
+
+type SourceValueParams = {
+  Secret: string;
+  Source: string;
+  Key: string;
+  Version: string;
+};
 
 export type SourceValueSchema = {
   Key: {};
-  CreateParams: { Source: string; Key: string; Version: string };
-  UpdateParams: { Source: string; Key: string; Version: string };
+  CreateParams: SourceValueParams;
+  UpdateParams: SourceValueParams;
   ReadResult: {};
 };
 
@@ -15,6 +22,12 @@ const sourceValueResource = resource<SourceValueSchema>({
 });
 
 const sourceValueSchema = sourceValueResource.defineSchema({
+  /** The id of the secret whose value it is. */
+  Secret: {
+    propertyType: "param",
+    presence: "required",
+    value: v.string(),
+  },
   /** The source's name, such as `infisical`. */
   Source: {
     propertyType: "param",
@@ -38,75 +51,43 @@ const sourceValueSchema = sourceValueResource.defineSchema({
   },
 } as const);
 
-const SourceValueResource = sourceValueSchema.defineOperations<{
-  Version: string;
-}>({
-  create: async () => {},
-  update: async () => {},
-  delete: async () => {},
-});
-
-type SourceValueResourceInstance = InstanceType<typeof SourceValueResource>;
-
-// The class that `defineOperations` returns is typed as the abstract
-// `Resource`, which a class can't extend. Its instances implement every
-// member, so it is typed here as a plain constructor.
-const SourceValueBase = SourceValueResource as unknown as {
-  new (
-    id: string,
-    opts: { config: { Source: string; Key: string } },
-  ): Pick<SourceValueResourceInstance, keyof SourceValueResourceInstance>;
-} & Pick<typeof SourceValueResource, keyof typeof SourceValueResource>;
-
-export type SourceValueOptions = {
-  config: { Source: string; Key: string };
-  /** The source that the declaration was given. */
-  source?: Source;
-  /** The id of the secret whose value it is, for error messages. */
-  secret?: string;
-};
-
 /**
  * Records where a secret's value comes from: a source and a key. It never
  * holds the value. Its `Version` changes when the source's version of the key
  * changes, or on every run for a source with no versions, and the secret that
  * depends on it writes its value then.
  *
- * Plan and deploy fail when the source doesn't have the key.
+ * It finds the source in the secret's declaration. Plan and deploy fail when
+ * the source doesn't have the key.
  */
-export class SourceValue extends SourceValueBase {
-  readonly #source: Source | undefined;
-  readonly #secret: string;
-
-  constructor(id: string, options: SourceValueOptions) {
-    super(id, { config: options.config });
-    this.#source = options.source;
-    this.#secret = options.secret ?? id;
-  }
-
-  deriveParams = async (): Promise<{ Version: string }> => {
-    const source = this.#source;
-    const { Key } = this.config;
-    if (!source) {
-      throw new Error(`${this.id} has no source, so its params can't be read.`);
-    }
+export const SourceValue = sourceValueSchema.defineOperations({
+  deriveParams: async ({ config }) => {
+    const Secret = config.Secret!;
+    const Key = config.Key!;
     const context = secretContext();
     if (!context) {
       throw new Error(
-        `${this.id} reads its source only in notation plan and notation deploy.`,
+        `The source of \`${Secret}\` is read only in notation plan and notation deploy.`,
       );
+    }
+    const source = context.declared.get(Secret)?.source;
+    if (!source) {
+      throw new Error(`No secret with a source has the id "${Secret}".`);
     }
     const sourceContext = { stage: context.stage };
     if (!(await source.has(Key, sourceContext))) {
       throw new Error(
-        `\`${Key}\` isn't in the ${source.name} source of \`${this.#secret}\`.`,
+        `\`${Key}\` isn't in the ${source.name} source of \`${Secret}\`.`,
       );
     }
     const Version = source.version
       ? await source.version(Key, sourceContext)
       : context.runId;
     return { Version };
-  };
-}
+  },
+  create: async () => {},
+  update: async () => {},
+  delete: async () => {},
+});
 
 export type SourceValueInstance = InstanceType<typeof SourceValue>;

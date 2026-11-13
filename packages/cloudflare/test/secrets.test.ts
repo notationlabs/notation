@@ -164,7 +164,11 @@ describe("secret", () => {
     );
 
     expect(group.value!.id).toBe("value:stripe-key");
-    expect(group.value!.config).toEqual({ Source: "vault", Key: "STRIPE_KEY" });
+    expect(group.value!.config).toEqual({
+      Secret: "stripe-key",
+      Source: "vault",
+      Key: "STRIPE_KEY",
+    });
     expect(group.secret.getDependencies()).toContain(group.value);
 
     group.secret.dependencies.store.setOutput({
@@ -172,6 +176,7 @@ describe("secret", () => {
       StoreId: "store",
     });
     group.value!.setOutput({
+      Secret: "stripe-key",
       Source: "vault",
       Key: "STRIPE_KEY",
       Version: "14",

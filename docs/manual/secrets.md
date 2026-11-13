@@ -35,7 +35,7 @@ export const webhookSecret = secret({
 export const adminPassword = secret({ id: "admin-password" });
 ```
 
-Each secret with a source has a `SourceValue` resource, with the ID `value:<id>`. It records the source's name, the key, and a version, and never the value. Plan and deploy fail when the source doesn't have the key:
+Each secret with a source has a `SourceValue` resource, with the ID `value:<id>`. It records the secret's id, the source's name, the key, and a version, and never the value. Plan and deploy fail when the source doesn't have the key:
 
 ```text
 `SENTRY_DSN` isn't in the env source of `sentry-dsn`.
