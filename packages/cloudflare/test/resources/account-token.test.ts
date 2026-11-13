@@ -254,17 +254,15 @@ describe("AccountToken", () => {
     expect(calls.at(-1)!.url.pathname).toBe(`${TOKENS}/t1`);
   });
 
-  it("deletes the token and its secret", async () => {
-    route({
-      listSecrets: () =>
-        ok([{ id: "s1", name: params.Name, status: "active" }]),
-    });
+  it("deletes the token, and its secret by the ID in its record", async () => {
+    route({});
 
-    await token.delete(key, {} as any);
+    await token.delete(key, { SecretId: "s1" } as any);
 
-    expect(
-      calls.filter((c) => c.method === "DELETE").map((c) => c.url.pathname),
-    ).toEqual([`${TOKENS}/t1`, `${SECRETS}/s1`]);
+    expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([
+      `DELETE ${TOKENS}/t1`,
+      `DELETE ${SECRETS}/s1`,
+    ]);
   });
 
   it("adds the permission it needs to a 403", async () => {

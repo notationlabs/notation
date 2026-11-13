@@ -3,9 +3,10 @@ import { PROMPT_SOURCE } from "@notation/core";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { getValue, isValueSupplied } from "@notation/std/sources";
 import {
-  deleteSecretByName,
+  createSecret,
+  deleteStoreSecret,
   findSecretByName,
-  writeSecret,
+  setSecretValue,
 } from "src/api/secrets-store";
 import type { SecretsStoreInstance } from "./secrets-store";
 
@@ -99,19 +100,20 @@ const secretsStoreSecretSchema = secretsStoreSecret.defineSchema({
  */
 async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
   const { AccountId, StoreId, Name, ValueFrom } = params;
+  const existing = await findSecretByName(AccountId, StoreId, Name);
   if (
+    existing &&
     ValueFrom.Source === PROMPT_SOURCE &&
-    !isValueSupplied(ValueFrom.Secret) &&
-    (await findSecretByName(AccountId, StoreId, Name))
+    !isValueSupplied(ValueFrom.Secret)
   ) {
     return;
   }
-  await writeSecret(
-    AccountId,
-    StoreId,
-    Name,
-    (await getValue(ValueFrom.Secret)).unwrap(),
-  );
+  const value = (await getValue(ValueFrom.Secret)).unwrap();
+  if (existing) {
+    await setSecretValue(AccountId, StoreId, existing.id, value);
+  } else {
+    await createSecret(AccountId, StoreId, Name, value);
+  }
 }
 
 /**
@@ -149,7 +151,7 @@ export const SecretsStoreSecret = secretsStoreSecretSchema
 
     delete: async (key, state) => {
       if (!state.StageScoped) return;
-      await deleteSecretByName(key.AccountId, key.StoreId, key.Name);
+      await deleteStoreSecret(key, state.SecretId);
     },
   })
   .requireDependencies<SecretsStoreSecretDependencies>()

@@ -229,6 +229,7 @@ describe("SecretsStoreSecret", () => {
       source: vault,
     });
 
+    expect(calls.filter((call) => call.method === "GET")).toHaveLength(1);
     expect(writes()).toEqual([
       {
         method: "PATCH",
@@ -345,10 +346,20 @@ describe("SecretsStoreSecret", () => {
     );
   });
 
-  it("deletes a stage-scoped secret", async () => {
-    mockFetch((call) => (call.method === "GET" ? ok([listed()]) : ok()));
+  it("deletes a stage-scoped secret by the ID in its record", async () => {
+    mockFetch(() => ok());
 
     await resource.delete(key, { ...params, SecretId: "s1" });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ method: "DELETE" });
+    expect(calls[0]!.url.pathname).toBe(`${STORES}/store/secrets/s1`);
+  });
+
+  it("finds the secret by name to delete it when its record has no ID", async () => {
+    mockFetch((call) => (call.method === "GET" ? ok([listed()]) : ok()));
+
+    await resource.delete(key, params as any);
 
     expect(calls[1]).toMatchObject({ method: "DELETE" });
     expect(calls[1]!.url.pathname).toBe(`${STORES}/store/secrets/s1`);
@@ -367,11 +378,7 @@ describe("SecretsStoreSecret", () => {
   });
 
   it("does nothing on delete when the secret is already gone", async () => {
-    mockFetch((call) =>
-      call.method === "GET"
-        ? ok([listed()])
-        : fail(404, 1001, "secret_not_found"),
-    );
+    mockFetch(() => fail(404, 1001, "secret_not_found"));
 
     await expect(
       resource.delete(key, { ...params, SecretId: "s1" }),

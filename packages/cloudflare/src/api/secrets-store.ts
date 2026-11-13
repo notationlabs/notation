@@ -165,12 +165,17 @@ export async function deleteSecret(
   }
 }
 
-/** Does nothing if no secret has the name. */
-export async function deleteSecretByName(
-  account: string,
-  store: string,
-  name: string,
+/**
+ * Deletes the secret by the ID that its record holds. A record written when
+ * the read after create failed has no ID, so the secret is found by name.
+ * Does nothing if the secret doesn't exist.
+ */
+export async function deleteStoreSecret(
+  key: { AccountId: string; StoreId: string; Name: string },
+  secretId: string | undefined,
 ): Promise<void> {
-  const secret = await findSecretByName(account, store, name);
-  if (secret) await deleteSecret(account, store, secret.id);
+  const id =
+    secretId ??
+    (await findSecretByName(key.AccountId, key.StoreId, key.Name))?.id;
+  if (id) await deleteSecret(key.AccountId, key.StoreId, id);
 }

@@ -8,7 +8,7 @@ import {
 import { sortedJson } from "@notation/utils";
 import { cloudflareCreate } from "src/api/client";
 import {
-  deleteSecretByName,
+  deleteStoreSecret,
   findSecretByName,
   writeSecret,
 } from "src/api/secrets-store";
@@ -188,9 +188,9 @@ export const AccountToken = accountTokenSchema
       });
     },
 
-    delete: async (key) => {
+    delete: async (key, state) => {
       await deleteToken(key.AccountId, key.TokenId);
-      await deleteSecretByName(key.AccountId, key.StoreId, key.Name);
+      await deleteStoreSecret(key, state.SecretId);
     },
   })
   .requireDependencies<AccountTokenDependencies>()
