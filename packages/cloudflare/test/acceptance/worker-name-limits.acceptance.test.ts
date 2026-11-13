@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setScriptSubdomain } from "../../../cloudflare/src/api/workers";
+import { setScriptSubdomain } from "../../src/api/workers";
 import {
   accountSubdomain,
   api,

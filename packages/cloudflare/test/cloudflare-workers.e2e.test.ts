@@ -5,6 +5,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -12,17 +13,31 @@ import { fileURLToPath } from "node:url";
 import { Miniflare } from "miniflare";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { setConfigFile } from "@notation/core";
-import { compileInfra, compileRuntimeModules } from "../src/compile";
+import { compileInfra, compileRuntimeModules } from "@notation/cli/src/compile";
 
-// Inside this package, so that the project's imports of @notation/cloudflare
-// resolve to the built package.
+// Inside this package, so that the project's imports of @notation packages
+// resolve from this package's node_modules.
 const tmpDir = fileURLToPath(new URL("../tmp", import.meta.url));
+const packageDir = fileURLToPath(new URL("..", import.meta.url));
+
+// The project gets its own package.json, as this package's
+// `"sideEffects": false` would otherwise let the infra build drop the
+// project's modules. The build treats a bare import as a package only when it
+// is installed in a node_modules folder, so the project links
+// @notation/cloudflare into its own.
+function setUpProject(root: string) {
+  writeFileSync(path.join(root, "package.json"), `{ "private": true }`);
+  const link = path.join(root, "node_modules/@notation/cloudflare");
+  mkdirSync(path.dirname(link), { recursive: true });
+  symlinkSync(packageDir, link, "dir");
+}
 
 let root: string;
 
 beforeEach(() => {
   mkdirSync(tmpDir, { recursive: true });
   root = realpathSync(mkdtempSync(path.join(tmpDir, "notation-cf-e2e-")));
+  setUpProject(root);
   writeFileSync(path.join(root, "notation.config.ts"), "export default {}");
   setConfigFile(path.join(root, "notation.config.ts"));
 });

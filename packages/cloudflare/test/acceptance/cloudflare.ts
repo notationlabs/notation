@@ -6,14 +6,14 @@ const API_URL = "https://api.cloudflare.com/client/v4";
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 const apiToken = process.env.CLOUDFLARE_API_TOKEN;
 
-/** True when the credentials for the live tests are set. */
+/** True when the credentials for the acceptance tests are set. */
 export const hasCredentials = Boolean(accountId && apiToken);
 
 /**
- * Starts the name of everything that a run of the live tests creates, so
+ * Starts the name of everything that a run of the acceptance tests creates, so
  * that leftovers can be found and two runs don't collide.
  */
-export const runPrefix = `nlive-${crypto.randomBytes(3).toString("hex")}`;
+export const runPrefix = `nacc-${crypto.randomBytes(3).toString("hex")}`;
 
 export type ApiResponse<T> = {
   status: number;

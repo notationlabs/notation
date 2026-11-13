@@ -7,7 +7,7 @@ export default defineConfig({
   test: {
     // Opt in to the workspace source dirs so stray trees (e.g. .claude/worktrees) are ignored.
     include: ["{packages,examples}/**/*.{test,spec}.?(c|m)[jt]s?(x)"],
-    // Live tests deploy to a real Cloudflare account. `pok test live` runs them.
-    exclude: [...configDefaults.exclude, "**/*.live.test.ts"],
+    // Acceptance tests deploy to a real Cloudflare account. `pok test acceptance` runs them.
+    exclude: [...configDefaults.exclude, "**/*.acceptance.test.ts"],
   },
 });

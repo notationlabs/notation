@@ -10,7 +10,7 @@ import {
 // holds 63 characters. A preview URL puts an 8 character version prefix and
 // a hyphen in the same label, which leaves 54. Cloudflare enforces this: it
 // refuses to turn on workers.dev with preview URLs for a longer name (error
-// 100315), and the live tests check it.
+// 100315), and the acceptance tests check it.
 export const WORKER_NAME_MAX_LENGTH = 54;
 
 // The longest name that a Worker got before deploy generated its name.

@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Miniflare } from "miniflare";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setConfigFile } from "@notation/core";
-import { compileInfra, compileRuntimeModules } from "../src/compile";
+import { compileInfra, compileRuntimeModules } from "@notation/cli/src/compile";
 
 // Inside the repository, so the bundle's imports of @notation packages
 // resolve from the root node_modules.

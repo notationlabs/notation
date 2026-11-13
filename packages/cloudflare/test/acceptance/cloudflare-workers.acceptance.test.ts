@@ -1,5 +1,11 @@
 import { execFile } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -16,13 +22,28 @@ import {
   scriptsWithPrefix,
 } from "./cloudflare";
 
-// Inside this package, so that the project's imports of @notation/cloudflare
-// resolve to the built package.
+// Inside this package, so that the project's imports of @notation packages
+// resolve from this package's node_modules.
 const tmpDir = fileURLToPath(new URL("../../tmp", import.meta.url));
-const cli = fileURLToPath(new URL("../../dist/index.js", import.meta.url));
+const packageDir = fileURLToPath(new URL("../..", import.meta.url));
+const cli = fileURLToPath(
+  new URL("../../node_modules/@notation/cli/dist/index.js", import.meta.url),
+);
+
+// The project gets its own package.json, as this package's
+// `"sideEffects": false` would otherwise let the infra build drop the
+// project's modules. The build treats a bare import as a package only when it
+// is installed in a node_modules folder, so the project links
+// @notation/cloudflare into its own.
+function setUpProject(root: string) {
+  writeFileSync(path.join(root, "package.json"), `{ "private": true }`);
+  const link = path.join(root, "node_modules/@notation/cloudflare");
+  mkdirSync(path.dirname(link), { recursive: true });
+  symlinkSync(packageDir, link, "dir");
+}
 
 const app = runPrefix;
-const stage = "live";
+const stage = "acceptance";
 const scope = `${app}--${stage}--`;
 
 // Long enough that deploy cuts the generated name to the 54 character limit.
@@ -170,6 +191,7 @@ describe.skipIf(!hasCredentials)(
     beforeAll(async () => {
       mkdirSync(tmpDir, { recursive: true });
       root = mkdtempSync(path.join(tmpDir, `${runPrefix}-`));
+      setUpProject(root);
       subdomain = await accountSubdomain();
     });
 
