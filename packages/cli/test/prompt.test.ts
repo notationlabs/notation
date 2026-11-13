@@ -33,6 +33,17 @@ describe("promptHidden", () => {
     expect(canPrompt(input)).toBe(true);
   });
 
+  it("drops escape sequences, such as the arrow keys, and other control characters", async () => {
+    const { input, output } = terminal();
+
+    const answer = promptHidden("Value: ", { input, output });
+    input.write("hun\u001b[D");
+    input.write("ter\u001bOA\t\u001b[1;5C\u001bb");
+    input.write("\u001b[200~2\u001b[201~é\r");
+
+    await expect(answer).resolves.toBe("hunter2é");
+  });
+
   it("rejects on Ctrl-C", async () => {
     const { input, output } = terminal();
 

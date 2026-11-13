@@ -9,6 +9,13 @@ type Input = NodeJS.ReadableStream & {
 
 type Output = Pick<NodeJS.WritableStream, "write">;
 
+// A terminal sends keys such as the arrows as an escape sequence: ESC, then
+// `[` or `O` and a final byte, as in `\u001b[D`. Alt and a key sends ESC and
+// the key. A sequence arrives whole in one chunk.
+const ESCAPE_SEQUENCE = /\u001b(?:\[[0-?]*[ -/]*[@-~]|O.|.)?/gs;
+
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/;
+
 export type PromptStreams = { input?: Input; output?: Output };
 
 /** True when a person can answer a prompt. */
@@ -42,9 +49,10 @@ export function promptHidden(
     };
 
     // Raw mode passes each key through, so line endings, backspace, Ctrl-C
-    // and Ctrl-D are handled here.
+    // and Ctrl-D are handled here. Escape sequences and other control
+    // characters are dropped.
     const onData = (chunk: string | Buffer) => {
-      for (const char of String(chunk)) {
+      for (const char of String(chunk).replace(ESCAPE_SEQUENCE, "")) {
         if (char === "\r" || char === "\n") return finish();
         if (char === "\u0003") {
           return finish(new Error("The prompt was cancelled."));
@@ -58,6 +66,7 @@ export function promptHidden(
           value = [...value].slice(0, -1).join("");
           continue;
         }
+        if (CONTROL_CHARACTER.test(char)) continue;
         value += char;
       }
     };
