@@ -1,5 +1,5 @@
 import { test, expect } from "vitest";
-import { collectResourceGraph } from "@notation/resource";
+import { UNKNOWN_AFTER_APPLY, collectResourceGraph } from "@notation/resource";
 import { lambda, type NameSafe } from "src/lambda";
 
 const code = { type: "file", path: "src/fns/handler.fn.js" } as const;
@@ -47,7 +47,7 @@ test("a function without concurrency has no reserved concurrency", () => {
   ).toBeUndefined();
 });
 
-test("the policy's role name is known at plan before the role is deployed", async () => {
+test("the policy's role name is unknown at plan before the role is deployed", async () => {
   const group = lambda({ id: "get-todos", code });
   group.policy.contribute({
     PolicyDocument: {
@@ -55,7 +55,11 @@ test("the policy's role name is known at plan before the role is deployed", asyn
     },
   });
   expect(await group.policy.planParams()).toMatchObject({
-    RoleName: "get-todos-role",
+    RoleName: UNKNOWN_AFTER_APPLY,
+  });
+  group.role.setOutput({ RoleName: "lambda-get-todos-role-1a2b3c4d" } as any);
+  expect(await group.policy.planParams()).toMatchObject({
+    RoleName: "lambda-get-todos-role-1a2b3c4d",
   });
   expect(group.policy.getDependencies()).toContain(group.role);
 });

@@ -45,9 +45,8 @@ test("AWS names start with the app and stage", async () => {
   expect(declared.fn.fn.config.FunctionName).toBe(
     "orders-app--prod--get-orders",
   );
-  expect(declared.fn.role.config.RoleName).toBe(
-    "orders-app--prod--get-orders-role",
-  );
+  // Deploy generates the role's name.
+  expect(declared.fn.role.config.RoleName).toBeUndefined();
   expect(declared.api.api.config.Name).toBe("orders-app--prod--orders-api");
   expect(declared.queue.queue.config.QueueName).toBe(
     "orders-app--prod--orders",
@@ -68,7 +67,7 @@ test("resource ids do not change with the stage", async () => {
   expect(staging.fn.config.FunctionName).not.toBe(prod.fn.config.FunctionName);
 });
 
-test("a long function and role name is shortened to 64 characters", async () => {
+test("a long function name is shortened to 64 characters", async () => {
   const id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
   const fn = await collect(() => lambda({ id, code }));
 
@@ -76,11 +75,9 @@ test("a long function and role name is shortened to 64 characters", async () => 
   expect(fn.fn.config.FunctionName).toMatch(
     /^orders-app--prod--x+-[0-9a-f]{8}$/,
   );
-  expect(fn.role.config.RoleName).toHaveLength(64);
-  expect(fn.role.config.RoleName).not.toBe(fn.fn.config.FunctionName);
 });
 
-test("the policy's role name is the scoped role name", async () => {
+test("the policy's role name is the role's RoleName output", async () => {
   const fn = await collect(() => {
     const fn = lambda({ id: "get-orders", code });
     fn.policy.contribute({
@@ -93,7 +90,10 @@ test("the policy's role name is the scoped role name", async () => {
     return fn;
   });
 
-  expect(fn.policy.config.RoleName).toBe("orders-app--prod--get-orders-role");
+  fn.role.setOutput({ RoleName: "orders-app--prod--role-1a2b3c4d" } as any);
+  expect(await fn.policy.getParams()).toMatchObject({
+    RoleName: "orders-app--prod--role-1a2b3c4d",
+  });
   expect(fn.policy.config.PolicyName).toBe("get-orders-role-policy");
 });
 
@@ -179,7 +179,6 @@ test("name overrides the AWS name, with the app and stage, and the id stays the 
 
   expect(fn.fn.id).toBe("lambda:get-orders");
   expect(fn.fn.config.FunctionName).toBe("orders-app--prod--fetch-orders");
-  expect(fn.role.config.RoleName).toBe("orders-app--prod--get-orders-role");
   expect(ordersApi.api.id).toBe("api:orders-api");
   expect(ordersApi.api.config.Name).toBe("orders-app--prod--shop-api");
   expect(ordersQueue.queue.id).toBe("sqs-queue:orders");

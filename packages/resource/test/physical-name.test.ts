@@ -1,5 +1,12 @@
 import { expect, it } from "vitest";
-import { collectResourceGraph, physicalName, scopedPhysicalName } from "src";
+import {
+  collectResourceGraph,
+  generatedPhysicalName,
+  physicalName,
+  resource,
+  scopedPhysicalName,
+} from "src";
+import { string } from "./validators";
 
 const scope = { app: "orders-app", stage: "prod" };
 
@@ -86,4 +93,104 @@ it("uses a hash that does not change between releases", () => {
   expect(physicalName(scope, "a".repeat(60), { maxLength: 64 })).toBe(
     `orders-app--prod--${"a".repeat(37)}-386c3ec7`,
   );
+});
+
+it("generates a name from the app, stage, resource ID and instance", () => {
+  expect(
+    generatedPhysicalName(scope, "lambda:get-orders:role", "1a2b3c4d", {
+      maxLength: 64,
+    }),
+  ).toBe("orders-app--prod--lambda-get-orders-role-1a2b3c4d");
+});
+
+it("generates a name with no app and stage when there is no scope", () => {
+  expect(
+    generatedPhysicalName(undefined, "lambda:get-orders:role", "1a2b3c4d", {
+      maxLength: 64,
+    }),
+  ).toBe("lambda-get-orders-role-1a2b3c4d");
+});
+
+it("generates a name of lower-case letters, digits and single hyphens from any resource ID", () => {
+  expect(
+    generatedPhysicalName(
+      scope,
+      ":Route:GET /Orders/{id}__v2--x:",
+      "1a2b3c4d",
+      {
+        maxLength: 64,
+      },
+    ),
+  ).toBe("orders-app--prod--route-get-orders-id-v2-x-1a2b3c4d");
+});
+
+it("shortens a generated name before the instance", () => {
+  const result = generatedPhysicalName(
+    scope,
+    `lambda:${"x".repeat(60)}:role`,
+    "1a2b3c4d",
+    { maxLength: 64 },
+  );
+  expect(result).toHaveLength(64);
+  expect(result).toMatch(/^orders-app--prod--lambda-x+-1a2b3c4d$/);
+});
+
+it("does not end the shortened part of a generated name with a hyphen", () => {
+  // The cut falls just after the hyphen that follows "lambda".
+  const result = generatedPhysicalName(scope, "lambda:orders", "1a2b3c4d", {
+    maxLength: "orders-app--prod--lambda-".length + 9,
+  });
+  expect(result).toBe("orders-app--prod--lambda-1a2b3c4d");
+});
+
+it("puts the instance of a generated name before a required ending", () => {
+  const rule = { maxLength: 40, requiredEnding: ".fifo" };
+  expect(
+    generatedPhysicalName(scope, "sqs-queue:orders.fifo", "1a2b3c4d", rule),
+  ).toBe("orders-app--prod--sqs-queu-1a2b3c4d.fifo");
+  expect(
+    generatedPhysicalName(undefined, "sqs-queue:orders", "1a2b3c4d", rule),
+  ).toBe("sqs-queue-orders-1a2b3c4d");
+});
+
+it("throws when the maximum length leaves no room before the instance", () => {
+  expect(() =>
+    generatedPhysicalName(scope, "role", "1a2b3c4d", { maxLength: 9 }),
+  ).toThrow("A maximum length of 9 leaves no room for a generated name");
+});
+
+it("lets config leave out a param that has physicalName", async () => {
+  const Role = resource<{
+    Key: { RoleName: string };
+    CreateParams: { RoleName: string; Path: string };
+    UpdateParams: { RoleName: string };
+    ReadResult: {};
+  }>({ type: "test/physical-name/role", provider: "test" })
+    .defineSchema({
+      RoleName: {
+        propertyType: "param",
+        presence: "required",
+        value: string(),
+        primaryKey: true,
+        physicalName: { maxLength: 64 },
+      },
+      Path: {
+        propertyType: "param",
+        presence: "required",
+        value: string(),
+        immutable: true,
+      },
+    })
+    .defineOperations({
+      // The params of an operation always hold the name.
+      create: async (params) => void (params.RoleName satisfies string),
+      delete: async () => undefined,
+    });
+
+  const generated = new Role("generated", { config: { Path: "/" } });
+  new Role("provided", { config: { Path: "/", RoleName: "role" } });
+  // @ts-expect-error Path has no physicalName, so config must set it
+  new Role("incomplete", { config: { RoleName: "role" } });
+
+  expect(await generated.getParams()).toEqual({ Path: "/" });
 });

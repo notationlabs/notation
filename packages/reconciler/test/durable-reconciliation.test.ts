@@ -6261,6 +6261,399 @@ describe("dependency cycles", () => {
   });
 });
 
+describe("generated physical names", () => {
+  const nameScope = { app: "shop", stage: "prod" };
+  const GENERATED = /^shop--prod--queue-orders-[0-9a-f]{8}$/;
+
+  /**
+   * A resource whose `name` deploy generates when config leaves it out. The
+   * provider keeps one resource per name. `beforeCreate` runs when create is
+   * called, before it makes anything.
+   */
+  function defineGenerated(type: ResourceType) {
+    const remote = new Map<string, { name: string; path: string }>();
+    const calls: string[] = [];
+    const control: { beforeCreate?: () => Promise<void> } = {};
+    const Generated = resource({ type, provider: "test" })
+      // Cast: see "reads a create interrupted before its outcome was
+      // recorded instead of creating again".
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+          physicalName: { maxLength: 64 },
+        },
+        path: {
+          presence: "required",
+          propertyType: "param",
+          immutable: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          calls.push(`create:${params.name}`);
+          await control.beforeCreate?.();
+          if (remote.has(params.name)) {
+            throw new ResourceAlreadyExistsError(
+              `${params.name} already exists`,
+            );
+          }
+          remote.set(params.name, { ...params });
+        },
+        read: async (key: any) => {
+          const found = remote.get(key.name);
+          if (!found) throw new ResourceNotFoundError(`${key.name} not found`);
+          return { ...found };
+        },
+        delete: async (key: any) => {
+          calls.push(`delete:${key.name}`);
+          remote.delete(key.name);
+        },
+      });
+    return { Generated, remote, calls, control };
+  }
+
+  it("generates a name from the app, stage, resource ID and a random instance, and records it before create is called", async () => {
+    const { Generated, remote, control } = defineGenerated(
+      "test/durable/name-generated",
+    );
+    const runtime = createRuntime(
+      [new Generated("queue:orders", { config: { path: "/" } as any })],
+      "name-generated",
+      { nameScope },
+    );
+    let creating: Awaited<ReturnType<typeof runtime.state.get>>;
+    control.beforeCreate = async () => {
+      creating = await runtime.state.get("queue:orders");
+    };
+
+    await runtime.run("deploy-1");
+
+    const [name] = [...remote.keys()];
+    expect(name).toMatch(GENERATED);
+    expect(creating).toMatchObject({
+      lastOperation: "creating",
+      params: { name, path: "/" },
+      output: { name },
+    });
+    expect(await runtime.state.get("queue:orders")).toMatchObject({
+      lastOperation: "create",
+      config: { path: "/" },
+      params: { name, path: "/" },
+      output: { name },
+    });
+    runtime.close();
+  });
+
+  it("generates a name with no app and stage when deploy has no name scope", async () => {
+    const { Generated, remote } = defineGenerated("test/durable/name-unscoped");
+    const runtime = createRuntime(
+      [new Generated("queue:orders", { config: { path: "/" } as any })],
+      "name-unscoped",
+    );
+
+    await runtime.run("deploy-1");
+
+    expect([...remote.keys()]).toEqual([
+      expect.stringMatching(/^queue-orders-[0-9a-f]{8}$/),
+    ]);
+    runtime.close();
+  });
+
+  it("uses a name that config provides", async () => {
+    const { Generated, remote } = defineGenerated("test/durable/name-provided");
+    const runtime = createRuntime(
+      [
+        new Generated("queue:orders", {
+          config: { name: "orders", path: "/" } as any,
+        }),
+      ],
+      "name-provided",
+      { nameScope },
+    );
+
+    await runtime.run("deploy-1");
+
+    expect([...remote.keys()]).toEqual(["orders"]);
+    runtime.close();
+  });
+
+  it("keeps the recorded name on the next deploy, and decides noop", async () => {
+    const { Generated, remote, calls } = defineGenerated(
+      "test/durable/name-kept",
+    );
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(
+      [new Generated("queue:orders", { config: { path: "/" } as any })],
+      "name-kept",
+      { nameScope, emit: (event) => void events.push(event) },
+    );
+
+    await runtime.run("deploy-1");
+    const [name] = [...remote.keys()];
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual([`create:${name}`]);
+    expect(
+      events
+        .filter((event) => event.event === "reconciler.deploy.decision")
+        .map((event) => event.decision),
+    ).toEqual(["create", "noop"]);
+    expect(await runtime.state.get("queue:orders")).toMatchObject({
+      params: { name },
+    });
+    runtime.close();
+  });
+
+  it("keeps a name that config provided before, when config leaves it out", async () => {
+    const { Generated, remote, calls } = defineGenerated(
+      "test/durable/name-from-config",
+    );
+    const resources = [
+      new Generated("queue:orders", {
+        config: { name: "shop--prod--orders", path: "/" } as any,
+      }),
+    ];
+    const runtime = createRuntime(resources, "name-from-config", { nameScope });
+
+    await runtime.run("deploy-1");
+    resources[0] = new Generated("queue:orders", {
+      config: { path: "/" } as any,
+    });
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:shop--prod--orders"]);
+    expect([...remote.keys()]).toEqual(["shop--prod--orders"]);
+    runtime.close();
+  });
+
+  it("generates the same name when the execution is replayed after a crash", async () => {
+    const { Generated, remote, calls } = defineGenerated(
+      "test/durable/name-replay",
+    );
+    const runtime = createRuntime(
+      [new Generated("queue:orders", { config: { path: "/" } as any })],
+      "name-replay",
+      {
+        nameScope,
+        crashAfterStep: `notation:deploy:${encodeURIComponent("queue:orders")}:physical-names`,
+      },
+    );
+
+    const random = vi.spyOn(globalThis.crypto, "getRandomValues");
+
+    await expect(runtime.run("deploy-1")).rejects.toThrow(
+      "simulated process crash",
+    );
+    expect(calls).toEqual([]);
+    await runtime.run("deploy-1");
+
+    expect(random).toHaveBeenCalledOnce();
+    random.mockRestore();
+    const [name] = [...remote.keys()];
+    expect(name).toMatch(GENERATED);
+    expect(calls).toEqual([`create:${name}`]);
+    runtime.close();
+  });
+
+  it("uses the name in the creating record when a second deploy follows a crash during create", async () => {
+    const { Generated, remote, calls } = defineGenerated(
+      "test/durable/name-crash",
+    );
+    const resources = [
+      new Generated("queue:orders", { config: { path: "/" } as any }),
+    ];
+    const runtime = createRuntime(resources, "name-crash", {
+      nameScope,
+      crashAfterStep: `notation:deploy:${encodeURIComponent("queue:orders")}:create:remote:effect:0`,
+    });
+    await expect(runtime.run("deploy-1")).rejects.toThrow(
+      "simulated process crash",
+    );
+    const creating = await runtime.state.get("queue:orders");
+    expect(creating).toMatchObject({ lastOperation: "creating" });
+    const name = creating!.params.name as string;
+    expect([...remote.keys()]).toEqual([name]);
+
+    // The first execution is abandoned, so the second can take the hold.
+    await durable.clearDeploymentHold({
+      storeClient: runtime.storeClient,
+      deploymentId: "name-crash",
+      fromExecutionId: "deploy-1",
+    });
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual([`create:${name}`, `create:${name}`]);
+    expect([...remote.keys()]).toEqual([name]);
+    expect(await runtime.state.get("queue:orders")).toMatchObject({
+      lastOperation: "create",
+      params: { name, path: "/" },
+    });
+    runtime.close();
+  });
+
+  it("creates a replacement with a new generated name, after the delete", async () => {
+    const { Generated, remote, calls } = defineGenerated(
+      "test/durable/name-replace",
+    );
+    const resources = [
+      new Generated("queue:orders", { config: { path: "/" } as any }),
+    ];
+    const runtime = createRuntime(resources, "name-replace", { nameScope });
+
+    await runtime.run("deploy-1");
+    const [first] = [...remote.keys()];
+    resources[0] = new Generated("queue:orders", {
+      config: { path: "/new/" } as any,
+    });
+    await runtime.run("deploy-2");
+
+    const [second] = [...remote.keys()];
+    expect(second).toMatch(GENERATED);
+    expect(second).not.toBe(first);
+    expect(calls).toEqual([
+      `create:${first}`,
+      `delete:${first}`,
+      `create:${second}`,
+    ]);
+    expect(await runtime.state.get("queue:orders")).toMatchObject({
+      params: { name: second, path: "/new/" },
+      output: { name: second },
+    });
+
+    await runtime.run("deploy-3");
+    expect([...remote.keys()]).toEqual([second]);
+    runtime.close();
+  });
+
+  it("keeps a provided name on a replace", async () => {
+    const { Generated, calls } = defineGenerated(
+      "test/durable/name-replace-provided",
+    );
+    const resources = [
+      new Generated("queue:orders", {
+        config: { name: "orders", path: "/" } as any,
+      }),
+    ];
+    const runtime = createRuntime(resources, "name-replace-provided", {
+      nameScope,
+    });
+
+    await runtime.run("deploy-1");
+    resources[0] = new Generated("queue:orders", {
+      config: { name: "orders", path: "/new/" } as any,
+    });
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:orders", "delete:orders", "create:orders"]);
+    runtime.close();
+  });
+
+  it("creates the placeholder of a cycle with a generated name, and keeps the name in the later passes", async () => {
+    const remote = new Map<string, string[]>();
+    const calls: string[] = [];
+    const put = (verb: string, params: any) => {
+      remote.set(params.name, params.bindings ?? []);
+      calls.push(verb);
+    };
+    const Worker = resource({
+      type: "test/durable/name-cycle",
+      provider: "test",
+    })
+      // Cast: see "reads a create interrupted before its outcome was
+      // recorded instead of creating again".
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          primaryKey: true,
+          value: v.string(),
+          physicalName: { maxLength: 64 },
+        },
+        bindings: {
+          propertyType: "param",
+          presence: "optional",
+          value: v.array(v.string()),
+          collect: (items: string[][]) => items.flat(),
+        },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => put("create", params),
+        update: async (_key: any, _patch: any, params: any) =>
+          put("update", params),
+        delete: async (key: any) => void remote.delete(key.name),
+      });
+    const a: BaseResource = new Worker("a");
+    const b: BaseResource = new Worker("b");
+    a.contribute({ bindings: [b.outputRef("name")] } as any);
+    b.contribute({ bindings: [a.outputRef("name")] } as any);
+    const runtime = createRuntime([a, b], "name-cycle", { nameScope });
+
+    await runtime.run("deploy-1");
+
+    const nameA = (await runtime.state.get("a"))!.params.name as string;
+    const nameB = (await runtime.state.get("b"))!.params.name as string;
+    expect(nameA).toMatch(/^shop--prod--a-[0-9a-f]{8}$/);
+    expect(nameB).toMatch(/^shop--prod--b-[0-9a-f]{8}$/);
+    expect(calls).toEqual(["create", "create", "update"]);
+    expect(remote).toEqual(
+      new Map([
+        [nameA, [nameB]],
+        [nameB, [nameA]],
+      ]),
+    );
+
+    calls.length = 0;
+    await runtime.run("deploy-2");
+    expect(calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("gives a new name to the replacement of a resource that deploy took over", async () => {
+    const { Generated, remote, calls } = defineGenerated(
+      "test/durable/name-takeover-replace",
+    );
+    const resources = [
+      new Generated("queue:orders", { config: { path: "/" } as any }),
+    ];
+    const runtime = createRuntime(resources, "name-takeover-replace", {
+      nameScope,
+    });
+    // The record of a create that an earlier deploy did not finish. The
+    // provider made the resource, with another path than config has now.
+    const name = "shop--prod--queue-orders-0a1b2c3d";
+    remote.set(name, { name, path: "/old/" });
+    await runtime.storeClient
+      .store(durable.resourceStateStore, runtime.state.storeId("queue:orders"))
+      .update(() => ({
+        ...resourceStateRecord("queue:orders"),
+        type: "test/durable/name-takeover-replace",
+        params: { name, path: "/old/" },
+        output: { name },
+        lastOperation: "creating" as const,
+      }));
+
+    await runtime.run("deploy-1");
+
+    const [replacement] = [...remote.keys()];
+    expect(replacement).toMatch(GENERATED);
+    expect(replacement).not.toBe(name);
+    expect(calls).toEqual([
+      `create:${name}`,
+      `delete:${name}`,
+      `create:${replacement}`,
+    ]);
+    expect(await runtime.state.get("queue:orders")).toMatchObject({
+      lastOperation: "create",
+      params: { name: replacement, path: "/" },
+    });
+    runtime.close();
+  });
+});
+
 function createRuntime(
   resources: BaseResource[],
   deploymentId: string,
@@ -6276,6 +6669,7 @@ function createRuntime(
     driftDetection?: boolean;
     dryRun?: boolean;
     emit?: (event: ReconcilerEvent) => void;
+    nameScope?: { app: string; stage: string };
   } = {},
 ) {
   const database = createSqliteDb({ path: ":memory:" });
@@ -6308,6 +6702,7 @@ function createRuntime(
       dryRun: options.dryRun,
       emit: options.emit,
       maxOperationAttempts: options.maxOperationAttempts,
+      nameScope: options.nameScope,
     });
   });
   const destroy = workflow(async function* (step, event) {
