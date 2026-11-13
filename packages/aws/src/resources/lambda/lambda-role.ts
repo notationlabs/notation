@@ -4,7 +4,7 @@ import * as sdk from "@aws-sdk/client-iam";
 import { iamClient } from "src/resources/utils/aws-clients";
 import { awsCreate } from "src/resources/utils/errors";
 import { AwsSchema } from "src/resources/utils/types";
-import { nameRules } from "src/naming";
+import { nameBase } from "src/id";
 import { lambdaTrustPolicy } from "src/resources/templates/iam.policy";
 
 export type LambdaIamRoleSchema = AwsSchema<{
@@ -37,7 +37,8 @@ const lambdaIamRoleSchema = lambdaIamRole.defineSchema({
     presence: "required",
     value: v.string(),
     primaryKey: true,
-    physicalName: nameRules.iamRole,
+    // [\w+=,.@-]
+    physicalName: { maxLength: 64, base: nameBase },
   },
   Arn: {
     propertyType: "computed",

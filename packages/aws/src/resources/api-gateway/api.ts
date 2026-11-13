@@ -6,7 +6,7 @@ import { executeApiSourceArn } from "src/resources/templates/arn";
 import { awsCreate } from "src/resources/utils/errors";
 import { findOnlyInPages } from "src/resources/utils/paginate";
 import { AwsSchema } from "src/resources/utils/types";
-import { nameRules } from "src/naming";
+import { nameBase } from "src/id";
 
 type ApiSdkSchema = AwsSchema<{
   Key: sdk.DeleteApiRequest;
@@ -93,7 +93,8 @@ const apiSchema = api.defineSchema({
     propertyType: "param",
     presence: "required",
     value: v.string(),
-    physicalName: nameRules.apiGatewayApi,
+    // any characters, and not unique
+    physicalName: { maxLength: 128, base: nameBase },
   },
   ProtocolType: {
     propertyType: "param",

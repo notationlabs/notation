@@ -1,29 +1,4 @@
-import { perCollection, type PhysicalNameRule } from "@notation/resource";
-import { nameBase } from "src/id";
-
-/**
- * The rules of the AWS names that deploy generates: each is the
- * `physicalName` of the name param in the resource's schema. App, stage and
- * id characters are already valid in every one of them.
- */
-export const nameRules = {
-  // [a-zA-Z0-9-_]
-  lambdaFunction: { maxLength: 64, base: nameBase },
-  // [\w+=,.@-]
-  iamRole: { maxLength: 64, base: nameBase },
-  // [a-zA-Z0-9-_], a FIFO queue's name ends in .fifo
-  sqsQueue: {
-    maxLength: 80,
-    ending: (params) => (params.FifoQueue === true ? ".fifo" : ""),
-    base: nameBase,
-  },
-  // [.\-_A-Za-z0-9], unique per event bus
-  eventBridgeRule: { maxLength: 64, base: nameBase },
-  // [/.\-_A-Za-z0-9]
-  eventBridgeBus: { maxLength: 256, base: nameBase },
-  // any characters, and not unique
-  apiGatewayApi: { maxLength: 128, base: nameBase },
-} satisfies Record<string, PhysicalNameRule>;
+import { perCollection } from "@notation/resource";
 
 /**
  * Describes a declaration in errors, such as
