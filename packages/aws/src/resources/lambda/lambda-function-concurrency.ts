@@ -23,8 +23,11 @@ export type LambdaFunctionConcurrencyDependencies = {
 const lambdaFunctionConcurrency = resource<LambdaFunctionConcurrencySchema>({
   type: "aws/lambda/LambdaFunctionConcurrency",
   provider: "@notation/aws/resources",
-  // A function replaced under the same name has no reservation, so deploy
-  // deletes this resource first and creates it again after the function.
+  // A function replaced under the same name has no reservation, so a
+  // delete-first replace of the function deletes this resource first and
+  // creates it again after the function. A function with a generated name is
+  // replaced create-first, under a new name, and this resource is replaced
+  // when deploy reaches it.
   blocksDeleteOf: [LambdaFunction.type],
 });
 

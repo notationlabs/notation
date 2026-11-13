@@ -74,7 +74,9 @@ const eventBridgeRule = resource<EventBridgeRuleSchema>({
   type: "aws/eventBridge/rule",
   provider: "@notation/aws/resources",
   // AWS refuses to delete a bus that has rules. The default bus is never
-  // deleted, so it is not listed.
+  // deleted, so it is not listed. A bus with a generated name is replaced
+  // create-first, and its old rules are deleted before it at the end of the
+  // deploy.
   blocksDeleteOf: [EventBus.type],
 });
 
