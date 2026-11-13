@@ -2,10 +2,9 @@ import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { getValue, isValueSupplied } from "@notation/std/sources";
 import {
-  createSecret,
   deleteSecretByName,
   findSecretByName,
-  setSecretValue,
+  writeSecret,
 } from "src/api/secrets-store";
 import type { SecretsStoreInstance } from "./secrets-store";
 
@@ -103,20 +102,19 @@ const secretsStoreSecretSchema = secretsStoreSecret.defineSchema({
  */
 async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
   const { AccountId, StoreId, Name, ValueFrom } = params;
-  const existing = await findSecretByName(AccountId, StoreId, Name);
   if (
-    existing &&
     ValueFrom.Source === PROMPT_SOURCE &&
-    !isValueSupplied(ValueFrom.Secret)
+    !isValueSupplied(ValueFrom.Secret) &&
+    (await findSecretByName(AccountId, StoreId, Name))
   ) {
     return;
   }
-  const value = (await getValue(ValueFrom.Secret)).unwrap();
-  if (existing) {
-    await setSecretValue(AccountId, StoreId, existing.id, value);
-  } else {
-    await createSecret(AccountId, StoreId, Name, value);
-  }
+  await writeSecret(
+    AccountId,
+    StoreId,
+    Name,
+    (await getValue(ValueFrom.Secret)).unwrap(),
+  );
 }
 
 /**
