@@ -11,7 +11,7 @@ import {
 // a hyphen in the same label, which leaves 54. Cloudflare enforces this: it
 // refuses to turn on workers.dev with preview URLs for a longer name (error
 // 100315), and the live tests check it.
-const WORKER_NAME_MAX_LENGTH = 54;
+export const WORKER_NAME_MAX_LENGTH = 54;
 
 // The longest name that a Worker got before deploy generated its name.
 const FIXED_WORKER_NAME_MAX_LENGTH = 63;

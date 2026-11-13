@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { setScriptSubdomain } from "../../../cloudflare/src/api/workers";
 import {
   accountSubdomain,
   api,
@@ -80,12 +81,21 @@ describe.skipIf(!hasCredentials)("the length of a Worker's name", () => {
       await poll(`https://${name}.${subdomain}.workers.dev/`),
     ).toMatchObject({ ok: true });
 
-    // What `WorkerSubdomain` sends. Without `previews_enabled`, Cloudflare
-    // turns preview URLs on, even for a Worker that has them off.
+    // Without `previews_enabled`, Cloudflare turns preview URLs on, even for a
+    // Worker that has them off.
     const again = await api("POST", `/workers/scripts/${name}/subdomain`, {
       enabled: true,
     });
     expect(again.errors).toEqual([expect.objectContaining({ code: 100315 })]);
+  });
+
+  it("enables workers.dev through WorkerSubdomain's call for a fixed name of 63 characters", async () => {
+    const name = nameOf(63).replace(/z$/, "y");
+    expect((await uploadScript(name)).errors).toEqual([]);
+
+    await setScriptSubdomain(process.env.CLOUDFLARE_ACCOUNT_ID!, name, true);
+    const state = await api("GET", `/workers/scripts/${name}/subdomain`);
+    expect(state.result).toEqual({ enabled: true, previews_enabled: false });
   });
 
   it("uploads a 64 character name, but refuses to serve it on workers.dev", async () => {
