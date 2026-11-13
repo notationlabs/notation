@@ -64,6 +64,45 @@ export function physicalName(
 }
 
 /**
+ * Makes a generated physical name: `<app>--<stage>--<base>-<instance>`, or
+ * `<base>-<instance>` when there is no scope. The base is the resource ID in
+ * lower case, with each run of characters other than `a-z` and `0-9`
+ * replaced by one `-`. So the base holds no `--`, and the name is valid
+ * where only lower-case letters, digits and hyphens are allowed, if the
+ * instance is.
+ *
+ * When the name is longer than `rule.maxLength`, the part before the
+ * instance is cut short, and the instance stays whole. When the resource ID
+ * ends with `rule.requiredEnding`, the name ends with it too, after the
+ * instance.
+ */
+export function generatedPhysicalName(
+  scope: NameScope | undefined,
+  resourceId: string,
+  instance: string,
+  rule: PhysicalNameRule,
+): string {
+  const ending =
+    rule.requiredEnding && resourceId.endsWith(rule.requiredEnding)
+      ? rule.requiredEnding
+      : "";
+  const base = resourceId
+    .slice(0, resourceId.length - ending.length)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  const prefix = scope ? `${scope.app}--${scope.stage}--` : "";
+  const room = rule.maxLength - ending.length - instance.length - 1;
+  if (room < 1) {
+    throw new Error(
+      `A maximum length of ${rule.maxLength} leaves no room for a generated name`,
+    );
+  }
+  const body = `${prefix}${base}`.slice(0, room).replace(/[-_.]+$/, "");
+  return `${[body, instance].filter(Boolean).join("-")}${ending}`;
+}
+
+/**
  * Makes the physical name of a resource declared during the active
  * collection, scoped by the collection's app and stage. It is an engine
  * mechanism for resource packages, not user-facing API.

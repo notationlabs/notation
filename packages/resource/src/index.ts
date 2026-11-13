@@ -17,6 +17,7 @@ export {
   type ResourceGraph,
 } from "./resource-collection";
 export {
+  generatedPhysicalName,
   physicalName,
   scopedPhysicalName,
   type NameScope,

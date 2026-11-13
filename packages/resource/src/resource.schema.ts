@@ -7,6 +7,7 @@ import type {
 import type { Durable } from "./durable-value";
 import type { CollectContext } from "./contributions";
 import type { StandardSchemaV1 } from "./standard-schema";
+import type { PhysicalNameRule } from "./physical-name";
 
 export type DefineResourceApiSchema = {
   Key: any;
@@ -56,6 +57,13 @@ export type SchemaItem<T = any> = {
        * items.
        */
       collect?: (items: DeepPartial<T>[], context: CollectContext) => T;
+      /**
+       * Marks the param as the resource's physical name. Config can leave
+       * it out, and deploy then fills it with a generated name that fits
+       * the rule. The name is kept in state, so later deploys use the same
+       * one. The params that an operation receives always hold the field.
+       */
+      physicalName?: PhysicalNameRule;
     }
   | {
       propertyType: "computed";
@@ -125,6 +133,11 @@ export type Contributions<S extends ResolvedSchema> = {
   }
     ? Item
     : never;
+};
+
+/** The params that have `physicalName`, which config can leave out. */
+export type PhysicalNames<S extends ResolvedSchema> = {
+  [K in keyof S as S[K] extends { physicalName: object } ? K : never]: true;
 };
 
 export type State<S extends ResolvedSchema> = MapSchema<S, { hidden: true }>;

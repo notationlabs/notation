@@ -1,4 +1,4 @@
-import type { BaseResource } from "@notation/resource";
+import type { BaseResource, NameScope } from "@notation/resource";
 import type { ReconcilerEventEmitter } from "../events";
 import type { ResourceRegistry } from "../resource-registry";
 import type { DurableStateBackend } from "./state-backend";
@@ -15,4 +15,9 @@ export type DurableWorkflowOptions = {
 
 export type DurableDeployOptions = DurableWorkflowOptions & {
   driftDetection?: boolean;
+  /**
+   * The app and stage that start each generated physical name. Without it,
+   * a generated name has no such prefix.
+   */
+  nameScope?: NameScope;
 };

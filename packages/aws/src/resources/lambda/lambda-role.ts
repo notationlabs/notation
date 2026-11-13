@@ -36,6 +36,7 @@ const lambdaIamRoleSchema = lambdaIamRole.defineSchema({
     presence: "required",
     value: v.string(),
     primaryKey: true,
+    physicalName: { maxLength: 64 },
   },
   Arn: {
     propertyType: "computed",

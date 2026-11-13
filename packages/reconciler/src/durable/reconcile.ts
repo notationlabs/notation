@@ -45,6 +45,7 @@ import {
   type ResourceAction,
 } from "../plan";
 import { assertOutputsRecoverable } from "../planner";
+import { generateNames, recordedNames, unnamedFields } from "../physical-names";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
@@ -64,6 +65,14 @@ export type ResourceStateSession =
   | { node: StateNode; persist: PersistState; remove: RemoveState };
 
 type SnapshotRef = { current: ResourceSnapshot };
+
+type SharedParams = Omit<CreateResourceParams, "persist"> & {
+  /**
+   * The `physicalName` params that config leaves out. `resourceParams` holds
+   * a name for each, and a replacement gets a new one.
+   */
+  unnamed: string[];
+};
 
 export type ReconcileOptions = {
   /** Leaves out the decision event when the decision is noop. */
@@ -115,11 +124,25 @@ export async function* reconcileResource(
   // deterministic, so an operation resolving them again could persist params
   // other than the ones the decision was taken against. The step also pins
   // the answer across a replay.
-  const params = yield* step.run("params", () =>
+  const configParams = yield* step.run("params", () =>
     resource.getParams({
       excludeContributionsFrom: options.excludeContributionsFrom,
     }),
   );
+  const unnamed = unnamedFields(resource, configParams);
+  // A name in the record wins over a new one, so that a resource that
+  // exists, or that an earlier deploy started to create, is not renamed.
+  const recorded = recordedNames(unnamed, session.node);
+  const params = {
+    ...configParams,
+    ...recorded,
+    ...(yield* generateNamesStep(
+      step,
+      opts,
+      resource,
+      unnamed.filter((field) => !(field in recorded)),
+    )),
+  };
   await validateParams(resource, params, "deploy");
   // A placeholder's record leaves out the edges to the peers that its params
   // leave out, as those may not exist yet.
@@ -200,6 +223,7 @@ export async function* reconcileResource(
       emit,
       maxOperationAttempts: opts.maxOperationAttempts,
       prior: session.node,
+      unnamed,
     },
     // The params of a placeholder already leave out the contributions that
     // depend on a member of the cycle.
@@ -234,7 +258,7 @@ async function* applyAction(
   opts: DurableDeployOptions,
   session: ResourceStateSession,
   action: ResourceAction,
-  shared: Omit<CreateResourceParams, "persist">,
+  shared: SharedParams,
   replaceWithout?: ReconcileOptions["replaceWithout"],
 ): AsyncGenerator<any, void, any> {
   const { resource, dependsOn } = shared;
@@ -285,6 +309,22 @@ async function* applyAction(
 }
 
 /**
+ * Generates a name for each of `fields`, in a step, so that a replay of the
+ * execution gets the same names.
+ */
+async function* generateNamesStep(
+  step: DurableStepRunner,
+  opts: DurableDeployOptions,
+  resource: BaseResource,
+  fields: string[],
+): AsyncGenerator<any, Record<string, string>, any> {
+  if (fields.length === 0) return {};
+  return yield* step.run("physical-names", async () =>
+    generateNames(resource, fields, opts.nameScope),
+  );
+}
+
+/**
  * Compares a resource that create took over with the desired params, and
  * updates, replaces or keeps it, as for any recorded resource. Its record
  * was just written from a read, so drift detection is skipped. The record
@@ -294,7 +334,7 @@ async function* applyAction(
 async function* reconcileTakenOver(
   parent: DurableStepRunner,
   opts: DurableDeployOptions,
-  shared: Omit<CreateResourceParams, "persist">,
+  shared: SharedParams,
   replaceWithout?: ReconcileOptions["replaceWithout"],
 ): AsyncGenerator<any, void, any> {
   // The state key keeps the writes that follow a takeover apart from the
@@ -358,7 +398,7 @@ async function* recoverOutputs(
   step: DurableStepRunner,
   opts: DurableDeployOptions,
   session: Extract<ResourceStateSession, { node: StateNode }>,
-  shared: Omit<CreateResourceParams, "persist">,
+  shared: SharedParams,
 ): AsyncGenerator<any, void, any> {
   const { resource } = shared;
   const readStep = step.scope("output-read");
@@ -403,13 +443,18 @@ async function* rewriteRecord(
  */
 async function* withoutContributions(
   step: DurableStepRunner,
-  shared: Omit<CreateResourceParams, "persist">,
+  shared: SharedParams,
   excluded: ReadonlySet<BaseResource>,
-): AsyncGenerator<any, Omit<CreateResourceParams, "persist">, any> {
+): AsyncGenerator<any, SharedParams, any> {
   const { resource } = shared;
-  const params = yield* step.run("replace:params", () =>
-    resource.getParams({ excludeContributionsFrom: excluded }),
-  );
+  const params = {
+    ...(yield* step.run("replace:params", () =>
+      resource.getParams({ excludeContributionsFrom: excluded }),
+    )),
+    ...Object.fromEntries(
+      shared.unnamed.map((field) => [field, shared.resourceParams[field]]),
+    ),
+  };
   await validateParams(resource, params, "deploy");
   return {
     ...shared,
@@ -425,6 +470,8 @@ async function* withoutContributions(
  * Deletes the resource and then creates it again, each part in its own scope.
  * Deleting first is deliberate: a resource usually takes its physical name
  * from its params, so a new one created beside the old would collide with it.
+ * A name that deploy generated is generated again, so the replacement does
+ * not have the name of the resource it replaces.
  * The dependents that block the delete are deleted first, and deploy creates
  * them again when it reaches them.
  * The new record is a new store instance, so observers can tell the
@@ -434,7 +481,7 @@ async function* replaceResource(
   step: DurableStepRunner,
   opts: DurableDeployOptions,
   session: Extract<ResourceStateSession, { node: StateNode }>,
-  shared: Omit<CreateResourceParams, "persist">,
+  shared: SharedParams,
   replaceWithout?: ReconcileOptions["replaceWithout"],
 ): AsyncGenerator<any, void, any> {
   const deleted = yield* deleteBlockingDependents(
@@ -454,11 +501,23 @@ async function* replaceResource(
   });
 
   const excluded = replaceWithout?.(new Set(deleted));
-  const created = excluded?.size
+  const desired = excluded?.size
     ? yield* withoutContributions(step, shared, excluded)
     : shared;
 
   const createStep = step.scope("replace:create");
+  const created = {
+    ...desired,
+    resourceParams: {
+      ...desired.resourceParams,
+      ...(yield* generateNamesStep(
+        createStep,
+        opts,
+        shared.resource,
+        shared.unnamed,
+      )),
+    },
+  };
   // The delete removed the store instance that `session` read, so a write
   // against it would conflict. The record is read again for the create.
   const recreated = yield* openStateSession(createStep, opts, shared.resource);

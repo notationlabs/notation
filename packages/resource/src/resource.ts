@@ -12,6 +12,7 @@ import type {
   ComputedPrimaryKey,
   CompoundKey,
   Contributions,
+  PhysicalNames,
 } from "./resource.schema";
 import type {
   OptionalIfAllPropertiesOptional,
@@ -81,6 +82,7 @@ export type ResourceTypes = {
   state: any;
   output: any;
   collected: any;
+  named: any;
 };
 
 export type InferResourceTypes<S extends ResolvedSchema> = {
@@ -91,20 +93,23 @@ export type InferResourceTypes<S extends ResolvedSchema> = {
   state: State<S>;
   output: Output<S>;
   collected: Contributions<S>;
+  named: PhysicalNames<S>;
 };
 
 /**
  * The config a resource takes: its params less `Omitted`. Collected params
- * are optional, because contributions can supply them.
+ * are optional, because contributions can supply them. Params with
+ * `physicalName` are optional, because deploy generates them.
  */
 export type ConfigParams<
   T extends ResourceTypes,
   Omitted extends PropertyKey = never,
-> = Omit<T["params"], Omitted | keyof T["collected"]> &
+> = Omit<T["params"], Omitted | keyof T["collected"] | keyof T["named"]> &
   Partial<
     Pick<
       T["params"],
-      Exclude<keyof T["collected"], Omitted> & keyof T["params"]
+      Exclude<keyof T["collected"] | keyof T["named"], Omitted> &
+        keyof T["params"]
     >
   >;
 

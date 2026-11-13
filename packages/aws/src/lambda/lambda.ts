@@ -96,7 +96,7 @@ export class LambdaGroup extends AwsResourceGroup<LambdaConfig> {
       resourceId("lambda", this.id, "role-policy"),
       {
         config: {
-          RoleName: this.role.config.RoleName,
+          RoleName: this.role.outputRef("RoleName"),
           PolicyName: `${this.id}-role-policy`,
         },
         dependencies: { role: this.role },
@@ -164,11 +164,7 @@ const build = (
   }
 
   const role = functionGroup.add(
-    new aws.lambda.LambdaIamRole(resourceId("lambda", lambdaId, "role"), {
-      config: {
-        RoleName: awsName("iamRole", `${lambdaId}-role`),
-      },
-    }),
+    new aws.lambda.LambdaIamRole(resourceId("lambda", lambdaId, "role")),
   );
 
   functionGroup.add(

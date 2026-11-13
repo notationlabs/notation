@@ -19,6 +19,8 @@
  *   notation:destroy:<id>:*    per-resource deletion steps
  *   notation:orphans:list      the orphan sweep's one read of persisted state
  *   notation:orphans:<id>:*    orphan sweep, per persisted record
+ *   *:physical-names           the names that deploy generates for a
+ *                              resource, or for its replacement
  *   *:create:remote:effect:<n> one create attempt, as a step.effect
  *   *:remote:attempt:<n>       one read, update or delete attempt
  *   *:remote:retry-delay:<n>   the wait between two attempts

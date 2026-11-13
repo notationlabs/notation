@@ -1,4 +1,5 @@
 import {
+  UNKNOWN_AFTER_APPLY,
   assertRequiredOutputs,
   validateParams,
   type BaseResource,
@@ -24,6 +25,7 @@ import {
   type PlanNode,
 } from "./plan";
 import { workflowRegistry, type ResourceRegistry } from "./resource-registry";
+import { recordedNames, unnamedFields } from "./physical-names";
 import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
 
@@ -89,7 +91,7 @@ export async function createPlan({
     cycle: DeployUnit | undefined,
     detectDrift = driftDetection,
   ): Promise<PlanNode> => {
-    const { stateNode, params } = await planKnownParams(
+    const { stateNode, params, unnamed } = await planKnownParams(
       resource,
       state,
       "plan",
@@ -149,6 +151,8 @@ export async function createPlan({
       // so its dependents plan against unknown params, as they would for a
       // resource with no state.
       resource.setOutput(null as any);
+      // Deploy generates a new name for the resource that it creates again.
+      for (const field of unnamed) params[field] = UNKNOWN_AFTER_APPLY;
     }
     edgesById.set(resource.id, dependsOn);
 
@@ -258,6 +262,10 @@ async function loadOutput(
  * params that plan knows. Throws if the state record has a different type.
  * Outputs in state stand in for the outputs of dependencies, so the
  * dependencies must be loaded first.
+ *
+ * `unnamed` lists the `physicalName` params that config leaves out. Each
+ * takes its value from the state record, as in deploy. Without one, deploy
+ * generates the name, so it is unknown here.
  */
 export async function planKnownParams(
   resource: BaseResource,
@@ -266,9 +274,16 @@ export async function planKnownParams(
 ): Promise<{
   stateNode: StateNode | undefined;
   params: Record<string, unknown>;
+  unnamed: string[];
 }> {
   const stateNode = await loadOutput(resource, state);
-  const params = await resource.planParams();
+  const configParams = await resource.planParams();
+  const unnamed = unnamedFields(resource, configParams);
+  const params = {
+    ...configParams,
+    ...Object.fromEntries(unnamed.map((field) => [field, UNKNOWN_AFTER_APPLY])),
+    ...recordedNames(unnamed, stateNode),
+  };
   await validateParams(resource, params, point);
-  return { stateNode, params };
+  return { stateNode, params, unnamed };
 }
