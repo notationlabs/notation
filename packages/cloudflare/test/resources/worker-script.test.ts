@@ -380,39 +380,6 @@ describe("WorkerScript", () => {
       });
     });
 
-    it("sends the renames and deletes in the first upload of a transfer only", async () => {
-      mockFetch(
-        respondWith([
-          { script: "app--dev--web", class: "Room", use_sqlite: true },
-        ]),
-      );
-
-      await script.update!(
-        key,
-        {} as any,
-        {
-          ...arriving,
-          DurableObjectNamespaces: [
-            { id: "counters", className: "Tally" },
-            rooms,
-          ],
-        },
-        params,
-      );
-
-      const expecting = (await uploadedMetadata(calls[2]!)).metadata;
-      expect(expecting.exports.Counter).toEqual({
-        type: "durable-object",
-        state: "renamed",
-        renamed_to: "Tally",
-      });
-      const settled = (await uploadedMetadata(calls[4]!)).metadata;
-      expect(settled.exports).toEqual({
-        Tally: { type: "durable-object", storage: "sqlite" },
-        Room: { type: "durable-object", storage: "sqlite" },
-      });
-    });
-
     it("fails before any upload when the Worker that a namespace moves to is created in this deploy", async () => {
       mockFetch((call) =>
         isListing(call)
@@ -426,6 +393,38 @@ describe("WorkerScript", () => {
         'Deploy would move the Durable Object namespaces "rooms" from the Worker app--dev--web to the Worker app--dev--api, which this deploy creates. Deploy can move a namespace only to a Worker that exists. Deploy app--dev--api first without the namespaces, and move them in a later deploy.',
       );
       expect(calls.some(({ method }) => method === "PUT")).toBe(false);
+    });
+
+    it("lists the account's namespaces once in a create, and uploads once", async () => {
+      mockFetch((call) =>
+        isListing(call)
+          ? ok([])
+          : call.method === "PUT"
+            ? ok({})
+            : fail(404, 10007, "not found"),
+      );
+
+      await script.create(arriving);
+
+      expect(calls.filter(isListing)).toHaveLength(1);
+      expect(calls.filter(({ method }) => method !== "GET")).toHaveLength(1);
+    });
+
+    it("fails when the list of the account's namespaces doesn't end", async () => {
+      mockFetch((call) =>
+        isListing(call)
+          ? ok([
+              { script: "app--dev--other", class: "Lobby", use_sqlite: true },
+            ])
+          : ok({}),
+      );
+
+      await expect(
+        script.update!(key, {} as any, arriving, params),
+      ).rejects.toThrow(
+        "Cloudflare listed more than 100 pages of Durable Object namespaces in the account acc, so deploy stopped listing them.",
+      );
+      expect(calls.filter(isListing)).toHaveLength(100);
     });
 
     it("creates the namespace when no Worker that binds it hosts its class", async () => {
@@ -504,7 +503,7 @@ describe("WorkerScript", () => {
         await expect(
           script.update!(key, {} as any, arriving, params),
         ).rejects.toThrow(
-          /^Cannot move the Durable Object namespace "rooms" from the Worker app--dev--web: app--dev--web also hosts the namespace of the class Legacy, which uses the key-value storage type\./,
+          /^Cannot move the Durable Object namespace "rooms" from the Worker app--dev--web: app--dev--web also hosts the namespace of the class Legacy, which Cloudflare's namespace list doesn't show as using SQLite storage\. Notation can move a namespace only from a Worker whose namespaces all use SQLite\.$/,
         );
         expect(calls.map(({ method }) => method)).toEqual(["GET", "GET"]);
       },

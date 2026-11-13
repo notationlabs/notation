@@ -240,11 +240,11 @@ export const WorkerScript = workerScriptSchema
           `A Worker named ${params.ScriptName} already exists in the Cloudflare account ${params.AccountId}`,
         );
       }
-      const { transfers } = await findTransfers(params, []);
-      if (transfers.length > 0) {
-        throw new Error(newHostError(params, transfers));
+      const found = await findTransfers(params, []);
+      if (found.transfers.length > 0) {
+        throw new Error(newHostError(params, found.transfers));
       }
-      await cloudflareCreate(upload)(params, []);
+      await cloudflareCreate(upload)(params, [], found);
     },
 
     read: async (key) => {
@@ -266,7 +266,8 @@ export const WorkerScript = workerScriptSchema
     // compares the namespaces in state with the new ones, to rename, delete
     // or move those that changed.
     update: async (_key, _patch, params, state) => {
-      await upload(params, state.DurableObjectNamespaces ?? []);
+      const previous = state.DurableObjectNamespaces ?? [];
+      await upload(params, previous, await findTransfers(params, previous));
     },
 
     delete: async (key, _state, _context, deletion) => {
@@ -299,9 +300,15 @@ export function sortedFlags(flags: string[]): string[] {
   return [...new Set(flags)].sort();
 }
 
+/**
+ * Uploads the Worker, and first moves the namespaces of `found` to it.
+ * `rejectNamespaceLoss` fails a move in the deploy that renames or deletes
+ * a namespace of the Worker, so the exports of a move have no such entries.
+ */
 async function upload(
   params: WorkerScriptParams,
   previous: HostedNamespace[],
+  found: FoundTransfers,
 ): Promise<void> {
   const code = await readCode(params.CodeFilePath, params.CodeSha256);
   const exports = durableObjectExports(
@@ -317,11 +324,8 @@ async function upload(
     bindings: params.Bindings ?? [],
     exports,
   };
-  const { transfers, account } = await findTransfers(params, previous);
-  if (transfers.length > 0) {
-    await transferNamespaces(params, upload, transfers, account);
-    // The first upload of the transfer applied the renames and deletes.
-    upload.exports = liveExports(exports);
+  if (found.transfers.length > 0) {
+    await transferNamespaces(params, upload, found.transfers, found.account);
   }
   await putScript(params.AccountId, params.ScriptName, upload);
 }
@@ -333,6 +337,8 @@ type Transfer = {
   from: string;
 };
 
+type FoundTransfers = { transfers: Transfer[]; account: AccountNamespace[] };
+
 /**
  * Finds the hosted namespaces that are new to the Worker and that another
  * Worker of the deployment hosts now, with the account's namespaces. Lists
@@ -341,7 +347,7 @@ type Transfer = {
 async function findTransfers(
   params: WorkerScriptParams,
   previous: HostedNamespace[],
-): Promise<{ transfers: Transfer[]; account: AccountNamespace[] }> {
+): Promise<FoundTransfers> {
   const sources = params.DurableObjectTransferSources ?? [];
   const arriving = (params.DurableObjectNamespaces ?? []).flatMap(
     (namespace) => {
@@ -375,7 +381,7 @@ async function findTransfers(
     );
     if (legacy) {
       throw new Error(
-        `Cannot move the Durable Object namespace "${namespace.id}" from the Worker ${from}: ${from} also hosts the namespace of the class ${legacy.className}, which uses the key-value storage type. Notation supports only namespaces with SQLite storage.`,
+        `Cannot move the Durable Object namespace "${namespace.id}" from the Worker ${from}: ${from} also hosts the namespace of the class ${legacy.className}, which Cloudflare's namespace list doesn't show as using SQLite storage. Notation can move a namespace only from a Worker whose namespaces all use SQLite.`,
       );
     }
     transfers.push({ id: namespace.id, className: namespace.className, from });
@@ -443,11 +449,6 @@ async function transferNamespaces(
     await patchScriptExports(params.AccountId, from, exports);
   }
 }
-
-const liveExports = (exports: Record<string, DurableObjectExport>) =>
-  Object.fromEntries(
-    Object.entries(exports).filter(([, entry]) => !("state" in entry)),
-  );
 
 const describeHosted = (namespace: HostedNamespace) =>
   `"${namespace.id}" (class ${namespace.className})`;

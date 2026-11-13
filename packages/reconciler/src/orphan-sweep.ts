@@ -38,19 +38,29 @@ export function orphanSweepSteps(
   return steps;
 }
 
+/**
+ * The records that are no longer in code, and the edges between them, as
+ * deploy's sweep follows them.
+ */
+export function orphanRecords(
+  records: StateNode[],
+  inCode: ReadonlySet<string>,
+): { orphans: StateNode[]; edgesById: Map<string, string[]> } {
+  const orphans = records.filter((node) => !inCode.has(node.id));
+  return {
+    orphans,
+    edgesById: new Map(orphans.map((node) => [node.id, node.dependsOn ?? []])),
+  };
+}
+
 /** The orphans that deploy's sweep deletes, in delete order. */
 export function orphansDeployDeletes(
   records: StateNode[],
   inCode: ReadonlySet<string>,
   registry: ResourceRegistry,
 ): StateNode[] {
-  const orphans = records.filter((node) => !inCode.has(node.id));
-  return orphanSweepSteps(
-    orphans,
-    registry,
-    new Map(orphans.map((node) => [node.id, node.dependsOn ?? []])),
-    new Set(),
-  )
+  const { orphans, edgesById } = orphanRecords(records, inCode);
+  return orphanSweepSteps(orphans, registry, edgesById, new Set())
     .filter((step) => step.Resource)
     .map((step) => step.node);
 }

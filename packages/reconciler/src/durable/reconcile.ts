@@ -19,7 +19,7 @@ import { remainingDependencies } from "../cycles";
 import { collectDependents } from "../dependency-graph";
 import { createBlocksDelete } from "../delete-cascade";
 import type { OperationLifecycleEvent } from "../events";
-import { keep, orphanSweepSteps } from "../orphan-sweep";
+import { keep, orphanRecords, orphanSweepSteps } from "../orphan-sweep";
 import { resolveResourceClass, workflowRegistry } from "../resource-registry";
 import { assertSameType } from "../resource-type";
 import {
@@ -438,6 +438,7 @@ async function* deleteBlockingDependents(
       assertOrphanDeleteAllowed(registry, record);
       continue;
     }
+    if (!declared.rejectChange) continue;
     // A step, as deriveParams is user code and need not be deterministic.
     const params = yield* step.run(
       `params:${encodeURIComponent(id)}`,
@@ -564,9 +565,9 @@ export async function* sweepOrphans(
   const persisted = yield* scope.run("list", () => opts.state.values());
   const registry = workflowRegistry(opts);
 
-  const orphans = persisted.filter((node) => !resourceById.has(node.id));
-  const edgesById = new Map(
-    orphans.map((node) => [node.id, node.dependsOn ?? []]),
+  const { orphans, edgesById } = orphanRecords(
+    persisted,
+    new Set(resourceById.keys()),
   );
   // Destroy deletes the desired set after the sweep, so an edge from a
   // skipped orphan to a desired resource keeps that resource too. Deploy does

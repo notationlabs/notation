@@ -147,6 +147,7 @@ export type AccountNamespace = {
 };
 
 const NAMESPACE_PAGE_SIZE = 1000;
+const MAX_NAMESPACE_PAGES = 100;
 
 /**
  * Lists the account's Durable Object namespaces, one page after another
@@ -158,6 +159,11 @@ export async function listAccountNamespaces(
 ): Promise<AccountNamespace[]> {
   const namespaces: AccountNamespace[] = [];
   for (let page = 1; ; page++) {
+    if (page > MAX_NAMESPACE_PAGES) {
+      throw new Error(
+        `Cloudflare listed more than ${MAX_NAMESPACE_PAGES} pages of Durable Object namespaces in the account ${account}, so deploy stopped listing them.`,
+      );
+    }
     const items = await cloudflare<
       {
         script?: string | null;
