@@ -38,7 +38,7 @@ type SecretsStoreSecretParams = {
 export type SecretsStoreSecretSchema = {
   Key: { AccountId: string; StoreId: string; Name: string };
   CreateParams: SecretsStoreSecretParams;
-  UpdateParams: Pick<SecretsStoreSecretParams, "ValueFrom">;
+  UpdateParams: Pick<SecretsStoreSecretParams, "StageScoped" | "ValueFrom">;
   ReadResult: { SecretId: string };
 };
 
@@ -76,7 +76,6 @@ const secretsStoreSecretSchema = secretsStoreSecret.defineSchema({
   StageScoped: {
     propertyType: "param",
     presence: "required",
-    immutable: true,
     value: v.boolean(),
   },
   ValueFrom: {
@@ -120,7 +119,8 @@ async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
  * where the secret is and where its value comes from, and never the value.
  *
  * Create and update write the value. A change to `ValueFrom`, such as a new
- * version from the source, updates the secret. Read finds the secret by
+ * version from the source, updates the secret. A change to `StageScoped`
+ * only changes the record. Read finds the secret by
  * name, so a secret recreated outside notation shows as a changed
  * `SecretId`, and a deleted one as drift, which the next deploy creates
  * again.
@@ -143,8 +143,8 @@ export const SecretsStoreSecret = secretsStoreSecretSchema
       return { ...key, SecretId: secret.id };
     },
 
-    update: async (_key, _patch, params) => {
-      await writeValue(params);
+    update: async (_key, patch, params) => {
+      if (patch.ValueFrom) await writeValue(params);
     },
 
     delete: async (key, state) => {

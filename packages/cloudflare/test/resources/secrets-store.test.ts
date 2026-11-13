@@ -11,6 +11,7 @@ import {
   type Source,
 } from "@notation/core";
 import { collectResourceGraph } from "@notation/resource";
+import { decideAction } from "@notation/reconciler";
 import { SecretsStore, SecretsStoreSecret } from "src/resources/secrets-store";
 
 type Call = { method: string; url: URL; body: unknown };
@@ -235,6 +236,27 @@ describe("SecretsStoreSecret", () => {
         body: { value: "sk_from_vault" },
       },
     ]);
+  });
+
+  it("updates a change to StageScoped alone, without writing the value", async () => {
+    mockFetch(() => ok([listed()]));
+    const desired = { ...sourced, StageScoped: false };
+
+    const action = decideAction({
+      resource,
+      stateNode: { params: sourced } as any,
+      params: desired,
+    });
+    await deploying(
+      () => resource.update!(key, (action as any).patch, desired, {} as any),
+      { source: vault },
+    );
+
+    expect(action).toMatchObject({
+      decision: "update",
+      patch: { StageScoped: false },
+    });
+    expect(calls).toEqual([]);
   });
 
   it("asks for the value of a missing secret without a source", async () => {
