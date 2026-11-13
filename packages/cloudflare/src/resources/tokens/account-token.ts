@@ -23,6 +23,8 @@ import {
 } from "src/api/tokens";
 import type { SecretsStoreInstance } from "src/resources/secrets-store";
 
+export const TOKEN_NAME_MAX_LENGTH = 120;
+
 const policySchema = v.strictObject({
   effect: v.picklist(["allow", "deny"]),
   /**
@@ -89,7 +91,7 @@ const accountTokenSchema = accountToken.defineSchema({
     presence: "required",
     immutable: true,
     secondaryKey: true,
-    value: v.pipe(v.string(), v.minLength(1), v.maxLength(120)),
+    value: v.pipe(v.string(), v.minLength(1), v.maxLength(TOKEN_NAME_MAX_LENGTH)),
   },
   Policies: {
     propertyType: "param",

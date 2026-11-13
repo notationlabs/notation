@@ -1,7 +1,10 @@
 import { declareSecret } from "@notation/core";
 import { ResourceGroup, scopedPhysicalName } from "@notation/resource";
 import * as cloudflare from "src/resources";
-import { sortedPolicies } from "src/resources/tokens/account-token";
+import {
+  sortedPolicies,
+  TOKEN_NAME_MAX_LENGTH,
+} from "src/resources/tokens/account-token";
 import {
   assertSecretId,
   claimSecretName,
@@ -32,7 +35,7 @@ export class AccountTokenGroup
 
   constructor(config: AccountTokenConfig) {
     assertSecretId("accountToken()", config.id);
-    const name = scopedPhysicalName(config.id, { maxLength: 120 });
+    const name = scopedPhysicalName(config.id, { maxLength: TOKEN_NAME_MAX_LENGTH });
     claimSecretName(name, `accountToken({ id: "${config.id}" })`);
     super("cloudflare/accountToken", config.id, config);
     this.token = this.add(
