@@ -183,7 +183,6 @@ describe("SecretsStoreSecret", () => {
         await collectResourceGraph(() =>
           declareSecret({
             id: "stripe-key",
-            resource,
             ...(source ? { source, key: "STRIPE_KEY" } : {}),
           }),
         );
@@ -285,17 +284,6 @@ describe("SecretsStoreSecret", () => {
 
     expect(prompt).not.toHaveBeenCalled();
     expect(writes()).toEqual([]);
-  });
-
-  it("overwrites a secret without a source with the value that notation secret set supplied", async () => {
-    mockFetch((call) => (call.method === "GET" ? ok([listed()]) : ok()));
-    const supplied = { id: "stripe-key", value: new Redacted("sk_set") };
-
-    await deploying(() => resource.create(params), { supplied });
-
-    expect(writes()).toMatchObject([
-      { method: "PATCH", body: { value: "sk_set" } },
-    ]);
   });
 
   it("fails with the command to run for a missing secret when no one can be asked", async () => {

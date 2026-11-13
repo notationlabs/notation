@@ -1,7 +1,7 @@
 import * as v from "valibot";
 import { PROMPT_SOURCE } from "@notation/core";
 import { resource, ResourceNotFoundError } from "@notation/resource";
-import { getValue, isValueSupplied } from "@notation/std/sources";
+import { getValue } from "@notation/std/sources";
 import {
   createSecret,
   deleteSecret,
@@ -95,19 +95,12 @@ const secretsStoreSecretSchema = secretsStoreSecret.defineSchema({
  * Writes the secret's value, fetched with `getValue`. It creates the secret,
  * or overwrites the value of the one that exists. A secret whose value comes
  * from the prompt is written only when it is missing, so that a value set
- * with `notation secret set` before the first deploy is kept, unless
- * `notation secret set` is the caller.
+ * with `notation secret set` is kept.
  */
 async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
   const { AccountId, StoreId, Name, ValueFrom } = params;
   const existing = await findSecretByName(AccountId, StoreId, Name);
-  if (
-    existing &&
-    ValueFrom.Source === PROMPT_SOURCE &&
-    !isValueSupplied(ValueFrom.Secret)
-  ) {
-    return;
-  }
+  if (existing && ValueFrom.Source === PROMPT_SOURCE) return;
   const value = (await getValue(ValueFrom.Secret)).unwrap();
   if (existing) {
     await setSecretValue(AccountId, StoreId, existing.id, value);

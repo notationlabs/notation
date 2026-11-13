@@ -4,7 +4,6 @@ import {
   runWithSecretContext,
   type Source,
 } from "@notation/core";
-import type { BaseResource } from "@notation/resource";
 import { Redacted } from "src/sources";
 import { SourceValue } from "src/resources/sources";
 
@@ -25,7 +24,6 @@ const inContext = <T>(source: Source, fn: () => Promise<T>) =>
   runWithSecretContext({ stage: "dev", runId: "exec-1" }, () => {
     declareSecret({
       id: "stripe-key",
-      resource: {} as BaseResource,
       source,
       key: "STRIPE_KEY",
     });

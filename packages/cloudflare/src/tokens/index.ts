@@ -46,12 +46,9 @@ export class AccountTokenGroup
         dependencies: { store: secretsStoreGroup().store },
       }),
     );
-    const refusal = `\`${config.id}\` is the secret of an API token, and only the token's create writes its value. To get a new value, rotate the token: change the id of its accountToken() declaration, and deploy.`;
     declareSecret({
       id: config.id,
-      resource: this.token,
-      refuseSet: refusal,
-      refuseDelete: refusal,
+      refusal: `\`${config.id}\` is the secret of an API token, and only the token's create writes its value. To get a new value, rotate the token: change the id of its accountToken() declaration, and deploy.`,
     });
   }
 

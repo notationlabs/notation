@@ -2,6 +2,14 @@ import { declareSecret, PROMPT_SOURCE } from "@notation/core";
 import { ResourceGroup, scopedPhysicalName } from "@notation/resource";
 import * as std from "@notation/std/resources";
 import type { Source } from "@notation/std/sources";
+import { accountId } from "src/api/client";
+import {
+  createStore,
+  DEFAULT_STORE_NAME,
+  deleteSecret,
+  listStores,
+  writeSecret,
+} from "src/api/secrets-store";
 import * as cloudflare from "src/resources";
 import type { BindableSecret } from "src/workers/declaration";
 import {
@@ -86,13 +94,25 @@ export class SecretGroup
     );
     declareSecret({
       id,
-      resource: this.secret,
       source,
       key,
+      set: async (value) => {
+        const account = accountId();
+        const [store] = await listStores(account);
+        const storeId =
+          store?.id ?? (await createStore(account, DEFAULT_STORE_NAME)).id;
+        await writeSecret(account, storeId, name, value);
+      },
       ...(config.name === undefined
-        ? {}
+        ? {
+            delete: async () => {
+              const account = accountId();
+              const [store] = await listStores(account);
+              if (store) await deleteSecret(account, store.id, name);
+            },
+          }
         : {
-            refuseDelete: `\`${id}\` has the explicit name ${config.name}, so notation didn't create it and doesn't delete it. Delete it with wrangler or in the Cloudflare dashboard.`,
+            refusal: `\`${id}\` has the explicit name ${config.name}, so notation didn't create it and doesn't delete it. Delete it with wrangler or in the Cloudflare dashboard.`,
           }),
     });
   }

@@ -10,9 +10,9 @@ import {
   type SecretContextOptions,
   type Source,
 } from "@notation/core";
-import { collectResourceGraph, type BaseResource } from "@notation/resource";
+import { collectResourceGraph } from "@notation/resource";
 import { clearSecretValues } from "@notation/utils";
-import { Redacted, dotenv, env, getValue, isValueSupplied } from "src/sources";
+import { Redacted, dotenv, env, getValue } from "src/sources";
 
 const context = { stage: "dev" };
 let directory: string;
@@ -123,8 +123,6 @@ describe("getValue", () => {
     get: async (key, { stage }) => new Redacted(`${key}@${stage}`),
   };
 
-  const resource = {} as BaseResource;
-
   function inContext<T>(
     options: Partial<SecretContextOptions>,
     fn: () => Promise<T>,
@@ -133,8 +131,8 @@ describe("getValue", () => {
       { stage: "dev", runId: "run", ...options },
       async () => {
         await collectResourceGraph(() => {
-          declareSecret({ id: "stripe-key", resource, source, key: "STRIPE" });
-          declareSecret({ id: "admin", resource });
+          declareSecret({ id: "stripe-key", source, key: "STRIPE" });
+          declareSecret({ id: "admin" });
         });
         return fn();
       },
@@ -175,7 +173,7 @@ describe("getValue", () => {
     await expect(
       runWithSecretContext({ stage: "dev", runId: "run" }, async () => {
         await collectResourceGraph(() => {
-          declareSecret({ id: "dsn", resource, source: empty, key: "DSN" });
+          declareSecret({ id: "dsn", source: empty, key: "DSN" });
         });
         return getValue("dsn");
       }),
@@ -200,21 +198,9 @@ describe("getValue", () => {
     );
   });
 
-  it("returns the value that notation secret set supplied", async () => {
-    const supplied = { id: "stripe-key", value: new Redacted("sk_set") };
-
-    const result = await inContext({ supplied }, async () => ({
-      value: (await getValue("stripe-key")).unwrap(),
-      supplied: isValueSupplied("stripe-key"),
-      other: isValueSupplied("admin"),
-    }));
-
-    expect(result).toEqual({ value: "sk_set", supplied: true, other: false });
-  });
-
   it("fails outside a secret context", async () => {
     await expect(getValue("admin")).rejects.toThrow(
-      "can only be read in notation deploy or notation secret set",
+      "can only be read during notation deploy",
     );
   });
 });

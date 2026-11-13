@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { BaseResource } from "@notation/resource";
 import type { Redacted } from "./redacted";
 
 /** What a source is told when it is asked for a key. */
@@ -34,18 +33,15 @@ export const PROMPT_SOURCE = "prompt";
 /** A secret that the infra declares, by its id. */
 export type DeclaredSecret = {
   id: string;
-  /**
-   * The resource that writes the secret's value.
-   * `notation secret set` and `notation secret delete` call its operations.
-   */
-  resource: BaseResource;
   /** Where the value comes from. Without a source, deploy asks for it. */
   source?: Source;
   key?: string;
-  /** Set when `notation secret set` refuses the secret, with the reason. */
-  refuseSet?: string;
-  /** Set when `notation secret delete` refuses the secret, with the reason. */
-  refuseDelete?: string;
+  /** Writes the value to the store. `notation secret set` calls it. */
+  set?: (value: string) => Promise<void>;
+  /** Deletes the secret from the store. `notation secret delete` calls it. */
+  delete?: () => Promise<void>;
+  /** Why `set` or `delete` is left out, which the command shows. */
+  refusal?: string;
 };
 
 /** Asks a person for the value of a secret that has no source. */
@@ -63,11 +59,6 @@ export type SecretContextOptions = {
   runId: string;
   /** Unset when no one can answer, such as in CI or with `--json`. */
   prompt?: SecretPrompt;
-  /**
-   * The value that `notation secret set` writes. `getValue` returns it for
-   * the secret with this id, in place of its source or the prompt.
-   */
-  supplied?: { id: string; value: Redacted<string> };
 };
 
 export type SecretContext = SecretContextOptions & {

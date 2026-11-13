@@ -189,31 +189,90 @@ describe("secret", () => {
     });
   });
 
-  it("declares secrets and tokens by id, and refuses to set a token's secret", async () => {
-    const declared = await runWithSecretContext(
-      { stage: "dev", runId: "run" },
-      async () => {
-        await collect(() => {
-          secret({ id: "stripe-key", source: vault, key: "STRIPE_KEY" });
-          secret({ id: "sentry", name: "SENTRY_DSN" });
-          accountToken({ id: "deploy", policies });
-        });
-        return secretContext()!.declared;
-      },
-    );
+  const declare = (evaluate: () => unknown) =>
+    runWithSecretContext({ stage: "dev", runId: "run" }, async () => {
+      await collect(evaluate);
+      return secretContext()!.declared;
+    });
+
+  it("declares secrets and tokens by id, without set or delete for a token, or delete for an explicit name", async () => {
+    const declared = await declare(() => {
+      secret({ id: "stripe-key", source: vault, key: "STRIPE_KEY" });
+      secret({ id: "sentry", name: "SENTRY_DSN" });
+      accountToken({ id: "deploy", policies });
+    });
 
     expect([...declared.keys()]).toEqual(["stripe-key", "sentry", "deploy"]);
     expect(declared.get("stripe-key")).toMatchObject({
       source: vault,
       key: "STRIPE_KEY",
+      set: expect.any(Function),
+      delete: expect.any(Function),
     });
-    expect(declared.get("stripe-key")!.resource.id).toBe("secret:stripe-key");
-    expect(declared.get("sentry")!.refuseDelete).toContain(
-      "has the explicit name SENTRY_DSN",
-    );
-    expect(declared.get("deploy")!.refuseSet).toContain(
-      "is the secret of an API token",
-    );
+    expect(declared.get("sentry")!.delete).toBeUndefined();
+    expect(declared.get("deploy")!.set).toBeUndefined();
+    expect(declared.get("deploy")!.delete).toBeUndefined();
+    expect(declared.get("sentry")).toMatchObject({
+      set: expect.any(Function),
+      refusal: expect.stringContaining("has the explicit name SENTRY_DSN"),
+    });
+    expect(declared.get("deploy")).toMatchObject({
+      refusal: expect.stringContaining("is the secret of an API token"),
+    });
+  });
+
+  describe("set and delete", () => {
+    type Call = { method: string; path: string; body: unknown };
+    let calls: Call[];
+
+    // Answers as an account with no store and no secrets, until the store
+    // is created.
+    beforeEach(() => {
+      calls = [];
+      vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "acc");
+      vi.stubEnv("CLOUDFLARE_API_TOKEN", "token");
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+        const call = {
+          method: init?.method ?? "GET",
+          path: new URL(String(url)).pathname,
+          body: init?.body ? JSON.parse(init.body as string) : undefined,
+        };
+        calls.push(call);
+        const result = call.method === "GET" ? [] : { id: "new-store" };
+        return Response.json({ success: true, errors: [], result });
+      });
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    it("sets a secret before the first deploy, creating the account's store", async () => {
+      const declared = await declare(() => secret({ id: "admin" }));
+
+      await declared.get("admin")!.set!("hunter2");
+
+      const stores = "/client/v4/accounts/acc/secrets_store/stores";
+      expect(calls.filter((call) => call.method === "POST")).toEqual([
+        {
+          method: "POST",
+          path: stores,
+          body: { name: "default_secrets_store" },
+        },
+        {
+          method: "POST",
+          path: `${stores}/new-store/secrets`,
+          body: [
+            { name: "shop--dev--admin", value: "hunter2", scopes: ["workers"] },
+          ],
+        },
+      ]);
+    });
+
+    it("deletes nothing when the account has no store", async () => {
+      const declared = await declare(() => secret({ id: "admin" }));
+
+      await declared.get("admin")!.delete!();
+
+      expect(calls.map((call) => call.method)).toEqual(["GET"]);
+    });
   });
 
   it("fails for a name with a dot", async () => {
@@ -260,7 +319,7 @@ describe("secret", () => {
 });
 
 describe("accountToken", () => {
-  it("declares a token named <app>--<stage>--<id>, with its policies sorted", async () => {
+  it("declares a token named <app>--<stage>--<id>, with its policies", async () => {
     const graph = await collect(() => {
       accountToken({
         id: "deploy",
@@ -288,7 +347,7 @@ describe("accountToken", () => {
       Policies: [
         {
           effect: "allow",
-          permissionGroups: ["Account Settings Read", "Workers Scripts Write"],
+          permissionGroups: ["Workers Scripts Write", "Account Settings Read"],
           resources: { "com.cloudflare.api.account.acc": "*" },
         },
       ],

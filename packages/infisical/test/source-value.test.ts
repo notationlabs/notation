@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { declareSecret, runWithSecretContext } from "@notation/core";
-import { collectResourceGraph, type BaseResource } from "@notation/resource";
+import { collectResourceGraph } from "@notation/resource";
 import { sources } from "@notation/std/resources";
 import { getValue } from "@notation/std/sources";
 import { infisical } from "src/sources";
@@ -38,7 +38,6 @@ it("gives a SourceValue its version, and getValue its value, from one listing of
       await collectResourceGraph(() => {
         declareSecret({
           id: "stripe-key",
-          resource: {} as BaseResource,
           source,
           key: "STRIPE_KEY",
         });

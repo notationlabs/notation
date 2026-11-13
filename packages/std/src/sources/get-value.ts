@@ -5,7 +5,6 @@ import { Redacted, recordSecretValue, secretContext } from "@notation/core";
  * writes it. It calls `get` on the secret's source. A secret without a source
  * takes its value from the prompt, and fails when there is no one to ask.
  * The prompt is asked once per run for each secret. An empty value fails.
- * `notation secret set` supplies the value instead.
  *
  * The CLI removes every value that this returns from what it prints.
  */
@@ -13,7 +12,7 @@ export async function getValue(id: string): Promise<Redacted<string>> {
   const context = secretContext();
   if (!context) {
     throw new Error(
-      `The value of the secret \`${id}\` can only be read in notation deploy or notation secret set.`,
+      `The value of the secret \`${id}\` can only be read during notation deploy or notation watch.`,
     );
   }
   const declared = context.declared.get(id);
@@ -25,15 +24,14 @@ export async function getValue(id: string): Promise<Redacted<string>> {
   if (cached) return cached;
   let value: Redacted<string>;
   let from: string;
-  if (context.supplied?.id === id) {
-    value = context.supplied.value;
-    from = "notation secret set";
-  } else if (declared.source) {
+  let prompted = false;
+  if (declared.source) {
     value = await declared.source.get(declared.key!, { stage });
     from = `${declared.source.name} key \`${declared.key}\``;
   } else if (context.prompt) {
     value = new Redacted(await context.prompt({ id, stage }));
     from = "the prompt";
+    prompted = true;
   } else {
     throw new Error(
       `Secret \`${id}\` isn't set for stage ${stage}. Run \`notation secret set ${id} --stage ${stage}\`.`,
@@ -43,15 +41,6 @@ export async function getValue(id: string): Promise<Redacted<string>> {
     throw new Error(`The value of the secret \`${id}\` from ${from} is empty.`);
   }
   recordSecretValue(value.unwrap());
-  if (from === "the prompt") context.prompted.set(id, value);
+  if (prompted) context.prompted.set(id, value);
   return value;
-}
-
-/**
- * True when `notation secret set` is writing the value of the secret declared
- * with `id`. A resource uses it to write a secret that already exists, which
- * it otherwise leaves for a secret without a source.
- */
-export function isValueSupplied(id: string): boolean {
-  return secretContext()?.supplied?.id === id;
 }

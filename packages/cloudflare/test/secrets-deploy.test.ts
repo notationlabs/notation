@@ -7,6 +7,7 @@ import {
   Redacted,
   runDurableWorkflow,
   runWithSecretContext,
+  secretContext,
   type SecretPrompt,
   type Source,
 } from "@notation/core";
@@ -190,6 +191,17 @@ describe("secrets in a deploy", () => {
     await expect(deploy("first")).rejects.toThrow(
       "Secret `admin` isn't set for stage dev. Run `notation secret set admin --stage dev`.",
     );
+  });
+
+  it("keeps a secret without a source that notation secret set wrote before the first deploy", async () => {
+    await runWithSecretContext({ stage: "dev", runId: "set" }, async () => {
+      await collect();
+      await secretContext()!.declared.get("admin")!.set!(PROMPTED);
+    });
+
+    await deploy("first");
+
+    expect(secrets.get("shop--dev--admin")?.value).toBe(PROMPTED);
   });
 
   it("fails at plan when the source doesn't have the key", async () => {
