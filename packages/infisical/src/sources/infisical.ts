@@ -1,9 +1,4 @@
-import {
-  Redacted,
-  secretContext,
-  type Source,
-  type SourceContext,
-} from "@notation/core";
+import { Redacted, type Source, type SourceContext } from "@notation/core";
 import { request, siteUrl } from "./api";
 import { accessToken } from "./auth";
 
@@ -42,6 +37,19 @@ type Folder = Map<string, InfisicalSecret>;
  */
 export function infisical(options: InfisicalOptions): Source {
   const path = normalisePath(options.path ?? "/");
+  // The infra is evaluated again in each run, which calls `infisical()`
+  // again, so the responses are cached for one run.
+  const cache = new Map<string, Promise<unknown>>();
+  const cached = <T>(key: string, load: () => Promise<T>): Promise<T> => {
+    let entry = cache.get(key) as Promise<T> | undefined;
+    if (!entry) {
+      entry = load();
+      cache.set(key, entry);
+      // A failed request is tried again on the next call.
+      entry.catch(() => cache.delete(key));
+    }
+    return entry;
+  };
 
   const environment = ({ stage }: SourceContext) =>
     typeof options.environment === "function"
@@ -110,23 +118,4 @@ export function infisical(options: InfisicalOptions): Source {
 function normalisePath(path: string): string {
   const trimmed = path.replace(/^\/+|\/+$/g, "");
   return `/${trimmed}`;
-}
-
-// Responses are cached for one run, so that `notation watch` reads new
-// versions on its next deploy. Outside a run they are cached for the process.
-const runCaches = new WeakMap<object, Map<string, Promise<unknown>>>();
-const outsideRun = {};
-
-function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
-  const run = secretContext() ?? outsideRun;
-  const cache = runCaches.get(run) ?? new Map<string, Promise<unknown>>();
-  runCaches.set(run, cache);
-  let entry = cache.get(key) as Promise<T> | undefined;
-  if (!entry) {
-    entry = load();
-    cache.set(key, entry);
-    // A failed request is tried again on the next call.
-    entry.catch(() => cache.delete(key));
-  }
-  return entry;
 }

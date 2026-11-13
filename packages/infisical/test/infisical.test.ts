@@ -105,18 +105,18 @@ describe("infisical", () => {
     expect(call!.headers.get("authorization")).toBe("Bearer st.token");
   });
 
-  it("fetches the folder again in a new run", async () => {
+  it("fetches the folder again in a new run, which calls infisical() again", async () => {
     vi.stubEnv("INFISICAL_TOKEN", "st.token");
     let version = 1;
     mockFetch(() => folder(secret("STRIPE_KEY", "sk", version)));
-    const source = infisical({ projectId: "proj", environment: "dev" });
+    const source = () => infisical({ projectId: "proj", environment: "dev" });
 
     await expect(
-      inRun(() => source.version!("STRIPE_KEY", context)),
+      inRun(() => source().version!("STRIPE_KEY", context)),
     ).resolves.toBe("id-STRIPE_KEY:1");
     version = 2;
     await expect(
-      inRun(() => source.version!("STRIPE_KEY", context)),
+      inRun(() => source().version!("STRIPE_KEY", context)),
     ).resolves.toBe("id-STRIPE_KEY:2");
     expect(calls).toHaveLength(2);
   });
@@ -223,7 +223,7 @@ describe("infisical", () => {
 describe("authentication", () => {
   const source = () => infisical({ projectId: "proj", environment: "dev" });
 
-  it("logs in with a machine identity's client ID and secret, once per run", async () => {
+  it("logs in with a machine identity's client ID and secret, once per source", async () => {
     vi.stubEnv("INFISICAL_UNIVERSAL_AUTH_CLIENT_ID", "client");
     vi.stubEnv("INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET", "secret");
     mockFetch((call) =>
@@ -231,15 +231,10 @@ describe("authentication", () => {
         ? loginResponse("ua.token")
         : folder(),
     );
+    const byStage = infisical({ projectId: "proj", environment: (s) => s });
 
-    await inRun(async () => {
-      await source().has("A", context);
-      await infisical({
-        projectId: "proj",
-        environment: "dev",
-        path: "/other",
-      }).has("A", context);
-    });
+    await byStage.has("A", { stage: "dev" });
+    await byStage.has("A", { stage: "prod" });
 
     expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([
       "POST /api/v1/auth/universal-auth/login",
