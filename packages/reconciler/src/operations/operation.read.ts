@@ -98,7 +98,7 @@ export async function* applyDriftDetection(
   const { action, driftDetection, ...readParams } = params;
   if (
     action.decision !== "noop" ||
-    !(driftDetection ?? true) ||
+    (!(driftDetection ?? true) && !readParams.resource.alwaysRead) ||
     !readParams.resource.read
   ) {
     return action;

@@ -3,12 +3,14 @@
  * resources, each built on one read of the resource's persisted record and
  * writes conditional on that read.
  */
+import { isDeepStrictEqual } from "node:util";
 import {
   SchemaStructureError,
   assertRequiredOutputs,
   collectResourceGraph,
   validateParams,
   type BaseResource,
+  type DurableObject,
   type ResourceGroupRef,
   type ResourceDeletion,
   type ResourceType,
@@ -147,6 +149,10 @@ export async function* reconcileResource(
     });
   }
 
+  if (action.decision === "noop" && action.output) {
+    resource.setOutput({ ...session.node?.output, ...action.output });
+  }
+
   if (
     action.decision === "drift-update" ||
     action.decision === "drift-replace"
@@ -230,16 +236,30 @@ export async function* reconcileResource(
       return;
     case "noop":
       if (!session.node) return;
-      if (findMissingOutputs(resource, session.node.output)) {
+      if (findMissingOutputs(resource, resource.output)) {
         yield* recoverOutputs(step, opts, session, shared);
         return;
       }
-      if (
-        !opts.dryRun &&
-        (!hasSameEdges(session.node, dependsOn) ||
-          session.node.provider !== resource.provider)
-      ) {
-        yield* rewriteRecord(session, resource, dependsOn);
+      if (!opts.dryRun) {
+        const nextOutput =
+          action.output !== undefined
+            ? (resource.toState(resource.output) as DurableObject)
+            : undefined;
+        const outputChanged =
+          nextOutput !== undefined &&
+          !isDeepStrictEqual(session.node.output, nextOutput);
+        if (
+          outputChanged ||
+          !hasSameEdges(session.node, dependsOn) ||
+          session.node.provider !== resource.provider
+        ) {
+          yield* rewriteRecord(
+            session,
+            resource,
+            dependsOn,
+            outputChanged ? nextOutput : undefined,
+          );
+        }
       }
       return;
   }
@@ -298,19 +318,21 @@ async function* recoverOutputs(
 }
 
 /**
- * Updates `dependsOn` and `provider` in the record, without calling the
- * resource's update operation.
+ * Updates `dependsOn`, `provider`, and optionally `output` in the record,
+ * without calling the resource's update operation.
  */
 async function* rewriteRecord(
   session: Extract<ResourceStateSession, { node: StateNode }>,
   resource: BaseResource,
   dependsOn: string[],
+  output?: DurableObject,
 ): AsyncGenerator<any, void, any> {
   const { version: _, ...record } = session.node;
   yield* session.persist({
     ...record,
     provider: resource.provider,
     group: (record.group ?? null) as ResourceGroupRef | null,
+    ...(output ? { output } : {}),
     dependsOn,
   });
 }

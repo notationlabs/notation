@@ -56,6 +56,8 @@ export type PlanNode = {
    * and updates it with them once the rest of its cycle exists.
    */
   placeholder?: true;
+  /** Optional resource-supplied notes surfaced in plan output. */
+  notes?: string[];
   params: Record<string, unknown>;
   dependsOn: string[];
 };
@@ -70,7 +72,7 @@ export type DriftRead =
 
 export type ResourceAction =
   | { decision: "create" }
-  | { decision: "noop" }
+  | { decision: "noop"; output?: Record<string, unknown> }
   | { decision: "drift-recreate" }
   | { decision: "update"; patch: Record<string, unknown>; diff: PlanDiff }
   | {
@@ -169,7 +171,7 @@ export function decideDriftAction(opts: {
     return { decision: "drift-update", patch, diff };
   }
 
-  return { decision: "noop" };
+  return { decision: "noop", output: driftRead.output };
 }
 
 /**

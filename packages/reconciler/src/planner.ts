@@ -11,7 +11,7 @@ import {
 import { isCycle, orderDeployUnits, type DeployUnit } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
-import { applyDriftDetection } from "./operations";
+import { applyDriftDetection, readResourceOperation } from "./operations";
 import {
   decideAction,
   getDependencyIds,
@@ -100,6 +100,24 @@ export async function createPlan({
         maxOperationAttempts,
       }),
     );
+    if (action.decision === "noop" && action.output) {
+      resource.setOutput({ ...stateNode?.output, ...action.output });
+    } else if (
+      action.decision === "update" &&
+      resource.alwaysRead &&
+      resource.read
+    ) {
+      const refreshed = await runOperation(
+        readResourceOperation(createStepRunner(), {
+          resource,
+          resourceParams: params,
+          persistedOutput: stateNode?.output,
+          emit: emitStep,
+          maxOperationAttempts,
+        }),
+      );
+      resource.setOutput({ ...stateNode?.output, ...refreshed });
+    }
 
     const dependsOn = getDependencyIds(resource);
     const replaceFields =
@@ -150,13 +168,20 @@ export async function createPlan({
     // A resource deleted in a cascade is created again, so a diff of an
     // update does not apply to it.
     const cascadeOnly = replacedDependency && !replaceFields;
+    const decision = cascadeOnly ? "replace" : action.decision;
+    const notes = resource.planNotes
+      ? await resource.planNotes({
+          decision,
+          params,
+        })
+      : undefined;
     const placeholder =
       cycle?.placeholders.includes(resource) &&
       (action.decision === "create" || action.decision === "drift-recreate");
     return {
       id: resource.id,
       type: resource.type,
-      decision: cascadeOnly ? "replace" : action.decision,
+      decision,
       ...("diff" in action && !cascadeOnly ? { diff: action.diff } : {}),
       ...(replaceFields ? { replaceFields } : {}),
       ...(replacedDependency ? { replacedDependency } : {}),
@@ -169,6 +194,7 @@ export async function createPlan({
           }
         : {}),
       ...(placeholder ? { placeholder: true as const } : {}),
+      ...(notes && notes.length > 0 ? { notes } : {}),
       params,
       dependsOn,
     };

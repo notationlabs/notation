@@ -151,6 +151,11 @@ export interface BaseResource {
   /** See `DefineResourceMeta.deleteTakesDependents`. */
   readonly deleteTakesDependents?: boolean;
   /**
+   * When true, drift detection always reads this resource even when
+   * `driftDetection` is disabled (e.g. `watch` mode).
+   */
+  readonly alwaysRead?: boolean;
+  /**
    * The params the resource deploys with. Deploy creates the placeholder of
    * a dependency cycle before the other members exist, so it leaves out the
    * contributions that depend on them.
@@ -168,6 +173,14 @@ export interface BaseResource {
     config: any;
     deps: any;
   }) => DurableObject | Promise<DurableObject>;
+  /**
+   * Optional notes shown for this resource in `plan` output (for example,
+   * explaining that deploy will prompt for an unset secret).
+   */
+  planNotes?: (context: {
+    decision: string;
+    params: Record<string, unknown>;
+  }) => string[] | undefined | Promise<string[] | undefined>;
   /**
    * Adds values to the resource's collected params, or a function that
    * returns them from the outputs of `options.deps`. Throws once evaluation
@@ -233,6 +246,7 @@ export abstract class Resource<
   abstract type: ResourceType;
   abstract provider: string;
   declare readonly deleteTakesDependents?: boolean;
+  declare readonly alwaysRead?: boolean;
   abstract schema: Schema;
   abstract create: (
     params: T["params"],
@@ -262,6 +276,10 @@ export abstract class Resource<
     config: C;
     deps: D;
   }): Record<string, any> | Promise<Record<string, any>>;
+  planNotes?: (context: {
+    decision: string;
+    params: Record<string, unknown>;
+  }) => string[] | undefined | Promise<string[] | undefined>;
 
   constructor(
     id: string,
@@ -775,6 +793,11 @@ export type ResourceOperationsOptions<
   deriveParams?: (opts: {
     config: Partial<T["params"]>;
   }) => IntrinsicParams | Promise<IntrinsicParams>;
+  planNotes?: (context: {
+    decision: string;
+    params: T["params"];
+  }) => string[] | undefined | Promise<string[] | undefined>;
+  alwaysRead?: boolean;
 };
 
 export type ResourceDependenciesBuilder<
@@ -875,6 +898,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             type = meta.type;
             static blocksDeleteOf = meta.blocksDeleteOf ?? [];
             deleteTakesDependents = meta.deleteTakesDependents ?? false;
+            alwaysRead = opts.alwaysRead;
             provider = meta.provider;
             schema = schema;
             create = opts.create;
@@ -882,6 +906,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             read = opts.read ? opts.read : undefined;
             update = opts.update ? opts.update : undefined;
             delete = opts.delete;
+            planNotes = opts.planNotes as BaseResource["planNotes"];
 
             constructor(
               id: string,

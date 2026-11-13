@@ -200,6 +200,9 @@ async function* checkPlaceholder(
     emit: durableEmitter(readStep, opts.emit),
     maxOperationAttempts: opts.maxOperationAttempts,
   });
+  if (driftRead.kind === "present") {
+    resource.setOutput({ ...session.node.output, ...driftRead.output });
+  }
   return { recorded: true, driftRead };
 }
 
