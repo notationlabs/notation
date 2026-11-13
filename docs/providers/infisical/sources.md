@@ -35,7 +35,7 @@ export const stripeKey = secret({
 | `siteUrl`     | The URL of the Infisical instance. Defaults to `INFISICAL_DOMAIN`, and then to `https://app.infisical.com`. |
 
 - The source lists the folder's secrets once in each plan or deploy, and answers every key from that one response. `notation watch` lists the folder again on each deploy.
-- Secret references in values are expanded. Secrets imported into the folder, and secrets in its subfolders, aren't read.
+- Secret references in values are expanded. Secrets imported into the folder, secrets in its subfolders, and personal overrides aren't read.
 - The version of a key is the secret's ID and its Infisical version, such as `9c41…:14`. A secret is written to its store when the version changes. The ID is part of the version because a secret that is deleted and added again starts again at version 1.
 - Plan and deploy fail when the folder doesn't have the key, and deploy fails when the identity can't read secret values.
 

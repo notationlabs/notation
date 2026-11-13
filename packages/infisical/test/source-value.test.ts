@@ -18,6 +18,7 @@ it("gives a SourceValue its version, and getValue its value, from one fetch", as
         {
           id: "sec-1",
           version: 14,
+          type: "shared",
           secretKey: "STRIPE_KEY",
           secretValue: "sk_live_sentinel",
           secretValueHidden: false,

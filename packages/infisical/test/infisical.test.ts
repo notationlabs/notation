@@ -21,6 +21,7 @@ function mockFetch(respond: (call: Call) => Response | Promise<Response>) {
 const secret = (secretKey: string, secretValue: string, version = 1) => ({
   id: `id-${secretKey}`,
   version,
+  type: "shared" as "shared" | "personal",
   secretKey,
   secretValue,
   secretValueHidden: false,
@@ -100,6 +101,7 @@ describe("infisical", () => {
       viewSecretValue: "true",
       expandSecretReferences: "true",
       includeImports: "false",
+      includePersonalOverrides: "false",
       recursive: "false",
     });
     expect(call!.headers.get("authorization")).toBe("Bearer st.token");
@@ -140,6 +142,25 @@ describe("infisical", () => {
       "dev",
     ]);
     expect(calls[0]!.url.searchParams.get("secretPath")).toBe("/orders");
+  });
+
+  it("ignores a personal override, and reads the shared secret", async () => {
+    vi.stubEnv("INFISICAL_TOKEN", "st.token");
+    mockFetch(() =>
+      folder(
+        secret("STRIPE_KEY", "sk_shared"),
+        { ...secret("STRIPE_KEY", "sk_personal"), type: "personal" },
+        { ...secret("MINE", "personal_only"), type: "personal" },
+      ),
+    );
+    const source = infisical({ projectId: "proj", environment: "dev" });
+
+    await inRun(async () => {
+      expect((await source.get("STRIPE_KEY", context)).unwrap()).toBe(
+        "sk_shared",
+      );
+      await expect(source.has("MINE", context)).resolves.toBe(false);
+    });
   });
 
   it("names the folder when a key is missing", async () => {

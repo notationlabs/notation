@@ -19,6 +19,7 @@ export type InfisicalOptions = {
 type InfisicalSecret = {
   id: string;
   version: number;
+  type: "shared" | "personal";
   secretKey: string;
   secretValue: string;
   secretValueHidden?: boolean;
@@ -74,6 +75,7 @@ export function infisical(options: InfisicalOptions): Source {
           viewSecretValue: "true",
           expandSecretReferences: "true",
           includeImports: "false",
+          includePersonalOverrides: "false",
           recursive: "false",
         }).toString();
         const response = await request<{ secrets: InfisicalSecret[] }>(
@@ -81,7 +83,13 @@ export function infisical(options: InfisicalOptions): Source {
           url,
           { token },
         );
-        return new Map(response.secrets.map((s) => [s.secretKey, s]));
+        // A personal override belongs to one user. It must never be written
+        // to a shared store, so it is dropped even if the API returns one.
+        return new Map(
+          response.secrets
+            .filter((s) => s.type === "shared")
+            .map((s) => [s.secretKey, s]),
+        );
       },
     );
   };
