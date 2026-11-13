@@ -665,12 +665,53 @@ describe("WorkerScript", () => {
 
   it("reads a missing Worker as not found, and deletes it without an error", async () => {
     mockFetch(() => fail(404, 10007, "This Worker does not exist"));
-    const key = { AccountId: "acc", ScriptName: "app--dev--api" };
+    // A name that no other test creates, as a read waits for a Worker that
+    // was created moments before.
+    const key = { AccountId: "acc", ScriptName: "app--dev--missing" };
 
     await expect(script.read!(key)).rejects.toBeInstanceOf(
       ResourceNotFoundError,
     );
     await expect(script.delete(key, {} as any)).resolves.toBeUndefined();
+  });
+
+  it("waits for a Worker that Cloudflare reports as not found just after its create", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const created = { ...params, ScriptName: "app--dev--lagging" };
+    const key = { AccountId: "acc", ScriptName: created.ScriptName };
+    mockFetch((call) =>
+      call.method === "GET"
+        ? fail(404, 10007, "This Worker does not exist")
+        : ok({}),
+    );
+
+    try {
+      await script.create(created);
+      vi.advanceTimersByTime(14_000);
+      await expect(script.read!(key)).rejects.toBeInstanceOf(
+        ResourceOperationPendingError,
+      );
+      vi.advanceTimersByTime(1_000);
+      await expect(script.read!(key)).rejects.toBeInstanceOf(
+        ResourceNotFoundError,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads a Worker that it created and then deleted as not found", async () => {
+    const created = { ...params, ScriptName: "app--dev--deleted" };
+    const key = { AccountId: "acc", ScriptName: created.ScriptName };
+    mockFetch((call) =>
+      call.method === "PUT" ? ok({}) : fail(404, 10007, "not found"),
+    );
+
+    await script.create(created);
+    await script.delete(key, {} as any);
+    await expect(script.read!(key)).rejects.toBeInstanceOf(
+      ResourceNotFoundError,
+    );
   });
 
   describe("delete of a Worker that other Workers refer to", () => {
