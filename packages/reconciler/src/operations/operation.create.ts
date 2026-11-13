@@ -319,7 +319,10 @@ async function* restoreRecord(
     return;
   }
   yield* params.persist(
-    toPersistedState(record, record.dependsOn ?? params.dependsOn),
+    {
+      ...toPersistedState(record, record.dependsOn ?? params.dependsOn),
+      retired: record.retired ?? [],
+    },
     "restored",
   );
 }

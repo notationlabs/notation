@@ -7032,6 +7032,7 @@ describe("create-first replacement", () => {
       failCreate?: (params: any) => Error | undefined;
       failRead?: () => Error | undefined;
       failUpdate?: (params: any) => Error | undefined;
+      beforeDelete?: (label: string) => Promise<void>;
       failDelete?: (label: string) => Error | undefined;
     } = {};
     const label = (name: string) => {
@@ -7073,6 +7074,7 @@ describe("create-first replacement", () => {
         calls.push(`update ${label(params.name)}`);
       },
       delete: async (key: any) => {
+        await control.beforeDelete?.(label(key.name));
         const error = control.failDelete?.(label(key.name));
         if (error) throw error;
         const users = [...live.values()].filter(
@@ -7538,6 +7540,30 @@ describe("create-first replacement", () => {
     runtime.close();
   });
 
+  it("fails with the version conflict when another writer moves the record during the delete of a retired resource", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-retired-race");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    world.control.beforeDelete = async (label) => {
+      if (label !== "bus#1") return;
+      await runtime.storeClient.updateStore({
+        definition: durable.resourceStateStore,
+        id: runtime.state.storeId("bus"),
+        updater: (draft: any) => {
+          draft.lastOperationAt = "1999-01-01T00:00:00.000Z";
+        },
+      });
+    };
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "VersionConflict",
+    });
+    expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
+    runtime.close();
+  });
+
   it("resumes the delete of a retired resource after a crash that follows the remote delete", async () => {
     const world = defineNamedWorld();
     const resources = declareBus(world, "/");
@@ -7552,6 +7578,8 @@ describe("create-first replacement", () => {
       "simulated process crash",
     );
     expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
+    // The crash ends the delivery, not the execution, so the hold is kept.
+    expect(await readHolder(runtime, "cbd-resume-retired")).toBe("deploy-2");
 
     await runtime.run("deploy-2");
     expect(world.calls).toEqual([

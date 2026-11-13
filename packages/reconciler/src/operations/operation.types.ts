@@ -90,9 +90,8 @@ export function toPersistedState(
  * record.
  *
  * A write that leaves out `retired` keeps the retired instances that the
- * record lists, except a `restored` write, which writes the record as it is
- * given. Neither `null` nor a removal may drop a record that lists retired
- * instances.
+ * record lists. Neither `null` nor a removal may drop a record that lists
+ * retired instances.
  */
 export type PersistState = (
   next: PersistedResourceState | null,
@@ -142,7 +141,7 @@ export type CreateResourceParams = ResolvedResourceParams & {
   prior?: StateNode;
   /**
    * Set for the create of a replacement: the record of the resource that it
-   * replaces. A delete-first replace has removed it.
+   * replaces, which the delete removed.
    */
   replaces?: StateNode;
   /**

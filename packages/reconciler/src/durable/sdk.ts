@@ -1,6 +1,10 @@
 import type { WorkflowFn } from "@notation/durable";
 
-export { defineStore, registerErrorClass } from "@notation/durable";
+export {
+  WorkflowCancelledError,
+  defineStore,
+  registerErrorClass,
+} from "@notation/durable";
 export type { WorkflowStore } from "@notation/durable";
 export { InfrastructureError } from "@notation/durable/runtime";
 export type {

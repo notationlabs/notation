@@ -11,6 +11,7 @@ import {
   validateParams,
   type BaseResource,
   type DurableObject,
+  type ResourceClass,
   type ResourceGroupRef,
   type ResourceDeletion,
   type ResourceType,
@@ -69,7 +70,11 @@ import {
   type ResourceSnapshot,
 } from "./stores";
 import type { DeployContext, DurableWorkflowOptions } from "./types";
-import type { DurableStep } from "./sdk";
+import {
+  InfrastructureError,
+  WorkflowCancelledError,
+  type DurableStep,
+} from "./sdk";
 
 /**
  * A read of a resource's persisted record, together with the writes that are
@@ -311,7 +316,11 @@ async function* applyAction(
           `Cannot replace ${resource.id}: it has no state record`,
         );
       }
-      yield* replaceResource(step, opts, session, shared, replaceWithout);
+      if (replaceOrder(resource) === "create-first") {
+        yield* replaceCreateFirst(step, opts, session, shared);
+      } else {
+        yield* replaceDeleteFirst(step, opts, session, shared, replaceWithout);
+      }
       return;
     case "noop":
       if (!session.node) return;
@@ -492,23 +501,6 @@ async function* withoutContributions(
 }
 
 /**
- * Replaces the resource in the order that `replaceOrder` gives.
- */
-async function* replaceResource(
-  step: DurableStepRunner,
-  opts: DeployContext,
-  session: Extract<ResourceStateSession, { node: StateNode }>,
-  shared: SharedParams,
-  replaceWithout?: ReconcileOptions["replaceWithout"],
-): AsyncGenerator<any, void, any> {
-  if (replaceOrder(shared.resource) === "create-first") {
-    yield* replaceCreateFirst(step, opts, session, shared);
-    return;
-  }
-  yield* replaceDeleteFirst(step, opts, session, shared, replaceWithout);
-}
-
-/**
  * Creates the replacement beside the resource it replaces, under a new
  * generated name. The "creating" record of the replacement adds the
  * replaced resource to the record's retired instances, in one write, and
@@ -549,7 +541,6 @@ async function* replaceCreateFirst(
     // The persisted output describes the resource that is replaced.
     persistedOutput: undefined,
     prior: session.node,
-    replaces: session.node,
     retired: [
       ...(session.node.retired ?? []),
       retiredInstance(session.node, shared.dependsOn),
@@ -607,7 +598,12 @@ async function* replaceDeleteFirst(
   const deleteStep = step.scope("replace:delete");
   // A class lists retired instances only while it has a `physicalName`
   // param. One that has lost it deletes them with the record.
-  yield* deleteRetiredInstances(deleteStep, opts, session, shared.resource);
+  yield* deleteRetiredInstances(
+    deleteStep,
+    opts,
+    session,
+    resolveResourceClass(workflowRegistry(opts), shared.resource.type)!,
+  );
   yield* deleteResourceOperation(deleteStep, {
     resource: shared.resource,
     deletion: yield* readDeletion(deleteStep, opts, shared.resource),
@@ -754,24 +750,26 @@ export async function* deleteResource(
 ): AsyncGenerator<any, void, any> {
   const session = yield* openStateSession(step, opts, declared);
   if (!session.node) return;
-  let resource = declared;
-  if (session.node.type !== declared.type) {
-    const Resource = resolveResourceClass(
-      workflowRegistry(opts),
-      session.node.type as ResourceType,
+  // The classes in code win in the registry, so a record of the declared
+  // type resolves to the declared class.
+  const Resource = resolveResourceClass(
+    workflowRegistry(opts),
+    session.node.type as ResourceType,
+  );
+  if (!Resource) {
+    throw new Error(
+      `No class is registered for type ${session.node.type}, the type of ` +
+        `the state record of ${declared.id}. The orphan sweep keeps such a ` +
+        `record, so destroy should not reach it.`,
     );
-    if (!Resource) {
-      throw new Error(
-        `No class is registered for type ${session.node.type}, the type of ` +
-          `the state record of ${declared.id}. The orphan sweep keeps such a ` +
-          `record, so destroy should not reach it.`,
-      );
-    }
-    resource = await instantiateRecord(Resource, session.node);
   }
+  const resource =
+    session.node.type === declared.type
+      ? declared
+      : await instantiateRecord(Resource, session.node);
   resource.setOutput(session.node.output);
 
-  yield* deleteRetiredInstances(step, opts, session, resource);
+  yield* deleteRetiredInstances(step, opts, session, Resource);
   const emit = durableEmitter(step, opts.emit);
   yield* deleteResourceOperation(step, {
     resource,
@@ -797,14 +795,34 @@ async function* readDeletion(
   step: DurableStepRunner,
   opts: DurableWorkflowOptions,
   resource: BaseResource,
-  /**
-   * For the delete of a retired instance. The dependents in code are left
-   * out, as they have moved to the replacement. The retired instances of
-   * other records that depend on the resource are added, as the sweep
-   * deletes them too. They are left when the retired instances depend on
-   * each other, as the retired members of a cycle do.
-   */
-  retired = false,
+): AsyncGenerator<any, ResourceDeletion | undefined, any> {
+  if (!resource.deleteTakesDependents || opts.dryRun) return undefined;
+  const resourceById = new Map(
+    opts.resources.map((desired) => [desired.id, desired]),
+  );
+  const dependents = yield* step.run("dependents", async () =>
+    (await opts.state.values())
+      .filter(
+        (node) =>
+          node.id !== resource.id &&
+          recordedEdges(node, resourceById).includes(resource.id),
+      )
+      .map(({ id, type, params }) => ({ id, type, params })),
+  );
+  return { dependents };
+}
+
+/**
+ * `readDeletion` for a retired instance. The dependents in code are left
+ * out, as they have moved to the replacement. The retired instances of other
+ * records that depend on the resource are added. The sweep deletes them
+ * first, except when retired instances depend on each other, as the retired
+ * members of a cycle do.
+ */
+async function* readRetiredDeletion(
+  step: DurableStepRunner,
+  opts: DurableWorkflowOptions,
+  resource: BaseResource,
 ): AsyncGenerator<any, ResourceDeletion | undefined, any> {
   if (!resource.deleteTakesDependents || opts.dryRun) return undefined;
   const resourceById = new Map(
@@ -815,14 +833,14 @@ async function* readDeletion(
       if (node.id === resource.id) return [];
       const { id, type } = node;
       const found =
-        !(retired && resourceById.has(id)) &&
+        !resourceById.has(id) &&
         recordedEdges(node, resourceById).includes(resource.id)
           ? [{ id, type, params: node.params }]
           : [];
-      if (!retired) return found;
       for (const instance of node.retired ?? []) {
-        if (!instance.dependsOn.includes(resource.id)) continue;
-        found.push({ id, type, params: instance.params });
+        if (instance.dependsOn.includes(resource.id)) {
+          found.push({ id, type, params: instance.params });
+        }
       }
       return found;
     }),
@@ -832,8 +850,8 @@ async function* readDeletion(
 
 /**
  * Deletes each retired instance that the record of `session` lists, oldest
- * first, with the class of `resource`. Each delete removes the instance from
- * the list, with a write against the record that the one before it left.
+ * first, with `Resource`. Each delete removes the instance from the list,
+ * with a write against the record that the one before it left.
  * When the provider refuses a delete, the instance stays retired, and the
  * error names the resources in code that depend on the resource.
  */
@@ -841,34 +859,45 @@ async function* deleteRetiredInstances(
   step: DurableStepRunner,
   opts: DurableWorkflowOptions,
   session: Extract<ResourceStateSession, { node: StateNode }>,
-  resource: BaseResource,
+  Resource: ResourceClass<any, any, any>,
 ): AsyncGenerator<any, void, any> {
   const { node } = session;
   const instances = node.retired ?? [];
-  const Resource = resource.constructor as unknown as NonNullable<
-    ReturnType<typeof resolveResourceClass>
-  >;
   for (const [index, instance] of instances.entries()) {
     const scoped = step.scope(`retired:${index}`);
     const retired = await instantiateRecord(Resource, { ...node, ...instance });
     const emit = durableEmitter(scoped, opts.emit);
+    const deletion = yield* readRetiredDeletion(scoped, opts, retired);
+    let writing = false;
     try {
       yield* deleteResourceOperation(scoped, {
         resource: retired,
-        deletion: yield* readDeletion(scoped, opts, retired, true),
+        deletion,
         dryRun: opts.dryRun,
         emit: (event) => emit({ ...event, reason: "retired" }),
         maxOperationAttempts: opts.maxOperationAttempts,
-        remove: () =>
-          session.persist(
+        remove: () => {
+          writing = true;
+          return session.persist(
             {
               ...toPersistedState(node, node.dependsOn ?? []),
               retired: instances.slice(index + 1),
             },
             `retired:${index}`,
-          ),
+          );
+        },
       });
     } catch (error) {
+      // Only the provider's refusal is explained. A failed state write, such
+      // as a `VersionConflict`, an infrastructure error and a cancellation
+      // keep their class, which the runtime and the deployment hold act on.
+      if (
+        writing ||
+        InfrastructureError.is(error) ||
+        error instanceof WorkflowCancelledError
+      ) {
+        throw error;
+      }
       throw retiredDeleteError(opts, node.id, error);
     }
   }
@@ -972,7 +1001,12 @@ export async function* sweepOrphans(
       );
       const session = yield* openStateSession(retiredScope, opts, resource);
       if (session.node) {
-        yield* deleteRetiredInstances(retiredScope, opts, session, resource);
+        yield* deleteRetiredInstances(
+          retiredScope,
+          opts,
+          session,
+          sweep.Resource,
+        );
       }
       continue;
     }
@@ -1094,7 +1128,7 @@ function persistResourceState(
     const { current } = ref;
     if (next === null) assertNoRetired(resource, current);
     const record =
-      next === null || stage === "restored" || "retired" in next
+      next === null || "retired" in next
         ? next
         : { ...next, retired: current.state?.retired };
     const result = yield* store.updateFrom(

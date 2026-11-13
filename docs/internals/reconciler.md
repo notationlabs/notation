@@ -115,7 +115,7 @@ The old resource and its replacement have the same ID, so an edge in state can't
 
 The sweep reaches a record in code only to delete its retired instances, under the step keys `notation:retired:<id>`. The delete of a record's instance `<n>`, oldest first, runs in the scope `retired:<n>`, and its state write has the key `state:persist:<id>:retired:<n>`. Each delete event has `reason: "retired"`.
 
-When the provider refuses to delete a retired instance, the deploy fails. The instance stays retired, and the error names the resources in code that depend on the resource. The next deploy deletes the instance in its sweep, whether or not it replaces anything. It does not delete it at its start, because a dependent that a stopped deploy did not reach still uses the old resource.
+When the provider refuses to delete a retired instance, the deploy fails. The instance stays retired, and the error names the resources in code that depend on the resource. Any other error, such as a `VersionConflict` from the state write, fails the deploy unchanged. The next deploy deletes the instance in its sweep, whether or not it replaces anything. It does not delete it at its start, because a dependent that a stopped deploy did not reach still uses the old resource.
 
 A deploy that stops after the create leaves the old resource retired, and the next deploy deletes it at its end. When the create has an unknown outcome, the `creating` record keeps the old resource in its list, and the next deploy resolves the create as described in [Recoverable creates](#recoverable-creates).
 
@@ -217,7 +217,7 @@ Step 3 runs in the scope `taken-over`, and its state writes add `:after-takeover
 
 A delete-first replace deletes the resource and creates it again. The replacement has the same key when its key does not change with the replace: config provides the key, or the key holds no name of the resource's own, such as the function and event source of a `LambdaEventSourceMapping`. If the provider still holds the deleted resource when the create runs, a takeover would record the old resource as its own replacement.
 
-So the create of a replacement compares the key of an existing resource with the key in the record of the replaced resource. When the keys are equal, deploy refuses the resource: it writes the record of the replaced resource back, and fails. The next deploy deletes the resource and creates the replacement again.
+So the create of a delete-first replacement compares the key of an existing resource with the key in the record of the replaced resource. When the keys are equal, deploy refuses the resource: it writes the record of the replaced resource back, and fails. The next deploy deletes the resource and creates the replacement again.
 
 The rule is the same on all three ways to an existing resource in that create:
 
@@ -225,9 +225,9 @@ The rule is the same on all three ways to an existing resource in that create:
 - `create` throws `ResourceAlreadyExistsError`. The create made nothing, so the existing resource is the replaced one.
 - The lookup of a create with an unknown outcome finds the resource. The resource is the replaced one or the replacement, and deploy cannot tell which. If it is the replacement, the next deploy replaces it once more.
 
-When the replacement has another key than the replaced resource, for example after a change of name, the existing resource is not the replaced one, and deploy takes it over as usual. A replacement with a generated name has a new name, so the guard does not fire for a resource that is keyed or found by that name. Such a replacement is created first, and the resource that it replaces still exists.
+When the replacement has another key than the replaced resource, for example after a change of name, the existing resource is not the replaced one, and deploy takes it over as usual. A replacement with a generated name has a new name, so it cannot meet the resource that it replaces. Such a replacement is created first, while the resource that it replaces still exists, and the guard does not apply to its create.
 
-The guard applies only to the create of the replaced resource, inside the replace. It does not apply in two other cases; see [Limits](#limits):
+The guard applies only to the create of the replaced resource, inside a delete-first replace. It does not apply in two other cases; see [Limits](#limits):
 
 - A later deploy creates the resource from a `creating` record or from no record.
 - A replace deleted a dependent because it blocks the delete. Deploy creates that dependent again later in the same deploy, with a plain create. That create does not know the key of the deleted dependent.
