@@ -166,7 +166,7 @@ All schema items carry these fields:
 - `rejectReplace` – a function `(previous, desired) => string`. When a change to the param would replace the resource, plan and deploy fail with the returned message. Use it for a param that the user can change by accident, on a resource whose delete loses data.
 - `primaryKey` / `secondaryKey` – together form the compound key used for read/update/delete.
 - `collect` – makes the param collected, and combines what is contributed to it. See [Contributions](#contributions).
-- `physicalName` – marks the param as the resource's physical name, with the rule of the provider's names. Config can leave the param out, and deploy then generates the name. See [Physical names](#physical-names).
+- `physicalName` – marks the param as the resource's physical name, with the rule of the provider's names. Deploy always generates the name, and config cannot set it. See [Physical names](#physical-names).
 
 **`computed`**
 
@@ -201,23 +201,22 @@ The rule is a `PhysicalNameRule` from `@notation/resource`:
 | `requiredEndingWhen` | no       | The name of a boolean param, such as `FifoQueue`. A generated name gets `requiredEnding` when the resource's params hold `true` for it. Without it, no generated name gets one.                         |
 | `base`               | no       | A function that takes the resource ID and returns the base of a generated name. Use it to leave a part of the ID out of the name, such as a type prefix. Without it, the base is the whole resource ID. |
 
-A param with `physicalName` is optional in config, also when its `presence` is `required`:
+**The reconciler owns the physical name.** A resource class declares all of the provider's fields, including the name field, such as `FunctionName`, `RoleName` or `QueueName`. The reconciler generates the value of the name field from the resource ID. Config cannot set it: the config type leaves the param out, also when its `presence` is `required`. The params, the state record and the outputs still hold it.
 
 ```ts
 new aws.sqs.Queue("sqs-queue:orders", { config: { FifoQueue: true } });
 // deploy names the queue my-app--prod--orders-1a2b3c4d.fifo
-
-new aws.sqs.Queue("sqs-queue:orders", { config: { QueueName: "orders" } });
-// the queue is named orders
 ```
 
-When config leaves the param out, deploy generates the name, `<app>--<stage>--<base>-<instance>`, from the app, the stage, the base and 8 random hex characters. The base is the result of the rule's `base`, or the resource ID, in lower case, with each run of characters other than `a-z` and `0-9` turned into one `-`. Deploy keeps the name in the state record, so later deploys use the same name, and a replacement gets a new one. The params that an operation receives always hold the name. Plan shows the name as unknown until the resource exists. See [Generated names](../internals/reconciler.md#generated-names) for the steps and their limits.
+There is no way to set an exact name for now. If a resource needs one later, an override will be added then.
 
-**Only config supplies a `physicalName` param.** When config leaves the param out and `deriveParams` returns a value for it, plan and deploy throw. Deploy decides from config alone whether to generate the name, and a generated or recorded name would replace the derived one.
+Deploy generates the name, `<app>--<stage>--<base>-<instance>`, from the app, the stage, the base and 8 random hex characters. The base is the result of the rule's `base`, or the resource ID, in lower case, with each run of characters other than `a-z` and `0-9` turned into one `-`. Deploy keeps the name in the state record, so later deploys use the same name, and a replacement gets a new one. The params that an operation receives always hold the name. Plan shows the name as unknown until the resource exists. See [Generated names](../internals/reconciler.md#generated-names) for the steps and their limits.
 
-**A dependent reads the name through an output ref.** `resource.config` does not hold a generated name, so another resource can't copy the name from it. It takes `role.outputRef("RoleName")` instead, which deploy fills in once the role exists; see [Output refs](#output-refs). At plan the ref is unknown until then. A construct that wants plan to know a name that config does provide can pass the config value when there is one, as the EventBridge rule does with `bus.bus.config.Name ?? bus.name`.
+**Nothing else supplies a `physicalName` param.** When `deriveParams` returns a value for the param, or untyped config holds one, plan and deploy throw. A generated or recorded name would replace the value.
 
-**Use `scopedPhysicalName` for a name that the user provides.** A construct that takes a `name` option from the user builds the physical name with `scopedPhysicalName(name, rule)` from `@notation/resource`, and puts the result in config, so deploy generates nothing. It returns `<app>--<stage>--<name>`, shortened with a hash when it is longer than `rule.maxLength`. This name is the same on every deploy, and two declarations with the same `name` get the same one, so the construct must check that no two declarations provide the same name. `scopedPhysicalName` is also the tool for a name on a resource class whose param has no `physicalName`, as `@notation/cloudflare` names a Worker.
+**A dependent reads the name through an output ref.** `resource.config` does not hold the name, so another resource can't copy the name from it. It takes `role.outputRef("RoleName")` instead, which deploy fills in once the role exists; see [Output refs](#output-refs). At plan the ref is unknown until then.
+
+**`scopedPhysicalName` makes a fixed name on a class without `physicalName`.** `scopedPhysicalName(name, rule)` from `@notation/resource` returns `<app>--<stage>--<name>`, shortened with a hash when it is longer than `rule.maxLength`. It is the same on every deploy. A construct puts the result in config. `@notation/cloudflare` names a Worker this way. Two declarations with the same `name` get the same result, so the construct must check that no two declarations give the same name.
 
 ### Value types
 
@@ -483,7 +482,7 @@ An output, such as a queue's ARN, does not exist until the provider creates the 
 
 ```ts [packages/aws/src/sqs/queue.ts]
 const queue = new aws.sqs.Queue("orders-queue", {
-  config: { QueueName: "orders" },
+  config: { VisibilityTimeout: 60 },
 });
 
 const mapping = new aws.lambda.LambdaEventSourceMapping("orders-mapping", {

@@ -7,7 +7,6 @@ A runtime module declares the Lambda function that it deploys as with `$lambda` 
 ```ts [@notation/aws/lambda]
 type LambdaDeclarationConfig = {
   id: string; // name-safe string literal
-  name?: string; // the function's AWS name, in place of a generated one
   event?: () => SqsEvent | ApiGatewayEvent | EventBridgeRuleEvent;
   env?: () => Record<string, string>;
   policy?: () => PolicyStatement[];
@@ -77,11 +76,9 @@ The declaration needs no export unless another module refers to it. In practice 
 
 `id` is required. It keys the function, its IAM role and its log group in state. The ID doesn't depend on the module's path, so you can move or rename the module and keep its function. Changing the ID replaces the function.
 
-Without a `name`, deploy generates the function's AWS name from the app, the stage and the `id`, such as `my-app--prod--orders-1a2b3c4d`. Deploy generates the name when it first creates the function, and keeps it in state. See [Generated names](./project-config.md#generated-names).
+Deploy generates the function's AWS name from the app, the stage and the `id`, such as `my-app--prod--orders-1a2b3c4d`. Deploy generates the name when it first creates the function, and keeps it in state. You can't set the name. See [Generated names](./project-config.md#generated-names).
 
 Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. TypeScript reports an ID that breaks the rule, and `$lambda` throws on one when the infra code runs. Two Lambda functions in one deployment can't share an ID. See [Lambda IDs](../providers/aws/lambda.md#ids).
-
-`name` sets the function's AWS name in place of a generated one: the function is named `<app>--<stage>--<name>`. The `id` still keys the function in state. The runtime build removes `name`, as it removes the other options that the function doesn't read.
 
 ## `env`
 

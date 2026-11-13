@@ -23,15 +23,14 @@ export const todoApi = api({ id: "todo-api" });
 ```ts [@notation/aws/api-gateway]
 type ApiConfig = {
   id: string;
-  name?: string;
 };
 ```
 
 `id` keys the API in state, so changing it replaces the API. Use 1 to 64 letters, digits, hyphens and underscores, as a string literal. Deploy generates the API's AWS name when it first creates the API, and keeps the name in state. The name is `<app>--<stage>--<id>-<instance>`, such as `my-app--prod--todo-api-1a2b3c4d`, where the instance is 8 random hex characters.
 
-`name` sets the AWS name in place of a generated one, so `api({ id: "todo-api", name: "todos" })` is named `my-app--prod--todos`. See [AWS names](../../manual/project-config.md#aws-names).
+You can't set the API's AWS name. See [AWS names](../../manual/project-config.md#aws-names).
 
-The routes, integrations and permissions of an API take their state keys from the IDs that they connect. A route is keyed `api-route:<api id>:<METHOD> <path>`, such as `api-route:todo-api:POST /todos`, an integration `api-integration:<api id>:<lambda id>`, and a permission `api-permission:<api id>:<lambda id>`. So a change of `name` leaves them as they are.
+The routes, integrations and permissions of an API take their state keys from the IDs that they connect. A route is keyed `api-route:<api id>:<METHOD> <path>`, such as `api-route:todo-api:POST /todos`, an integration `api-integration:<api id>:<lambda id>`, and a permission `api-permission:<api id>:<lambda id>`.
 
 `api()` also makes the `$default` stage, which deploys each change.
 
