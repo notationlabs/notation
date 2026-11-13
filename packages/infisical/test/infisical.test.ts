@@ -169,7 +169,9 @@ describe("infisical", () => {
     const source = infisical({ projectId: "proj", environment: "dev" });
 
     await inRun(async () => {
-      await expect(source.has("STRIPE_KEY", context)).resolves.toBe(true);
+      await expect(source.has("STRIPE_KEY", context)).rejects.toThrow(
+        "can't read the value of `STRIPE_KEY` in Infisical project proj, environment dev, path /. Give it a role that can read secret values.",
+      );
       await expect(source.get("STRIPE_KEY", context)).rejects.toThrow(
         "can't read the value of `STRIPE_KEY`",
       );

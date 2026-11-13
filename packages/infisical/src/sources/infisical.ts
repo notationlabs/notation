@@ -86,6 +86,20 @@ export function infisical(options: InfisicalOptions): Source {
     );
   };
 
+  // A value that the identity can't read fails `has` as well as `get`, so
+  // that plan fails before deploy writes anything.
+  const assertReadable = (
+    found: InfisicalSecret,
+    key: string,
+    context: SourceContext,
+  ) => {
+    if (found.secretValueHidden) {
+      throw new Error(
+        `The Infisical identity can't read the value of \`${key}\` in ${where(context)}. Give it a role that can read secret values.`,
+      );
+    }
+  };
+
   const secret = async (key: string, context: SourceContext) => {
     const found = (await folder(context)).get(key);
     if (!found) {
@@ -96,7 +110,12 @@ export function infisical(options: InfisicalOptions): Source {
 
   return {
     name: "infisical",
-    has: async (key, context) => (await folder(context)).has(key),
+    has: async (key, context) => {
+      const found = (await folder(context)).get(key);
+      if (!found) return false;
+      assertReadable(found, key, context);
+      return true;
+    },
     // The secret's ID is part of the version, because a secret that is
     // deleted and added again starts again at version 1.
     version: async (key, context) => {
@@ -105,11 +124,7 @@ export function infisical(options: InfisicalOptions): Source {
     },
     get: async (key, context) => {
       const found = await secret(key, context);
-      if (found.secretValueHidden) {
-        throw new Error(
-          `The Infisical identity can't read the value of \`${key}\` in ${where(context)}. Give it a role that can read secret values.`,
-        );
-      }
+      assertReadable(found, key, context);
       return new Redacted(found.secretValue);
     },
   };
