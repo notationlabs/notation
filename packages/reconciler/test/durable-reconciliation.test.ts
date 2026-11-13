@@ -7695,7 +7695,7 @@ describe("create-first replacement", () => {
     runtime.close();
   });
 
-  it("deletes a retired instance in destroy before a resource that it depends on and the record's resource does not", async () => {
+  it("deletes a record and its retired instances in destroy before a resource that a retired instance depends on and the record's resource does not", async () => {
     const world = defineNamedWorld();
     // In code, the rule comes before the function, so destroy deletes the
     // function first. The old rule is on the function, and the new rule is
@@ -7728,8 +7728,58 @@ describe("create-first replacement", () => {
     await runtime.destroy("destroy-1");
     expect(world.calls).toEqual([
       "delete rule#1",
-      "delete fn#1",
       "delete rule#2",
+      "delete fn#1",
+      "delete bus#1",
+    ]);
+    expect(await runtime.state.values()).toEqual([]);
+    runtime.close();
+  });
+
+  it("deletes a dependent that a stopped deploy did not reach in destroy before the retired instance that it uses, also when destroy reaches what that instance depends on first", async () => {
+    const world = defineNamedWorld();
+    // The old rule is on b, and the new rule is on the bus. d is on the rule.
+    // In the second deploy, b comes after d in deploy order, so destroy
+    // reaches b before d.
+    const declare = (onB: boolean) => {
+      const bus = new world.Bus("bus", { config: { path: "/" } as any });
+      const x = new world.Fn("x", {
+        config: {} as any,
+        dependencies: { parent: bus },
+      });
+      const b = new world.Fn("b", {
+        config: {} as any,
+        dependencies: { parent: x },
+      });
+      const rule = new world.Rule("rule", {
+        config: { path: onB ? "/" : "/new/" } as any,
+        dependencies: { parent: onB ? b : bus },
+      });
+      const d = new world.Fn("d", {
+        config: {} as any,
+        dependencies: { parent: rule },
+      });
+      return onB ? [bus, x, b, rule, d] : [bus, x, rule, d, b];
+    };
+    const resources = declare(true);
+    const runtime = createRuntime(resources, "cbd-destroy-unreached");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declare(false));
+    world.control.failUpdate = () => new Error("update rejected");
+    await expect(runtime.run("deploy-2")).rejects.toThrow("update rejected");
+    expect(await retiredNames(runtime, world, "rule")).toEqual(["rule#1"]);
+
+    await clearHold(runtime, "cbd-destroy-unreached", "deploy-2");
+    world.control.failUpdate = undefined;
+    world.calls.length = 0;
+    await runtime.destroy("destroy-1");
+    expect(world.calls).toEqual([
+      "delete d#1",
+      "delete rule#1",
+      "delete rule#2",
+      "delete b#1",
+      "delete x#1",
       "delete bus#1",
     ]);
     expect(await runtime.state.values()).toEqual([]);

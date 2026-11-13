@@ -19,12 +19,12 @@
  *   notation:deploy:<id>:settle:<n>:*    pass <n> after the first over a
  *                              cycle
  *   notation:destroy:<id>:*    per-resource deletion steps
- *   notation:orphans:list      the orphan sweep's one read of persisted state
- *   notation:orphans:<id>:*    orphan sweep, per persisted record
+ *   notation:orphans:list      the one read of persisted state by the
+ *                              orphan sweep, or by destroy
+ *   notation:orphans:<id>:*    the delete of an orphan, by the sweep or by
+ *                              destroy
  *   notation:retired:<id>:*    the delete of the retired instances of a
- *                              record in code, by deploy's sweep, or by
- *                              destroy before a resource that one of them
- *                              depends on
+ *                              record in code, by deploy's sweep
  *   *:retired:<n>:*            the delete of a record's retired instance
  *                              <n>, oldest first
  *   *:physical-names           the names that deploy generates for a
@@ -58,6 +58,8 @@
  *   *:replace:create:*         replacement: the create. In a delete-first
  *                              replacement, a read of the removed record
  *                              comes first
+ *   *:replace:create:retired-at   the time when a create-first
+ *                              replacement retires the resource
  *   *:create:find              the find, before a create, of a resource
  *                              that already exists
  *   *:create:existing          the find of a resource that the provider

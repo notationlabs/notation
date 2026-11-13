@@ -48,7 +48,7 @@ export async function* deploy(
       );
     }
 
-    yield* sweepOrphans(step, deployOpts, "deploy");
+    yield* sweepOrphans(step, deployOpts);
   });
 }
 

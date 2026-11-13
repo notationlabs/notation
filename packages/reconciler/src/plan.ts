@@ -51,7 +51,8 @@ export type PlanNode = {
    * Set with the decision `delete-retired`, for an instance of the resource
    * that an earlier create-first replace retired: when that replace started.
    * The node has the ID of the resource, and the params and edges of the
-   * instance. Deploy deletes it in the sweep at the end of the deploy.
+   * instance. Deploy deletes it in the sweep at the end of the deploy, or
+   * with the resource when it replaces the resource delete-first.
    */
   retiredAt?: string;
   /**
@@ -289,6 +290,11 @@ export function recordedEdges(
   if (node.dependsOn) return node.dependsOn;
   const resource = resourceById.get(node.id);
   return resource ? getDependencyIds(resource) : [];
+}
+
+/** The edges of the retired instances that a state record lists. */
+export function retiredEdges(node: StateNode | undefined): string[] {
+  return (node?.retired ?? []).flatMap((instance) => instance.dependsOn);
 }
 
 export function hasSameEdges(

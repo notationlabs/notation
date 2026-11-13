@@ -26,7 +26,7 @@ import { remainingDependencies } from "../cycles";
 import { collectDependents } from "../dependency-graph";
 import { createBlocksDelete } from "../delete-cascade";
 import type { EmitStep, OperationLifecycleEvent } from "../events";
-import { keep, orphanSweepSteps, sweptRecords } from "../orphan-sweep";
+import { orphanSweepSteps, sweptRecords } from "../orphan-sweep";
 import { resolveResourceClass, workflowRegistry } from "../resource-registry";
 import { assertSameType } from "../resource-type";
 import {
@@ -51,6 +51,7 @@ import {
   getDependencyIds,
   hasSameEdges,
   recordedEdges,
+  retiredEdges,
   type DriftRead,
   type ResourceAction,
 } from "../plan";
@@ -543,7 +544,15 @@ async function* replaceCreateFirst(
     prior: session.node,
     retired: [
       ...(session.node.retired ?? []),
-      retiredInstance(session.node, shared.dependsOn),
+      retiredInstance(
+        session.node,
+        shared.dependsOn,
+        // A step, so that each write of the create, also after a replay,
+        // lists the instance with the same time.
+        yield* createStep.run("retired-at", async () =>
+          new Date().toISOString(),
+        ),
+      ),
     ],
     persist: session.persist,
   });
@@ -562,6 +571,7 @@ async function* replaceCreateFirst(
 function retiredInstance(
   node: StateNode,
   dependsOn: string[],
+  retiredAt: string,
 ): RetiredInstance {
   return {
     config: node.config,
@@ -569,7 +579,7 @@ function retiredInstance(
     output: node.output,
     // A record written before edges were recorded takes the edges in code.
     dependsOn: node.dependsOn ?? dependsOn,
-    retiredAt: new Date().toISOString(),
+    retiredAt,
   };
 }
 
@@ -652,11 +662,12 @@ async function* replaceDeleteFirst(
 /**
  * Deletes the resources that block the delete of `resource`: each depends on
  * it in state, or on another of them, and its type lists the type of what it
- * depends on in `blocksDeleteOf`. They are deleted in reverse order of the
- * edges in state. Each of them that is still declared has no record
- * afterwards, so deploy creates it again when it reaches it, after
- * `resource` has been created again. Each orphan among them is gone before
- * the sweep reaches it. Every other dependent stays in place, including one
+ * depends on in `blocksDeleteOf`. A record depends on what its retired
+ * instances depend on too, and is deleted with them. They are deleted in
+ * reverse order of the edges in state. Each of them that is still declared
+ * has no record afterwards, so deploy creates it again when it reaches it,
+ * after `resource` has been created again. Each orphan among them is gone
+ * before the sweep reaches it. Every other dependent stays in place, including one
  * with no class. Returns the IDs of the deleted dependents.
  *
  * Records are listed when the replacement starts. Deploy has written the
@@ -683,7 +694,10 @@ async function* deleteBlockingDependents(
   const dependents = collectDependents(
     resource.id,
     new Map(
-      records.map((node) => [node.id, recordedEdges(node, resourceById)]),
+      records.map((node) => [
+        node.id,
+        [...recordedEdges(node, resourceById), ...retiredEdges(node)],
+      ]),
     ),
     createBlocksDelete(records, registry),
   );
@@ -788,10 +802,11 @@ export async function* deleteResource(
 
 /**
  * Reads what a `delete` of `resource` is told about the delete, when its
- * type takes it: the resources whose state records depend on it now. Listed
- * just before the delete, so that it leaves out the dependents that deploy
- * has already deleted. The step returns only the dependents, as its result
- * is copied into the journal.
+ * type takes it: the resources whose state records depend on it now, and the
+ * retired instances that depend on it. Listed just before the delete, so
+ * that it leaves out the dependents that deploy has already deleted. The
+ * step returns only the dependents, as its result is copied into the
+ * journal.
  */
 async function* readDeletion(
   step: DurableStepRunner,
@@ -803,15 +818,29 @@ async function* readDeletion(
     opts.resources.map((desired) => [desired.id, desired]),
   );
   const dependents = yield* step.run("dependents", async () =>
-    (await opts.state.values())
-      .filter(
-        (node) =>
-          node.id !== resource.id &&
-          recordedEdges(node, resourceById).includes(resource.id),
-      )
-      .map(({ id, type, params }) => ({ id, type, params })),
+    (await opts.state.values()).flatMap((node) => {
+      if (node.id === resource.id) return [];
+      const { id, type } = node;
+      return [
+        ...(recordedEdges(node, resourceById).includes(resource.id)
+          ? [{ id, type, params: node.params }]
+          : []),
+        ...retiredDependents(node, resource.id),
+      ];
+    }),
   );
   return { dependents };
+}
+
+/** The retired instances that `node` lists and that depend on `id`. */
+function retiredDependents(node: StateNode, id: string) {
+  return (node.retired ?? [])
+    .filter((instance) => instance.dependsOn.includes(id))
+    .map((instance) => ({
+      id: node.id,
+      type: node.type,
+      params: instance.params,
+    }));
 }
 
 /**
@@ -832,16 +861,12 @@ async function* readRetiredDeletion(
     (await opts.state.values()).flatMap((node) => {
       if (node.id === resource.id) return [];
       const { id, type } = node;
-      const found =
-        !inCode.has(id) && (node.dependsOn ?? []).includes(resource.id)
+      return [
+        ...(!inCode.has(id) && (node.dependsOn ?? []).includes(resource.id)
           ? [{ id, type, params: node.params }]
-          : [];
-      for (const instance of node.retired ?? []) {
-        if (instance.dependsOn.includes(resource.id)) {
-          found.push({ id, type, params: instance.params });
-        }
-      }
-      return found;
+          : []),
+        ...retiredDependents(node, resource.id),
+      ];
     }),
   );
   return { dependents };
@@ -912,7 +937,8 @@ function retiredDeleteError(
   workflow: "deploy" | "destroy",
 ): Error {
   const reason = error instanceof Error ? error.message : String(error);
-  // Destroy has deleted the dependents in code before it reaches the record.
+  // Destroy has deleted every record that depends on the record before it
+  // reaches the record, except the other members of its cycle.
   if (workflow === "destroy") {
     return new Error(
       `Cannot delete a retired instance of ${id}: ${reason}. The instance and its record stay in state, and the next destroy tries to delete them again.`,
@@ -940,79 +966,31 @@ function retiredDeleteError(
  * reverse order of the edges their records hold. An orphan's retired
  * instances are deleted just before the orphan.
  *
- * In deploy, the sweep also deletes the retired instances of the records in
- * code, in the same order. A resource in code is treated as using the
- * replacement of each retired instance, so its edges do not order the sweep.
- * Destroy deletes those retired instances with their records, after the
- * sweep, so that the dependents in code are deleted first.
+ * The sweep also deletes the retired instances of the records in code, in the
+ * same order. A resource in code is treated as using the replacement of each
+ * retired instance, so its edges do not order the sweep.
  *
  * A state node whose type has no registry entry is left in place and surfaced
  * as a warning, because deleting it would need a resource class we cannot
  * resolve. Every orphan or retired instance it depends on is left in place
- * too, and the warning names them. In destroy, desired resources it depends
- * on are kept too, and so is a desired resource whose record's type has no
- * class.
- *
- * Returns the IDs of all records left in place, and the function that
- * destroy calls before it deletes a resource. See `retiredDependentsDeleter`.
+ * too, and the warning names them.
  */
 export async function* sweepOrphans(
   step: DurableStep,
   opts: DurableWorkflowOptions,
-  workflow: "deploy" | "destroy",
-): AsyncGenerator<
-  any,
-  { kept: Set<string>; deleteRetiredDependents: RetiredDependentsDeleter },
-  any
-> {
+): AsyncGenerator<any, void, any> {
   const scope = scopeStep(step, "notation:orphans");
   const resourceById = new Map(
     opts.resources.map((resource) => [resource.id, resource]),
   );
   const persisted = yield* scope.run("list", () => opts.state.values());
   const registry = workflowRegistry(opts);
-
-  const records = sweptRecords(persisted, new Set(resourceById.keys()));
-  const { edgesById } = records;
-  const swept =
-    workflow === "destroy"
-      ? records.swept.filter((record) => record.orphan)
-      : records.swept;
-  // Destroy deletes the desired set after the sweep, so an edge from a
-  // skipped orphan to a desired resource keeps that resource too, and what
-  // the resource, its record and its retired instances depend on. Deploy
-  // does not delete desired resources, so it follows edges between swept
-  // records only.
-  if (workflow === "destroy") {
-    const recordById = new Map(persisted.map((node) => [node.id, node]));
-    for (const resource of opts.resources) {
-      edgesById.set(resource.id, [
-        ...getDependencyIds(resource),
-        ...(recordById.get(resource.id)?.dependsOn ?? []),
-        ...(edgesById.get(resource.id) ?? []),
-      ]);
-    }
-  }
-  const kept = new Set<string>();
-
-  if (workflow === "destroy") {
-    for (const node of persisted) {
-      const resource = resourceById.get(node.id);
-      if (!resource || resource.type === node.type) continue;
-      if (resolveResourceClass(registry, node.type as ResourceType)) continue;
-      const keptDependencies = keep(node, edgesById, kept);
-      yield* warnUnregistered(scope, opts, node, keptDependencies, workflow);
-    }
-  }
-
-  const steps = orphanSweepSteps(swept, registry, edgesById, kept);
-  const deleteRetiredDependents = retiredDependentsDeleter(
-    step,
-    opts,
+  const { swept, edgesById } = sweptRecords(
     persisted,
-    kept,
+    new Set(resourceById.keys()),
   );
-  for (const sweep of steps) {
+
+  for (const sweep of orphanSweepSteps(swept, registry, edgesById, new Set())) {
     const { node } = sweep;
     if (!sweep.Resource) {
       yield* warnUnregistered(
@@ -1020,7 +998,7 @@ export async function* sweepOrphans(
         opts,
         node,
         sweep.keptDependencies,
-        workflow,
+        "deploy",
       );
       continue;
     }
@@ -1030,75 +1008,19 @@ export async function* sweepOrphans(
         opts,
         resourceById.get(node.id)!,
         sweep.Resource,
-        workflow,
       );
       continue;
     }
     // Repeats the check of notation:validate, because the record may have
     // changed since validate ran before the hold.
-    if (workflow === "deploy") assertOrphanDeleteAllowed(registry, node);
-
-    if (workflow === "destroy") yield* deleteRetiredDependents(node.id);
+    assertOrphanDeleteAllowed(registry, node);
     yield* deleteResource(
       scope.scope(encodeURIComponent(node.id)),
       await instantiateRecord(sweep.Resource, node),
       opts,
-      workflow,
+      "deploy",
     );
   }
-
-  return { kept, deleteRetiredDependents };
-}
-
-/** Deletes the retired instances that depend on the resource with `id`. */
-export type RetiredDependentsDeleter = (
-  id: string,
-) => AsyncGenerator<any, void, any>;
-
-/**
- * Destroy deletes a record's retired instances just before the record. A
- * retired instance can depend on a resource that the record's current
- * resource does not depend on, and destroy can reach that resource first.
- * Before destroy deletes a resource, it calls the returned function with the
- * resource's ID. The function deletes the retired instances of the records
- * in code that depend on the resource, each after the retired instances that
- * depend on it in turn. A record that the sweep keeps is left alone.
- */
-function retiredDependentsDeleter(
-  step: DurableStep,
-  opts: DurableWorkflowOptions,
-  persisted: StateNode[],
-  kept: ReadonlySet<string>,
-): RetiredDependentsDeleter {
-  const registry = workflowRegistry(opts);
-  const resourceById = new Map(
-    opts.resources.map((resource) => [resource.id, resource]),
-  );
-  const records = persisted.filter(
-    (node) =>
-      node.retired?.length && resourceById.has(node.id) && !kept.has(node.id),
-  );
-  const done = new Set<string>();
-  return async function* deleteRetiredDependents(
-    id: string,
-  ): AsyncGenerator<any, void, any> {
-    for (const node of records) {
-      if (node.id === id || done.has(node.id)) continue;
-      if (!node.retired!.some((instance) => instance.dependsOn.includes(id))) {
-        continue;
-      }
-      done.add(node.id);
-      yield* deleteRetiredDependents(node.id);
-      yield* deleteRetiredOf(
-        step,
-        opts,
-        resourceById.get(node.id)!,
-        // A record in code whose type has no class is kept.
-        resolveResourceClass(registry, node.type as ResourceType)!,
-        "destroy",
-      );
-    }
-  };
 }
 
 /**
@@ -1110,7 +1032,6 @@ async function* deleteRetiredOf(
   opts: DurableWorkflowOptions,
   resource: BaseResource,
   Resource: ResourceClass<any, any, any>,
-  workflow: "deploy" | "destroy",
 ): AsyncGenerator<any, void, any> {
   const scope = scopeStep(
     step,
@@ -1118,10 +1039,10 @@ async function* deleteRetiredOf(
   );
   const session = yield* openStateSession(scope, opts, resource);
   if (!session.node) return;
-  yield* deleteRetiredInstances(scope, opts, session, Resource, workflow);
+  yield* deleteRetiredInstances(scope, opts, session, Resource, "deploy");
 }
 
-async function* warnUnregistered(
+export async function* warnUnregistered(
   scope: DurableStepRunner,
   opts: DurableWorkflowOptions,
   node: StateNode,
@@ -1147,7 +1068,7 @@ async function* warnUnregistered(
  * Makes a resource from its state record, so that it can be deleted with no
  * declaration in code.
  */
-async function instantiateRecord(
+export async function instantiateRecord(
   Resource: NonNullable<ReturnType<typeof resolveResourceClass>>,
   node: StateNode,
 ): Promise<BaseResource> {
