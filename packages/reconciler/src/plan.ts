@@ -55,6 +55,12 @@ export type PlanNode = {
    */
   retiredAt?: string;
   /**
+   * Set with the decision `delete-retired`: the position of the instance in
+   * its record's list of retired instances, oldest first. With `id`, it
+   * names the instance.
+   */
+  retiredIndex?: number;
+  /**
    * Set when deploy deletes this resource before it replaces a resource this
    * one depends on, directly or through other deleted resources, because
    * this resource blocks that delete. Deploy then creates it again, so it is

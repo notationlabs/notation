@@ -7500,6 +7500,7 @@ describe("create-first replacement", () => {
         id: "bus",
         type: world.Bus.type,
         decision: "delete-retired",
+        retiredIndex: 0,
         retiredAt: retired.retiredAt,
         params: retired.params,
         dependsOn: [],

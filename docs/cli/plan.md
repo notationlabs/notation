@@ -72,4 +72,4 @@ Deploy generates the AWS name of a resource, such as a function or a queue, when
 notation plan --stage prod --json > plan.json
 ```
 
-Each node has `id`, `type`, `decision`, `params` and `dependsOn`. A node with the decision `replace` or `drift-replace` has `replaceOrder`, `"create-first"` or `"delete-first"`. A retired resource is a node with the decision `delete-retired`. It has the ID of the resource that replaced it, its own `params` and `dependsOn`, and `retiredAt`, the time when the replace started.
+Each node has `id`, `type`, `decision`, `params` and `dependsOn`. A node with the decision `replace` or `drift-replace` has `replaceOrder`, `"create-first"` or `"delete-first"`. A retired resource is a node with the decision `delete-retired`. It has the ID of the resource that replaced it, `retiredIndex`, its position in the list of retired instances of that resource, its own `params` and `dependsOn`, and `retiredAt`, the time when the replace started. The ID and `retiredIndex` together name the instance.

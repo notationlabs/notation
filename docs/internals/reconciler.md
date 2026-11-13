@@ -123,7 +123,7 @@ A dry run emits a **dry-run** delete with `reason: "retired"` just after the cre
 
 A class that loses its `physicalName` param is replaced delete-first. Deploy then deletes the retired instances that the record lists before it deletes the resource.
 
-Plan sets `replaceOrder` on each node with the decision **replace** or **drift-replace**. A dependent that plan shows as **replace** only because a replaced dependency's delete needs it deleted first has `replaceOrder: "delete-first"`. For each retired instance in state, plan adds a node with the decision **delete-retired**, the ID of its record, the instance's `params` and `dependsOn`, and `retiredAt`. `notation plan` prints the order after a replace, and each retired instance as a delete:
+Plan sets `replaceOrder` on each node with the decision **replace** or **drift-replace**. A dependent that plan shows as **replace** only because a replaced dependency's delete needs it deleted first has `replaceOrder: "delete-first"`. For each retired instance that the sweep deletes, plan adds a node with the decision **delete-retired**, the ID of its record, `retiredIndex`, the instance's position in the record's list, the instance's `params` and `dependsOn`, and `retiredAt`. The ID and `retiredIndex` together name the instance. Plan leaves out the retired instances of a record that the sweep keeps, because an orphan with no registered class depends on it. `notation plan` prints the order after a replace, and each retired instance as a delete:
 
 ```
 +/- replace aws/lambda/LambdaIamRole lambda:orders:role (create, then delete)

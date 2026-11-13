@@ -18,7 +18,7 @@ import { isCycle, orderDeployUnits, type DeployUnit } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
-import { orphansDeployDeletes } from "./orphan-sweep";
+import { orphanSweepSteps, sweptRecords } from "./orphan-sweep";
 import {
   assertChangeAllowed,
   assertOrphanDeleteAllowed,
@@ -242,20 +242,32 @@ export async function createPlan({
   }
 
   const inCode = new Set(resourceById.keys());
-  for (const stateNode of orphansDeployDeletes(stateNodes, inCode, classes)) {
-    assertOrphanDeleteAllowed(classes, stateNode);
+  const { swept, edgesById: sweptEdges } = sweptRecords(stateNodes, inCode);
+  const sweepDeletes = orphanSweepSteps(
+    swept,
+    classes,
+    sweptEdges,
+    new Set(),
+  ).filter((step) => step.Resource);
+  for (const { node, orphan } of sweepDeletes) {
+    if (orphan) assertOrphanDeleteAllowed(classes, node);
   }
-  // Deploy deletes a record's retired instances just before the record.
+  // The retired instances that the sweep deletes, and the orphans, in the
+  // order of the records in state.
+  const sweptIds = new Set(sweepDeletes.map(({ node }) => node.id));
   for (const stateNode of stateNodes) {
-    for (const instance of stateNode.retired ?? []) {
-      nodes.push({
-        id: stateNode.id,
-        type: stateNode.type,
-        decision: "delete-retired",
-        retiredAt: instance.retiredAt,
-        params: instance.params,
-        dependsOn: instance.dependsOn,
-      });
+    if (sweptIds.has(stateNode.id)) {
+      for (const [index, instance] of (stateNode.retired ?? []).entries()) {
+        nodes.push({
+          id: stateNode.id,
+          type: stateNode.type,
+          decision: "delete-retired",
+          retiredIndex: index,
+          retiredAt: instance.retiredAt,
+          params: instance.params,
+          dependsOn: instance.dependsOn,
+        });
+      }
     }
     if (inCode.has(stateNode.id)) continue;
     nodes.push({

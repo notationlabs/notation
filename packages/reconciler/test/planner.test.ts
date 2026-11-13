@@ -2077,6 +2077,7 @@ describe("createPlan with a generated physical name", () => {
         id: "old",
         type: Queue.type,
         decision: "delete-retired",
+        retiredIndex: 0,
         retiredAt: old.retiredAt,
         params: old.params,
         dependsOn: ["role"],
@@ -2085,13 +2086,46 @@ describe("createPlan with a generated physical name", () => {
       expect.objectContaining({
         id: "orders",
         decision: "delete-retired",
+        retiredIndex: 0,
         params: first.params,
       }),
       expect.objectContaining({
         id: "orders",
         decision: "delete-retired",
+        retiredIndex: 1,
         params: second.params,
       }),
+    ]);
+  });
+
+  it("plans no delete of the retired instances of a record that an orphan with no class keeps", async () => {
+    const plan = await createPlan({
+      resources: [queue("orders", { path: "/" })],
+      state: new MemoryStateBackend({
+        orders: {
+          ...record("orders", { name, path: "/" }),
+          retired: [
+            {
+              config: {},
+              params: { name: "shop--prod--orders-00000001", path: "/" },
+              output: { name: "shop--prod--orders-00000001" },
+              dependsOn: [],
+              retiredAt: "2026-07-20T00:00:00.000Z",
+            },
+          ],
+        },
+        holder: {
+          ...record("holder", {}),
+          type: "test/planner/unregistered",
+          dependsOn: ["orders"],
+        },
+      }),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes.map(({ id, decision }) => `${decision} ${id}`)).toEqual([
+      "noop orders",
+      "delete-orphan holder",
     ]);
   });
 
