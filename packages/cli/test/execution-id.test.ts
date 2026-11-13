@@ -21,6 +21,9 @@ vi.mock("@notation/core", () => ({
   deployApp,
   destroyApp,
   resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}`,
+  runWithSecretPromptHandler: (_handler: unknown, fn: () => unknown) => fn(),
+  scrubError: (e: unknown) => e,
+  scrubSecrets: (s: string) => s,
 }));
 vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
 

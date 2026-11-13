@@ -6,9 +6,15 @@ import { deployInChild } from "../src/deploy-child";
 
 function fakeSpawn(lines: string[], exitCode: number) {
   const calls: string[][] = [];
+  const spawnOptions: Array<{ stdio?: unknown; env?: NodeJS.ProcessEnv }> = [];
   const children: { kill: ReturnType<typeof vi.fn> }[] = [];
-  const spawn = ((_cmd: string, args: string[]) => {
+  const spawn = ((
+    _cmd: string,
+    args: string[],
+    opts: { stdio?: unknown; env?: NodeJS.ProcessEnv },
+  ) => {
     calls.push(args);
+    spawnOptions.push(opts);
     const child = new EventEmitter() as EventEmitter & {
       stdout: PassThrough;
       kill: ReturnType<typeof vi.fn>;
@@ -23,7 +29,7 @@ function fakeSpawn(lines: string[], exitCode: number) {
     });
     return child;
   }) as any;
-  return { spawn, calls, children };
+  return { spawn, calls, spawnOptions, children };
 }
 
 const logger = () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() });
@@ -121,5 +127,49 @@ describe("deployInChild", () => {
 
     expect(proc.listenerCount("SIGINT")).toBe(0);
     expect(proc.listenerCount("SIGTERM")).toBe(0);
+  });
+
+  it("inherits stdin and enables stderr prompt when watch runs on a TTY", async () => {
+    const { spawn, spawnOptions } = fakeSpawn([], 0);
+    const proc = Object.assign(new EventEmitter(), {
+      pid: 42,
+      kill: vi.fn(),
+      stdin: { isTTY: true },
+      stderr: { isTTY: true },
+    });
+
+    await deployInChild({
+      deployment: { app: "orders-app", stage: "prod" },
+      executionId: "exec-1",
+      logger: logger(),
+      spawn,
+      proc: proc as any,
+      env: {},
+    });
+
+    expect(spawnOptions[0]?.stdio).toEqual(["inherit", "pipe", "inherit"]);
+    expect(spawnOptions[0]?.env?.NOTATION_SECRET_PROMPT).toBe("1");
+  });
+
+  it("ignores stdin and disables prompt without a TTY", async () => {
+    const { spawn, spawnOptions } = fakeSpawn([], 0);
+    const proc = Object.assign(new EventEmitter(), {
+      pid: 42,
+      kill: vi.fn(),
+      stdin: { isTTY: false },
+      stderr: { isTTY: false },
+    });
+
+    await deployInChild({
+      deployment: { app: "orders-app", stage: "prod" },
+      executionId: "exec-1",
+      logger: logger(),
+      spawn,
+      proc: proc as any,
+      env: { NOTATION_SECRET_PROMPT: "1" },
+    });
+
+    expect(spawnOptions[0]?.stdio).toEqual(["ignore", "pipe", "inherit"]);
+    expect(spawnOptions[0]?.env?.NOTATION_SECRET_PROMPT).toBeUndefined();
   });
 });

@@ -6,6 +6,7 @@ import { destroy } from "./destroy";
 import { plan } from "./plan";
 import { defaultLogger } from "./logger";
 import { runWithErrorHandling } from "./run-with-error-handling";
+import { secretDelete, secretSet } from "./secret";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
 import { startDashboardServer } from "@notation/dashboard";
@@ -105,6 +106,33 @@ program
     const project = await load(options);
     const deployment = resolveDeployment(project, { stage: options.stage });
     await plan(deployment, { json: options.json });
+  });
+
+const secretCommand = program
+  .command("secret")
+  .description("Manage Notation Secrets");
+
+secretCommand
+  .command("set <id>")
+  .option(...configOption)
+  .option(...stageOption)
+  .description("Set a secret's value in its remote store")
+  .action(async (id: string, options) => {
+    const project = await load(options);
+    const deployment = resolveDeployment(project, { stage: options.stage });
+    await secretSet(deployment, id);
+  });
+
+secretCommand
+  .command("delete <id>")
+  .option(...configOption)
+  .option(...stageOption)
+  .option("-y, --yes", "confirm deletion without prompting")
+  .description("Delete a secret's value from its remote store")
+  .action(async (id: string, options) => {
+    const project = await load(options);
+    const deployment = resolveDeployment(project, { stage: options.stage });
+    await secretDelete(deployment, id, { yes: options.yes });
   });
 
 program

@@ -1,14 +1,13 @@
 import {
   createLoggerReconcilerSubscriber,
-  createNdjsonEventEmitter,
   destroyApp,
   resolveDeploymentId,
   type Deployment,
 } from "@notation/core";
 import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
-import { defaultLogger, type Logger } from "./logger";
-import { redirectStdoutToStderr } from "./stdio";
+import { createScrubbedLogger, defaultLogger, type Logger } from "./logger";
+import { createScrubbedNdjsonEmitter, redirectStdoutToStderr } from "./stdio";
 
 export type DestroyCommandOptions = {
   json?: boolean;
@@ -22,20 +21,26 @@ export async function destroy(
   deployment: Deployment,
   opts: DestroyCommandOptions = {},
 ) {
-  const logger = opts.logger ?? defaultLogger;
-  const emit = opts.json
-    ? createNdjsonEventEmitter(redirectStdoutToStderr().write)
-    : createLoggerReconcilerSubscriber({ logger });
+  const logger = createScrubbedLogger(opts.logger ?? defaultLogger);
+  const redirect = opts.json ? redirectStdoutToStderr() : undefined;
 
-  await compile(deployment, { logger });
-  logger.info(`Destroying ${resolveDeploymentId(deployment)}\n`);
-  const executionId = opts.executionId ?? randomUUID();
-  logger.info(`Execution ID ${executionId}`);
-  if (opts.resumeCommand) {
-    logger.info(
-      `To resume after a crash, run ${opts.resumeCommand} --execution-id ${executionId}`,
-    );
+  try {
+    const emit = redirect
+      ? createScrubbedNdjsonEmitter(redirect.write)
+      : createLoggerReconcilerSubscriber({ logger });
+
+    await compile(deployment, { logger });
+    logger.info(`Destroying ${resolveDeploymentId(deployment)}\n`);
+    const executionId = opts.executionId ?? randomUUID();
+    logger.info(`Execution ID ${executionId}`);
+    if (opts.resumeCommand) {
+      logger.info(
+        `To resume after a crash, run ${opts.resumeCommand} --execution-id ${executionId}`,
+      );
+    }
+
+    await destroyApp({ deployment, emit, executionId });
+  } finally {
+    redirect?.restore();
   }
-
-  await destroyApp({ deployment, emit, executionId });
 }

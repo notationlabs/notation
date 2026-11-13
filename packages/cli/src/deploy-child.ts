@@ -7,13 +7,18 @@ import {
 import { spawn as nodeSpawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Logger } from "./logger";
+import { INTERACTIVE_SECRET_PROMPT_ENV } from "./secret-prompt";
 
 export type DeployChildOptions = {
   deployment: DeploymentIdentity;
   executionId: string;
   logger: Logger;
   spawn?: typeof nodeSpawn;
-  proc?: Pick<NodeJS.Process, "on" | "off" | "kill" | "pid">;
+  proc?: Pick<NodeJS.Process, "on" | "off" | "kill" | "pid"> & {
+    stdin?: { isTTY?: boolean };
+    stderr?: { isTTY?: boolean };
+  };
+  env?: NodeJS.ProcessEnv;
 };
 
 const forwardedSignals = ["SIGINT", "SIGTERM"] as const;
@@ -34,8 +39,17 @@ export function deployInChild({
   logger,
   spawn = nodeSpawn,
   proc = process,
+  env,
 }: DeployChildOptions): Promise<void> {
   const emit = createLoggerReconcilerSubscriber({ logger });
+  const interactiveTty = Boolean(proc.stdin?.isTTY && proc.stderr?.isTTY);
+  const childEnv: NodeJS.ProcessEnv = { ...(env ?? process.env) };
+  if (interactiveTty) {
+    childEnv[INTERACTIVE_SECRET_PROMPT_ENV] = "1";
+  } else {
+    delete childEnv[INTERACTIVE_SECRET_PROMPT_ENV];
+  }
+
   const args = [
     ...process.execArgv,
     process.argv[1]!,
@@ -53,7 +67,8 @@ export function deployInChild({
 
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
-      stdio: ["ignore", "pipe", "inherit"],
+      stdio: [interactiveTty ? "inherit" : "ignore", "pipe", "inherit"],
+      env: childEnv,
     });
 
     // A parent signalled on its own (e.g. by a task runner) would otherwise

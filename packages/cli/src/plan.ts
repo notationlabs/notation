@@ -2,12 +2,13 @@ import {
   createLoggerReconcilerSubscriber,
   planApp,
   resolveDeploymentId,
+  scrubSecrets,
   type Deployment,
   type Plan,
   type PlanNode,
 } from "@notation/core";
 import { compile } from "./compile";
-import { defaultLogger, type Logger } from "./logger";
+import { createScrubbedLogger, defaultLogger, type Logger } from "./logger";
 import { redirectStdoutToStderr } from "./stdio";
 
 export type PlanCommandOptions = {
@@ -30,7 +31,7 @@ export async function plan(
   deployment: Deployment,
   opts: PlanCommandOptions = {},
 ) {
-  const logger = opts.logger ?? defaultLogger;
+  const logger = createScrubbedLogger(opts.logger ?? defaultLogger);
   const emit = createLoggerReconcilerSubscriber({ logger });
   if (opts.json) {
     let result: Plan;
@@ -41,7 +42,7 @@ export async function plan(
     } finally {
       restore();
     }
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.stdout.write(`${scrubSecrets(JSON.stringify(result, null, 2))}\n`);
     return;
   }
 
@@ -87,6 +88,9 @@ function printPlanSummary(result: Plan, logger: Logger) {
       logger.info(
         `    created first without the contributions that refer to ${(node.cycle ?? []).join(", ")}, the other members of its cycle`,
       );
+    }
+    for (const note of node.notes ?? []) {
+      logger.info(`    ${note}`);
     }
   }
 

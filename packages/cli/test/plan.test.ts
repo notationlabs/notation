@@ -16,6 +16,8 @@ vi.mock("@notation/core", () => ({
   createLoggerReconcilerSubscriber: () => () => undefined,
   planApp,
   resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}`,
+  scrubError: (e: unknown) => e,
+  scrubSecrets: (s: string) => s,
 }));
 vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
 
@@ -160,5 +162,30 @@ it("prints the dependents whose references a replacement breaks", async () => {
     "-/+ replace test/plan/worker queue",
     "    name unknown, may force replacement",
     "    the references from web are broken until deploy updates them, if it is replaced",
+  ]);
+});
+
+it("prints resource notes indented under the resource line", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "secret:admin-password",
+        type: "cloudflare/secrets-store/SecretsStoreSecret",
+        decision: "create",
+        notes: ["not set; deploy will ask for it, or fail without a TTY"],
+        params: {},
+        dependsOn: ["secrets-store"],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 3)).toEqual([
+    "+ create cloudflare/secrets-store/SecretsStoreSecret secret:admin-password",
+    "    not set; deploy will ask for it, or fail without a TTY",
   ]);
 });

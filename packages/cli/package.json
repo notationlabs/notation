@@ -18,6 +18,8 @@
     "@notation/build": "workspace:*",
     "@notation/core": "workspace:*",
     "@notation/dashboard": "workspace:*",
+    "@notation/resource": "workspace:*",
+    "@notation/std": "workspace:*",
     "chokidar": "^4.0.3",
     "commander": "^13.1.0",
     "rolldown": "^1.3.0"
@@ -25,7 +27,7 @@
   "devDependencies": {
     "@notation/aws": "workspace:*",
     "@notation/cloudflare": "workspace:*",
-    "@notation/resource": "workspace:*",
+    "@notation/infisical": "workspace:*",
     "@types/which-pm-runs": "^1.0.2",
     "miniflare": "5.20261012.0-beta"
   }

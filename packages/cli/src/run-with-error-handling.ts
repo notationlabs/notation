@@ -1,3 +1,4 @@
+import { scrubError } from "@notation/core";
 import type { Logger } from "./logger";
 
 export async function runWithErrorHandling(
@@ -8,7 +9,11 @@ export async function runWithErrorHandling(
     await fn();
     return 0;
   } catch (error: unknown) {
-    if (error instanceof Error && error.name === "CredentialsProviderError") {
+    const scrubbed = scrubError(error);
+    if (
+      scrubbed instanceof Error &&
+      scrubbed.name === "CredentialsProviderError"
+    ) {
       opts.logger.error(
         "\nAWS credentials not found.",
         "\n\nEnsure you have a default profile set up in ~/.aws/credentials.",
@@ -16,7 +21,7 @@ export async function runWithErrorHandling(
       );
       return 1;
     }
-    opts.logger.error(error);
+    opts.logger.error(scrubbed);
     return 1;
   }
 }
