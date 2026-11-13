@@ -502,20 +502,23 @@ async function* withoutContributions(
 }
 
 /**
- * Creates the replacement beside the resource it replaces, under a new
- * generated name. The "creating" record of the replacement adds the
- * replaced resource to the record's retired instances, in one write, and
- * the sweep at the end of the deploy deletes it. Dependents are not deleted
- * first: deploy decides each of them again with the outputs of the
- * replacement when it reaches them.
+ * Replaces the resource without deleting it first:
  *
- * A failed create writes back the record of the replaced resource, with the
- * retired instances it listed. A create with an unknown outcome keeps the
- * "creating" record, so the replaced resource stays retired.
+ * 1. Generate new physical names for the replacement.
+ * 2. Write the "creating" record, which adds the replaced resource to the
+ *    record's retired instances in the same write.
+ * 3. Create the replacement.
+ *
+ * No dependent is deleted. The sweep at the end of the deploy deletes the
+ * replaced resource.
+ *
+ * A failed create writes back the record of the replaced resource. A create
+ * with an unknown outcome keeps the "creating" record, so the replaced
+ * resource stays retired.
  *
  * Contributions that refer to the resource's own outputs take the outputs of
- * the replaced resource, as no member of a cycle was deleted. A cycle
- * updates the replacement with its own outputs in the next pass.
+ * the replaced resource. A cycle updates the replacement with its own outputs
+ * in the next pass.
  */
 async function* replaceCreateFirst(
   step: DurableStepRunner,
@@ -584,13 +587,14 @@ function retiredInstance(
 }
 
 /**
- * Deletes the resource and then creates it again, each part in its own scope.
- * Deleting first is needed when the replacement takes its physical name from
- * its params, as it would collide with the resource it replaces.
- * The dependents that block the delete are deleted first, and deploy creates
- * them again when it reaches them.
- * The new record is a new store instance, so observers can tell the
- * replacement from the resource it replaced.
+ * Replaces the resource by deleting it first:
+ *
+ * 1. Delete the dependents that block the delete. Deploy creates them again
+ *    when it reaches them.
+ * 2. Delete the retired instances that the record lists.
+ * 3. Delete the resource.
+ * 4. Create the resource again, in a new store instance, so observers can
+ *    tell the replacement from the resource it replaced.
  */
 async function* replaceDeleteFirst(
   step: DurableStepRunner,
@@ -662,12 +666,12 @@ async function* replaceDeleteFirst(
 /**
  * Deletes the resources that block the delete of `resource`: each depends on
  * it in state, or on another of them, and its type lists the type of what it
- * depends on in `blocksDeleteOf`. A record depends on what its retired
- * instances depend on too, and is deleted with them. They are deleted in
- * reverse order of the edges in state. Each of them that is still declared
- * has no record afterwards, so deploy creates it again when it reaches it,
- * after `resource` has been created again. Each orphan among them is gone
- * before the sweep reaches it. Every other dependent stays in place, including one
+ * depends on in `blocksDeleteOf`. A record also depends on what its retired
+ * instances depend on, and is deleted with them. They are deleted in reverse
+ * order of the edges in state. Each of them that is still declared has no
+ * record afterwards, so deploy creates it again when it reaches it, after
+ * `resource` has been created again. Each orphan among them is gone before
+ * the sweep reaches it. Every other dependent stays in place, including one
  * with no class. Returns the IDs of the deleted dependents.
  *
  * Records are listed when the replacement starts. Deploy has written the
@@ -873,9 +877,13 @@ async function* readRetiredDeletion(
 }
 
 /**
- * Deletes each retired instance that the record of `session` lists, oldest
- * first, with `Resource`. Each delete removes the instance from the list,
- * with a write against the record that the one before it left.
+ * Deletes the retired instances that the record of `session` lists. For each
+ * instance, oldest first:
+ *
+ * 1. Delete the instance with `Resource`.
+ * 2. Remove the instance from the list, with a write against the record that
+ *    the previous step left.
+ *
  * When the provider refuses a delete, the instance stays retired, and the
  * error names the resources in code that depend on the resource.
  */
@@ -962,13 +970,14 @@ function retiredDeleteError(
 }
 
 /**
- * Deletes persisted resources that are no longer in the desired set, in
- * reverse order of the edges their records hold. An orphan's retired
- * instances are deleted just before the orphan.
+ * Deletes the orphans and the retired instances, in reverse order of the
+ * edges their records hold. For each record it reaches, the sweep:
  *
- * The sweep also deletes the retired instances of the records in code, in the
- * same order. A resource in code is treated as using the replacement of each
- * retired instance, so its edges do not order the sweep.
+ * 1. Deletes the retired instances that the record lists.
+ * 2. Deletes the record and its resource, if the record is an orphan.
+ *
+ * The edges of a record in code are not used, as the resource in code uses
+ * the replacement of each retired instance.
  *
  * A state node whose type has no registry entry is left in place and surfaced
  * as a warning, because deleting it would need a resource class we cannot

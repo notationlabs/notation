@@ -40,9 +40,9 @@ const CREATING_DECISIONS: ResourceAction["decision"][] = [
  *
  * A cycle gets one pass after the first for each member, and at least two,
  * so that a member that refers to itself is updated and then checked. Each
- * replace of a member adds a pass. A member with a `physicalName` param is
- * replaced create-first: no member is deleted while the cycle settles, and
- * the sweep at the end of the deploy deletes the replaced member. When
+ * replace of a member adds a pass. A create-first replace of a member
+ * deletes no member while the cycle settles. The sweep deletes the replaced
+ * member at the end of the deploy. When
  * outputs still change in the last pass, deploy fails and names those
  * outputs. A dry run stops after the first pass, as it creates and updates
  * nothing. It also reconciles each placeholder that the first pass left as

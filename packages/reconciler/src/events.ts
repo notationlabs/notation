@@ -3,10 +3,16 @@ import type { ReplaceField, ResourceType } from "@notation/resource";
 export type OperationName = "create" | "read" | "update" | "delete";
 
 /**
- * The order of the two halves of a replace. `create-first` creates the
- * replacement, moves the dependents to it, and deletes the replaced resource
- * at the end of the deploy. `delete-first` deletes the resource, and then
- * creates it again.
+ * The order of the two halves of a replace.
+ *
+ * `create-first`:
+ * 1. Create the replacement.
+ * 2. Update the dependents to use the replacement.
+ * 3. Delete the replaced resource at the end of the deploy.
+ *
+ * `delete-first`:
+ * 1. Delete the resource.
+ * 2. Create it again.
  */
 export type ReplaceOrder = "create-first" | "delete-first";
 

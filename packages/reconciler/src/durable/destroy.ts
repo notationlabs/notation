@@ -15,26 +15,27 @@ import type { DurableStep } from "./sdk";
 
 /**
  * Durably destroys persisted resources, each after the resources that depend
- * on it.
+ * on it:
  *
- * Each record is deleted with its retired instances, which are deleted just
- * before it. A record's edges are the edges in code, the edges in its record,
- * and the edges of its retired instances. So a dependent that a stopped
- * deploy did not reach, and that still uses a retired instance, is deleted
- * before that instance.
+ * 1. Collect the edges of each record: the edges in code, the edges in its
+ *    record, and the edges of its retired instances.
+ * 2. Keep each record whose type has no class, with a warning, and every
+ *    record that it depends on.
+ * 3. Make the base order: the orphans in the order of deploy's sweep, then
+ *    the resources in code in the reverse of their deploy order.
+ * 4. Visit each record in the base order. Visit each record that has an edge
+ *    to it first, then delete its retired instances, then delete the record.
  *
- * The base order is the orphans in the order of deploy's sweep, then the
- * resources in code in the reverse of their deploy order. Before destroy
- * deletes a record, it deletes each record that has an edge to it, in the
- * same way. An edge between members of one cycle is skipped, so a cycle is
- * deleted in the reverse of its order in deploy. A placeholder still refers
- * to the members deleted before it, so its provider must delete a resource
- * that a dependent in state refers to. See `ResourceDeletion`. Where edges
- * form a loop across deploy units, the record reached first in the base
- * order is deleted last.
+ * The edges of retired instances mean that a dependent that a stopped deploy
+ * did not reach, and that still uses a retired instance, is deleted before
+ * that instance.
  *
- * A record whose type has no class is kept, with a warning, and so is every
- * record that it depends on.
+ * An edge between members of one cycle is skipped, so a cycle is deleted in
+ * the reverse of its order in deploy. A placeholder still refers to the
+ * members deleted before it, so its provider must delete a resource that a
+ * dependent in state refers to. See `ResourceDeletion`. Where edges form a
+ * loop across deploy units, the record reached first in the base order is
+ * deleted last.
  */
 export async function* destroy(
   step: DurableStep,
