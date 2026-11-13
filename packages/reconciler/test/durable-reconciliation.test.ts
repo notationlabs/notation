@@ -7672,7 +7672,7 @@ describe("create-first replacement", () => {
     runtime.close();
   });
 
-  it("deletes retired instances first in destroy", async () => {
+  it("deletes a record's retired instances just before the record in destroy, after the dependents in code", async () => {
     const world = defineNamedWorld();
     const resources = declareBus(world, "/");
     const runtime = createRuntime(resources, "cbd-destroy");
@@ -7682,15 +7682,78 @@ describe("create-first replacement", () => {
     world.control.failUpdate = () => new Error("update rejected");
     await expect(runtime.run("deploy-2")).rejects.toThrow("update rejected");
 
+    // The function still uses the old bus.
     await clearHold(runtime, "cbd-destroy", "deploy-2");
     world.calls.length = 0;
     await runtime.destroy("destroy-1");
     expect(world.calls).toEqual([
-      "delete bus#1",
       "delete fn#1",
+      "delete bus#1",
       "delete bus#2",
     ]);
     expect(await runtime.state.values()).toEqual([]);
+    runtime.close();
+  });
+
+  it("deletes a retired instance in destroy before a resource that it depends on and the record's resource does not", async () => {
+    const world = defineNamedWorld();
+    // In code, the rule comes before the function, so destroy deletes the
+    // function first. The old rule is on the function, and the new rule is
+    // on the bus.
+    const declare = (onFn: boolean) => {
+      const bus = new world.Bus("bus", { config: { path: "/" } as any });
+      const fn = new world.Fn("fn", {
+        config: {} as any,
+        dependencies: { parent: bus },
+      });
+      const rule = new world.Rule("rule", {
+        config: { path: onFn ? "/" : "/new/" } as any,
+        dependencies: { parent: onFn ? fn : bus },
+      });
+      return [bus, rule, fn];
+    };
+    const resources = declare(true);
+    const runtime = createRuntime(resources, "cbd-destroy-retired-edge");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declare(false));
+    world.control.failDelete = (label) =>
+      label === "rule#1" ? new Error("rule#1 is busy") : undefined;
+    await expect(runtime.run("deploy-2")).rejects.toThrow("rule#1 is busy");
+    expect(await retiredNames(runtime, world, "rule")).toEqual(["rule#1"]);
+
+    await clearHold(runtime, "cbd-destroy-retired-edge", "deploy-2");
+    world.control.failDelete = undefined;
+    world.calls.length = 0;
+    await runtime.destroy("destroy-1");
+    expect(world.calls).toEqual([
+      "delete rule#1",
+      "delete fn#1",
+      "delete rule#2",
+      "delete bus#1",
+    ]);
+    expect(await runtime.state.values()).toEqual([]);
+    runtime.close();
+  });
+
+  it("fails destroy when the provider refuses to delete a retired resource, and keeps it retired", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-destroy-refused");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    world.control.failDelete = (label) =>
+      label === "bus#1" ? new Error("bus#1 is still in use") : undefined;
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "bus#1 is still in use",
+    );
+
+    await clearHold(runtime, "cbd-destroy-refused", "deploy-2");
+    await expect(runtime.destroy("destroy-1")).rejects.toThrow(
+      "Cannot delete a retired instance of bus: bus#1 is still in use. The instance and its record stay in state, and the next destroy tries to delete them again.",
+    );
+    expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
     runtime.close();
   });
 

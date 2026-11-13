@@ -14,16 +14,23 @@ export async function* destroy(
     // Orphans go first: an orphan can depend on a resource in the desired
     // set, but no resource in the desired set depends on an orphan. The sweep
     // returns the IDs it left in place, and destroy leaves them too.
-    const kept = yield* sweepOrphans(step, opts, "destroy");
+    const { kept, deleteRetiredDependents } = yield* sweepOrphans(
+      step,
+      opts,
+      "destroy",
+    );
 
     // Delete in reverse dependency order, so dependents are gone before the
     // resources they depend on. The members of a cycle are deleted in the
     // reverse of their order in deploy. A placeholder still refers to the
     // members deleted before it, so its provider must delete a resource that
-    // a dependent in state refers to. See `ResourceDeletion`.
+    // a dependent in state refers to. See `ResourceDeletion`. A record's
+    // retired instances are deleted with the record, or earlier when a
+    // resource that one of them depends on comes first.
     for (const unit of orderDeployUnits(opts.resources).reverse()) {
       for (const resource of [...unit.members].reverse()) {
         if (kept.has(resource.id)) continue;
+        yield* deleteRetiredDependents(resource.id);
         yield* deleteResource(
           scopeStep(
             step,
@@ -31,6 +38,7 @@ export async function* destroy(
           ),
           resource,
           opts,
+          "destroy",
         );
       }
     }

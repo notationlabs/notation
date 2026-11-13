@@ -9,7 +9,7 @@ notation destroy [--config <path>] [--stage <stage>]
 | `--config <path>` | The config file. Default: the nearest `notation.config.ts`. |
 | `--stage <stage>` | The stage. Default: `defaultStage`.                         |
 
-Compiles the entry file and destroys the resources of the stage. The command removes the orphans in state whose resource type is registered, and then removes the resources in reverse dependency order. A type is registered when a resource in the graph has it, or when the provider package named in its state record is installed and exports its class. The command removes the retired instances that a create-first replace left in a state record before the record. See [Create-first replacement](../internals/reconciler.md#create-first-replacement).
+Compiles the entry file and destroys the resources of the stage. The command removes the orphans in state whose resource type is registered, and then removes the resources in reverse dependency order. A type is registered when a resource in the graph has it, or when the provider package named in its state record is installed and exports its class. The command removes the retired instances that a create-first replace left in a state record just before the record, after the resources in code that depend on it. A retired instance that depends on a resource is removed before that resource. See [Create-first replacement](../internals/reconciler.md#create-first-replacement).
 
 ```sh
 notation destroy --stage prod

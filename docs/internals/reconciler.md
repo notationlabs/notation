@@ -103,7 +103,7 @@ A class with a `physicalName` param is replaced create-first. Its replacement ge
 Each entry of the `retired` list holds the `config`, `params`, `output` and `dependsOn` of the old resource, and `retiredAt`, the time when the replace started. A record lists several instances when a second replace runs before the first old resource is deleted. See [State](./state.md). Three rules keep the list correct:
 
 - Every write to the record keeps the list.
-- A record that lists retired instances is not removed. Deploy and destroy delete a record's retired instances just before the record.
+- A record that lists retired instances is not removed. Deploy and destroy delete a record's retired instances just before the record. See [Destroy flow](#destroy-flow) for the one exception in destroy.
 - When a create fails with a known outcome, deploy writes back the record of the old resource, with its list as it was before the replace.
 
 No dependent is deleted in advance. A dependent whose type blocks the delete of the replaced resource has a param that holds an output of the replacement, so deploy updates or replaces it when it reaches it. For example, when a bus is replaced, each rule on it gets a new `EventBusName`, which is immutable. The rule is replaced create-first too, and the sweep deletes the old rule before the old bus. A dependent with no `physicalName` param, such as a Lambda permission, is replaced delete-first when deploy reaches it. By then its dependency's replacement exists.
@@ -113,9 +113,9 @@ The old resource and its replacement have the same ID, so an edge in state can't
 - A dependent in code has been decided again in step 3, so the sweep treats it as using the replacement. Its edges do not order the sweep.
 - A dependent that is no longer in code was not decided again, so it uses the old resource. The sweep deletes it before the retired instance.
 
-The sweep reaches a record in code only to delete its retired instances, under the step keys `notation:retired:<id>`. The delete of a record's instance `<n>`, oldest first, runs in the scope `retired:<n>`, and its state write has the key `state:persist:<id>:retired:<n>`. Each delete event has `reason: "retired"`.
+The sweep reaches a record in code only to delete its retired instances, under the step keys `notation:retired:<id>`. Destroy's sweep reaches only orphans. The delete of a record's instance `<n>`, oldest first, runs in the scope `retired:<n>`, and its state write has the key `state:persist:<id>:retired:<n>`. Each delete event has `reason: "retired"`.
 
-When the provider refuses to delete a retired instance, the deploy fails. The instance stays retired, and the error names the resources in code that depend on the resource. Any other error, such as a `VersionConflict` from the state write, fails the deploy unchanged. The next deploy deletes the instance in its sweep, whether or not it replaces anything. It does not delete it at its start, because a dependent that a stopped deploy did not reach still uses the old resource.
+When the provider refuses to delete a retired instance, the deploy fails. The instance stays retired, and the error names the resources in code that depend on the resource. In destroy, the error does not name them, as destroy has deleted them already. Any other error, such as a `VersionConflict` from the state write, fails the deploy unchanged. The next deploy deletes the instance in its sweep, whether or not it replaces anything. It does not delete it at its start, because a dependent that a stopped deploy did not reach still uses the old resource.
 
 A deploy that stops after the create leaves the old resource retired, and the next deploy deletes it at its end. When the create has an unknown outcome, the `creating` record keeps the old resource in its list, and the next deploy resolves the create as described in [Recoverable creates](#recoverable-creates).
 
@@ -426,7 +426,9 @@ Dry-run deploy performs decisions and emits lifecycle events without provider mu
 
 ## Destroy flow
 
-`destroy` is a first-class durable operation. It takes the same deployment hold as deploy, deletes registered persisted orphans and the retired instances of every record, deletes desired resources in reverse dependency order, and conditionally removes each resource store only after the provider delete succeeds or reports that the resource is already absent. Orphans go first, because an orphan can depend on a desired resource, but no desired resource depends on an orphan.
+`destroy` is a first-class durable operation. It takes the same deployment hold as deploy, deletes registered persisted orphans, deletes desired resources in reverse dependency order, and conditionally removes each resource store only after the provider delete succeeds or reports that the resource is already absent. Orphans go first, because an orphan can depend on a desired resource, but no desired resource depends on an orphan.
+
+Destroy deletes a record's [retired instances](#create-first-replacement) just before the record. So a dependent in code that a stopped deploy did not reach is deleted before the old resource that it still uses. A retired instance can depend on a resource that the record's current resource does not depend on. Before destroy deletes a resource, it first deletes the retired instances of the records in code that depend on that resource, under the step keys `notation:retired:<id>`. It deletes the retired instances that depend on those in turn before them.
 
 ## Waiting and replay
 

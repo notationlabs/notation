@@ -136,10 +136,7 @@ function collectDependencies(
   edgesById: Map<string, string[]>,
 ): string[] {
   const found = new Set<string>();
-  const pending = [
-    ...(node.dependsOn ?? []),
-    ...(edgesById.get(node.id) ?? []),
-  ];
+  const pending = [...(edgesById.get(node.id) ?? node.dependsOn ?? [])];
   while (pending.length > 0) {
     const id = pending.pop()!;
     const edges = edgesById.get(id);
