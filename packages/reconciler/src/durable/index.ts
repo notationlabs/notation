@@ -44,8 +44,8 @@
  *   *:replace:delete:*         replacement, first half: the delete
  *   *:replace:create:*         replacement, second half: a read of the
  *                              removed record, then the create
- *   *:create:find              the find, before a create, of the resource
- *                              that an earlier execution's create made
+ *   *:create:find              the find, before a create, of a resource
+ *                              that already exists
  *   *:create:existing          the find of a resource that the provider
  *                              reported as already existing
  *   *:delete:find              the find of the resource of a "creating"

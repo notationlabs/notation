@@ -389,7 +389,10 @@ function observedParams(
   return Object.fromEntries(
     set
       .filter(([name]) => !leftOut.has(name))
-      .map(([name, value]) => [name, remote[name] ?? value]),
+      .map(([name, value]) => [
+        name,
+        remote[name] !== undefined ? remote[name] : value,
+      ]),
   );
 }
 
