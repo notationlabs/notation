@@ -3,7 +3,8 @@ import {
   ResourceCreationUnknownError,
   ResourceNotFoundError,
 } from "@notation/resource";
-import { AccountToken } from "src/resources/tokens";
+import { decideDriftAction } from "@notation/reconciler";
+import { AccountToken, sortedPolicies } from "src/resources/tokens";
 
 type Call = { method: string; url: URL; body: unknown };
 let calls: Call[];
@@ -266,5 +267,67 @@ describe("AccountToken", () => {
     await expect(token.create(params)).rejects.toThrow(
       "it needs the Account API Tokens: Edit permission",
     );
+  });
+
+  describe("drift", () => {
+    const twoGroups = [
+      {
+        effect: "allow" as const,
+        permissionGroups: ["Workers Scripts Write", "Account Settings Read"],
+        resources: { "com.cloudflare.api.account.acc": "*" },
+      },
+      {
+        effect: "deny" as const,
+        permissionGroups: ["Workers KV Storage Write"],
+        resources: { "com.cloudflare.api.account.acc": "*" },
+      },
+    ];
+
+    const readPolicies = (policies: typeof twoGroups) => {
+      route({
+        getToken: () =>
+          ok({
+            name: params.Name,
+            policies: policies.map((policy) => ({
+              effect: policy.effect,
+              permission_groups: policy.permissionGroups.map((name) => ({
+                id: name,
+                name,
+              })),
+              resources: policy.resources,
+            })),
+          }),
+        listSecrets: () =>
+          ok([{ id: "s1", name: params.Name, status: "active" }]),
+      });
+      return token.read!(key);
+    };
+
+    it("doesn't see the order of the policies and their groups as a change", async () => {
+      const reversed = [...twoGroups].reverse().map((policy) => ({
+        ...policy,
+        permissionGroups: [...policy.permissionGroups].reverse(),
+      }));
+      const action = decideDriftAction({
+        resource: token,
+        params: { ...params, Policies: sortedPolicies(twoGroups) },
+        driftRead: { kind: "present", output: await readPolicies(reversed) },
+      });
+
+      expect(action).toMatchObject({ decision: "noop" });
+    });
+
+    it("updates policies changed in the dashboard back to the declaration", async () => {
+      const action = decideDriftAction({
+        resource: token,
+        params: { ...params, Policies: sortedPolicies(twoGroups) },
+        driftRead: {
+          kind: "present",
+          output: await readPolicies([twoGroups[0]!]),
+        },
+      });
+
+      expect(action).toMatchObject({ decision: "drift-update" });
+    });
   });
 });
