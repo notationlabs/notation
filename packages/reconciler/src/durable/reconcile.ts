@@ -45,7 +45,12 @@ import {
   type ResourceAction,
 } from "../plan";
 import { assertOutputsRecoverable } from "../planner";
-import { generateNames, recordedNames, unnamedFields } from "../physical-names";
+import {
+  assertNamesNotDerived,
+  generateNames,
+  recordedNames,
+  unnamedFields,
+} from "../physical-names";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
   resourceStateStore,
@@ -122,6 +127,7 @@ export async function* reconcileResource(
     }),
   );
   const unnamed = unnamedFields(resource);
+  assertNamesNotDerived(resource, unnamed, configParams);
   // A name in the record wins over a new one, so that a resource that
   // exists, or that an earlier deploy started to create, is not renamed.
   const recorded = recordedNames(unnamed, session.node);
@@ -438,18 +444,14 @@ async function* withoutContributions(
   step: DurableStepRunner,
   shared: Omit<CreateResourceParams, "persist">,
   excluded: ReadonlySet<BaseResource>,
+  names: Record<string, string>,
 ): AsyncGenerator<any, Omit<CreateResourceParams, "persist">, any> {
   const { resource } = shared;
   const params = {
     ...(yield* step.run("replace:params", () =>
       resource.getParams({ excludeContributionsFrom: excluded }),
     )),
-    ...Object.fromEntries(
-      unnamedFields(resource).map(({ field }) => [
-        field,
-        shared.resourceParams[field],
-      ]),
-    ),
+    ...names,
   };
   await validateParams(resource, params, "deploy");
   return {
@@ -497,22 +499,20 @@ async function* replaceResource(
   });
 
   const createStep = step.scope("replace:create");
+  const names = yield* generateNamesStep(
+    createStep,
+    opts,
+    shared.resource,
+    unnamedFields(shared.resource),
+    shared.resourceParams,
+  );
   const renamed = {
     ...shared,
-    resourceParams: {
-      ...shared.resourceParams,
-      ...(yield* generateNamesStep(
-        createStep,
-        opts,
-        shared.resource,
-        unnamedFields(shared.resource),
-        shared.resourceParams,
-      )),
-    },
+    resourceParams: { ...shared.resourceParams, ...names },
   };
   const excluded = replaceWithout?.(new Set(deleted));
   const created = excluded?.size
-    ? yield* withoutContributions(step, renamed, excluded)
+    ? yield* withoutContributions(step, renamed, excluded, names)
     : renamed;
   // The delete removed the store instance that `session` read, so a write
   // against it would conflict. The record is read again for the create.

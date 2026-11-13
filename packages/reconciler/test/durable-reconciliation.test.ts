@@ -6374,6 +6374,23 @@ describe("generated physical names", () => {
     runtime.close();
   });
 
+  it("throws when deriveParams supplies the name, and creates nothing", async () => {
+    const { Generated, calls } = defineGenerated("test/durable/name-derived");
+    const Derived = Generated.requireDependencies<{}>().deriveParams(
+      ({ id }) => ({ name: `derived-${id}` }) as any,
+    );
+    const runtime = createRuntime(
+      [new Derived("queue:orders", { config: { path: "/" } as any })],
+      "name-derived",
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toThrow(
+      'Resource "queue:orders" (test/durable/name-derived): deriveParams supplies "name", which has physicalName in the schema.',
+    );
+    expect(calls).toEqual([]);
+    runtime.close();
+  });
+
   it("keeps the recorded name on the next deploy, and decides noop", async () => {
     const { Generated, remote, calls } = defineGenerated(
       "test/durable/name-kept",

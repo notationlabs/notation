@@ -1633,6 +1633,76 @@ describe("createPlan with a generated physical name", () => {
     ]);
   });
 
+  it("plans a noop with the name in the record's output when the record's params lack it", async () => {
+    const plan = await createPlan({
+      resources: [queue("orders", { path: "/" })],
+      state: new MemoryStateBackend({
+        orders: {
+          ...record("orders", { name, path: "/" }),
+          params: { path: "/" },
+        },
+      }),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({
+        id: "orders",
+        decision: "noop",
+        params: { name, path: "/" },
+      }),
+    ]);
+  });
+
+  it("does not take the name from the output of a creating record", async () => {
+    const plan = await createPlan({
+      resources: [queue("orders", { path: "/" })],
+      state: new MemoryStateBackend({
+        orders: {
+          ...record("orders", { name, path: "/" }, "creating"),
+          params: { path: "/" },
+        },
+      }),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes[0]).toMatchObject({
+      id: "orders",
+      decision: "create",
+      params: { name: UNKNOWN_AFTER_APPLY, path: "/" },
+    });
+  });
+
+  it("throws when deriveParams supplies the name", async () => {
+    const Derived = resource({ type: "test/planner/derived", provider: "test" })
+      // Cast: as for Queue.
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          primaryKey: true,
+          value: v.string(),
+          physicalName: { maxLength: 64 },
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+      })
+      .requireDependencies<{}>()
+      .deriveParams(({ id }) => ({ name: `derived-${id}` }));
+
+    await expect(
+      createPlan({
+        resources: [new Derived("orders", { config: {} as any })],
+        state: new MemoryStateBackend({}),
+        driftDetection: false,
+      }),
+    ).rejects.toThrow(
+      'Resource "orders" (test/planner/derived): deriveParams supplies "name", which has physicalName in the schema. Only config can supply a physicalName param.',
+    );
+  });
+
   it("plans a create with an unknown name for a resource with no record", async () => {
     const orders = queue("orders", { path: "/" });
     const mirror = queue("mirror", { path: "/" });

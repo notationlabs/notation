@@ -25,7 +25,11 @@ import {
   type PlanNode,
 } from "./plan";
 import { workflowRegistry, type ResourceRegistry } from "./resource-registry";
-import { recordedNames, unnamedFields } from "./physical-names";
+import {
+  assertNamesNotDerived,
+  recordedNames,
+  unnamedFields,
+} from "./physical-names";
 import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
 
@@ -279,8 +283,10 @@ export async function planKnownParams(
 }> {
   const stateNode = await loadOutput(resource, state);
   const unnamed = unnamedFields(resource);
+  const planned = await resource.planParams();
+  assertNamesNotDerived(resource, unnamed, planned);
   const params = {
-    ...(await resource.planParams()),
+    ...planned,
     ...Object.fromEntries(
       unnamed.map(({ field }) => [field, UNKNOWN_AFTER_APPLY]),
     ),
