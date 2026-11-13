@@ -21,14 +21,15 @@ import {
   resolveDeploymentId,
   type DeploymentIdentity,
 } from "src/config/deployment";
+import { runWithExecutionContext, scrubError } from "src/secrets";
 import {
   ExecutionAdmissionError,
   createWorkflowRouter,
   workflow,
 } from "@notation/durable";
 
-function resolveDatabasePath(): string {
-  return process.env.NOTATION_DATABASE_PATH ?? filePaths.database();
+export function resolveDatabasePath(explicit?: string): string {
+  return explicit ?? process.env.NOTATION_DATABASE_PATH ?? filePaths.database();
 }
 
 export type NodeDurableRuntimeOptions = {
@@ -71,7 +72,7 @@ export class NodeDurableRuntime {
     this.#logger = opts.logger ?? pino({ level: "silent" });
     this.#leaseDuration = opts.leaseDuration;
     this.#database = createSqliteDb({
-      path: opts.databasePath ?? resolveDatabasePath(),
+      path: resolveDatabasePath(opts.databasePath),
     });
     this.#runtime = new SqliteRuntime(this.#database);
     this.state = new DurableStateBackend(
@@ -100,7 +101,20 @@ export class NodeDurableRuntime {
     const invoker: WorkflowInvoker = {
       workflowEndEmitter: new EventEmitter(),
       deliver: (event, { lease, signal }) =>
-        runner.run(event, { lease, signal, logger: this.#logger }),
+        runWithExecutionContext(
+          { stage: this.deployment.stage, executionId: event.executionId },
+          async () => {
+            const outcome = await runner.run(event, {
+              lease,
+              signal,
+              logger: this.#logger,
+            });
+            if (outcome.status === "failed") {
+              return { ...outcome, error: scrubError(outcome.error) as Error };
+            }
+            return outcome;
+          },
+        ),
     };
     const dispatcher = new ExecutionDispatcher(this.#runtime, {
       invoker,
@@ -205,7 +219,7 @@ export async function readExecutionDeployment(
   executionId: string,
   opts: { databasePath?: string } = {},
 ): Promise<DeploymentIdentity | undefined> {
-  const databasePath = opts.databasePath ?? resolveDatabasePath();
+  const databasePath = resolveDatabasePath(opts.databasePath);
   // Opening the database would create it, so a project that has never
   // deployed would get an empty database from a lookup.
   if (databasePath !== ":memory:" && !fs.existsSync(databasePath)) {

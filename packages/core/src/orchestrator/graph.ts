@@ -4,6 +4,7 @@ import {
   type NameScope,
   type ResourceGroup,
 } from "@notation/resource";
+import { clearSecretTargets } from "src/secrets";
 import { filePaths } from "src/utils/paths";
 
 type ResourceGraph = {
@@ -25,6 +26,7 @@ export async function getResourceGraph(
 ): Promise<ResourceGraph> {
   const outFilePath = filePaths.dist.infra(entryPoint);
 
+  clearSecretTargets();
   // todo: move into worker thread. this will cause memory leaks
   return collectResourceGraph(
     async () => {

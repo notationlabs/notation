@@ -6,6 +6,7 @@ import {
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
+import { runWithExecutionContext } from "src/secrets";
 import {
   loadStateProviderRegistry,
   mergeResourceRegistries,
@@ -41,29 +42,40 @@ export async function deployApp({
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: DeployAppOptions): Promise<void> {
-  const graph = await getResourceGraph(deployment.entryPoint, {
-    app: deployment.app,
-    stage: deployment.stage,
-  });
-  await runDurableWorkflow(
-    { deployment, workflowId: "deploy", runtime, databasePath, executionId },
-    async function* (step, executionId, runtime) {
-      const providerRegistry = yield* loadStateProviderRegistry(
-        step,
-        runtime.state,
-        graph.resources,
-        emit,
-      );
-      yield* durable.deploy(step, {
-        executionId,
-        resources: graph.resources,
-        state: runtime.state,
-        registry: mergeResourceRegistries(providerRegistry, registry),
-        emit,
-        dryRun,
-        driftDetection,
-        maxOperationAttempts,
+  return runWithExecutionContext(
+    { stage: deployment.stage, executionId },
+    async () => {
+      const graph = await getResourceGraph(deployment.entryPoint, {
+        app: deployment.app,
+        stage: deployment.stage,
       });
+      await runDurableWorkflow(
+        {
+          deployment,
+          workflowId: "deploy",
+          runtime,
+          databasePath,
+          executionId,
+        },
+        async function* (step, executionId, runtime) {
+          const providerRegistry = yield* loadStateProviderRegistry(
+            step,
+            runtime.state,
+            graph.resources,
+            emit,
+          );
+          yield* durable.deploy(step, {
+            executionId,
+            resources: graph.resources,
+            state: runtime.state,
+            registry: mergeResourceRegistries(providerRegistry, registry),
+            emit,
+            dryRun,
+            driftDetection,
+            maxOperationAttempts,
+          });
+        },
+      );
     },
   );
 }

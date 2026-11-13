@@ -6,6 +6,7 @@ import {
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
+import { runWithExecutionContext } from "src/secrets";
 import {
   loadStateProviderRegistry,
   mergeResourceRegistries,
@@ -36,28 +37,39 @@ export async function destroyApp({
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: DestroyAppOptions) {
-  const graph = await getResourceGraph(
-    deployment.entryPoint,
-    { app: deployment.app, stage: deployment.stage },
-    { declarationChecks: false },
-  );
-  await runDurableWorkflow(
-    { deployment, workflowId: "destroy", runtime, databasePath, executionId },
-    async function* (step, executionId, runtime) {
-      const providerRegistry = yield* loadStateProviderRegistry(
-        step,
-        runtime.state,
-        graph.resources,
-        emit,
+  return runWithExecutionContext(
+    { stage: deployment.stage, executionId },
+    async () => {
+      const graph = await getResourceGraph(
+        deployment.entryPoint,
+        { app: deployment.app, stage: deployment.stage },
+        { declarationChecks: false },
       );
-      yield* durable.destroy(step, {
-        executionId,
-        resources: graph.resources,
-        state: runtime.state,
-        registry: mergeResourceRegistries(providerRegistry, registry),
-        emit,
-        maxOperationAttempts,
-      });
+      await runDurableWorkflow(
+        {
+          deployment,
+          workflowId: "destroy",
+          runtime,
+          databasePath,
+          executionId,
+        },
+        async function* (step, executionId, runtime) {
+          const providerRegistry = yield* loadStateProviderRegistry(
+            step,
+            runtime.state,
+            graph.resources,
+            emit,
+          );
+          yield* durable.destroy(step, {
+            executionId,
+            resources: graph.resources,
+            state: runtime.state,
+            registry: mergeResourceRegistries(providerRegistry, registry),
+            emit,
+            maxOperationAttempts,
+          });
+        },
+      );
     },
   );
 }
