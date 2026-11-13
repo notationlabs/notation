@@ -59,7 +59,7 @@ describe("LambdaEventSourceMapping", () => {
     ).rejects.toSatisfy(ResourceAlreadyExistsError.is);
   });
 
-  it("creates the mapping with no tags", async () => {
+  it("creates the mapping with the params and nothing else", async () => {
     const send = mockSend(() => ({ UUID: "uuid-1" }));
 
     await createMapping().create({
@@ -112,6 +112,29 @@ describe("LambdaEventSourceMapping", () => {
 
     await expect(found).rejects.toThrow("uuid-1, uuid-2");
     await expect(found).rejects.not.toSatisfy(ResourceNotFoundError.is);
+  });
+
+  it("does not find a mapping that is being deleted", async () => {
+    mockSend(() => ({
+      EventSourceMappings: [{ UUID: "uuid-1", State: "Deleting" }],
+    }));
+
+    await expect(
+      createMapping().find!({ EventSourceArn: queueArn, FunctionName: "app" }),
+    ).rejects.toSatisfy(ResourceNotFoundError.is);
+  });
+
+  it("finds the mapping beside one that is being deleted", async () => {
+    mockSend(() => ({
+      EventSourceMappings: [
+        { UUID: "uuid-1", State: "Deleting" },
+        { UUID: "uuid-2", State: "Creating" },
+      ],
+    }));
+
+    await expect(
+      createMapping().find!({ EventSourceArn: queueArn, FunctionName: "app" }),
+    ).resolves.toEqual({ UUID: "uuid-2" });
   });
 
   it("waits while the mapping is being created", async () => {

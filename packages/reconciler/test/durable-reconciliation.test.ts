@@ -1032,6 +1032,32 @@ describe("recoverable creates", () => {
       runtime.close();
     });
 
+    it("creates the replacement when find no longer returns the replaced resource", async () => {
+      const { Computed, remote, calls } = defineComputedKey(
+        "test/durable/replacement-find-clear",
+        false,
+      );
+      const resources: BaseResource[] = [
+        new Computed("api", { config: { name: "app", path: "/" } as any }),
+      ];
+      const runtime = createRuntime(resources, "replacement-find-clear");
+      await runtime.run("deploy-1");
+
+      resources[0] = new Computed("api", {
+        config: { name: "app", path: "/other/" } as any,
+      });
+      await runtime.run("deploy-2");
+
+      expect(calls).toEqual(["create:app", "delete:app/0", "create:app"]);
+      expect([...remote.keys()]).toEqual(["app/1"]);
+      expect(await runtime.state.get("api")).toMatchObject({
+        lastOperation: "create",
+        params: { path: "/other/" },
+        output: { url: "app/1" },
+      });
+      runtime.close();
+    });
+
     it("does not take over the resource it replaces when find returns it before the create", async () => {
       const { Computed, remote, calls, control } = defineComputedKey(
         "test/durable/replacement-found",
@@ -1499,6 +1525,51 @@ describe("recoverable creates", () => {
         "the existing resource and deploy again.",
     );
     // The provider refused the create, so no creating record is left.
+    expect(await runtime.state.get("no-read")).toBeUndefined();
+    runtime.close();
+  });
+
+  it("leaves no creating record when the lookup of a create finds a resource whose class has no read", async () => {
+    let made = false;
+    const TestResource = resource({
+      type: "test/durable/lookup-no-read",
+      provider: "test",
+    })
+      .defineSchema({
+        remoteId: {
+          value: v.string(),
+          presence: "required",
+          propertyType: "computed",
+          primaryKey: true,
+        },
+      } as any)
+      .defineOperations({
+        create: (async () => {
+          made = true;
+          return { remoteId: "remote-1" };
+        }) as any,
+        find: (async () => {
+          if (made) return { remoteId: "remote-1" };
+          throw new ResourceNotFoundError("nothing found");
+        }) as any,
+        delete: async () => undefined,
+      });
+    const runtime = createRuntime(
+      [new TestResource("no-read")],
+      "lookup-no-read",
+      { failSettle: 1 },
+    );
+
+    await expect(runtime.run("deploy-1")).rejects.toMatchObject({
+      name: "InfrastructureError",
+    });
+    expect(await runtime.state.get("no-read")).toMatchObject({
+      lastOperation: "creating",
+    });
+    await expect(runtime.run("deploy-1")).rejects.toThrow(
+      "Cannot take over no-read",
+    );
+
     expect(await runtime.state.get("no-read")).toBeUndefined();
     runtime.close();
   });

@@ -158,7 +158,9 @@ export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
     // AWS assigns the UUID, so `find` matches on the function and the event
     // source. This class supports one mapping per function and source.
     // Lambda allows several mappings of one stream to one function, and
-    // `find` fails when it finds more than one.
+    // `find` fails when it finds more than one. A mapping that is being
+    // deleted still shows in the list for a while, and is left out, so that
+    // a create that follows a delete does not take it over.
     find: async (params) => {
       const mapping = await findOnlyInPages(
         async (Marker) => {
@@ -174,7 +176,7 @@ export const LambdaEventSourceMapping = lambdaEventSourceMappingSchema
             NextToken: page.NextMarker,
           };
         },
-        () => true,
+        (item) => item.State !== "Deleting",
         `event source mapping from ${params.EventSourceArn} to the ` +
           `function ${params.FunctionName}`,
         (item) => item.UUID!,

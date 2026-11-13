@@ -295,8 +295,8 @@ export const EventBridgeRule = eventBridgeRuleSchema
           ),
         );
       } catch (error) {
-        // A rule kept without its targets would be found by the create's
-        // lookup, and recorded with targets it does not have.
+        // The create failed, so it leaves no rule. A rule kept without its
+        // targets would match events and deliver them nowhere.
         await deleteCreatedRule(key, errorMessage(error));
       }
     }),

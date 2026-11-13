@@ -3,6 +3,7 @@ import * as sdk from "@aws-sdk/client-apigatewayv2";
 import { AwsSchema } from "src/resources/utils/types";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { apiGatewayClient } from "src/resources/utils/aws-clients";
+import { awsCreate } from "src/resources/utils/errors";
 import { findOnlyInPages } from "src/resources/utils/paginate";
 import { ApiInstance } from "./api";
 
@@ -64,14 +65,14 @@ const apiSchema = authorizer.defineSchema({
 
 export const RouteAuth = apiSchema
   .defineOperations({
-    create: async (params) => {
+    create: awsCreate(async (params) => {
       const command = new sdk.CreateAuthorizerCommand(params);
       const result = await apiGatewayClient().send(command);
 
       return {
         AuthorizerId: result.AuthorizerId!,
       };
-    },
+    }),
     // AWS assigns the authorizer's ID, so `find` matches on the name within
     // the API.
     find: async (params) => {

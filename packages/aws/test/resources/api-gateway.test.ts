@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sdk from "@aws-sdk/client-apigatewayv2";
 import {
+  ResourceAlreadyExistsError,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
   validateValues,
@@ -11,7 +12,9 @@ import { MemoryStateBackend } from "@notation/state";
 import { apiGatewayClient } from "src/resources/utils/aws-clients";
 import { Api } from "src/resources/api-gateway/api";
 import { RouteAuth } from "src/resources/api-gateway/auth";
+import { LambdaIntegration } from "src/resources/api-gateway/lambda-integration";
 import { Route } from "src/resources/api-gateway/route";
+import { Stage } from "src/resources/api-gateway/stage";
 import { awsCallMayHaveTakenEffect } from "src/resources/utils/errors";
 
 vi.mock("src/resources/context", () => ({
@@ -160,6 +163,16 @@ describe("API Gateway authorizer", () => {
   });
   const params = { ApiId: "api-1", Name: "jwt" } as any;
 
+  it("reports a create that gets a server error as unknown", async () => {
+    mockSend(() => {
+      throw { $metadata: { httpStatusCode: 503 } };
+    });
+
+    await expect(auth.create(params)).rejects.toSatisfy(
+      ResourceCreationUnknownError.is,
+    );
+  });
+
   it("finds the authorizer with the name in the API", async () => {
     const send = mockSend(() => ({
       Items: [
@@ -252,6 +265,24 @@ describe("API Gateway route", () => {
     dependencies: {} as any,
   });
 
+  it("reports a route key that the API already has as already existing", async () => {
+    const conflict = new sdk.ConflictException({
+      message: "Route with key GET /todos already exists for this API",
+      $metadata: {},
+    });
+    mockSend(() => {
+      throw conflict;
+    });
+
+    const created = route.create({
+      ApiId: "api-1",
+      RouteKey: "GET /todos",
+    } as any);
+
+    await expect(created).rejects.toSatisfy(ResourceAlreadyExistsError.is);
+    await expect(created).rejects.toMatchObject({ cause: conflict });
+  });
+
   it("finds the route with the route key", async () => {
     const send = mockSend(() => ({
       Items: [
@@ -290,6 +321,46 @@ describe("API Gateway route", () => {
 
     await expect(found).rejects.toSatisfy(ResourceNotFoundError.is);
     await expect(found).rejects.toMatchObject({ cause: notFound });
+  });
+});
+
+describe("API Gateway stage", () => {
+  it("reports a stage name that the API already has as already existing", async () => {
+    const conflict = new sdk.ConflictException({
+      message: "Stage already exists",
+      $metadata: {},
+    });
+    mockSend(() => {
+      throw conflict;
+    });
+    const stage = new Stage("stage", {
+      config: { StageName: "$default" } as any,
+      dependencies: {} as any,
+    });
+
+    const created = stage.create({
+      ApiId: "api-1",
+      StageName: "$default",
+    } as any);
+
+    await expect(created).rejects.toSatisfy(ResourceAlreadyExistsError.is);
+    await expect(created).rejects.toMatchObject({ cause: conflict });
+  });
+});
+
+describe("API Gateway Lambda integration", () => {
+  it("reports a create that gets a server error as unknown", async () => {
+    mockSend(() => {
+      throw { $metadata: { httpStatusCode: 503 } };
+    });
+    const integration = new LambdaIntegration("integration", {
+      config: {} as any,
+      dependencies: {} as any,
+    });
+
+    await expect(
+      integration.create({ ApiId: "api-1" } as any),
+    ).rejects.toSatisfy(ResourceCreationUnknownError.is);
   });
 });
 

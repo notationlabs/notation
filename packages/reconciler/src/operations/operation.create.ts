@@ -68,7 +68,7 @@ const MAX_CREATE_LOOKUP_ATTEMPTS = 10;
  *
  * When create fails and its outcome is not unknown, the record that this
  * create started from is written back, or the record is cleared if it
- * started from none. When the provider reports that the resource exists and
+ * started from none. When the resource exists and
  * deploy cannot take it over, the create of a replacement writes back the
  * record of the replaced resource instead. An unknown outcome keeps the
  * "creating" record.
@@ -122,16 +122,14 @@ export async function* createResourceOperation(
         throw failure;
       }
       yield* refuseReplaced(params, key);
-      if (!resource.read) {
-        yield* restoreRecord(params, params.replaces ?? params.prior);
-        throw noReadError(resource);
-      }
+      yield* refuseUnreadable(params);
       return yield* takeOver(step, params, key);
     }
 
     if (created.lookedUp) {
       const key = created.key ?? {};
       yield* refuseReplaced(params, key);
+      yield* refuseUnreadable(params);
       return yield* takeOver(step, params, key);
     }
 
@@ -258,6 +256,19 @@ async function* takeOver(
     reason: "taken-over",
   });
   return { tookOver: true };
+}
+
+/**
+ * Fails the takeover of a resource whose class has no `read`, after the
+ * "creating" record was written. The resource exists, so the outcome is
+ * known, and no "creating" record is left.
+ */
+async function* refuseUnreadable(
+  params: CreateResourceParams,
+): AsyncGenerator<unknown, void, unknown> {
+  if (params.resource.read) return;
+  yield* restoreRecord(params, params.replaces ?? params.prior);
+  throw noReadError(params.resource);
 }
 
 function noReadError(resource: BaseResource): Error {
