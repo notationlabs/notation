@@ -6706,7 +6706,7 @@ describe("generated physical names", () => {
     runtime.close();
   });
 
-  it("creates a replacement with a new generated name, after the delete", async () => {
+  it("creates a replacement with a new generated name, and then deletes the replaced resource", async () => {
     const { Generated, remote, calls } = defineGenerated(
       "test/durable/name-replace",
     );
@@ -6727,8 +6727,8 @@ describe("generated physical names", () => {
     expect(second).not.toBe(first);
     expect(calls).toEqual([
       `create:${first}`,
-      `delete:${first}`,
       `create:${second}`,
+      `delete:${first}`,
     ]);
     expect(await runtime.state.get("queue:orders")).toMatchObject({
       params: { name: second, path: "/new/" },
@@ -7003,8 +7003,8 @@ describe("generated physical names", () => {
     expect(replacement).not.toBe(name);
     expect(calls).toEqual([
       `create:${name}`,
-      `delete:${name}`,
       `create:${replacement}`,
+      `delete:${name}`,
     ]);
     expect(await runtime.state.get("queue:orders")).toMatchObject({
       lastOperation: "create",
@@ -7125,8 +7125,8 @@ describe("refs that add no dependency", () => {
       expect(second).not.toBe(first);
       expect(calls).toEqual([
         `create:${first}`,
-        `delete:${first}`,
         `create:${second}`,
+        `delete:${first}`,
       ]);
       expect(remote.get(second)).toMatchObject({
         bindings: [{ name: "SELF", service: second }],

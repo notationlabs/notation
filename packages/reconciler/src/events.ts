@@ -2,6 +2,14 @@ import type { ReplaceField, ResourceType } from "@notation/resource";
 
 export type OperationName = "create" | "read" | "update" | "delete";
 
+/**
+ * The order of the two halves of a replace. `create-first` creates the
+ * replacement, moves the dependents to it, and deletes the replaced resource
+ * at the end of the deploy. `delete-first` deletes the resource, and then
+ * creates it again.
+ */
+export type ReplaceOrder = "create-first" | "delete-first";
+
 export type OperationLifecycleStatus =
   "start" | "success" | "error" | "skip" | "dry-run";
 
@@ -16,6 +24,8 @@ export type OperationLifecycleEvent = {
    * `dependency-replaced`: the delete of a dependent that blocks the delete
    * of a replaced resource.
    * `taken-over`: a create that took over a resource that already existed.
+   * `retired`: the delete of an instance that a create-first replace
+   * retired.
    */
   reason?: string;
   /**
@@ -41,6 +51,8 @@ export type DeployDecisionEvent = {
     | "drift-recreate"
     | "noop";
   replaceFields?: ReplaceField[];
+  /** Set with the decisions `replace` and `drift-replace`. */
+  replaceOrder?: ReplaceOrder;
   /**
    * Set when deploy creates the resource without its contributions, as the
    * first member of a dependency cycle. A later decision for the same

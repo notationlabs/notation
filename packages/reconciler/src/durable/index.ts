@@ -21,6 +21,10 @@
  *   notation:destroy:<id>:*    per-resource deletion steps
  *   notation:orphans:list      the orphan sweep's one read of persisted state
  *   notation:orphans:<id>:*    orphan sweep, per persisted record
+ *   notation:retired:<id>:*    the sweep's delete of the retired instances
+ *                              of a record in code
+ *   *:retired:<n>:*            the delete of a record's retired instance
+ *                              <n>, oldest first
  *   *:physical-names           the names that deploy generates for a
  *                              resource, or for its replacement
  *   *:create:remote:effect:<n> one create attempt, as a step.effect
@@ -38,6 +42,9 @@
  *                              failed create started from or that the
  *                              replaced resource had, or removal of the
  *                              "creating" record if there is none
+ *   state:persist:<id>:retired[:<state key>]:retired:<n>   conditional
+ *                              write that removes retired instance <n>
+ *                              from the record
  *   state:delete:<id>          conditional removal of one
  *   state:<write>:<id>:settle:<n>        a write in pass <n> over a cycle
  *   state:<write>:<id>[:<stage>]:after-takeover   a write that follows a
@@ -45,9 +52,11 @@
  *                              takeover it follows
  *   state:delete:<id>:replace:<replaced id>   the removal of a dependent
  *                              that blocks the delete of <replaced id>
- *   *:replace:delete:*         replacement, first half: the delete
- *   *:replace:create:*         replacement, second half: a read of the
- *                              removed record, then the create
+ *   *:replace:delete:*         delete-first replacement, first half: the
+ *                              delete
+ *   *:replace:create:*         replacement: the create. In a delete-first
+ *                              replacement, a read of the removed record
+ *                              comes first
  *   *:create:find              the find, before a create, of a resource
  *                              that already exists
  *   *:create:existing          the find of a resource that the provider

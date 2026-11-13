@@ -40,7 +40,9 @@ const CREATING_DECISIONS: ResourceAction["decision"][] = [
  *
  * A cycle gets one pass after the first for each member, and at least two,
  * so that a member that refers to itself is updated and then checked. Each
- * replace of a member adds a pass. When
+ * replace of a member adds a pass. A member with a `physicalName` param is
+ * replaced create-first: no member is deleted while the cycle settles, and
+ * the sweep at the end of the deploy deletes the replaced member. When
  * outputs still change in the last pass, deploy fails and names those
  * outputs. A dry run stops after the first pass, as it creates and updates
  * nothing. It also reconciles each placeholder that the first pass left as
@@ -65,10 +67,10 @@ export async function* reconcileCycle(
   const replaced: BaseResource[] = [];
   // The passes after the first. A replace adds one.
   let passes = 0;
-  // The members that a replacement created without the contributions that
-  // refer to itself or to a member it deleted, and that the current pass has
-  // not reconciled since. The pass doesn't end the deploy of the cycle while
-  // one remains.
+  // The members that a delete-first replacement created without the
+  // contributions that refer to itself or to a member it deleted, and that
+  // the current pass has not reconciled since. The pass doesn't end the
+  // deploy of the cycle while one remains.
   const incomplete = new Set<BaseResource>();
   const options = (resource: BaseResource): ReconcileOptions => ({
     replaceWithout: (deleted) => {

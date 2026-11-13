@@ -4,7 +4,7 @@ import type {
   DurableValue,
   ResourceGroupRef,
 } from "@notation/resource";
-import type { StateNode } from "@notation/state";
+import type { RetiredInstance, StateNode } from "@notation/state";
 import type {
   DurableStepFn,
   StepRunner as DurableStepRunner,
@@ -58,6 +58,11 @@ export type PersistedResourceState = Pick<
   group: ResourceGroupRef | null;
   // Required here, though optional on StateNode: every write records edges.
   dependsOn: string[];
+  /**
+   * Left out to carry forward the list that the record holds. See
+   * `PersistState`.
+   */
+  retired?: RetiredInstance[];
   [key: string]: DurableValue;
 };
 
@@ -83,6 +88,11 @@ export function toPersistedState(
  * the last with a `stage`, so that each write has its own step key. Each
  * write is made against the record the one before it left. `null` clears the
  * record.
+ *
+ * A write that leaves out `retired` keeps the retired instances that the
+ * record lists, except a `restored` write, which writes the record as it is
+ * given. Neither `null` nor a removal may drop a record that lists retired
+ * instances.
  */
 export type PersistState = (
   next: PersistedResourceState | null,
@@ -92,8 +102,9 @@ export type PersistState = (
 /**
  * `restored` writes back the record that a failed create started from, or
  * that the replaced resource had. It clears the record if there is none.
+ * `retired` removes a retired instance that deploy has deleted.
  */
-export type PersistStage = "creating" | "taken-over" | "restored";
+export type PersistStage = "creating" | "taken-over" | "restored" | "retired";
 
 export type RemoveState = () => AsyncGenerator<unknown, void, unknown>;
 
@@ -129,9 +140,14 @@ export type CreateResourceParams = ResolvedResourceParams & {
   prior?: StateNode;
   /**
    * Set for the create of a replacement: the record of the resource that it
-   * replaces, which the delete removed.
+   * replaces. A delete-first replace has removed it.
    */
   replaces?: StateNode;
+  /**
+   * Set for a create-first replace: the list of retired instances that the
+   * "creating" record holds, with the replaced resource added.
+   */
+  retired?: RetiredInstance[];
   /** The edges to record with the resource. */
   dependsOn: string[];
   persist: PersistState;

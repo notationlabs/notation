@@ -67,8 +67,8 @@ const MAX_CREATE_LOOKUP_ATTEMPTS = 10;
  *    `find`, which matches on a unique attribute. See `existingKey`.
  *
  * When create fails and its outcome is not unknown, the record that this
- * create started from is written back, or the record is cleared if it
- * started from none. When the resource exists and
+ * create started from is written back, with the retired instances it
+ * listed, or the record is cleared if it started from none. When the resource exists and
  * deploy cannot take it over, the create of a replacement writes back the
  * record of the replaced resource instead. An unknown outcome keeps the
  * "creating" record.
@@ -342,12 +342,15 @@ function isOutcomeUnknown(error: unknown): boolean {
  * from the record alone.
  */
 function creatingRecord(params: CreateResourceParams): PersistedResourceState {
-  const { resource, resourceParams } = params;
-  return resourceRecord(params, {
-    lastOperation: "creating",
-    params: resource.toState(resourceParams),
-    output: resource.toState(definedKey(resource, resourceParams)),
-  });
+  const { resource, resourceParams, retired } = params;
+  return {
+    ...resourceRecord(params, {
+      lastOperation: "creating",
+      params: resource.toState(resourceParams),
+      output: resource.toState(definedKey(resource, resourceParams)),
+    }),
+    ...(retired ? { retired } : {}),
+  };
 }
 
 function definedKey(

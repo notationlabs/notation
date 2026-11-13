@@ -835,11 +835,16 @@ export type DefineResourceMeta = {
    *    replaced under the same name, so `LambdaFunctionConcurrency` lists
    *    `LambdaFunction.type`.
    *
-   * When deploy replaces a resource of a listed type, it first deletes each
-   * resource of this type that depends on it in state. It then deletes the
-   * resource, creates it again, and creates the dependents again. A
-   * dependent of a type that does not list the type stays in place, and
-   * deploy updates it when its params change.
+   * When deploy replaces a resource of a listed type delete-first, it first
+   * deletes each resource of this type that depends on it in state. It then
+   * deletes the resource, creates it again, and creates the dependents
+   * again. A dependent of a type that does not list the type stays in place,
+   * and deploy updates it when its params change.
+   *
+   * A replace of a resource with a `physicalName` param creates first, and
+   * does not use this list: deploy decides each dependent again with the
+   * outputs of the replacement, and deletes the replaced resource at the end
+   * of the deploy.
    */
   blocksDeleteOf?: ResourceType[];
   /**
