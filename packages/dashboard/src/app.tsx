@@ -13,7 +13,8 @@ function App() {
     if (resources.length > 0 && !activeResource) {
       // todo: remove hack
       const resource =
-        resources.find((r) => r.type.includes("/apiGateway/")) || resources[0];
+        resources.find((r) => r.type.includes("/apiGateway/")) ||
+        resources[0];
       setActiveResource(resource);
     }
   }, [resources, activeResource]);
