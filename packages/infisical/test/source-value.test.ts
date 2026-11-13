@@ -43,7 +43,11 @@ it("gives a SourceValue its version, and getValue its value, from one fetch", as
         });
       });
       const value = new sources.SourceValue("value:stripe-key", {
-        config: { Secret: "stripe-key", Source: source.name, Key: "STRIPE_KEY" },
+        config: {
+          Secret: "stripe-key",
+          Source: source.name,
+          Key: "STRIPE_KEY",
+        },
       });
       return {
         params: await value.getParams(),
