@@ -53,6 +53,19 @@ async function uploadedMetadata(call: Call) {
   };
 }
 
+// Answers a read of the Worker's settings as not found until the first
+// upload, and every other call with `respond`.
+function untilUploaded(respond: (call: Call) => Response = () => ok({})) {
+  let uploaded = false;
+  return (call: Call) => {
+    if (call.method === "PUT") uploaded = true;
+    if (call.method === "GET" && call.url.endsWith("/settings")) {
+      return uploaded ? ok({}) : fail(404, 10007, "not found");
+    }
+    return respond(call);
+  };
+}
+
 beforeEach(() => {
   calls.length = 0;
   root = mkdtempSync(path.join(os.tmpdir(), "notation-cf-"));
@@ -73,9 +86,7 @@ afterEach(() => {
 
 describe("WorkerScript", () => {
   it("uploads the bundle as an ES module, with its bindings and namespaces", async () => {
-    mockFetch((call) =>
-      call.method === "GET" ? fail(404, 10007, "not found") : ok({}),
-    );
+    mockFetch(untilUploaded());
 
     await script.create(params);
 
@@ -97,7 +108,7 @@ describe("WorkerScript", () => {
   });
 
   it("leaves exports out for a Worker that hosts no namespace", async () => {
-    mockFetch((call) => (call.method === "GET" ? fail(404, 10007) : ok({})));
+    mockFetch(untilUploaded());
 
     await script.create({ ...params, DurableObjectNamespaces: [] });
 
@@ -378,13 +389,7 @@ describe("WorkerScript", () => {
     });
 
     it("lists the account's namespaces once in a create, and uploads once", async () => {
-      mockFetch((call) =>
-        isListing(call)
-          ? ok([])
-          : call.method === "PUT"
-            ? ok({})
-            : fail(404, 10007, "not found"),
-      );
+      mockFetch(untilUploaded((call) => (isListing(call) ? ok([]) : ok({}))));
 
       await script.create(arriving);
 
@@ -663,55 +668,71 @@ describe("WorkerScript", () => {
     expect(calls[0]!.url).toMatch(/\/scripts\/app--dev--api\/settings$/);
   });
 
+  describe("read after the upload that creates a Worker", () => {
+    const isSettings = ({ method, url }: Call) =>
+      method === "GET" && url.endsWith("/settings");
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // Moves the fake clock on until `promise` settles, and returns the fake
+    // time that passed. `setImmediate` is real, so the file read and the
+    // fetch mock can finish between steps.
+    async function elapsedUntilSettled(promise: Promise<unknown>) {
+      const start = Date.now();
+      let settled = false;
+      promise.finally(() => (settled = true)).catch(() => {});
+      for (let step = 0; !settled && step < 1_000; step++) {
+        await new Promise((resolve) => setImmediate(resolve));
+        await vi.advanceTimersByTimeAsync(50);
+      }
+      return Date.now() - start;
+    }
+
+    it("waits until Cloudflare stops reporting the new Worker as not found", async () => {
+      let reads = 0;
+      mockFetch((call) => {
+        if (!isSettings(call)) return ok({});
+        reads += 1;
+        return reads <= 3 ? fail(404, 10007, "not found") : ok({});
+      });
+
+      const created = script.create(params);
+
+      expect(await elapsedUntilSettled(created)).toBeLessThan(1_000);
+      await expect(created).resolves.toBeUndefined();
+      expect(calls.filter(isSettings)).toHaveLength(4);
+    });
+
+    it("fails when Cloudflare still reports the new Worker as not found 15 seconds after the upload", async () => {
+      mockFetch((call) =>
+        isSettings(call) ? fail(404, 10007, "not found") : ok({}),
+      );
+
+      const created = script.create(params).catch((e) => e);
+
+      expect(await elapsedUntilSettled(created)).toBeGreaterThanOrEqual(15_000);
+      const error = await created;
+      expect(error).not.toBeInstanceOf(ResourceCreationUnknownError);
+      expect(error.message).toBe(
+        "Cloudflare accepted the upload of the Worker app--dev--api, but still reported it as not found 15 seconds later",
+      );
+    });
+  });
+
   it("reads a missing Worker as not found, and deletes it without an error", async () => {
     mockFetch(() => fail(404, 10007, "This Worker does not exist"));
-    // A name that no other test creates, as a read waits for a Worker that
-    // was created moments before.
-    const key = { AccountId: "acc", ScriptName: "app--dev--missing" };
+    const key = { AccountId: "acc", ScriptName: "app--dev--api" };
 
     await expect(script.read!(key)).rejects.toBeInstanceOf(
       ResourceNotFoundError,
     );
     await expect(script.delete(key, {} as any)).resolves.toBeUndefined();
-  });
-
-  it("waits for a Worker that Cloudflare reports as not found just after its create", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    const created = { ...params, ScriptName: "app--dev--lagging" };
-    const key = { AccountId: "acc", ScriptName: created.ScriptName };
-    mockFetch((call) =>
-      call.method === "GET"
-        ? fail(404, 10007, "This Worker does not exist")
-        : ok({}),
-    );
-
-    try {
-      await script.create(created);
-      vi.advanceTimersByTime(14_000);
-      await expect(script.read!(key)).rejects.toBeInstanceOf(
-        ResourceOperationPendingError,
-      );
-      vi.advanceTimersByTime(1_000);
-      await expect(script.read!(key)).rejects.toBeInstanceOf(
-        ResourceNotFoundError,
-      );
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("reads a Worker that it created and then deleted as not found", async () => {
-    const created = { ...params, ScriptName: "app--dev--deleted" };
-    const key = { AccountId: "acc", ScriptName: created.ScriptName };
-    mockFetch((call) =>
-      call.method === "PUT" ? ok({}) : fail(404, 10007, "not found"),
-    );
-
-    await script.create(created);
-    await script.delete(key, {} as any);
-    await expect(script.read!(key)).rejects.toBeInstanceOf(
-      ResourceNotFoundError,
-    );
   });
 
   describe("delete of a Worker that other Workers refer to", () => {

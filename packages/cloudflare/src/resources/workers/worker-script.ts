@@ -8,7 +8,6 @@ import {
   resource,
   ResourceAlreadyExistsError,
   ResourceNotFoundError,
-  ResourceOperationPendingError,
   type RejectChangeContext,
   type ResourceDeletion,
 } from "@notation/resource";
@@ -115,23 +114,23 @@ export type WorkerScriptDependencies = {
 
 const WORKER_SCRIPT_TYPE = "cloudflare/workers/WorkerScript";
 
-/**
- * Cloudflare sometimes reports a Worker as not found for about a second
- * after the upload that created it. For this long after a create, the read
- * waits for the Worker instead of reporting it as not found.
- */
-const CREATE_VISIBLE_WITHIN_MS = 15_000;
-const CREATE_VISIBLE_RETRY_MS = 1_000;
+const READABLE_WITHIN_MS = 15_000;
+const READABLE_RETRY_MS = 250;
 
-/**
- * When this process created each Worker, by account and name. The map is
- * lost when the process stops, and the read then reports a Worker that
- * Cloudflare doesn't show as not found, as it would without the map.
- */
-const createdAt = new Map<string, number>();
-
-const createdKey = (key: WorkerScriptSchema["Key"]) =>
-  `${key.AccountId}/${key.ScriptName}`;
+// Cloudflare sometimes reports a Worker as not found for about a second
+// after the upload that created it. The reconciler reads the Worker straight
+// after create, and fails on not found, so create waits until it can read it.
+async function waitUntilReadable(account: string, scriptName: string) {
+  const deadline = Date.now() + READABLE_WITHIN_MS;
+  while (!(await getScriptSettings(account, scriptName))) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Cloudflare accepted the upload of the Worker ${scriptName}, but still reported it as not found ${READABLE_WITHIN_MS / 1_000} seconds later`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, READABLE_RETRY_MS));
+  }
+}
 
 const workerScript = resource<WorkerScriptSchema>({
   type: WORKER_SCRIPT_TYPE,
@@ -275,23 +274,15 @@ export const WorkerScript = workerScriptSchema
       if (found.transfers.length > 0) {
         throw new Error(newHostError(params, found.transfers));
       }
-      await cloudflareCreate(upload)(params, [], found);
-      createdAt.set(createdKey(params), Date.now());
+      await cloudflareCreate(async () => {
+        await upload(params, [], found);
+        await waitUntilReadable(params.AccountId, params.ScriptName);
+      })();
     },
 
     read: async (key) => {
       const settings = await getScriptSettings(key.AccountId, key.ScriptName);
       if (!settings) {
-        const created = createdAt.get(createdKey(key));
-        if (
-          created !== undefined &&
-          Date.now() - created < CREATE_VISIBLE_WITHIN_MS
-        ) {
-          throw new ResourceOperationPendingError(
-            `Waiting for Cloudflare to show the Worker ${key.ScriptName}, which deploy has just created`,
-            { retryAfterMs: CREATE_VISIBLE_RETRY_MS },
-          );
-        }
         throw new ResourceNotFoundError("Worker was not found");
       }
       return {
@@ -313,7 +304,6 @@ export const WorkerScript = workerScriptSchema
     },
 
     delete: async (key, _state, _context, deletion) => {
-      createdAt.delete(createdKey(key));
       try {
         await deleteScript(key.AccountId, key.ScriptName);
       } catch (error) {
