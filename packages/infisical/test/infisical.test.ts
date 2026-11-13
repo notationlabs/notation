@@ -163,9 +163,7 @@ describe("infisical", () => {
     const source = infisical({ projectId: "proj", environment: "dev" });
 
     await inRun(async () => {
-      await expect(source.version!("DB_URL", context)).resolves.toBe(
-        undefined,
-      );
+      await expect(source.version!("DB_URL", context)).resolves.toBe(undefined);
       await expect(source.version!("DB_PASSWORD", context)).resolves.toBe(
         "id-DB_PASSWORD:7",
       );
