@@ -16,6 +16,7 @@ import {
   runLambdaMutation,
 } from "src/resources/utils/lambda-mutation";
 import { AwsSchema } from "src/resources/utils/types";
+import { nameRules } from "src/naming";
 import { fs } from "@notation/std/resources";
 import { LambdaIamRoleInstance } from "./";
 
@@ -77,7 +78,7 @@ const lambdaFunctionSchema = lambdaFunction.defineSchema({
     presence: "required",
     value: v.string(),
     primaryKey: true,
-    physicalName: { maxLength: 64 },
+    physicalName: nameRules.lambdaFunction,
   },
   Architectures: {
     propertyType: "param",

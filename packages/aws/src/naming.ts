@@ -5,16 +5,20 @@ import {
 } from "@notation/resource";
 
 /**
- * The length limits of the AWS names that Notation makes from a `name`
- * option. App, stage and name characters are already valid in every one of
- * them. A name that deploy generates takes its limit from `physicalName` in
- * the resource's schema.
+ * The rules of the AWS names that Notation makes from a `name` option and
+ * that deploy generates: each is also the `physicalName` of the name param
+ * in the resource's schema. App, stage and name characters are already
+ * valid in every one of them.
  */
-const rules = {
+export const nameRules = {
   // [a-zA-Z0-9-_]
   lambdaFunction: { maxLength: 64 },
   // [a-zA-Z0-9-_], a FIFO queue's name ends in .fifo
-  sqsQueue: { maxLength: 80, requiredEnding: ".fifo" },
+  sqsQueue: {
+    maxLength: 80,
+    requiredEnding: ".fifo",
+    requiredEndingWhen: "FifoQueue",
+  },
   // [.\-_A-Za-z0-9], unique per event bus
   eventBridgeRule: { maxLength: 64 },
   // [/.\-_A-Za-z0-9]
@@ -26,10 +30,20 @@ const rules = {
 /**
  * Makes the AWS name of a resource from its `name` option:
  * `<app>--<stage>--<name>`, shortened with a hash when it is too long for
- * the service.
+ * the service. Claims the AWS name for `declaration`, as `claimAwsName`
+ * does. Returns undefined without a `name`: deploy then generates a name,
+ * which no other resource has.
  */
-export function awsName(kind: keyof typeof rules, name: string): string {
-  return scopedPhysicalName(name, rules[kind]);
+export function claimedAwsName(
+  kind: keyof typeof nameRules,
+  kinds: string,
+  name: string | undefined,
+  declaration: string,
+): string | undefined {
+  if (name === undefined) return undefined;
+  const awsName = scopedPhysicalName(name, nameRules[kind]);
+  claimAwsName(kinds, awsName, declaration);
+  return awsName;
 }
 
 /**

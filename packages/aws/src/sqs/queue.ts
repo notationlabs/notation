@@ -3,7 +3,7 @@ import { AwsResourceGroup } from "src/resource-group";
 import type { LambdaGroup } from "src/lambda/lambda";
 import type { SqsOptions } from "src/lambda/declaration";
 import type { StandardSchemaV1 } from "@notation/resource";
-import { awsName, claimAwsName, describeDeclaration } from "src/naming";
+import { claimedAwsName, describeDeclaration } from "src/naming";
 import { assertId, assertName, resourceId, type IdOption } from "src/id";
 
 export type QueueConfig<S extends StandardSchemaV1 = StandardSchemaV1> = {
@@ -101,22 +101,13 @@ export class QueueGroup<
     assertId("queue()", config.id);
     assertName("queue()", config.name);
     assertQueueOptions(config);
-    // Without a name, deploy generates one, which no other queue has.
-    const queueName =
-      config.name === undefined
-        ? undefined
-        : awsName(
-            "sqsQueue",
-            config.fifo ? `${config.name}.fifo` : config.name,
-          );
     super("aws/sqs/queue", config.id, config);
-    if (queueName !== undefined) {
-      claimAwsName(
-        "SQS queues",
-        queueName,
-        describeDeclaration("queue()", config.id, config.name),
-      );
-    }
+    const queueName = claimedAwsName(
+      "sqsQueue",
+      "SQS queues",
+      config.name && config.fifo ? `${config.name}.fifo` : config.name,
+      describeDeclaration("queue()", config.id, config.name),
+    );
     this.schema = schema;
     this.queue = this.add(
       new aws.sqs.Queue(resourceId("sqs-queue", config.id), {

@@ -3,7 +3,7 @@ import { AwsResourceGroup } from "src/resource-group";
 import * as std from "@notation/std/resources";
 import { getActiveResourceCollection } from "@notation/resource";
 import path from "path";
-import { awsName, claimAwsName, describeDeclaration } from "src/naming";
+import { claimedAwsName, describeDeclaration } from "src/naming";
 import { assertId, assertName, resourceId, type NameSafe } from "src/id";
 
 export type LambdaConfig = {
@@ -73,18 +73,12 @@ export class LambdaGroup extends AwsResourceGroup<LambdaConfig> {
     assertId(caller, config.id);
     assertName(caller, config.name);
     assertUniqueLambdaId(caller, config.id);
-    // Without a name, deploy generates one, which no other function has.
-    const functionName =
-      config.name === undefined
-        ? undefined
-        : awsName("lambdaFunction", config.name);
-    if (functionName !== undefined) {
-      claimAwsName(
-        "Lambda functions",
-        functionName,
-        describeDeclaration(caller, config.id, config.name, where),
-      );
-    }
+    const functionName = claimedAwsName(
+      "lambdaFunction",
+      "Lambda functions",
+      config.name,
+      describeDeclaration(caller, config.id, config.name, where),
+    );
     super("Lambda", config.id, config);
     const { fn, role } = build(this, config, functionName);
     this.fn = fn;
@@ -129,20 +123,16 @@ export function lambda<const Id extends string>(
   return new LambdaGroup(config);
 }
 
-// IAM role names are unique regardless of case, so compare IDs in lower case
 function assertUniqueLambdaId(caller: string, id: string) {
   const collection = getActiveResourceCollection();
   if (!collection) return;
-  const clash = collection.graph.resourceGroups.find(
-    (group) =>
-      isLambdaGroup(group) && group.id.toLowerCase() === id.toLowerCase(),
-  );
-  if (clash) {
-    const existing = clash.id;
+  if (
+    collection.graph.resourceGroups.some(
+      (group) => isLambdaGroup(group) && group.id === id,
+    )
+  ) {
     throw new Error(
-      existing === id
-        ? `Duplicate ${caller} id "${id}": another Lambda in this deployment already uses it. Give each Lambda a unique id.`
-        : `Duplicate ${caller} id "${id}": it clashes with "${existing}", because AWS IAM role names ignore case. Give each Lambda a unique id.`,
+      `Duplicate ${caller} id "${id}": another Lambda in this deployment already uses it. Give each Lambda a unique id.`,
     );
   }
 }

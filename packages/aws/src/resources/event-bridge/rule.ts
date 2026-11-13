@@ -6,6 +6,7 @@ import {
   ResourceNotFoundError,
 } from "@notation/resource";
 import { AwsSchema } from "src/resources/utils/types";
+import { nameRules } from "src/naming";
 import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/resources/utils/aws-clients";
 import { awsCreate } from "src/resources/utils/errors";
@@ -203,7 +204,7 @@ const eventBridgeRuleSchema = eventBridgeRule.defineSchema({
     primaryKey: true,
     propertyType: "param",
     value: v.string(),
-    physicalName: { maxLength: 64 },
+    physicalName: nameRules.eventBridgeRule,
   },
   EventBusName: {
     presence: "required",

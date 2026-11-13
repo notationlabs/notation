@@ -9,6 +9,7 @@ import * as sdk from "@aws-sdk/client-sqs";
 import { sqsClient } from "src/resources/utils/aws-clients";
 import { awsCreate } from "src/resources/utils/errors";
 import { AwsSchema } from "src/resources/utils/types";
+import { nameRules } from "src/naming";
 
 /** The queue attributes that can be changed after the queue is created. */
 type QueueAttributeParams = {
@@ -120,12 +121,7 @@ const queueSchema = queue.defineSchema({
     presence: "required",
     immutable: true,
     value: v.string(),
-    // [a-zA-Z0-9-_], and a FIFO queue's name ends in .fifo
-    physicalName: {
-      maxLength: 80,
-      requiredEnding: ".fifo",
-      requiredEndingWhen: "FifoQueue",
-    },
+    physicalName: nameRules.sqsQueue,
   },
   FifoQueue: {
     propertyType: "param",

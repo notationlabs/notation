@@ -3,7 +3,7 @@ import { AwsResourceGroup } from "src/resource-group";
 import type { ScheduleOptions } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import { assertId, assertName, resourceId } from "src/id";
-import { awsName, claimAwsName, describeDeclaration } from "src/naming";
+import { claimedAwsName, describeDeclaration } from "src/naming";
 import { toAwsScheduleExpression } from "./aws-conversions";
 
 export class ScheduleGroup extends AwsResourceGroup<ScheduleOptions> {
@@ -17,19 +17,13 @@ export class ScheduleGroup extends AwsResourceGroup<ScheduleOptions> {
   ) {
     assertId(caller, config.id);
     assertName(caller, config.name);
-    // Without a name, deploy generates one, which no other rule has.
-    const ruleName =
-      config.name === undefined
-        ? undefined
-        : awsName("eventBridgeRule", config.name);
     super("aws/eventBridge/schedule", config.id, config);
-    if (ruleName !== undefined) {
-      claimAwsName(
-        "EventBridge rules",
-        ruleName,
-        describeDeclaration(caller, config.id, config.name),
-      );
-    }
+    const ruleName = claimedAwsName(
+      "eventBridgeRule",
+      "EventBridge rules",
+      config.name,
+      describeDeclaration(caller, config.id, config.name),
+    );
 
     const lambdaResource = lambdaGroup.fn;
 

@@ -3,7 +3,7 @@ import { AwsResourceGroup } from "src/resource-group";
 import type { RetryOptions, RuleOptions } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import { assertId, assertName, resourceId } from "src/id";
-import { awsName, claimAwsName, describeDeclaration } from "src/naming";
+import { claimedAwsName, describeDeclaration } from "src/naming";
 import type { EventBus } from "./event-bus";
 
 export class RuleGroup extends AwsResourceGroup<RuleOptions> {
@@ -20,22 +20,16 @@ export class RuleGroup extends AwsResourceGroup<RuleOptions> {
     assertName(caller, config.name);
     assertPattern(caller, config.id, config.pattern);
     if (config.retry) assertRetry(caller, config.id, config.retry);
-    // Without a name, deploy generates one, which no other rule has.
-    const ruleName =
-      config.name === undefined
-        ? undefined
-        : awsName("eventBridgeRule", config.name);
     super("aws/eventBridge/rule", config.id, config);
     // AWS names rules uniquely on each bus, but the name is claimed across
     // buses, and schedules claim the same names. Nothing depends on this, so
     // the claim could be limited to each bus.
-    if (ruleName !== undefined) {
-      claimAwsName(
-        "EventBridge rules",
-        ruleName,
-        describeDeclaration(caller, config.id, config.name),
-      );
-    }
+    const ruleName = claimedAwsName(
+      "eventBridgeRule",
+      "EventBridge rules",
+      config.name,
+      describeDeclaration(caller, config.id, config.name),
+    );
 
     const lambdaResource = lambdaGroup.fn;
     const { retry } = config;

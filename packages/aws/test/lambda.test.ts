@@ -121,13 +121,16 @@ test("two lambdas with the same id in one deployment throw", async () => {
   ).rejects.toThrow('Duplicate lambda() id "fn"');
 });
 
-test("ids that differ only in case clash, as IAM role names ignore case", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      lambda({ id: "myFn", code });
-      lambda({ id: "myfn", code });
-    }),
-  ).rejects.toThrow(/Duplicate lambda\(\) id "myfn": it clashes with "myFn"/);
+test("ids that differ only in case do not clash", async () => {
+  const graph = await collectResourceGraph(() => {
+    lambda({ id: "myFn", code });
+    lambda({ id: "myfn", code });
+  });
+
+  expect(graph.resourceGroups.map((group) => group.id)).toEqual([
+    "myFn",
+    "myfn",
+  ]);
 });
 
 test("a name that is another Lambda's name throws, and names both declarations", async () => {

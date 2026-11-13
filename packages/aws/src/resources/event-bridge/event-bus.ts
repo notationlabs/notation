@@ -4,6 +4,7 @@ import * as sdk from "@aws-sdk/client-eventbridge";
 import { eventBridgeClient } from "src/resources/utils/aws-clients";
 import { awsCreate } from "src/resources/utils/errors";
 import { AwsSchema } from "src/resources/utils/types";
+import { nameRules } from "src/naming";
 
 export type EventBusSchema = AwsSchema<{
   Key: { Name: string };
@@ -22,7 +23,7 @@ const eventBusSchema = eventBus.defineSchema({
     presence: "required",
     primaryKey: true,
     value: v.string(),
-    physicalName: { maxLength: 256 },
+    physicalName: nameRules.eventBridgeBus,
   },
   Arn: {
     propertyType: "computed",

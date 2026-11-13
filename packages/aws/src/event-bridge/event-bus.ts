@@ -4,7 +4,7 @@ import { perCollection } from "@notation/resource";
 import type { EventBusSource, RuleOptions } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
 import { assertId, assertName, resourceId, type NameSafe } from "src/id";
-import { awsName, claimAwsName, describeDeclaration } from "src/naming";
+import { claimedAwsName, describeDeclaration } from "src/naming";
 import { RuleGroup } from "./rule-group";
 
 export type EventBusConfig = {
@@ -72,19 +72,13 @@ export class EventBusGroup extends EventBus<EventBusConfig> {
   constructor(config: EventBusConfig) {
     assertId("eventBus()", config.id);
     assertName("eventBus()", config.name);
-    // Without a name, deploy generates one, which no other bus has.
-    const busName =
-      config.name === undefined
-        ? undefined
-        : awsName("eventBridgeBus", config.name);
     super("aws/eventBridge/eventBus", config.id, config);
-    if (busName !== undefined) {
-      claimAwsName(
-        "EventBridge event buses",
-        busName,
-        describeDeclaration("eventBus()", config.id, config.name),
-      );
-    }
+    const busName = claimedAwsName(
+      "eventBridgeBus",
+      "EventBridge event buses",
+      config.name,
+      describeDeclaration("eventBus()", config.id, config.name),
+    );
     this.bus = this.add(
       new aws.eventBridge.EventBus(resourceId("eventbridge-bus", config.id), {
         config: { Name: busName },
