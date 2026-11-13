@@ -33,7 +33,7 @@ function mockSend(handler: (command: unknown) => unknown) {
 
 describe("API Gateway API", () => {
   const api = new Api("api", {
-    config: { Name: "app", ProtocolType: "HTTP" },
+    config: { ProtocolType: "HTTP" },
   });
 
   it("reports a create that gets a server error as unknown", async () => {
@@ -135,7 +135,7 @@ describe("API Gateway API", () => {
 
 describe("API Gateway API with the create token tag of an earlier version", () => {
   const api = new Api("api", {
-    config: { Name: "app", ProtocolType: "HTTP" },
+    config: { ProtocolType: "HTTP" },
   });
 
   it("reads the tags without the tag", async () => {
@@ -228,9 +228,9 @@ describe("API Gateway API drift", () => {
     ["no Tags", {}],
     ["empty Tags", { Tags: {} }],
   ])("reports no drift for an API with %s", async (_name, tags) => {
-    const config = { Name: "app", ProtocolType: "HTTP" as const, ...tags };
+    const config = { ProtocolType: "HTTP" as const, ...tags };
     const api = new Api("api", { config });
-    const params = await api.getParams();
+    const params = { ...(await api.getParams()), Name: "app" };
     mockSend(() => ({
       ApiId: "api-1",
       Name: "app",

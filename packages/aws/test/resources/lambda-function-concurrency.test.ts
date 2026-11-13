@@ -131,12 +131,10 @@ describe("LambdaFunctionConcurrency", () => {
           .update("zip bytes")
           .digest("base64"),
       });
-      const role = new LambdaIamRole("role", {
-        config: { RoleName: "orders" },
-      });
+      const role = new LambdaIamRole("role");
       role.setOutput({ Arn: "arn:aws:iam::123456789012:role/orders" } as any);
       const lambda = new LambdaFunction("lambda:orders", {
-        config: { FunctionName: "app--prod--orders", Tags: { team: "web" } },
+        config: { Tags: { team: "web" } },
         dependencies: { role, zipFile },
       });
       const resource = new LambdaFunctionConcurrency(
@@ -149,6 +147,7 @@ describe("LambdaFunctionConcurrency", () => {
 
       const lambdaParams = {
         ...(await lambda.getParams()),
+        FunctionName: "app--prod--orders",
         Tags: { team: "api" },
       };
       const concurrencyParams = {

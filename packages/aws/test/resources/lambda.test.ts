@@ -121,10 +121,9 @@ describe("Lambda code", () => {
       sourceSha256: "source",
       fileSha256: await sha256Base64(filePath),
     });
-    const role = new LambdaIamRole("role", { config: { RoleName: "app" } });
+    const role = new LambdaIamRole("role");
     role.setOutput({ Arn: "arn:aws:iam::123456789012:role/app" } as any);
     return new LambdaFunction("app", {
-      config: { FunctionName: "app" },
       dependencies: { role, zipFile },
     });
   }
@@ -150,7 +149,11 @@ describe("Lambda code", () => {
     lambda: LambdaFunctionInstance,
     stored: Record<string, unknown> = {},
   ) {
-    const params = { ...(await lambda.getParams()), ...stored };
+    const params = {
+      ...(await lambda.getParams()),
+      FunctionName: "app",
+      ...stored,
+    };
     const plan = await createPlan({
       resources: [lambda],
       state: new MemoryStateBackend({
@@ -285,10 +288,7 @@ async function sha256Base64(filePath: string) {
 describe("Lambda environment", () => {
   function createLambda(Environment?: sdk.Environment) {
     const lambda = new LambdaFunction("app", {
-      config: {
-        FunctionName: "app",
-        Environment,
-      },
+      config: { Environment },
       dependencies: {} as any,
     });
     lambda.deriveParams = async () => ({});

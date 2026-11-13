@@ -1,15 +1,10 @@
-import {
-  perCollection,
-  scopedPhysicalName,
-  type PhysicalNameRule,
-} from "@notation/resource";
+import { perCollection, type PhysicalNameRule } from "@notation/resource";
 import { nameBase } from "src/id";
 
 /**
- * The rules of the AWS names that Notation makes from a `name` option and
- * that deploy generates: each is also the `physicalName` of the name param
- * in the resource's schema. App, stage and name characters are already
- * valid in every one of them.
+ * The rules of the AWS names that deploy generates: each is the
+ * `physicalName` of the name param in the resource's schema. App, stage and
+ * id characters are already valid in every one of them.
  */
 export const nameRules = {
   // [a-zA-Z0-9-_]
@@ -32,39 +27,19 @@ export const nameRules = {
 } satisfies Record<string, PhysicalNameRule>;
 
 /**
- * Makes the AWS name of a resource from its `name` option:
- * `<app>--<stage>--<name>`, shortened with a hash when it is too long for
- * the service. Claims the AWS name for `declaration`, as `claimAwsName`
- * does. Returns undefined without a `name`: deploy then generates a name,
- * which no other resource has.
- */
-export function claimedAwsName(
-  kind: keyof typeof nameRules,
-  kinds: string,
-  name: string | undefined,
-  declaration: string,
-): string | undefined {
-  if (name === undefined) return undefined;
-  const awsName = scopedPhysicalName(name, nameRules[kind]);
-  claimAwsName(kinds, awsName, declaration);
-  return awsName;
-}
-
-/**
- * Describes a declaration in errors, such as `$lambda({ id: "a", name: "b" })`.
- * @param caller The function that declares the resource, such as `queue()`.
- * @param where The module of the declaration, when it is known.
+ * Describes a declaration in errors, such as
+ * `jwtAuthorizer({ id: "a", name: "b" })`.
+ * @param caller The function that declares the resource, such as
+ * `jwtAuthorizer()`.
  */
 export function describeDeclaration(
   caller: string,
   id: string,
   name?: string,
-  where?: string,
 ): string {
   const options =
     name === undefined ? `id: "${id}"` : `id: "${id}", name: "${name}"`;
-  const call = `${caller.replace(/\(\)$/, "")}({ ${options} })`;
-  return where ? `${call} in ${where}` : call;
+  return `${caller.replace(/\(\)$/, "")}({ ${options} })`;
 }
 
 // The declarations that gave each AWS name in a collection, keyed by kind and
@@ -79,9 +54,9 @@ const claims = perCollection(
  * Throws when another declaration in the deployment already gave one of
  * `kinds` the same name. Does nothing when no resource graph is being
  * collected.
- * @param kinds The kind of resource, in the plural, such as
- * `Lambda functions`. A kind whose names are unique only within a parent
- * names the parent, such as `JWT authorizers of the API "todos"`.
+ * @param kinds The kind of resource, in the plural. A kind whose names are
+ * unique only within a parent names the parent, such as
+ * `JWT authorizers of the API "todos"`.
  */
 export function claimAwsName(
   kinds: string,

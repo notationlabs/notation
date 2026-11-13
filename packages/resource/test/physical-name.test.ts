@@ -193,7 +193,7 @@ it("throws when the maximum length leaves no room before the instance", () => {
   ).toThrow("A maximum length of 9 leaves no room for a generated name");
 });
 
-it("lets config leave out a param that has physicalName", async () => {
+it("leaves a param that has physicalName out of the config type", async () => {
   const Role = resource<{
     Key: { RoleName: string };
     CreateParams: { RoleName: string; Path: string };
@@ -222,9 +222,10 @@ it("lets config leave out a param that has physicalName", async () => {
     });
 
   const generated = new Role("generated", { config: { Path: "/" } });
+  // @ts-expect-error RoleName has physicalName, so config cannot set it
   new Role("provided", { config: { Path: "/", RoleName: "role" } });
   // @ts-expect-error Path has no physicalName, so config must set it
-  new Role("incomplete", { config: { RoleName: "role" } });
+  new Role("incomplete", { config: {} });
 
   expect(await generated.getParams()).toEqual({ Path: "/" });
 });

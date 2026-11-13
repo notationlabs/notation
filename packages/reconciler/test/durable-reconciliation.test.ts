@@ -6581,8 +6581,8 @@ describe("generated physical names", () => {
     runtime.close();
   });
 
-  it("uses a name that config provides", async () => {
-    const { Generated, remote } = defineGenerated("test/durable/name-provided");
+  it("throws when config supplies the name, and creates nothing", async () => {
+    const { Generated, calls } = defineGenerated("test/durable/name-provided");
     const runtime = createRuntime(
       [
         new Generated("queue:orders", {
@@ -6592,9 +6592,10 @@ describe("generated physical names", () => {
       "name-provided",
     );
 
-    await runtime.run("deploy-1");
-
-    expect([...remote.keys()]).toEqual(["orders"]);
+    await expect(runtime.run("deploy-1")).rejects.toThrow(
+      'Resource "queue:orders" (test/durable/name-provided): the params supply "name", which has physicalName in the schema.',
+    );
+    expect(calls).toEqual([]);
     runtime.close();
   });
 
@@ -6609,7 +6610,7 @@ describe("generated physical names", () => {
     );
 
     await expect(runtime.run("deploy-1")).rejects.toThrow(
-      'Resource "queue:orders" (test/durable/name-derived): deriveParams supplies "name", which has physicalName in the schema.',
+      'Resource "queue:orders" (test/durable/name-derived): the params supply "name", which has physicalName in the schema.',
     );
     expect(calls).toEqual([]);
     runtime.close();
@@ -6639,28 +6640,6 @@ describe("generated physical names", () => {
     expect(await runtime.state.get("queue:orders")).toMatchObject({
       params: { name },
     });
-    runtime.close();
-  });
-
-  it("keeps a name that config provided before, when config leaves it out", async () => {
-    const { Generated, remote, calls } = defineGenerated(
-      "test/durable/name-from-config",
-    );
-    const resources = [
-      new Generated("queue:orders", {
-        config: { name: "shop--prod--orders", path: "/" } as any,
-      }),
-    ];
-    const runtime = createRuntime(resources, "name-from-config");
-
-    await runtime.run("deploy-1");
-    resources[0] = new Generated("queue:orders", {
-      config: { path: "/" } as any,
-    });
-    await runtime.run("deploy-2");
-
-    expect(calls).toEqual(["create:shop--prod--orders"]);
-    expect([...remote.keys()]).toEqual(["shop--prod--orders"]);
     runtime.close();
   });
 
@@ -6932,27 +6911,6 @@ describe("generated physical names", () => {
       params: { name },
       output: { id: "api-1" },
     });
-    runtime.close();
-  });
-
-  it("keeps a provided name on a replace", async () => {
-    const { Generated, calls } = defineGenerated(
-      "test/durable/name-replace-provided",
-    );
-    const resources = [
-      new Generated("queue:orders", {
-        config: { name: "orders", path: "/" } as any,
-      }),
-    ];
-    const runtime = createRuntime(resources, "name-replace-provided", {});
-
-    await runtime.run("deploy-1");
-    resources[0] = new Generated("queue:orders", {
-      config: { name: "orders", path: "/new/" } as any,
-    });
-    await runtime.run("deploy-2");
-
-    expect(calls).toEqual(["create:orders", "delete:orders", "create:orders"]);
     runtime.close();
   });
 

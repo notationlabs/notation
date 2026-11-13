@@ -3,26 +3,17 @@ import { AwsResourceGroup } from "src/resource-group";
 import * as std from "@notation/std/resources";
 import { getActiveResourceCollection } from "@notation/resource";
 import path from "path";
-import { claimedAwsName, describeDeclaration } from "src/naming";
-import { assertId, assertName, resourceId, type NameSafe } from "src/id";
+import { assertId, resourceId, type NameSafe } from "src/id";
 
 export type LambdaConfig = {
   /**
    * Keys the function and its role, zip, policy and log group in state.
-   * Without `name`, deploy generates the function's name in AWS from the app,
-   * the stage and the id. Changing the id replaces the function, so keep it
-   * stable.
+   * Deploy generates the function's name in AWS from the app, the stage and
+   * the id. Changing the id replaces the function, so keep it stable.
    *
    * Must be name-safe: 1 to 64 letters, digits, hyphens or underscores.
    */
   id: string;
-  /**
-   * The function's name in AWS, in place of a generated one. The function is
-   * named `<app>--<stage>--<name>`. Changing the name replaces the function.
-   * Removing it keeps the name. The role and the other resources keep names
-   * from the id. Must be name-safe.
-   */
-  name?: string;
   /**
    * The export of the code that Lambda calls with every event. Defaults to
    * `handler`.
@@ -62,25 +53,14 @@ export class LambdaGroup extends AwsResourceGroup<LambdaConfig> {
   }
 
   /**
-   * @param declaredBy The function that declares the Lambda, such as
-   * `$lambda`, and the module that declares it, for errors.
+   * @param caller The function that declares the Lambda, such as `$lambda`,
+   * for errors.
    */
-  constructor(
-    config: LambdaConfig,
-    declaredBy: { caller: string; where?: string } = { caller: "lambda()" },
-  ) {
-    const { caller, where } = declaredBy;
+  constructor(config: LambdaConfig, caller = "lambda()") {
     assertId(caller, config.id);
-    assertName(caller, config.name);
     assertUniqueLambdaId(caller, config.id);
-    const functionName = claimedAwsName(
-      "lambdaFunction",
-      "Lambda functions",
-      config.name,
-      describeDeclaration(caller, config.id, config.name, where),
-    );
     super("Lambda", config.id, config);
-    const { fn, role } = build(this, config, functionName);
+    const { fn, role } = build(this, config);
     this.fn = fn;
     this.role = role;
   }
@@ -137,11 +117,7 @@ function assertUniqueLambdaId(caller: string, id: string) {
   }
 }
 
-const build = (
-  functionGroup: LambdaGroup,
-  config: LambdaConfig,
-  functionName: string | undefined,
-) => {
+const build = (functionGroup: LambdaGroup, config: LambdaConfig) => {
   const filePath = config.code.path;
   const lambdaId = config.id;
 
@@ -180,7 +156,6 @@ const build = (
   const lambdaResource = functionGroup.add(
     new aws.lambda.LambdaFunction(resourceId("lambda", lambdaId), {
       config: {
-        FunctionName: functionName,
         Handler: `${fileName}.${config.handler ?? "handler"}`,
         Runtime: runtime,
         Timeout: config.timeout,

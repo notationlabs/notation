@@ -22,7 +22,6 @@ test("resources of declarations of different types with the same id have differe
     schedule({ id: "todos", schedule: rate(1, "day"), target: fn });
     rule({
       id: "todos",
-      name: "todo-events",
       bus: eventBus({ id: "todos" }),
       pattern: { source: ["todos"] },
       target: fn,

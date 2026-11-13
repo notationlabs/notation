@@ -51,10 +51,10 @@ import {
 } from "../plan";
 import { assertOutputsRecoverable } from "../planner";
 import {
-  assertNamesNotDerived,
+  assertNamesNotSupplied,
   generateNames,
   recordedNames,
-  unnamedFields,
+  nameFields,
 } from "../physical-names";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
@@ -131,11 +131,11 @@ export async function* reconcileResource(
       excludeContributionsFrom: options.excludeContributionsFrom,
     }),
   );
-  const unnamed = unnamedFields(resource);
-  assertNamesNotDerived(resource, unnamed, configParams);
+  const names = nameFields(resource);
+  assertNamesNotSupplied(resource, names, configParams);
   // A name in the record wins over a new one, so that a resource that
   // exists, or that an earlier deploy started to create, is not renamed.
-  const recorded = recordedNames(unnamed, session.node);
+  const recorded = recordedNames(names, session.node);
   const params = {
     ...configParams,
     ...recorded,
@@ -143,7 +143,7 @@ export async function* reconcileResource(
       step,
       opts,
       resource,
-      unnamed.filter(({ field }) => !(field in recorded)),
+      names.filter(({ field }) => !(field in recorded)),
       configParams,
     )),
   };
@@ -319,7 +319,7 @@ async function* generateNamesStep(
   step: DurableStepRunner,
   opts: DurableDeployOptions,
   resource: BaseResource,
-  fields: ReturnType<typeof unnamedFields>,
+  fields: ReturnType<typeof nameFields>,
   params: Record<string, unknown>,
 ): AsyncGenerator<any, Record<string, string>, any> {
   if (fields.length === 0) return {};
@@ -508,7 +508,7 @@ async function* replaceResource(
     createStep,
     opts,
     shared.resource,
-    unnamedFields(shared.resource),
+    nameFields(shared.resource),
     shared.resourceParams,
   );
   const renamed = {

@@ -11,37 +11,31 @@ const INSTANCE_BYTES = 4;
 
 type NameField = { field: string; rule: PhysicalNameRule };
 
-/**
- * The `physicalName` params that the resource's config leaves out, each with
- * its rule. Config decides, not the params: at plan, the params can hold an
- * unknown value for a param that config leaves out.
- */
-export function unnamedFields(resource: BaseResource): NameField[] {
+/** The resource's `physicalName` params, each with its rule. */
+export function nameFields(resource: BaseResource): NameField[] {
   return Object.entries(resource.schema).flatMap(([field, item]) =>
-    item.propertyType === "param" &&
-    item.physicalName &&
-    resource.config[field] === undefined
+    item.propertyType === "param" && item.physicalName
       ? [{ field, rule: item.physicalName }]
       : [],
   );
 }
 
 /**
- * Throws when `derived`, the params before deploy or plan fills in a name,
- * hold a value for one of `fields`. Config leaves these fields out, so the
- * value comes from `deriveParams`, and a generated or recorded name would
- * replace it.
+ * Throws when `params`, the params before deploy or plan fills in a name,
+ * hold a value for one of `fields`. Deploy generates these fields, and a
+ * generated or recorded name would replace the value. The config type leaves
+ * them out, so the value comes from `deriveParams` or from untyped config.
  */
-export function assertNamesNotDerived(
+export function assertNamesNotSupplied(
   resource: BaseResource,
   fields: NameField[],
-  derived: Record<string, unknown>,
+  params: Record<string, unknown>,
 ): void {
   for (const { field } of fields) {
-    const value = derived[field];
+    const value = params[field];
     if (value === undefined || isUnknownAfterApply(value)) continue;
     throw new Error(
-      `Resource "${resource.id}" (${resource.type}): deriveParams supplies "${field}", which has physicalName in the schema. Only config can supply a physicalName param. When config leaves it out, deploy generates the name.`,
+      `Resource "${resource.id}" (${resource.type}): the params supply "${field}", which has physicalName in the schema. Deploy generates a physicalName param from the resource ID, so neither config nor deriveParams can supply it.`,
     );
   }
 }

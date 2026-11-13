@@ -13,7 +13,6 @@ const send = vi.spyOn(eventBridgeClient(), "send");
 
 const rule = new EventBridgeRule("rule", {
   config: {
-    Name: "daily",
     EventBusName: "default",
     Targets: [{ Id: "fn", Arn: "arn:fn" }],
   },

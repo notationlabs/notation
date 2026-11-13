@@ -2,8 +2,7 @@ import * as aws from "src/resources";
 import { AwsResourceGroup } from "src/resource-group";
 import type { RetryOptions, RuleOptions } from "src/lambda/declaration";
 import type { LambdaGroup } from "src/lambda/lambda";
-import { assertId, assertName, resourceId } from "src/id";
-import { claimedAwsName, describeDeclaration } from "src/naming";
+import { assertId, resourceId } from "src/id";
 import type { EventBus } from "./event-bus";
 
 export class RuleGroup extends AwsResourceGroup<RuleOptions> {
@@ -17,20 +16,9 @@ export class RuleGroup extends AwsResourceGroup<RuleOptions> {
     caller: string,
   ) {
     assertId(caller, config.id);
-    assertName(caller, config.name);
     assertPattern(caller, config.id, config.pattern);
     if (config.retry) assertRetry(caller, config.id, config.retry);
     super("aws/eventBridge/rule", config.id, config);
-    // AWS names rules uniquely on each bus, but the name is claimed across
-    // buses, and schedules claim the same names. Nothing depends on this, so
-    // the claim could be limited to each bus.
-    const ruleName = claimedAwsName(
-      "eventBridgeRule",
-      "EventBridge rules",
-      config.name,
-      describeDeclaration(caller, config.id, config.name),
-    );
-
     const lambdaResource = lambdaGroup.fn;
     const { retry } = config;
 
@@ -39,10 +27,7 @@ export class RuleGroup extends AwsResourceGroup<RuleOptions> {
         resourceId("eventbridge-pattern-rule", config.id),
         {
           config: {
-            Name: ruleName,
-            // A name in the bus's config is known at plan. A generated
-            // name is known only once the bus exists.
-            EventBusName: bus.bus.config.Name ?? bus.name,
+            EventBusName: bus.name,
             EventPattern: JSON.stringify(config.pattern),
             State: config.enabled === false ? "DISABLED" : "ENABLED",
             Targets: [

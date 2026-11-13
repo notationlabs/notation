@@ -83,75 +83,25 @@ test("a bus's grant allows the actions on the bus's ARN", () => {
   });
 });
 
-test("a bus whose AWS name is another bus's throws, and names both declarations", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      eventBus({ id: "orders", name: "events" });
-      eventBus({ id: "shop", name: "events" });
-    }),
-  ).rejects.toThrow(
-    'eventBus({ id: "orders", name: "events" }) and eventBus({ id: "shop", name: "events" }) give two EventBridge event buses the same AWS name',
-  );
-});
-
-test("a bus with only an id passes no name, and a name passes the scoped name", async () => {
+test("a bus and a rule pass no name", async () => {
   let orders!: ReturnType<typeof eventBus>;
-  let shop!: ReturnType<typeof eventBus>;
-  await collectResourceGraph(
-    () => {
-      orders = eventBus({ id: "orders" });
-      // The id "orders" claims no name, so this name is free.
-      shop = eventBus({ id: "shop", name: "orders" });
-    },
-    { scope: { app: "shop", stage: "prod" } },
-  );
+  const graph = await collectResourceGraph(() => {
+    orders = eventBus({ id: "orders" });
+    rule({
+      id: "order-placed",
+      bus: orders,
+      pattern,
+      target: lambda({ id: "fulfil", code }),
+    });
+  });
 
-  expect(orders.bus.config.Name).toBeUndefined();
-  expect(shop.bus.config.Name).toBe("shop--prod--orders");
-});
-
-test("a rule with only an id passes no name, and a name passes the scoped name", async () => {
-  const graph = await collectResourceGraph(
-    () => {
-      const fn = lambda({ id: "fulfil", code });
-      const bus = defaultEventBus();
-      rule({ id: "order-placed", bus, pattern, target: fn });
-      // The id "order-placed" claims no name, so this name is free.
-      rule({ id: "placed", name: "order-placed", bus, pattern, target: fn });
-    },
-    { scope: { app: "shop", stage: "prod" } },
-  );
-
-  expect(ruleGroup(graph, "order-placed").rule.config.Name).toBeUndefined();
-  expect(ruleGroup(graph, "placed").rule.config.Name).toBe(
-    "shop--prod--order-placed",
+  expect(orders.bus.config).not.toHaveProperty("Name");
+  expect(ruleGroup(graph, "order-placed").rule.config).not.toHaveProperty(
+    "Name",
   );
 });
 
-test("a rule takes its bus name from the bus's config when the config has one", async () => {
-  const graph = await collectResourceGraph(
-    () => {
-      const fn = lambda({ id: "fulfil", code });
-      rule({ id: "aws-events", bus: defaultEventBus(), pattern, target: fn });
-      rule({
-        id: "order-placed",
-        bus: eventBus({ id: "orders", name: "orders" }),
-        pattern,
-        target: fn,
-      });
-    },
-    { scope: { app: "shop", stage: "prod" } },
-  );
-
-  expect(ruleGroup(graph, "aws-events").rule.config.EventBusName).toBe(
-    "default",
-  );
-  expect(ruleGroup(graph, "order-placed").rule.config.EventBusName).toBe(
-    "shop--prod--orders",
-  );
-});
-
-test("a rule on a bus with a generated name takes its bus name from the bus's Name output", async () => {
+test("a rule takes its bus name from the bus's Name output", async () => {
   let orders!: ReturnType<typeof eventBus>;
   const graph = await collectResourceGraph(() => {
     orders = eventBus({ id: "orders" });
@@ -367,29 +317,6 @@ test.each([
       });
     }),
   ).rejects.toThrow(`rule() with id "order-placed" sets ${message}.`);
-});
-
-test("a rule whose AWS name is a schedule's throws", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      const fn = lambda({ id: "fn", code });
-      schedule({
-        id: "daily",
-        name: "report",
-        schedule: rate(1, "day"),
-        target: fn,
-      });
-      rule({
-        id: "orders",
-        name: "report",
-        bus: eventBus({ id: "orders" }),
-        pattern,
-        target: fn,
-      });
-    }),
-  ).rejects.toThrow(
-    'schedule({ id: "daily", name: "report" }) and rule({ id: "orders", name: "report" }) give two EventBridge rules the same AWS name',
-  );
 });
 
 test("eventBridge.bind(bus).defineRule() in a declaration makes the rule and the permission", async () => {

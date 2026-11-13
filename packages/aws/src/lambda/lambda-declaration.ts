@@ -23,17 +23,10 @@ export type LambdaDeclarationConfig<
 > = {
   /**
    * Keys the function and its role, zip, policy and log group in state.
-   * Without `name`, deploy generates the function's name in AWS from the app,
-   * the stage and the id. Changing the id replaces the function, so keep it
-   * stable.
+   * Deploy generates the function's name in AWS from the app, the stage and
+   * the id. Changing the id replaces the function, so keep it stable.
    */
   id: NameSafe<Id>;
-  /**
-   * The function's name in AWS, in place of a generated one. The function is
-   * named `<app>--<stage>--<name>`. Changing the name replaces the function.
-   * Removing it keeps the name. Must be name-safe.
-   */
-  name?: string;
   /**
    * The events that the function receives, such as
    * `() => sqs.bind(orderQueue)`.
@@ -143,7 +136,6 @@ function buildGroup(
   const group = new LambdaGroup(
     {
       id: config.id,
-      name: config.name,
       code: {
         type: "file",
         path: toProjectRoot(filePaths.dist.runtime.index(modulePath)),
@@ -154,7 +146,7 @@ function buildGroup(
       memory: config.memory,
       concurrency: config.concurrency,
     },
-    { caller: "$lambda", where: record.path },
+    "$lambda",
   );
   const env = config.env?.();
   if (env && Object.keys(env).length > 0) {

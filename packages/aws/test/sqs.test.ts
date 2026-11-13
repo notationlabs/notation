@@ -322,43 +322,16 @@ test("eventSourceMapping after evaluation has ended throws", async () => {
   );
 });
 
-test("a queue whose AWS name is another queue's throws, and names both declarations", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      queue({ id: "orders", name: "events", schema: Unknown });
-      queue({ id: "sales", name: "events", schema: Unknown });
-    }),
-  ).rejects.toThrow(
-    'queue({ id: "orders", name: "events" }) and queue({ id: "sales", name: "events" }) give two SQS queues the same AWS name, "events".',
-  );
-});
-
-test("a queue with only an id passes no name, and a name passes the scoped name", async () => {
+test("a queue passes no name", async () => {
   let orders!: ReturnType<typeof queue>;
   let ledger!: ReturnType<typeof queue>;
-  let sales!: ReturnType<typeof queue>;
-  await collectResourceGraph(
-    () => {
-      orders = queue({ id: "orders", schema: Unknown });
-      ledger = queue({ id: "ledger", fifo: true, schema: Unknown });
-      // The id "orders" claims no name, so this name is free.
-      sales = queue({ id: "sales", name: "orders", schema: Unknown });
-    },
-    { scope: { app: "shop", stage: "prod" } },
-  );
+  await collectResourceGraph(() => {
+    orders = queue({ id: "orders", schema: Unknown });
+    ledger = queue({ id: "ledger", fifo: true, schema: Unknown });
+  });
 
-  expect(orders.queue.config.QueueName).toBeUndefined();
-  expect(ledger.queue.config.QueueName).toBeUndefined();
-  expect(sales.queue.config.QueueName).toBe("shop--prod--orders");
-});
-
-test("a FIFO queue and a standard queue can share a name", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      queue({ id: "orders", name: "events", schema: Unknown });
-      queue({ id: "sales", name: "events", fifo: true, schema: Unknown });
-    }),
-  ).resolves.toBeDefined();
+  expect(orders.queue.config).not.toHaveProperty("QueueName");
+  expect(ledger.queue.config).not.toHaveProperty("QueueName");
 });
 
 test("a queue with a dead-letter queue depends on it and sets its redrive policy", async () => {
@@ -616,7 +589,7 @@ test("a batchSize over 10 on a FIFO queue throws", async () => {
       eventSourceMapping({ source: ledger, target: fn, batchSize: 20 });
     }),
   ).rejects.toThrow(
-    'sets batchSize: 20, but Lambda allows at most 10 for a FIFO queue.',
+    "sets batchSize: 20, but Lambda allows at most 10 for a FIFO queue.",
   );
 });
 

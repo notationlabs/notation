@@ -87,7 +87,7 @@ describe("LambdaPermission", () => {
     let held!: InstanceType<typeof LambdaPermission>;
     let api!: InstanceType<typeof Api>;
     await collectResourceGraph(() => {
-      api = new Api("api", { config: { Name: "app", ProtocolType: "HTTP" } });
+      api = new Api("api", { config: { ProtocolType: "HTTP" } });
       held = new LambdaPermission("p", {
         config: {
           Action: "lambda:InvokeFunction",

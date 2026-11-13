@@ -97,9 +97,9 @@ export type InferResourceTypes<S extends ResolvedSchema> = {
 };
 
 /**
- * The config a resource takes: its params less `Omitted`. Collected params
- * are optional, because contributions can supply them. Params with
- * `physicalName` are optional, because deploy generates them.
+ * The config a resource takes: its params less `Omitted` and less the params
+ * with `physicalName`, which deploy generates. Collected params are
+ * optional, because contributions can supply them.
  */
 export type ConfigParams<
   T extends ResourceTypes,
@@ -108,7 +108,7 @@ export type ConfigParams<
   Partial<
     Pick<
       T["params"],
-      Exclude<keyof T["collected"] | keyof T["named"], Omitted> &
+      Exclude<keyof T["collected"], Omitted | keyof T["named"]> &
         keyof T["params"]
     >
   >;

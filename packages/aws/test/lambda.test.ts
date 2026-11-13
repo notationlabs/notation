@@ -16,13 +16,7 @@ test("resource ids embed the id, and the function is given no name", () => {
     ].sort(),
   );
   // Deploy generates the function's name.
-  expect(group.fn.config.FunctionName).toBeUndefined();
-});
-
-test("name gives the function its name", () => {
-  const group = lambda({ id: "get-todos", name: "list-todos", code });
-  expect(group.fn.id).toBe("lambda:get-todos");
-  expect(group.fn.config.FunctionName).toBe("list-todos");
+  expect(group.fn.config).not.toHaveProperty("FunctionName");
 });
 
 test("the function calls the bundle's `handler` export", () => {
@@ -131,37 +125,6 @@ test("ids that differ only in case do not clash", async () => {
     "myFn",
     "myfn",
   ]);
-});
-
-test("a name that is another Lambda's name throws, and names both declarations", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      lambda({ id: "c", name: "b", code });
-      lambda({ id: "a", name: "b", code });
-    }),
-  ).rejects.toThrow(
-    'lambda({ id: "c", name: "b" }) and lambda({ id: "a", name: "b" }) give two Lambda functions the same AWS name, "b". Give one of them another name.',
-  );
-});
-
-test("a name can be another Lambda's id, as an id claims no name", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      lambda({ id: "b", code });
-      lambda({ id: "a", name: "b", code });
-    }),
-  ).resolves.toBeDefined();
-});
-
-test("two Lambdas in different collections can have the same name", async () => {
-  await collectResourceGraph(() => {
-    lambda({ id: "a", name: "b", code });
-  });
-  await expect(
-    collectResourceGraph(() => {
-      lambda({ id: "c", name: "b", code });
-    }),
-  ).resolves.toBeDefined();
 });
 
 test("distinct ids in one deployment are fine", async () => {

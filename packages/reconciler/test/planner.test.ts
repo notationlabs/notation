@@ -1879,7 +1879,7 @@ describe("createPlan with a generated physical name", () => {
         driftDetection: false,
       }),
     ).rejects.toThrow(
-      'Resource "orders" (test/planner/derived): deriveParams supplies "name", which has physicalName in the schema. Only config can supply a physicalName param.',
+      'Resource "orders" (test/planner/derived): the params supply "name", which has physicalName in the schema. Deploy generates a physicalName param from the resource ID, so neither config nor deriveParams can supply it.',
     );
   });
 
@@ -2004,17 +2004,15 @@ describe("createPlan with a generated physical name", () => {
     });
   });
 
-  it("plans a noop with a name that config provides", async () => {
-    const plan = await createPlan({
-      resources: [queue("orders", { name: "orders", path: "/" })],
-      state: new MemoryStateBackend({
-        orders: record("orders", { name: "orders", path: "/" }),
+  it("throws when config supplies the name", async () => {
+    await expect(
+      createPlan({
+        resources: [queue("orders", { name: "orders", path: "/" })],
+        state: new MemoryStateBackend({}),
+        driftDetection: false,
       }),
-      driftDetection: false,
-    });
-
-    expect(plan.nodes).toEqual([
-      expect.objectContaining({ id: "orders", decision: "noop" }),
-    ]);
+    ).rejects.toThrow(
+      'Resource "orders" (test/planner/named): the params supply "name", which has physicalName in the schema.',
+    );
   });
 });

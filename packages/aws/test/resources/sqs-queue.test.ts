@@ -16,7 +16,7 @@ const dlqArn = "arn:aws:sqs:eu-west-2:123456789012:orders-dlq";
 
 const sourceArn = "arn:aws:sqs:eu-west-2:123456789012:orders";
 
-const queue = new Queue("orders-queue", { config: { QueueName: "orders" } });
+const queue = new Queue("orders-queue");
 
 const queueDoesNotExist = () =>
   new sdk.QueueDoesNotExist({ message: "missing", $metadata: {} });
@@ -193,7 +193,6 @@ describe("SQS queue", () => {
   it("finds drift when the dead-letter queue was removed outside Notation", async () => {
     const withDlq = new Queue("orders-with-dlq", {
       config: {
-        QueueName: "orders",
         RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 3 },
       },
     });
@@ -301,7 +300,7 @@ describe("SQS queue", () => {
     expect(
       () =>
         new Queue("bad-queue", {
-          config: { QueueName: "bad", VisibilityTimeout: 50_000 },
+          config: { VisibilityTimeout: 50_000 },
         }),
     ).toThrow(ValueValidationError);
   });
@@ -356,7 +355,6 @@ describe("SQS queue", () => {
       () =>
         new Queue("bad-queue", {
           config: {
-            QueueName: "bad",
             RedrivePolicy: { deadLetterTargetArn: dlqArn, maxReceiveCount: 0 },
           },
         }),
@@ -368,7 +366,6 @@ describe("SQS queue", () => {
       () =>
         new Queue("bad-queue", {
           config: {
-            QueueName: "bad",
             RedriveAllowPolicy: {
               redrivePermission: "byQueue",
               sourceQueueArns: [],

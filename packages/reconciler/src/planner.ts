@@ -29,9 +29,9 @@ import {
 } from "./plan";
 import { workflowRegistry, type ResourceRegistry } from "./resource-registry";
 import {
-  assertNamesNotDerived,
+  assertNamesNotSupplied,
   recordedNames,
-  unnamedFields,
+  nameFields,
 } from "./physical-names";
 import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
@@ -157,7 +157,7 @@ export async function createPlan({
       // resource with no state.
       resource.setOutput(null as any);
       // Deploy generates a new name for the resource that it creates again.
-      for (const { field } of unnamedFields(resource)) {
+      for (const { field } of nameFields(resource)) {
         params[field] = UNKNOWN_AFTER_APPLY;
       }
     }
@@ -283,9 +283,9 @@ async function loadOutput(
  * Outputs in state stand in for the outputs of dependencies, so the
  * dependencies must be loaded first.
  *
- * A `physicalName` param that config leaves out takes its value from the
- * state record, as in deploy. Without one, deploy generates the name, so it
- * is unknown here.
+ * A `physicalName` param takes its value from the state record, as in
+ * deploy. Without a record, deploy generates the name, so it is unknown
+ * here.
  */
 export async function planKnownParams(
   resource: BaseResource,
@@ -296,15 +296,15 @@ export async function planKnownParams(
   params: Record<string, unknown>;
 }> {
   const stateNode = await loadOutput(resource, state);
-  const unnamed = unnamedFields(resource);
+  const names = nameFields(resource);
   const planned = await resource.planParams();
-  assertNamesNotDerived(resource, unnamed, planned);
+  assertNamesNotSupplied(resource, names, planned);
   const params = {
     ...planned,
     ...Object.fromEntries(
-      unnamed.map(({ field }) => [field, UNKNOWN_AFTER_APPLY]),
+      names.map(({ field }) => [field, UNKNOWN_AFTER_APPLY]),
     ),
-    ...recordedNames(unnamed, stateNode),
+    ...recordedNames(names, stateNode),
   };
   await validateParams(resource, params, point);
   return { stateNode, params };

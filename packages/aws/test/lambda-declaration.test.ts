@@ -78,14 +78,14 @@ test("runtime, timeout, memory and concurrency are applied to the function", asy
   ).toEqual({ ReservedConcurrentExecutions: 10 });
 });
 
-test("name overrides the function's AWS name, and the id stays its state key", async () => {
+test("the id keys the function in state, and the function passes no name", async () => {
   const graph = await collectResourceGraph(() => {
-    inModule($lambda({ id: "orders", name: "order-handler" }));
+    inModule($lambda({ id: "orders" }));
   });
   const group = lambdaGroup(graph, "orders");
 
   expect(group.fn.id).toBe("lambda:orders");
-  expect(group.fn.config.FunctionName).toBe("order-handler");
+  expect(group.fn.config).not.toHaveProperty("FunctionName");
 });
 
 test("env is set as the function's environment variables", async () => {
@@ -157,29 +157,13 @@ test("an invalid id throws when the declaration is made", () => {
   );
 });
 
-test("an invalid name and a duplicate id name $lambda in the error", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      inModule($lambda({ id: "orders", name: "bad.name" }));
-    }),
-  ).rejects.toThrow('Invalid $lambda name "bad.name"');
+test("a duplicate id names $lambda in the error", async () => {
   await expect(
     collectResourceGraph(() => {
       inModule($lambda({ id: "orders" }));
       inModule($lambda({ id: "orders" }));
     }),
   ).rejects.toThrow('Duplicate $lambda id "orders"');
-});
-
-test("a $lambda whose AWS name is another Lambda's throws, with both modules", async () => {
-  await expect(
-    collectResourceGraph(() => {
-      inModule($lambda({ id: "a", name: "b" }), "runtime/a.ts");
-      inModule($lambda({ id: "c", name: "b" }), "runtime/c.ts");
-    }),
-  ).rejects.toThrow(
-    '$lambda({ id: "a", name: "b" }) in runtime/a.ts and $lambda({ id: "c", name: "b" }) in runtime/c.ts give two Lambda functions the same AWS name, "b".',
-  );
 });
 
 test("env() in infra returns the evaluated env", () => {
