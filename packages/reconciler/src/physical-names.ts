@@ -40,11 +40,14 @@ export function recordedNames(
 /**
  * Makes a name with a new random instance for each of `fields`. The result
  * differs on every call, so deploy calls this inside a step.
+ * @param params The resource's params, which decide a name's ending when
+ * its rule has `requiredEndingWhen`.
  */
 export function generateNames(
   resource: BaseResource,
   fields: string[],
   scope: NameScope | undefined,
+  params: Record<string, unknown>,
 ): Record<string, string> {
   return Object.fromEntries(
     fields.map((field) => {
@@ -53,7 +56,13 @@ export function generateNames(
         item.propertyType === "param" ? item.physicalName : undefined;
       return [
         field,
-        generatedPhysicalName(scope, resource.id, randomInstance(), rule!),
+        generatedPhysicalName(
+          scope,
+          resource.id,
+          randomInstance(),
+          rule!,
+          params,
+        ),
       ];
     }),
   );

@@ -153,6 +153,34 @@ it("puts the instance of a generated name before a required ending", () => {
   ).toBe("sqs-queue-orders-1a2b3c4d");
 });
 
+it("ends a generated name with the required ending when the rule's param is true", () => {
+  const rule = {
+    maxLength: 80,
+    requiredEnding: ".fifo",
+    requiredEndingWhen: "FifoQueue",
+  };
+  const generate = (params?: Record<string, unknown>, maxLength = 80) =>
+    generatedPhysicalName(
+      scope,
+      "sqs-queue:orders",
+      "1a2b3c4d",
+      { ...rule, maxLength },
+      params,
+    );
+
+  expect(generate({ FifoQueue: true })).toBe(
+    "orders-app--prod--sqs-queue-orders-1a2b3c4d.fifo",
+  );
+  expect(generate({ FifoQueue: true }, 40)).toBe(
+    "orders-app--prod--sqs-queu-1a2b3c4d.fifo",
+  );
+  expect(generate({ FifoQueue: false })).toBe(
+    "orders-app--prod--sqs-queue-orders-1a2b3c4d",
+  );
+  expect(generate({})).toBe("orders-app--prod--sqs-queue-orders-1a2b3c4d");
+  expect(generate()).toBe("orders-app--prod--sqs-queue-orders-1a2b3c4d");
+});
+
 it("throws when the maximum length leaves no room before the instance", () => {
   expect(() =>
     generatedPhysicalName(scope, "role", "1a2b3c4d", { maxLength: 9 }),

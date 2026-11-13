@@ -6268,7 +6268,8 @@ describe("generated physical names", () => {
   /**
    * A resource whose `name` deploy generates when config leaves it out. The
    * provider keeps one resource per name. `beforeCreate` runs when create is
-   * called, before it makes anything.
+   * called, before it makes anything. A generated name ends in `.fifo` when
+   * `fifo` is true.
    */
   function defineGenerated(type: ResourceType) {
     const remote = new Map<string, { name: string; path: string }>();
@@ -6283,13 +6284,23 @@ describe("generated physical names", () => {
           propertyType: "param",
           primaryKey: true,
           value: v.string(),
-          physicalName: { maxLength: 64 },
+          physicalName: {
+            maxLength: 64,
+            requiredEnding: ".fifo",
+            requiredEndingWhen: "fifo",
+          },
         },
         path: {
           presence: "required",
           propertyType: "param",
           immutable: true,
           value: v.string(),
+        },
+        fifo: {
+          presence: "optional",
+          propertyType: "param",
+          immutable: true,
+          value: v.boolean(),
         },
       } as any)
       .defineOperations({
@@ -6526,6 +6537,182 @@ describe("generated physical names", () => {
 
     await runtime.run("deploy-3");
     expect([...remote.keys()]).toEqual([second]);
+    runtime.close();
+  });
+
+  it("ends a generated name with the rule's ending when its param is true, on a create and on a replace", async () => {
+    const { Generated, remote } = defineGenerated("test/durable/name-ending");
+    const resources = [
+      new Generated("queue:orders", {
+        config: { path: "/", fifo: true } as any,
+      }),
+    ];
+    const runtime = createRuntime(resources, "name-ending", { nameScope });
+    const FIFO = /^shop--prod--queue-orders-[0-9a-f]{8}\.fifo$/;
+
+    await runtime.run("deploy-1");
+    const [first] = [...remote.keys()];
+    expect(first).toMatch(FIFO);
+
+    resources[0] = new Generated("queue:orders", {
+      config: { path: "/new/", fifo: true } as any,
+    });
+    await runtime.run("deploy-2");
+    const [second] = [...remote.keys()];
+    expect(second).toMatch(FIFO);
+    expect(second).not.toBe(first);
+
+    // The ending follows the params of the replacement.
+    resources[0] = new Generated("queue:orders", {
+      config: { path: "/new/" } as any,
+    });
+    await runtime.run("deploy-3");
+    expect([...remote.keys()]).toEqual([expect.stringMatching(GENERATED)]);
+    runtime.close();
+  });
+
+  it("resolves a key made of a generated name and a dependency's generated name", async () => {
+    const { Generated: Bus, remote: buses } = defineGenerated(
+      "test/durable/name-key-bus",
+    );
+    const rules = new Map<string, Record<string, unknown>>();
+    const Rule = resource({
+      type: "test/durable/name-key-rule",
+      provider: "test",
+    })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+          physicalName: { maxLength: 64 },
+        },
+        bus: {
+          presence: "required",
+          propertyType: "param",
+          secondaryKey: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          rules.set(`${params.bus}/${params.name}`, { ...params });
+        },
+        read: async (key: any) => {
+          const found = rules.get(`${key.bus}/${key.name}`);
+          if (!found) throw new ResourceNotFoundError("rule not found");
+          return { ...found };
+        },
+        delete: async (key: any) => {
+          rules.delete(`${key.bus}/${key.name}`);
+        },
+      })
+      .requireDependencies<{ bus: BaseResource }>()
+      .deriveParams(() => ({}));
+    const bus = new Bus("bus:shop", { config: { path: "/" } as any });
+    const rule = new Rule("rule:placed", {
+      config: { bus: (bus as any).outputRef("name") } as any,
+      dependencies: { bus },
+    });
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime([bus, rule], "name-key", {
+      nameScope,
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("deploy-1");
+
+    const [busName] = [...buses.keys()];
+    expect(busName).toMatch(/^shop--prod--bus-shop-[0-9a-f]{8}$/);
+    const [created] = [...rules.values()];
+    expect(created).toEqual({
+      name: expect.stringMatching(/^shop--prod--rule-placed-[0-9a-f]{8}$/),
+      bus: busName,
+    });
+    expect(await runtime.state.get("rule:placed")).toMatchObject({
+      output: { name: created!.name, bus: busName },
+    });
+
+    await runtime.run("deploy-2");
+    expect(
+      events
+        .filter((event) => event.event === "reconciler.deploy.decision")
+        .map((event) => event.decision),
+    ).toEqual(["create", "create", "noop", "noop"]);
+    runtime.close();
+  });
+
+  it("finds a resource by its generated name, before create and after a crash during create", async () => {
+    const remote = new Map<string, { name: string }>();
+    const calls: string[] = [];
+    const Api = resource({ type: "test/durable/name-find", provider: "test" })
+      .defineSchema({
+        id: {
+          presence: "required",
+          propertyType: "computed",
+          primaryKey: true,
+          value: v.string(),
+        },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          value: v.string(),
+          physicalName: { maxLength: 64 },
+        },
+      } as any)
+      .defineOperations({
+        create: (async (params: any) => {
+          calls.push(`create:${params.name}`);
+          const id = `api-${remote.size + 1}`;
+          remote.set(id, { name: params.name });
+          return { id };
+        }) as any,
+        find: (async (params: any) => {
+          calls.push(`find:${params.name}`);
+          const found = [...remote].find(
+            ([, item]) => item.name === params.name,
+          );
+          if (found) return { id: found[0] };
+          throw new ResourceNotFoundError(`nothing is named ${params.name}`);
+        }) as any,
+        read: async (key: any) => {
+          const found = remote.get(key.id);
+          if (!found) throw new ResourceNotFoundError(`${key.id} not found`);
+          return { id: key.id, ...found };
+        },
+        delete: async (key: any) => {
+          remote.delete(key.id);
+        },
+      });
+    const runtime = createRuntime([new Api("api:orders")], "name-find", {
+      nameScope,
+      crashAfterStep: `notation:deploy:${encodeURIComponent("api:orders")}:create:remote:effect:0`,
+    });
+
+    await expect(runtime.run("deploy-1")).rejects.toThrow(
+      "simulated process crash",
+    );
+    const [name] = [...remote.values()].map((item) => item.name);
+    expect(name).toMatch(/^shop--prod--api-orders-[0-9a-f]{8}$/);
+    expect(calls).toEqual([`find:${name}`, `create:${name}`]);
+
+    await durable.clearDeploymentHold({
+      storeClient: runtime.storeClient,
+      deploymentId: "name-find",
+      fromExecutionId: "deploy-1",
+    });
+    await runtime.run("deploy-2");
+
+    // The second deploy takes the name from the "creating" record, so find
+    // matches the API that the first deploy made.
+    expect(calls).toEqual([`find:${name}`, `create:${name}`, `find:${name}`]);
+    expect([...remote.keys()]).toEqual(["api-1"]);
+    expect(await runtime.state.get("api:orders")).toMatchObject({
+      lastOperation: "create",
+      params: { name },
+      output: { id: "api-1" },
+    });
     runtime.close();
   });
 

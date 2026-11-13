@@ -141,6 +141,7 @@ export async function* reconcileResource(
       opts,
       resource,
       unnamed.filter((field) => !(field in recorded)),
+      configParams,
     )),
   };
   await validateParams(resource, params, "deploy");
@@ -317,10 +318,11 @@ async function* generateNamesStep(
   opts: DurableDeployOptions,
   resource: BaseResource,
   fields: string[],
+  params: Record<string, unknown>,
 ): AsyncGenerator<any, Record<string, string>, any> {
   if (fields.length === 0) return {};
   return yield* step.run("physical-names", async () =>
-    generateNames(resource, fields, opts.nameScope),
+    generateNames(resource, fields, opts.nameScope, params),
   );
 }
 
@@ -515,6 +517,7 @@ async function* replaceResource(
         opts,
         shared.resource,
         shared.unnamed,
+        desired.resourceParams,
       )),
     },
   };

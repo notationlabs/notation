@@ -14,6 +14,11 @@ export type PhysicalNameRule = {
    * it, the ending stays at the end after the name is shortened.
    */
   requiredEnding?: string;
+  /**
+   * The name of a boolean param, such as `FifoQueue`. A generated name gets
+   * `requiredEnding` when the resource's params hold `true` for it.
+   */
+  requiredEndingWhen?: string;
 };
 
 const HASH_LENGTH = 8;
@@ -72,22 +77,28 @@ export function physicalName(
  * instance is.
  *
  * When the name is longer than `rule.maxLength`, the part before the
- * instance is cut short, and the instance stays whole. When the resource ID
- * ends with `rule.requiredEnding`, the name ends with it too, after the
- * instance.
+ * instance is cut short, and the instance stays whole. The name ends with
+ * `rule.requiredEnding`, after the instance, when the resource ID ends with
+ * it, or when `params` hold `true` for `rule.requiredEndingWhen`.
  */
 export function generatedPhysicalName(
   scope: NameScope | undefined,
   resourceId: string,
   instance: string,
   rule: PhysicalNameRule,
+  params: Record<string, unknown> = {},
 ): string {
+  const { requiredEnding, requiredEndingWhen } = rule;
+  const idEnding =
+    requiredEnding && resourceId.endsWith(requiredEnding) ? requiredEnding : "";
   const ending =
-    rule.requiredEnding && resourceId.endsWith(rule.requiredEnding)
-      ? rule.requiredEnding
-      : "";
+    requiredEnding &&
+    requiredEndingWhen !== undefined &&
+    params[requiredEndingWhen] === true
+      ? requiredEnding
+      : idEnding;
   const base = resourceId
-    .slice(0, resourceId.length - ending.length)
+    .slice(0, resourceId.length - idEnding.length)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
