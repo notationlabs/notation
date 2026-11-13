@@ -473,8 +473,8 @@ async function* withoutContributions(
  * Deletes the resource and then creates it again, each part in its own scope.
  * Deleting first is deliberate: a resource usually takes its physical name
  * from its params, so a new one created beside the old would collide with it.
- * A name that deploy generated is generated again, so the replacement does
- * not have the name of the resource it replaces.
+ * Every `physicalName` param is generated again, so a replacement with such
+ * a param does not have the name of the resource it replaces.
  * The dependents that block the delete are deleted first, and deploy creates
  * them again when it reaches them.
  * The new record is a new store instance, so observers can tell the

@@ -1,4 +1,4 @@
-// The longest id or name: the length limit of a Lambda FunctionName.
+// The longest id, and the longest authorizer name.
 export const ID_MAX_LENGTH = 64;
 
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -85,7 +85,7 @@ export function isNameSafe(id: unknown): id is string {
 export function assertId(caller: string, id: unknown): asserts id is string {
   if (id === undefined || id === null || id === "") {
     throw new Error(
-      `${caller} requires an id: ${RULE}. The id keys the resource in state and is the default base of its AWS name, so keep it stable.`,
+      `${caller} requires an id: ${RULE}. The id keys the resource in state and is the base of its AWS name, so keep it stable.`,
     );
   }
   if (!isNameSafe(id)) {
@@ -94,8 +94,8 @@ export function assertId(caller: string, id: unknown): asserts id is string {
 }
 
 /**
- * Throws when `name`, the override of a resource's AWS name, is set and is
- * not name-safe.
+ * Throws when `name`, the override of a JWT authorizer's AWS name, is set
+ * and is not name-safe.
  */
 export function assertName(caller: string, name: unknown): void {
   if (name === undefined) return;
