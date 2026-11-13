@@ -1,10 +1,6 @@
 import * as v from "valibot";
 import { resource, ResourceNotFoundError } from "@notation/resource";
-import {
-  accountId,
-  CloudflareApiError,
-  cloudflareCreate,
-} from "src/api/client";
+import { accountId, cloudflareCreate } from "src/api/client";
 import {
   createStore,
   DEFAULT_STORE_NAME,
@@ -64,10 +60,7 @@ export const SecretsStore = secretsStoreSchema.defineOperations({
     } catch (error) {
       // Another deploy may have created the account's store since the list.
       // Cloudflare rejects a second store, so the list is read again.
-      if (!(error instanceof CloudflareApiError) || error.status >= 500) {
-        throw error;
-      }
-      const raced = await adoptStore(params.AccountId);
+      const raced = await adoptStore(params.AccountId).catch(() => undefined);
       if (raced) return raced;
       throw error;
     }
