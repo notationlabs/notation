@@ -68,6 +68,16 @@ afterEach(() => {
 });
 
 describe("infisical", () => {
+  it("treats an empty value as missing", async () => {
+    vi.stubEnv("INFISICAL_TOKEN", "st.token");
+    mockFetch(() => folder(secret("EMPTY", "", 1)));
+    const source = infisical({ projectId: "proj", environment: "dev" });
+
+    await inRun(async () => {
+      await expect(source.has("EMPTY", context)).resolves.toBe(false);
+    });
+  });
+
   it("lists one folder and answers has, version and get from it", async () => {
     vi.stubEnv("INFISICAL_TOKEN", "st.token");
     mockFetch(() => folder(secret("STRIPE_KEY", "sk_live_1", 14)));

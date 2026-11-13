@@ -141,7 +141,7 @@ export function infisical(options: InfisicalOptions): Source {
       const found = (await folder(context)).get(key);
       if (!found) return false;
       assertReadable(found, key, context);
-      return true;
+      return found.secretValue !== "";
     },
     // The secret's ID is part of the version, because a secret that is
     // deleted and added again starts again at version 1. A secret that
