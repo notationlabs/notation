@@ -1,6 +1,5 @@
 import {
   deleteSecret,
-  recordSecretValue,
   setSecret,
   type Deployment,
 } from "@notation/core";
@@ -42,7 +41,6 @@ export async function secretSet(
           )
         : await readStdin(opts.streams?.input);
       if (value === "") throw new Error(`No value was given for ${id}.`);
-      recordSecretValue(value);
       return value;
     },
   });

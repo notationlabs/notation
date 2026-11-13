@@ -8,7 +8,6 @@ import {
 } from "@notation/core";
 import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
-import { parentSecretPrompt } from "./deploy-child";
 import { defaultLogger, type Logger } from "./logger";
 import { canPrompt, terminalSecretPrompt } from "./prompt";
 import { redirectStdoutToStderr } from "./stdio";
@@ -22,6 +21,11 @@ export type DeployCommandOptions = {
   compile?: boolean;
   driftDetection?: boolean;
   logger?: Logger;
+  /**
+   * Asks on the terminal for secret values even with `json`. `watch` sets it
+   * for the deploys it runs, whose stdout carries events to `watch`.
+   */
+  promptSecrets?: boolean;
   /** Defaults to the prompt that `secretPrompt` picks. */
   promptSecret?: SecretPrompt;
 };
@@ -52,21 +56,23 @@ export async function deploy(
     emit,
     executionId,
     driftDetection: opts.driftDetection,
-    promptSecret: opts.promptSecret ?? secretPrompt({ json: opts.json }),
+    promptSecret:
+      opts.promptSecret ??
+      secretPrompt({ json: opts.json, promptSecrets: opts.promptSecrets }),
   });
 }
 
 /**
- * How deploy asks for the value of a secret without a source: through the
- * parent process when `watch` started it, and otherwise on the terminal.
- * There is no prompt with `--json`, whose stdout is a stream of events, or
- * without a terminal, so deploy fails with the command that sets the secret.
+ * How deploy asks for the value of a secret without a source: on the
+ * terminal, with the question on stderr. There is no prompt without a
+ * terminal, or with `--json` unless `promptSecrets` is set, so deploy fails
+ * with the command that sets the secret.
  */
 export function secretPrompt(opts: {
   json?: boolean;
+  promptSecrets?: boolean;
 }): SecretPrompt | undefined {
-  const parent = parentSecretPrompt();
-  if (parent) return parent;
-  if (opts.json || !canPrompt()) return undefined;
+  if (opts.json && !opts.promptSecrets) return undefined;
+  if (!canPrompt()) return undefined;
   return terminalSecretPrompt();
 }

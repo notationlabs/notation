@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { program } from "commander";
+import { Option, program } from "commander";
 import { compile } from "./compile";
 import { deploy } from "./deploy";
 import { destroy } from "./destroy";
@@ -72,6 +72,12 @@ program
   .option("--execution-id <id>", "resume a durable execution")
   .option("--no-compile", "deploy the existing build without compiling")
   .option("--no-drift-detection", "skip drift detection")
+  .addOption(
+    new Option(
+      "--prompt-secrets",
+      "ask on the terminal for secret values even with --json",
+    ).hideHelp(),
+  )
   .action(async (options) => {
     const project = await load(options);
     const deployment = await resolveResumableDeployment(project, options);
@@ -81,6 +87,7 @@ program
       resumeCommand: resumeCommand("deploy", options),
       compile: options.compile,
       driftDetection: options.driftDetection,
+      promptSecrets: options.promptSecrets,
     });
   });
 

@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline/promises";
-import { recordSecretValue, type SecretPrompt } from "@notation/core";
+import type { SecretPrompt } from "@notation/core";
 
 type Input = NodeJS.ReadableStream & {
   isTTY?: boolean;
@@ -103,29 +103,6 @@ export function terminalSecretPrompt(
       streams,
     );
     if (value === "") throw new Error(`No value was given for ${id}.`);
-    recordSecretValue(value);
     return value;
-  };
-}
-
-/**
- * Wraps a prompt so that it asks once for each secret, and only one question
- * is on the terminal at a time. `watch` uses it, so that it asks for a value
- * at the first deploy that needs it.
- */
-export function onceEachSecret(prompt: SecretPrompt): SecretPrompt {
-  const answers = new Map<string, Promise<string>>();
-  let queue: Promise<unknown> = Promise.resolve();
-  return (request) => {
-    const key = `${request.stage}\u0000${request.id}`;
-    let answer = answers.get(key);
-    if (!answer) {
-      answer = queue.then(() => prompt(request));
-      queue = answer.catch(() => {});
-      answers.set(key, answer);
-      // A failed prompt asks again next time.
-      answer.catch(() => answers.delete(key));
-    }
-    return answer;
   };
 }

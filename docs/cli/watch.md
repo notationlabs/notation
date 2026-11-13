@@ -25,7 +25,7 @@ notation watch --stage dev
 
 ## Secrets
 
-Each deploy runs in its own process, which asks `watch` for the value of a secret without a source. `watch` asks on the terminal once for each secret, at the first deploy that needs it, and gives the same answer to later deploys. See [Secrets](../manual/secrets.md).
+Each deploy runs in its own process, which shares the terminal with `watch`. A deploy that needs the value of a secret without a source asks for it on the terminal. `watch` doesn't keep the answer, so each later deploy that needs the value asks again. See [Secrets](../manual/secrets.md).
 
 ## Changing the config
 

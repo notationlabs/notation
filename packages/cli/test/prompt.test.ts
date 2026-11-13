@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   canPrompt,
   confirm,
-  onceEachSecret,
   promptHidden,
   readStdin,
 } from "../src/prompt";
@@ -72,29 +71,5 @@ describe("readStdin", () => {
 
     await expect(readStdin(input)).resolves.toBe("line one\nline two\n");
     expect(canPrompt(input)).toBe(false);
-  });
-});
-
-describe("onceEachSecret", () => {
-  it("asks once for each secret and stage", async () => {
-    const prompt = vi.fn(async ({ id }: { id: string }) => `${id}-value`);
-    const once = onceEachSecret(prompt);
-
-    await expect(once({ id: "a", stage: "dev" })).resolves.toBe("a-value");
-    await expect(once({ id: "a", stage: "dev" })).resolves.toBe("a-value");
-    await expect(once({ id: "a", stage: "prod" })).resolves.toBe("a-value");
-
-    expect(prompt).toHaveBeenCalledTimes(2);
-  });
-
-  it("asks again after a prompt that failed", async () => {
-    const prompt = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("cancelled"))
-      .mockResolvedValueOnce("value");
-    const once = onceEachSecret(prompt);
-
-    await expect(once({ id: "a", stage: "dev" })).rejects.toThrow("cancelled");
-    await expect(once({ id: "a", stage: "dev" })).resolves.toBe("value");
   });
 });

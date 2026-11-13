@@ -17,7 +17,6 @@ const { setSecret, deleteSecret } = vi.hoisted(() => ({
 vi.mock("@notation/core", () => ({
   setSecret,
   deleteSecret,
-  recordSecretValue: () => {},
 }));
 vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
 
