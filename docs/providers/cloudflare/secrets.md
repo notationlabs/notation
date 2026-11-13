@@ -1,8 +1,8 @@
 # Secrets
 
-`@notation/cloudflare` keeps secrets in the account's [Secrets Store](https://developers.cloudflare.com/secrets-store/), and binds them to Workers. Notation records where a secret is, such as the store ID and the name, and never the secret's value.
+`@notation/cloudflare` keeps secrets in the account's [Secrets Store](https://developers.cloudflare.com/secrets-store/), and binds them to Workers. Notation records where a secret is, such as the store ID and the name, and where its value comes from. It never records the secret's value.
 
-Notation doesn't write secret values yet. A secret declared with `secret()` must exist before the deploy that adds it. An API token declared with `accountToken()` writes its own value.
+Deploy writes a secret's value from its source, or asks for it when the secret has no source. See [Secrets](../../manual/secrets.md). An API token declared with `accountToken()` writes its own value.
 
 ## `secret(config)`
 
@@ -12,8 +12,13 @@ An infra module calls `secret` to declare a secret, and a Worker binds it with `
 
 ```ts [infra/secrets.ts]
 import { secret } from "@notation/cloudflare/secrets-store";
+import { env } from "@notation/std/sources";
 
-export const stripeKey = secret({ id: "stripe-key" });
+export const stripeKey = secret({
+  id: "stripe-key",
+  source: env,
+  key: "STRIPE_KEY",
+});
 ```
 
 ```ts [runtime/api.ts]
@@ -40,22 +45,18 @@ export default {
 
 ::
 
-| Option | Description                                                                                                                                                                                                     |
-| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`   | Keys the secret in state. The secret's name in the store is `<app>--<stage>--<id>`, such as `shop--dev--stripe-key`.                                                                                            |
-| `name` | An exact name in the store, in place of `<app>--<stage>--<id>`. The name isn't scoped to the stage. Use it to adopt a secret that exists, or to share one between stages. Cloudflare rejects a name with a dot. |
+| Option   | Description                                                                                                                                                                                                     |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`     | Keys the secret in state, and is what `notation secret set <id>` takes. The secret's name in the store is `<app>--<stage>--<id>`, such as `shop--dev--stripe-key`.                                              |
+| `source` | Where the value comes from, such as `env` or `dotenv(".env.local")` from `@notation/std/sources`. Given together with `key`. Without a source, deploy asks for the value.                                       |
+| `key`    | The key that the source is asked for.                                                                                                                                                                           |
+| `name`   | An exact name in the store, in place of `<app>--<stage>--<id>`. The name isn't scoped to the stage. Use it to adopt a secret that exists, or to share one between stages. Cloudflare rejects a name with a dot. |
 
-Before the first deploy, create the secret with wrangler, and type its value at the prompt:
-
-```sh
-wrangler secrets-store secret create <store id> --name shop--dev--stripe-key --scopes workers --remote
-```
-
-Or create it on the Secrets Store page of the Cloudflare dashboard, with the scope Workers. When the secret is missing, deploy fails with this command and the store's ID.
-
-- Deploy finds the secret by its name. A secret that is deleted later is seen as drift, and the next deploy fails until it is created again.
+- Deploy writes the value when it creates the secret, and when the source's version of the key changes. For `env` and `dotenv`, that is every deploy. A new secret gets the scope Workers. A secret that exists keeps its scopes.
+- A secret without a source is written only when it is missing. Deploy asks for the value on a terminal, and fails without one. Set it first with [`notation secret set`](../../cli/secret.md), or with wrangler or in the dashboard.
+- Deploy finds the secret by its name. A secret that is deleted later is seen as drift, and the next deploy creates it again from its source or the prompt.
 - Destroy deletes a secret whose name is `<app>--<stage>--<id>`. It leaves a secret with an explicit `name`.
-- Cloudflare never returns a secret's value, so a value changed in the dashboard or with wrangler isn't seen as a change.
+- Cloudflare never returns a secret's value, so a value changed in the dashboard or with wrangler isn't seen as a change. It stays until the next write.
 
 ## `accountToken(config)`
 
@@ -99,6 +100,7 @@ export const worker = $worker({
 - A change to the policies updates the token, which keeps its value.
 - If the token's secret is deleted, plan fails, because the value can't be fetched again. Rotate the token by changing its `id`.
 - Destroy deletes the token and its secret.
+- `notation secret set` and `notation secret delete` refuse a token's secret.
 
 ## `secretsStore.bind(secret)`
 
