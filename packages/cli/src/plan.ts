@@ -27,6 +27,18 @@ const decisionSymbols: Record<PlanNode["decision"], string> = {
   noop: " ",
 };
 
+function symbolOf(node: PlanNode) {
+  return node.replaceOrder === "create-first"
+    ? "+/-"
+    : decisionSymbols[node.decision];
+}
+
+function orderOf(node: PlanNode) {
+  if (node.replaceOrder === "create-first") return " (create, then delete)";
+  if (node.replaceOrder === "delete-first") return " (delete, then create)";
+  return "";
+}
+
 export async function plan(
   deployment: Deployment,
   opts: PlanCommandOptions = {},
@@ -57,8 +69,13 @@ function printPlanSummary(result: Plan, logger: Logger) {
 
   for (const node of changedNodes) {
     logger.info(
-      `${decisionSymbols[node.decision]} ${node.decision} ${node.type} ${node.id}`,
+      `${symbolOf(node)} ${node.decision} ${node.type} ${node.id}${orderOf(node)}`,
     );
+    if (node.retiredAt) {
+      logger.info(
+        `    the instance that a replace retired at ${node.retiredAt}, deleted at the end of the deploy`,
+      );
+    }
     for (const field of node.replaceFields ?? []) {
       logger.info(
         field.known
@@ -104,7 +121,7 @@ function printPlanSummary(result: Plan, logger: Logger) {
     `${count("update") + count("drift-update")} to update`,
     `${count("replace") + count("drift-replace")} to replace`,
     `${count("drift-recreate")} to recreate`,
-    `${count("delete-orphan")} to delete`,
+    `${count("delete-orphan") + count("delete-retired")} to delete`,
     `${count("noop")} unchanged`,
   ].join(", ");
 
