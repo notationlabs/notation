@@ -197,7 +197,7 @@ describe("createPlan", () => {
     });
   });
 
-  it("plans a create for a resource whose record is a creating record", async () => {
+  it("plans a create for a creating record without a read, and notes that it may take over an existing resource", async () => {
     const TestResource = resource({
       type: "test/planner/creating",
       provider: "test",
@@ -225,46 +225,16 @@ describe("createPlan", () => {
     });
 
     const plan = await createPlan({
-      resources: [new TestResource("creating")],
+      resources: [new TestResource("creating"), new TestResource("new")],
       state,
     });
 
     expect(plan.nodes).toEqual([
-      expect.objectContaining({ id: "creating", decision: "create" }),
-    ]);
-  });
-
-  it("notes a create that may take over an existing resource: one with a creating record", async () => {
-    const TestResource = resource({
-      type: "test/planner/take-over",
-      provider: "test",
-    })
-      .defineSchema({})
-      .defineOperations({
-        create: async () => undefined,
-        delete: async () => undefined,
-      });
-    const state = new MemoryStateBackend({
-      recorded: {
-        version: 1,
-        id: "recorded",
-        type: TestResource.type,
-        provider: "test",
-        config: {},
-        params: {},
-        output: {},
-        lastOperation: "creating",
-        lastOperationAt: "2026-07-22T00:00:00.000Z",
-      },
-    });
-
-    const plan = await createPlan({
-      resources: [new TestResource("recorded"), new TestResource("new")],
-      state,
-    });
-
-    expect(plan.nodes).toEqual([
-      expect.objectContaining({ id: "recorded", mayTakeOver: true }),
+      expect.objectContaining({
+        id: "creating",
+        decision: "create",
+        mayTakeOver: true,
+      }),
       expect.not.objectContaining({ mayTakeOver: true }),
     ]);
   });

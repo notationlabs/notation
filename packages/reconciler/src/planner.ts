@@ -21,7 +21,6 @@ import {
   getDependencyIds,
   recordedEdges,
   type Plan,
-  type ResourceAction,
   type PlanNode,
 } from "./plan";
 import { workflowRegistry, type ResourceRegistry } from "./resource-registry";
