@@ -9,7 +9,14 @@ import {
 import * as std from "@notation/std/resources";
 import * as cloudflare from "src/resources";
 import { assertWorkerId, workerName } from "src/id";
-import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
+import type {
+  BindableSecret,
+  Bindings,
+  DurableObjectClass,
+  DurableObjectDeclaration,
+  SecretBinding,
+  Worker,
+} from "./declaration";
 import { describeNamespace, registeredNamespace } from "./durable-object";
 
 // Always set: the build imports Node's built-in modules as `node:` modules,
@@ -120,6 +127,22 @@ const registeredWorker = (value: unknown): Entry | undefined =>
   typeof value === "object" && value !== null && workerRegistration in value
     ? (value as { [workerRegistration]: Entry })[workerRegistration]
     : undefined;
+
+const registeredSecret = (value: unknown): BindableSecret | undefined => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("~secretBinding" in value)
+  ) {
+    return undefined;
+  }
+  const secret = (value as SecretBinding)["~secretBinding"];
+  return typeof secret === "object" &&
+    secret !== null &&
+    typeof secret["~secret"] === "function"
+    ? secret
+    : undefined;
+};
 
 const declaredWorkers = perCollection(
   "@notation/cloudflare/workers",
@@ -328,8 +351,19 @@ function resolveBindings(self: Entry): ResolvedBindings {
       });
       continue;
     }
+    const secret = registeredSecret(value);
+    if (secret) {
+      const target = secret["~secret"]();
+      resolved.bindings.push({
+        type: "secrets_store_secret",
+        name,
+        store_id: target.outputRef("StoreId") as string,
+        secret_name: target.outputRef("Name") as string,
+      });
+      continue;
+    }
     throw new Error(
-      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker, or a string.`,
+      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker, a secret from secretsStore.bind(), or a string.`,
     );
   }
   return resolved;

@@ -39,6 +39,12 @@ export const bindingSchema = v.variant("type", [
     name: v.string(),
     service: v.string(),
   }),
+  v.object({
+    type: v.literal("secrets_store_secret"),
+    name: v.string(),
+    store_id: v.string(),
+    secret_name: v.string(),
+  }),
 ]);
 
 export type ScriptBinding = v.InferOutput<typeof bindingSchema>;

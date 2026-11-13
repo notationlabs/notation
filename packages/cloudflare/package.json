@@ -4,6 +4,11 @@
   "version": "0.16.0",
   "sideEffects": false,
   "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "notation-runtime": "./dist/runtime.js",
+      "import": "./dist/index.js"
+    },
     "./workers": {
       "types": "./dist/workers/index.d.ts",
       "notation-runtime": "./dist/workers/runtime.js",

@@ -1,3 +1,4 @@
+import { scrubError } from "@notation/core";
 import {
   ResourceCreationUnknownError,
   ResourceOperationPendingError,
@@ -69,6 +70,17 @@ export function accountId(): string {
   return id;
 }
 
+/**
+ * Builds an `AccountId.rejectReplace` message explaining that a resource bound
+ * to a Cloudflare account cannot move across accounts.
+ */
+export function rejectAccountReplace(
+  describe: (previous: string) => string,
+): (previous: string, desired: string) => string {
+  return (previous, desired) =>
+    `CLOUDFLARE_ACCOUNT_ID is ${desired}, but ${describe(previous)} Set CLOUDFLARE_ACCOUNT_ID back to ${previous}. To deploy to the other account, first run \`notation destroy\` with the old account, or deploy to another stage.`;
+}
+
 function apiToken(): string {
   const token = process.env.CLOUDFLARE_API_TOKEN;
   if (!token) {
@@ -79,10 +91,20 @@ function apiToken(): string {
   return token;
 }
 
+/** The paging fields of a list response. */
+export type ResultInfo = {
+  page?: number;
+  per_page?: number;
+  count?: number;
+  total_count?: number;
+  total_pages?: number;
+};
+
 type Envelope<T> = {
   success?: boolean;
   errors?: CloudflareErrorItem[];
   result?: T;
+  result_info?: ResultInfo;
 };
 
 // Cloudflare's code for "Please wait and consider throttling your request
@@ -100,16 +122,37 @@ function isRateLimited(errors: CloudflareErrorItem[]): boolean {
   );
 }
 
+type Method = "GET" | "PUT" | "POST" | "PATCH" | "DELETE";
+
 /**
  * Returns the response's `result`. Throws `ResourceOperationPendingError`
  * when the request is rate limited, so the reconciler retries.
  */
 export async function cloudflare<T>(
-  method: "GET" | "PUT" | "POST" | "DELETE",
+  method: Method,
   /** The path after `/client/v4`, such as `/accounts/<id>/workers/scripts`. */
   path: string,
   body?: FormData | object,
 ): Promise<T> {
+  return (await cloudflareEnvelope<T>(method, path, body)).result as T;
+}
+
+/**
+ * Like `cloudflare`, but also returns the response's `result_info`, which
+ * holds the paging fields of a list.
+ */
+export async function cloudflareList<T>(
+  path: string,
+): Promise<{ result: T; resultInfo?: ResultInfo }> {
+  const envelope = await cloudflareEnvelope<T>("GET", path);
+  return { result: envelope.result as T, resultInfo: envelope.result_info };
+}
+
+async function cloudflareEnvelope<T>(
+  method: Method,
+  path: string,
+  body?: FormData | object,
+): Promise<Envelope<T>> {
   const request = `${method} ${path}`;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiToken()}`,
@@ -141,12 +184,14 @@ export async function cloudflare<T>(
       );
     }
     if (error instanceof TypeError) {
-      throw new CloudflareNetworkError(
-        `Cloudflare API ${request} failed on the network: ${error.message}`,
-        { cause: error },
+      throw scrubError(
+        new CloudflareNetworkError(
+          `Cloudflare API ${request} failed on the network: ${error.message}`,
+          { cause: error },
+        ),
       );
     }
-    throw error;
+    throw scrubError(error);
   }
   let envelope: Envelope<T> = {};
   try {
@@ -170,9 +215,9 @@ export async function cloudflare<T>(
     );
   }
   if (failed) {
-    throw new CloudflareApiError(request, response.status, errors);
+    throw scrubError(new CloudflareApiError(request, response.status, errors));
   }
-  return envelope.result as T;
+  return envelope;
 }
 
 /**
@@ -195,10 +240,12 @@ export function cloudflareCreate<Args extends unknown[], Result>(
     try {
       return await create(...args);
     } catch (error) {
-      if (!callMayHaveTakenEffect(error)) throw error;
-      throw new ResourceCreationUnknownError(
-        `Cloudflare did not report whether the resource was created: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error },
+      if (!callMayHaveTakenEffect(error)) throw scrubError(error);
+      throw scrubError(
+        new ResourceCreationUnknownError(
+          `Cloudflare did not report whether the resource was created: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        ),
       );
     }
   };
