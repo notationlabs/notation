@@ -57,6 +57,7 @@ Deploy generates a Worker's name when it creates the Worker: `<app>--<stage>--<i
 | --------------------------------------------------------- | ------------------------ | ------------------------------- |
 | A namespace from [`$durableObject`](#durableobjectconfig) | Durable Object namespace | `DurableObjectNamespace<Class>` |
 | A Worker from `$worker`                                   | Service binding          | `Fetcher`                       |
+| A secret from [`secretsStore.bind`](secrets.md)           | Secrets Store secret     | `SecretsStoreSecret`            |
 | A string                                                  | Plain text               | `string`                        |
 
 `WorkerEnv<typeof worker>` is the type of `env`, and `WorkerHandler<typeof worker>` is the type of the default export. A Worker that binds another Worker is uploaded after it.
