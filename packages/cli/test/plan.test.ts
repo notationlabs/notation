@@ -275,6 +275,61 @@ it("prints the delete of a retired instance before a delete-first replace of its
   ]);
 });
 
+it("reads the replace of a delete-first dependency, not its retired instance", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "rule",
+        type: "test/plan/rule",
+        decision: "delete-retired",
+        retiredAt: "2026-11-13T00:00:00.000Z",
+        params: {},
+        dependsOn: ["bus"],
+      },
+      {
+        id: "bus",
+        type: "test/plan/bus",
+        decision: "delete-retired",
+        retiredAt: "2026-11-13T00:00:00.000Z",
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "rule",
+        type: "test/plan/rule",
+        decision: "replace",
+        replaceOrder: "delete-first",
+        replacedDependency: "bus",
+        params: {},
+        dependsOn: ["bus"],
+      },
+      {
+        id: "bus",
+        type: "test/plan/bus",
+        decision: "replace",
+        replaceFields: [{ name: "name", known: true }],
+        replaceOrder: "delete-first",
+        params: {},
+        dependsOn: [],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 7)).toEqual([
+    "- delete-retired test/plan/rule rule",
+    "    the instance that a replace retired at 2026-11-13T00:00:00.000Z, deleted before the resource is replaced",
+    "- delete-retired test/plan/bus bus",
+    "    the instance that a replace retired at 2026-11-13T00:00:00.000Z, deleted before the resource is replaced",
+    "-/+ replace test/plan/rule rule (delete, then create)",
+    "    deleted before bus is replaced",
+  ]);
+});
+
 it("writes the order of a replace in the JSON plan", async () => {
   const node = {
     id: "role",
