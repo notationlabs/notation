@@ -28,8 +28,8 @@ function mockFetch(respond: (call: Call) => Response | Promise<Response>) {
   });
 }
 
-const ok = (result: unknown = null, result_info?: object) =>
-  Response.json({ success: true, errors: [], result, result_info });
+const ok = (result: unknown = null) =>
+  Response.json({ success: true, errors: [], result });
 
 const fail = (status: number, code: number, message = "failed") =>
   Response.json(
@@ -300,9 +300,8 @@ describe("SecretsStoreSecret", () => {
             Array.from({ length: 100 }, (_, i) =>
               listed({ id: `x${i}`, name: `${params.Name}-${i}` }),
             ),
-            { total_pages: 2 },
           )
-        : ok([listed({ id: "s2" })], { total_pages: 2 }),
+        : ok([listed({ id: "s2" })]),
     );
 
     await expect(resource.read!(key)).resolves.toMatchObject({

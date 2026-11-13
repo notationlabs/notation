@@ -1,4 +1,4 @@
-import { CloudflareApiError, cloudflare, cloudflareList } from "./client";
+import { CloudflareApiError, cloudflare } from "./client";
 
 // Cloudflare returns this code for several errors. The message names the
 // error, such as `secret_not_found`.
@@ -86,13 +86,12 @@ export async function findSecretByName(
       per_page: String(PAGE_SIZE),
     });
     let secrets: StoreSecret[];
-    let totalPages: number | undefined;
     try {
-      const { result, resultInfo } = await cloudflareList<StoreSecret[] | null>(
-        `${storePath(account, store)}/secrets?${query}`,
-      );
-      secrets = result ?? [];
-      totalPages = resultInfo?.total_pages;
+      secrets =
+        (await cloudflare<StoreSecret[] | null>(
+          "GET",
+          `${storePath(account, store)}/secrets?${query}`,
+        )) ?? [];
     } catch (error) {
       if (isStoreNotFound(error)) return undefined;
       throw error;
@@ -102,7 +101,6 @@ export async function findSecretByName(
     );
     if (secret) return secret;
     if (secrets.length < PAGE_SIZE) return undefined;
-    if (totalPages !== undefined && page >= totalPages) return undefined;
   }
 }
 

@@ -79,20 +79,10 @@ function apiToken(): string {
   return token;
 }
 
-/** The paging fields of a list response. */
-export type ResultInfo = {
-  page?: number;
-  per_page?: number;
-  count?: number;
-  total_count?: number;
-  total_pages?: number;
-};
-
 type Envelope<T> = {
   success?: boolean;
   errors?: CloudflareErrorItem[];
   result?: T;
-  result_info?: ResultInfo;
 };
 
 // Cloudflare's code for "Please wait and consider throttling your request
@@ -115,29 +105,11 @@ function isRateLimited(errors: CloudflareErrorItem[]): boolean {
  * when the request is rate limited, so the reconciler retries.
  */
 export async function cloudflare<T>(
-  method: Method,
+  method: "GET" | "PUT" | "POST" | "PATCH" | "DELETE",
   /** The path after `/client/v4`, such as `/accounts/<id>/workers/scripts`. */
   path: string,
   body?: FormData | object,
 ): Promise<T> {
-  return (await cloudflareEnvelope<T>(method, path, body)).result as T;
-}
-
-/** Like `cloudflare`, but also returns the paging fields of a list. */
-export async function cloudflareList<T>(
-  path: string,
-): Promise<{ result: T; resultInfo?: ResultInfo }> {
-  const envelope = await cloudflareEnvelope<T>("GET", path);
-  return { result: envelope.result as T, resultInfo: envelope.result_info };
-}
-
-type Method = "GET" | "PUT" | "POST" | "PATCH" | "DELETE";
-
-async function cloudflareEnvelope<T>(
-  method: Method,
-  path: string,
-  body?: FormData | object,
-): Promise<Envelope<T>> {
   const request = `${method} ${path}`;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiToken()}`,
@@ -200,7 +172,7 @@ async function cloudflareEnvelope<T>(
   if (failed) {
     throw new CloudflareApiError(request, response.status, errors);
   }
-  return envelope;
+  return envelope.result as T;
 }
 
 /**
