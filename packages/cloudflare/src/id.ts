@@ -13,11 +13,13 @@ const WORKER_NAME_MAX_LENGTH = 54;
 // The longest name that a Worker got before deploy generated its name.
 const FIXED_WORKER_NAME_MAX_LENGTH = 63;
 
+const WORKER_ID_MAX_LENGTH = 63;
+
 // The length of the random instance at the end of a generated name.
 const INSTANCE_LENGTH = 8;
 
 const WORKER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
-const WORKER_ID_RULE = `1 to ${FIXED_WORKER_NAME_MAX_LENGTH} lowercase letters, digits or hyphens, not starting or ending with a hyphen`;
+const WORKER_ID_RULE = `1 to ${WORKER_ID_MAX_LENGTH} lowercase letters, digits or hyphens, not starting or ending with a hyphen`;
 
 const NAMESPACE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const NAMESPACE_ID_RULE = "1 to 64 letters, digits, hyphens or underscores";
@@ -44,7 +46,7 @@ export function assertWorkerId(
   }
   if (
     typeof value !== "string" ||
-    value.length > FIXED_WORKER_NAME_MAX_LENGTH ||
+    value.length > WORKER_ID_MAX_LENGTH ||
     !WORKER_ID_PATTERN.test(value)
   ) {
     throw new Error(
@@ -77,6 +79,8 @@ export function workerNames(id: string): {
   nameBody: string;
   fixedName: string;
 } {
+  // Deploy generates names in `nameScope` (workflow.deploy.ts), which must
+  // be the collection's scope, or `nameBody` describes the wrong name.
   const scope = getActiveResourceCollection()?.scope;
   const nameBody = scope
     ? generatedNameBody(

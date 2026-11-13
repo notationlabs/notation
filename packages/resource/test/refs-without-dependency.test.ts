@@ -4,7 +4,6 @@ import {
   isOwnPhysicalName,
   ownPhysicalName,
   resource,
-  isStateRefTarget,
 } from "src";
 import { object, string } from "./validators";
 
@@ -16,6 +15,7 @@ const Worker = resource<{
     Name: string;
     Path: string;
     Label?: string;
+    Secret?: string;
     Sources?: string[];
     Bindings?: Statement[];
   };
@@ -38,6 +38,13 @@ const Worker = resource<{
       immutable: true,
     },
     Label: { propertyType: "param", value: string(), presence: "optional" },
+    Secret: {
+      propertyType: "param",
+      value: string(),
+      presence: "optional",
+      immutable: true,
+      hidden: true,
+    },
     Sources: {
       propertyType: "param",
       value: object<string[]>(),
@@ -74,10 +81,10 @@ describe("~state refs", () => {
 
   it("reads a param that only a replace changes, and marks its target", () => {
     const binder = new Worker("binder", { config: { Path: "/" } });
-    expect(isStateRefTarget(binder)).toBe(false);
+    expect(binder.isStateRefTarget()).toBe(false);
     binder["~state"].outputRef("Name");
     binder["~state"].outputRef("Path");
-    expect(isStateRefTarget(binder)).toBe(true);
+    expect(binder.isStateRefTarget()).toBe(true);
   });
 
   it("throws for an output that an update can change", () => {
@@ -91,6 +98,14 @@ describe("~state refs", () => {
     expect(() => binder["~state"].outputRef("Id")).toThrow(
       "Cannot read Id of binder from state",
     );
+  });
+
+  it("throws for a hidden param, which the state record does not hold", () => {
+    const binder = new Worker("binder", { config: { Path: "/" } });
+    expect(() => binder["~state"].outputRef("Secret")).toThrow(
+      "Cannot read Secret of binder from state: it is a hidden param, which the state record does not hold",
+    );
+    expect(binder.isStateRefTarget()).toBe(false);
   });
 
   it("adds no dependency, and resolves from the recorded outputs, to undefined for one with no record", async () => {

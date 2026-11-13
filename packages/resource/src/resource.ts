@@ -234,6 +234,11 @@ export interface BaseResource {
   outputRef(key: string): unknown;
   /** See `Resource["~state"]`. */
   readonly "~state": { outputRef(key: string): unknown };
+  /**
+   * Whether a `~state` ref names the resource. Deploy reads the outputs of
+   * these resources from state once, at the start, before any params exist.
+   */
+  isStateRefTarget(): boolean;
 }
 
 export abstract class Resource<
@@ -253,6 +258,7 @@ export abstract class Resource<
   // Set once code reads the params or dependencies. A later contribution
   // would be missing from what was read, so `contribute` throws.
   #sealed = false;
+  #stateRefTarget = false;
   abstract type: ResourceType;
   abstract provider: string;
   declare readonly deleteTakesDependents?: boolean;
@@ -397,16 +403,26 @@ export abstract class Resource<
    * recorded. The token can only be placed in a contribution:
    * `getDependencies` throws when config holds one.
    *
-   * `outputRef` throws unless only a replace changes the output: a param
-   * that is `immutable`, `primaryKey` or `secondaryKey`, or that has
-   * `physicalName`.
+   * `outputRef` can read only a param that is `immutable`, `primaryKey` or
+   * `secondaryKey`, or that has `physicalName`, and that is not `hidden`.
+   * It throws for any other key, though the type accepts every output.
    */
   get "~state"(): {
     outputRef<K extends keyof T["output"] & string>(
       key: K,
     ): T["output"][K] | undefined;
   } {
-    return { outputRef: (key) => stateOutputRef(this, key) as any };
+    return {
+      outputRef: (key) => {
+        const token = stateOutputRef(this, key);
+        this.#stateRefTarget = true;
+        return token as any;
+      },
+    };
+  }
+
+  isStateRefTarget(): boolean {
+    return this.#stateRefTarget;
   }
 
   contribute(values: T["collected"]): void;
@@ -466,7 +482,7 @@ export abstract class Resource<
           `The config of ${this.id} holds a ~state ref to ${token.resource.id}. A ~state ref can only be placed in a contribution.`,
         );
       }
-      found.add(token.resource);
+      if (isDependencyRef(this, token)) found.add(token.resource);
     });
     return [...found];
   }
@@ -626,9 +642,10 @@ export abstract class Resource<
     recordedOutputs: RecordedOutputs | undefined,
   ): unknown {
     const lookup: OutputLookup = plan ? planLookup : deployLookup;
+    const lookupRecorded = recordedLookup(recordedOutputs);
     return resolveOutputRefs(value, (token) =>
       token instanceof StateOutputRef
-        ? recordedLookup(recordedOutputs)(token)
+        ? lookupRecorded(token)
         : isOwnNameRef(this, token)
           ? { known: true, value: ownPhysicalName(token.path[0]!) }
           : lookup(token),

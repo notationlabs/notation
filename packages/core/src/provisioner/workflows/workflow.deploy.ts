@@ -41,10 +41,11 @@ export async function deployApp({
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: DeployAppOptions): Promise<void> {
-  const graph = await getResourceGraph(deployment.entryPoint, {
-    app: deployment.app,
-    stage: deployment.stage,
-  });
+  // Code that runs while infra is evaluated, such as `workerNames` in
+  // @notation/cloudflare, reads the collection's scope, which must be the
+  // scope deploy generates names in.
+  const nameScope = { app: deployment.app, stage: deployment.stage };
+  const graph = await getResourceGraph(deployment.entryPoint, nameScope);
   await runDurableWorkflow(
     { deployment, workflowId: "deploy", runtime, databasePath, executionId },
     async function* (step, executionId, runtime) {
@@ -63,7 +64,7 @@ export async function deployApp({
         dryRun,
         driftDetection,
         maxOperationAttempts,
-        nameScope: { app: deployment.app, stage: deployment.stage },
+        nameScope,
       });
     },
   );

@@ -39,7 +39,6 @@ export {
   OutputRefStringError,
   PendingOutput,
   StateOutputRef,
-  isStateRefTarget,
   containsOutputRef,
   isOutputRef,
   resolveOutputRefs,

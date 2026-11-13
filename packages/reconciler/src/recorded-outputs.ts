@@ -1,8 +1,4 @@
-import {
-  isStateRefTarget,
-  type BaseResource,
-  type RecordedOutputs,
-} from "@notation/resource";
+import type { BaseResource, RecordedOutputs } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 
 /**
@@ -16,7 +12,7 @@ export async function readRecordedOutputs(
 ): Promise<RecordedOutputs> {
   const recorded: RecordedOutputs = {};
   for (const resource of resources) {
-    if (!isStateRefTarget(resource)) continue;
+    if (!resource.isStateRefTarget()) continue;
     const node = await state.get(resource.id);
     recorded[resource.id] =
       node && !isCreatingRecord(node) ? node.output : null;

@@ -531,7 +531,7 @@ A state ref differs from an output ref in five ways:
 - **It adds no dependency.** `host` does not depend on `binder.script`, so the graph and the deploy order stay the same.
 - **It resolves to the output in the target's state record at the start of the deploy.** Deploy reads these outputs once, after it takes the deployment hold, in the step `notation:recorded-outputs`. A resumed deploy uses the outputs that this step recorded. Plan reads the same outputs from state, so the value is known at plan.
 - **It resolves to `undefined` when the target has no record**, or only a `creating` record. TypeScript types the ref as the output or `undefined`.
-- **It reads only an output that only a replace changes.** `outputRef(key)` throws unless the output is a param that is `immutable`, `primaryKey` or `secondaryKey`, or that has `physicalName`. An output that an update changes would be read one deploy late, with no error.
+- **It reads only an output that only a replace changes.** `outputRef(key)` throws unless the output is a param that is `immutable`, `primaryKey` or `secondaryKey`, or that has `physicalName`. An output that an update changes would be read one deploy late, with no error. It also throws for a `hidden` param, which the state record does not hold.
 - **It can only be placed in a contribution.** `create` and `update` read the refs in config from the live outputs of their targets, which a state ref's target may not have yet. `getDependencies()` throws when config holds a state ref.
 
 Make each state ref while infra is evaluated. Deploy reads the outputs of the resources that state refs name before it resolves any params, and a state ref made later fails at deploy.

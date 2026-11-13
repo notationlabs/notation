@@ -51,26 +51,23 @@ export class StateOutputRef extends OutputRef {}
  */
 export type RecordedOutputs = { [id: string]: DurableObject | null };
 
-// Deploy reads the outputs of these resources from state once, at the start,
-// so it needs to know them before any params exist.
-const stateRefTargets = new WeakSet<BaseResource>();
-
-/** Whether a `~state` ref names `resource`. */
-export function isStateRefTarget(resource: BaseResource): boolean {
-  return stateRefTargets.has(resource);
-}
-
 /**
  * Makes a `~state` ref. Throws unless only a replace changes the output: a
  * param that is `immutable`, `primaryKey` or `secondaryKey`, or that has
  * `physicalName`. An output that an update changes would be read one
- * deploy late, with no error.
+ * deploy late, with no error. Also throws for a `hidden` param, which the
+ * state record does not hold, so the ref would always resolve to undefined.
  */
 export function stateOutputRef(
   resource: BaseResource,
   key: string,
 ): StateOutputRef {
   const item = resource.schema[key];
+  if (item?.propertyType === "param" && item.hidden) {
+    throw new Error(
+      `Cannot read ${key} of ${resource.id} from state: it is a hidden param, which the state record does not hold`,
+    );
+  }
   const readable =
     item?.propertyType === "param" &&
     (item.immutable ||
@@ -82,7 +79,6 @@ export function stateOutputRef(
       `Cannot read ${key} of ${resource.id} from state: ~state can read only an output that only a replace changes, which is a param that is immutable, primaryKey or secondaryKey, or that has physicalName`,
     );
   }
-  stateRefTargets.add(resource);
   return new StateOutputRef(resource, [key]);
 }
 

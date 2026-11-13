@@ -13,7 +13,6 @@ import {
   collectResourceGraph,
   declaredIn,
   ownPhysicalName,
-  isStateRefTarget,
   type BaseResource,
   type RecordedOutputs,
   type ResourceGraph,
@@ -107,7 +106,7 @@ async function deployParams(
     }
     const recordedOutputs: RecordedOutputs = {};
     for (const resource of collectedScripts) {
-      if (!isStateRefTarget(resource)) continue;
+      if (!resource.isStateRefTarget()) continue;
       const found = recorded.find((other) => other.script === resource);
       recordedOutputs[resource.id] = found
         ? { ScriptName: nameOf(found.id) }
@@ -795,7 +794,7 @@ describe("plan", () => {
       const state = { get: async (id: string) => records[id] };
       const recordedOutputs: RecordedOutputs = {};
       for (const resource of graph.resources) {
-        if (!isStateRefTarget(resource)) continue;
+        if (!resource.isStateRefTarget()) continue;
         recordedOutputs[resource.id] =
           (records[resource.id]?.output as any) ?? null;
       }

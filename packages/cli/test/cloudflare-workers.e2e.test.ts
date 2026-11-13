@@ -64,7 +64,6 @@ function workerParams(): Record<string, ScriptParams> {
     import {
       collectResourceGraph,
       fillPhysicalNames,
-      isStateRefTarget,
     } from "@notation/resource";
 
     const graph = await collectResourceGraph(() => import("./dist/infra/main.mjs"), {
@@ -82,7 +81,7 @@ function workerParams(): Record<string, ScriptParams> {
     const recordedOutputs = {};
     for (const resource of scripts) {
       resource.setOutput({ ScriptName: nameOf(resource) });
-      if (isStateRefTarget(resource)) {
+      if (resource.isStateRefTarget()) {
         recordedOutputs[resource.id] = { ScriptName: nameOf(resource) };
       }
     }
