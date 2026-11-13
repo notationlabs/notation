@@ -6,6 +6,8 @@ import { destroy } from "./destroy";
 import { plan } from "./plan";
 import { defaultLogger } from "./logger";
 import { runWithErrorHandling } from "./run-with-error-handling";
+import { scrubOutput } from "./scrub";
+import { secretDelete, secretSet } from "./secret";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
 import { startDashboardServer } from "@notation/dashboard";
@@ -24,6 +26,10 @@ import {
 // so a resource's declaredAt names the source file. Only modules loaded after
 // this call are mapped, and the bundle is imported later.
 process.setSourceMapsEnabled(true);
+
+// Secret values that the process reads never reach its output, even when a
+// provider echoes one back in an error.
+scrubOutput();
 
 const configOption = [
   "--config <path>",
@@ -125,6 +131,35 @@ program
     const project = await load(options);
     const deployment = resolveDeployment(project, { stage: options.stage });
     await watch(deployment);
+  });
+
+const secret = program
+  .command("secret")
+  .description("Set or delete the values of secrets");
+
+secret
+  .command("set <id>")
+  .option(...configOption)
+  .option(...stageOption)
+  .description(
+    "Set a secret's value, from a hidden prompt on a terminal or from stdin",
+  )
+  .action(async (id: string, options) => {
+    const project = await load(options);
+    const deployment = resolveDeployment(project, { stage: options.stage });
+    await secretSet(deployment, id);
+  });
+
+secret
+  .command("delete <id>")
+  .option(...configOption)
+  .option(...stageOption)
+  .option("--yes", "delete without asking for confirmation")
+  .description("Delete a secret from its store")
+  .action(async (id: string, options) => {
+    const project = await load(options);
+    const deployment = resolveDeployment(project, { stage: options.stage });
+    await secretDelete(deployment, id, { yes: options.yes });
   });
 
 function load(options: { config?: string }) {

@@ -6,6 +6,7 @@ import { configPath, filePaths, type Deployment } from "@notation/core";
 import { compile } from "./compile";
 import { deployInChild } from "./deploy-child";
 import { defaultLogger, type Logger } from "./logger";
+import { canPrompt, onceEachSecret, terminalSecretPrompt } from "./prompt";
 
 const dotFilesRe = /(^|[\/\\])\../;
 
@@ -44,6 +45,11 @@ export async function watch(
   let stopping = false;
   let timeoutId: NodeJS.Timeout;
   const debounceTime = 500;
+  // Each deploy runs in a new process, so the answers are kept here, and
+  // watch asks for each secret once.
+  const promptSecret = canPrompt()
+    ? onceEachSecret(terminalSecretPrompt())
+    : undefined;
 
   function debounceDeploy() {
     if (timeoutId) {
@@ -69,7 +75,7 @@ export async function watch(
         const executionId = randomUUID();
         // A fresh process per deploy: importing the rebuilt infra in this
         // long-lived process would leak a copy of the bundle every time.
-        await deployInChild({ deployment, executionId, logger });
+        await deployInChild({ deployment, executionId, logger, promptSecret });
       } catch (err) {
         logger.error(err);
       }

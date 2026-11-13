@@ -354,3 +354,35 @@ it("writes the order of a replace in the JSON plan", async () => {
   const output = chunks.join("");
   expect(JSON.parse(output).nodes).toEqual([node]);
 });
+
+it("prints that deploy asks for the value of a new secret without a source", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "secret:admin",
+        type: "cloudflare/secrets-store/SecretsStoreSecret",
+        decision: "create",
+        params: { ValueFrom: { Secret: "admin", Source: "prompt" } },
+        dependsOn: [],
+      },
+      {
+        id: "secret:stripe-key",
+        type: "cloudflare/secrets-store/SecretsStoreSecret",
+        decision: "create",
+        params: { ValueFrom: { Secret: "stripe-key", Source: "env" } },
+        dependsOn: [],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 4)).toEqual([
+    "+ create cloudflare/secrets-store/SecretsStoreSecret secret:admin",
+    "    value not set: deploy asks for it if the secret doesn't exist, and fails without a terminal",
+    "+ create cloudflare/secrets-store/SecretsStoreSecret secret:stripe-key",
+  ]);
+});

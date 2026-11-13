@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { configPath } from "@notation/core";
-import { deployInChild } from "../src/deploy-child";
+import { deployInChild, parentSecretPrompt } from "../src/deploy-child";
 
 function fakeSpawn(lines: string[], exitCode: number) {
   const calls: string[][] = [];
@@ -121,5 +121,91 @@ describe("deployInChild", () => {
 
     expect(proc.listenerCount("SIGINT")).toBe(0);
     expect(proc.listenerCount("SIGTERM")).toBe(0);
+  });
+});
+
+describe("secret prompts over IPC", () => {
+  it("answers the child's questions with promptSecret", async () => {
+    const sent: unknown[] = [];
+    let options: any;
+    const spawn = ((_cmd: string, _args: string[], opts: unknown) => {
+      options = opts;
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new PassThrough(),
+        kill: vi.fn(),
+        connected: true,
+        send: (message: unknown) => {
+          sent.push(message);
+          child.stdout.end();
+          child.stdout.once("close", () => child.emit("close", 0));
+          return true;
+        },
+      });
+      setImmediate(() =>
+        child.emit("message", {
+          type: "notation:secret-prompt",
+          requestId: "r1",
+          id: "admin",
+          stage: "prod",
+        }),
+      );
+      return child;
+    }) as any;
+    const promptSecret = vi.fn(async () => "hunter2");
+
+    await deployInChild({
+      deployment: { app: "orders-app", stage: "prod" },
+      executionId: "exec-1",
+      logger: logger(),
+      promptSecret,
+      spawn,
+    });
+
+    expect(options.stdio).toEqual(["ignore", "pipe", "inherit", "ipc"]);
+    expect(options.env.NOTATION_SECRET_PROMPT).toBe("ipc");
+    expect(promptSecret).toHaveBeenCalledWith({ id: "admin", stage: "prod" });
+    expect(sent).toEqual([
+      { type: "notation:secret-answer", requestId: "r1", value: "hunter2" },
+    ]);
+  });
+
+  it("asks the parent from the child, and fails with the parent's error", async () => {
+    const proc = Object.assign(new EventEmitter(), {
+      env: { NOTATION_SECRET_PROMPT: "ipc" },
+      send: (message: any) => {
+        setImmediate(() =>
+          proc.emit(
+            "message",
+            message.id === "admin"
+              ? {
+                  type: "notation:secret-answer",
+                  requestId: message.requestId,
+                  value: "hunter2",
+                }
+              : {
+                  type: "notation:secret-answer",
+                  requestId: message.requestId,
+                  error: "No terminal",
+                },
+          ),
+        );
+        return true;
+      },
+    });
+    const prompt = parentSecretPrompt(proc as any)!;
+
+    await expect(prompt({ id: "admin", stage: "prod" })).resolves.toBe(
+      "hunter2",
+    );
+    await expect(prompt({ id: "other", stage: "prod" })).rejects.toThrow(
+      "No terminal",
+    );
+    expect(proc.listenerCount("message")).toBe(0);
+  });
+
+  it("has no parent prompt in a process that deployInChild didn't start", () => {
+    expect(
+      parentSecretPrompt({ env: {}, send: vi.fn() } as any),
+    ).toBeUndefined();
   });
 });
