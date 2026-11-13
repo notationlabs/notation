@@ -71,6 +71,11 @@ export type SecretContextOptions = {
 export type SecretContext = SecretContextOptions & {
   /** The secrets that the infra declared while the graph was collected. */
   declared: Map<string, DeclaredSecret>;
+  /**
+   * The prompt's answers, by secret id. They are kept for the run, so that a
+   * create or update that is retried doesn't ask again.
+   */
+  prompted: Map<string, Redacted<string>>;
 };
 
 // On globalThis, so that the infra bundle's copy of this package and the
@@ -94,7 +99,7 @@ export function runWithSecretContext<T>(
   options: SecretContextOptions,
   fn: () => T,
 ): T {
-  return storage().run({ ...options, declared: new Map() }, fn);
+  return storage().run({ ...options, declared: new Map(), prompted: new Map() }, fn);
 }
 
 export function secretContext(): SecretContext | undefined {

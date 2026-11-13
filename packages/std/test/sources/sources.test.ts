@@ -145,6 +145,18 @@ describe("getValue", () => {
     expect(prompt).toHaveBeenCalledWith({ id: "admin", stage: "dev" });
   });
 
+  it("asks the prompt once in a run, so that a retried write doesn't ask again", async () => {
+    const prompt = vi.fn(async () => "hunter2");
+
+    const values = await inContext({ prompt }, async () => [
+      (await getValue("admin")).unwrap(),
+      (await getValue("admin")).unwrap(),
+    ]);
+
+    expect(values).toEqual(["hunter2", "hunter2"]);
+    expect(prompt).toHaveBeenCalledTimes(1);
+  });
+
   it("fails with the command to run for a secret without a source and no prompt", async () => {
     await expect(inContext({}, () => getValue("admin"))).rejects.toThrow(
       "Secret `admin` isn't set for stage dev. Run `notation secret set admin --stage dev`.",

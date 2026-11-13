@@ -4,6 +4,7 @@ import { Redacted, recordSecretValue, secretContext } from "@notation/core";
  * Fetches the value of the secret declared with `id`, for a resource that
  * writes it. It calls `get` on the secret's source. A secret without a source
  * takes its value from the prompt, and fails when there is no one to ask.
+ * The prompt is asked once per run for each secret.
  * `notation secret set` supplies the value instead.
  *
  * The CLI removes every value that this returns from what it prints.
@@ -25,8 +26,11 @@ export async function getValue(id: string): Promise<Redacted<string>> {
     value = context.supplied.value;
   } else if (declared.source) {
     value = await declared.source.get(declared.key!, { stage });
+  } else if (context.prompted.has(id)) {
+    value = context.prompted.get(id)!;
   } else if (context.prompt) {
     value = new Redacted(await context.prompt({ id, stage }));
+    context.prompted.set(id, value);
   } else {
     throw new Error(
       `Secret \`${id}\` isn't set for stage ${stage}. Run \`notation secret set ${id} --stage ${stage}\`.`,
