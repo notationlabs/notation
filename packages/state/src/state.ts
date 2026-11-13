@@ -25,10 +25,9 @@ export type StateNode = {
   lastOperation: "creating" | "create" | "update";
   lastOperationAt: string;
   /**
-   * The instances of the resource that a create-first replace left, oldest
-   * first, each still waiting for deploy to delete it. Absent when there are
-   * none. Every write to the record carries the list forward, and a record
-   * that lists retired instances is not removed.
+   * The instances of the resource that a create-first replace retired and
+   * that deploy has not deleted yet, oldest first. Absent when there are
+   * none.
    */
   retired?: RetiredInstance[];
   [key: string]: DurableValue;

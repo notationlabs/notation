@@ -20,10 +20,8 @@ export type ResourceDeletion = {
    * that others refer to can force the delete when every reference comes
    * from one of these.
    *
-   * For the delete of an instance that a create-first replace retired, the
-   * dependents in code are left out, as they have moved to the replacement.
-   * The retired instances that depend on the resource are listed instead,
-   * each with the ID of its record and its own params.
+   * For the delete of a retired instance, these are the retired instances
+   * that depend on it, each with the ID of its record and its own params.
    */
   dependents: readonly {
     id: string;
