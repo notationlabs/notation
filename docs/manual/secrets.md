@@ -13,6 +13,8 @@ A secret takes its value from a source and a key, or from a prompt when it has n
 | `env`          | `process.env`.                                                                           |
 | `dotenv(path)` | One `.env` file. `path` is relative to the project root. A missing file counts as empty. |
 
+Other sources are in their own packages, such as [`infisical()`](../providers/infisical/sources.md) from `@notation/infisical/sources`.
+
 ```ts [infra/secrets.ts]
 import { secret } from "@notation/cloudflare/secrets-store";
 import { dotenv, env } from "@notation/std/sources";
@@ -43,11 +45,11 @@ Each secret with a source has a `SourceValue` resource, with the ID `value:<id>`
 
 A secret is written when its version changes:
 
-| Source          | Version                   | The secret is written                                |
-| --------------- | ------------------------- | ---------------------------------------------------- |
-| A versioned one | the source's version      | when the version changes                             |
-| `env`, `dotenv` | the deploy's execution ID | on every deploy                                      |
-| none (prompt)   | none                      | when the secret is created, or recreated after drift |
+| Source                                 | Version                   | The secret is written                                |
+| -------------------------------------- | ------------------------- | ---------------------------------------------------- |
+| A versioned one, such as `infisical()` | the source's version      | when the version changes                             |
+| `env`, `dotenv`                        | the deploy's execution ID | on every deploy                                      |
+| none (prompt)                          | none                      | when the secret is created, or recreated after drift |
 
 `env` and `dotenv` have no versions, so plan shows an update of their `SourceValue` on every run. A move from one source to another writes the secret from the new source.
 

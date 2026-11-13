@@ -110,5 +110,16 @@ export const deploy = {
         },
       ],
     },
+    {
+      label: "Infisical",
+      slug: "infisical",
+      sections: [
+        {
+          heading: "Sources",
+          icon: "database",
+          links: [{ label: "Infisical", slug: "providers/infisical/sources" }],
+        },
+      ],
+    },
   ],
 } satisfies DocsSite;
