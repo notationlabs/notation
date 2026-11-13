@@ -226,7 +226,7 @@ script.contribute({
 
 A ref from a resource to one of its own `physicalName` params is not a dependency, so the Worker is not a [cycle](#cycles) of one. Deploy fills in the ref when it fills in the name, before it calls `create`. So `create` receives the name as a plain string in both params, and the Worker is created once, with the binding. A replacement gets its new name in both params. Plan shows the ref as it shows the name: the recorded name, or unknown when there is no record or the resource is replaced. A ref to any other output of the resource itself is still a dependency.
 
-**`scopedPhysicalName` makes a fixed name on a class without `physicalName`.** `scopedPhysicalName(name, rule)` from `@notation/resource` returns `<app>--<stage>--<name>`, shortened with a hash when it is longer than `rule.maxLength`. It is the same on every deploy. A construct puts the result in config. Two declarations with the same `name` get the same result, so the construct must check that no two declarations give the same name. A fixed name can also belong to a resource that someone else made, which deploy then [takes over](../internals/reconciler.md#the-takeover-rule). No class in `@notation/aws` or `@notation/cloudflare` is named this way: deploy generates every name. `@notation/cloudflare` uses `scopedPhysicalName` only to find a Worker that an earlier version named `<app>--<stage>--<id>`.
+**`scopedPhysicalName` makes a fixed name on a class without `physicalName`.** `scopedPhysicalName(name, rule)` from `@notation/resource` returns `<app>--<stage>--<name>`, shortened with a hash when it is longer than `rule.maxLength`. It is the same on every deploy. A construct puts the result in config. Two declarations with the same `name` get the same result, so the construct must check that no two declarations give the same name. A fixed name can also belong to a resource that someone else made, which deploy then [takes over](../internals/reconciler.md#the-takeover-rule). No class in `@notation/aws` or `@notation/cloudflare` is named this way: deploy generates every name.
 
 ### Value types
 
@@ -521,7 +521,6 @@ host.contribute({
       workerId: "web",
       scriptName: binder.script["~state"].outputRef("ScriptName"),
       nameBody: "shop--prod--web",
-      fixedName: "shop--prod--web",
     },
   ],
 });

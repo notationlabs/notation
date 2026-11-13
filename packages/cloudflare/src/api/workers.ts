@@ -1,5 +1,4 @@
 import * as v from "valibot";
-import { WORKER_NAME_MAX_LENGTH } from "../id";
 import { CloudflareApiError, cloudflare } from "./client";
 
 /** Cloudflare's error code for a Worker that doesn't exist. */
@@ -287,19 +286,14 @@ export async function getScriptSubdomain(
 }
 
 // Without `previews_enabled`, enabling also turns on preview URLs, even for a
-// Worker that had them off. Cloudflare then refuses a name of more than 54
-// characters (error 100315). A fixed name from before names were generated can
-// be up to 63 characters, so for such a name preview URLs are turned off.
+// Worker that had them off.
 export async function setScriptSubdomain(
   account: string,
   scriptName: string,
   enabled: boolean,
 ): Promise<void> {
-  const tooLongForPreviews =
-    enabled && scriptName.length > WORKER_NAME_MAX_LENGTH;
   await cloudflare("POST", `${scriptPath(account, scriptName)}/subdomain`, {
     enabled,
-    ...(tooLongForPreviews && { previews_enabled: false }),
   });
 }
 

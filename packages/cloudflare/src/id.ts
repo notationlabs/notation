@@ -2,7 +2,6 @@ import {
   GENERATED_INSTANCE_LENGTH,
   generatedNameBody,
   getActiveResourceCollection,
-  scopedPhysicalName,
   type PhysicalNameRule,
 } from "@notation/resource";
 
@@ -13,9 +12,6 @@ import {
 // 100315), and refuses workers.dev for a name of more than 63 characters
 // (error 100132).
 export const WORKER_NAME_MAX_LENGTH = 54;
-
-// The longest name that a Worker got before deploy generated its name.
-const FIXED_WORKER_NAME_MAX_LENGTH = 63;
 
 const WORKER_ID_MAX_LENGTH = 63;
 
@@ -69,17 +65,11 @@ export function assertNamespaceId(
 
 /**
  * The names that the Worker with the id `id` can have in the active
- * collection's scope, other than through its state record:
- * - `nameBody`: its generated name without the `-<instance>` at the end,
- *   cut as deploy cuts it to fit the limit.
- * - `fixedName`: the name that the Worker got before deploy generated its
- *   name, `<app>--<stage>--<id>`, shortened with a hash past 63 characters.
- * Without a scope, `nameBody` is the id.
+ * collection's scope, other than through its state record. `nameBody` is its
+ * generated name without the `-<instance>` at the end, cut as deploy cuts it
+ * to fit the limit. Without a scope, `nameBody` is the id.
  */
-export function workerNames(id: string): {
-  nameBody: string;
-  fixedName: string;
-} {
+export function workerNames(id: string): { nameBody: string } {
   // Deploy generates names in `nameScope` (workflow.deploy.ts), which must
   // be the collection's scope, or `nameBody` describes the wrong name.
   const scope = getActiveResourceCollection()?.scope;
@@ -91,21 +81,17 @@ export function workerNames(id: string): {
         GENERATED_INSTANCE_LENGTH + 1,
       )
     : id;
-  const fixedName = scopedPhysicalName(id, {
-    maxLength: FIXED_WORKER_NAME_MAX_LENGTH,
-  });
-  return { nameBody, fixedName };
+  return { nameBody };
 }
 
 /**
- * Whether `scriptName` is a name that `workerNames` describes: the fixed
- * name, or the name body followed by `-` and 8 hex characters.
+ * Whether `scriptName` is a name that `workerNames` describes: the name body
+ * followed by `-` and 8 hex characters.
  */
 export function matchesWorkerNames(
   scriptName: string,
-  names: { nameBody: string; fixedName: string },
+  names: { nameBody: string },
 ): boolean {
-  if (scriptName === names.fixedName) return true;
   const prefix = `${names.nameBody}-`;
   return (
     scriptName.startsWith(prefix) &&

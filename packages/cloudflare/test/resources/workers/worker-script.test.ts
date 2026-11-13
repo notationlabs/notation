@@ -295,7 +295,6 @@ describe("WorkerScript", () => {
       workerId: "web",
       scriptName: "app--dev--web",
       nameBody: "app--dev--web",
-      fixedName: "app--dev--web",
     };
     const arriving = {
       ...params,
@@ -475,34 +474,25 @@ describe("WorkerScript", () => {
         namespaceId: "rooms",
         workerId: "web",
         nameBody: "app--dev--web",
-        fixedName: "app--dev--web-legacy",
       };
       const lost = {
         ...arriving,
         DurableObjectTransferSources: [lostWeb],
       };
 
-      it.each([
-        ["a generated name", "app--dev--web-1a2b3c4d"],
-        [
-          "its fixed name from before names were generated",
-          "app--dev--web-legacy",
-        ],
-      ])(
-        "fails before any upload when a Worker with %s hosts the class, and names it",
-        async (_, found) => {
-          mockFetch(
-            respondWith([{ script: found, class: "Room", use_sqlite: true }]),
-          );
+      it("fails before any upload when a Worker with a generated name hosts the class, and names it", async () => {
+        const found = "app--dev--web-1a2b3c4d";
+        mockFetch(
+          respondWith([{ script: found, class: "Room", use_sqlite: true }]),
+        );
 
-          await expect(
-            script.update!(key, {} as any, lost, params),
-          ).rejects.toThrow(
-            `The Durable Object namespace "rooms" is new to the Worker app--dev--api. The Worker "web" binds it and has no state record, and the Worker ${found} in the Cloudflare account hosts a namespace with its class Room.`,
-          );
-          expect(calls.some(({ method }) => method === "PUT")).toBe(false);
-        },
-      );
+        await expect(
+          script.update!(key, {} as any, lost, params),
+        ).rejects.toThrow(
+          `The Durable Object namespace "rooms" is new to the Worker app--dev--api. The Worker "web" binds it and has no state record, and the Worker ${found} in the Cloudflare account hosts a namespace with its class Room.`,
+        );
+        expect(calls.some(({ method }) => method === "PUT")).toBe(false);
+      });
 
       it("fails a create too", async () => {
         mockFetch((call) =>
@@ -566,7 +556,6 @@ describe("WorkerScript", () => {
                 workerId: "web-2",
                 scriptName: "app--dev--web-5e6f7a8b",
                 nameBody: "app--dev--web-2",
-                fixedName: "app--dev--web-2",
               },
             ],
           },
@@ -973,7 +962,6 @@ describe("rejectChange", () => {
             workerId: "web",
             scriptName: "app--dev--web",
             nameBody: "app--dev--web",
-            fixedName: "app--dev--web",
           },
         ],
       };
@@ -1136,7 +1124,6 @@ describe("rejectChange", () => {
               workerId: "web",
               scriptName: "app--dev--web",
               nameBody: "app--dev--web",
-              fixedName: "app--dev--web",
             },
           ],
         }),

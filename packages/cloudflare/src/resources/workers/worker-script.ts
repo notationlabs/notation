@@ -62,8 +62,6 @@ const transferSourceSchema = v.object({
   scriptName: v.optional(v.string()),
   /** That Worker's generated name without its instance. */
   nameBody: v.string(),
-  /** The name that Worker got before deploy generated its name. */
-  fixedName: v.string(),
 });
 
 /** A Worker that binds a namespace that this Worker hosts. */

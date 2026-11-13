@@ -322,14 +322,12 @@ describe("$worker", () => {
         workerId: "reports",
         scriptName: undefined,
         nameBody: "shop--dev--reports",
-        fixedName: "shop--dev--reports",
       },
       {
         namespaceId: "counters",
         workerId: "web",
         scriptName: nameOf("web"),
         nameBody: "shop--dev--web",
-        fixedName: "shop--dev--web",
       },
     ]);
   });
@@ -728,7 +726,6 @@ describe("$worker", () => {
     expect(generated).not.toContain(id);
     expect(names).toEqual({
       nameBody: generated.slice(0, -9),
-      fixedName: `shop--dev--${id}`,
     });
     expect(matchesWorkerNames(generated, names!)).toBe(true);
   });
@@ -844,7 +841,6 @@ describe("plan", () => {
           namespaceId: "counters",
           workerId: "web",
           nameBody: "shop--dev--web",
-          fixedName: "shop--dev--web",
         },
       ],
     });

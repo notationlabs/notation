@@ -1,13 +1,5 @@
 import { expect, it } from "vitest";
-import { WorkerSubdomain } from "src/resources/workers/worker-subdomain";
-import {
-  accountId,
-  api,
-  describeE2e,
-  poll,
-  useProject,
-  versionIds,
-} from "../../e2e";
+import { api, describeE2e, poll, useProject, versionIds } from "../../e2e";
 
 // Long enough that deploy cuts the generated name to the 54 character limit.
 const longId = "subdomainworkerwithanidlongerthanthenamelimit";
@@ -59,49 +51,5 @@ describeE2e("WorkerSubdomain", () => {
       `/workers/scripts/${names.hidden}/subdomain`,
     );
     expect(state.result).toMatchObject({ enabled: false });
-  });
-
-  // Deploy gives a Worker a generated name of at most 54 characters. A name
-  // of 55 to 63 characters is a fixed name that an earlier version gave the
-  // Worker, which deploy keeps from its state record. A deploy can't create
-  // one, so this test uploads the Worker through the API and enables
-  // workers.dev with the resource.
-  it("serves a Worker with a fixed name of 63 characters on workers.dev, with preview URLs off", async () => {
-    const name = `${project.scope}fixed-`.padEnd(63, "a");
-    const form = new FormData();
-    form.set(
-      "metadata",
-      JSON.stringify({
-        main_module: "index.mjs",
-        compatibility_date: "2026-10-12",
-      }),
-    );
-    form.set(
-      "index.mjs",
-      new File(
-        [`export default { fetch() { return new Response("fixed"); } };`],
-        "index.mjs",
-        { type: "application/javascript+module" },
-      ),
-    );
-    expect((await api("PUT", `/workers/scripts/${name}`, form)).errors).toEqual(
-      [],
-    );
-
-    const subdomain = new WorkerSubdomain("worker:fixed:subdomain", {
-      dependencies: {} as any,
-    });
-    const key = { AccountId: accountId, ScriptName: name };
-    await subdomain.create(key);
-
-    const state = await api("GET", `/workers/scripts/${name}/subdomain`);
-    expect(state.result).toEqual({ enabled: true, previews_enabled: false });
-    await expect(subdomain.read!(key)).resolves.toMatchObject({
-      Url: project.url(name),
-    });
-    expect(await poll(`${project.url(name)}/`)).toMatchObject({
-      ok: true,
-      body: "fixed",
-    });
   });
 });

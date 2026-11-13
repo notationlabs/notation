@@ -36,17 +36,6 @@ describe("WorkerSubdomain", () => {
     });
   });
 
-  it("turns preview URLs off for a fixed name longer than 54 characters", async () => {
-    mockFetch(() => ok({ enabled: true, previews_enabled: false }));
-    const ScriptName = "app--dev--".padEnd(63, "a");
-
-    await subdomain.create({ AccountId: "acc", ScriptName });
-    expect(JSON.parse(calls[0]!.body as string)).toEqual({
-      enabled: true,
-      previews_enabled: false,
-    });
-  });
-
   it("explains that the account has no workers.dev subdomain", async () => {
     mockFetch((call) =>
       call.url.endsWith("/workers/subdomain")
