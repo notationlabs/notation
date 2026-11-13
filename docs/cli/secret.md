@@ -30,6 +30,8 @@ Run `set` before a deploy without a terminal, such as in CI, for each secret tha
 
 `delete` deletes a secret from its store, with the secret's own delete. It succeeds if the secret is already gone. It asks for confirmation on a terminal, and needs `--yes` without one.
 
+The next `notation deploy` finds the secret missing and creates it again, from its source or from the prompt. `notation watch` deploys without drift detection, so it doesn't create the secret again. Until `notation deploy` runs, an upload of a Worker that binds the secret fails with Cloudflare error 10182.
+
 ## Errors
 
 Both commands fail when:

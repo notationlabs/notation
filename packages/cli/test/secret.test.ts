@@ -92,7 +92,7 @@ describe("secretDelete", () => {
     });
 
     expect(logger.info).toHaveBeenCalledWith(
-      "Deleted the secret admin for stage prod.",
+      "Deleted the secret admin for stage prod. The next `notation deploy` creates it again. `notation watch` doesn't, and a Worker that binds it fails to upload until it exists.",
     );
   });
 });

@@ -72,7 +72,7 @@ export async function secretDelete(
   });
   logger.info(
     deleted
-      ? `Deleted the secret ${id} for stage ${deployment.stage}.`
+      ? `Deleted the secret ${id} for stage ${deployment.stage}. The next \`notation deploy\` creates it again. \`notation watch\` doesn't, and a Worker that binds it fails to upload until it exists.`
       : `Kept the secret ${id}.`,
   );
 }
