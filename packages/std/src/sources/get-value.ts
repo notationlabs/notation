@@ -6,7 +6,8 @@ import { Redacted, recordSecretValue, secretContext } from "@notation/core";
  * takes its value from the prompt, and fails when there is no one to ask.
  * The prompt is asked once per run for each secret. An empty value fails.
  *
- * The CLI removes every value that this returns from what it prints.
+ * Every value that this returns is removed from the errors that the
+ * reconciler records and that the CLI prints.
  */
 export async function getValue(id: string): Promise<Redacted<string>> {
   const context = secretContext();
