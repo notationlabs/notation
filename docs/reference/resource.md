@@ -327,7 +327,7 @@ The outcome of a create attempt is unknown when the process stops after `create`
 2. A resource with `read`, whose key is made of params, is read by the key it would have. A read that throws `ResourceOperationPendingError` finds the resource, because a pending read means that the resource exists. A read that throws a throttled `ResourceOperationPendingError` doesn't.
 3. Any other resource cannot be found. The reconciler calls `create` again after a stopped process, and fails the deployment on a `ResourceCreationUnknownError`.
 
-When a lookup finds the resource, the reconciler takes it over, as described in [Resources that already exist](#resources-that-already-exist). A resource with no `read` is recorded as created instead. When the lookup throws, the reconciler looks again after one second. When the outcome is still unknown after 10 attempts, or after `maxOperationAttempts` when it is lower, the deployment fails with a `WorkflowEffectError` with code `EFFECT_OUTCOME_UNKNOWN`.
+When a lookup finds the resource, the reconciler takes it over, as described in [Resources that already exist](#resources-that-already-exist). When the lookup throws, the reconciler looks again after one second. When the outcome is still unknown after 10 attempts, or after `maxOperationAttempts` when it is lower, the deployment fails with a `WorkflowEffectError` with code `EFFECT_OUTCOME_UNKNOWN`.
 
 A lookup must not report a resource as absent while a create for it can still finish. A provider whose reads are eventually consistent can break this rule.
 
@@ -358,7 +358,7 @@ See [Recoverable creates](../internals/reconciler.md#recoverable-creates) for th
 
 Define `find` when the provider assigns the resource's key, or part of it. The reconciler cannot compute such a key from params, so it calls `find(params)` to get it:
 
-- before `create`, when an earlier deploy started the create and did not finish it
+- before every `create`, to take over a resource that exists instead of making a second one
 - to look up a create with an unknown outcome
 - after `create` throws `ResourceAlreadyExistsError`
 - to delete the resource of a `creating` record
@@ -370,6 +370,8 @@ Define `find` when the provider assigns the resource's key, or part of it. The r
 | One     | Return what `create` would have returned: the computed key.                                 |
 | None    | Throw `ResourceNotFoundError`.                                                              |
 | Several | Throw another error that names the matches. The reconciler never takes over one of several. |
+
+`find` should not match a resource that the provider reports as being deleted. The reconciler calls `find` before the create of a replacement too, just after the delete. If `find` returns the deleted resource there, the replace fails.
 
 The third row applies when the provider does not keep the attribute unique. API Gateway allows two APIs with the same name, so `Api`'s `find` reads every page of `GetApis` before it returns:
 
