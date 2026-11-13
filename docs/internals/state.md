@@ -16,6 +16,10 @@ Each record holds the resource's `id`, `type`, `provider`, `group`, `config`, `p
 
 `lastOperation` is `create`, `update` or `creating`. Deploy writes a `creating` record before it calls a resource's `create`, and replaces it with a `create` record when the create is done. A `creating` record says that a deploy tried to create the resource, and may or may not have made it. Its `output` holds the key fields that params supply. Its `params` hold each physical name that deploy generated, so the next deploy uses the same name. See [Recoverable creates](./reconciler.md#recoverable-creates).
 
+A record can have a `retired` list: the instances of the resource that a create-first replace left, oldest first, each waiting for deploy to delete it. Each entry holds the `config`, `params`, `output` and `dependsOn` of the old resource, and `retiredAt`, the time when the replace started. The instance has the type and provider of its record. A record with no retired instances has no `retired` field. Every write to the record keeps the list, and a record that lists retired instances is not removed. See [Create-first replacement](./reconciler.md#create-first-replacement).
+
+A create-first replace writes the replacement's records to the store of the old resource, so the store keeps its `instanceId`. A delete-first replace removes the store, and its create makes a new one with a new `instanceId`. So the `instanceId` does not show whether a resource was replaced.
+
 `DurableStateBackend` is read-only: state writes happen inside the workflow, through the store handle, so each write is stamped with the step that made it and is not repeated on replay.
 
 The workflow serializes deploy and destroy through one `notation/deployment-hold` store per deployment.

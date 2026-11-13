@@ -16,6 +16,7 @@ The reconciler expresses deployment and destruction as `@notation/durable` async
 | In state, provider state differs from stored state                                       | **drift-update**   |
 | In state, provider state differs in an immutable or key param                            | **drift-replace**  |
 | In state, not in graph                                                                   | **delete-orphan**  |
+| A retired instance in a state record                                                     | **delete-retired** |
 | In state with another type                                                               | plan fails         |
 
 The change decision comes from the resource schema, through `diffParams` in `@notation/resource`. It compares comparable params (`param` items that are not `volatile` or `hidden`) field by field. A changed field forces replacement when its schema item is `immutable`, `primaryKey` or `secondaryKey`, or when the resource has no `update` operation. A change anywhere inside such a field replaces the whole resource. If the changed field's schema item has `rejectReplace`, and the new value is known, plan and deploy fail with its message instead.
@@ -24,15 +25,19 @@ After the diff, `decideAction` calls the resource's [`rejectChange`](../referenc
 
 An `undefined` param counts as absent, so an optional param left unset never looks changed. Drift compares only fields that both the desired params and the read output have: a read need not return every param, and it reports defaults for params left unset, and neither is drift.
 
-Replacement deletes the resource and then creates it again. A resource whose key does not change with the replace, such as a `LambdaEventSourceMapping`, whose key is its function and event source, keeps the key, so a new resource created beside the old one would collide with it. Deploy also deletes first for a class whose name it generates, although the replacement then gets a new name; see [Generated names](#generated-names). Each half is durable: the delete removes the state record, and the create writes a new one with a new instance ID. A crash anywhere in between resumes where it stopped. If the create fails, the old resource and its record are gone, and the next deploy plans **create**. There is one exception. When a resource already exists and deploy refuses it or cannot take it over, deploy writes the record of the replaced resource back, and the next deploy plans **replace** again. See [Guard 1](#guard-1-a-replacement-does-not-take-over-a-resource-with-the-replaced-key) and [The record after a failed create](#the-record-after-a-failed-create).
+A replace runs in one of two orders, which `replaceOrder` in `packages/reconciler/src/physical-names.ts` picks from the class. A class with a `physicalName` param is replaced create-first: deploy creates the replacement under a new name beside the old resource, and deletes the old resource at the end of the deploy. See [Create-first replacement](#create-first-replacement). Every other class is replaced delete-first.
 
-The dependents of a replaced resource stay in place. When deploy reaches each of them, it decides again with the outputs of the new resource. A dependent whose params change is updated, or replaced if a changed param forces replacement. For example, replacing a Lambda role updates the function's `Role`, and does not delete the function or its log group. A dependent whose type blocks the delete of the replaced resource is deleted first instead. See [Dependents of a replaced resource](#dependents-of-a-replaced-resource).
+A delete-first replace deletes the resource and then creates it again. A resource whose key does not change with the replace, such as a `LambdaEventSourceMapping`, whose key is its function and event source, keeps the key, so a new resource created beside the old one would collide with it. Each half is durable: the delete removes the state record, and the create writes a new one with a new instance ID. A crash anywhere in between resumes where it stopped. If the create fails, the old resource and its record are gone, and the next deploy plans **create**. There is one exception. When a resource already exists and deploy refuses it or cannot take it over, deploy writes the record of the replaced resource back, and the next deploy plans **replace** again. See [Guard 1](#guard-1-a-replacement-does-not-take-over-a-resource-with-the-replaced-key) and [The record after a failed create](#the-record-after-a-failed-create).
+
+The dependents of a replaced resource stay in place. When deploy reaches each of them, it decides again with the outputs of the new resource. A dependent whose params change is updated, or replaced if a changed param forces replacement. For example, replacing a Lambda role updates the function's `Role`, and does not delete the function or its log group. In a delete-first replace, a dependent whose type blocks the delete of the replaced resource is deleted first instead. See [Dependents of a replaced resource](#dependents-of-a-replaced-resource).
 
 An unknown immutable or key param plans **replace** with the field marked "unknown, may force replacement". The planner treats a replaced resource's output as unknown, so its dependents plan against unknown params, and can show **replace** in turn. Deploy decides again for each resource once its dependencies have converged, with real params, so it replaces only what really changed. [Unknown values](#unknown-values) explains when plan marks a param unknown.
 
 A resource can't change type under the same ID, as its class would read, update or delete the resource of another class. When a state record's type differs from the type of the resource with its ID, plan and deploy throw `ResourceTypeChangedError` before any change. Destroy deletes such a record through the class of the record's type instead, so destroy does not need code to agree with state. When that class is not registered, destroy keeps the record and every resource it depends on, and emits `reconciler.orphan-deletion.skipped`. A provider that changes the type of a resource gives it a new ID instead. The new resource is then created in the dependency walk, and the old record is deleted in the orphan sweep after the walk, so the new resource exists before the old one is deleted. The old type's class must stay registered for the sweep to delete it.
 
 ### Dependents of a replaced resource
+
+This section applies to a delete-first replace. A create-first replace deletes no dependent in advance; see [Create-first replacement](#create-first-replacement). In `@notation/aws/resources`, `EventBridgeRule` lists `EventBus`, but a bus is replaced create-first. So the steps below run for no class in Notation's provider packages today. The examples show what they would do if a bus were replaced delete-first.
 
 A provider can refuse to delete a resource while other resources use it. For example, AWS does not delete an EventBridge bus that has rules. The type of the dependent lists the types it blocks the delete of, in its definition:
 
@@ -86,6 +91,53 @@ Plan finds the same dependents with the same code. It shows each dependent in co
 
 When the replaced resource depends on a field that is unknown at plan, its own entry says "unknown, may force replacement". Its dependents are shown as **replace** in the same way, and `notation plan` prints `deleted if eventbridge-bus:orders is replaced`, because deploy deletes them only if it replaces the resource.
 
+### Create-first replacement
+
+A class with a `physicalName` param is replaced create-first. Its replacement gets a new generated name, so it can exist beside the resource that it replaces. In `@notation/aws/resources` these are the Lambda function, the function's IAM role, the SQS queue, the EventBridge rule and bus, and the API Gateway API. In `@notation/cloudflare` it is the Worker. A drift-replace of such a class creates first too. Deploy runs these steps:
+
+1. Deploy generates the new names and writes the `creating` record of the replacement. In the same write, it adds the old resource to the record's `retired` list. The resource is now retired.
+2. Deploy creates the replacement and writes its `create` record. The resource ID now refers to the replacement.
+3. Deploy carries on through the graph. It decides each dependent again with the outputs of the replacement, and updates or replaces it.
+4. After the last resource in the graph, the sweep deletes each retired instance, together with the orphans, in reverse order of their edges. Each delete removes the instance from its record's list.
+
+Each entry of the `retired` list holds the `config`, `params`, `output` and `dependsOn` of the old resource, and `retiredAt`, the time when the replace started. A record lists several instances when a second replace runs before the first old resource is deleted. See [State](./state.md). Three rules keep the list correct:
+
+- Every write to the record keeps the list.
+- A record that lists retired instances is not removed. Deploy and destroy delete a record's retired instances just before the record.
+- When a create fails with a known outcome, deploy writes back the record of the old resource, with its list as it was before the replace.
+
+No dependent is deleted in advance. A dependent whose type blocks the delete of the replaced resource has a param that holds an output of the replacement, so deploy updates or replaces it when it reaches it. For example, when a bus is replaced, each rule on it gets a new `EventBusName`, which is immutable. The rule is replaced create-first too, and the sweep deletes the old rule before the old bus. A dependent with no `physicalName` param, such as a Lambda permission, is replaced delete-first when deploy reaches it. By then its dependency's replacement exists.
+
+The old resource and its replacement have the same ID, so an edge in state can't say which of the two a dependent uses. The sweep decides by whether the dependent is in code:
+
+- A dependent in code has been decided again in step 3, so the sweep treats it as using the replacement. Its edges do not order the sweep.
+- A dependent that is no longer in code was not decided again, so it uses the old resource. The sweep deletes it before the retired instance.
+
+The sweep reaches a record in code only to delete its retired instances, under the step keys `notation:retired:<id>`. The delete of a record's instance `<n>`, oldest first, runs in the scope `retired:<n>`, and its state write has the key `state:persist:<id>:retired:<n>`. Each delete event has `reason: "retired"`.
+
+When the provider refuses to delete a retired instance, the deploy fails. The instance stays retired, and the error names the resources in code that depend on the resource. The next deploy deletes the instance in its sweep, whether or not it replaces anything. It does not delete it at its start, because a dependent that a stopped deploy did not reach still uses the old resource.
+
+A deploy that stops after the create leaves the old resource retired, and the next deploy deletes it at its end. When the create has an unknown outcome, the `creating` record keeps the old resource in its list, and the next deploy resolves the create as described in [Recoverable creates](#recoverable-creates).
+
+A dry run emits a **dry-run** delete with `reason: "retired"` just after the create of the replacement, and changes nothing.
+
+A class that loses its `physicalName` param is replaced delete-first. Deploy then deletes the retired instances that the record lists before it deletes the resource.
+
+Plan sets `replaceOrder` on each node with the decision **replace** or **drift-replace**. A dependent that plan shows as **replace** only because a replaced dependency's delete needs it deleted first has `replaceOrder: "delete-first"`. For each retired instance in state, plan adds a node with the decision **delete-retired**, the ID of its record, the instance's `params` and `dependsOn`, and `retiredAt`. `notation plan` prints the order after a replace, and each retired instance as a delete:
+
+```
++/- replace aws/lambda/LambdaIamRole lambda:orders:role (create, then delete)
+- delete-retired aws/lambda/LambdaIamRole lambda:orders:role
+    the instance that a replace retired at 2026-11-13T09:12:44.120Z, deleted at the end of the deploy
+```
+
+Limits:
+
+- Two instances of a resource exist for part of a deploy, so a replace can fail on an account quota that it passed before.
+- A resource that holds data, such as an SQS queue, still loses its data when it is replaced. The old queue is deleted at the end of the deploy, not at the start.
+- A dependent in code that holds its link to the old resource in a `hidden` or `volatile` param, or in no param, is not updated. The provider then refuses the delete of the retired instance, and every deploy fails until the dependent changes. No class has such a dependent today.
+- A class can have a unique value besides its name. If the replacement collides on it, the create fails. No class with a `physicalName` param has such a value today, so a class can't turn create-first off.
+
 ### Recoverable creates
 
 A deploy can stop after the provider made a resource and before deploy recorded it. The next deploy then finds the resource in the provider, and takes it over instead of failing.
@@ -118,7 +170,7 @@ When the name is longer than the rule's `maxLength`, `<app>--<stage>--<base>` is
 
 From here on the name is one of the resource's params. Deploy validates it, writes it in the `creating` record, and passes it to `create`. **The name is in state before the provider is called.** This matters because it means that a deploy that stops during the create leaves the name behind: the next deploy takes the name from the `creating` record in step 2, and looks for the resource under the same name.
 
-A replace generates the names again, for every `physicalName` param, in the step `physical-names` of the scope `replace:create`. So a replacement never gets the name of the resource that it replaces. The replace still deletes first.
+A replace generates the names again, for every `physicalName` param, in the step `physical-names` of the scope `replace:create`. So a replacement never gets the name of the resource that it replaces, and it can exist beside it. A replace of such a class creates first; see [Create-first replacement](#create-first-replacement).
 
 Plan fills in the same params without generating anything. It throws in the same way when the params supply the param. It takes the name from the state record when the record has one, and marks the name unknown otherwise. For a resource that plan decides to replace, plan marks the name unknown in the node's `params`. A ref to the resource's own name gets the same value as the name.
 
@@ -163,7 +215,7 @@ Step 3 runs in the scope `taken-over`, and its state writes add `:after-takeover
 
 #### Guard 1: a replacement does not take over a resource with the replaced key
 
-A replace deletes the resource and creates it again. The replacement has the same key when its key does not change with the replace: config provides the key, or the key holds no name of the resource's own, such as the function and event source of a `LambdaEventSourceMapping`. If the provider still holds the deleted resource when the create runs, a takeover would record the old resource as its own replacement.
+A delete-first replace deletes the resource and creates it again. The replacement has the same key when its key does not change with the replace: config provides the key, or the key holds no name of the resource's own, such as the function and event source of a `LambdaEventSourceMapping`. If the provider still holds the deleted resource when the create runs, a takeover would record the old resource as its own replacement.
 
 So the create of a replacement compares the key of an existing resource with the key in the record of the replaced resource. When the keys are equal, deploy refuses the resource: it writes the record of the replaced resource back, and fails. The next deploy deletes the resource and creates the replacement again.
 
@@ -173,7 +225,7 @@ The rule is the same on all three ways to an existing resource in that create:
 - `create` throws `ResourceAlreadyExistsError`. The create made nothing, so the existing resource is the replaced one.
 - The lookup of a create with an unknown outcome finds the resource. The resource is the replaced one or the replacement, and deploy cannot tell which. If it is the replacement, the next deploy replaces it once more.
 
-When the replacement has another key than the replaced resource, for example after a change of name, the existing resource is not the replaced one, and deploy takes it over as usual. A replacement with a generated name has a new name, so the guard does not fire for a resource that is keyed or found by that name.
+When the replacement has another key than the replaced resource, for example after a change of name, the existing resource is not the replaced one, and deploy takes it over as usual. A replacement with a generated name has a new name, so the guard does not fire for a resource that is keyed or found by that name. Such a replacement is created first, and the resource that it replaces still exists.
 
 The guard applies only to the create of the replaced resource, inside the replace. It does not apply in two other cases; see [Limits](#limits):
 
@@ -199,7 +251,9 @@ After any other error, the outcome is known: the create made nothing, or the res
 - When it started from a `creating` record that an earlier deploy left, deploy writes that record back.
 - When it started from a `create` or `update` record, in a drift-recreate, deploy writes that record back. The next deploy reads the resource again.
 
-The create of a replacement starts from no record, because the delete removed it. It removes the `creating` record when `create` fails with an error of its own. It writes back the record of the replaced resource instead in these cases, so that the next deploy replaces the resource again:
+The create of a create-first replacement starts from the record of the replaced resource. After any error with a known outcome, deploy writes that record back, with the retired instances that it listed before the replace. Nothing was deleted, so the next deploy replaces the resource again. After an unknown outcome, the `creating` record stays, and still lists the replaced resource as retired.
+
+The create of a delete-first replacement starts from no record, because the delete removed it. It removes the `creating` record when `create` fails with an error of its own. It writes back the record of the replaced resource instead in these cases, so that the next deploy replaces the resource again:
 
 - Guard 1 fails the create.
 - `create` throws `ResourceAlreadyExistsError`, and deploy cannot take the existing resource over. See the cases below.
@@ -227,9 +281,9 @@ The orphan sweep and destroy handle a `creating` record like this:
 - A takeover of a class with no `read` fails, because deploy cannot compare the resource's params with config. `LambdaRolePolicyAttachment` is the only such class in `@notation/aws`, and its `create` never throws `ResourceAlreadyExistsError`. The error says how to get past it: delete the existing resource and deploy again.
 - When the `creating` record names another key than the desired one, for example after config changed a mapping's event source, deploy creates the resource under the new key. The resource that the unfinished create may have made under the old key stays in the provider, and state does not track it.
 - Deploy relies on the provider's "already exists" error, or on a check that `create` makes before its call. A provider whose reads are eventually consistent can report a resource as absent just after another create made it. `create` then makes a second resource when the provider does not keep the name unique, and a later `find` fails because two resources match.
-- A `creating` record does not say that its create was the create of a replacement. So guard 1 does not apply on the next deploy in two cases: the create of a replacement ended with an unknown outcome and left its `creating` record, or a replace stopped between its delete and its create. The next deploy plans a plain **create**, and takes over an existing resource as usual. It keeps the replaced resource as the replacement only when all of these hold: no create made the replacement, the provider reported the delete as done while the resource is still visible, and the read does not return the param that forced the replace. Deploy then records that param with its desired value, and the resource keeps the old value.
+- A `creating` record does not say that its create was the create of a replacement. So guard 1 does not apply on the next deploy in two cases: the create of a replacement ended with an unknown outcome and left its `creating` record, or a delete-first replace stopped between its delete and its create. The next deploy plans a plain **create**, and takes over an existing resource as usual. It keeps the replaced resource as the replacement only when all of these hold: no create made the replacement, the provider reported the delete as done while the resource is still visible, and the read does not return the param that forced the replace. Deploy then records that param with its desired value, and the resource keeps the old value.
 - Guard 1 does not cover a dependent that a replace deleted because it blocks the delete. Deploy creates the dependent again later in the same deploy, with a plain create. If the provider still returns the deleted dependent then, deploy takes it over, and the record then describes a resource that the provider is deleting. The record of the deleted dependent is not passed to that create, because the create runs when deploy reaches the dependent, in another part of the workflow.
-- `find` runs before every create of a class with `find`. When the provider's list returns a deleted resource for a while, a replace of such a class fails through guard 1, and the next deploy replaces the resource again.
+- `find` runs before every create of a class with `find`. When the provider's list returns a deleted resource for a while, a delete-first replace of such a class fails through guard 1, and the next deploy replaces the resource again.
 - A takeover updates or replaces the existing resource to match config. Two deployments with the same app and stage in one provider account therefore write over each other's resources, where both compute the same key. A generated name differs on each create, so this applies only to a key that holds no generated name.
 - A generated name is only in the state record. When the record of a resource with a generated name is lost, the next deploy generates a new name and creates a second resource. The first stays in the provider, and state does not track it. A deploy that stops during the create is the exception, because it leaves the `creating` record with the name. For a Cloudflare Worker that hosts a Durable Object namespace, see [Moving a namespace](../providers/cloudflare/workers.md#moving-a-namespace): deploy fails when a namespace may still be on a Worker whose record was lost.
 - The cut of a long generated name removes the base first. A name of at most 64 characters, such as a Lambda function's, has 55 characters before `-<instance>`, and `<app>--<stage>--` takes 4 more than the app and the stage. So the base is cut when the app, the stage and the base together have more than 51 characters. With an app and a stage of 32 characters each, `<app>--<stage>--` has 68 characters, so the name holds the app, a part of the stage and the instance. Such names differ only in the instance.
@@ -254,11 +308,13 @@ After the first pass, a pass announces a decision only when it is not **noop**, 
 
 When deploy fails after it created a placeholder, the placeholder has a record. The next deploy leaves it as it is in the first pass, and updates it in the second.
 
-A pass after the first must not create or replace a member that this deploy has already created. A second create would reuse the create effect IDs of the first. This happens when a param of a member that forces a replacement takes an output of another member, and that output changed when the other member was updated with its contributions. It also happens when deploy replaces a member, and deletes a member that this deploy created because it blocks the delete. Deploy fails with `ResourceCycleError` in both cases, and the error says which. In the second case, the next deploy creates the deleted member.
+A pass after the first must not create or replace a member that this deploy has already created. A second create would reuse the create effect IDs of the first. This happens when a param of a member that forces a replacement takes an output of another member, and that output changed when the other member was updated with its contributions. It also happens when deploy replaces a member delete-first, and deletes a member that this deploy created because it blocks the delete. Deploy fails with `ResourceCycleError` in both cases, and the error says which. In the second case, the next deploy creates the deleted member.
 
 ### Replacing a member of a cycle
 
-Deploy replaces a member of a cycle as it replaces any resource: it deletes the dependents that block the delete, deletes the member, and creates it again. The other members still refer to the member when it is deleted. A provider may refuse to delete a resource that another resource refers to. Cloudflare, for example, does not delete a Worker that another Worker binds, unless the delete is forced. So the provider must delete the member while a dependent in the deployment refers to it. See [Deletes of a resource that others refer to](#deletes-of-a-resource-that-others-refer-to).
+A member with a `physicalName` param is replaced create-first, as any resource of its class. No member is deleted while the cycle settles. The members that refer to it are updated with the output of the replacement later in the same pass, or in the next pass, and the sweep deletes the replaced member at the end of the deploy. Its contributions that refer to its own outputs take the outputs of the replaced resource, and the next pass updates it with its own. The provider does not have to force a delete, and the replace can't fail with `ResourceCycleError` because it deletes a member that this deploy created.
+
+The rest of this section applies to a member that is replaced delete-first. Deploy replaces it as it replaces any resource: it deletes the dependents that block the delete, deletes the member, and creates it again. The other members still refer to the member when it is deleted. A provider may refuse to delete a resource that another resource refers to. Cloudflare, for example, does not delete a Worker that another Worker binds, unless the delete is forced. So the provider must delete the member while a dependent in the deployment refers to it. See [Deletes of a resource that others refer to](#deletes-of-a-resource-that-others-refer-to).
 
 The members that refer to the replaced member are updated with the output of the new resource when deploy reaches them: later in the same pass, or in the next pass. Until then, their references point at a resource that no longer exists. The replaced member is unavailable from its delete until its cycle settles.
 
@@ -275,8 +331,6 @@ A member that depends on the replaced member is updated only when its params cha
 
 Plan plans each member that comes before a replaced member a second time, after the replaced member, so that its node shows the update with the unknown output of the replacement, not a **noop** against the output of the old resource.
 
-Deploy deletes the old resource before it creates the new one, also when the new one gets another generated name, so the two never exist side by side.
-
 ### Destroying a cycle
 
 Destroy deletes the members of a cycle in the reverse of their order in deploy. A placeholder comes first in deploy, so it is deleted last, and it still refers to the members that are deleted before it. As in a replace, the provider must delete a resource that a dependent in the deployment refers to. Destroy does not read the current code for this, so a change to the code since the last deploy does not stop it.
@@ -290,6 +344,7 @@ A type that sets `deleteTakesDependents` gets a fourth argument in `delete`: `{ 
 Deploy updates or deletes every dependent in the same run:
 
 - In a replace, each dependent is a resource in code that deploy updates when it reaches it, or an orphan that the sweep deletes.
+- In the delete of a retired instance, the dependents in code are left out, as deploy has updated them to use the replacement. The list holds the retired instances of other records that depend on the resource, each with the ID of its record and its own params. The sweep deletes them first, so the list is empty unless they depend on each other, as the retired members of a cycle do.
 - In destroy and in the orphan sweep, each dependent is deleted too.
 
 So a provider can force a delete that it would otherwise refuse, when every reference to the resource comes from one of the dependents. It must refuse when another resource refers to it, such as a resource of another deployment, as nothing repairs that reference.
@@ -359,7 +414,7 @@ A dependency whose output `deriveParams` never reads only orders the deploy, so 
 
 Each state record stores the IDs of the resources it depends on in `dependsOn`, sorted. Create, update and replace write the edges with the rest of the record. When a resource is a **noop** but its edges differ from those in state, deploy rewrites only `dependsOn`, and does not call the provider. The plan still shows the resource as a noop. A dry run does not rewrite edges.
 
-The sweep deletes orphans in reverse order of these edges, as deploy and destroy do for resources in the graph. A replacement deletes the dependents that block its delete in the same order; see [Dependents of a replaced resource](#dependents-of-a-replaced-resource). An edge to a resource that is not an orphan is ignored, including an edge to a resource that is no longer in state. A record written before edges were recorded has no `dependsOn`, and keeps its storage order among the orphans it has no edges to. The next deploy that reaches the resource writes its edges.
+The sweep deletes orphans in reverse order of these edges, as deploy and destroy do for resources in the graph. It deletes the [retired instances](#create-first-replacement) in the same order, with the orphans. A delete-first replacement deletes the dependents that block its delete in the same order; see [Dependents of a replaced resource](#dependents-of-a-replaced-resource). An edge to a resource that is not an orphan is ignored, including an edge to a resource that is no longer in state. A record written before edges were recorded has no `dependsOn`, and keeps its storage order among the orphans it has no edges to. The next deploy that reaches the resource writes its edges.
 
 Orphans that form a cycle cannot be ordered. They, and the orphans that depend on them, are deleted first, in storage order. A provider that refuses to delete a resource that another orphan refers to fails the deploy, unless its type forces the delete; see [Deletes of a resource that others refer to](#deletes-of-a-resource-that-others-refer-to). An orphan in this group with no registered class does not keep the orphans it depends on in the group, as the sweep can delete them before it reaches the orphan.
 
@@ -371,7 +426,7 @@ Dry-run deploy performs decisions and emits lifecycle events without provider mu
 
 ## Destroy flow
 
-`destroy` is a first-class durable operation. It takes the same deployment hold as deploy, deletes registered persisted orphans, deletes desired resources in reverse dependency order, and conditionally removes each resource store only after the provider delete succeeds or reports that the resource is already absent. Orphans go first, because an orphan can depend on a desired resource, but no desired resource depends on an orphan.
+`destroy` is a first-class durable operation. It takes the same deployment hold as deploy, deletes registered persisted orphans and the retired instances of every record, deletes desired resources in reverse dependency order, and conditionally removes each resource store only after the provider delete succeeds or reports that the resource is already absent. Orphans go first, because an orphan can depend on a desired resource, but no desired resource depends on an orphan.
 
 ## Waiting and replay
 
@@ -402,4 +457,4 @@ The durable workflows emit these events:
 | `reconciler.orphan-deletion.skipped` | When no registered class can delete an orphan; names the orphans kept with it |
 | `reconciler.provider.load-failed`    | When a provider package that state names can't be resolved or imported        |
 
-Lifecycle events cover create, read, update, and delete with `start`, `success`, `error`, `skip`, or `dry-run` status. The delete of a dependent that blocks the delete of a replaced resource has `reason: "dependency-replaced"`, and names the replaced resource in `replacedDependency`.
+Lifecycle events cover create, read, update, and delete with `start`, `success`, `error`, `skip`, or `dry-run` status. The delete of a dependent that blocks the delete of a replaced resource has `reason: "dependency-replaced"`, and names the replaced resource in `replacedDependency`. The delete of a retired instance has `reason: "retired"`, and the resource ID of its record. The decision event of a replace has `replaceOrder`, `create-first` or `delete-first`.

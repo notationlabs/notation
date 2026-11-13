@@ -42,7 +42,7 @@ type QueueConfig = {
 
 You can't set the queue's AWS name. See [AWS names](../../manual/project-config.md#aws-names).
 
-`fifo: true` makes a FIFO queue. The AWS name of a FIFO queue ends in `.fifo`, as SQS requires. The generated name ends in it, such as `my-app--prod--ledger-1a2b3c4d.fifo`. `fifo` can't change after the queue is created, so changing it replaces the queue, and the replacement gets a name with the right ending.
+`fifo: true` makes a FIFO queue. The AWS name of a FIFO queue ends in `.fifo`, as SQS requires. The generated name ends in it, such as `my-app--prod--ledger-1a2b3c4d.fifo`. `fifo` can't change after the queue is created, so changing it replaces the queue, and the replacement gets a name with the right ending. Deploy creates the new queue first, and deletes the old queue and its messages at the end of the deploy. The messages are not moved to the new queue.
 
 There is one case where the ending is wrong. If the create of a queue ends with an unknown outcome, state keeps the generated name for the next deploy. If you turn `fifo` on before that deploy, the name in state has no `.fifo`, and each deploy fails until you turn `fifo` off again. Turn `fifo` on after a deploy has created the queue.
 
