@@ -285,8 +285,9 @@ export async function getScriptSubdomain(
   }
 }
 
-// `previews_enabled` is omitted, so the preview URL setting from the
-// dashboard is kept.
+// Without `previews_enabled`, enabling also turns on preview URLs, even for a
+// Worker that had them off. Cloudflare then refuses a name of more than 54
+// characters, the limit in `workerNameRule`.
 export async function setScriptSubdomain(
   account: string,
   scriptName: string,

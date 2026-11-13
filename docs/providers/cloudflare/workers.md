@@ -43,7 +43,7 @@ The declaration adds the Worker even when nothing imports it.
 
 Deploy generates a Worker's name when it creates the Worker: `<app>--<stage>--<id>-<instance>`, where the instance is 8 random hex characters. A Worker `orders` in the `prod` stage of the `shop` app is named, for example, `shop--prod--orders-3f9a1c2e`. The name can't be set in config.
 
-- **The longest name is 54 characters.** A Worker's name is the first label of its workers.dev URL, and a DNS label holds 63 characters. A preview URL puts a version prefix of 8 characters and a hyphen in the same label. When the name would be longer, the part before the instance is cut short.
+- **The longest name is 54 characters.** A Worker's name is the first label of its workers.dev URL, and a DNS label holds 63 characters. A preview URL puts a version prefix of 8 characters and a hyphen in the same label. Cloudflare refuses to serve a Worker with a longer name on workers.dev while its preview URLs are on, and turning on workers.dev turns them on. When the name would be longer, the part before the instance is cut short.
 - **The name is not known before the first deploy.** Plan shows the name of a Worker that deploy creates as unknown, and so its workers.dev URL. Anything outside Notation that needs the URL must read it after the first deploy.
 - **The name does not change after that.** Deploy keeps the name in the Worker's state record, and uses it on each later deploy. Only a replace would change it, and the only change that replaces a Worker, a change of the account, fails at plan.
 - **A Worker that an earlier version deployed keeps its name**, `<app>--<stage>--<id>` or `<app>--<stage>--<name>`, as long as its state record exists.
