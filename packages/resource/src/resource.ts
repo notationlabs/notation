@@ -108,7 +108,8 @@ export type ConfigParams<
   Partial<
     Pick<
       T["params"],
-      Exclude<keyof T["collected"], Omitted> & keyof T["params"]
+      Exclude<keyof T["collected"], Omitted | keyof T["named"]> &
+        keyof T["params"]
     >
   >;
 
