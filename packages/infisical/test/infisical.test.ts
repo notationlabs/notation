@@ -190,6 +190,28 @@ describe("infisical", () => {
     );
   });
 
+  it("keeps the path prefix of a site URL", async () => {
+    vi.stubEnv("INFISICAL_UNIVERSAL_AUTH_CLIENT_ID", "client");
+    vi.stubEnv("INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET", "secret");
+    mockFetch((call) =>
+      call.method === "POST" ? loginResponse("ua.token") : folder(),
+    );
+    const source = infisical({
+      projectId: "proj",
+      environment: "dev",
+      siteUrl: "https://example.com/infisical/",
+    });
+
+    await inRun(() => source.has("A", context));
+
+    expect(
+      calls.map((c) => `${c.method} ${c.url.origin}${c.url.pathname}`),
+    ).toEqual([
+      "POST https://example.com/infisical/api/v1/auth/universal-auth/login",
+      "GET https://example.com/infisical/api/v4/secrets",
+    ]);
+  });
+
   it("reports the API's error message, and tries again on the next call", async () => {
     vi.stubEnv("INFISICAL_TOKEN", "st.token");
     let status = 403;

@@ -1,4 +1,4 @@
-import { request } from "./api";
+import { apiUrl, request } from "./api";
 
 type LoginResponse = { accessToken: string };
 
@@ -26,7 +26,7 @@ export async function accessToken(site: string): Promise<string> {
     }
     const login = await request<LoginResponse>(
       "POST",
-      new URL("/api/v1/auth/universal-auth/login", site),
+      apiUrl(site, "/api/v1/auth/universal-auth/login"),
       { body: { clientId, clientSecret } },
     );
     return login.accessToken;
@@ -36,7 +36,7 @@ export async function accessToken(site: string): Promise<string> {
   if (identityId) {
     const login = await request<LoginResponse>(
       "POST",
-      new URL("/api/v1/auth/oidc-auth/login", site),
+      apiUrl(site, "/api/v1/auth/oidc-auth/login"),
       { body: { identityId, jwt: await oidcToken() } },
     );
     return login.accessToken;

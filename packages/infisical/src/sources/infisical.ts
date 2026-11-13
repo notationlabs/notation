@@ -1,5 +1,5 @@
 import { Redacted, type Source, type SourceContext } from "@notation/core";
-import { request, siteUrl } from "./api";
+import { apiUrl, request, siteUrl } from "./api";
 import { accessToken } from "./auth";
 
 export type InfisicalOptions = {
@@ -66,7 +66,7 @@ export function infisical(options: InfisicalOptions): Source {
       `folder ${site} ${options.projectId} ${env} ${path}`,
       async () => {
         const token = await cached(`token ${site}`, () => accessToken(site));
-        const url = new URL("/api/v4/secrets", site);
+        const url = apiUrl(site, "/api/v4/secrets");
         url.search = new URLSearchParams({
           projectId: options.projectId,
           environment: env,

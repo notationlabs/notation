@@ -24,6 +24,14 @@ export function siteUrl(option: string | undefined): string {
   return url.replace(/\/+$/, "").replace(/\/api$/, "");
 }
 
+/**
+ * The URL of an API path on the instance at `site`. A path prefix of the
+ * site, such as `/infisical`, is kept.
+ */
+export function apiUrl(site: string, path: string): URL {
+  return new URL(`${site}${path}`);
+}
+
 export async function request<T>(
   method: "GET" | "POST",
   url: URL,
