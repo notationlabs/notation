@@ -1,0 +1,278 @@
+import * as v from "valibot";
+import {
+  resource,
+  ResourceCreationUnknownError,
+  ResourceNotFoundError,
+} from "@notation/resource";
+import { cloudflareCreate } from "src/api/client";
+import {
+  deleteSecretByName,
+  findSecretByName,
+  writeSecret,
+} from "src/api/secrets-store";
+import {
+  createToken,
+  deleteToken,
+  findPermissionGroups,
+  getToken,
+  updateToken,
+  type Token,
+  type TokenPolicyRequest,
+} from "src/api/tokens";
+import type { SecretsStoreInstance } from "src/resources/secrets-store";
+
+const policySchema = v.strictObject({
+  effect: v.picklist(["allow", "deny"]),
+  /**
+   * The names of the permission groups, as Cloudflare lists them, such as
+   * `Workers Scripts Write`.
+   */
+  permissionGroups: v.pipe(
+    v.array(v.pipe(v.string(), v.nonEmpty())),
+    v.minLength(1),
+  ),
+  /**
+   * The resources that the policy applies to, such as
+   * `{ "com.cloudflare.api.account.<account id>": "*" }`.
+   */
+  resources: v.record(
+    v.string(),
+    v.union([v.string(), v.record(v.string(), v.string())]),
+  ),
+});
+
+export type AccountTokenPolicy = v.InferOutput<typeof policySchema>;
+
+type AccountTokenParams = {
+  AccountId: string;
+  StoreId: string;
+  /** The token's name, and the name of the secret that holds its value. */
+  Name: string;
+  Policies: AccountTokenPolicy[];
+};
+
+export type AccountTokenSchema = {
+  Key: { AccountId: string; TokenId: string; StoreId: string; Name: string };
+  CreateParams: AccountTokenParams;
+  UpdateParams: Pick<AccountTokenParams, "Policies">;
+  ReadResult: { SecretId: string };
+};
+
+export type AccountTokenDependencies = {
+  store: SecretsStoreInstance;
+};
+
+const accountToken = resource<AccountTokenSchema>({
+  type: "cloudflare/tokens/AccountToken",
+  provider: "@notation/cloudflare/resources",
+});
+
+const accountTokenSchema = accountToken.defineSchema({
+  AccountId: {
+    propertyType: "param",
+    presence: "required",
+    immutable: true,
+    secondaryKey: true,
+    value: v.string(),
+  },
+  StoreId: {
+    propertyType: "param",
+    presence: "required",
+    immutable: true,
+    secondaryKey: true,
+    value: v.string(),
+  },
+  Name: {
+    propertyType: "param",
+    presence: "required",
+    immutable: true,
+    secondaryKey: true,
+    value: v.pipe(v.string(), v.minLength(1), v.maxLength(120)),
+  },
+  Policies: {
+    propertyType: "param",
+    presence: "required",
+    value: v.pipe(v.array(policySchema), v.minLength(1)),
+  },
+  TokenId: {
+    propertyType: "computed",
+    presence: "required",
+    primaryKey: true,
+    value: v.string(),
+  },
+  SecretId: {
+    propertyType: "computed",
+    presence: "required",
+    value: v.string(),
+  },
+} as const);
+
+/**
+ * An account-owned API token, whose value is kept in a secret of the
+ * account's Secrets Store. The secret has the token's name. Its record holds
+ * where the secret is, and never the value.
+ *
+ * Create writes the new token's value into the secret in the same step,
+ * because Cloudflare returns the value only in the create's response. A
+ * change to the policies updates the token in place, and the token keeps
+ * its value. Delete deletes the token and its secret.
+ *
+ * Read fails when the secret is missing, as the value can't be fetched
+ * again. The token has to be rotated.
+ */
+export const AccountToken = accountTokenSchema
+  .defineOperations({
+    create: async (params) => {
+      const policies = await policyRequests(params.AccountId, params.Policies);
+      let token: { id: string; value: string };
+      try {
+        token = await cloudflareCreate(createToken)(params.AccountId, {
+          name: params.Name,
+          policies,
+        });
+      } catch (error) {
+        if (!ResourceCreationUnknownError.is(error)) throw error;
+        // A token that is found again has no value, so the create is not
+        // looked up. Cloudflare accepts two tokens with the same name.
+        throw new ResourceCreationUnknownError(
+          `${error.message}. If the account ${params.AccountId} has an API token named ${params.Name} that the deploy doesn't track, delete it in the dashboard.`,
+          { cause: error },
+        );
+      }
+      try {
+        await writeSecret(
+          params.AccountId,
+          params.StoreId,
+          params.Name,
+          token.value,
+        );
+      } catch (error) {
+        // The value is lost when the write fails, so the token is deleted,
+        // and the next deploy creates a new one.
+        await deleteToken(params.AccountId, token.id).catch(() => {});
+        throw error;
+      }
+      return { TokenId: token.id };
+    },
+
+    read: async (key) => {
+      const token = await getToken(key.AccountId, key.TokenId);
+      if (!token) {
+        throw new ResourceNotFoundError("API token was not found");
+      }
+      const secret = await findSecretByName(
+        key.AccountId,
+        key.StoreId,
+        key.Name,
+      );
+      if (!secret) {
+        throw new Error(
+          `The secret ${key.Name}, which holds the value of the API token ${key.TokenId}, isn't in the Secrets Store ${key.StoreId}. Cloudflare returns a token's value only when it creates the token, so the secret can't be written again. Rotate the token: change the id of its accountToken() declaration, and deploy.`,
+        );
+      }
+      const policies = readPolicies(token);
+      return {
+        ...key,
+        SecretId: secret.id,
+        ...(policies ? { Policies: policies } : {}),
+      };
+    },
+
+    update: async (key, _patch, params) => {
+      await updateToken(key.AccountId, key.TokenId, {
+        name: params.Name,
+        policies: await policyRequests(params.AccountId, params.Policies),
+      });
+    },
+
+    delete: async (key) => {
+      await deleteToken(key.AccountId, key.TokenId);
+      await deleteSecretByName(key.AccountId, key.StoreId, key.Name);
+    },
+  })
+  .requireDependencies<AccountTokenDependencies>()
+  .deriveParams(async ({ deps }) => ({
+    AccountId: deps.store.output.AccountId,
+    StoreId: deps.store.output.StoreId,
+  }));
+
+export type AccountTokenInstance = InstanceType<typeof AccountToken>;
+
+/** The policies of a request, with each permission group by ID. */
+async function policyRequests(
+  account: string,
+  policies: AccountTokenPolicy[],
+): Promise<TokenPolicyRequest[]> {
+  const names = [...new Set(policies.flatMap((p) => p.permissionGroups))];
+  const ids = new Map<string, string[]>();
+  await Promise.all(
+    names.map(async (name) => {
+      const groups = await findPermissionGroups(account, name);
+      if (groups.length === 0) {
+        throw new Error(
+          `Cloudflare has no API token permission group named "${name}". Use the name that the dashboard shows when you create a token, such as "Workers Scripts Write".`,
+        );
+      }
+      ids.set(
+        name,
+        groups.map((group) => group.id),
+      );
+    }),
+  );
+  return policies.map((policy) => ({
+    effect: policy.effect,
+    permission_groups: policy.permissionGroups.flatMap((name) =>
+      ids.get(name)!.map((id) => ({ id })),
+    ),
+    resources: policy.resources,
+  }));
+}
+
+/**
+ * The token's policies in the form of the params, or `undefined` when a
+ * permission group has no name, as the policies then can't be compared.
+ */
+function readPolicies(token: Token): AccountTokenPolicy[] | undefined {
+  if (!token.policies) return undefined;
+  const policies: AccountTokenPolicy[] = [];
+  for (const policy of token.policies) {
+    const names = policy.permission_groups.map((group) => group.name);
+    if (names.some((name) => name === undefined)) return undefined;
+    policies.push({
+      effect: policy.effect,
+      permissionGroups: names as string[],
+      resources: policy.resources,
+    });
+  }
+  return sortedPolicies(policies);
+}
+
+/**
+ * Sorts the policies, and the permission groups in each one, so that the
+ * order that Cloudflare returns them in is not seen as a change. The order
+ * has no effect on what the token can do.
+ */
+export function sortedPolicies(
+  policies: AccountTokenPolicy[],
+): AccountTokenPolicy[] {
+  return policies
+    .map((policy) => ({
+      ...policy,
+      permissionGroups: [...new Set(policy.permissionGroups)].sort(),
+    }))
+    .sort((a, b) => compare(stableJson(a), stableJson(b)));
+}
+
+const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+// JSON with the keys of each object sorted, so that two equal values give
+// the same string.
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_, inner) =>
+    inner && typeof inner === "object" && !Array.isArray(inner)
+      ? Object.fromEntries(
+          Object.entries(inner).sort(([a], [b]) => compare(a, b)),
+        )
+      : inner,
+  );
+}
