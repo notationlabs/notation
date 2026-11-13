@@ -1,10 +1,6 @@
 import * as v from "valibot";
 import { recordSecretValue } from "@notation/core";
-import {
-  resource,
-  ResourceCreationUnknownError,
-  ResourceNotFoundError,
-} from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import { sortedJson } from "@notation/utils";
 import { cloudflareCreate } from "src/api/client";
 import {
@@ -16,6 +12,7 @@ import {
   createToken,
   deleteToken,
   findPermissionGroups,
+  findTokensByName,
   getToken,
   updateToken,
   type Token,
@@ -91,7 +88,11 @@ const accountTokenSchema = accountToken.defineSchema({
     presence: "required",
     immutable: true,
     secondaryKey: true,
-    value: v.pipe(v.string(), v.minLength(1), v.maxLength(TOKEN_NAME_MAX_LENGTH)),
+    value: v.pipe(
+      v.string(),
+      v.minLength(1),
+      v.maxLength(TOKEN_NAME_MAX_LENGTH),
+    ),
   },
   Policies: {
     propertyType: "param",
@@ -118,6 +119,8 @@ const accountTokenSchema = accountToken.defineSchema({
  *
  * Create writes the new token's value into the secret in the same step,
  * because Cloudflare returns the value only in the create's response. A
+ * create with an unknown outcome deletes the tokens with the name, and runs
+ * again. A
  * change to the policies updates the token in place, and the token keeps
  * its value. Delete deletes the token and its secret.
  *
@@ -128,21 +131,10 @@ export const AccountToken = accountTokenSchema
   .defineOperations({
     create: async (params) => {
       const policies = await policyRequests(params.AccountId, params.Policies);
-      let token: { id: string; value: string };
-      try {
-        token = await cloudflareCreate(createToken)(params.AccountId, {
-          name: params.Name,
-          policies,
-        });
-      } catch (error) {
-        if (!ResourceCreationUnknownError.is(error)) throw error;
-        // A token that is found again has no value, so the create is not
-        // looked up. Cloudflare accepts two tokens with the same name.
-        throw new ResourceCreationUnknownError(
-          `${error.message}. If the account ${params.AccountId} has an API token named ${params.Name} that the deploy doesn't track, delete it in the dashboard.`,
-          { cause: error },
-        );
-      }
+      const token = await cloudflareCreate(createToken)(params.AccountId, {
+        name: params.Name,
+        policies,
+      });
       recordSecretValue(token.value);
       try {
         await writeSecret(
@@ -154,10 +146,30 @@ export const AccountToken = accountTokenSchema
       } catch (error) {
         // The value is lost when the write fails, so the token is deleted,
         // and the next deploy creates a new one.
-        await deleteToken(params.AccountId, token.id).catch(() => {});
+        try {
+          await deleteToken(params.AccountId, token.id);
+        } catch {
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)}. The API token ${token.id} that was just created couldn't be deleted. Delete it in the dashboard.`,
+            { cause: error },
+          );
+        }
         throw error;
       }
       return { TokenId: token.id };
+    },
+
+    // Runs when a create may have made a token and its outcome is unknown.
+    // A token made then can't be used, as its value is lost, so every token
+    // with the name is deleted and the create runs again. Replace deletes
+    // the old token before it creates the new one, so no tracked token has
+    // the name.
+    find: async (params) => {
+      const ids = await findTokensByName(params.AccountId, params.Name);
+      await Promise.all(ids.map((id) => deleteToken(params.AccountId, id)));
+      throw new ResourceNotFoundError(
+        "A token made by an earlier create has no value",
+      );
     },
 
     read: async (key) => {

@@ -35,7 +35,9 @@ export class AccountTokenGroup
 
   constructor(config: AccountTokenConfig) {
     assertSecretId("accountToken()", config.id);
-    const name = scopedPhysicalName(config.id, { maxLength: TOKEN_NAME_MAX_LENGTH });
+    const name = scopedPhysicalName(config.id, {
+      maxLength: TOKEN_NAME_MAX_LENGTH,
+    });
     claimSecretName(name, `accountToken({ id: "${config.id}" })`);
     super("cloudflare/accountToken", config.id, config);
     this.token = this.add(

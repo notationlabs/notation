@@ -3,6 +3,9 @@ import { CloudflareApiError, cloudflare } from "./client";
 /** Cloudflare's error code for a token that doesn't exist. */
 const TOKEN_NOT_FOUND = 1003;
 
+/** The most tokens that Cloudflare returns in one page of the list. */
+const TOKENS_PAGE_SIZE = 50;
+
 /** Cloudflare's error code for an authentication error. */
 const AUTHENTICATION_ERROR = 10000;
 
@@ -73,6 +76,34 @@ export async function getToken(
   } catch (error) {
     if (isNotFound(error)) return undefined;
     throw withPermissionHint(error);
+  }
+}
+
+/** The IDs of the account's tokens that are named `name`. */
+export async function findTokensByName(
+  account: string,
+  name: string,
+): Promise<string[]> {
+  const ids: string[] = [];
+  for (let page = 1; ; page++) {
+    const query = new URLSearchParams({
+      page: String(page),
+      per_page: String(TOKENS_PAGE_SIZE),
+    });
+    let tokens: { id: string; name: string }[];
+    try {
+      tokens =
+        (await cloudflare<{ id: string; name: string }[] | null>(
+          "GET",
+          `${tokensPath(account)}?${query}`,
+        )) ?? [];
+    } catch (error) {
+      throw withPermissionHint(error);
+    }
+    for (const token of tokens) {
+      if (token.name === name) ids.push(token.id);
+    }
+    if (tokens.length < TOKENS_PAGE_SIZE) return ids;
   }
 }
 

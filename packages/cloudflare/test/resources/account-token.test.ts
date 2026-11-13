@@ -66,6 +66,8 @@ type Routes = {
   groups?: () => Response;
   createToken?: () => Response;
   getToken?: () => Response;
+  listTokens?: (page: string) => Response;
+  deleteToken?: () => Response;
   listSecrets?: () => Response;
   createSecret?: () => Response;
   patchSecret?: () => Response;
@@ -80,11 +82,19 @@ function route(routes: Routes) {
         (() => ok([{ id: "g1", name: "Workers Scripts Write" }]))
       )();
     }
+    if (path === TOKENS && call.method === "GET") {
+      return (routes.listTokens ?? (() => ok([])))(
+        call.url.searchParams.get("page")!,
+      );
+    }
     if (path === TOKENS && call.method === "POST") {
       return (routes.createToken ?? (() => ok({ id: "t1", value: VALUE })))();
     }
     if (path.startsWith(`${TOKENS}/`) && call.method === "GET") {
       return (routes.getToken ?? (() => ok({ name: params.Name })))();
+    }
+    if (path.startsWith(`${TOKENS}/`) && call.method === "DELETE") {
+      return (routes.deleteToken ?? (() => ok()))();
     }
     if (path.startsWith(`${TOKENS}/`)) return ok();
     if (path === SECRETS && call.method === "GET") {
@@ -188,14 +198,49 @@ describe("AccountToken", () => {
     expect(scrubSecretValues(error.message)).not.toContain(VALUE);
   });
 
+  it("says to delete the new token by hand when its value can't be written and the token can't be deleted", async () => {
+    route({
+      createSecret: () => fail(400, 1001, "store_not_found"),
+      deleteToken: () => fail(500, 0, "internal error"),
+    });
+
+    await expect(token.create(params)).rejects.toThrow(
+      "store_not_found (1001). The API token t1 that was just created couldn't be deleted. Delete it in the dashboard.",
+    );
+  });
+
   it("reports a create whose response was a server error as unknown", async () => {
     route({ createToken: () => fail(502, 0, "bad gateway") });
 
-    const error = await token.create(params).catch((e) => e);
-    expect(error).toBeInstanceOf(ResourceCreationUnknownError);
-    expect(error.message).toContain(
-      "If the account acc has an API token named shop--dev--deploy that the deploy doesn't track, delete it in the dashboard.",
+    await expect(token.create(params)).rejects.toBeInstanceOf(
+      ResourceCreationUnknownError,
     );
+  });
+
+  it("deletes every token with the name after a create with an unknown outcome, and reports none found", async () => {
+    const page = (n: number) =>
+      Array.from({ length: 50 }, (_, i) => ({
+        id: `other-${n}-${i}`,
+        name: `other-${i}`,
+      }));
+    route({
+      listTokens: (n) =>
+        n === "1"
+          ? ok([...page(1).slice(1), { id: "lost-1", name: params.Name }])
+          : ok([{ id: "lost-2", name: params.Name }, ...page(2).slice(0, 3)]),
+    });
+
+    await expect(token.find!(params, "token")).rejects.toBeInstanceOf(
+      ResourceNotFoundError,
+    );
+    expect(
+      calls
+        .filter((c) => c.url.pathname === TOKENS)
+        .map((c) => c.url.searchParams.get("per_page")),
+    ).toEqual(["50", "50"]);
+    expect(
+      calls.filter((c) => c.method === "DELETE").map((c) => c.url.pathname),
+    ).toEqual([`${TOKENS}/lost-1`, `${TOKENS}/lost-2`]);
   });
 
   it("reads the policies by name, and the ID of the secret", async () => {
