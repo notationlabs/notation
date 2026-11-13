@@ -26,19 +26,29 @@ export default {
 
 When infra has finished loading, the declaration adds a Worker group with:
 
-- the **Worker script** `api`, named `<app>--<stage>--api`, which uploads the bundle `dist/runtime/api/index.mjs`,
+- the **Worker script** `api`, which uploads the bundle `dist/runtime/api/index.mjs`. Deploy names it `<app>--<stage>--api-<instance>` when it creates it. See [Names](#names).
 - the **workers.dev route** of the Worker, unless `url` is `false`.
 
 The declaration adds the Worker even when nothing imports it.
 
 | Option               | Description                                                                                                                                              |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`                 | Names the Worker and keys it in state. Use 1 to 63 lowercase letters, digits or hyphens. Changing the id replaces the Worker.                            |
-| `name`               | The Worker's name in Cloudflare, in place of the id. The Worker is named `<app>--<stage>--<name>`. Changing the name replaces the Worker.                |
+| `id`                 | Keys the Worker in state, and is the base of its name. Use 1 to 63 lowercase letters, digits or hyphens. Changing the id replaces the Worker.            |
 | `bindings`           | A function that returns the values that the code reads from `env`, by name. See [Bindings](#bindings).                                                   |
 | `compatibilityDate`  | Required. The Worker's compatibility date, such as `"2026-10-12"`. Cloudflare runs the Worker with the behaviour of the runtime on that date.            |
 | `compatibilityFlags` | The Worker's compatibility flags. `nodejs_compat` is always added, as the build imports Node's built-in modules as `node:` modules, which need the flag. |
-| `url`                | Serves the Worker on `https://<name>.<account subdomain>.workers.dev`. Defaults to `true`, as in wrangler.                                               |
+| `url`                | Serves the Worker on `https://<name>.<account subdomain>.workers.dev`, where `<name>` is the Worker's name. Defaults to `true`, as in wrangler.          |
+
+### Names
+
+Deploy generates a Worker's name when it creates the Worker: `<app>--<stage>--<id>-<instance>`, where the instance is 8 random hex characters. A Worker `orders` in the `prod` stage of the `shop` app is named, for example, `shop--prod--orders-3f9a1c2e`. The name can't be set in config.
+
+- **The longest name is 54 characters.** A Worker's name is the first label of its workers.dev URL, and a DNS label holds 63 characters. A preview URL puts a version prefix of 8 characters and a hyphen in the same label. When the name would be longer, the part before the instance is cut short.
+- **The name is not known before the first deploy.** Plan shows the name of a Worker that deploy creates as unknown, and so its workers.dev URL. Anything outside Notation that needs the URL must read it after the first deploy.
+- **The name does not change after that.** Deploy keeps the name in the Worker's state record, and uses it on each later deploy. Only a replace would change it, and the only change that replaces a Worker, a change of the account, fails at plan.
+- **A Worker that an earlier version deployed keeps its name**, `<app>--<stage>--<id>` or `<app>--<stage>--<name>`, as long as its state record exists.
+- **Deploy fills in the name wherever the Worker is bound.** A service binding to the Worker, a Durable Object binding to a namespace that it hosts, and a binding of the Worker to itself all hold the generated name. A Worker that binds itself is created once, with the binding.
+- **A new Worker with the id of an old one is a second Worker.** This happens when the state record of a Worker is lost. The old Worker stays in the account.
 
 ### Bindings
 
@@ -62,9 +72,9 @@ Between steps 1 and 3, the first Worker's `env` has no service bindings, so a re
 
 ### Deleting a Worker that other Workers bind
 
-Cloudflare doesn't delete a Worker that another Worker binds as a service, or whose Durable Object namespace another Worker binds, unless the delete is forced. Deploy deletes a Worker when its `name` changes, when it is removed from code, and in destroy.
+Cloudflare doesn't delete a Worker that another Worker binds as a service, or whose Durable Object namespace another Worker binds, unless the delete is forced. Deploy deletes a Worker when its `id` changes, when it is removed from code, and in destroy.
 
-- When every Worker that binds it is in the same app and stage, the delete is forced. After a change of `name`, deploy uploads each of those Workers again with the new name. Their bindings are broken from the delete until that upload, so requests that use them fail in between.
+- When every Worker that binds it is in the same app and stage, the delete is forced.
 - When another Worker binds it, such as a Worker of another app or stage, or one that Notation did not deploy, the delete fails, and the error names that Worker. A Pages project that binds the Worker, and a Worker that sends it tail events, stop the delete in the same way. Remove the reference first.
 
 Deleting a Worker deletes the objects of the Durable Object namespaces that it hosts, forced or not.
@@ -139,7 +149,7 @@ A new namespace uses SQLite storage. Deploy uploads Cloudflare's declarative `ex
 - A namespace's `id` can't change. Plan fails, and says to change the id back. When the `class` changes too, plan can't pair the old and new namespaces, so it fails with the message for a deleted namespace, which also says to change the id back if it changed.
 - When the hosting Worker no longer hosts a namespace, plan fails, unless the namespace is unprotected in state. See [Deleting a namespace](#deleting-a-namespace).
 - When a namespace's class export moves to another Worker, and the old host still binds the namespace, deploy moves the namespace and its objects to the new host. See [Moving a namespace](#moving-a-namespace). When the old host no longer binds the namespace, plan fails, unless the namespace is unprotected in state.
-- When a Worker is removed or replaced, as when its `id` or `name` changes, deploy deletes all its namespaces. Plan fails unless each of them is unprotected in state.
+- When a Worker is removed, as when its `id` changes, deploy deletes all its namespaces. Plan fails unless each of them is unprotected in state.
 - Plan fails if a namespace takes a class that another namespace had on the same Worker before, as the new namespace would get the old one's objects. Rename or delete the old namespace in one deploy, and give its class to the new namespace in a later deploy.
 
 `notation destroy` doesn't make these checks. It deletes each Worker with its namespaces.
@@ -198,7 +208,9 @@ Then deploy uploads the old host, with its binding on the new host. A later depl
 
 Between steps 1 and 3, the new host's `env` has no binding to the namespace, so a request on the new host that uses it fails. From step 2 until deploy uploads the old host, the old host's deployed version still binds the class as its own, so a request on the old host that uses it fails too. If step 2 fails, the namespace and its objects stay on the old host, and the new host's class waits for them. The next deploy runs the move again.
 
-To find the old host, deploy lists the account's namespaces when a Worker hosts a namespace that is new to it, and another Worker binds that namespace. If one of those Workers hosts a namespace with the same class, deploy moves it. If none does, the namespace is new.
+To find the old host, deploy lists the account's namespaces when a Worker hosts a namespace that is new to it, and another Worker binds that namespace. The new host reads the names of the Workers that bind the namespace from their state records at the start of the deploy, as those Workers depend on it. If one of those Workers hosts a namespace with the same class, deploy moves it. If none does, the namespace is new. A Worker that this deploy creates has no record, and has never hosted the namespace, so it is left out.
+
+When a Worker that binds the namespace has no state record, deploy also checks that no Worker in the account with a name that deploy gives that Worker hosts the class. Such a Worker may be the old host, with its state record lost. Without the check, the new host would start an empty namespace while the old Worker keeps the objects. The names are a generated name, `<app>--<stage>--<id>-` followed by 8 hex characters, cut as deploy cuts a long name, and the name that an earlier version gave the Worker, `<app>--<stage>--<id>`. When such a Worker hosts the class, deploy fails and names it. The check never moves a namespace. It can fail a deploy that is correct: a Worker whose id ends in something that looks like an instance, such as `orders-deadbeef`, has a name that matches `orders`, and two Workers whose long names are cut to the same part match each other.
 
 Plan fails when:
 
@@ -207,7 +219,7 @@ Plan fails when:
 - the old host no longer binds the namespace, and the namespace is protected in state. Without the binding, deploy doesn't know where the namespace moves to, and the old host's upload would delete it.
 - the new host gets a namespace that another Worker binds, and the same deploy renames or deletes another namespace of the new host. The first upload of a move would apply the rename or delete before the move is done. Plan can't tell whether the namespace moves or is new, so it fails in both cases. Make the two changes in separate deploys.
 
-Deploy fails, before it uploads the new host, when this deploy creates the new host. Plan doesn't catch this, as plan doesn't list the account's namespaces. Deploy the new host without the namespace first. Deploy also fails when the old host hosts a namespace with key-value storage, which Notation doesn't support, or a namespace that Cloudflare's list doesn't show as SQLite.
+Deploy fails, before it uploads the new host, when this deploy creates the new host, and when the check above finds a Worker with no state record. Plan doesn't catch this, as plan doesn't list the account's namespaces. Deploy the new host without the namespace first. Deploy also fails when the old host hosts a namespace with key-value storage, which Notation doesn't support, or a namespace that Cloudflare's list doesn't show as SQLite.
 
 If a move stops part way through, the next deploy finishes it. The new host's state is updated only after the last upload, so the next deploy runs the move again. It finds the namespace on the old host, or on the new host if Cloudflare already moved it.
 
@@ -225,7 +237,7 @@ export const rooms = $durableObject({
 
 This deploy saves the value in the state of the hosting Worker. Plan lists the Worker as an update, and deploy uploads it again, without changing the namespace.
 
-In a later deploy, remove the declaration, its binding and its class. Deploy uploads a `deleted` entry for the namespace's class. The Worker's module must no longer export the class, or Cloudflare rejects the upload. In the same way, a later deploy can remove the hosting Worker, or change its `id` or `name`, once all its namespaces are unprotected in state.
+In a later deploy, remove the declaration, its binding and its class. Deploy uploads a `deleted` entry for the namespace's class. The Worker's module must no longer export the class, or Cloudflare rejects the upload. In the same way, a later deploy can remove the hosting Worker, or change its `id`, once all its namespaces are unprotected in state.
 
 Plan reads `protect` from state, not from code. A deploy that sets `protect: false` and also stops hosting the namespace fails at plan.
 
@@ -238,4 +250,4 @@ Deploy reads two environment variables:
 
 A Worker can't move to another account. If `CLOUDFLARE_ACCOUNT_ID` changes, plan and deploy fail, because replacing each Worker would delete the objects of the namespaces that it hosts. To deploy to another account, first run `notation destroy` with the old account, or deploy to another stage.
 
-When a Worker with the same name already exists in the account, deploy takes it over: it reads the Worker, and then updates or replaces it to match config. See [Recoverable creates](../../internals/reconciler.md#recoverable-creates).
+A generated name ends in a random instance, so a Worker that someone else made in the account does not have it. When a create stops before deploy records it, the next deploy finds the Worker under the name in the `creating` record, and takes it over. See [Recoverable creates](../../internals/reconciler.md#recoverable-creates).

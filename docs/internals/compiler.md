@@ -380,7 +380,7 @@ return collectResourceGraph(
 
 While the compiled entry is imported, calls such as `queue({ ... })` add resources to the graph. When the import ends, the `onEvaluationEnd` callbacks run. Each `$lambda` declaration then adds its Lambda function and the resources that support it (IAM role, log group, zip package), with `code` pointing at `dist/<module path>/index.mjs`. Then each wiring call adds its event source mapping, route or rule.
 
-`scope` holds the app and the stage of the deployment. A constructor that builds a fixed name, such as the Cloudflare Worker's, calls `scopedPhysicalName` from `@notation/resource`, which reads `scope` and returns the name `<app>--<stage>--<name>`. `notation viz` deploys nothing, so it passes no scope, and these names in its graph have no prefix. A resource whose name deploy generates has no name in its config; see [Generated names](./reconciler.md#generated-names).
+`scope` holds the app and the stage of the deployment. A constructor that builds a fixed name calls `scopedPhysicalName` from `@notation/resource`, which reads `scope` and returns the name `<app>--<stage>--<name>`. The Cloudflare Worker construct uses `scope` to describe the names that a Worker with no state record may have, for the check in [Moving a namespace](../providers/cloudflare/workers.md#moving-a-namespace). `notation viz` deploys nothing, so it passes no scope, and these names in its graph have no prefix. A resource whose name deploy generates has no name in its config; see [Generated names](./reconciler.md#generated-names).
 
 The reconciler uses the resulting `{ resources, resourceGroups }` object to plan deployments.
 

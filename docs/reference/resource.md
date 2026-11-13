@@ -226,7 +226,7 @@ script.contribute({
 
 A ref from a resource to one of its own `physicalName` params is not a dependency, so the Worker is not a [cycle](#cycles) of one. Deploy fills in the ref when it fills in the name, before it calls `create`. So `create` receives the name as a plain string in both params, and the Worker is created once, with the binding. A replacement gets its new name in both params. Plan shows the ref as it shows the name: the recorded name, or unknown when there is no record or the resource is replaced. A ref to any other output of the resource itself is still a dependency.
 
-**`scopedPhysicalName` makes a fixed name on a class without `physicalName`.** `scopedPhysicalName(name, rule)` from `@notation/resource` returns `<app>--<stage>--<name>`, shortened with a hash when it is longer than `rule.maxLength`. It is the same on every deploy. A construct puts the result in config. `@notation/cloudflare` names a Worker this way. Two declarations with the same `name` get the same result, so the construct must check that no two declarations give the same name.
+**`scopedPhysicalName` makes a fixed name on a class without `physicalName`.** `scopedPhysicalName(name, rule)` from `@notation/resource` returns `<app>--<stage>--<name>`, shortened with a hash when it is longer than `rule.maxLength`. It is the same on every deploy. A construct puts the result in config. Two declarations with the same `name` get the same result, so the construct must check that no two declarations give the same name. A fixed name can also belong to a resource that someone else made, which deploy then [takes over](../internals/reconciler.md#the-takeover-rule). No class in `@notation/aws` or `@notation/cloudflare` is named this way: deploy generates every name. `@notation/cloudflare` uses `scopedPhysicalName` only to find a Worker that an earlier version named `<app>--<stage>--<id>`.
 
 ### Value types
 
@@ -620,7 +620,7 @@ Contributions close when evaluation ends, and `contribute` and `dependOn` throw 
 
 `onEvaluationEnd(callback)` registers a callback that runs after evaluation and before the close, for code whose values do not exist while modules are still being evaluated. It throws when no resource graph is being collected. In `@notation/aws`, `$lambda` uses it to build a Lambda's resources and the resources that its event makes: the mapping of `sqs.bind(queue)`, the route of `apiGateway.bind(api).defineRoute()`, and the rules of `eventBridge.bind(bus).defineRule()` and `eventBridge.defineSchedule()`. `eventSourceMapping()`, `route()`, `rule()` and `schedule()` use it to wire a declaration. A runtime module and the infra module that wires it often import each other, so a declaration can be read safely only after every module has loaded. It is an engine mechanism, not user-facing API.
 
-`perCollection(key, create)` returns a function that gives one value for each resource graph that is being collected. The first call in a graph makes the value with `create`. The function returns `undefined` when no graph is being collected. A provider package keeps its declarations in such a store, so that two graphs collected in one process don't see each other's declarations. `@notation/resource` is loaded once, so two installed copies of a provider package that pass the same `key` share the value. `@notation/aws` keeps its claimed AWS names and the default event bus this way, and `@notation/cloudflare` keeps its Workers, their names and the namespace ids.
+`perCollection(key, create)` returns a function that gives one value for each resource graph that is being collected. The first call in a graph makes the value with `create`. The function returns `undefined` when no graph is being collected. A provider package keeps its declarations in such a store, so that two graphs collected in one process don't see each other's declarations. `@notation/resource` is loaded once, so two installed copies of a provider package that pass the same `key` share the value. `@notation/aws` keeps its claimed AWS names and the default event bus this way, and `@notation/cloudflare` keeps its Workers and the namespace ids.
 
 ### Declared modules
 
@@ -633,8 +633,8 @@ When you delete a `contribute` call, the collected value changes, and the resour
 A resource in `config` or `dependencies` must already be constructed, so two resources can only depend on each other through `contribute` or `dependOn`. For example, two Workers that call each other each contribute a service binding to the other:
 
 ```ts
-const a = new WorkerScript("a", { config: { ScriptName: "a" } });
-const b = new WorkerScript("b", { config: { ScriptName: "b" } });
+const a = new WorkerScript("worker:a", { config: configA, dependencies: depsA });
+const b = new WorkerScript("worker:b", { config: configB, dependencies: depsB });
 a.contribute({
   Bindings: [
     { type: "service", name: "B", service: b.outputRef("ScriptName") },
