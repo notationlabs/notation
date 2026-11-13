@@ -1,6 +1,8 @@
+import { SCRUBBED } from "@notation/utils";
+
 const inspectCustom = Symbol.for("nodejs.util.inspect.custom");
 
-export const REDACTED_PLACEHOLDER = "Redacted(<hidden>)";
+export const REDACTED_PLACEHOLDER = `Redacted(${SCRUBBED})`;
 
 export class RedactedValueError extends Error {
   constructor(use: string) {

@@ -4,7 +4,12 @@ import * as std from "@notation/std/resources";
 import type { Source } from "@notation/std/sources";
 import * as cloudflare from "src/resources";
 import type { BindableSecret } from "src/workers/declaration";
-import { assertSecretId, claimSecretName, secretsStoreGroup } from "./store";
+import {
+  assertSecretId,
+  claimSecretName,
+  SECRET_NAME_MAX_LENGTH,
+  secretsStoreGroup,
+} from "./store";
 
 export { SecretsStoreGroup } from "./store";
 export type { BindableSecret } from "src/workers/declaration";
@@ -47,7 +52,11 @@ export class SecretGroup
 
   constructor(config: SecretConfig) {
     assertSecretId("secret()", config.id);
-    const name = config.name ?? scopedPhysicalName(config.id, secretNameRule);
+    const name =
+      config.name ??
+      scopedPhysicalName(config.id, {
+        maxLength: SECRET_NAME_MAX_LENGTH,
+      });
     claimSecretName(name, describe(config));
     super("cloudflare/secret", config.id, config);
     const { id, source, key } = config;
@@ -92,8 +101,6 @@ export class SecretGroup
     return this.secret;
   }
 }
-
-const secretNameRule = { maxLength: 255 };
 
 const describe = (config: SecretConfig) =>
   config.name === undefined

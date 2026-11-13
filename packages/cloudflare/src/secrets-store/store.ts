@@ -2,7 +2,7 @@ import { perCollection, ResourceGroup } from "@notation/resource";
 import * as cloudflare from "src/resources";
 
 // Cloudflare's limit on the length of a secret's name.
-const SECRET_NAME_MAX_LENGTH = 255;
+export const SECRET_NAME_MAX_LENGTH = 255;
 
 export class SecretsStoreGroup extends ResourceGroup {
   platform = "cloudflare";
