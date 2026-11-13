@@ -1,4 +1,6 @@
 import {
+  GENERATED_INSTANCE_LENGTH,
+  UNKNOWN_AFTER_APPLY,
   generatedPhysicalName,
   isUnknownAfterApply,
   type BaseResource,
@@ -6,8 +8,6 @@ import {
   type PhysicalNameRule,
 } from "@notation/resource";
 import type { StateNode } from "@notation/state";
-
-const INSTANCE_BYTES = 4;
 
 type NameField = { field: string; rule: PhysicalNameRule };
 
@@ -38,6 +38,16 @@ export function assertNamesNotSupplied(
       `Resource "${resource.id}" (${resource.type}): the params supply "${field}", which has physicalName in the schema. Deploy generates a physicalName param from the resource ID, so neither config nor deriveParams can supply it.`,
     );
   }
+}
+
+/**
+ * `UNKNOWN_AFTER_APPLY` for each of the resource's `physicalName` params,
+ * for a plan of a resource whose name deploy generates.
+ */
+export function unknownNames(resource: BaseResource): Record<string, unknown> {
+  return Object.fromEntries(
+    nameFields(resource).map(({ field }) => [field, UNKNOWN_AFTER_APPLY]),
+  );
 }
 
 /**
@@ -76,6 +86,8 @@ export function generateNames(
 }
 
 function randomInstance(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(INSTANCE_BYTES));
+  const bytes = crypto.getRandomValues(
+    new Uint8Array(GENERATED_INSTANCE_LENGTH / 2),
+  );
   return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

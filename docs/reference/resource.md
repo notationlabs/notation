@@ -214,7 +214,19 @@ Deploy generates the name, `<app>--<stage>--<base>-<instance>`, from the app, th
 
 **A dependent reads the name through an output ref.** `resource.config` does not hold the name, so another resource can't copy the name from it. It takes `role.outputRef("RoleName")` instead, which deploy fills in once the role exists; see [Output refs](#output-refs). At plan the ref is unknown until then.
 
-**`scopedPhysicalName` makes a fixed name on a class without `physicalName`.** `scopedPhysicalName(name, rule)` from `@notation/resource` returns `<app>--<stage>--<name>`, shortened with a hash when it is longer than `rule.maxLength`. It is the same on every deploy. A construct puts the result in config. `@notation/cloudflare` names a Worker this way. Two declarations with the same `name` get the same result, so the construct must check that no two declarations give the same name.
+**A resource can hold its own name in another param.** For example, a Worker that binds itself as a service contributes a binding that refers to its own `ScriptName`:
+
+```ts
+script.contribute({
+  Bindings: [
+    { type: "service", name: "SELF", service: script.outputRef("ScriptName") },
+  ],
+});
+```
+
+A ref from a resource to one of its own `physicalName` params is not a dependency, so the Worker is not a [cycle](#cycles) of one. Deploy fills in the ref when it fills in the name, before it calls `create`. So `create` receives the name as a plain string in both params, and the Worker is created once, with the binding. A replacement gets its new name in both params. Plan shows the ref as it shows the name: the recorded name, or unknown when there is no record or the resource is replaced. A ref to any other output of the resource itself is still a dependency.
+
+**`scopedPhysicalName` makes a fixed name on a class without `physicalName`.** `scopedPhysicalName(name, rule)` from `@notation/resource` returns `<app>--<stage>--<name>`, shortened with a hash when it is longer than `rule.maxLength`. It is the same on every deploy. A construct puts the result in config. Two declarations with the same `name` get the same result, so the construct must check that no two declarations give the same name. A fixed name can also belong to a resource that someone else made, which deploy then [takes over](../internals/reconciler.md#the-takeover-rule). No class in `@notation/aws` or `@notation/cloudflare` is named this way: deploy generates every name.
 
 ### Value types
 
@@ -495,6 +507,35 @@ The ref has two effects:
 
 **A ref can only be placed whole.** Turning it into a string throws `OutputRefStringError`, whether in a template string, with `String()` or with `JSON.stringify`. This matters because a string such as `` `${arn}/*` `` would hide the ref, and plan could not tell that the value is unknown. It follows that a ref cannot be a map key: key the entry by something known now, and put the ref inside it. To compute with an output, use `deriveParams` or a [function contribution](#function-contributions), which receive the real output at deploy.
 
+### State refs
+
+An output ref always adds a dependency. Sometimes a resource needs an output of a resource that depends on it, and the dependency would make a cycle. For example, a Durable Object host lists the script names of the Workers that bind its namespace, so that it can move the namespace from them, and those Workers depend on the host.
+
+`resource["~state"].outputRef(key)` returns a state ref. It is for the code of a resource package, like the other members that start with `~`:
+
+```ts
+host.contribute({
+  DurableObjectTransferSources: [
+    {
+      namespaceId: "rooms",
+      workerId: "web",
+      scriptName: binder.script["~state"].outputRef("ScriptName"),
+      nameBody: "shop--prod--web",
+    },
+  ],
+});
+```
+
+A state ref differs from an output ref in five ways:
+
+- **It adds no dependency.** `host` does not depend on `binder.script`, so the graph and the deploy order stay the same.
+- **It resolves to the output in the target's state record at the start of the deploy.** Deploy reads these outputs once, after it takes the deployment hold, in the step `notation:recorded-outputs`. When this deploy replaces the target, the ref resolves to the output from before the replace. A resumed deploy uses the outputs that this step recorded. Plan reads the same outputs from state, so the value is known at plan.
+- **It resolves to `undefined` when the target has no record**, or only a `creating` record. TypeScript types the ref as the output or `undefined`.
+- **It reads only an output that only a replace changes.** `outputRef(key)` throws unless the output is a param that is `immutable`, `primaryKey` or `secondaryKey`, or that has `physicalName`. An output that an update changes would be read one deploy late, with no error. It also throws for a `hidden` param, which the state record does not hold.
+- **It can only be placed in a contribution.** `create` and `update` read the refs in config from the live outputs of their targets, which a state ref's target may not have yet. `getDependencies()` throws when config holds a state ref.
+
+Make each state ref while infra is evaluated. Deploy reads the outputs of the resources that state refs name before it resolves any params, and a state ref made later fails at deploy.
+
 ## Contributions
 
 Some params take values from several places. For example, a Lambda role's inline policy gets one statement from each queue that the function reads. Each queue that is mapped to the function, with `sqs.bind(queue)` or `eventSourceMapping()`, adds its statement to the policy, and none of them owns the whole document.
@@ -585,7 +626,7 @@ Contributions close when evaluation ends, and `contribute` and `dependOn` throw 
 
 `onEvaluationEnd(callback)` registers a callback that runs after evaluation and before the close, for code whose values do not exist while modules are still being evaluated. It throws when no resource graph is being collected. In `@notation/aws`, `$lambda` uses it to build a Lambda's resources and the resources that its event makes: the mapping of `sqs.bind(queue)`, the route of `apiGateway.bind(api).defineRoute()`, and the rules of `eventBridge.bind(bus).defineRule()` and `eventBridge.defineSchedule()`. `eventSourceMapping()`, `route()`, `rule()` and `schedule()` use it to wire a declaration. A runtime module and the infra module that wires it often import each other, so a declaration can be read safely only after every module has loaded. It is an engine mechanism, not user-facing API.
 
-`perCollection(key, create)` returns a function that gives one value for each resource graph that is being collected. The first call in a graph makes the value with `create`. The function returns `undefined` when no graph is being collected. A provider package keeps its declarations in such a store, so that two graphs collected in one process don't see each other's declarations. `@notation/resource` is loaded once, so two installed copies of a provider package that pass the same `key` share the value. `@notation/aws` keeps its claimed AWS names and the default event bus this way, and `@notation/cloudflare` keeps its Workers, their names and the namespace ids.
+`perCollection(key, create)` returns a function that gives one value for each resource graph that is being collected. The first call in a graph makes the value with `create`. The function returns `undefined` when no graph is being collected. A provider package keeps its declarations in such a store, so that two graphs collected in one process don't see each other's declarations. `@notation/resource` is loaded once, so two installed copies of a provider package that pass the same `key` share the value. `@notation/aws` keeps its claimed AWS names and the default event bus this way, and `@notation/cloudflare` keeps its Workers and the namespace ids.
 
 ### Declared modules
 
@@ -598,8 +639,14 @@ When you delete a `contribute` call, the collected value changes, and the resour
 A resource in `config` or `dependencies` must already be constructed, so two resources can only depend on each other through `contribute` or `dependOn`. For example, two Workers that call each other each contribute a service binding to the other:
 
 ```ts
-const a = new WorkerScript("a", { config: { ScriptName: "a" } });
-const b = new WorkerScript("b", { config: { ScriptName: "b" } });
+const a = new WorkerScript("worker:a", {
+  config: configA,
+  dependencies: depsA,
+});
+const b = new WorkerScript("worker:b", {
+  config: configB,
+  dependencies: depsB,
+});
 a.contribute({
   Bindings: [
     { type: "service", name: "B", service: b.outputRef("ScriptName") },
@@ -628,7 +675,7 @@ Deploy leaves out a whole contribution when any value in it refers to another me
 
 In each loop, the first member in the order of the resources that can be the placeholder becomes one. When no member of a loop can, plan and deploy fail with `ResourceCycleError`, which names the members of the loop and says why each of them can't be the placeholder.
 
-Three methods give the engine what it needs: `getFixedDependencies()` returns the dependencies that don't come from contributions, `getContributedParams({ from })` returns the collected params that the contributions that depend on a resource in `from` set, and `getParams({ excludeContributionsFrom })` returns the params without the contributions that depend on a resource in `excludeContributionsFrom`. A contribution depends on the resources in the `deps` of a function contribution, or on the resources whose output refs it holds. See [Dependency cycles](../internals/reconciler.md#dependency-cycles) for how deploy, destroy and plan handle a cycle.
+Three methods give the engine what it needs: `getFixedDependencies()` returns the dependencies that don't come from contributions, `getContributedParams({ from })` returns the collected params that the contributions that depend on a resource in `from` set, and `getParams({ excludeContributionsFrom })` returns the params without the contributions that depend on a resource in `excludeContributionsFrom`. A contribution depends on the resources in the `deps` of a function contribution, or on the resources whose output refs it holds. A [state ref](#state-refs), and a ref to the resource's own `physicalName` param, add no dependency. See [Dependency cycles](../internals/reconciler.md#dependency-cycles) for how deploy, destroy and plan handle a cycle.
 
 Destroy deletes the members of a cycle while they still refer to each other, and so does a replace of a member. When the provider refuses to delete a resource that another resource refers to, the type must force the delete. See [Deletes of a resource that others refer to](#deletes-of-a-resource-that-others-refer-to).
 

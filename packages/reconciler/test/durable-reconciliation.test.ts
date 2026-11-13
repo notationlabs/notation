@@ -7014,6 +7014,255 @@ describe("generated physical names", () => {
   });
 });
 
+describe("refs that add no dependency", () => {
+  /**
+   * A Worker whose `name` deploy generates. `bindings` and `sources` are
+   * collected. The provider keeps one Worker per name.
+   */
+  function defineWorker(type: ResourceType) {
+    const remote = new Map<string, Record<string, unknown>>();
+    const calls: string[] = [];
+    const Worker = resource({ type, provider: "test" })
+      // Cast: see "reads a create interrupted before its outcome was
+      // recorded instead of creating again".
+      .defineSchema({
+        name: {
+          propertyType: "param",
+          presence: "required",
+          primaryKey: true,
+          value: v.string(),
+          physicalName: { maxLength: 64 },
+        },
+        path: {
+          propertyType: "param",
+          presence: "required",
+          immutable: true,
+          value: v.string(),
+        },
+        bindings: {
+          propertyType: "param",
+          presence: "optional",
+          value: v.array(v.unknown()),
+          collect: (items: unknown[][]) => items.flat(),
+        },
+        sources: {
+          propertyType: "param",
+          presence: "optional",
+          value: v.array(v.string()),
+          // A ~state ref to a target with no record resolves to undefined.
+          collect: (items: (string | undefined)[][]) =>
+            items.flat().filter((name) => name !== undefined),
+        },
+      } as any)
+      .defineOperations({
+        create: async (params: any) => {
+          calls.push(`create:${params.name}`);
+          remote.set(params.name, { ...params });
+        },
+        update: async (_key: any, _patch: any, params: any) => {
+          calls.push(`update:${params.name}`);
+          remote.set(params.name, { ...params });
+        },
+        delete: async (key: any) => {
+          calls.push(`delete:${key.name}`);
+          remote.delete(key.name);
+        },
+      });
+    const worker = (id: string, path = "/"): BaseResource =>
+      new Worker(id, { config: { path } as any });
+    return { worker, remote, calls };
+  }
+
+  const nameOf = async (
+    runtime: ReturnType<typeof createRuntime>,
+    id: string,
+  ) => (await runtime.state.get(id))!.params.name as string;
+
+  describe("a ref to the resource's own physicalName param", () => {
+    const bindSelf = (self: BaseResource) => {
+      self.contribute({
+        bindings: [{ name: "SELF", service: self.outputRef("name") }],
+      } as any);
+      return self;
+    };
+
+    it("creates the resource once, with its generated name in the other param", async () => {
+      const { worker, remote, calls } = defineWorker("test/durable/self-name");
+      const runtime = createRuntime(
+        [bindSelf(worker("worker:api"))],
+        "self-name",
+      );
+
+      await runtime.run("deploy-1");
+
+      const name = await nameOf(runtime, "worker:api");
+      expect(name).toMatch(/^shop--prod--worker-api-[0-9a-f]{8}$/);
+      expect(calls).toEqual([`create:${name}`]);
+      expect(remote.get(name)).toEqual({
+        name,
+        path: "/",
+        bindings: [{ name: "SELF", service: name }],
+      });
+
+      await runtime.run("deploy-2");
+      expect(calls).toEqual([`create:${name}`]);
+      runtime.close();
+    });
+
+    it("gives the other param the new name of a replacement", async () => {
+      const { worker, remote, calls } = defineWorker(
+        "test/durable/self-name-replace",
+      );
+      const resources = [bindSelf(worker("worker:api"))];
+      const runtime = createRuntime(resources, "self-name-replace");
+
+      await runtime.run("deploy-1");
+      const first = await nameOf(runtime, "worker:api");
+      resources[0] = bindSelf(worker("worker:api", "/new/"));
+      await runtime.run("deploy-2");
+
+      const second = await nameOf(runtime, "worker:api");
+      expect(second).not.toBe(first);
+      expect(calls).toEqual([
+        `create:${first}`,
+        `delete:${first}`,
+        `create:${second}`,
+      ]);
+      expect(remote.get(second)).toMatchObject({
+        bindings: [{ name: "SELF", service: second }],
+      });
+      runtime.close();
+    });
+
+    it("fills in the name when a resumed deploy takes the params from the params step", async () => {
+      const { worker, remote, calls } = defineWorker(
+        "test/durable/self-name-replay",
+      );
+      const runtime = createRuntime(
+        [bindSelf(worker("worker:api"))],
+        "self-name-replay",
+        {
+          crashAfterStep: `notation:deploy:${encodeURIComponent("worker:api")}:params`,
+        },
+      );
+
+      await expect(runtime.run("deploy-1")).rejects.toThrow(
+        "simulated process crash",
+      );
+      await runtime.run("deploy-1");
+
+      const name = await nameOf(runtime, "worker:api");
+      expect(calls).toEqual([`create:${name}`]);
+      expect(remote.get(name)).toMatchObject({
+        bindings: [{ name: "SELF", service: name }],
+      });
+      runtime.close();
+    });
+  });
+
+  describe("a ~state ref", () => {
+    it("resolves to nothing when the target has no record, then to the recorded output, with no dependency", async () => {
+      const { worker, remote, calls } = defineWorker("test/durable/state-ref");
+      const host = worker("worker:host");
+      const binder = worker("worker:binder");
+      binder.contribute({
+        bindings: [{ name: "HOST", service: host.outputRef("name") }],
+      } as any);
+      host.contribute({
+        sources: [binder["~state"].outputRef("name")],
+      } as any);
+      const runtime = createRuntime([host, binder], "state-ref");
+
+      await runtime.run("deploy-1");
+
+      const hostName = await nameOf(runtime, "worker:host");
+      const binderName = await nameOf(runtime, "worker:binder");
+      expect(calls).toEqual([`create:${hostName}`, `create:${binderName}`]);
+      expect(remote.get(hostName)).toEqual({
+        name: hostName,
+        path: "/",
+        sources: [],
+      });
+      expect(await runtime.state.get("worker:host")).toMatchObject({
+        dependsOn: [],
+      });
+
+      await runtime.run("deploy-2");
+
+      expect(calls.slice(2)).toEqual([`update:${hostName}`]);
+      expect(remote.get(hostName)).toMatchObject({ sources: [binderName] });
+      runtime.close();
+    });
+
+    it("reads the record as it was at the start of the deploy, after the target is replaced", async () => {
+      const { worker, remote } = defineWorker("test/durable/state-ref-start");
+      const reader = (binder: BaseResource) => {
+        const host = worker("worker:host");
+        host.dependOn(binder);
+        host.contribute({
+          sources: [binder["~state"].outputRef("name")],
+        } as any);
+        return host;
+      };
+      const binder = worker("worker:binder");
+      const resources = [binder, reader(binder)];
+      const runtime = createRuntime(resources, "state-ref-start");
+
+      await runtime.run("deploy-1");
+      const hostName = await nameOf(runtime, "worker:host");
+      const first = await nameOf(runtime, "worker:binder");
+      expect(remote.get(hostName)).toMatchObject({ sources: [] });
+
+      const replaced = worker("worker:binder", "/new/");
+      resources.splice(0, 2, replaced, reader(replaced));
+      await runtime.run("deploy-2");
+      const second = await nameOf(runtime, "worker:binder");
+      expect(second).not.toBe(first);
+      expect(remote.get(hostName)).toMatchObject({ sources: [first] });
+
+      await runtime.run("deploy-3");
+      expect(remote.get(hostName)).toMatchObject({ sources: [second] });
+      runtime.close();
+    });
+
+    it("reads the outputs that a resumed deploy recorded at its start", async () => {
+      const type = "test/durable/state-ref-replay";
+      const { worker, remote } = defineWorker(type);
+      const host = worker("worker:host");
+      const binder = worker("worker:binder");
+      host.contribute({
+        sources: [binder["~state"].outputRef("name")],
+      } as any);
+      const runtime = createRuntime([host, binder], "state-ref-replay", {
+        crashAfterStep: "notation:recorded-outputs",
+      });
+      const hostName = "shop--prod--worker-host-1a2b3c4d";
+      const binderName = "shop--prod--worker-binder-5e6f7a8b";
+      const write = (id: string, name: string, output = { name }) =>
+        runtime.storeClient
+          .store(durable.resourceStateStore, runtime.state.storeId(id))
+          .update(() => ({
+            ...resourceStateRecord(id),
+            type,
+            params: { name, path: "/" },
+            output,
+          }));
+      await write("worker:host", hostName);
+      await write("worker:binder", binderName);
+
+      await expect(runtime.run("deploy-1")).rejects.toThrow(
+        "simulated process crash",
+      );
+      // A record that changes after the deploy read the outputs.
+      await write("worker:binder", binderName, { name: "renamed" });
+      await runtime.run("deploy-1");
+
+      expect(remote.get(hostName)).toMatchObject({ sources: [binderName] });
+      runtime.close();
+    });
+  });
+});
+
 function createRuntime(
   resources: BaseResource[],
   deploymentId: string,

@@ -4,6 +4,7 @@ import * as nodeFs from "node:fs/promises";
 import path from "node:path";
 import { fromProjectRoot } from "@notation/core/paths";
 import {
+  isUnknownAfterApply,
   resource,
   ResourceAlreadyExistsError,
   ResourceNotFoundError,
@@ -12,6 +13,7 @@ import {
 } from "@notation/resource";
 import type { fs } from "@notation/std/resources";
 import { accountId, cloudflareCreate } from "src/api/client";
+import { matchesWorkerNames, workerNameRule } from "src/id";
 import {
   bindingSchema,
   deleteScript,
@@ -53,11 +55,16 @@ export type BoundNamespace = v.InferOutput<typeof boundNamespaceSchema>;
 
 const transferSourceSchema = v.object({
   /** The id of a namespace that the Worker hosts. */
-  id: v.string(),
-  /** The other Workers that bind the namespace. */
-  scriptNames: v.array(v.string()),
+  namespaceId: v.string(),
+  /** The `$worker` id of another Worker that binds the namespace. */
+  workerId: v.string(),
+  /** That Worker's name in its state record, if it has one. */
+  scriptName: v.optional(v.string()),
+  /** That Worker's generated name without its instance. */
+  nameBody: v.string(),
 });
 
+/** A Worker that binds a namespace that this Worker hosts. */
 export type TransferSource = v.InferOutput<typeof transferSourceSchema>;
 
 type WorkerScriptParams = {
@@ -87,7 +94,9 @@ type WorkerScriptParams = {
   /**
    * When a hosted namespace is new to the Worker, and one of the Workers
    * listed for it hosts a namespace with its class, deploy moves that
-   * namespace and its objects to this Worker.
+   * namespace and its objects to this Worker. A listed Worker with no
+   * `scriptName` has no state record: deploy fails when a Worker with one
+   * of its names hosts the class.
    */
   DurableObjectTransferSources?: TransferSource[];
 };
@@ -104,6 +113,24 @@ export type WorkerScriptDependencies = {
 };
 
 const WORKER_SCRIPT_TYPE = "cloudflare/workers/WorkerScript";
+
+const READABLE_WITHIN_MS = 15_000;
+const READABLE_RETRY_MS = 250;
+
+// Cloudflare sometimes reports a Worker as not found for about a second
+// after the upload that created it. The reconciler reads the Worker straight
+// after create, and fails on not found, so create waits until it can read it.
+async function waitUntilReadable(account: string, scriptName: string) {
+  const deadline = Date.now() + READABLE_WITHIN_MS;
+  while (!(await getScriptSettings(account, scriptName))) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Cloudflare accepted the upload of the Worker ${scriptName}, but still reported it as not found ${READABLE_WITHIN_MS / 1_000} seconds later`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, READABLE_RETRY_MS));
+  }
+}
 
 const workerScript = resource<WorkerScriptSchema>({
   type: WORKER_SCRIPT_TYPE,
@@ -174,6 +201,7 @@ const workerScriptSchema = workerScript.defineSchema({
     immutable: true,
     primaryKey: true,
     value: v.string(),
+    physicalName: workerNameRule,
   },
   MainModule: {
     propertyType: "param",
@@ -228,6 +256,7 @@ const workerScriptSchema = workerScript.defineSchema({
     presence: "optional",
     hidden: true,
     value: v.array(transferSourceSchema),
+    collect: (items: unknown[]) => items.flat() as TransferSource[],
   },
 } as const);
 
@@ -245,7 +274,10 @@ export const WorkerScript = workerScriptSchema
       if (found.transfers.length > 0) {
         throw new Error(newHostError(params, found.transfers));
       }
-      await cloudflareCreate(upload)(params, [], found);
+      await cloudflareCreate(async () => {
+        await upload(params, [], found);
+        await waitUntilReadable(params.AccountId, params.ScriptName);
+      })();
     },
 
     read: async (key) => {
@@ -344,6 +376,9 @@ type FoundTransfers = { transfers: Transfer[]; account: AccountNamespace[] };
  * Finds the hosted namespaces that are new to the Worker and that another
  * Worker of the deployment hosts now, with the account's namespaces. Lists
  * the account's namespaces only when a new namespace has transfer sources.
+ * Fails when a Worker that binds a new namespace has no state record, and a
+ * Worker with one of its names hosts the class: that may be the Worker, and
+ * its record lost.
  */
 async function findTransfers(
   params: WorkerScriptParams,
@@ -353,20 +388,38 @@ async function findTransfers(
   const arriving = (params.DurableObjectNamespaces ?? []).flatMap(
     (namespace) => {
       if (previous.some((before) => before.id === namespace.id)) return [];
-      const from = sources.find((source) => source.id === namespace.id);
-      return from && from.scriptNames.length > 0
-        ? [{ namespace, scriptNames: from.scriptNames }]
-        : [];
+      const workers = sources.filter(
+        (source) => source.namespaceId === namespace.id,
+      );
+      return workers.length > 0 ? [{ namespace, workers }] : [];
     },
   );
   if (arriving.length === 0) return { transfers: [], account: [] };
   const account = await listAccountNamespaces(params.AccountId);
   const transfers: Transfer[] = [];
-  for (const { namespace, scriptNames } of arriving) {
-    const hosts = account.filter(
-      (other) =>
-        other.className === namespace.className &&
-        scriptNames.includes(other.script),
+  for (const { namespace, workers } of arriving) {
+    const scriptNames = workers.flatMap((worker) =>
+      worker.scriptName === undefined ? [] : [worker.scriptName],
+    );
+    const withClass = account.filter(
+      (other) => other.className === namespace.className,
+    );
+    for (const worker of workers) {
+      if (worker.scriptName !== undefined) continue;
+      const lost = withClass.find(
+        (other) =>
+          other.script !== params.ScriptName &&
+          !scriptNames.includes(other.script) &&
+          matchesWorkerNames(other.script, worker),
+      );
+      if (lost) {
+        throw new Error(
+          lostRecordError(params, namespace, worker, lost.script),
+        );
+      }
+    }
+    const hosts = withClass.filter((other) =>
+      scriptNames.includes(other.script),
     );
     if (hosts.length > 1) {
       throw new Error(
@@ -389,6 +442,14 @@ async function findTransfers(
   }
   return { transfers, account };
 }
+
+const lostRecordError = (
+  params: WorkerScriptParams,
+  namespace: HostedNamespace,
+  worker: TransferSource,
+  script: string,
+) =>
+  `The Durable Object namespace "${namespace.id}" is new to the Worker ${params.ScriptName}. The Worker "${worker.workerId}" binds it and has no state record, and the Worker ${script} in the Cloudflare account hosts a namespace with its class ${namespace.className}. ${script} has a name that deploy gives the Worker "${worker.workerId}", so it may be that Worker, with its state record lost. Deploy moves a namespace only from a Worker in state, and would otherwise start an empty namespace while ${script} keeps the objects. If ${script} is that Worker, restore its state record, so that deploy moves the namespace from it. If it is not, give the Worker "${worker.workerId}" another id.`;
 
 // A create that stopped part way through a transfer would be recorded as
 // done, and the next deploy would not finish the transfer.
@@ -451,6 +512,10 @@ async function transferNamespaces(
   }
 }
 
+// At plan, the name of a Worker that deploy creates is not known.
+const describeScript = (scriptName: string) =>
+  isUnknownAfterApply(scriptName) ? "another Worker" : scriptName;
+
 const describeHosted = (namespace: HostedNamespace) =>
   `"${namespace.id}" (class ${namespace.className})`;
 
@@ -475,14 +540,14 @@ export function rejectNamespaceLoss(
   const kept = desired && !context.replace ? desired : undefined;
   const hosted = kept?.DurableObjectNamespaces ?? [];
   const bound = kept?.BoundDurableObjects ?? [];
-  // At plan, the list is UNKNOWN_AFTER_APPLY when a dependency has no
-  // output yet. Deploy runs the check again with the real params.
-  if (!Array.isArray(hosted)) return undefined;
+  // At plan, a list is UNKNOWN_AFTER_APPLY when a dependency has no output
+  // yet. Deploy runs the check again with the real params.
+  if (!Array.isArray(hosted) || !Array.isArray(bound)) return undefined;
 
   for (const namespace of before) {
     const moved = bound.find((now) => now.id === namespace.id);
     if (moved && moved.className !== namespace.className) {
-      return `The Durable Object namespace "${namespace.id}" would move from the Worker ${previous.ScriptName} to ${moved.scriptName}, and its class would change from ${namespace.className} to ${moved.className}. Deploy can't move a namespace and change its class at once. Move it with the class ${namespace.className}, and change the class in a later deploy.`;
+      return `The Durable Object namespace "${namespace.id}" would move from the Worker ${previous.ScriptName} to ${describeScript(moved.scriptName)}, and its class would change from ${namespace.className} to ${moved.className}. Deploy can't move a namespace and change its class at once. Move it with the class ${namespace.className}, and change the class in a later deploy.`;
     }
   }
 
@@ -537,9 +602,12 @@ export function rejectNamespaceLoss(
   const arriving = hosted.filter(
     (namespace) =>
       !before.some((other) => other.id === namespace.id) &&
-      sources.some(
-        (source) => source.id === namespace.id && source.scriptNames.length > 0,
-      ),
+      (!Array.isArray(sources) ||
+        sources.some(
+          (source) =>
+            source.namespaceId === namespace.id &&
+            source.scriptName !== undefined,
+        )),
   );
   const migrating = Object.entries(
     durableObjectExports(hosted, before, bound),

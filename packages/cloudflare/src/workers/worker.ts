@@ -8,7 +8,7 @@ import {
 } from "@notation/resource";
 import * as std from "@notation/std/resources";
 import * as cloudflare from "src/resources";
-import { assertWorkerId, workerName } from "src/id";
+import { assertWorkerId, workerNames, workerResourceId } from "src/id";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
 import { describeNamespace, registeredNamespace } from "./durable-object";
 
@@ -18,12 +18,11 @@ const NODEJS_COMPAT = "nodejs_compat";
 
 export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
   /**
-   * The Worker's name in Cloudflare is `<app>--<stage>--<id>`. Changing the
-   * id replaces the Worker.
+   * Keys the Worker in state. Deploy names the Worker in Cloudflare
+   * `<app>--<stage>--<id>-<instance>` when it creates it, with 8 random hex
+   * characters as the instance. Changing the id replaces the Worker.
    */
   id: Id;
-  /** Replaces the id in the Worker's name. Changing it replaces the Worker. */
-  name?: string;
   /**
    * The values that the Worker reads from `env`: a `$durableObject`
    * namespace, another Worker or a string. Return an object literal with no
@@ -40,7 +39,6 @@ export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
 
 export type WorkerGroupConfig = {
   id: string;
-  scriptName: string;
   /** The bundle to upload, relative to the project root. */
   codePath: string;
   compatibilityDate: string;
@@ -51,8 +49,6 @@ export type WorkerGroupConfig = {
   unprotectedNamespaces?: string[];
   /** The namespaces that the Worker binds on other Workers. */
   boundNamespaces: cloudflare.workers.BoundNamespace[];
-  /** For each hosted namespace, the other Workers that bind it. */
-  transferSources: cloudflare.workers.TransferSource[];
   url: boolean;
 };
 
@@ -76,16 +72,14 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
       }),
     );
     this.script = this.add(
-      new cloudflare.workers.WorkerScript(`worker:${config.id}`, {
+      new cloudflare.workers.WorkerScript(workerResourceId(config.id), {
         config: {
-          ScriptName: config.scriptName,
           CompatibilityDate: config.compatibilityDate,
           CompatibilityFlags: config.compatibilityFlags,
           Bindings: config.bindings,
           DurableObjectNamespaces: config.namespaces,
           UnprotectedDurableObjects: config.unprotectedNamespaces,
           BoundDurableObjects: config.boundNamespaces,
-          DurableObjectTransferSources: config.transferSources,
         },
         dependencies: { code: this.code },
       }),
@@ -108,7 +102,6 @@ export function isWorkerGroup(value: unknown): value is WorkerGroup {
 type Entry = {
   declaration: Worker<any>;
   id: string;
-  scriptName: string;
   /** Names the Worker in errors, with its module if known. */
   describe: () => string;
   record: () => DeclaredIn;
@@ -134,10 +127,6 @@ const declaredWorkers = perCollection(
   "@notation/cloudflare/workers",
   () => [] as Entry[],
 );
-const claimedNames = perCollection(
-  "@notation/cloudflare/workerNames",
-  () => new Map<string, string>(),
-);
 
 /**
  * Declares a Cloudflare Worker. The module's default export is the handler.
@@ -148,16 +137,12 @@ const claimedNames = perCollection(
 export function $worker<const Id extends string, B extends Bindings = {}>(
   config: WorkerDeclarationConfig<Id, B>,
 ): Worker<B> {
-  assertWorkerId("$worker", "id", config.id);
-  if (config.name !== undefined) {
-    assertWorkerId("$worker", "name", config.name);
-  }
+  assertWorkerId("$worker", config.id);
   if (typeof config.compatibilityDate !== "string") {
     throw new Error(
       `$worker({ id: "${config.id}" }) requires compatibilityDate, such as "2026-10-12". Cloudflare runs the Worker with the behaviour of the runtime on that date, so the date is set in the code, and changes only when you change it.`,
     );
   }
-  const scriptName = workerName(config.name ?? config.id);
   const declaration = { id: config.id } as unknown as Worker<B>;
   let bindings: Bindings | undefined;
   let group: WorkerGroup | undefined;
@@ -166,14 +151,9 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
   const entry: Entry = {
     declaration,
     id: config.id,
-    scriptName,
     describe: () => {
-      const options =
-        config.name === undefined
-          ? `id: "${config.id}"`
-          : `id: "${config.id}", name: "${config.name}"`;
       const where = getDeclaredIn(declaration)?.path;
-      return `$worker({ ${options} })${where ? ` in ${where}` : ""}`;
+      return `$worker({ id: "${config.id}" })${where ? ` in ${where}` : ""}`;
     },
     record: () => {
       const record = getDeclaredIn(declaration);
@@ -192,15 +172,15 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
       if (chain.includes(entry)) {
         throw bindingCycleError([...chain.slice(chain.indexOf(entry)), entry]);
       }
-      const resolved = resolveBindings(entry);
-      const record = entry.record();
-      const after = resolved.dependsOn.map(
-        (other) => other.build([...chain, entry]).script,
+      // The hosts of the namespaces that the Worker binds are built first,
+      // as the bindings refer to their scripts.
+      const resolved = resolveBindings(
+        entry,
+        (host) => host.build([...chain, entry]).script,
       );
-      claimName(scriptName, entry.describe());
+      const record = entry.record();
       group = new WorkerGroup({
         id: config.id,
-        scriptName,
         codePath: toProjectRoot(
           filePaths.dist.runtime.index(fromProjectRoot(record.path)),
         ),
@@ -217,12 +197,12 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
           ? [...resolved.unprotected].sort()
           : undefined,
         boundNamespaces: resolved.bound,
-        transferSources: resolved.transferSources,
         url: config.url ?? true,
       });
-      for (const script of after) group.script.dependOn(script);
-      // Each binding is a contribution, so that deploy can create one of two
-      // Workers that bind each other first, without its binding.
+      // Each service binding is a contribution, so that deploy can create
+      // one of two Workers that bind each other first, without its binding.
+      // A binding of the Worker to itself refers to its own name, which is
+      // no dependency.
       const script = group.script;
       for (const { name, worker } of resolved.services) {
         worker.whenBuilt((bound) =>
@@ -236,6 +216,24 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
             ],
           }),
         );
+      }
+      // The Workers that bind a hosted namespace depend on this one, so their
+      // names are read from state, with no dependency.
+      for (const { id, binders } of resolved.transferSources) {
+        for (const binder of binders) {
+          binder.whenBuilt((bound) =>
+            script.contribute({
+              DurableObjectTransferSources: [
+                {
+                  namespaceId: id,
+                  workerId: binder.id,
+                  scriptName: bound.script["~state"].outputRef("ScriptName"),
+                  ...workerNames(binder.id),
+                },
+              ],
+            }),
+          );
+        }
       }
       for (const callback of waiting.splice(0)) callback(group);
       return group;
@@ -273,42 +271,33 @@ function bindingCycleError(cycle: Entry[]): Error {
   );
 }
 
-function claimName(scriptName: string, declaration: string) {
-  const claimed = active(claimedNames, "Worker names");
-  const previous = claimed.get(scriptName);
-  if (previous) {
-    throw new Error(
-      `${previous} and ${declaration} give two Workers the same name, "${scriptName}". Give one of them another name.`,
-    );
-  }
-  claimed.set(scriptName, declaration);
-}
-
 type ResolvedBindings = {
   bindings: cloudflare.workers.WorkerBinding[];
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotected: Set<string>;
   bound: cloudflare.workers.BoundNamespace[];
-  transferSources: cloudflare.workers.TransferSource[];
-  /** The hosts of the namespaces that the Worker binds on another Worker. */
-  dependsOn: Entry[];
-  /** The other Workers that the Worker binds as services. */
+  /** For each hosted namespace, the other Workers that bind it. */
+  transferSources: { id: string; binders: Entry[] }[];
+  /** The Workers that the Worker binds as services, itself included. */
   services: { name: string; worker: Entry }[];
 };
 
 /**
  * The Worker that binds a namespace and exports its class hosts it. Other
- * Workers that bind the namespace are uploaded after the host.
+ * Workers that bind the namespace bind it on the host's script, which
+ * `scriptOf` returns.
  */
-function resolveBindings(self: Entry): ResolvedBindings {
+function resolveBindings(
+  self: Entry,
+  scriptOf: (host: Entry) => cloudflare.workers.WorkerScriptInstance,
+): ResolvedBindings {
   const resolved: ResolvedBindings = {
     bindings: [],
     namespaces: [],
     unprotected: new Set(),
     bound: [],
     transferSources: [],
-    dependsOn: [],
     services: [],
   };
   for (const [name, value] of Object.entries(self.bindings())) {
@@ -330,34 +319,26 @@ function resolveBindings(self: Entry): ResolvedBindings {
           class_name: namespace.className,
         });
       } else {
+        const scriptName = scriptOf(host).outputRef("ScriptName");
         resolved.bindings.push({
           type: "durable_object_namespace",
           name,
           class_name: namespace.className,
-          script_name: host.scriptName,
+          script_name: scriptName,
         });
         if (!resolved.bound.some((bound) => bound.id === ns.id)) {
           resolved.bound.push({
             id: ns.id,
             className: namespace.className,
-            scriptName: host.scriptName,
+            scriptName,
           });
         }
-        resolved.dependsOn.push(host);
       }
       continue;
     }
     const worker = registeredWorker(value);
-    if (worker && worker !== self) {
-      resolved.services.push({ name, worker });
-      continue;
-    }
     if (worker) {
-      resolved.bindings.push({
-        type: "service",
-        name,
-        service: worker.scriptName,
-      });
+      resolved.services.push({ name, worker });
       continue;
     }
     throw new Error(
@@ -387,18 +368,15 @@ function addHosted(
 // doesn't export the class, or it would host the namespace too.
 function addTransferSources(
   self: Entry,
-  sources: cloudflare.workers.TransferSource[],
+  sources: ResolvedBindings["transferSources"],
   namespace: DurableObjectDeclaration,
 ) {
   if (sources.some((source) => source.id === namespace.id)) return;
-  const scriptNames = active(declaredWorkers, "Workers")
-    .filter(
-      (entry) =>
-        entry !== self && Object.values(entry.bindings()).includes(namespace),
-    )
-    .map((entry) => entry.scriptName)
-    .sort();
-  if (scriptNames.length > 0) sources.push({ id: namespace.id, scriptNames });
+  const binders = active(declaredWorkers, "Workers").filter(
+    (entry) =>
+      entry !== self && Object.values(entry.bindings()).includes(namespace),
+  );
+  if (binders.length > 0) sources.push({ id: namespace.id, binders });
 }
 
 function hostOf(

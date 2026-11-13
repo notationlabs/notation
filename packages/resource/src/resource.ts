@@ -40,12 +40,20 @@ import {
   deployLookup,
   forEachOutputRef,
   hasPendingOutput,
+  isDependencyRef,
   isOutputRef,
+  isOwnNameRef,
   markUnknownOutputRefs,
   planLookup,
   resolveOutputRefs,
+  recordedLookup,
+  StateOutputRef,
+  stateOutputRef,
+  type OutputLookup,
   type PlanViews,
+  type RecordedOutputs,
 } from "./output-ref";
+import { ownPhysicalName } from "./physical-name";
 import { getActiveResourceCollection } from "./resource-collection";
 import { assertParamFields, validateValues } from "./value-validation";
 
@@ -164,6 +172,8 @@ export interface BaseResource {
   getParams(options?: {
     /** Leaves out each contribution that depends on one of these. */
     excludeContributionsFrom?: ReadonlySet<BaseResource>;
+    /** The outputs that `~state` refs resolve to. */
+    recordedOutputs?: RecordedOutputs;
   }): Promise<DurableObject>;
   toState(output: {}): {};
   toResult(result: {}): DurableObject;
@@ -192,7 +202,9 @@ export interface BaseResource {
   /**
    * Every resource this one depends on: its declared dependencies, those
    * added with `dependOn`, the deps of its function contributions, and the
-   * resources whose output refs its config and contributions hold.
+   * resources whose output refs its config and contributions hold. A
+   * `~state` ref, and a ref to the resource's own `physicalName` param, add
+   * no dependency.
    */
   getDependencies(): BaseResource[];
   /**
@@ -214,9 +226,19 @@ export interface BaseResource {
    * The params as a plan shows them. A value that holds an output not yet
    * deployed is `UNKNOWN_AFTER_APPLY` at its own path.
    */
-  planParams(): Promise<Record<string, unknown>>;
+  planParams(options?: {
+    /** The outputs that `~state` refs resolve to. */
+    recordedOutputs?: RecordedOutputs;
+  }): Promise<Record<string, unknown>>;
   /** A token for one of the resource's outputs, to place whole in config. */
   outputRef(key: string): unknown;
+  /** See `Resource["~state"]`. */
+  readonly "~state": { outputRef(key: string): unknown };
+  /**
+   * Whether a `~state` ref names the resource. Deploy reads the outputs of
+   * these resources from state once, at the start, before any params exist.
+   */
+  isStateRefTarget(): boolean;
 }
 
 export abstract class Resource<
@@ -236,6 +258,7 @@ export abstract class Resource<
   // Set once code reads the params or dependencies. A later contribution
   // would be missing from what was read, so `contribute` throws.
   #sealed = false;
+  #stateRefTarget = false;
   abstract type: ResourceType;
   abstract provider: string;
   declare readonly deleteTakesDependents?: boolean;
@@ -371,6 +394,38 @@ export abstract class Resource<
     return new OutputRef(this, [key]) as any;
   }
 
+  /**
+   * Reads outputs from the resource's state record, for the code of a
+   * resource package. `outputRef(key)` returns a token that resolves to the
+   * output in the record at the start of the deploy or plan, or to
+   * undefined when there is no full record. When the deploy replaces this
+   * resource, the token resolves to the output from before the replace. The
+   * resource holding the token does not depend on this one. A resumed deploy
+   * uses the params that it recorded. The token can only be placed in a contribution:
+   * `getDependencies` throws when config holds one.
+   *
+   * `outputRef` can read only a param that is `immutable`, `primaryKey` or
+   * `secondaryKey`, or that has `physicalName`, and that is not `hidden`.
+   * It throws for any other key, though the type accepts every output.
+   */
+  get "~state"(): {
+    outputRef<K extends keyof T["output"] & string>(
+      key: K,
+    ): T["output"][K] | undefined;
+  } {
+    return {
+      outputRef: (key) => {
+        const token = stateOutputRef(this, key);
+        this.#stateRefTarget = true;
+        return token as any;
+      },
+    };
+  }
+
+  isStateRefTarget(): boolean {
+    return this.#stateRefTarget;
+  }
+
   contribute(values: T["collected"]): void;
   contribute<Deps extends Record<string, BaseResource>>(
     compute: ContributionFunction<Deps, T["collected"]>,
@@ -406,7 +461,7 @@ export abstract class Resource<
   getDependencies(): BaseResource[] {
     const found = new Set(this.getFixedDependencies());
     for (const contribution of this.#contributions) {
-      for (const dependency of contributionDependencies(contribution)) {
+      for (const dependency of contributionDependencies(this, contribution)) {
         found.add(dependency);
       }
     }
@@ -420,7 +475,16 @@ export abstract class Resource<
       if (dependency) found.add(dependency as BaseResource);
     }
     for (const dependency of this.#addedDependencies) found.add(dependency);
-    forEachOutputRef(this.config, (token) => found.add(token.resource));
+    forEachOutputRef(this.config, (token) => {
+      // Create and update resolve config with the live output of each ref,
+      // which a `~state` ref's target may not have yet.
+      if (token instanceof StateOutputRef) {
+        throw new Error(
+          `The config of ${this.id} holds a ~state ref to ${token.resource.id}. A ~state ref can only be placed in a contribution.`,
+        );
+      }
+      if (isDependencyRef(this, token)) found.add(token.resource);
+    });
     return [...found];
   }
 
@@ -430,7 +494,7 @@ export abstract class Resource<
     this.#sealed = true;
     const params = new Set<string>();
     for (const contribution of this.#contributions) {
-      if (from && !dependsOnAny(contribution, from)) continue;
+      if (from && !dependsOnAny(this, contribution, from)) continue;
       const keys =
         "compute" in contribution
           ? Object.keys(this.schema).filter(
@@ -446,9 +510,11 @@ export abstract class Resource<
 
   async getParams({
     excludeContributionsFrom,
-  }: { excludeContributionsFrom?: ReadonlySet<BaseResource> } = {}): Promise<
-    T["params"]
-  > {
+    recordedOutputs,
+  }: {
+    excludeContributionsFrom?: ReadonlySet<BaseResource>;
+    recordedOutputs?: RecordedOutputs;
+  } = {}): Promise<T["params"]> {
     this.#sealed = true;
     const derivedParams = await this.deriveParams({
       id: this.id,
@@ -458,6 +524,7 @@ export abstract class Resource<
     return (await this.#combineParams(derivedParams, {
       plan: false,
       excludeContributionsFrom,
+      recordedOutputs,
     })) as T["params"];
   }
 
@@ -468,11 +535,20 @@ export abstract class Resource<
    * `deriveParams` reads such an output, the plan cannot tell which params
    * are known: every param not set in config is unknown. When it reads none,
    * the plan is exact.
+   *
+   * A ref to the resource's own `physicalName` param is an `OwnPhysicalName`
+   * in the result, here and in `getParams`, for the reconciler to fill in.
    */
-  async planParams(): Promise<Record<string, unknown>> {
+  async planParams({
+    recordedOutputs,
+  }: { recordedOutputs?: RecordedOutputs } = {}): Promise<
+    Record<string, unknown>
+  > {
     this.#sealed = true;
     const pending = this.getDependencies().some(hasPendingOutput);
-    if (!pending) return withoutUndefined(await this.getParams());
+    if (!pending) {
+      return withoutUndefined(await this.getParams({ recordedOutputs }));
+    }
 
     const views = createPlanViews();
     const derivedParams = await tryAtPlan(views, () =>
@@ -482,23 +558,37 @@ export abstract class Resource<
         deps: views.of(this.dependencies),
       }),
     );
-    if (derivedParams === undefined) return this.#cautiousPlanParams();
-    const params = await this.#combineParams(derivedParams, { plan: true });
+    if (derivedParams === undefined) {
+      return this.#cautiousPlanParams(recordedOutputs);
+    }
+    const params = await this.#combineParams(derivedParams, {
+      plan: true,
+      recordedOutputs,
+    });
     return markUnknownOutputRefs(withoutUndefined(params)) as Record<
       string,
       unknown
     >;
   }
 
-  async #cautiousPlanParams(): Promise<Record<string, unknown>> {
+  async #cautiousPlanParams(
+    recordedOutputs: RecordedOutputs | undefined,
+  ): Promise<Record<string, unknown>> {
     const params: Record<string, unknown> = {};
     const config = this.config as Record<string, unknown>;
     const contributions = await this.#evaluateContributions(true);
     for (const [key, item] of Object.entries(this.schema)) {
       if (item.propertyType === "computed") continue;
       const value = item.collect
-        ? this.#collect(key, item.collect, config[key], contributions, true)
-        : resolveOutputRefs(config[key], planLookup);
+        ? this.#collect(
+            key,
+            item.collect,
+            config[key],
+            contributions,
+            true,
+            recordedOutputs,
+          )
+        : this.#resolveRefs(config[key], true, recordedOutputs);
       params[key] =
         value === undefined
           ? UNKNOWN_AFTER_APPLY
@@ -512,9 +602,10 @@ export abstract class Resource<
     options: {
       plan: boolean;
       excludeContributionsFrom?: ReadonlySet<BaseResource>;
+      recordedOutputs?: RecordedOutputs;
     },
   ): Promise<Record<string, unknown>> {
-    const { plan, excludeContributionsFrom } = options;
+    const { plan, excludeContributionsFrom, recordedOutputs } = options;
     const params: Record<string, unknown> = {
       ...this.config,
       ...derivedParams,
@@ -531,12 +622,35 @@ export abstract class Resource<
         params[key],
         contributions,
         plan,
+        recordedOutputs,
       );
     }
-    return resolveOutputRefs(
-      params,
-      plan ? planLookup : deployLookup,
-    ) as Record<string, unknown>;
+    return this.#resolveRefs(params, plan, recordedOutputs) as Record<
+      string,
+      unknown
+    >;
+  }
+
+  /**
+   * Fills in the refs in `value` that are known. A `~state` ref takes its
+   * value from `recordedOutputs`. A ref to the resource's own
+   * `physicalName` param becomes an `OwnPhysicalName`, as the name is
+   * decided after the params.
+   */
+  #resolveRefs(
+    value: unknown,
+    plan: boolean,
+    recordedOutputs: RecordedOutputs | undefined,
+  ): unknown {
+    const lookup: OutputLookup = plan ? planLookup : deployLookup;
+    const lookupRecorded = recordedLookup(recordedOutputs);
+    return resolveOutputRefs(value, (token) =>
+      token instanceof StateOutputRef
+        ? lookupRecorded(token)
+        : isOwnNameRef(this, token)
+          ? { known: true, value: ownPhysicalName(token.path[0]!) }
+          : lookup(token),
+    );
   }
 
   /**
@@ -551,7 +665,7 @@ export abstract class Resource<
   ): Promise<EvaluatedContributions> {
     const evaluated: EvaluatedContributions = { items: [], unknown: false };
     for (const contribution of this.#contributions) {
-      if (exclude && dependsOnAny(contribution, exclude)) continue;
+      if (exclude && dependsOnAny(this, contribution, exclude)) continue;
       if (!("compute" in contribution)) {
         evaluated.items.push(contribution);
         continue;
@@ -591,6 +705,7 @@ export abstract class Resource<
     configured: unknown,
     contributions: EvaluatedContributions,
     plan: boolean,
+    recordedOutputs: RecordedOutputs | undefined,
   ): unknown {
     if (contributions.unknown) return UNKNOWN_AFTER_APPLY;
     const items = sortContributions(
@@ -609,9 +724,8 @@ export abstract class Resource<
       });
     }
     if (items.length === 0) return undefined;
-    const lookup = plan ? planLookup : deployLookup;
     return collect(
-      items.map((item) => resolveOutputRefs(item.value, lookup)),
+      items.map((item) => this.#resolveRefs(item.value, plan, recordedOutputs)),
       {
         resourceId: this.id,
         param: key,
@@ -651,18 +765,24 @@ export abstract class Resource<
  * The deps of a function contribution, or the resources whose output refs
  * a contribution of values holds.
  */
-function contributionDependencies(contribution: Contribution): BaseResource[] {
+function contributionDependencies(
+  holder: BaseResource,
+  contribution: Contribution,
+): BaseResource[] {
   if ("compute" in contribution) return Object.values(contribution.deps);
   const found: BaseResource[] = [];
-  forEachOutputRef(contribution.values, (token) => found.push(token.resource));
+  forEachOutputRef(contribution.values, (token) => {
+    if (isDependencyRef(holder, token)) found.push(token.resource);
+  });
   return found;
 }
 
 function dependsOnAny(
+  holder: BaseResource,
   contribution: Contribution,
   resources: ReadonlySet<BaseResource>,
 ): boolean {
-  return contributionDependencies(contribution).some((dependency) =>
+  return contributionDependencies(holder, contribution).some((dependency) =>
     resources.has(dependency),
   );
 }

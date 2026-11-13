@@ -15,7 +15,7 @@ import {
   type ReconcileOptions,
 } from "./reconcile";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
-import type { DurableDeployOptions } from "./types";
+import type { DeployContext } from "./types";
 import type { DurableStep } from "./sdk";
 
 const CREATING_DECISIONS: ResourceAction["decision"][] = [
@@ -50,7 +50,7 @@ const CREATING_DECISIONS: ResourceAction["decision"][] = [
 export async function* reconcileCycle(
   step: DurableStep,
   cycle: DeployUnit,
-  opts: DurableDeployOptions,
+  opts: DeployContext,
 ): AsyncGenerator<any, void, any> {
   const scope = (resource: BaseResource, suffix?: string, stateKey?: string) =>
     scopeStep(
@@ -182,7 +182,7 @@ export async function* reconcileCycle(
 async function* checkPlaceholder(
   step: DurableStepRunner,
   resource: BaseResource,
-  opts: DurableDeployOptions,
+  opts: DeployContext,
 ): AsyncGenerator<any, { recorded: boolean; driftRead?: DriftRead }, any> {
   const session = yield* openStateSession(step, opts, resource);
   // Repeats the notation:validate check, because validate ran before the

@@ -1,8 +1,9 @@
 import {
-  UNKNOWN_AFTER_APPLY,
   assertRequiredOutputs,
+  fillPhysicalNames,
   validateParams,
   type BaseResource,
+  type RecordedOutputs,
 } from "@notation/resource";
 import {
   isCreatingRecord,
@@ -32,7 +33,9 @@ import {
   assertNamesNotSupplied,
   recordedNames,
   nameFields,
+  unknownNames,
 } from "./physical-names";
+import { readRecordedOutputs } from "./recorded-outputs";
 import { assertSameType } from "./resource-type";
 import { createStepRunner, runOperation } from "./step-runner";
 
@@ -79,6 +82,7 @@ export async function createPlan({
   assertDependenciesPresent(resources);
 
   const stateNodes = await state.values();
+  const recordedOutputs = await readRecordedOutputs(resources, state);
   // The edges in state as deploy finds them when it replaces a resource.
   // Deploy writes the edges in code for each resource it reaches, so a
   // resource takes those once it is planned.
@@ -96,11 +100,14 @@ export async function createPlan({
     cycle: DeployUnit | undefined,
     detectDrift = driftDetection,
   ): Promise<PlanNode> => {
-    const { stateNode, params } = await planKnownParams(
+    const known = await planKnownParams(
       resource,
       state,
       "plan",
+      recordedOutputs,
     );
+    const { stateNode } = known;
+    let { params } = known;
     const action = await runOperation(
       applyDriftDetection(createStepRunner(), {
         action: decideAction({ resource, stateNode, params }),
@@ -157,9 +164,7 @@ export async function createPlan({
       // resource with no state.
       resource.setOutput(null as any);
       // Deploy generates a new name for the resource that it creates again.
-      for (const { field } of nameFields(resource)) {
-        params[field] = UNKNOWN_AFTER_APPLY;
-      }
+      params = fillPhysicalNames(known.unnamed, unknownNames(resource));
     }
     edgesById.set(resource.id, dependsOn);
 
@@ -284,28 +289,28 @@ async function loadOutput(
  * dependencies must be loaded first.
  *
  * A `physicalName` param takes its value from the state record, as in
- * deploy. Without a record, deploy generates the name, so it is unknown
- * here.
+ * deploy, and so does a ref to it from another of the resource's params.
+ * Without a record, deploy generates the name, so it is unknown here.
+ * `unnamed` holds the params before the names are filled in.
  */
 export async function planKnownParams(
   resource: BaseResource,
   state: { get(id: string): Promise<StateNode | undefined> },
   point: "plan" | "deploy",
+  recordedOutputs: RecordedOutputs,
 ): Promise<{
   stateNode: StateNode | undefined;
   params: Record<string, unknown>;
+  unnamed: Record<string, unknown>;
 }> {
   const stateNode = await loadOutput(resource, state);
   const names = nameFields(resource);
-  const planned = await resource.planParams();
-  assertNamesNotSupplied(resource, names, planned);
-  const params = {
-    ...planned,
-    ...Object.fromEntries(
-      names.map(({ field }) => [field, UNKNOWN_AFTER_APPLY]),
-    ),
+  const unnamed = await resource.planParams({ recordedOutputs });
+  assertNamesNotSupplied(resource, names, unnamed);
+  const params = fillPhysicalNames(unnamed, {
+    ...unknownNames(resource),
     ...recordedNames(names, stateNode),
-  };
+  });
   await validateParams(resource, params, point);
-  return { stateNode, params };
+  return { stateNode, params, unnamed };
 }

@@ -2016,3 +2016,231 @@ describe("createPlan with a generated physical name", () => {
     );
   });
 });
+
+describe("createPlan with refs that add no dependency", () => {
+  const Worker = resource({ type: "test/planner/worker", provider: "test" })
+    // Cast: as for Queue in "createPlan with a generated physical name".
+    .defineSchema({
+      name: {
+        propertyType: "param",
+        presence: "required",
+        primaryKey: true,
+        value: v.string(),
+        physicalName: { maxLength: 64 },
+      },
+      path: {
+        propertyType: "param",
+        presence: "required",
+        immutable: true,
+        value: v.string(),
+      },
+      bindings: {
+        propertyType: "param",
+        presence: "optional",
+        value: v.array(v.unknown()),
+        collect: (items: unknown[][]) => items.flat(),
+      },
+      sources: {
+        propertyType: "param",
+        presence: "optional",
+        value: v.array(v.string()),
+        // A ~state ref to a target with no record resolves to undefined.
+        collect: (items: (string | undefined)[][]) =>
+          items.flat().filter((name) => name !== undefined),
+      },
+    } as any)
+    .defineOperations({
+      create: async () => undefined,
+      update: async () => undefined,
+      delete: async () => undefined,
+    });
+  const worker = (id: string, path = "/"): BaseResource =>
+    new Worker(id, { config: { path } as any });
+  const record = (
+    id: string,
+    params: Record<string, DurableObject[string]>,
+  ) => ({
+    version: 1,
+    id,
+    type: Worker.type,
+    provider: "test",
+    config: {},
+    params,
+    output: params,
+    lastOperation: "create" as const,
+    lastOperationAt: "2026-07-22T00:00:00.000Z",
+  });
+  const hostName = "shop--prod--host-1a2b3c4d";
+  const binderName = "shop--prod--binder-5e6f7a8b";
+
+  describe("a ref to the resource's own physicalName param", () => {
+    const selfBound = (id: string, path = "/") => {
+      const self = worker(id, path);
+      self.contribute({
+        bindings: [{ name: "SELF", service: self.outputRef("name") }],
+      } as any);
+      return self;
+    };
+
+    it("plans a create with the name unknown in both params, and no cycle", async () => {
+      const plan = await createPlan({
+        resources: [selfBound("host")],
+        state: new MemoryStateBackend({}),
+        driftDetection: false,
+      });
+
+      expect(plan.nodes).toEqual([
+        {
+          id: "host",
+          type: Worker.type,
+          decision: "create",
+          params: {
+            name: UNKNOWN_AFTER_APPLY,
+            path: "/",
+            bindings: [{ name: "SELF", service: UNKNOWN_AFTER_APPLY }],
+          },
+          dependsOn: [],
+        },
+      ]);
+    });
+
+    it("plans a noop with the recorded name in both params", async () => {
+      const plan = await createPlan({
+        resources: [selfBound("host")],
+        state: new MemoryStateBackend({
+          host: record("host", {
+            name: hostName,
+            path: "/",
+            bindings: [{ name: "SELF", service: hostName }],
+          }),
+        }),
+        driftDetection: false,
+      });
+
+      expect(plan.nodes).toEqual([
+        expect.objectContaining({
+          decision: "noop",
+          params: {
+            name: hostName,
+            path: "/",
+            bindings: [{ name: "SELF", service: hostName }],
+          },
+        }),
+      ]);
+    });
+
+    it("plans a replace with the name unknown in both params", async () => {
+      const plan = await createPlan({
+        resources: [selfBound("host", "/new/")],
+        state: new MemoryStateBackend({
+          host: record("host", {
+            name: hostName,
+            path: "/",
+            bindings: [{ name: "SELF", service: hostName }],
+          }),
+        }),
+        driftDetection: false,
+      });
+
+      expect(plan.nodes).toEqual([
+        expect.objectContaining({
+          decision: "replace",
+          params: {
+            name: UNKNOWN_AFTER_APPLY,
+            path: "/new/",
+            bindings: [{ name: "SELF", service: UNKNOWN_AFTER_APPLY }],
+          },
+        }),
+      ]);
+    });
+  });
+
+  describe("a ~state ref", () => {
+    // The binder depends on the host, and the host reads the binder's name
+    // from state, as a Durable Object host reads its transfer sources.
+    const hostAndBinder = () => {
+      const host = worker("host");
+      const binder = worker("binder");
+      binder.contribute({
+        bindings: [{ name: "HOST", service: host.outputRef("name") }],
+      } as any);
+      host.contribute({
+        sources: [binder["~state"].outputRef("name")],
+      } as any);
+      return [host, binder];
+    };
+
+    it("plans with no value when the target has no record, and adds no dependency", async () => {
+      const plan = await createPlan({
+        resources: hostAndBinder(),
+        state: new MemoryStateBackend({}),
+        driftDetection: false,
+      });
+
+      expect(plan.nodes).toEqual([
+        expect.objectContaining({
+          id: "host",
+          decision: "create",
+          params: { name: UNKNOWN_AFTER_APPLY, path: "/", sources: [] },
+          dependsOn: [],
+        }),
+        expect.objectContaining({
+          id: "binder",
+          decision: "create",
+          dependsOn: ["host"],
+        }),
+      ]);
+      expect(plan.nodes[0]).not.toHaveProperty("cycle");
+    });
+
+    it("plans with the output in the target's record", async () => {
+      const plan = await createPlan({
+        resources: hostAndBinder(),
+        state: new MemoryStateBackend({
+          host: record("host", { name: hostName, path: "/", sources: [] }),
+          binder: record("binder", {
+            name: binderName,
+            path: "/",
+            bindings: [{ name: "HOST", service: hostName }],
+          }),
+        }),
+        driftDetection: false,
+      });
+
+      expect(plan.nodes).toEqual([
+        expect.objectContaining({
+          id: "host",
+          decision: "update",
+          params: { name: hostName, path: "/", sources: [binderName] },
+        }),
+        expect.objectContaining({ id: "binder", decision: "noop" }),
+      ]);
+    });
+
+    it("plans with the recorded output when the target is replaced", async () => {
+      const host = worker("host");
+      const binder = worker("binder", "/new/");
+      host.contribute({
+        sources: [binder["~state"].outputRef("name")],
+      } as any);
+
+      const plan = await createPlan({
+        resources: [binder, host],
+        state: new MemoryStateBackend({
+          host: record("host", { name: hostName, path: "/" }),
+          binder: record("binder", { name: binderName, path: "/" }),
+        }),
+        driftDetection: false,
+      });
+
+      expect(plan.nodes).toEqual([
+        expect.objectContaining({ id: "binder", decision: "replace" }),
+        expect.objectContaining({
+          id: "host",
+          decision: "update",
+          params: { name: hostName, path: "/", sources: [binderName] },
+        }),
+      ]);
+    });
+  });
+});

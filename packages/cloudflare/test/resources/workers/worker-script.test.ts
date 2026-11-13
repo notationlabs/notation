@@ -12,36 +12,11 @@ import {
 } from "@notation/resource";
 import { decideAction } from "@notation/reconciler";
 import { WorkerScript } from "src/resources/workers/worker-script";
-import { WorkerSubdomain } from "src/resources/workers/worker-subdomain";
-import { CloudflareApiError } from "src/api/client";
+import { calls, fail, mockFetch, ok, type Call } from "../../mock-api";
 
 let root: string;
 const code = "export default { fetch() { return new Response('ok'); } };";
 const codeSha256 = crypto.createHash("sha256").update(code).digest("base64");
-
-type Call = { method: string; url: string; body: unknown };
-let calls: Call[];
-
-function mockFetch(respond: (call: Call) => Response | Promise<Response>) {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
-    const call = {
-      method: init?.method ?? "GET",
-      url: String(url),
-      body: init?.body,
-    };
-    calls.push(call);
-    return respond(call);
-  });
-}
-
-const ok = (result: unknown = null) =>
-  Response.json({ success: true, errors: [], result });
-
-const fail = (status: number, code: number, message = "failed") =>
-  Response.json(
-    { success: false, errors: [{ code, message }], result: null },
-    { status },
-  );
 
 const params = {
   AccountId: "acc",
@@ -64,7 +39,6 @@ const params = {
 
 const script = new WorkerScript("worker:api", {
   config: {
-    ScriptName: params.ScriptName,
     CompatibilityDate: params.CompatibilityDate,
   },
   dependencies: {} as any,
@@ -79,8 +53,21 @@ async function uploadedMetadata(call: Call) {
   };
 }
 
+// Answers a read of the Worker's settings as not found until the first
+// upload, and every other call with `respond`.
+function untilUploaded(respond: (call: Call) => Response = () => ok({})) {
+  let uploaded = false;
+  return (call: Call) => {
+    if (call.method === "PUT") uploaded = true;
+    if (call.method === "GET" && call.url.endsWith("/settings")) {
+      return uploaded ? ok({}) : fail(404, 10007, "not found");
+    }
+    return respond(call);
+  };
+}
+
 beforeEach(() => {
-  calls = [];
+  calls.length = 0;
   root = mkdtempSync(path.join(os.tmpdir(), "notation-cf-"));
   writeFileSync(path.join(root, "notation.config.ts"), "export default {}");
   setConfigFile(path.join(root, "notation.config.ts"));
@@ -99,9 +86,7 @@ afterEach(() => {
 
 describe("WorkerScript", () => {
   it("uploads the bundle as an ES module, with its bindings and namespaces", async () => {
-    mockFetch((call) =>
-      call.method === "GET" ? fail(404, 10007, "not found") : ok({}),
-    );
+    mockFetch(untilUploaded());
 
     await script.create(params);
 
@@ -123,7 +108,7 @@ describe("WorkerScript", () => {
   });
 
   it("leaves exports out for a Worker that hosts no namespace", async () => {
-    mockFetch((call) => (call.method === "GET" ? fail(404, 10007) : ok({})));
+    mockFetch(untilUploaded());
 
     await script.create({ ...params, DurableObjectNamespaces: [] });
 
@@ -316,13 +301,17 @@ describe("WorkerScript", () => {
       name: "ROOMS",
       class_name: "Room",
     };
+    const web = {
+      namespaceId: "rooms",
+      workerId: "web",
+      scriptName: "app--dev--web",
+      nameBody: "app--dev--web",
+    };
     const arriving = {
       ...params,
       Bindings: [...params.Bindings, roomsBinding],
       DurableObjectNamespaces: [...params.DurableObjectNamespaces, rooms],
-      DurableObjectTransferSources: [
-        { id: "rooms", scriptNames: ["app--dev--web"] },
-      ],
+      DurableObjectTransferSources: [web],
     };
     const namespacesPage = (page: number) =>
       `https://api.cloudflare.com/client/v4/accounts/acc/workers/durable_objects/namespaces?page=${page}&per_page=1000`;
@@ -400,13 +389,7 @@ describe("WorkerScript", () => {
     });
 
     it("lists the account's namespaces once in a create, and uploads once", async () => {
-      mockFetch((call) =>
-        isListing(call)
-          ? ok([])
-          : call.method === "PUT"
-            ? ok({})
-            : fail(404, 10007, "not found"),
-      );
+      mockFetch(untilUploaded((call) => (isListing(call) ? ok([]) : ok({}))));
 
       await script.create(arriving);
 
@@ -491,6 +474,128 @@ describe("WorkerScript", () => {
       expect(calls.map(({ method }) => method)).toEqual(["PUT", "PUT"]);
     });
 
+    describe("from a Worker with no state record", () => {
+      const lostWeb = {
+        namespaceId: "rooms",
+        workerId: "web",
+        nameBody: "app--dev--web",
+      };
+      const lost = {
+        ...arriving,
+        DurableObjectTransferSources: [lostWeb],
+      };
+
+      it("fails before any upload when a Worker with a generated name hosts the class, and names it", async () => {
+        const found = "app--dev--web-1a2b3c4d";
+        mockFetch(
+          respondWith([{ script: found, class: "Room", use_sqlite: true }]),
+        );
+
+        await expect(
+          script.update!(key, {} as any, lost, params),
+        ).rejects.toThrow(
+          `The Durable Object namespace "rooms" is new to the Worker app--dev--api. The Worker "web" binds it and has no state record, and the Worker ${found} in the Cloudflare account hosts a namespace with its class Room.`,
+        );
+        expect(calls.some(({ method }) => method === "PUT")).toBe(false);
+      });
+
+      it("fails a create too", async () => {
+        mockFetch((call) =>
+          isListing(call)
+            ? respondWith([
+                {
+                  script: "app--dev--web-1a2b3c4d",
+                  class: "Room",
+                  use_sqlite: true,
+                },
+              ])(call)
+            : fail(404, 10007, "not found"),
+        );
+
+        await expect(script.create(lost)).rejects.toThrow(
+          "the Worker app--dev--web-1a2b3c4d in the Cloudflare account hosts",
+        );
+        expect(calls.some(({ method }) => method === "PUT")).toBe(false);
+      });
+
+      it.each([
+        ["another Worker's name", "app--dev--webhooks-1a2b3c4d"],
+        ["an ending that isn't an instance", "app--dev--web-1a2b3c4"],
+      ])(
+        "creates the namespace when the Worker that hosts the class has %s",
+        async (_, found) => {
+          mockFetch(
+            respondWith([{ script: found, class: "Room", use_sqlite: true }]),
+          );
+
+          await script.update!(key, {} as any, lost, params);
+
+          expect(calls.map(({ method }) => method)).toEqual([
+            "GET",
+            "GET",
+            "PUT",
+          ]);
+        },
+      );
+
+      it("moves the namespace from a Worker in state whose name the Worker with no record could have", async () => {
+        mockFetch(
+          respondWith([
+            {
+              script: "app--dev--web-5e6f7a8b",
+              class: "Room",
+              use_sqlite: true,
+            },
+          ]),
+        );
+
+        await script.update!(
+          key,
+          {} as any,
+          {
+            ...lost,
+            DurableObjectTransferSources: [
+              lostWeb,
+              {
+                namespaceId: "rooms",
+                workerId: "web-2",
+                scriptName: "app--dev--web-5e6f7a8b",
+                nameBody: "app--dev--web-2",
+              },
+            ],
+          },
+          params,
+        );
+
+        expect(calls.map(({ method }) => method).slice(2)).toEqual([
+          "PUT",
+          "PATCH",
+          "PUT",
+        ]);
+      });
+
+      it("matches a name that was cut to fit the limit by its cut body", async () => {
+        const body = "app--dev--a-very-long-worker-id-that-is-cut-he";
+        mockFetch(
+          respondWith([
+            { script: `${body}-0badf00d`, class: "Room", use_sqlite: true },
+          ]),
+        );
+
+        await expect(
+          script.update!(
+            key,
+            {} as any,
+            {
+              ...lost,
+              DurableObjectTransferSources: [{ ...lostWeb, nameBody: body }],
+            },
+            params,
+          ),
+        ).rejects.toThrow(`the Worker ${body}-0badf00d in the Cloudflare`);
+      });
+    });
+
     it.each([
       ["false", { use_sqlite: false }],
       ["missing", {}],
@@ -561,6 +666,63 @@ describe("WorkerScript", () => {
       CompatibilityFlags: ["global_fetch_strictly_public", "nodejs_compat"],
     });
     expect(calls[0]!.url).toMatch(/\/scripts\/app--dev--api\/settings$/);
+  });
+
+  describe("read after the upload that creates a Worker", () => {
+    const isSettings = ({ method, url }: Call) =>
+      method === "GET" && url.endsWith("/settings");
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // Moves the fake clock on until `promise` settles, and returns the fake
+    // time that passed. `setImmediate` is real, so the file read and the
+    // fetch mock can finish between steps.
+    async function elapsedUntilSettled(promise: Promise<unknown>) {
+      const start = Date.now();
+      let settled = false;
+      promise.finally(() => (settled = true)).catch(() => {});
+      for (let step = 0; !settled && step < 1_000; step++) {
+        await new Promise((resolve) => setImmediate(resolve));
+        await vi.advanceTimersByTimeAsync(50);
+      }
+      return Date.now() - start;
+    }
+
+    it("waits until Cloudflare stops reporting the new Worker as not found", async () => {
+      let reads = 0;
+      mockFetch((call) => {
+        if (!isSettings(call)) return ok({});
+        reads += 1;
+        return reads <= 3 ? fail(404, 10007, "not found") : ok({});
+      });
+
+      const created = script.create(params);
+
+      expect(await elapsedUntilSettled(created)).toBeLessThan(1_000);
+      await expect(created).resolves.toBeUndefined();
+      expect(calls.filter(isSettings)).toHaveLength(4);
+    });
+
+    it("fails when Cloudflare still reports the new Worker as not found 15 seconds after the upload", async () => {
+      mockFetch((call) =>
+        isSettings(call) ? fail(404, 10007, "not found") : ok({}),
+      );
+
+      const created = script.create(params).catch((e) => e);
+
+      expect(await elapsedUntilSettled(created)).toBeGreaterThanOrEqual(15_000);
+      const error = await created;
+      expect(error).not.toBeInstanceOf(ResourceCreationUnknownError);
+      expect(error.message).toBe(
+        "Cloudflare accepted the upload of the Worker app--dev--api, but still reported it as not found 15 seconds later",
+      );
+    });
   });
 
   it("reads a missing Worker as not found, and deletes it without an error", async () => {
@@ -822,6 +984,21 @@ describe("rejectChange", () => {
       );
     });
 
+    it("allows a move at plan to a Worker whose name is unknown, and names it as another Worker", () => {
+      const unknown = { $unknown: "after-apply" } as never;
+      const toNew = (className: string) => ({
+        BoundDurableObjects: [{ id: "rooms", className, scriptName: unknown }],
+      });
+      expect(
+        reject({ DurableObjectNamespaces: [counters], ...toNew("Room") }),
+      ).toBeUndefined();
+      expect(
+        reject({ DurableObjectNamespaces: [counters], ...toNew("Lobby") }),
+      ).toMatch(
+        /^The Durable Object namespace "rooms" would move from the Worker app--dev--api to another Worker, and its class would change/,
+      );
+    });
+
     it("rejects a bound namespace that takes the class of another namespace of this Worker", () => {
       expect(
         reject(
@@ -842,7 +1019,12 @@ describe("rejectChange", () => {
       const lobbies = { id: "lobbies", className: "Lobby" };
       const sources = {
         DurableObjectTransferSources: [
-          { id: "lobbies", scriptNames: ["app--dev--web"] },
+          {
+            namespaceId: "lobbies",
+            workerId: "web",
+            scriptName: "app--dev--web",
+            nameBody: "app--dev--web",
+          },
         ],
       };
 
@@ -999,7 +1181,12 @@ describe("rejectChange", () => {
             { id: "lobbies", className: "Lobby", scriptName: "app--dev--web" },
           ],
           DurableObjectTransferSources: [
-            { id: "rooms", scriptNames: ["app--dev--web"] },
+            {
+              namespaceId: "rooms",
+              workerId: "web",
+              scriptName: "app--dev--web",
+              nameBody: "app--dev--web",
+            },
           ],
         }),
       ).toEqual({ decision: "noop" });
@@ -1015,62 +1202,5 @@ describe("rejectChange", () => {
         /^worker:api: Deploy would delete the Durable Object namespaces "rooms"/,
       );
     });
-  });
-});
-
-describe("WorkerSubdomain", () => {
-  const subdomain = new WorkerSubdomain("worker:api:subdomain", {
-    dependencies: { script },
-  });
-  const key = { AccountId: "acc", ScriptName: "app--dev--api" };
-
-  it("enables workers.dev and reads the URL from the account's subdomain", async () => {
-    mockFetch((call) =>
-      call.url.endsWith("/workers/subdomain")
-        ? ok({ subdomain: "team" })
-        : ok({ enabled: true, previews_enabled: false }),
-    );
-
-    await subdomain.create(key);
-    expect(calls[0]).toMatchObject({ method: "POST" });
-    expect(JSON.parse(calls[0]!.body as string)).toEqual({ enabled: true });
-    await expect(subdomain.read!(key)).resolves.toEqual({
-      ...key,
-      Url: "https://app--dev--api.team.workers.dev",
-    });
-  });
-
-  it("explains that the account has no workers.dev subdomain", async () => {
-    mockFetch((call) =>
-      call.url.endsWith("/workers/subdomain")
-        ? fail(404, 10007, "not found")
-        : ok({ enabled: true, previews_enabled: false }),
-    );
-
-    const error = await subdomain.read!(key).catch((error) => error);
-    expect(error.message).toContain(
-      "The account acc has no workers.dev subdomain.",
-    );
-    expect(error.cause).toBeInstanceOf(CloudflareApiError);
-  });
-
-  it("fails with the API error for a 404 that Cloudflare can't route", async () => {
-    mockFetch((call) =>
-      call.url.endsWith("/workers/subdomain")
-        ? fail(404, 7003, "Could not route")
-        : ok({ enabled: true, previews_enabled: false }),
-    );
-
-    await expect(subdomain.read!(key)).rejects.toThrow(
-      "failed with status 404",
-    );
-  });
-
-  it("reads a Worker that is not on workers.dev as not found", async () => {
-    mockFetch(() => ok({ enabled: false, previews_enabled: false }));
-
-    await expect(subdomain.read!(key)).rejects.toBeInstanceOf(
-      ResourceNotFoundError,
-    );
   });
 });

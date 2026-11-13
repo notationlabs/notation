@@ -24,7 +24,7 @@ After the diff, `decideAction` calls the resource's [`rejectChange`](../referenc
 
 An `undefined` param counts as absent, so an optional param left unset never looks changed. Drift compares only fields that both the desired params and the read output have: a read need not return every param, and it reports defaults for params left unset, and neither is drift.
 
-Replacement deletes the resource and then creates it again. A resource whose key comes from config, such as a Cloudflare Worker's name, keeps the key, so a new resource created beside the old one would collide with it. Deploy also deletes first for a class whose name it generates, although the replacement then gets a new name; see [Generated names](#generated-names). Each half is durable: the delete removes the state record, and the create writes a new one with a new instance ID. A crash anywhere in between resumes where it stopped. If the create fails, the old resource and its record are gone, and the next deploy plans **create**. There is one exception. When a resource already exists and deploy refuses it or cannot take it over, deploy writes the record of the replaced resource back, and the next deploy plans **replace** again. See [Guard 1](#guard-1-a-replacement-does-not-take-over-a-resource-with-the-replaced-key) and [The record after a failed create](#the-record-after-a-failed-create).
+Replacement deletes the resource and then creates it again. A resource whose key does not change with the replace, such as a `LambdaEventSourceMapping`, whose key is its function and event source, keeps the key, so a new resource created beside the old one would collide with it. Deploy also deletes first for a class whose name it generates, although the replacement then gets a new name; see [Generated names](#generated-names). Each half is durable: the delete removes the state record, and the create writes a new one with a new instance ID. A crash anywhere in between resumes where it stopped. If the create fails, the old resource and its record are gone, and the next deploy plans **create**. There is one exception. When a resource already exists and deploy refuses it or cannot take it over, deploy writes the record of the replaced resource back, and the next deploy plans **replace** again. See [Guard 1](#guard-1-a-replacement-does-not-take-over-a-resource-with-the-replaced-key) and [The record after a failed create](#the-record-after-a-failed-create).
 
 The dependents of a replaced resource stay in place. When deploy reaches each of them, it decides again with the outputs of the new resource. A dependent whose params change is updated, or replaced if a changed param forces replacement. For example, replacing a Lambda role updates the function's `Role`, and does not delete the function or its log group. A dependent whose type blocks the delete of the replaced resource is deleted first instead. See [Dependents of a replaced resource](#dependents-of-a-replaced-resource).
 
@@ -100,6 +100,8 @@ A param whose schema item has `physicalName` holds the resource's physical name.
 2. If the params of the state record hold the name, deploy uses that name. A `creating` record counts.
 3. Otherwise deploy generates a name, in the step `physical-names`, so that a replay of the execution gets the same name.
 
+A ref from the resource to one of its own `physicalName` params is not a dependency. `getParams` leaves it as an `OwnPhysicalName`, `{ "~physicalName": "<param>" }`, which the step `params` can record. `fillPhysicalNames` in `packages/resource/src/physical-name.ts` then sets each name and replaces each `OwnPhysicalName` with the name of its param. A replace fills in the new names in the same way, from the params before the old names were filled in.
+
 `generatedPhysicalName` in `packages/resource/src/physical-name.ts` makes the name, `<app>--<stage>--<base>-<instance>`:
 
 | Part       | Value                                                                                                                                                                                                                                                |
@@ -118,13 +120,13 @@ From here on the name is one of the resource's params. Deploy validates it, writ
 
 A replace generates the names again, for every `physicalName` param, in the step `physical-names` of the scope `replace:create`. So a replacement never gets the name of the resource that it replaces. The replace still deletes first.
 
-Plan fills in the same params without generating anything. It throws in the same way when the params supply the param. It takes the name from the state record when the record has one, and marks the name unknown otherwise. For a resource that plan decides to replace, plan marks the name unknown in the node's `params`.
+Plan fills in the same params without generating anything. It throws in the same way when the params supply the param. It takes the name from the state record when the record has one, and marks the name unknown otherwise. For a resource that plan decides to replace, plan marks the name unknown in the node's `params`. A ref to the resource's own name gets the same value as the name.
 
 #### The takeover rule
 
 When `create` throws `ResourceAlreadyExistsError`, deploy takes the existing resource over. This holds for every resource class.
 
-The reason is the resource's name. Every name starts with `<app>--<stage>--`: a generated name does, and a construct that builds a fixed name, such as the Cloudflare Worker's, builds `<app>--<stage>--<name>` through `scopedPhysicalName`. A resource in the provider with the same key therefore belongs to the same app and stage, and so to the same deployment. Deploy does not check who made the resource. If a resource with that name was made outside Notation, deploy takes it over too, and then updates or replaces it to match config.
+The reason is the resource's name. Deploy generates every AWS and Cloudflare name that Notation makes: `<app>--<stage>--<base>-<instance>`, with a random instance. No other deployment has the name, and nobody can type it in advance, so a resource in the provider with that key was made by this deployment. A resource whose key holds no generated name, such as a mapping's function and event source, is under a parent that is in state, and so belongs to the same deployment. Deploy does not check who made the resource. If a resource with that key was made outside Notation, deploy takes it over too, and then updates or replaces it to match config.
 
 Deploy output prints a line for each takeover:
 
@@ -161,7 +163,7 @@ Step 3 runs in the scope `taken-over`, and its state writes add `:after-takeover
 
 #### Guard 1: a replacement does not take over a resource with the replaced key
 
-A replace deletes the resource and creates it again. The replacement has the same key when its key does not change with the replace: config provides the key, as for a Cloudflare Worker's name, or the key holds no name of the resource's own, such as the function and event source of a `LambdaEventSourceMapping`. If the provider still holds the deleted resource when the create runs, a takeover would record the old resource as its own replacement.
+A replace deletes the resource and creates it again. The replacement has the same key when its key does not change with the replace: config provides the key, or the key holds no name of the resource's own, such as the function and event source of a `LambdaEventSourceMapping`. If the provider still holds the deleted resource when the create runs, a takeover would record the old resource as its own replacement.
 
 So the create of a replacement compares the key of an existing resource with the key in the record of the replaced resource. When the keys are equal, deploy refuses the resource: it writes the record of the replaced resource back, and fails. The next deploy deletes the resource and creates the replacement again.
 
@@ -223,13 +225,13 @@ The orphan sweep and destroy handle a `creating` record like this:
 
 - A class with a key that the provider assigns and no `find`, such as `LambdaIntegration`, can't be looked up. When a deploy stops after the provider made the resource and before deploy recorded its key, the next deploy creates a second one. The first stays in the provider, and state does not track it. A delete of the `creating` record removes only the record.
 - A takeover of a class with no `read` fails, because deploy cannot compare the resource's params with config. `LambdaRolePolicyAttachment` is the only such class in `@notation/aws`, and its `create` never throws `ResourceAlreadyExistsError`. The error says how to get past it: delete the existing resource and deploy again.
-- When the `creating` record names another key than the desired one, for example after config changed a Worker's name, deploy creates the resource under the new key. The resource that the unfinished create may have made under the old key stays in the provider, and state does not track it.
+- When the `creating` record names another key than the desired one, for example after config changed a mapping's event source, deploy creates the resource under the new key. The resource that the unfinished create may have made under the old key stays in the provider, and state does not track it.
 - Deploy relies on the provider's "already exists" error, or on a check that `create` makes before its call. A provider whose reads are eventually consistent can report a resource as absent just after another create made it. `create` then makes a second resource when the provider does not keep the name unique, and a later `find` fails because two resources match.
 - A `creating` record does not say that its create was the create of a replacement. So guard 1 does not apply on the next deploy in two cases: the create of a replacement ended with an unknown outcome and left its `creating` record, or a replace stopped between its delete and its create. The next deploy plans a plain **create**, and takes over an existing resource as usual. It keeps the replaced resource as the replacement only when all of these hold: no create made the replacement, the provider reported the delete as done while the resource is still visible, and the read does not return the param that forced the replace. Deploy then records that param with its desired value, and the resource keeps the old value.
 - Guard 1 does not cover a dependent that a replace deleted because it blocks the delete. Deploy creates the dependent again later in the same deploy, with a plain create. If the provider still returns the deleted dependent then, deploy takes it over, and the record then describes a resource that the provider is deleting. The record of the deleted dependent is not passed to that create, because the create runs when deploy reaches the dependent, in another part of the workflow.
 - `find` runs before every create of a class with `find`. When the provider's list returns a deleted resource for a while, a replace of such a class fails through guard 1, and the next deploy replaces the resource again.
-- A takeover updates or replaces the existing resource to match config. Two deployments with the same app and stage in one provider account therefore write over each other's resources, where both compute the same key, such as a Worker's name.
-- A generated name is only in the state record. When the record of a resource with a generated name is lost, the next deploy generates a new name and creates a second resource. The first stays in the provider, and state does not track it. A deploy that stops during the create is the exception, because it leaves the `creating` record with the name. A resource whose key comes from config, such as a Worker, is found again under its key and taken over.
+- A takeover updates or replaces the existing resource to match config. Two deployments with the same app and stage in one provider account therefore write over each other's resources, where both compute the same key. A generated name differs on each create, so this applies only to a key that holds no generated name.
+- A generated name is only in the state record. When the record of a resource with a generated name is lost, the next deploy generates a new name and creates a second resource. The first stays in the provider, and state does not track it. A deploy that stops during the create is the exception, because it leaves the `creating` record with the name. For a Cloudflare Worker that hosts a Durable Object namespace, see [Moving a namespace](../providers/cloudflare/workers.md#moving-a-namespace): deploy fails when a namespace may still be on a Worker whose record was lost.
 - The cut of a long generated name removes the base first. A name of at most 64 characters, such as a Lambda function's, has 55 characters before `-<instance>`, and `<app>--<stage>--` takes 4 more than the app and the stage. So the base is cut when the app, the stage and the base together have more than 51 characters. With an app and a stage of 32 characters each, `<app>--<stage>--` has 68 characters, so the name holds the app, a part of the stage and the instance. Such names differ only in the instance.
 - The ending of a generated name is decided when the name is generated. When the create of a queue ends with an unknown outcome, and `fifo` is then turned on, the `creating` record keeps a name without `.fifo`. Deploy uses that name with `FifoQueue: true`, and fails until `fifo` is turned off again.
 - The plan of a replace shows a generated name as unknown in the node's `params`, but the node's `diff` and `replaceFields` do not list the name, because plan compares the params before it marks the name unknown.
@@ -315,7 +317,7 @@ Before plan or deploy does anything else, `assertDependenciesPresent` (`packages
 
 - declared in its `dependencies`
 - added with `dependOn`
-- held as an output ref in its config or contributions
+- held as an output ref in its config or contributions, except a [state ref](../reference/resource.md#state-refs) and a ref to the resource's own `physicalName` param
 - named in the `deps` of a function contribution
 
 A dependency must be part of the deployment, because the graph ignores an edge to a resource that is not in it. Without the check, nothing would deploy the dependency, and the dependent would wait on an output that never arrives. So the check fails with:
@@ -338,6 +340,8 @@ Destroy does not run the check, so broken infra code cannot block a teardown.
 At plan, some resources have not been created yet, so their outputs do not exist. Plan marks a param that needs one of these outputs as unknown. **The rule from RFC 0002 decides every case below: plan may show more unknowns than deploy finds, but must never show a known value that deploy would change.**
 
 **Output refs.** Plan fills in each output ref from the outputs in state. When the resource has no output yet, plan marks the value unknown at its own path, and the rest of the map stays visible.
+
+**State refs.** Plan resolves each [state ref](../reference/resource.md#state-refs) from the outputs in state, as deploy does at its start, so the value is never unknown. A target with no record gives `undefined`.
 
 **`deriveParams`.** Plan calls `deriveParams` with a view of each dependency. Reading the view's `output` throws `PendingOutput` when the dependency has no output yet. Plan cannot tell which params depend on that output, so it handles each result like this:
 

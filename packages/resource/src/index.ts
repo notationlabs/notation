@@ -17,10 +17,16 @@ export {
   type ResourceGraph,
 } from "./resource-collection";
 export {
+  fillPhysicalNames,
+  GENERATED_INSTANCE_LENGTH,
+  generatedNameBody,
   generatedPhysicalName,
+  isOwnPhysicalName,
+  ownPhysicalName,
   physicalName,
   scopedPhysicalName,
   type NameScope,
+  type OwnPhysicalName,
   type PhysicalNameRule,
 } from "./physical-name";
 export {
@@ -33,10 +39,12 @@ export {
   OutputRef,
   OutputRefStringError,
   PendingOutput,
+  StateOutputRef,
   containsOutputRef,
   isOutputRef,
   resolveOutputRefs,
   deployLookup,
   planLookup,
   type OutputLookup,
+  type RecordedOutputs,
 } from "./output-ref";
