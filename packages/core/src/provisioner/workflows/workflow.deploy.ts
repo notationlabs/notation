@@ -6,6 +6,7 @@ import {
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
+import { runWithSecretContext, type SecretPrompt } from "src/secrets/context";
 import {
   loadStateProviderRegistry,
   mergeResourceRegistries,
@@ -27,6 +28,11 @@ export type DeployAppOptions = {
   executionId: string;
   databasePath?: string;
   emit?: ReconcilerEventEmitter;
+  /**
+   * Asks for the value of a secret that has no source. Without it, deploy
+   * fails when it has to write such a secret.
+   */
+  promptSecret?: SecretPrompt;
 };
 
 export async function deployApp({
@@ -40,32 +46,46 @@ export async function deployApp({
   executionId,
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
+  promptSecret,
 }: DeployAppOptions): Promise<void> {
   // Code that runs while infra is evaluated, such as `workerNames` in
   // @notation/cloudflare, reads the collection's scope, which must be the
   // scope deploy generates names in.
   const nameScope = { app: deployment.app, stage: deployment.stage };
-  const graph = await getResourceGraph(deployment.entryPoint, nameScope);
-  await runDurableWorkflow(
-    { deployment, workflowId: "deploy", runtime, databasePath, executionId },
-    async function* (step, executionId, runtime) {
-      const providerRegistry = yield* loadStateProviderRegistry(
-        step,
-        runtime.state,
-        graph.resources,
-        emit,
+  // A resumed execution has the same run ID, so a source without versions
+  // gives the version that the execution recorded.
+  await runWithSecretContext(
+    { stage: deployment.stage, runId: executionId, prompt: promptSecret },
+    async () => {
+      const graph = await getResourceGraph(deployment.entryPoint, nameScope);
+      await runDurableWorkflow(
+        {
+          deployment,
+          workflowId: "deploy",
+          runtime,
+          databasePath,
+          executionId,
+        },
+        async function* (step, executionId, runtime) {
+          const providerRegistry = yield* loadStateProviderRegistry(
+            step,
+            runtime.state,
+            graph.resources,
+            emit,
+          );
+          yield* durable.deploy(step, {
+            executionId,
+            resources: graph.resources,
+            state: runtime.state,
+            registry: mergeResourceRegistries(providerRegistry, registry),
+            emit,
+            dryRun,
+            driftDetection,
+            maxOperationAttempts,
+            nameScope,
+          });
+        },
       );
-      yield* durable.deploy(step, {
-        executionId,
-        resources: graph.resources,
-        state: runtime.state,
-        registry: mergeResourceRegistries(providerRegistry, registry),
-        emit,
-        dryRun,
-        driftDetection,
-        maxOperationAttempts,
-        nameScope,
-      });
     },
   );
 }

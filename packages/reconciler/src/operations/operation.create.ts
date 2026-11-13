@@ -16,6 +16,7 @@ import {
 } from "@notation/resource";
 import { type StateNode } from "@notation/state";
 import { WorkflowEffectError, type EffectLookup } from "@notation/durable";
+import { scrubError } from "@notation/utils";
 import {
   type CreateResourceParams,
   type PersistedResourceState,
@@ -461,8 +462,13 @@ async function* createAttempt(
     ),
     lookup: async () => (lookup ? lookup() : { status: "not-found" }),
     perform: async (): Promise<CreateAttemptResult> => {
-      const key = await resource.create(resourceParams, context);
-      return { key: key ? resource.toResult(key) : undefined };
+      try {
+        const key = await resource.create(resourceParams, context);
+        return { key: key ? resource.toResult(key) : undefined };
+      } catch (error) {
+        // The effect records the error. See `runPendingOperation`.
+        throw scrubError(error);
+      }
     },
     failsOn: (error) =>
       lookup === undefined || !ResourceCreationUnknownError.is(error),

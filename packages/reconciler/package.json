@@ -26,6 +26,7 @@
     "@notation/durable": "0.9.0",
     "@notation/resource": "workspace:*",
     "@notation/state": "workspace:*",
+    "@notation/utils": "workspace:*",
     "valibot": "^1.5.0"
   },
   "devDependencies": {

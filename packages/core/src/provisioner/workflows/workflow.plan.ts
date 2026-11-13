@@ -6,7 +6,9 @@ import {
   type ResourceRegistry,
 } from "@notation/reconciler";
 import type { Deployment } from "src/config/deployment";
+import { randomUUID } from "node:crypto";
 import { getResourceGraph } from "src/orchestrator/graph";
+import { runWithSecretContext } from "src/secrets/context";
 import {
   loadPlanProviderRegistry,
   mergeResourceRegistries,
@@ -35,26 +37,32 @@ export async function planApp({
   databasePath,
   emit = createLoggerReconcilerSubscriber(),
 }: PlanAppOptions): Promise<Plan> {
-  const graph = await getResourceGraph(deployment.entryPoint, {
-    app: deployment.app,
-    stage: deployment.stage,
-  });
-  return withRuntime(
-    { deployment, runtime: suppliedRuntime, databasePath },
-    async (runtime) => {
-      const providerRegistry = await loadPlanProviderRegistry(
-        runtime.state,
-        graph.resources,
-        emit,
-      );
-      return createPlan({
-        resources: graph.resources,
-        state: runtime.state,
-        driftDetection,
-        emit,
-        maxOperationAttempts,
-        registry: mergeResourceRegistries(providerRegistry, registry),
+  // Plan never asks for a secret's value, so it has no prompt.
+  return runWithSecretContext(
+    { stage: deployment.stage, runId: randomUUID() },
+    async () => {
+      const graph = await getResourceGraph(deployment.entryPoint, {
+        app: deployment.app,
+        stage: deployment.stage,
       });
+      return withRuntime(
+        { deployment, runtime: suppliedRuntime, databasePath },
+        async (runtime) => {
+          const providerRegistry = await loadPlanProviderRegistry(
+            runtime.state,
+            graph.resources,
+            emit,
+          );
+          return createPlan({
+            resources: graph.resources,
+            state: runtime.state,
+            driftDetection,
+            emit,
+            maxOperationAttempts,
+            registry: mergeResourceRegistries(providerRegistry, registry),
+          });
+        },
+      );
     },
   );
 }

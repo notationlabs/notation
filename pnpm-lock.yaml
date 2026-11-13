@@ -340,6 +340,9 @@ importers:
       '@notation/state':
         specifier: workspace:*
         version: link:../state
+      '@notation/utils':
+        specifier: workspace:*
+        version: link:../utils
       esbuild:
         specifier: ^0.25.12
         version: 0.25.12
@@ -448,6 +451,9 @@ importers:
       '@notation/state':
         specifier: workspace:*
         version: link:../state
+      '@notation/utils':
+        specifier: workspace:*
+        version: link:../utils
       valibot:
         specifier: ^1.5.0
         version: 1.5.0(typescript@7.0.2)
