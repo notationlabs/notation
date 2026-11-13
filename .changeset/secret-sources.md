@@ -14,4 +14,4 @@ Secrets take their values from sources, part 2 of RFC 0017. Notation writes a se
 - `notation secret set <id>` writes a secret's value, read from a hidden prompt or from stdin. `notation secret delete <id>` deletes a secret, and needs `--yes` without a terminal. Both refuse an API token's secret.
 - `SecretsStoreSecret` now requires `ValueFrom`, and its create and update write the value.
 - `Redacted` from `@notation/core` holds a secret value. Turning it into a string or JSON throws, and `console.log` prints `Redacted(<hidden>)`. A source implements the `Source` interface from `@notation/std/sources`, and a resource reads a value with `getValue(id)`.
-- The CLI removes every secret value that it read from what it prints, and the reconciler removes them from the errors of operations before it records them.
+- The reconciler removes every secret value that the process read from the errors of operations before it records them, and the CLI removes them from the error that it prints when a command fails.

@@ -6,7 +6,6 @@ import { destroy } from "./destroy";
 import { plan } from "./plan";
 import { defaultLogger } from "./logger";
 import { runWithErrorHandling } from "./run-with-error-handling";
-import { scrubOutput } from "./scrub";
 import { secretDelete, secretSet } from "./secret";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
@@ -26,10 +25,6 @@ import {
 // so a resource's declaredAt names the source file. Only modules loaded after
 // this call are mapped, and the bundle is imported later.
 process.setSourceMapsEnabled(true);
-
-// Secret values that the process reads never reach its output, even when a
-// provider echoes one back in an error.
-scrubOutput();
 
 const configOption = [
   "--config <path>",

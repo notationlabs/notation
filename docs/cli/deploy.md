@@ -19,7 +19,7 @@ notation deploy --stage prod
 
 Deploy writes each secret from its source. For a secret without a source that doesn't exist yet, deploy asks for the value with a hidden prompt on a terminal. With no terminal, or with `--json`, it fails with the [`notation secret set`](./secret.md) command to run first. See [Secrets](../manual/secrets.md).
 
-Deploy removes every secret value that it read from what it prints.
+Deploy removes every secret value that it read from the errors that it records and prints.
 
 ## Event stream
 

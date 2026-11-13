@@ -112,4 +112,4 @@ A package that has sources exports them from a `/sources` subpath, as `@notation
 
 A resource that writes a secret's value calls `getValue(id)` from `@notation/std/sources` in its `create` and `update`, with the id of the secret's declaration. It calls the secret's source, or the prompt. This is the pattern of a Lambda function, which reads its code from a `File` resource when it uploads.
 
-The CLI removes every value that `getValue` returned from what it prints, in its raw, base64 and JSON-escaped forms. The reconciler removes them from the errors of operations before it records them, as a provider can echo a value back in an error.
+The reconciler removes every value that `getValue` returned from the errors of operations before it records them, in its raw, base64 and JSON-escaped forms, as a provider can echo a value back in an error. The CLI removes them from the error that it prints when a command fails.
