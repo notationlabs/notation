@@ -13,6 +13,7 @@ const framework: ReleasePackage[] = [
   { file: "packages/core/package.json", build },
   { file: "packages/dashboard/package.json", build },
   { file: "packages/build/package.json", build },
+  { file: "packages/infisical/package.json", build },
   { file: "packages/reconciler/package.json", build },
   { file: "packages/resource/package.json", build },
   { file: "packages/state/package.json", build },
