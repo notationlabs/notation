@@ -39,7 +39,8 @@ export interface OneTimeSource {
     producer: string;
     /**
      * Says how to rotate the producer, so that its create writes a new
-     * value. Errors and refusals about a secret that takes the value show it.
+     * value. The refusal of `notation secret` for the secret that takes the
+     * value shows it.
      */
     rotation: string;
     /** The resource whose create writes the value. The secret depends on it. */
@@ -88,9 +89,8 @@ export function oneTimeSource(options: {
   param: string;
   /**
    * Says how to rotate the producer, such as which resource to delete in a
-   * dashboard before the next deploy. The refusal of `notation secret` and
-   * the error for a missing secret show it. Without it, they only say to
-   * rotate the producer.
+   * dashboard before the next deploy. The refusal of `notation secret`
+   * shows it. Without it, the refusal only says to rotate the producer.
    */
   rotation?: string;
 }): OneTimeSource {

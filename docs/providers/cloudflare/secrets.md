@@ -76,10 +76,10 @@ Deploy creates the resources in this order: the store, the producer, the secret,
   ```
 
 - **A failed write loses the value.** When the producer's create fails to write the value to the secret, no later operation can get the value. The create of `accountToken()` then deletes the new token, so the next deploy creates a new one.
-- **A secret deleted outside notation is drift.** The secret's read finds no secret with the name, and plan shows the secret as `drift-recreate`. Deploy then fails at the secret, because only the producer's create writes the value. The error says how to rotate the producer:
+- **A secret deleted outside notation is drift.** The secret's read finds no secret with the name, and plan shows the secret as `drift-recreate`. Deploy then fails at the secret, because only the producer's create writes the value. The error names the producer's resource:
 
   ```text
-  The secret shop--dev--deploy of `deploy` is missing. Only the create of its producer writes the value. To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to the secret.
+  The secret shop--dev--deploy of `deploy` is missing. Only the create of token:deploy writes the value. To write a new value, delete the remote resource of token:deploy outside notation, then run `notation deploy`.
   ```
 
 - Destroy deletes the secret and its value, as for any secret named `<app>--<stage>--<id>`. The producer's delete removes only the producer's own resource, such as the API token, and leaves the secret.

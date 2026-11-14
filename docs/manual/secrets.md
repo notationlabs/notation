@@ -173,7 +173,7 @@ this.secret = new SecretGroup(
 | `param`    | The collected param of `resource` that holds the target.                                                                                                                              |
 | `rotation` | Optional. Text that says how to rotate the producer, such as which resource to delete in a dashboard before the next deploy. The default is `Rotate <producer> to write a new value.` |
 
-The `rotation` text is shown in two places: the refusal of `notation secret set` and `notation secret delete`, and the error of a secret's create when the secret is missing. Name the producer by its declaration in it, because the user wrote the declaration and not the resource id.
+The `rotation` text is shown in the refusal of `notation secret set` and `notation secret delete`. It is not recorded in state. Name the producer by its declaration in it, because the user wrote the declaration and not the resource id.
 
 The one-time source holds `producer`, `rotation`, `resource` and a method `register(target, consumer)` under the key `"~oneTimeSource"`. A secret's declaration calls `register` with its own target and its declaration, such as `secret({ id: "app-key" })`, and `register` contributes the target to `param`. When the target holds output refs, such as the store's `StoreId`, the producer depends on the resources that they refer to. So deploy creates the store, then the producer, then the secret.
 
@@ -217,11 +217,11 @@ The other operations of a producer follow from the fact that the secret owns the
 A secret's declaration accepts a `SecretSource`, and checks it with `isOneTimeSource`. For a one-time source, the Cloudflare `secret()` does this:
 
 - It calls `register` with the target `{ provider: "@notation/cloudflare/resources", params: { AccountId, StoreId, Name } }`, where `AccountId` and `StoreId` are output refs of the store, and with its declaration.
-- It records `ValueFrom: { Secret: id, Source: "one-time", Producer, Rotation }`. `"one-time"` is `ONE_TIME_SOURCE` from `@notation/core`. `Producer` is the id of the producer's resource, such as `token:deploy`. Plan finds the secret that a replace or recreate of that resource rotates by it. `Rotation` is the producer's `rotation` text, which is not secret data.
+- It records `ValueFrom: { Secret: id, Source: "one-time", Producer }`. `"one-time"` is `ONE_TIME_SOURCE` from `@notation/core`. `Producer` is the id of the producer's resource, such as `token:deploy`. Plan finds the secret that a replace or recreate of that resource rotates by it.
 - It makes the secret depend on the producer's resource.
 - It declares the secret with no `set` and no `delete`, so `notation secret set` and `notation secret delete` refuse it. The refusal names the producer and holds the `rotation` text.
 
-The secret's create writes nothing. It finds the secret by name and records it. When the secret is missing, the create fails with the recorded `Rotation` text, because a create runs from the recorded params only. Its update writes nothing. Its delete deletes the secret, as for any other source.
+The secret's create writes nothing. It finds the secret by name and records it. When the secret is missing, the create fails with an error that names the recorded `Producer`, because a create runs from the recorded params only. Its update writes nothing. Its delete deletes the secret, as for any other source.
 
 ### `registerSecretStore(provider, store)`
 

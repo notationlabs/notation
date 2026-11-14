@@ -123,7 +123,6 @@ export class SecretGroup
         Secret: id,
         Source: ONE_TIME_SOURCE,
         Producer: oneTime.resource.id,
-        Rotation: oneTime.rotation,
       };
     } else {
       const added = addSecretValue(this, declaration, {

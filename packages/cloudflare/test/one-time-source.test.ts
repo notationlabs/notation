@@ -265,7 +265,6 @@ describe("a secret whose source a resource produces", () => {
         Secret: "app-key",
         Source: "one-time",
         Producer: "key-pair:ci",
-        Rotation: 'Rotate fakeKeyPair({ id: "ci" }) to write a new value.',
       },
     });
 
@@ -326,7 +325,6 @@ describe("a secret whose source a resource produces", () => {
       Secret: "app-key",
       Source: "one-time",
       Producer: "key-pair:ci-2",
-      Rotation: 'Rotate fakeKeyPair({ id: "ci-2" }) to write a new value.',
     });
   });
 
@@ -377,7 +375,7 @@ describe("a secret whose source a resource produces", () => {
       "binding:api": "noop",
     });
     await expect(deploy("second")).rejects.toThrow(
-      'The secret shop--dev--app-key of `app-key` is missing. Only the create of its producer writes the value. Rotate fakeKeyPair({ id: "ci" }) to write a new value.',
+      "The secret shop--dev--app-key of `app-key` is missing. Only the create of key-pair:ci writes the value. To write a new value, delete the remote resource of key-pair:ci outside notation, then run `notation deploy`.",
     );
 
     // Rotating the producer writes the value again, and the secret
@@ -408,11 +406,10 @@ describe("a secret whose source a resource produces", () => {
           Secret: "app-key",
           Source: "one-time",
           Producer: "key-pair:ci",
-          Rotation: 'Rotate fakeKeyPair({ id: "ci" }) to write a new value.',
         },
       }),
     ).rejects.toThrow(
-      'The secret shop--dev--app-key of `app-key` is missing. Only the create of its producer writes the value. Rotate fakeKeyPair({ id: "ci" }) to write a new value.',
+      "The secret shop--dev--app-key of `app-key` is missing. Only the create of key-pair:ci writes the value. To write a new value, delete the remote resource of key-pair:ci outside notation, then run `notation deploy`.",
     );
   });
 

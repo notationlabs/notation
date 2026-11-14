@@ -113,12 +113,7 @@ async function claimOneTime(params: SecretsStoreSecretParams): Promise<void> {
   const { AccountId, StoreId, Name, ValueFrom } = params;
   if (await findSecretByName(AccountId, StoreId, Name)) return;
   throw new Error(
-    [
-      `The secret ${Name} of \`${ValueFrom.Secret}\` is missing. Only the create of its producer writes the value.`,
-      ValueFrom.Rotation,
-    ]
-      .filter(Boolean)
-      .join(" "),
+    `The secret ${Name} of \`${ValueFrom.Secret}\` is missing. Only the create of ${ValueFrom.Producer} writes the value. To write a new value, delete the remote resource of ${ValueFrom.Producer} outside notation, then run \`notation deploy\`.`,
   );
 }
 

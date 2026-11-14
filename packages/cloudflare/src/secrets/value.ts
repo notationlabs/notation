@@ -12,14 +12,10 @@ export const secretValueFromSchema = v.object({
   /**
    * The id of the resource whose create writes a one-time value, such as
    * `token:ci`. Plan finds the secrets that a replace of that resource
-   * rotates by it.
+   * rotates by it, and the secret's create names it when the secret is
+   * missing.
    */
   Producer: v.optional(v.string()),
-  /**
-   * How to rotate the producer of a one-time value. The secret's create
-   * shows it when the secret is missing. It is not secret data.
-   */
-  Rotation: v.optional(v.string()),
   /** The key that the source is asked for. */
   Key: v.optional(v.string()),
   /** The source's version of the key. It is never derived from the value. */

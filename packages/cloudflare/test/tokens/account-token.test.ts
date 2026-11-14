@@ -23,9 +23,6 @@ import { FakeBinding, operations } from "../fake-producer";
 const NAME = "shop--dev--deploy";
 const SECRETS = "/client/v4/accounts/acc/secrets_store/stores/st/secrets";
 const TOKENS = "/client/v4/accounts/acc/tokens";
-const ROTATION =
-  'To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to the secret.';
-
 let directory: string;
 let runtime: NodeDurableRuntime;
 let events: ReconcilerEvent[];
@@ -271,7 +268,7 @@ describe("accountToken in a deploy", () => {
       "secret:deploy": "drift-recreate",
     });
     await expect(deploy("second", after)).rejects.toThrow(
-      `The secret shop--dev--deploy of \`deploy\` is missing. Only the create of its producer writes the value. ${ROTATION}`,
+      "The secret shop--dev--deploy of `deploy` is missing. Only the create of token:deploy writes the value. To write a new value, delete the remote resource of token:deploy outside notation, then run `notation deploy`.",
     );
   });
 

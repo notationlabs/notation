@@ -399,7 +399,6 @@ describe("accountToken", () => {
         Secret: "deploy",
         Source: "one-time",
         Producer: "token:deploy",
-        Rotation: TOKEN_ROTATION,
       },
     });
     expect(secretGroup.secret.getDependencies()).toContain(group.token);
