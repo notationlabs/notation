@@ -27,9 +27,15 @@ export type DurableObjectDeclarationConfig<
    * remove the namespace or its Worker.
    */
   protect?: boolean;
+  /**
+   * Declares the class as a container class in the upload of the hosting
+   * Worker, so that a `ContainerApplication` can run containers for the
+   * namespace. Defaults to `false`.
+   */
+  container?: boolean;
 };
 
-type Registered = { className: string; protect: boolean };
+type Registered = { className: string; protect: boolean; container: boolean };
 
 // `Symbol.for`, so two installed copies of this package share it.
 const registration = Symbol.for(
@@ -77,7 +83,11 @@ export function $durableObject<
     id: config.id,
   } as unknown as DurableObjectDeclaration<C>;
   Object.defineProperty(declaration, registration, {
-    value: { className, protect: config.protect ?? true } satisfies Registered,
+    value: {
+      className,
+      protect: config.protect ?? true,
+      container: config.container ?? false,
+    } satisfies Registered,
   });
   return declaration;
 }

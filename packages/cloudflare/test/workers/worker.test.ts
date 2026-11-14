@@ -428,6 +428,46 @@ describe("$worker", () => {
     ).toBeUndefined();
   });
 
+  it("declares the class of a namespace that sets container: true as a container class, and leaves container out of other namespaces", async () => {
+    const graph = await collect(() => {
+      const counters = inModule(
+        $durableObject({ id: "counters", class: Counter }),
+        "runtime/counter.ts",
+      );
+      const rooms = inModule(
+        $durableObject({ id: "rooms", class: Room, container: true }),
+        "runtime/room.ts",
+      );
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters, ROOMS: rooms }),
+        }),
+        "runtime/api.ts",
+        ["Counter", "Room"],
+      );
+      inWorker(
+        $worker({
+          id: "web",
+          compatibilityDate,
+          bindings: () => ({ ROOMS: rooms }),
+        }),
+        "runtime/web.ts",
+      );
+    });
+
+    expect(group(graph, "api").script.config.DurableObjectNamespaces).toEqual(
+      [
+        { id: "counters", className: "Counter" },
+        { id: "rooms", className: "Room", container: true },
+      ],
+    );
+    expect(group(graph, "web").script.config.DurableObjectNamespaces).toEqual(
+      [],
+    );
+  });
+
   it("fails for a namespace that no Worker that binds it exports the class of", async () => {
     await expect(
       collect(() => {

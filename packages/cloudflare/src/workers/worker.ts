@@ -363,7 +363,7 @@ function resolveBindings(
       const ns = value as DurableObjectDeclaration;
       const host = hostOf(self, ns, namespace.className, name);
       if (host === self) {
-        addHosted(self, resolved.namespaces, ns, namespace.className);
+        addHosted(self, resolved.namespaces, ns, namespace);
         if (!namespace.protect) resolved.unprotected.add(ns.id);
         addTransferSources(self, resolved.transferSources, ns);
         resolved.bindings.push({
@@ -461,7 +461,7 @@ function addHosted(
   self: Entry,
   namespaces: cloudflare.workers.HostedNamespace[],
   namespace: DurableObjectDeclaration,
-  className: string,
+  { className, container }: { className: string; container: boolean },
 ) {
   if (namespaces.some((hosted) => hosted.id === namespace.id)) return;
   const clash = namespaces.find((hosted) => hosted.className === className);
@@ -470,7 +470,13 @@ function addHosted(
       `${self.describe()} hosts the namespaces "${clash.id}" and "${namespace.id}", which both have the class ${className}. Cloudflare keeps one namespace for each class that a Worker exports, so give each namespace its own class.`,
     );
   }
-  namespaces.push({ id: namespace.id, className });
+  // `container` is left out when false, so that the params of a Worker
+  // deployed before this option existed don't change.
+  namespaces.push({
+    id: namespace.id,
+    className,
+    ...(container ? { container } : {}),
+  });
 }
 
 // A Worker that binds a namespace on its host may have hosted it before. It
