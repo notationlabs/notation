@@ -87,18 +87,32 @@ Deploy creates the resources in this order: the store, the producer, the secret,
       rotation: writes a new value to the secrets deploy, ci-token
   ```
 
-- **A write that fails is rolled back.** When the producer's create fails to write to one secret, it deletes the values that it wrote to the secrets before it. The token's create also deletes the new token. In a rotation, a secret that held the earlier value can then be empty. The error says so, and the next plan shows each empty secret as drift.
-- **A secret deleted outside notation is drift.** The secret's read finds no secret with the name, and plan shows the secret as `drift-recreate`. Deploy then fails at the secret, because the value can't be fetched again. The error names the producer:
+- **A write that fails is rolled back.** When the producer's create fails to write to one secret, it deletes the secrets that it wrote to before it. The rollback also deletes a secret with an explicit `name` that took the value, although destroy leaves such a secret. The token's create also deletes the new token. In a rotation, a secret that held the earlier value can then be empty. The error says so, and the next plan shows each empty secret as drift.
+- **A secret deleted outside notation is drift.** The secret's read finds no secret with the name, and plan shows the secret as `drift-recreate`. Deploy then fails at the secret, because only the producer's create writes the value. The error says how to rotate the producer:
 
   ```text
-  The secret shop--dev--deploy of `deploy` is missing. accountToken({ id: "deploy" }) writes its value only when it is created. Rotate accountToken({ id: "deploy" }) to write a new value.
+  The secret shop--dev--deploy of `deploy` is missing. Only the create of its producer writes the value. To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to each secret that takes it.
   ```
-
-  Rotate the producer to write the value again. For a token, change its `id`.
 
 - Destroy deletes the secret and its value, as for any secret named `<app>--<stage>--<id>`. The producer's delete removes only the producer's own resource, such as the API token, and leaves the secrets.
 - When the producer is removed from the code and the secret stays, the secret keeps its last value. From then on, the secret takes its value from its new source. With no source, deploy finds that the secret exists and doesn't ask for a value.
-- `notation secret set` refuses a secret with a produced source, and names the producer.
+- `notation secret set` and `notation secret delete` refuse a secret with a produced source. The message says how to rotate the producer.
+
+### Rotating a producer
+
+To rotate a producer, delete its remote resource outside notation, then deploy. For `accountToken({ id: "deploy" })`, the steps are:
+
+1. Delete (or revoke) the API token `shop--dev--deploy` in the Cloudflare dashboard.
+2. Run `notation deploy`. The token's read finds no token, so plan shows the token as `drift-recreate`, with the secrets that get a new value:
+
+   ```text
+   ± drift-recreate cloudflare/tokens/AccountToken token:deploy
+       rotation: writes a new value to the secrets deploy, ci-token
+   ```
+
+3. The new token's create writes its value to each secret that takes `sources.value`. A secret that was also deleted is then found again, so its create succeeds.
+
+**Changing the token's `id` is not a rotation of the same secrets.** The secret's name comes from the `id`, so a new `id` makes a new token and a new secret, and a missing secret under the old name stays missing.
 
 ## `accountToken(config)`
 
@@ -136,7 +150,7 @@ export const worker = $worker({
 
 | Option      | Description                                                                                                                                                                                                     |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`        | Keys the token in state, and names the token and its secret `<app>--<stage>--<id>`. Changing the id rotates the token: deploy creates a new token and secret, and deletes the old ones.                         |
+| `id`        | Keys the token in state, and names the token and its secret `<app>--<stage>--<id>`. Changing the id replaces both: deploy creates a new token and secret, and deletes the old ones.                             |
 | `policies`  | What the token can do. Each policy has an `effect`, `allow` or `deny`, the names of its `permissionGroups` as the dashboard shows them, and the `resources` it applies to. A change updates the token in place. |
 | `condition` | Optional. The client IP ranges, in CIDR notation, as `{ requestIp: { in, notIn } }`. Only clients in `in` may use the token, and clients in `notIn` may not. A change updates the token in place.               |
 
@@ -151,9 +165,9 @@ export const worker = $worker({
 - A change to the policies or the condition updates the token, which keeps its value.
 - If the IP ranges or the policies are changed in the dashboard, deploy changes them back to the declaration.
 - Plan looks up the ID of each permission group by its name, and compares the IDs with the token's. A name can belong to more than one group, one for each scope. Then the scope of the policy's `resources` picks the group: `com.cloudflare.api.account.<account id>` picks the account group, and `com.cloudflare.api.account.zone.<zone id>` picks the zone group. If the resources have more than one scope, plan fails and lists the groups. Give each scope its own policy.
-- The token's secret follows the rules of [produced sources](#produced-sources). If the secret is deleted, plan shows drift and deploy fails. Rotate the token by changing its `id`. A secret that starts to take `sources.value` also rotates the token.
+- The token's secret follows the rules of [produced sources](#produced-sources). If the secret is deleted, plan shows drift and deploy fails. To rotate the token, delete it in the Cloudflare dashboard and run `notation deploy`, as in [Rotating a producer](#rotating-a-producer). A secret that starts to take `sources.value` also rotates the token.
 - Destroy deletes the secret, then the token.
-- `notation secret set` refuses the token's secret. `notation secret delete` deletes it, and deploy then fails until the token is rotated.
+- `notation secret set` and `notation secret delete` refuse the token's secret.
 
 ### Upgrading from 0.20
 

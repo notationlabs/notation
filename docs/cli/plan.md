@@ -63,6 +63,13 @@ When deploy replaces or recreates a resource that writes the value of secrets, s
     rotation: writes a new value to the secrets deploy, ci-token
 ```
 
+With one secret, the line reads `rotation: writes a new value to the secret deploy`. A token that was deleted in the Cloudflare dashboard shows as `drift-recreate`, with the same line:
+
+```
+± drift-recreate cloudflare/tokens/AccountToken token:deploy
+    rotation: writes a new value to the secret deploy
+```
+
 See [Produced sources](../providers/cloudflare/secrets.md#produced-sources).
 
 When an earlier deploy started the create of a resource and did not finish it, state holds a `creating` record for the resource. The plan prints a line under the create:

@@ -180,6 +180,8 @@ A state record holds the params that the resource had when it was last deployed.
 
 `backfill` prevents this. Plan and deploy call it with the params that the record holds, when the record doesn't hold the param, and compare the desired value with its result. It is not called for a record that holds the param.
 
+**Use `backfill` only on a required param.** A record without an optional param may have been written after the param was added, with the param left unset. `backfill` can't tell that record from one written before the param existed, so it would fill in a value that the resource never had.
+
 For example, `AccountToken` in `@notation/cloudflare` added the immutable param `ValueTargets` after 0.20. A 0.20 token wrote its value to the secret with its own name, in the store `StoreId`, so the backfill builds that target from the record:
 
 ```ts

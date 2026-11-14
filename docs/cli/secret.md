@@ -32,12 +32,14 @@ Run `set` before a deploy without a terminal, such as in CI, for each secret tha
 
 The next `notation deploy` finds the secret missing and creates it again, from its source or from the prompt. `notation watch` deploys without drift detection, so it doesn't create the secret again. Until `notation deploy` runs, an upload of a Worker that binds the secret fails with Cloudflare error 10182.
 
-A secret with a [produced source](../providers/cloudflare/secrets.md#produced-sources), such as the secret of an `accountToken()`, can't be created again from its source. After `delete`, the next deploy fails at the secret and names the producer. Rotate the producer to write a new value. For a token, change its `id`.
-
 ## Errors
 
 Both commands fail when no secret has the id. The message lists the declared ids.
 
-`set` also refuses a secret with a produced source, such as the secret of an `accountToken()`. Only the producer's create writes its value, and the message names the producer.
+Both commands refuse a secret with a [produced source](../providers/cloudflare/secrets.md#produced-sources), such as the secret of an `accountToken()`. Only the producer's create writes the value, so a deleted value can't be written again from a source or the prompt. The message says how to rotate the producer:
+
+```text
+Only the create of accountToken({ id: "deploy" }) writes the value of `deploy`, so `notation secret` can't set or delete it. To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to each secret that takes it.
+```
 
 `delete` also refuses a secret that a provider adopted rather than created, such as a Cloudflare secret with an explicit `name`.
