@@ -16,7 +16,6 @@ import * as durable from "@notation/reconciler/durable";
 import { collectResourceGraph } from "@notation/resource";
 import { SecretsStore, SecretsStoreSecret } from "src/resources/secrets-store";
 import { AccountToken } from "src/resources/tokens";
-import { secret } from "src/secrets-store";
 import { accountToken } from "src/tokens";
 import type { BindableSecret } from "src/workers/declaration";
 import { FakeBinding, operations } from "../fake-producer";
@@ -25,7 +24,7 @@ const NAME = "shop--dev--deploy";
 const SECRETS = "/client/v4/accounts/acc/secrets_store/stores/st/secrets";
 const TOKENS = "/client/v4/accounts/acc/tokens";
 const ROTATION =
-  'To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to each secret that takes it.';
+  'To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to the secret.';
 
 let directory: string;
 let runtime: NodeDurableRuntime;
@@ -247,12 +246,10 @@ describe("accountToken in a deploy", () => {
       AccountId: "acc",
       Name: NAME,
       Policies: [{ ...policies[0], permissionGroups: ["g1"] }],
-      ValueTargets: [
-        {
-          provider: "@notation/cloudflare/resources",
-          params: { AccountId: "acc", StoreId: "st", Name: NAME },
-        },
-      ],
+      ValueTarget: {
+        provider: "@notation/cloudflare/resources",
+        params: { AccountId: "acc", StoreId: "st", Name: NAME },
+      },
     });
     expect(JSON.stringify(await runtime.state.values())).not.toContain(
       "token-value-1",
@@ -284,118 +281,32 @@ describe("accountToken in a deploy", () => {
   ])(
     "rotates the token when it is deleted in the dashboard, with the secret %s",
     (_, secretMissing) => {
-      const withCopy = () => {
-        const token = accountToken({ id: "deploy", policies });
-        bind(token);
-        secret({ id: "copy", source: token.sources.value });
-      };
-
-      it("plans the token's create as a rotation, and one deploy writes a new value to each secret", async () => {
-        await deploy("first", withCopy);
+      it("plans the token's create as a rotation, and one deploy writes a new value to the secret", async () => {
+        await deploy("first", after);
         tokens.delete("t1");
         if (secretMissing) secrets.delete(NAME);
 
-        const planned = await plan(withCopy);
-        expect(decisions(planned)).toEqual({
+        expect(decisions(await plan(after))).toEqual({
           "secrets-store": "noop",
           "token:deploy": "drift-recreate",
           "secret:deploy": secretMissing ? "drift-recreate" : "noop",
-          "secret:copy": "noop",
           "binding:api": "noop",
         });
-        // The plan's rotation line lists the secrets whose `Producer` is the
-        // token.
-        expect(
-          planned.nodes
-            .filter(
-              (node) =>
-                (node.params.ValueFrom as { Producer?: string } | undefined)
-                  ?.Producer === "token:deploy",
-            )
-            .map((node) => node.id),
-        ).toEqual(["secret:deploy", "secret:copy"]);
 
-        await deploy("second", withCopy);
+        await deploy("second", after);
 
         expect([...tokens.keys()]).toEqual(["t2"]);
         expect(secrets.get(NAME)?.value).toBe("token-value-2");
-        expect(secrets.get("shop--dev--copy")?.value).toBe("token-value-2");
-        expect(decisions(await plan(withCopy))).toEqual({
+        expect(operations).not.toContain("update binding api");
+        expect(decisions(await plan(after))).toEqual({
           "secrets-store": "noop",
           "token:deploy": "noop",
           "secret:deploy": "noop",
-          "secret:copy": "noop",
           "binding:api": "noop",
         });
       });
     },
   );
-
-  it("rotates the token when another secret takes its value", async () => {
-    await deploy("first", after);
-    const withCopy = () => {
-      const token = accountToken({ id: "deploy", policies });
-      bind(token);
-      secret({ id: "copy", source: token.sources.value });
-    };
-
-    expect(decisions(await plan(withCopy))).toMatchObject({
-      "token:deploy": "replace",
-      "secret:deploy": "noop",
-      "secret:copy": "create",
-    });
-    await deploy("second", withCopy);
-
-    expect([...tokens.keys()]).toEqual(["t2"]);
-    expect(secrets.get(NAME)?.value).toBe("token-value-2");
-    expect(secrets.get("shop--dev--copy")?.value).toBe("token-value-2");
-    expect(operations).not.toContain("update binding api");
-  });
-
-  it("rotates the token when a secret stops taking its value", async () => {
-    const withCopy = () => {
-      const token = accountToken({ id: "deploy", policies });
-      bind(token);
-      secret({ id: "copy", source: token.sources.value });
-    };
-    await deploy("first", withCopy);
-
-    expect(decisions(await plan(after))).toMatchObject({
-      "token:deploy": "replace",
-      "secret:deploy": "noop",
-      "secret:copy": "delete-orphan",
-    });
-    await deploy("second", after);
-
-    expect([...tokens.keys()]).toEqual(["t2"]);
-    expect(secrets.get(NAME)?.value).toBe("token-value-2");
-    expect(secrets.has("shop--dev--copy")).toBe(false);
-  });
-
-  it("doesn't rotate the token when the secrets that take its value are declared in another order", async () => {
-    const withCopies = (ids: string[]) => () => {
-      const token = accountToken({ id: "deploy", policies });
-      bind(token);
-      for (const id of ids) secret({ id, source: token.sources.value });
-    };
-    await deploy("first", withCopies(["copy-b", "copy-a"]));
-
-    expect(
-      (
-        (await runtime.state.get("token:deploy"))?.params.ValueTargets as {
-          params: { Name: string };
-        }[]
-      ).map((target) => target.params.Name),
-    ).toEqual(["shop--dev--copy-a", "shop--dev--copy-b", NAME]);
-    expect(decisions(await plan(withCopies(["copy-a", "copy-b"])))).toEqual({
-      "secrets-store": "noop",
-      "token:deploy": "noop",
-      "secret:deploy": "noop",
-      "secret:copy-a": "noop",
-      "secret:copy-b": "noop",
-      "binding:api": "noop",
-    });
-  });
 
   it("destroys the binding, then the secret, then the token", async () => {
     await deploy("first", after);

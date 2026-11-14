@@ -187,14 +187,6 @@ registerSecretStore(SECRETS_STORE_PROVIDER, {
     const { AccountId, StoreId, Name } = params as TargetParams;
     await writeSecret(AccountId, StoreId, Name, value);
   },
-  delete: async (params) => {
-    const { AccountId, StoreId, Name } = params as TargetParams;
-    await deleteSecret(AccountId, StoreId, Name);
-  },
-  has: async (params) => {
-    const { AccountId, StoreId, Name } = params as TargetParams;
-    return (await findSecretByName(AccountId, StoreId, Name)) !== undefined;
-  },
 });
 
 export type SecretsStoreSecretInstance = InstanceType<

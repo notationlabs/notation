@@ -390,19 +390,6 @@ it("prints that deploy asks for the value of a new secret without a source", asy
 });
 
 it("labels the replacement of a resource that writes a produced secret as a rotation", async () => {
-  const secretNode = (id: string, decision: "noop" | "create") => ({
-    id: `secret:${id}`,
-    type: "cloudflare/secrets-store/SecretsStoreSecret",
-    decision,
-    params: {
-      ValueFrom: {
-        Secret: id,
-        Source: "produced",
-        Producer: "token:deploy",
-      },
-    },
-    dependsOn: ["secrets-store", "token:deploy"],
-  });
   planApp.mockResolvedValueOnce({
     createdAt: "",
     nodes: [
@@ -411,12 +398,23 @@ it("labels the replacement of a resource that writes a produced secret as a rota
         type: "cloudflare/tokens/AccountToken",
         decision: "replace",
         replaceOrder: "delete-first",
-        replaceFields: [{ name: "ValueTargets", known: true }],
+        replaceFields: [{ name: "ValueTarget", known: true }],
         params: {},
         dependsOn: ["secrets-store"],
       },
-      secretNode("deploy", "noop"),
-      secretNode("copy", "create"),
+      {
+        id: "secret:deploy",
+        type: "cloudflare/secrets-store/SecretsStoreSecret",
+        decision: "noop",
+        params: {
+          ValueFrom: {
+            Secret: "deploy",
+            Source: "produced",
+            Producer: "token:deploy",
+          },
+        },
+        dependsOn: ["secrets-store", "token:deploy"],
+      },
     ],
   });
   const lines: string[] = [];
@@ -426,8 +424,8 @@ it("labels the replacement of a resource that writes a produced secret as a rota
 
   expect(lines.slice(1, 4)).toEqual([
     "-/+ replace cloudflare/tokens/AccountToken token:deploy (delete, then create)",
-    "    ValueTargets forces replacement",
-    "    rotation: writes a new value to the secrets deploy, copy",
+    "    ValueTarget forces replacement",
+    "    rotation: writes a new value to the secret deploy",
   ]);
 });
 
@@ -461,7 +459,7 @@ it("lists only the secrets of the producer that aren't being deleted", async () 
         type: "cloudflare/tokens/AccountToken",
         decision: "replace",
         replaceOrder: "delete-first",
-        replaceFields: [{ name: "ValueTargets", known: true }],
+        replaceFields: [{ name: "ValueTarget", known: true }],
         params: {},
         dependsOn: ["secrets-store"],
       },

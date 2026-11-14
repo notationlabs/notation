@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as v from "valibot";
 import {
   producedSource,
-  writeSecretValues,
+  writeSecretValue,
   type ProducedSource,
   type SecretTarget,
 } from "@notation/core";
@@ -26,7 +26,7 @@ export const operations: string[] = [];
 
 type FakeKeyPairSchema = {
   Key: { KeyId: string };
-  CreateParams: { Name: string; PrivateKeyTargets: SecretTarget[] };
+  CreateParams: { Name: string; PrivateKeyTarget: SecretTarget };
   UpdateParams: {};
   ReadResult: {};
 };
@@ -53,15 +53,18 @@ export const FakeKeyPair = fakeKeyPair
       immutable: true,
       value: v.string(),
     },
-    // Each secret that takes `sources.privateKey` contributes its target.
+    // The secret that takes `sources.privateKey` contributes its target.
     // Immutable, because only a create gets a value to write to a new
     // target.
-    PrivateKeyTargets: {
+    PrivateKeyTarget: {
       propertyType: "param",
       presence: "required",
       immutable: true,
-      value: v.array(targetSchema),
-      collect: (items: unknown[]) => items.flat() as SecretTarget[],
+      value: targetSchema,
+      collect: (items: unknown[]) => {
+        if (items.length > 1) throw new Error("More than one target");
+        return items[0] as SecretTarget;
+      },
     },
     KeyId: {
       propertyType: "computed",
@@ -77,9 +80,7 @@ export const FakeKeyPair = fakeKeyPair
       fakeKeys.set(id, { name: params.Name });
       producedValues.push(privateKey);
       try {
-        await writeSecretValues(
-          params.PrivateKeyTargets.map((target) => [target, privateKey]),
-        );
+        await writeSecretValue(params.PrivateKeyTarget, privateKey);
       } catch (error) {
         fakeKeys.delete(id);
         throw error;
@@ -97,7 +98,7 @@ export const FakeKeyPair = fakeKeyPair
       return {};
     },
 
-    // The secrets own the value, so delete leaves it. A key pair that a
+    // The secret owns the value, so delete leaves it. A key pair that a
     // rotation replaced would otherwise delete its replacement's value.
     delete: async (key, state) => {
       fakeKeys.delete(key.KeyId);
@@ -122,7 +123,7 @@ export class FakeKeyPairGroup extends ResourceGroup<{ id: string }> {
         producer: `fakeKeyPair({ id: "${config.id}" })`,
         resource: this.keyPair,
         name: "privateKey",
-        param: "PrivateKeyTargets",
+        param: "PrivateKeyTarget",
       }),
     };
   }

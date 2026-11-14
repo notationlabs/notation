@@ -108,14 +108,17 @@ export class SecretGroup
     if (produced) {
       // The target holds only outputs of resources that the producer
       // depends on, so the producer's create can resolve it.
-      produced.register({
-        provider: SECRETS_STORE_PROVIDER,
-        params: {
-          AccountId: store.outputRef("AccountId"),
-          StoreId: store.outputRef("StoreId"),
-          Name: name,
+      produced.register(
+        {
+          provider: SECRETS_STORE_PROVIDER,
+          params: {
+            AccountId: store.outputRef("AccountId"),
+            StoreId: store.outputRef("StoreId"),
+            Name: name,
+          },
         },
-      });
+        declaration,
+      );
       valueFrom = {
         Secret: id,
         Source: PRODUCED_SOURCE,

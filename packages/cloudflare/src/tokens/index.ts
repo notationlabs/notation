@@ -1,4 +1,4 @@
-import { producedSource, type ProducedSource } from "@notation/core";
+import { producedSource } from "@notation/core";
 import { ResourceGroup, scopedPhysicalName } from "@notation/resource";
 import * as cloudflare from "src/resources";
 import { TOKEN_NAME_MAX_LENGTH } from "src/resources/tokens/account-token";
@@ -37,8 +37,6 @@ export class AccountTokenGroup
 {
   platform = "cloudflare";
   readonly token: cloudflare.tokens.AccountTokenInstance;
-  /** The token's value, which another secret can also take as its source. */
-  readonly sources: { value: ProducedSource };
   /** The secret that holds the token's value, with the id of the token. */
   readonly secret: SecretGroup;
 
@@ -59,17 +57,17 @@ export class AccountTokenGroup
         dependencies: { store: secretsStoreGroup().store },
       }),
     );
-    this.sources = {
-      value: producedSource({
-        producer: declaration,
-        resource: this.token,
-        name: "value",
-        param: "ValueTargets",
-        rotation: `To rotate ${declaration}, delete the API token ${name} in the Cloudflare dashboard, then run \`notation deploy\`. Deploy creates a new token and writes its value to each secret that takes it.`,
-      }),
-    };
+    // The group's own secret takes the value, so the produced source isn't
+    // exposed: a second secret that took it would throw.
+    const value = producedSource({
+      producer: declaration,
+      resource: this.token,
+      name: "value",
+      param: "ValueTarget",
+      rotation: `To rotate ${declaration}, delete the API token ${name} in the Cloudflare dashboard, then run \`notation deploy\`. Deploy creates a new token and writes its value to the secret.`,
+    });
     this.secret = new SecretGroup(
-      { id: config.id, source: this.sources.value },
+      { id: config.id, source: value },
       { declaration },
     );
   }

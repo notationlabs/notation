@@ -190,8 +190,9 @@ const rotatingDecisions = new Set<PlanNode["decision"]>([
 // A secret whose source a resource produces has `ValueFrom: { Source:
 // PRODUCED_SOURCE, Producer }`, where `Producer` is the id of that resource.
 // The producer's create writes the value, so a producer that is created
-// again writes a new value to each such secret that isn't being deleted.
-// Returns the ids of the secrets.
+// again writes a new value to such a secret, unless it is being deleted.
+// One secret takes each produced source, and a producer can have more than
+// one. Returns the ids of the secrets.
 function rotatedSecrets(result: Plan, node: PlanNode): string[] {
   if (!rotatingDecisions.has(node.decision)) return [];
   return result.nodes.flatMap((other) => {

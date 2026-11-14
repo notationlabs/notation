@@ -2,12 +2,10 @@ import * as v from "valibot";
 import { beforeEach, describe, expect, it } from "vitest";
 import { collectResourceGraph, resource } from "@notation/resource";
 import {
-  deleteSecretValue,
-  hasSecretValue,
   isProducedSource,
   producedSource,
   registerSecretStore,
-  writeSecretValues,
+  writeSecretValue,
   type SecretTarget,
 } from "src/secrets";
 
@@ -21,10 +19,6 @@ registerSecretStore("@example/store", {
     }
     held.set(params.name as string, value);
   },
-  delete: async (params) => {
-    held.delete(params.name as string);
-  },
-  has: async (params) => held.has(params.name as string),
 });
 
 const target = (name: string): SecretTarget => ({
@@ -37,46 +31,25 @@ beforeEach(() => {
   rejected = [];
 });
 
-describe("writeSecretValues", () => {
-  it("writes each value to its target", async () => {
-    await writeSecretValues([
-      [target("a"), "value-a"],
-      [target("b"), "value-b"],
-    ]);
+describe("writeSecretValue", () => {
+  it("writes the value to the target", async () => {
+    await writeSecretValue(target("a"), "value-a");
 
-    expect(Object.fromEntries(held)).toEqual({ a: "value-a", b: "value-b" });
-    await expect(hasSecretValue(target("a"))).resolves.toBe(true);
-    await deleteSecretValue(target("a"));
-    await expect(hasSecretValue(target("a"))).resolves.toBe(false);
+    expect(Object.fromEntries(held)).toEqual({ a: "value-a" });
   });
 
   it("fails for a provider that no loaded package registered", async () => {
     await expect(
-      hasSecretValue({ provider: "@example/missing", params: {} }),
+      writeSecretValue({ provider: "@example/missing", params: {} }, "value"),
     ).rejects.toThrow(
       "No secret store is registered for @example/missing. The package that provides it isn't loaded.",
     );
   });
 
-  it("deletes the values it wrote when a later write fails, and says a secret may be empty", async () => {
+  it("throws the error of a write that fails", async () => {
     rejected = ["bad"];
 
-    const error = await writeSecretValues([
-      [target("a"), "value-a"],
-      [target("bad"), "value-b"],
-    ]).catch((e: Error) => e);
-
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe(
-      "rejected. The values written to the other secrets before it were deleted, so a secret that held an earlier value may now be empty. The next plan shows each one as drift.",
-    );
-    expect(held.size).toBe(0);
-  });
-
-  it("throws the error of a first write that fails as it is", async () => {
-    rejected = ["bad"];
-
-    await expect(writeSecretValues([[target("bad"), "value"]])).rejects.toThrow(
+    await expect(writeSecretValue(target("bad"), "value")).rejects.toThrow(
       /^rejected$/,
     );
   });
@@ -84,7 +57,7 @@ describe("writeSecretValues", () => {
 
 type HolderSchema = {
   Key: { Id: string };
-  CreateParams: { Id: string; Targets: SecretTarget[] };
+  CreateParams: { Id: string; Target: SecretTarget };
   UpdateParams: {};
   ReadResult: {};
 };
@@ -101,17 +74,18 @@ const Holder = resource<HolderSchema>({
       primaryKey: true,
       value: v.string(),
     },
-    Targets: {
+    Target: {
       propertyType: "param",
       presence: "required",
       immutable: true,
-      value: v.array(
-        v.object({
-          provider: v.string(),
-          params: v.record(v.string(), v.any()),
-        }),
-      ),
-      collect: (items: unknown[]) => items.flat() as SecretTarget[],
+      value: v.object({
+        provider: v.string(),
+        params: v.record(v.string(), v.any()),
+      }),
+      collect: (items: unknown[]) => {
+        if (items.length > 1) throw new Error("More than one target");
+        return items[0] as SecretTarget;
+      },
     },
   } as const)
   .defineOperations({
@@ -125,23 +99,31 @@ describe("producedSource", () => {
       producer: 'holder({ id: "h" })',
       resource: holder,
       name: "value",
-      param: "Targets",
+      param: "Target",
     });
 
-  it("contributes each registered target to the param", async () => {
+  it("contributes the registered target to the param", async () => {
     let holder!: InstanceType<typeof Holder>;
     await collectResourceGraph(() => {
       holder = new Holder("holder", { config: { Id: "h" } });
       const value = source(holder);
       expect(isProducedSource(value)).toBe(true);
-      value["~producedSource"].register(target("a"));
-      value["~producedSource"].register(target("b"));
+      value["~producedSource"].register(target("a"), 'secret({ id: "a" })');
     });
 
-    expect((await holder.getParams()).Targets).toEqual([
-      target("a"),
-      target("b"),
-    ]);
+    expect((await holder.getParams()).Target).toEqual(target("a"));
+  });
+
+  it("throws when a second secret takes the source", async () => {
+    await expect(
+      collectResourceGraph(() => {
+        const value = source(new Holder("holder", { config: { Id: "h" } }));
+        value["~producedSource"].register(target("a"), 'secret({ id: "a" })');
+        value["~producedSource"].register(target("b"), 'secret({ id: "b" })');
+      }),
+    ).rejects.toThrow(
+      'secret({ id: "b" }) can\'t take holder({ id: "h" }).sources.value, because secret({ id: "a" }) takes it. Only one secret can take a produced source.',
+    );
   });
 
   it("throws when evaluation ends and no secret takes the source", async () => {

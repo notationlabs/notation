@@ -39,16 +39,14 @@ describeE2e("cloudflare/tokens/AccountToken", () => {
                     resources: { "com.cloudflare.api.account.${accountId}": "*" },
                   },
                 ],
-                ValueTargets: [
-                  {
-                    provider: cloudflare.secretsStore.SECRETS_STORE_PROVIDER,
-                    params: {
-                      AccountId: store.outputRef("AccountId"),
-                      StoreId: store.outputRef("StoreId"),
-                      Name: "${name}",
-                    },
+                ValueTarget: {
+                  provider: cloudflare.secretsStore.SECRETS_STORE_PROVIDER,
+                  params: {
+                    AccountId: store.outputRef("AccountId"),
+                    StoreId: store.outputRef("StoreId"),
+                    Name: "${name}",
                   },
-                ],
+                },
                 ${config}
               },
               dependencies: { store },

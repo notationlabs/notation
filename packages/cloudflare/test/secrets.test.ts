@@ -30,11 +30,12 @@ import {
   type WorkerGroup,
 } from "src/workers";
 import * as runtime from "src/workers/runtime";
+import { fakeKeyPairGroup } from "./fake-producer";
 
 const compatibilityDate = "2026-10-12";
 
 const TOKEN_ROTATION =
-  'To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to each secret that takes it.';
+  'To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to the secret.';
 
 beforeEach(() => setConfigFile("/some/project/notation.config.ts"));
 afterEach(() => {
@@ -202,8 +203,9 @@ describe("secret", () => {
     const declared = await declare(() => {
       secret({ id: "stripe-key", source: vault, key: "STRIPE_KEY" });
       secret({ id: "sentry", name: "SENTRY_DSN" });
-      const token = accountToken({ id: "deploy", policies });
-      secret({ id: "copy", name: "DEPLOY_TOKEN", source: token.sources.value });
+      accountToken({ id: "deploy", policies });
+      const app = fakeKeyPairGroup({ id: "app" });
+      secret({ id: "copy", name: "APP_KEY", source: app.sources.privateKey });
     });
 
     expect([...declared.keys()]).toEqual([
@@ -234,9 +236,7 @@ describe("secret", () => {
     expect(declared.get("copy")!.set).toBeUndefined();
     expect(declared.get("copy")!.delete).toBeUndefined();
     expect(declared.get("copy")!.refusal).toBe(
-      declared
-        .get("deploy")!
-        .refusal!.replace("value of `deploy`", "value of `copy`"),
+      'Only the create of fakeKeyPair({ id: "app" }) writes the value of `copy`, so `notation secret` can\'t set or delete it. Rotate fakeKeyPair({ id: "app" }) to write a new value.',
     );
   });
 
@@ -424,36 +424,17 @@ describe("accountToken", () => {
     );
     vi.stubEnv("CLOUDFLARE_API_TOKEN", "token");
     try {
-      expect((await group.token.getParams()).ValueTargets).toEqual([
-        {
-          provider: "@notation/cloudflare/resources",
-          params: {
-            AccountId: "acc",
-            StoreId: "store",
-            Name: "shop--dev--deploy",
-          },
+      expect((await group.token.getParams()).ValueTarget).toEqual({
+        provider: "@notation/cloudflare/resources",
+        params: {
+          AccountId: "acc",
+          StoreId: "store",
+          Name: "shop--dev--deploy",
         },
-      ]);
+      });
     } finally {
       vi.restoreAllMocks();
     }
-  });
-
-  it("lets another secret take the token's value", async () => {
-    const graph = await collect(() => {
-      const token = accountToken({ id: "deploy", policies });
-      secret({ id: "deploy-copy", source: token.sources.value });
-    });
-    const copy = groupOf<SecretGroup>(
-      graph,
-      "cloudflare/secret",
-      "deploy-copy",
-    );
-
-    expect(copy.secret.config.ValueFrom).toMatchObject({
-      Source: "produced",
-      Producer: "token:deploy",
-    });
   });
 });
 

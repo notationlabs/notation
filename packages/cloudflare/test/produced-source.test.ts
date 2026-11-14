@@ -224,12 +224,10 @@ describe("a secret whose source a resource produces", () => {
     const unknown = { $unknown: "after-apply" };
     expect(node("key-pair:ci").params).toEqual({
       Name: "ci",
-      PrivateKeyTargets: [
-        {
-          provider: "@notation/cloudflare/resources",
-          params: { AccountId: unknown, StoreId: unknown, Name: NAME },
-        },
-      ],
+      PrivateKeyTarget: {
+        provider: "@notation/cloudflare/resources",
+        params: { AccountId: unknown, StoreId: unknown, Name: NAME },
+      },
     });
     expect(node("secrets-store").dependsOn).toEqual([]);
     expect(node("key-pair:ci").dependsOn).toEqual(["secrets-store"]);
@@ -253,12 +251,10 @@ describe("a secret whose source a resource produces", () => {
     expect(secrets.get(NAME)?.value).toBe(producedValues[0]);
     expect((await runtime.state.get("key-pair:ci"))?.params).toEqual({
       Name: "ci",
-      PrivateKeyTargets: [
-        {
-          provider: "@notation/cloudflare/resources",
-          params: { AccountId: "acc", StoreId: "st", Name: NAME },
-        },
-      ],
+      PrivateKeyTarget: {
+        provider: "@notation/cloudflare/resources",
+        params: { AccountId: "acc", StoreId: "st", Name: NAME },
+      },
     });
     expect((await runtime.state.get("secret:app-key"))?.params).toEqual({
       AccountId: "acc",
@@ -292,33 +288,23 @@ describe("a secret whose source a resource produces", () => {
     expect((await recordedFiles()).includes(producedValues[0]!)).toBe(false);
   });
 
-  it("rolls back the producer and every write when one write fails", async () => {
-    rejectWrites = (name) => name === "shop--dev--app-key-2";
-    const twoSecrets = () => {
-      const app = fakeKeyPairGroup({ id: "ci" });
-      secret({ id: "app-key", source: app.sources.privateKey });
-      secret({ id: "app-key-2", source: app.sources.privateKey });
-    };
+  it("deletes the producer when the write fails", async () => {
+    rejectWrites = (name) => name === NAME;
 
-    const error = await deploy("first", twoSecrets).catch((e: Error) => e);
+    const error = await deploy("first").catch((e: Error) => e);
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain("invalid secret value");
-    expect((error as Error).message).toContain(
-      "so a secret that held an earlier value may now be empty. The next plan shows each one as drift.",
-    );
     expect((error as Error).message).not.toContain(producedValues[0]);
     expect(fakeKeys.size).toBe(0);
     expect(secrets.size).toBe(0);
     expect(await runtime.state.get("key-pair:ci")).toBeUndefined();
     expect(await runtime.state.get("secret:app-key")).toBeUndefined();
-    expect(await runtime.state.get("secret:app-key-2")).toBeUndefined();
 
     rejectWrites = () => false;
-    await deploy("second", twoSecrets);
+    await deploy("second");
     expect(fakeKeys.size).toBe(1);
     expect(secrets.get(NAME)?.value).toBe(producedValues[1]);
-    expect(secrets.get(`${NAME}-2`)?.value).toBe(producedValues[1]);
   });
 
   it("keeps the new value when rotation changes the producer's id", async () => {
@@ -462,38 +448,16 @@ describe("a secret whose source a resource produces", () => {
     }
   });
 
-  it("writes the value to each secret that takes the source", async () => {
-    await deploy("first", () => {
-      const app = fakeKeyPairGroup({ id: "ci" });
-      secret({ id: "app-key", source: app.sources.privateKey });
-      secret({ id: "app-key-2", source: app.sources.privateKey });
-    });
-
-    expect(producedValues).toHaveLength(1);
-    expect(secrets.get(NAME)?.value).toBe(producedValues[0]);
-    expect(secrets.get(`${NAME}-2`)?.value).toBe(producedValues[0]);
-  });
-
-  it("replaces the producer when a secret starts to take its source", async () => {
-    await deploy("first", infra("ci", { bound: false }));
-
-    const twoSecrets = () => {
-      const app = fakeKeyPairGroup({ id: "ci" });
-      secret({ id: "app-key", source: app.sources.privateKey });
-      secret({ id: "app-key-2", source: app.sources.privateKey });
-    };
-    expect(decisions(await plan(twoSecrets))).toMatchObject({
-      "key-pair:ci": "replace",
-      "secret:app-key": "noop",
-      "secret:app-key-2": "create",
-    });
-    await deploy("second", twoSecrets);
-
-    // Only a create gets a value, so the new target makes a new key pair,
-    // whose value replaces the first secret's value too.
-    expect(fakeKeys.size).toBe(1);
-    expect(secrets.get(NAME)?.value).toBe(producedValues[1]);
-    expect(secrets.get(`${NAME}-2`)?.value).toBe(producedValues[1]);
+  it("throws at collection when a second secret takes the source", async () => {
+    await expect(
+      collect(() => {
+        const app = fakeKeyPairGroup({ id: "ci" });
+        secret({ id: "app-key", source: app.sources.privateKey });
+        secret({ id: "app-key-2", source: app.sources.privateKey });
+      }),
+    ).rejects.toThrow(
+      'secret({ id: "app-key-2" }) can\'t take fakeKeyPair({ id: "ci" }).sources.privateKey, because secret({ id: "app-key" }) takes it. Only one secret can take a produced source.',
+    );
   });
 
   it("throws at collection when no secret takes the source", async () => {
@@ -515,7 +479,8 @@ describe("a secret whose source a resource produces", () => {
       // @ts-expect-error A source that deploy reads needs a key.
       secret({ id: "other", source: env });
       secret({ id: "third", source: env, key: "THIRD" });
-      secret({ id: "fourth", source: app.sources.privateKey });
+      const other = fakeKeyPairGroup({ id: "other" });
+      secret({ id: "fourth", source: other.sources.privateKey });
     };
     expect(declarations).toBeTypeOf("function");
   });

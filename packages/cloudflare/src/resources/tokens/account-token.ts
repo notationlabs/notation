@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { writeSecretValues, type SecretTarget } from "@notation/core";
+import { writeSecretValue, type SecretTarget } from "@notation/core";
 import {
   containsOutputRef,
   planLookup,
@@ -92,8 +92,8 @@ type AccountTokenParams = {
   Condition?: AccountTokenCondition;
   ExpiresOn?: string;
   NotBefore?: string;
-  /** The secrets that create writes the token's value to. */
-  ValueTargets: SecretTarget[];
+  /** The secret that create writes the token's value to. */
+  ValueTarget: SecretTarget;
 };
 
 export type AccountTokenSchema = {
@@ -161,16 +161,23 @@ const accountTokenSchema = accountToken.defineSchema({
     value: timestampSchema,
   },
   /**
-   * The secrets that create writes the token's value to. Each secret whose
-   * source is the token's `sources.value` contributes its target. It is
+   * The secret that create writes the token's value to. The secret whose
+   * source is the token's produced source contributes its target. It is
    * immutable, because only a create gets a value to write to a new target.
    */
-  ValueTargets: {
+  ValueTarget: {
     propertyType: "param",
     presence: "required",
     immutable: true,
-    value: v.array(targetSchema),
-    collect: (items: unknown[]) => items.flat() as SecretTarget[],
+    value: targetSchema,
+    collect: (items: unknown[], { resourceId, contributors }) => {
+      if (items.length > 1) {
+        throw new Error(
+          `${resourceId} writes its value to one secret, and ${contributors.join(", ")} each contributed a target.`,
+        );
+      }
+      return items[0] as SecretTarget;
+    },
   },
   TokenId: {
     propertyType: "computed",
@@ -182,17 +189,16 @@ const accountTokenSchema = accountToken.defineSchema({
 
 /**
  * An account-owned API token. Cloudflare returns its value only in the
- * create's response, so create writes the value to each secret in
- * `ValueTargets` in the same step. The record holds where the secrets are,
- * and never the value. When a write fails, create deletes the values it
- * wrote and the new token.
+ * create's response, so create writes the value to the secret in
+ * `ValueTarget` in the same step. The record holds where the secret is, and
+ * never the value. When the write fails, create deletes the new token.
  *
  * A create with an unknown outcome deletes the tokens with the name, and
  * runs again. A change to the policies, the condition or the times updates
  * the token in place, and the token keeps its value. A change to the name
- * or the targets replaces the token, which writes a new value to every
- * target. Delete deletes the token and leaves the secrets: each secret's
- * resource deletes its own value.
+ * or the target replaces the token, which writes a new value to the target.
+ * Delete deletes the token and leaves the secret: the secret's resource
+ * deletes its own value.
  *
  * A change made in the dashboard to the policies or the IP ranges is seen
  * as drift, and the deploy updates the token back to the config. A removed
@@ -211,11 +217,9 @@ export const AccountToken = accountTokenSchema
         not_before: params.NotBefore,
       });
       try {
-        await writeSecretValues(
-          params.ValueTargets.map((target) => [target, token.value]),
-        );
+        await writeSecretValue(params.ValueTarget, token.value);
       } catch (error) {
-        // The value is lost when a write fails, so the token is deleted,
+        // The value is lost when the write fails, so the token is deleted,
         // and the next deploy creates a new one.
         try {
           await deleteToken(params.AccountId, token.id);
@@ -279,10 +283,10 @@ export const AccountToken = accountTokenSchema
       });
     },
 
-    // Each secret's own resource deletes its value, so a replace or a removed
-    // token leaves the secrets in place. A delete of the secrets here would
-    // empty them until the new create writes them, and leave them empty if
-    // that create fails.
+    // The secret's own resource deletes its value, so a replace or a removed
+    // token leaves the secret in place. A delete of the secret here would
+    // empty it until the new create writes it, and leave it empty if that
+    // create fails.
     delete: async (key) => {
       await deleteToken(key.AccountId, key.TokenId);
     },

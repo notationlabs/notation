@@ -66,7 +66,7 @@ const params = {
   AccountId: "acc",
   Name: "shop--dev--deploy",
   Policies: [policy(["g1"])],
-  ValueTargets: [target("shop--dev--deploy")],
+  ValueTarget: target("shop--dev--deploy"),
 };
 
 const key = {
@@ -170,7 +170,7 @@ afterEach(() => {
 });
 
 describe("AccountToken", () => {
-  it("creates the token with its permission groups by ID, and writes its value to the secret of each target", async () => {
+  it("creates the token with its permission groups by ID, and writes its value to the target's secret", async () => {
     route({});
 
     await expect(token.create(params)).resolves.toEqual({ TokenId: "t1" });
@@ -195,22 +195,15 @@ describe("AccountToken", () => {
     });
   });
 
-  it("writes the value to every target", async () => {
+  it("fails to collect more than one target", async () => {
     route({});
+    const twoTargets = tokenWith(policies);
+    twoTargets.contribute({ ValueTarget: target("shop--dev--deploy") });
+    twoTargets.contribute({ ValueTarget: target("shop--dev--copy") });
 
-    await token.create({
-      ...params,
-      ValueTargets: [target("shop--dev--deploy"), target("shop--dev--copy")],
-    });
-
-    expect(
-      calls
-        .filter((c) => c.url.pathname === SECRETS && c.method === "POST")
-        .map((c) => c.body),
-    ).toEqual([
-      [{ name: "shop--dev--deploy", value: VALUE, scopes: ["workers"] }],
-      [{ name: "shop--dev--copy", value: VALUE, scopes: ["workers"] }],
-    ]);
+    await expect(twoTargets.getParams()).rejects.toThrow(
+      "token:deploy writes its value to one secret",
+    );
   });
 
   it("overwrites the value of a secret that has the token's name", async () => {
@@ -303,33 +296,6 @@ describe("AccountToken", () => {
     await expect(token.create(params)).rejects.toThrow("store_not_found");
     expect(calls.at(-1)).toMatchObject({ method: "DELETE" });
     expect(calls.at(-1)!.url.pathname).toBe(`${TOKENS}/t1`);
-  });
-
-  it("deletes the values it wrote and the new token when a later write fails", async () => {
-    const written: string[] = [];
-    route({
-      createSecret: (name) => {
-        if (name === "shop--dev--copy") {
-          return fail(400, 1001, "store_not_found");
-        }
-        written.push(name);
-        return ok([{ id: "s1", name }]);
-      },
-      listSecrets: () =>
-        ok(written.map((name) => ({ id: "s1", name, status: "active" }))),
-    });
-
-    await expect(
-      token.create({
-        ...params,
-        ValueTargets: [target("shop--dev--deploy"), target("shop--dev--copy")],
-      }),
-    ).rejects.toThrow(
-      "store_not_found (1001). The values written to the other secrets before it were deleted, so a secret that held an earlier value may now be empty.",
-    );
-    expect(
-      calls.filter((c) => c.method === "DELETE").map((c) => c.url.pathname),
-    ).toEqual([`${SECRETS}/s1`, `${TOKENS}/t1`]);
   });
 
   it("records the value, so that it is scrubbed from an error that echoes it", async () => {
@@ -431,7 +397,7 @@ describe("AccountToken", () => {
     expect(calls.at(-1)!.url.pathname).toBe(`${TOKENS}/t1`);
   });
 
-  it("deletes the token, and leaves its secrets", async () => {
+  it("deletes the token, and leaves its secret", async () => {
     route({});
 
     await token.delete(key, {} as any);
