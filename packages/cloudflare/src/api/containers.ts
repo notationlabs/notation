@@ -40,6 +40,7 @@ export const configurationSchema = v.pipe(
         /** `predefined` makes the container public, and can't be combined with `mode: "private"`. */
         assign_ipv4: v.optional(assignIpSchema),
         assign_ipv6: v.optional(assignIpSchema),
+        /** Cloudflare can't change the mode of an existing application. */
         mode: v.optional(v.picklist(["private", "public"])),
       }),
     ),
@@ -54,6 +55,86 @@ export const configurationSchema = v.pipe(
 );
 
 export type ContainerConfiguration = v.InferOutput<typeof configurationSchema>;
+
+/**
+ * A rollout's target configuration. `disk` is not a key of
+ * `ContainerConfiguration`, but `rolloutTarget` sets it to undo the disk size
+ * of a removed instance type.
+ */
+export type RolloutTarget = ContainerConfiguration & {
+  disk?: { size_mb: number };
+};
+
+// The values that Cloudflare gives an application whose configuration leaves
+// the key out. They are those of the `lite` instance type.
+const DEFAULT_INSTANCE_TYPE = "lite";
+const DEFAULT_VCPU = 0.0625;
+const DEFAULT_MEMORY_MIB = 256;
+const DEFAULT_DISK_MB = 2000;
+
+/**
+ * Returns the rollout target that gives the application `desired`, as a
+ * create with `desired` would. Cloudflare merges the target with the current
+ * configuration, so for each key of `previous` that `desired` leaves out,
+ * the target sets the value that clears it:
+ *
+ * - `environment_variables: []` removes the variables. Cloudflare refuses
+ *   `null` for every key.
+ * - `network: {}` sets the defaults. Cloudflare replaces `network` as a
+ *   whole, so a key removed inside it needs nothing.
+ * - With no instance type, `vcpu` or `memory_mib` left, `instance_type:
+ *   "lite"` sets the defaults. Cloudflare refuses `vcpu` below 1 without an
+ *   instance type, so the defaults can't be sent as `vcpu` and `memory_mib`.
+ * - A removed `vcpu` or `memory_mib` next to the other gets its default.
+ * - An instance type also sets the disk size, and a later `vcpu` and
+ *   `memory_mib` keep it. So a target that replaces an instance type with
+ *   them sets the default disk size.
+ */
+export function rolloutTarget(
+  previous: ContainerConfiguration | undefined,
+  desired: ContainerConfiguration,
+): RolloutTarget {
+  const target: RolloutTarget = { ...desired };
+  if (!previous) return target;
+  if (previous.environment_variables && !desired.environment_variables) {
+    target.environment_variables = [];
+  }
+  if (previous.network && !desired.network) target.network = {};
+  if (desired.instance_type !== undefined) return target;
+  const hadSize =
+    previous.instance_type !== undefined ||
+    previous.vcpu !== undefined ||
+    previous.memory_mib !== undefined;
+  if (desired.vcpu === undefined && desired.memory_mib === undefined) {
+    if (hadSize) target.instance_type = DEFAULT_INSTANCE_TYPE;
+    return target;
+  }
+  if (previous.vcpu !== undefined && desired.vcpu === undefined) {
+    target.vcpu = DEFAULT_VCPU;
+  }
+  if (previous.memory_mib !== undefined && desired.memory_mib === undefined) {
+    target.memory_mib = DEFAULT_MEMORY_MIB;
+  }
+  if (previous.instance_type !== undefined) {
+    target.disk = { size_mb: DEFAULT_DISK_MB };
+  }
+  return target;
+}
+
+/**
+ * The network mode that Cloudflare gives a configuration. Without `mode`, an
+ * assigned IP makes the mode `public`.
+ */
+export function networkMode(
+  configuration: ContainerConfiguration,
+): "private" | "public" {
+  const network = configuration.network;
+  if (network?.mode) return network.mode;
+  return network?.assign_ipv4 === "predefined" ||
+    network?.assign_ipv6 === "predefined"
+    ? "public"
+    : "private";
+}
 
 // The rules that Cloudflare checks when it validates an application's name.
 export const applicationNameSchema = v.pipe(
@@ -154,13 +235,13 @@ export async function updateApplication(
  * after the call returns.
  *
  * Cloudflare merges the target configuration with the current one, so a key
- * that is left out of it stays as it was. `environment_variables: []` clears
- * the variables.
+ * that is left out of it stays as it was. `rolloutTarget` builds a target
+ * that clears the keys that were removed.
  */
 export async function rollOutConfiguration(
   account: string,
   applicationId: string,
-  configuration: ContainerConfiguration,
+  configuration: RolloutTarget,
 ): Promise<void> {
   await cloudflare(
     "POST",

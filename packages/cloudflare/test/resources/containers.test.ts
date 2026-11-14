@@ -398,6 +398,157 @@ describe("ContainerApplication", () => {
 
     expect(calls.map((call) => call.method)).toEqual(["PATCH"]);
   });
+
+  // Rolls out `desired` over `previous`, and returns the target it sent.
+  async function rollOut(previous: object, desired: object) {
+    mockFetch(() => ok({}));
+    await application.update!(
+      key,
+      { Configuration: desired } as any,
+      { ...params, Configuration: desired },
+      { ...params, Configuration: previous } as any,
+    );
+    return (calls[0]!.body as any).target_configuration;
+  }
+
+  it("clears the environment variables and the network that the new configuration leaves out", async () => {
+    const target = await rollOut(
+      {
+        image: "img:1",
+        environment_variables: [{ name: "A", value: "1" }],
+        network: { mode: "private" },
+      },
+      { image: "img:2" },
+    );
+
+    expect(target).toEqual({
+      image: "img:2",
+      environment_variables: [],
+      network: {},
+    });
+  });
+
+  it("sends the configuration as it is when no key was removed", async () => {
+    const configuration = {
+      image: "img:2",
+      vcpu: 1,
+      memory_mib: 4096,
+      environment_variables: [{ name: "A", value: "2" }],
+    };
+    const target = await rollOut(
+      { ...configuration, image: "img:1" },
+      configuration,
+    );
+
+    expect(target).toEqual(configuration);
+  });
+
+  it.each([{ instance_type: "basic" }, { vcpu: 1, memory_mib: 4096 }])(
+    "sets the lite instance type when %j is removed and no size is left",
+    async (size) => {
+      const target = await rollOut(
+        { image: "img:1", ...size },
+        {
+          image: "img:1",
+        },
+      );
+
+      expect(target).toEqual({ image: "img:1", instance_type: "lite" });
+    },
+  );
+
+  it("sends no instance type when the configuration never set a size", async () => {
+    const target = await rollOut({ image: "img:1" }, { image: "img:2" });
+
+    expect(target).toEqual({ image: "img:2" });
+  });
+
+  it("sets the default disk size when vcpu and memory_mib replace an instance type", async () => {
+    const target = await rollOut(
+      { image: "img:1", instance_type: "basic" },
+      { image: "img:1", vcpu: 1, memory_mib: 4096 },
+    );
+
+    expect(target).toEqual({
+      image: "img:1",
+      vcpu: 1,
+      memory_mib: 4096,
+      disk: { size_mb: 2000 },
+    });
+  });
+
+  it("sets the default of a removed vcpu or memory_mib next to the other", async () => {
+    expect(
+      await rollOut(
+        { image: "img:1", vcpu: 2, memory_mib: 8192 },
+        { image: "img:1", memory_mib: 8192 },
+      ),
+    ).toEqual({ image: "img:1", vcpu: 0.0625, memory_mib: 8192 });
+  });
+
+  it("keeps vcpu and memory_mib out of the target when an instance type replaces them", async () => {
+    const target = await rollOut(
+      { image: "img:1", vcpu: 1, memory_mib: 4096 },
+      { image: "img:1", instance_type: "basic" },
+    );
+
+    expect(target).toEqual({ image: "img:1", instance_type: "basic" });
+  });
+});
+
+describe("ContainerApplication network mode", () => {
+  const params = {
+    AccountId: "acc",
+    Name: "app-dev-sandbox",
+    HostedNamespaceId: "sandboxes",
+    ScriptName: "app--dev--api",
+    ClassName: "Sandbox",
+    MaxInstances: 1,
+    Configuration: { image: "img:1" },
+  };
+  const reject = (
+    previous: object,
+    desired: object | undefined,
+    replace = false,
+  ) =>
+    ContainerApplication.rejectChange!(
+      { ...params, Configuration: previous as any },
+      desired && { ...params, Configuration: desired as any },
+      { replace },
+    );
+
+  it.each([
+    [{ image: "img:1", network: { mode: "public" } }, { image: "img:1" }],
+    [
+      { image: "img:1" },
+      { image: "img:1", network: { assign_ipv4: "predefined" } },
+    ],
+    [
+      { image: "img:1", network: { mode: "private" } },
+      { image: "img:1", network: { mode: "public" } },
+    ],
+  ])("rejects a change of the mode from %j to %j", (previous, desired) => {
+    expect(reject(previous, desired)).toMatch(
+      /Cloudflare can't change the network mode of the container application app-dev-sandbox .*also change Name/,
+    );
+  });
+
+  it("allows a removed network whose mode was private", () => {
+    expect(
+      reject(
+        { image: "img:1", network: { mode: "private" } },
+        {
+          image: "img:1",
+        },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("allows a change of the mode when the application is replaced or deleted", () => {
+    const publicNetwork = { image: "img:1", network: { mode: "public" } };
+    expect(reject(publicNetwork, { image: "img:1" }, true)).toBeUndefined();
+    expect(reject(publicNetwork, undefined)).toBeUndefined();
+  });
 });
 
 describe("ContainerRegistry", () => {

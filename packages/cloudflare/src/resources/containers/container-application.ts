@@ -1,8 +1,10 @@
 import * as v from "valibot";
 import {
+  containsUnknownAfterApply,
   resource,
   ResourceNotFoundError,
   ResourceOperationPendingError,
+  type RejectChangeContext,
 } from "@notation/resource";
 import {
   accountId,
@@ -19,7 +21,9 @@ import {
   listApplications,
   NAMESPACE_HAS_APPLICATION,
   NAMESPACE_NOT_CONTAINER_ENABLED,
+  networkMode,
   rollOutConfiguration,
+  rolloutTarget,
   updateApplication,
   type ContainerConfiguration,
 } from "src/api/containers";
@@ -152,10 +156,12 @@ type Params = ContainerApplicationSchema["CreateParams"];
  * configuration is not seen.
  *
  * Cloudflare merges a rollout's target configuration with the current
- * configuration. So a key that is removed from `Configuration` stays in
- * force, and the read can't show it. `environment_variables: []` clears the
- * variables. A deploy soon after another may
- * fail while the earlier rollout is still running.
+ * configuration. So for each key that is removed from `Configuration`, the
+ * rollout sends the value that a create without the key gives: no
+ * environment variables, the default network, and the resources of the
+ * `lite` instance type. Cloudflare can't change the network mode of an
+ * application, so the plan rejects a change to it. A deploy soon after
+ * another may fail while the earlier rollout is still running.
  *
  * Cloudflare refuses an application name that is empty, is longer than 253
  * bytes, starts with a dash or a digit, ends with a dash, or contains two
@@ -232,7 +238,9 @@ export const ContainerApplication = containerApplicationSchema
     },
 
     // `PATCH` changes `MaxInstances`, and a rollout changes the configuration.
-    update: async (key, patch) => {
+    // The rollout target clears the keys that are in state but not in the
+    // new configuration.
+    update: async (key, patch, _params, state) => {
       if (patch.MaxInstances !== undefined) {
         await updateApplication(key.AccountId, key.ApplicationId, {
           max_instances: patch.MaxInstances,
@@ -242,7 +250,7 @@ export const ContainerApplication = containerApplicationSchema
         await rollOutConfiguration(
           key.AccountId,
           key.ApplicationId,
-          patch.Configuration,
+          rolloutTarget(state.Configuration, patch.Configuration),
         );
       }
     },
@@ -254,6 +262,8 @@ export const ContainerApplication = containerApplicationSchema
         if (!isApplicationNotFound(error)) throw error;
       }
     },
+
+    rejectChange: rejectNetworkModeChange,
   })
   .requireDependencies<ContainerApplicationDependencies>()
   .deriveParams(async ({ config, deps }) => {
@@ -284,6 +294,24 @@ export const ContainerApplication = containerApplicationSchema
 export type ContainerApplicationInstance = InstanceType<
   typeof ContainerApplication
 >;
+
+/**
+ * Rejects a change to the network mode, which Cloudflare refuses in a
+ * rollout. A change to `Name` replaces the application, and the new one can
+ * take the new mode.
+ */
+function rejectNetworkModeChange(
+  previous: Partial<Params>,
+  desired: Params | undefined,
+  context: RejectChangeContext,
+): string | undefined {
+  if (!previous.Configuration || !desired || context.replace) return undefined;
+  if (containsUnknownAfterApply(desired.Configuration)) return undefined;
+  const before = networkMode(previous.Configuration);
+  const after = networkMode(desired.Configuration);
+  if (before === after) return undefined;
+  return `Cloudflare can't change the network mode of the container application ${previous.Name} from ${before} to ${after}. Set the network mode back to ${before}, or also change Name so that deploy deletes the application and creates it again with the new mode. The containers stop until the new application has instances.`;
+}
 
 /**
  * Returns the ID of the namespace that Cloudflare lists for the class, or
