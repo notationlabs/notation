@@ -9,7 +9,10 @@ import {
 } from "src/secrets-store/store";
 import type { BindableSecret } from "src/workers/declaration";
 
-export type { AccountTokenPolicy } from "src/resources/tokens/account-token";
+export type {
+  AccountTokenCondition,
+  AccountTokenPolicy,
+} from "src/resources/tokens/account-token";
 export type { BindableSecret } from "src/workers/declaration";
 
 export type AccountTokenConfig = {
@@ -21,6 +24,11 @@ export type AccountTokenConfig = {
   id: string;
   /** What the token can do. A change updates the token, which keeps its value. */
   policies: cloudflare.tokens.AccountTokenPolicy[];
+  /**
+   * The client IP ranges, in CIDR notation, that may or may not use the
+   * token. A change updates the token, which keeps its value.
+   */
+  condition?: cloudflare.tokens.AccountTokenCondition;
 };
 
 export class AccountTokenGroup
@@ -39,7 +47,11 @@ export class AccountTokenGroup
     super("cloudflare/accountToken", config.id, config);
     this.token = this.add(
       new cloudflare.tokens.AccountToken(`token:${config.id}`, {
-        config: { Name: name, Policies: config.policies },
+        config: {
+          Name: name,
+          Policies: config.policies,
+          Condition: config.condition,
+        },
         dependencies: { store: secretsStoreGroup().store },
       }),
     );

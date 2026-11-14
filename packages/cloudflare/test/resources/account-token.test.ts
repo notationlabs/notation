@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  OutputRef,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
 } from "@notation/resource";
 import { decideDriftAction } from "@notation/reconciler";
 import { clearSecretValues, scrubSecretValues } from "@notation/utils";
-import { AccountToken, sortedPolicies } from "src/resources/tokens";
+import {
+  AccountToken,
+  sortedCondition,
+  sortedPolicies,
+} from "src/resources/tokens";
 
 type Call = { method: string; url: URL; body: unknown };
 let calls: Call[];
@@ -347,6 +352,7 @@ describe("AccountToken", () => {
       ...key,
       SecretId: "s1",
       Policies: params.Policies,
+      Condition: {},
     });
   });
 
@@ -441,6 +447,169 @@ describe("AccountToken", () => {
       });
 
       expect(action).toMatchObject({ decision: "drift-update" });
+    });
+  });
+
+  describe("condition and times", () => {
+    const RANGES = ["198.51.100.0/24", "192.0.2.0/24"];
+
+    const tokenWithConfig = (config: Record<string, unknown>) =>
+      new AccountToken("token:deploy", {
+        config: { Name: params.Name, Policies: policies, ...config },
+        dependencies: {
+          store: { output: { AccountId: "acc", StoreId: "store" } },
+        } as any,
+      });
+
+    // A resource that has deployed, with outputs for the token's config to use.
+    const source = {
+      id: "source",
+      schema: {},
+      output: {
+        Range: "203.0.113.0/24",
+        Condition: { requestIp: { notIn: ["203.0.113.0/24", "192.0.2.0/24"] } },
+      },
+    } as any;
+    const outputRef = (name: string) => new OutputRef(source, [name]) as any;
+
+    const readToken = (fields: Record<string, unknown>) => {
+      route({
+        getToken: () =>
+          ok({
+            name: params.Name,
+            policies: [
+              {
+                effect: "allow",
+                permission_groups: [{ id: "g1" }],
+                resources: ACCOUNT,
+              },
+            ],
+            ...fields,
+          }),
+        listSecrets: () =>
+          ok([{ id: "s1", name: params.Name, status: "active" }]),
+      });
+      return token.read!(key);
+    };
+
+    it("creates the token with its IP ranges and times", async () => {
+      route({});
+
+      await token.create({
+        ...params,
+        Condition: { requestIp: { in: RANGES, notIn: ["192.0.2.1/32"] } },
+        ExpiresOn: "2027-01-01T00:00:00Z",
+        NotBefore: "2026-12-01T00:00:00Z",
+      });
+
+      expect(calls.find((c) => c.url.pathname === TOKENS)!.body).toMatchObject({
+        condition: { request_ip: { in: RANGES, not_in: ["192.0.2.1/32"] } },
+        expires_on: "2027-01-01T00:00:00Z",
+        not_before: "2026-12-01T00:00:00Z",
+      });
+    });
+
+    it("sorts the IP ranges, and drops the milliseconds from the times", async () => {
+      route({});
+
+      await expect(
+        tokenWithConfig({
+          Condition: { requestIp: { in: RANGES } },
+          ExpiresOn: "2027-01-01T00:00:00.500Z",
+          NotBefore: "2026-01-01T00:00:00Z",
+        }).getParams(),
+      ).resolves.toMatchObject({
+        Condition: { requestIp: { in: [...RANGES].sort() } },
+        ExpiresOn: "2027-01-01T00:00:00Z",
+        NotBefore: "2026-01-01T00:00:00Z",
+      });
+    });
+
+    it("rejects a time that is not in UTC", () => {
+      expect(() =>
+        tokenWithConfig({ ExpiresOn: "2027-01-01T00:00:00+01:00" }),
+      ).toThrow("Use an ISO 8601 time in UTC");
+    });
+
+    it("rejects a date that doesn't exist", () => {
+      expect(() =>
+        tokenWithConfig({ ExpiresOn: "2027-02-30T00:00:00Z" }),
+      ).toThrow("Use a date and time that exist");
+    });
+
+    it("fills in a condition and an IP range that are output refs, and sorts the ranges", async () => {
+      route({});
+
+      await expect(
+        tokenWithConfig({ Condition: outputRef("Condition") }).getParams(),
+      ).resolves.toMatchObject({
+        Condition: { requestIp: { notIn: ["192.0.2.0/24", "203.0.113.0/24"] } },
+      });
+      await expect(
+        tokenWithConfig({
+          Condition: { requestIp: { in: [outputRef("Range"), RANGES[0]] } },
+        }).getParams(),
+      ).resolves.toMatchObject({
+        Condition: { requestIp: { in: ["198.51.100.0/24", "203.0.113.0/24"] } },
+      });
+    });
+
+    it("reads the IP ranges and times in the form of the config", async () => {
+      await expect(
+        readToken({
+          condition: { request_ip: { in: RANGES, not_in: [] } },
+          expires_on: "2027-01-01T00:00:00.000Z",
+          not_before: null,
+        }),
+      ).resolves.toEqual({
+        ...key,
+        SecretId: "s1",
+        Policies: params.Policies,
+        Condition: { requestIp: { in: [...RANGES].sort() } },
+        ExpiresOn: "2027-01-01T00:00:00Z",
+      });
+    });
+
+    it("sees no drift when neither the config nor the token has a condition", async () => {
+      const action = decideDriftAction({
+        resource: token,
+        params,
+        driftRead: {
+          kind: "present",
+          output: await readToken({ condition: null }),
+        },
+      });
+
+      expect(action).toMatchObject({ decision: "noop" });
+    });
+
+    it("updates the token when its IP ranges were removed in the dashboard", async () => {
+      const Condition = sortedCondition({ requestIp: { in: RANGES } });
+      const action = decideDriftAction({
+        resource: token,
+        params: { ...params, Condition },
+        driftRead: {
+          kind: "present",
+          output: await readToken({ condition: {} }),
+        },
+      });
+
+      expect(action).toMatchObject({
+        decision: "drift-update",
+        patch: { Condition },
+      });
+    });
+
+    it("sends an empty condition and null times when the config no longer sets them", async () => {
+      route({});
+
+      await token.update!(key, {} as any, params, {} as any);
+
+      expect(calls.at(-1)!.body).toMatchObject({
+        condition: {},
+        expires_on: null,
+        not_before: null,
+      });
     });
   });
 });
