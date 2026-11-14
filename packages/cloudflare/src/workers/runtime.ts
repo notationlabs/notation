@@ -44,12 +44,6 @@ export function isWorkerGroup(_value: unknown): false {
   return false;
 }
 
-export class WorkerSecretGroup {
-  constructor() {
-    throw infraOnly("WorkerSecretGroup");
-  }
-}
-
-export function workerSecret(_config: WorkerSecretConfig): WorkerSecretGroup {
+export function workerSecret(_config: WorkerSecretConfig): never {
   throw infraOnly("workerSecret");
 }

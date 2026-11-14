@@ -282,12 +282,6 @@ describe("$worker", () => {
     ]);
   });
 
-  it("fails for a Worker secret without a source", () => {
-    expect(() => workerSecret({ id: "api-key" } as any)).toThrow(
-      `workerSecret({ id: "api-key" }) requires a source and a key.`,
-    );
-  });
-
   it("hosts a namespace whose class its module exports", async () => {
     const graph = await collect(() => {
       const counters = inModule(

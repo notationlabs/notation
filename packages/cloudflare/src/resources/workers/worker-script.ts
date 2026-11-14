@@ -401,20 +401,16 @@ async function upload(
   await putScript(params.AccountId, params.ScriptName, upload);
 }
 
-async function secretTextBindings(
+const secretTextBindings = (
   secrets: SecretBinding[],
-): Promise<SecretTextBinding[]> {
-  const bindings: SecretTextBinding[] = [];
-  for (const secret of secrets) {
-    const value = await getValue(secret.ValueFrom.Secret);
-    bindings.push({
+): Promise<SecretTextBinding[]> =>
+  Promise.all(
+    secrets.map(async (secret) => ({
       type: "secret_text",
       name: secret.Name,
-      text: value.unwrap(),
-    });
-  }
-  return bindings;
-}
+      text: (await getValue(secret.ValueFrom.Secret)).unwrap(),
+    })),
+  );
 
 type Transfer = {
   id: string;

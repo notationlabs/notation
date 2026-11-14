@@ -10,8 +10,6 @@ export function json<T extends Json>(value: T): JsonBinding<T> {
   return { "~json": value };
 }
 
-export function boundJson(value: unknown): { value: Json } | undefined {
-  return typeof value === "object" && value !== null && "~json" in value
-    ? { value: (value as JsonBinding)["~json"] }
-    : undefined;
+export function isJsonBinding(value: unknown): value is JsonBinding {
+  return typeof value === "object" && value !== null && "~json" in value;
 }

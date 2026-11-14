@@ -133,11 +133,11 @@ export default {
 
 `workerSecret` declares a secret that a Worker binds as secret text. In the Worker, the binding is a string. The value comes from a [source](../../manual/secrets.md#sources). Cloudflare stores the value with the Worker, not in a Secrets Store.
 
-| Option   | Description                                                                                                              |
-| -------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `id`     | Keys the secret's `SourceValue` resource in state, with the ID `value:<id>`. It must differ from the id of every secret. |
-| `source` | Required. Where the value comes from, such as `env` or `dotenv(".env.local")` from `@notation/std/sources`.              |
-| `key`    | Required. The key that the source is asked for.                                                                          |
+| Option   | Description                                                                                                 |
+| -------- | ----------------------------------------------------------------------------------------------------------- |
+| `id`     | Keys the secret in state. It must differ from the id of every other secret.                                 |
+| `source` | Required. Where the value comes from, such as `env` or `dotenv(".env.local")` from `@notation/std/sources`. |
+| `key`    | Required. The key that the source is asked for.                                                             |
 
 - Notation records the source, the key and the source's version of the key. It never records the value. Plan shows the binding's name, source, key and version.
 - Deploy reads the value from the source each time it uploads a Worker that binds the secret. A Worker is uploaded when one of its params changes, and the source's version of the key is one of them. For `env` and `dotenv`, the version is the deploy's execution ID, so deploy uploads the Worker on every deploy.

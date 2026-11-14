@@ -11,7 +11,7 @@ import * as cloudflare from "src/resources";
 import { assertWorkerId, workerNames, workerResourceId } from "src/id";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
 import { describeNamespace, registeredNamespace } from "./durable-object";
-import { boundJson } from "./json";
+import { isJsonBinding } from "./json";
 import { WorkerSecretGroup } from "./secret";
 import { boundSecret } from "./secrets-store";
 
@@ -197,7 +197,8 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
           ...(config.compatibilityFlags ?? []),
         ]),
         bindings: resolved.bindings,
-        // Undefined when empty, as for `unprotectedNamespaces`.
+        // Undefined when empty, so that the params of a Worker deployed
+        // before this option existed don't change.
         secretBindings: resolved.secrets.length ? resolved.secrets : undefined,
         namespaces: resolved.namespaces,
         // Undefined when empty, so that the params of a Worker deployed
@@ -390,9 +391,8 @@ function resolveBindings(
       });
       continue;
     }
-    const json = boundJson(value);
-    if (json) {
-      resolved.bindings.push({ type: "json", name, json: json.value });
+    if (isJsonBinding(value)) {
+      resolved.bindings.push({ type: "json", name, json: value["~json"] });
       continue;
     }
     if (typeof value === "object" && value !== null && "~secret" in value) {

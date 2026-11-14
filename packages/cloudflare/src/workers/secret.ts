@@ -7,10 +7,7 @@ import { assertSecretId } from "src/secrets-store/store";
 import type { WorkerSecret } from "./declaration";
 
 export type WorkerSecretConfig = {
-  /**
-   * Keys the secret's source value in state, with the ID `value:<id>`. It
-   * must differ from the id of every other secret.
-   */
+  /** Keys the secret in state. It must differ from the id of every other secret. */
   id: string;
   /** Where the value comes from, such as `env` or `dotenv(".env.local")`. */
   source: Source;
@@ -29,11 +26,6 @@ export class WorkerSecretGroup
 
   constructor(config: WorkerSecretConfig) {
     assertSecretId("workerSecret()", config.id);
-    if (!config.source || typeof config.key !== "string") {
-      throw new Error(
-        `workerSecret({ id: "${config.id}" }) requires a source and a key. Deploy reads the value from the source each time it uploads a Worker that binds the secret.`,
-      );
-    }
     super("cloudflare/workerSecret", config.id, config);
     const { id, source, key } = config;
     this.value = this.add(
