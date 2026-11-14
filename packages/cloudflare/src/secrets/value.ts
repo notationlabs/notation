@@ -7,8 +7,13 @@ import type { Source } from "@notation/std/sources";
 export const secretValueFromSchema = v.object({
   /** The id of the secret's declaration, which `getValue` takes. */
   Secret: v.string(),
-  /** The name of the source, such as `infisical`, or `prompt`. */
+  /** The name of the source, such as `infisical`, `prompt` or `produced`. */
   Source: v.string(),
+  /**
+   * Describes the resource whose create writes a produced value, such as
+   * `githubApp({ id: "ci" })`.
+   */
+  Producer: v.optional(v.string()),
   /** The key that the source is asked for. */
   Key: v.optional(v.string()),
   /** The source's version of the key. It is never derived from the value. */
