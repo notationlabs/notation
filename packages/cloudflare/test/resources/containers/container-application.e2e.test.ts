@@ -16,8 +16,10 @@ const IMAGE_V2 =
   "docker.io/traefik/whoami@sha256:02d8fe035f170f91cbb5e458a57f4cefab747436f8244a0eb2d66785fe5e565f";
 
 // The Worker sends each request to one Sandbox object, which starts its
-// container and forwards the request to the container's port 80. The port
-// refuses connections until the server in the container is listening.
+// container and forwards the request to the container's port 80. For a few
+// minutes after the application is created, Cloudflare has no instance to
+// give the object, and the start fails. The object answers each request at
+// once with the error, and the test polls until the container answers.
 const workerModule = `
   import { DurableObject } from "cloudflare:workers";
 
@@ -25,17 +27,11 @@ const workerModule = `
     async fetch(request) {
       const container = this.ctx.container;
       if (!container.running) container.start();
-      const port = container.getTcpPort(80);
-      let lastError;
-      for (let attempt = 0; attempt < 20; attempt++) {
-        try {
-          return await port.fetch(new URL("/", request.url).toString());
-        } catch (error) {
-          lastError = error;
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
+      try {
+        return await container.getTcpPort(80).fetch("http://container/");
+      } catch (error) {
+        return new Response("container not reachable: " + error, { status: 503 });
       }
-      return new Response("container not reachable: " + lastError, { status: 503 });
     }
   }
 
@@ -103,7 +99,7 @@ type Application = {
   id: string;
   name: string;
   max_instances: number;
-  configuration: { image: string; instance_type?: string };
+  configuration: { image: string; vcpu?: number; memory_mib?: number };
   durable_objects?: { namespace_id: string };
 };
 
@@ -170,7 +166,8 @@ describeE2e("ContainerApplication", () => {
     expect(application).toMatchObject({
       name: `${runPrefix}-sandbox`,
       max_instances: 1,
-      configuration: { image: IMAGE_V1, instance_type: "lite" },
+      // Cloudflare stores the resources of the instance type, not its name.
+      configuration: { image: IMAGE_V1, vcpu: 0.0625, memory_mib: 256 },
       durable_objects: {
         namespace_id: await namespaceIdOf(scriptName, "Sandbox"),
       },
