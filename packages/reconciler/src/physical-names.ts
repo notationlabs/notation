@@ -24,11 +24,15 @@ export function nameFields(resource: BaseResource): NameField[] {
 /**
  * A replace creates first when the resource has a `physicalName` param:
  * deploy generates a new name for the replacement, so the replacement can
- * exist beside the resource it replaces. Any other replacement would collide
- * with it, so it deletes first.
+ * exist beside the resource it replaces. It also creates first when the
+ * class sets `replaceCreatesFirst`, because each replace changes the key.
+ * Any other replacement would collide with the resource, so it deletes
+ * first.
  */
 export function replaceOrder(resource: BaseResource): ReplaceOrder {
-  return nameFields(resource).length > 0 ? "create-first" : "delete-first";
+  return resource.replaceCreatesFirst || nameFields(resource).length > 0
+    ? "create-first"
+    : "delete-first";
 }
 
 /**

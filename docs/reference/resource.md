@@ -89,8 +89,9 @@ const LambdaFunction = defineResource<{
 | `provider`              | the package or package subpath that exports the class (e.g. `@notation/aws/resources`). State records it with the type. See [Provider packages](#provider-packages). |
 | `blocksDeleteOf`        | `ResourceType[]?`. The types that the provider refuses to delete while a resource of this type depends on them. Defaults to `[]`.                                    |
 | `deleteTakesDependents` | `boolean?`. Set when `delete` uses its `deletion` argument. See [Deletes of a resource that others refer to](#deletes-of-a-resource-that-others-refer-to).           |
+| `replaceCreatesFirst`   | `boolean?`. Set when every replace changes the resource's key, so the replacement can exist beside the old resource. Deploy then replaces the type create-first.     |
 
-When deploy replaces a resource of a listed type delete-first, it first deletes each resource of this type that depends on it, and creates it again after the new resource. A type with a `physicalName` param is replaced create-first, and then no dependent is deleted in advance. See [Create-first replacement](../internals/reconciler.md#create-first-replacement). AWS, for example, does not delete an EventBridge bus that has rules, so `aws/eventBridge/rule` lists the bus type. A bus has a generated name and is replaced create-first, so no class in Notation's provider packages uses the list today:
+When deploy replaces a resource of a listed type delete-first, it first deletes each resource of this type that depends on it, and creates it again after the new resource. A type with a `physicalName` param, or with `replaceCreatesFirst`, is replaced create-first, and then no dependent is deleted in advance. See [Create-first replacement](../internals/reconciler.md#create-first-replacement). AWS, for example, does not delete an EventBridge bus that has rules, so `aws/eventBridge/rule` lists the bus type. A bus has a generated name and is replaced create-first, so no class in Notation's provider packages uses the list today:
 
 ```ts
 const eventBridgeRule = resource<EventBridgeRuleSchema>({

@@ -3741,6 +3741,96 @@ describe("replacement", () => {
     runtime.close();
   });
 
+  /** A key-value entry whose key can't change, and that replaces create-first. */
+  function defineEntry(type: ResourceType, calls: string[], live: Set<string>) {
+    return (
+      resource({ type, provider: "test", replaceCreatesFirst: true })
+        // Cast: as for defineReplaceable.
+        .defineSchema({
+          key: {
+            presence: "required",
+            propertyType: "param",
+            primaryKey: true,
+            immutable: true,
+            value: v.string(),
+          },
+        } as any)
+        .defineOperations({
+          create: async (params: any) => {
+            if (live.has(params.key)) {
+              throw new Error(`${params.key} already exists`);
+            }
+            live.add(params.key);
+            calls.push(`create:${params.key}`);
+          },
+          update: async () => undefined,
+          delete: async (key: any) => {
+            live.delete(key.key);
+            calls.push(`delete:${key.key}`);
+          },
+        })
+    );
+  }
+
+  it("creates the replacement before it deletes the old resource when the class sets replaceCreatesFirst", async () => {
+    const calls: string[] = [];
+    const live = new Set<string>();
+    const Entry = defineEntry(
+      "test/durable/replace-creates-first",
+      calls,
+      live,
+    );
+    const resources = [new Entry("entry", { config: { key: "a" } as any })];
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "replace-creates-first", {
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("deploy-1");
+    resources[0] = new Entry("entry", { config: { key: "b" } as any });
+    await runtime.run("deploy-2");
+
+    expect(calls).toEqual(["create:a", "create:b", "delete:a"]);
+    expect(live).toEqual(new Set(["b"]));
+    expect(await runtime.state.get("entry")).toMatchObject({
+      params: { key: "b" },
+    });
+    expect(
+      events.find(
+        (event) =>
+          event.event === "reconciler.deploy.decision" &&
+          event.decision === "replace",
+      ),
+    ).toMatchObject({ resourceId: "entry", replaceOrder: "create-first" });
+    runtime.close();
+  });
+
+  it("keeps the old resource when the create of a replaceCreatesFirst replace fails", async () => {
+    const calls: string[] = [];
+    const live = new Set<string>();
+    const Entry = defineEntry(
+      "test/durable/replace-creates-first-failed",
+      calls,
+      live,
+    );
+    const resources = [new Entry("entry", { config: { key: "a" } as any })];
+    const runtime = createRuntime(resources, "replace-creates-first-failed");
+
+    await runtime.run("deploy-1");
+    live.add("taken");
+    resources[0] = new Entry("entry", { config: { key: "taken" } as any });
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "taken already exists",
+    );
+
+    expect(calls).toEqual(["create:a"]);
+    expect(live).toEqual(new Set(["a", "taken"]));
+    expect(await runtime.state.get("entry")).toMatchObject({
+      params: { key: "a" },
+    });
+    runtime.close();
+  });
+
   it("emits dry-run for both halves of a replacement and changes nothing", async () => {
     const calls: string[] = [];
     const Role = defineReplaceable("test/durable/replace-dry-run", calls);
