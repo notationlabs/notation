@@ -169,13 +169,13 @@ export const worker = $worker({
 - Destroy deletes the secret, then the token.
 - `notation secret set` and `notation secret delete` refuse the token's secret.
 
-### Upgrading from 0.20
+### Upgrading from 0.21 or earlier
 
-In 0.20, the `AccountToken` resource wrote its value to the secret itself, and state had no record of the secret. The first deploy with a later version keeps the token and its value:
+Up to 0.21, the `AccountToken` resource wrote its value to the secret itself, and state had no record of the secret. The first deploy with a later version keeps the token and its value:
 
-1. Plan compares the token's new param `ValueTargets` with the secret that 0.20 wrote to, so the token is a `noop`.
+1. Plan compares the token's new param `ValueTargets` with the secret that the earlier version wrote to, so the token is a `noop`.
 2. Plan shows the secret's record, `secret:<id>`, as a create. A Worker that binds the token shows as an update, because the secret's outputs are unknown until its create has run.
-3. Deploy creates the record of the secret. The secret's create finds the secret that 0.20 wrote, and records it without a write.
+3. Deploy creates the record of the secret. The secret's create finds the secret that the earlier version wrote, and records it without a write.
 
 ## `secretsStore.bind(secret)`
 

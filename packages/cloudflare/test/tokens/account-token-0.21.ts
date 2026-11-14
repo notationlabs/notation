@@ -184,8 +184,8 @@ const accountTokenSchema = accountToken.defineSchema({
 } as const);
 
 /**
- * `AccountToken` as notation 0.20 released it, so that a test can deploy the
- * state records that 0.20 wrote, and then deploy them with this version.
+ * `AccountToken` as notation 0.21 released it, so that a test can deploy the
+ * state records that 0.21 wrote, and then deploy them with this version.
  *
  * An account-owned API token, whose value is kept in a secret of the
  * account's Secrets Store. The secret has the token's name. Its record holds
@@ -443,7 +443,7 @@ function toSeconds(time: string): string {
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-/** `accountToken()` as notation 0.20 released it. */
+/** `accountToken()` as notation 0.21 released it. */
 export class AccountTokenGroup extends ResourceGroup<{
   id: string;
   policies: AccountTokenPolicy[];

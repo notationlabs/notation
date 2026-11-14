@@ -20,7 +20,7 @@ import { secret } from "src/secrets-store";
 import { accountToken } from "src/tokens";
 import type { BindableSecret } from "src/workers/declaration";
 import { FakeBinding, operations } from "../fake-producer";
-import * as v020 from "./account-token-0.20";
+import * as v021 from "./account-token-0.21";
 
 const NAME = "shop--dev--deploy";
 const SECRETS = "/client/v4/accounts/acc/secrets_store/stores/st/secrets";
@@ -136,9 +136,9 @@ const bind = (bindable: BindableSecret) => {
   });
 };
 
-// The infra as notation 0.20 declared it.
+// The infra as notation 0.21 declared it.
 const before = () => {
-  bind(new v020.AccountTokenGroup({ id: "deploy", policies }));
+  bind(new v021.AccountTokenGroup({ id: "deploy", policies }));
 };
 
 const after = () => {
@@ -419,8 +419,8 @@ describe("accountToken in a deploy", () => {
   });
 });
 
-describe("the upgrade from notation 0.20", () => {
-  it("adopts the secret of a token that 0.20 deployed, and keeps the token and its value", async () => {
+describe("the upgrade from notation 0.21", () => {
+  it("adopts the secret of a token that 0.21 deployed, and keeps the token and its value", async () => {
     await deploy("first", before);
     const recorded = await runtime.state.get("token:deploy");
     expect(recorded?.params).toMatchObject({ StoreId: "st", Name: NAME });

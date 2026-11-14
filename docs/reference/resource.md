@@ -182,7 +182,7 @@ A state record holds the params that the resource had when it was last deployed.
 
 **Use `backfill` only on a required param.** A record without an optional param may have been written after the param was added, with the param left unset. `backfill` can't tell that record from one written before the param existed, so it would fill in a value that the resource never had.
 
-For example, `AccountToken` in `@notation/cloudflare` added the immutable param `ValueTargets` after 0.20. A 0.20 token wrote its value to the secret with its own name, in the store `StoreId`, so the backfill builds that target from the record:
+For example, `AccountToken` in `@notation/cloudflare` added the immutable param `ValueTargets` after 0.21. A token from 0.21 or earlier wrote its value to the secret with its own name, in the store `StoreId`, so the backfill builds that target from the record:
 
 ```ts
 ValueTargets: {

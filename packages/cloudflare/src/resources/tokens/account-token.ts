@@ -172,7 +172,7 @@ const accountTokenSchema = accountToken.defineSchema({
     immutable: true,
     value: v.array(targetSchema),
     collect: (items: unknown[]) => items.flat() as SecretTarget[],
-    // Up to 0.20, the token wrote its value to the secret with its own name,
+    // Up to 0.21, the token wrote its value to the secret with its own name,
     // in the store `StoreId`, and its record held no targets.
     backfill: (recorded) => [
       {

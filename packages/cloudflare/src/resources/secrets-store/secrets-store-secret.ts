@@ -108,7 +108,7 @@ async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
  * producer, so the producer's create has run. Cloudflare can't create a
  * secret without a value, so the producer creates the secret, and this
  * create only records it. It also records a secret that exists from before,
- * such as the secret of an account token made by notation 0.20.
+ * such as the secret of an account token made by notation 0.21 or earlier.
  */
 async function claimProduced(params: SecretsStoreSecretParams): Promise<void> {
   const { AccountId, StoreId, Name, ValueFrom } = params;

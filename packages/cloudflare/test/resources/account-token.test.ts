@@ -439,7 +439,7 @@ describe("AccountToken", () => {
     ]);
   });
 
-  it("fills in the target of the secret with its name, for a record of 0.20 that holds none", () => {
+  it("fills in the target of the secret with its name, for a record of 0.21 or earlier that holds none", () => {
     const backfill = (token.schema.ValueTargets as any).backfill;
 
     expect(
