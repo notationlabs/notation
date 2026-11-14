@@ -141,6 +141,10 @@ export async function cloudflareGetText(
   return text;
 }
 
+// `Response.text()` strips a leading U+FEFF, which would change a KV value
+// that starts with one.
+const utf8 = new TextDecoder("utf-8", { ignoreBOM: true });
+
 async function send(
   method: Method,
   path: string,
@@ -168,7 +172,8 @@ async function send(
       body: payload,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    return { request, response, text: await response.text() };
+    const bytes = await response.arrayBuffer();
+    return { request, response, text: utf8.decode(bytes) };
   } catch (error) {
     if ((error as Error)?.name === "TimeoutError") {
       throw new CloudflareNetworkError(

@@ -91,6 +91,13 @@ describe("KV value calls", () => {
     expect(calls[0]).toMatchObject({ method: "GET", url: `${NS}/values/k` });
   });
 
+  it("keeps a leading byte order mark in a value", async () => {
+    const stored = "﻿value";
+    mockFetch(() => text(stored));
+
+    await expect(getKVValue("acc", "ns1", "k")).resolves.toBe(stored);
+  });
+
   it("gets a value parsed as JSON", async () => {
     mockFetch(() => text('{"routes":["/a"]}'));
 
