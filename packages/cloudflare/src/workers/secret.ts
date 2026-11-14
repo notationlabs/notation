@@ -56,6 +56,9 @@ export class WorkerSecretGroup
   }
 }
 
+export const isWorkerSecret = (value: unknown): value is WorkerSecretGroup =>
+  typeof value === "object" && value !== null && "~workerSecret" in value;
+
 /**
  * Declares a secret that a Worker binds as a `secret_text` binding. In the
  * Worker, the binding is a string. Deploy reads the value from `source` when

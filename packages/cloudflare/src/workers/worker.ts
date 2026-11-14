@@ -12,7 +12,7 @@ import { assertWorkerId, workerNames, workerResourceId } from "src/id";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
 import { describeNamespace, registeredNamespace } from "./durable-object";
 import { isJsonBinding } from "./json";
-import { WorkerSecretGroup } from "./secret";
+import { isWorkerSecret } from "./secret";
 import { boundSecret } from "./secrets-store";
 
 // Always set: the build imports Node's built-in modules as `node:` modules,
@@ -367,12 +367,13 @@ function resolveBindings(
       resolved.services.push({ name, worker });
       continue;
     }
-    if (value instanceof WorkerSecretGroup) {
+    if (isWorkerSecret(value)) {
       resolved.secrets.push(value.binding(name));
       continue;
     }
     if (value instanceof cloudflare.r2.R2Bucket) {
       const bucket = value as cloudflare.r2.R2BucketInstance;
+      // The name is an output ref, so that the Worker depends on the bucket.
       const jurisdiction = bucket.config.Jurisdiction;
       resolved.bindings.push({
         type: "r2_bucket",

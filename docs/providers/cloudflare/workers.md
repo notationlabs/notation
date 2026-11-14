@@ -140,7 +140,7 @@ export default {
 | `key`    | Required. The key that the source is asked for.                                                             |
 
 - Notation records the source, the key and the source's version of the key. It never records the value. Plan shows the binding's name, source, key and version.
-- Deploy reads the value from the source each time it uploads a Worker that binds the secret. A Worker is uploaded when one of its params changes, and the source's version of the key is one of them. For `env` and `dotenv`, the version is the deploy's execution ID, so deploy uploads the Worker on every deploy.
+- Deploy reads the value from the source each time it uploads a Worker that binds the secret. A Worker is uploaded when one of its params changes, and the source's version of the key is one of them. For `env` and `dotenv`, the version is the deploy's execution ID, so deploy uploads the Worker on every deploy. A source with versions, such as `infisical()`, uploads it only when the version changes.
 - A secret without a source isn't supported, so deploy never asks for the value. `notation secret set` refuses a Worker secret. Change the value in the source.
 - A value changed in the dashboard or with wrangler stays until deploy next uploads the Worker.
 

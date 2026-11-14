@@ -102,7 +102,8 @@ type WorkerScriptParams = {
   /**
    * Create and update read each value with `getValue`, and upload it as a
    * `secret_text` binding. A change to `ValueFrom`, such as a new version
-   * from the source, updates the Worker.
+   * from the source, updates the Worker. Each `ValueFrom.Secret` must be
+   * the id of a declared secret, such as one from `workerSecret()`.
    */
   SecretBindings?: SecretBinding[];
   DurableObjectNamespaces?: HostedNamespace[];
