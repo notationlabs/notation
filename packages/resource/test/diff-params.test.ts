@@ -1,10 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  UNKNOWN_AFTER_APPLY,
-  backfillParams,
-  diffParams,
-  type Schema,
-} from "src";
+import { UNKNOWN_AFTER_APPLY, diffParams, type Schema } from "src";
 import { object, string } from "./validators";
 
 const schema: Schema = {
@@ -199,37 +194,5 @@ describe("diffParams", () => {
     expect(
       diffParams(schema, previous, desired, { canUpdate: true }).replaceFields,
     ).toEqual([{ name: "path", known: false }]);
-  });
-});
-
-describe("backfillParams", () => {
-  const added: Schema = {
-    name: {
-      propertyType: "param",
-      presence: "required",
-      value: string(),
-      primaryKey: true,
-    },
-    target: {
-      propertyType: "param",
-      presence: "required",
-      value: string(),
-      immutable: true,
-      backfill: (recorded) => `target of ${recorded.name}`,
-    },
-  };
-
-  test("fills in a param that the record doesn't hold", () => {
-    const recorded = { name: "a" };
-    expect(backfillParams(added, recorded)).toEqual({
-      name: "a",
-      target: "target of a",
-    });
-    expect(recorded).toEqual({ name: "a" });
-  });
-
-  test("keeps a param that the record holds", () => {
-    const recorded = { name: "a", target: "b" };
-    expect(backfillParams(added, recorded)).toBe(recorded);
   });
 });

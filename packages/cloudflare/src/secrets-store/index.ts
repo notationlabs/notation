@@ -75,11 +75,6 @@ export type SecretConfig = {
  * `accountToken()`.
  */
 export type SecretGroupOptions = {
-  /**
-   * The name in the store, in place of `<app>--<stage>--<id>`. Unlike
-   * `config.name`, the secret stays stage-scoped, so destroy deletes it.
-   */
-  scopedName?: string;
   /** Names the declaration in errors, such as `accountToken({ id: "ci" })`. */
   declaration?: string;
 };
@@ -97,7 +92,6 @@ export class SecretGroup
     assertSecretId("secret()", config.id);
     const name =
       config.name ??
-      options.scopedName ??
       scopedPhysicalName(config.id, {
         maxLength: SECRET_NAME_MAX_LENGTH,
       });

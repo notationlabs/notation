@@ -1,6 +1,5 @@
 import {
   assertRequiredOutputs,
-  backfillParams,
   fillPhysicalNames,
   validateParams,
   type BaseResource,
@@ -215,7 +214,7 @@ export async function createPlan({
       assertChangeAllowed(
         resource.id,
         resource.rejectChange,
-        backfillParams(resource.schema, stateNode.params),
+        stateNode.params,
         params,
         { replace: true },
       );

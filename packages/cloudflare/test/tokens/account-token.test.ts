@@ -20,7 +20,6 @@ import { secret } from "src/secrets-store";
 import { accountToken } from "src/tokens";
 import type { BindableSecret } from "src/workers/declaration";
 import { FakeBinding, operations } from "../fake-producer";
-import * as v021 from "./account-token-0.21";
 
 const NAME = "shop--dev--deploy";
 const SECRETS = "/client/v4/accounts/acc/secrets_store/stores/st/secrets";
@@ -134,11 +133,6 @@ const bind = (bindable: BindableSecret) => {
       SecretName: target.outputRef("Name"),
     },
   });
-};
-
-// The infra as notation 0.21 declared it.
-const before = () => {
-  bind(new v021.AccountTokenGroup({ id: "deploy", policies }));
 };
 
 const after = () => {
@@ -416,91 +410,5 @@ describe("accountToken in a deploy", () => {
     expect(operations.at(-1)).toBe("delete binding api");
     expect(secrets.size).toBe(0);
     expect(tokens.size).toBe(0);
-  });
-});
-
-describe("the upgrade from notation 0.21", () => {
-  it("adopts the secret of a token that 0.21 deployed, and keeps the token and its value", async () => {
-    await deploy("first", before);
-    const recorded = await runtime.state.get("token:deploy");
-    expect(recorded?.params).toMatchObject({ StoreId: "st", Name: NAME });
-    expect(recorded?.params.ValueTargets).toBeUndefined();
-    expect(await runtime.state.get("secret:deploy")).toBeUndefined();
-    expect(secrets.get(NAME)?.value).toBe("token-value-1");
-    writes.length = 0;
-    operations.length = 0;
-
-    const planned = await plan(after);
-    expect(decisions(planned)).toEqual({
-      "secrets-store": "noop",
-      "token:deploy": "noop",
-      "secret:deploy": "create",
-      // The secret's outputs are unknown until its create has run, so plan
-      // can't tell that the binding is the same.
-      "binding:api": "update",
-    });
-
-    const prompt = vi.fn(async () => "typed-in-value");
-    await deploy("second", after, prompt);
-
-    // No token was created, updated or deleted, and no secret was written
-    // or deleted.
-    expect(writes).toEqual([]);
-    expect(created).toBe(1);
-    expect([...tokens.keys()]).toEqual(["t1"]);
-    expect(secrets.get(NAME)?.value).toBe("token-value-1");
-    expect(prompt).not.toHaveBeenCalled();
-    expect(operations).toEqual([]);
-    expect((await runtime.state.get("secret:deploy"))?.params).toEqual({
-      AccountId: "acc",
-      StoreId: "st",
-      Name: NAME,
-      StageScoped: true,
-      ValueFrom: {
-        Secret: "deploy",
-        Source: "produced",
-        Producer: "token:deploy",
-        Rotation: ROTATION,
-      },
-    });
-    expect((await runtime.state.get("binding:api"))?.dependsOn).toEqual([
-      "secret:deploy",
-    ]);
-
-    expect(decisions(await plan(after))).toEqual({
-      "secrets-store": "noop",
-      "token:deploy": "noop",
-      "secret:deploy": "noop",
-      "binding:api": "noop",
-    });
-  });
-
-  it("destroys the token and its secret after the upgrade", async () => {
-    await deploy("first", before);
-    await deploy("second", after);
-    writes.length = 0;
-
-    await run("destroy", "destroy", after);
-
-    expect(writes).toEqual([
-      `DELETE ${SECRETS}/id-${NAME}`,
-      `DELETE ${TOKENS}/t1`,
-    ]);
-    expect(await runtime.state.values()).toEqual([]);
-  });
-
-  it("rotates the token after the upgrade when another secret takes its value", async () => {
-    await deploy("first", before);
-    await deploy("second", after);
-
-    await deploy("third", () => {
-      const token = accountToken({ id: "deploy", policies });
-      bind(token);
-      secret({ id: "copy", source: token.sources.value });
-    });
-
-    expect([...tokens.keys()]).toEqual(["t2"]);
-    expect(secrets.get(NAME)?.value).toBe("token-value-2");
-    expect(secrets.get("shop--dev--copy")?.value).toBe("token-value-2");
   });
 });

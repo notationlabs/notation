@@ -68,11 +68,9 @@ export class AccountTokenGroup
         rotation: `To rotate ${declaration}, delete the API token ${name} in the Cloudflare dashboard, then run \`notation deploy\`. Deploy creates a new token and writes its value to each secret that takes it.`,
       }),
     };
-    // The secret has the token's name, which is the name that the token's
-    // value was written to before the token wrote through `sources.value`.
     this.secret = new SecretGroup(
       { id: config.id, source: this.sources.value },
-      { scopedName: name, declaration },
+      { declaration },
     );
   }
 

@@ -168,39 +168,10 @@ All schema items carry these fields:
 - `primaryKey` / `secondaryKey` – together form the compound key used for read/update/delete.
 - `collect` – makes the param collected, and combines what is contributed to it. See [Contributions](#contributions).
 - `physicalName` – marks the param as the resource's physical name, with the rule of the provider's names. Deploy always generates the name, and config cannot set it. See [Physical names](#physical-names).
-- `backfill` – a function `(recorded) => value`. It gives the param's value for a state record that was written before the param was in the schema. See [Adding a param](#adding-a-param).
 
 **`computed`**
 
 - `primaryKey` – identifies the resource (e.g. `FunctionArn` returned by `create`).
-
-### Adding a param
-
-A state record holds the params that the resource had when it was last deployed. When a new version of a resource class adds a param, the records of resources that exist don't hold it. Plan then compares the desired value with `undefined`. For an `immutable` param, that replaces every such resource.
-
-`backfill` prevents this. Plan and deploy call it with the params that the record holds, when the record doesn't hold the param, and compare the desired value with its result. It is not called for a record that holds the param.
-
-**Use `backfill` only on a required param.** A record without an optional param may have been written after the param was added, with the param left unset. `backfill` can't tell that record from one written before the param existed, so it would fill in a value that the resource never had.
-
-For example, `AccountToken` in `@notation/cloudflare` added the immutable param `ValueTargets` after 0.21. A token from 0.21 or earlier wrote its value to the secret with its own name, in the store `StoreId`, so the backfill builds that target from the record:
-
-```ts
-ValueTargets: {
-  propertyType: "param",
-  presence: "required",
-  immutable: true,
-  value: v.array(targetSchema),
-  collect: (items: unknown[]) => items.flat() as SecretTarget[],
-  backfill: (recorded) => [
-    {
-      provider: SECRETS_STORE_PROVIDER,
-      params: { AccountId: recorded.AccountId, StoreId: recorded.StoreId, Name: recorded.Name },
-    },
-  ],
-},
-```
-
-The desired `ValueTargets` holds the same target, so plan shows the token as a `noop`, and the token keeps its value.
 
 ### Physical names
 

@@ -6,7 +6,6 @@
 import {
   SchemaStructureError,
   assertRequiredOutputs,
-  backfillParams,
   collectResourceGraph,
   fillPhysicalNames,
   validateParams,
@@ -766,13 +765,9 @@ async function* deleteBlockingDependents(
         ) as DurableObject;
       },
     );
-    assertChangeAllowed(
-      id,
-      declared.rejectChange,
-      backfillParams(declared.schema, record.params),
-      params,
-      { replace: true },
-    );
+    assertChangeAllowed(id, declared.rejectChange, record.params, params, {
+      replace: true,
+    });
   }
 
   for (const id of dependents) {

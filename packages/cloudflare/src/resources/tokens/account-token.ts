@@ -21,7 +21,6 @@ import {
   type TokenResources,
 } from "src/api/tokens";
 import type { SecretsStoreInstance } from "src/resources/secrets-store";
-import { SECRETS_STORE_PROVIDER } from "src/resources/secrets-store/secrets-store-secret";
 
 export const TOKEN_NAME_MAX_LENGTH = 120;
 
@@ -172,18 +171,6 @@ const accountTokenSchema = accountToken.defineSchema({
     immutable: true,
     value: v.array(targetSchema),
     collect: (items: unknown[]) => items.flat() as SecretTarget[],
-    // Up to 0.21, the token wrote its value to the secret with its own name,
-    // in the store `StoreId`, and its record held no targets.
-    backfill: (recorded) => [
-      {
-        provider: SECRETS_STORE_PROVIDER,
-        params: {
-          AccountId: recorded.AccountId,
-          StoreId: recorded.StoreId,
-          Name: recorded.Name,
-        },
-      },
-    ],
   },
   TokenId: {
     propertyType: "computed",

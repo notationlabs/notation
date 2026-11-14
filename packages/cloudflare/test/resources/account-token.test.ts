@@ -11,6 +11,8 @@ import {
   sortedCondition,
   sortedPolicies,
 } from "src/resources/tokens";
+// Registers the Secrets Store that the token's targets name.
+import "src/resources/secrets-store/secrets-store-secret";
 
 type Call = { method: string; url: URL; body: unknown };
 let calls: Call[];
@@ -437,14 +439,6 @@ describe("AccountToken", () => {
     expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([
       `DELETE ${TOKENS}/t1`,
     ]);
-  });
-
-  it("fills in the target of the secret with its name, for a record of 0.21 or earlier that holds none", () => {
-    const backfill = (token.schema.ValueTargets as any).backfill;
-
-    expect(
-      backfill({ AccountId: "acc", StoreId: "store", Name: params.Name }),
-    ).toEqual([target(params.Name)]);
   });
 
   describe("drift", () => {

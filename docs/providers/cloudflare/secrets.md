@@ -169,14 +169,6 @@ export const worker = $worker({
 - Destroy deletes the secret, then the token.
 - `notation secret set` and `notation secret delete` refuse the token's secret.
 
-### Upgrading from 0.21 or earlier
-
-Up to 0.21, the `AccountToken` resource wrote its value to the secret itself, and state had no record of the secret. The first deploy with a later version keeps the token and its value:
-
-1. Plan compares the token's new param `ValueTargets` with the secret that the earlier version wrote to, so the token is a `noop`.
-2. Plan shows the secret's record, `secret:<id>`, as a create. A Worker that binds the token shows as an update, because the secret's outputs are unknown until its create has run.
-3. Deploy creates the record of the secret. The secret's create finds the secret that the earlier version wrote, and records it without a write.
-
 ## `secretsStore.bind(secret)`
 
 `secretsStore.bind` binds a secret from `secret()` or a token from `accountToken()` to a Worker, as a Secrets Store binding. For a token, it binds the token's secret. A rotation that keeps the secret, such as one caused by a new secret that takes `sources.value`, writes the new value to the same secret, so the binding stays the same. A change to the token's `id` makes a new secret, so the binding changes. In the Worker, the binding has the type `SecretsStoreSecret`, and the code reads the value with `await env.NAME.get()`. The Worker is uploaded after the secret, because Cloudflare fails an upload that binds a secret that doesn't exist.

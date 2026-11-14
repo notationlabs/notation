@@ -375,7 +375,7 @@ describe("accountToken", () => {
     });
   });
 
-  it("writes its value to a secret with the id and name of the token, which depends on the token", async () => {
+  it("writes its value to a secret with the id of the token, which depends on the token", async () => {
     const graph = await collect(() => {
       accountToken({ id: "deploy", policies });
     });
@@ -437,21 +437,6 @@ describe("accountToken", () => {
     } finally {
       vi.restoreAllMocks();
     }
-  });
-
-  it("gives the secret the token's name, which is shorter than a secret's limit", async () => {
-    const id = "t".repeat(130);
-    const graph = await collect(() => {
-      accountToken({ id, policies });
-    });
-    const group = groupOf<AccountTokenGroup>(
-      graph,
-      "cloudflare/accountToken",
-      id,
-    );
-
-    expect(group.token.config.Name).toHaveLength(120);
-    expect(group.secret.secret.config.Name).toBe(group.token.config.Name);
   });
 
   it("lets another secret take the token's value", async () => {
