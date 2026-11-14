@@ -130,7 +130,7 @@ function printPlanSummary(result: Plan, logger: Logger) {
     const rotated = rotatedSecrets(result, node);
     if (rotated.length > 0) {
       logger.info(
-        `    rotation: writes a new value to the secrets ${rotated.join(", ")}`,
+        `    rotation: writes a new value to the ${rotated.length === 1 ? "secret" : "secrets"} ${rotated.join(", ")}`,
       );
     }
     if (promptsForValue(node)) {

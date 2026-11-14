@@ -25,6 +25,8 @@ import * as v020 from "./account-token-0.20";
 const NAME = "shop--dev--deploy";
 const SECRETS = "/client/v4/accounts/acc/secrets_store/stores/st/secrets";
 const TOKENS = "/client/v4/accounts/acc/tokens";
+const ROTATION =
+  'To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to each secret that takes it.';
 
 let directory: string;
 let runtime: NodeDurableRuntime;
@@ -278,9 +280,62 @@ describe("accountToken in a deploy", () => {
       "secret:deploy": "drift-recreate",
     });
     await expect(deploy("second", after)).rejects.toThrow(
-      "The secret shop--dev--deploy of `deploy` is missing. Only the create of the resource token:deploy writes its value.",
+      `The secret shop--dev--deploy of \`deploy\` is missing. Only the create of its producer writes the value. ${ROTATION}`,
     );
   });
+
+  describe.each([
+    ["present", false],
+    ["missing", true],
+  ])(
+    "rotates the token when it is deleted in the dashboard, with the secret %s",
+    (_, secretMissing) => {
+      const withCopy = () => {
+        const token = accountToken({ id: "deploy", policies });
+        bind(token);
+        secret({ id: "copy", source: token.sources.value });
+      };
+
+      it("plans the token's create as a rotation, and one deploy writes a new value to each secret", async () => {
+        await deploy("first", withCopy);
+        tokens.delete("t1");
+        if (secretMissing) secrets.delete(NAME);
+
+        const planned = await plan(withCopy);
+        expect(decisions(planned)).toEqual({
+          "secrets-store": "noop",
+          "token:deploy": "drift-recreate",
+          "secret:deploy": secretMissing ? "drift-recreate" : "noop",
+          "secret:copy": "noop",
+          "binding:api": "noop",
+        });
+        // The plan's rotation line lists the secrets whose `Producer` is the
+        // token.
+        expect(
+          planned.nodes
+            .filter(
+              (node) =>
+                (node.params.ValueFrom as { Producer?: string } | undefined)
+                  ?.Producer === "token:deploy",
+            )
+            .map((node) => node.id),
+        ).toEqual(["secret:deploy", "secret:copy"]);
+
+        await deploy("second", withCopy);
+
+        expect([...tokens.keys()]).toEqual(["t2"]);
+        expect(secrets.get(NAME)?.value).toBe("token-value-2");
+        expect(secrets.get("shop--dev--copy")?.value).toBe("token-value-2");
+        expect(decisions(await plan(withCopy))).toEqual({
+          "secrets-store": "noop",
+          "token:deploy": "noop",
+          "secret:deploy": "noop",
+          "secret:copy": "noop",
+          "binding:api": "noop",
+        });
+      });
+    },
+  );
 
   it("rotates the token when another secret takes its value", async () => {
     await deploy("first", after);
@@ -385,6 +440,7 @@ describe("the upgrade from notation 0.20", () => {
         Secret: "deploy",
         Source: "produced",
         Producer: "token:deploy",
+        Rotation: ROTATION,
       },
     });
     expect((await runtime.state.get("binding:api"))?.dependsOn).toEqual([

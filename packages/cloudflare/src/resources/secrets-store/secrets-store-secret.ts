@@ -113,11 +113,13 @@ async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
 async function claimProduced(params: SecretsStoreSecretParams): Promise<void> {
   const { AccountId, StoreId, Name, ValueFrom } = params;
   if (await findSecretByName(AccountId, StoreId, Name)) return;
-  const producer = ValueFrom.Producer
-    ? `the resource ${ValueFrom.Producer}`
-    : "the resource that produces it";
   throw new Error(
-    `The secret ${Name} of \`${ValueFrom.Secret}\` is missing. Only the create of ${producer} writes its value. Replace ${producer} to write a new value.`,
+    [
+      `The secret ${Name} of \`${ValueFrom.Secret}\` is missing. Only the create of its producer writes the value.`,
+      ValueFrom.Rotation,
+    ]
+      .filter(Boolean)
+      .join(" "),
   );
 }
 

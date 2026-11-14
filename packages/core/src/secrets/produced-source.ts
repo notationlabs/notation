@@ -1,10 +1,9 @@
 import {
   getActiveResourceCollection,
   onEvaluationEnd,
-  toCanonicalOutputRefs,
   type BaseResource,
 } from "@notation/resource";
-import { recordSecretValue, sortedJson } from "@notation/utils";
+import { recordSecretValue } from "@notation/utils";
 import type { Source } from "./context";
 
 /**
@@ -38,6 +37,11 @@ export interface ProducedSource {
   "~producedSource": {
     /** Names the producer's declaration, such as `accountToken({ id: "ci" })`. */
     producer: string;
+    /**
+     * Says how to rotate the producer, so that its create writes a new
+     * value. Errors and refusals about a secret that takes the value show it.
+     */
+    rotation: string;
     /** The resource whose create writes the value. Each secret depends on it. */
     resource: BaseResource;
     /**
@@ -72,12 +76,24 @@ export function producedSource(options: {
   name: string;
   /**
    * A collected param of `resource` that holds a list of `SecretTarget`,
-   * with `collectSecretTargets` as its `collect`. Make it immutable: only a
-   * create gets a value to write to a new target.
+   * with `(items: unknown[]) => items.flat() as SecretTarget[]` as its
+   * `collect`. The engine sorts the contributions by content before
+   * `collect`, so the order of the secrets in code doesn't change the
+   * param. Make it immutable: only a create gets a value to write to a new
+   * target.
    */
   param: string;
+  /**
+   * Says how to rotate the producer, such as which resource to delete in a
+   * dashboard before the next deploy. The refusal of `notation secret` and
+   * the error for a missing secret show it. Without it, they only say to
+   * rotate the producer.
+   */
+  rotation?: string;
 }): ProducedSource {
   const { producer, resource, name, param } = options;
+  const rotation =
+    options.rotation ?? `Rotate ${producer} to write a new value.`;
   let consumers = 0;
   if (getActiveResourceCollection()) {
     onEvaluationEnd(() => {
@@ -90,6 +106,7 @@ export function producedSource(options: {
   return {
     "~producedSource": {
       producer,
+      rotation,
       resource,
       register: (target) => {
         consumers += 1;
@@ -97,23 +114,6 @@ export function producedSource(options: {
       },
     },
   };
-}
-
-/**
- * The `collect` of a producer's param of targets. It sorts the targets by
- * content, so that a change to the order of the secrets in code doesn't
- * change the param, which would replace the producer.
- */
-export function collectSecretTargets(items: unknown[]): SecretTarget[] {
-  return (items as SecretTarget[])
-    .map((target) => ({
-      target,
-      // A target can still hold output refs, which can't be encoded as they
-      // are.
-      key: sortedJson.encode(toCanonicalOutputRefs(target)),
-    }))
-    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
-    .map(({ target }) => target);
 }
 
 // On globalThis, so that the infra bundle's copy of this package, the CLI's

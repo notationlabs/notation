@@ -269,6 +269,7 @@ describe("a secret whose source a resource produces", () => {
         Secret: "app-key",
         Source: "produced",
         Producer: "key-pair:ci",
+        Rotation: 'Rotate fakeKeyPair({ id: "ci" }) to write a new value.',
       },
     });
 
@@ -339,6 +340,7 @@ describe("a secret whose source a resource produces", () => {
       Secret: "app-key",
       Source: "produced",
       Producer: "key-pair:ci-2",
+      Rotation: 'Rotate fakeKeyPair({ id: "ci-2" }) to write a new value.',
     });
   });
 
@@ -389,7 +391,7 @@ describe("a secret whose source a resource produces", () => {
       "binding:api": "noop",
     });
     await expect(deploy("second")).rejects.toThrow(
-      "The secret shop--dev--app-key of `app-key` is missing. Only the create of the resource key-pair:ci writes its value. Replace the resource key-pair:ci to write a new value.",
+      'The secret shop--dev--app-key of `app-key` is missing. Only the create of its producer writes the value. Rotate fakeKeyPair({ id: "ci" }) to write a new value.',
     );
 
     // Rotating the producer writes the value again, and the secret
@@ -420,10 +422,11 @@ describe("a secret whose source a resource produces", () => {
           Secret: "app-key",
           Source: "produced",
           Producer: "key-pair:ci",
+          Rotation: 'Rotate fakeKeyPair({ id: "ci" }) to write a new value.',
         },
       }),
     ).rejects.toThrow(
-      "The secret shop--dev--app-key of `app-key` is missing. Only the create of the resource key-pair:ci writes its value. Replace the resource key-pair:ci to write a new value.",
+      'The secret shop--dev--app-key of `app-key` is missing. Only the create of its producer writes the value. Rotate fakeKeyPair({ id: "ci" }) to write a new value.',
     );
   });
 
@@ -517,7 +520,7 @@ describe("a secret whose source a resource produces", () => {
     expect(declarations).toBeTypeOf("function");
   });
 
-  it("refuses notation secret set, and names the producer", async () => {
+  it("refuses notation secret set and delete, and names the producer", async () => {
     const declared = await runWithSecretContext(
       { stage: "dev", runId: "set" },
       async () => {
@@ -527,9 +530,10 @@ describe("a secret whose source a resource produces", () => {
     );
 
     expect(declared.set).toBeUndefined();
+    expect(declared.delete).toBeUndefined();
     expect(declared.source).toBeUndefined();
     expect(declared.refusal).toBe(
-      '`app-key` is written by fakeKeyPair({ id: "ci" }), and only its create writes the value. To get a new value, rotate fakeKeyPair({ id: "ci" }).',
+      'Only the create of fakeKeyPair({ id: "ci" }) writes the value of `app-key`, so `notation secret` can\'t set or delete it. Rotate fakeKeyPair({ id: "ci" }) to write a new value.',
     );
   });
 

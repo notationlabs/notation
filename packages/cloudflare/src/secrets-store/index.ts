@@ -61,7 +61,8 @@ export type SecretConfig = {
        * A value that a resource gets when it is created, such as
        * `app.sources.privateKey`. That resource's create writes the value,
        * and this secret is created after it. Deploy never asks for the
-       * value, and `notation secret set` refuses the secret.
+       * value, and `notation secret set` and `notation secret delete`
+       * refuse the secret.
        */
       source: ProducedSource;
       key?: never;
@@ -125,6 +126,7 @@ export class SecretGroup
         Secret: id,
         Source: PRODUCED_SOURCE,
         Producer: produced.resource.id,
+        Rotation: produced.rotation,
       };
     } else {
       const added = addSecretValue(this, declaration, {
@@ -164,20 +166,16 @@ export class SecretGroup
               store?.id ?? (await createStore(account, DEFAULT_STORE_NAME)).id;
             await writeSecret(account, storeId, name, value);
           },
-      delete: explicitName
-        ? undefined
-        : async () => {
-            const account = accountId();
-            const [store] = await listStores(account);
-            if (store) await deleteSecret(account, store.id, name);
-          },
+      delete:
+        produced || explicitName
+          ? undefined
+          : async () => {
+              const account = accountId();
+              const [store] = await listStores(account);
+              if (store) await deleteSecret(account, store.id, name);
+            },
       refusal: produced
-        ? [
-            `\`${id}\` is written by ${produced.producer}, and only its create writes the value. To get a new value, rotate ${produced.producer}.`,
-            explicitName,
-          ]
-            .filter(Boolean)
-            .join(" ")
+        ? `Only the create of ${produced.producer} writes the value of \`${id}\`, so \`notation secret\` can't set or delete it. ${produced.rotation}`
         : explicitName,
     });
   }

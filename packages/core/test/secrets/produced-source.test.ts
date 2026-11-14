@@ -2,7 +2,6 @@ import * as v from "valibot";
 import { beforeEach, describe, expect, it } from "vitest";
 import { collectResourceGraph, resource } from "@notation/resource";
 import {
-  collectSecretTargets,
   deleteSecretValue,
   hasSecretValue,
   isProducedSource,
@@ -112,7 +111,7 @@ const Holder = resource<HolderSchema>({
           params: v.record(v.string(), v.any()),
         }),
       ),
-      collect: collectSecretTargets,
+      collect: (items: unknown[]) => items.flat() as SecretTarget[],
     },
   } as const)
   .defineOperations({

@@ -55,6 +55,10 @@ export type SchemaItem<T = any> = {
        * missing value, so adding the param to the schema doesn't update or
        * replace the resources that exist. It is not called for a record
        * that holds the param.
+       *
+       * Use it only on a required param. A record without an optional param
+       * may have been written after the param was added, with the param
+       * left unset, and `backfill` can't tell the two cases apart.
        */
       backfill?: (recorded: Record<string, unknown>) => T;
       /**

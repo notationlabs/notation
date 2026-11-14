@@ -475,11 +475,11 @@ it("lists only the secrets of the producer that aren't being deleted", async () 
   await plan(deployment, { logger });
 
   expect(lines.filter((line) => line.includes("rotation"))).toEqual([
-    "    rotation: writes a new value to the secrets deploy",
+    "    rotation: writes a new value to the secret deploy",
   ]);
   const token = lines.findIndex((line) => line.includes("token:deploy"));
   expect(lines[token + 2]).toBe(
-    "    rotation: writes a new value to the secrets deploy",
+    "    rotation: writes a new value to the secret deploy",
   );
 });
 
@@ -509,4 +509,41 @@ it("doesn't label the first create of a resource that writes a produced secret",
   await plan(deployment, { logger });
 
   expect(lines.some((line) => line.includes("rotation"))).toBe(false);
+});
+
+it("labels the create of a producer that was deleted outside notation as a rotation", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "token:deploy",
+        type: "cloudflare/tokens/AccountToken",
+        decision: "drift-recreate",
+        params: {},
+        dependsOn: ["secrets-store"],
+      },
+      {
+        id: "secret:deploy",
+        type: "cloudflare/secrets-store/SecretsStoreSecret",
+        decision: "noop",
+        params: {
+          ValueFrom: {
+            Secret: "deploy",
+            Source: "produced",
+            Producer: "token:deploy",
+          },
+        },
+        dependsOn: ["secrets-store", "token:deploy"],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 3)).toEqual([
+    "± drift-recreate cloudflare/tokens/AccountToken token:deploy",
+    "    rotation: writes a new value to the secret deploy",
+  ]);
 });

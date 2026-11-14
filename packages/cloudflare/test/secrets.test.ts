@@ -33,6 +33,9 @@ import * as runtime from "src/workers/runtime";
 
 const compatibilityDate = "2026-10-12";
 
+const TOKEN_ROTATION =
+  'To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to each secret that takes it.';
+
 beforeEach(() => setConfigFile("/some/project/notation.config.ts"));
 afterEach(() => {
   setConfigFile(undefined);
@@ -195,14 +198,20 @@ describe("secret", () => {
       return secretContext()!.declared;
     });
 
-  it("declares secrets and tokens by id, without set for a token, or delete for an explicit name", async () => {
+  it("declares secrets and tokens by id, without set or delete for a token, or delete for an explicit name", async () => {
     const declared = await declare(() => {
       secret({ id: "stripe-key", source: vault, key: "STRIPE_KEY" });
       secret({ id: "sentry", name: "SENTRY_DSN" });
-      accountToken({ id: "deploy", policies });
+      const token = accountToken({ id: "deploy", policies });
+      secret({ id: "copy", name: "DEPLOY_TOKEN", source: token.sources.value });
     });
 
-    expect([...declared.keys()]).toEqual(["stripe-key", "sentry", "deploy"]);
+    expect([...declared.keys()]).toEqual([
+      "stripe-key",
+      "sentry",
+      "deploy",
+      "copy",
+    ]);
     expect(declared.get("stripe-key")).toMatchObject({
       source: vault,
       key: "STRIPE_KEY",
@@ -216,11 +225,19 @@ describe("secret", () => {
       set: expect.any(Function),
       refusal: expect.stringContaining("has the explicit name SENTRY_DSN"),
     });
-    expect(declared.get("deploy")).toMatchObject({
-      delete: expect.any(Function),
-      refusal:
-        '`deploy` is written by accountToken({ id: "deploy" }), and only its create writes the value. To get a new value, rotate accountToken({ id: "deploy" }).',
-    });
+    expect(declared.get("deploy")!.delete).toBeUndefined();
+    expect(declared.get("deploy")!.refusal).toBe(
+      `Only the create of accountToken({ id: "deploy" }) writes the value of \`deploy\`, so \`notation secret\` can't set or delete it. ${TOKEN_ROTATION}`,
+    );
+    // The refusal of a produced secret with an explicit name is only the
+    // produced text.
+    expect(declared.get("copy")!.set).toBeUndefined();
+    expect(declared.get("copy")!.delete).toBeUndefined();
+    expect(declared.get("copy")!.refusal).toBe(
+      declared
+        .get("deploy")!
+        .refusal!.replace("value of `deploy`", "value of `copy`"),
+    );
   });
 
   describe("set and delete", () => {
@@ -382,6 +399,7 @@ describe("accountToken", () => {
         Secret: "deploy",
         Source: "produced",
         Producer: "token:deploy",
+        Rotation: TOKEN_ROTATION,
       },
     });
     expect(secretGroup.secret.getDependencies()).toContain(group.token);

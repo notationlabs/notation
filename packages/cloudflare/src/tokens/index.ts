@@ -16,8 +16,10 @@ export type { BindableSecret } from "src/workers/declaration";
 export type AccountTokenConfig = {
   /**
    * Keys the token in state. The token, and the secret that holds its value,
-   * are named `<app>--<stage>--<id>`. Changing the id rotates the token: a
-   * new token replaces it.
+   * are named `<app>--<stage>--<id>`. Changing the id replaces both with a
+   * new token and a new secret under the new name. To rotate the token and
+   * keep its secret, delete the token in the Cloudflare dashboard, then run
+   * `notation deploy`.
    */
   id: string;
   /** What the token can do. A change updates the token, which keeps its value. */
@@ -63,6 +65,7 @@ export class AccountTokenGroup
         resource: this.token,
         name: "value",
         param: "ValueTargets",
+        rotation: `To rotate ${declaration}, delete the API token ${name} in the Cloudflare dashboard, then run \`notation deploy\`. Deploy creates a new token and writes its value to each secret that takes it.`,
       }),
     };
     // The secret has the token's name, which is the name that the token's
@@ -82,7 +85,7 @@ export class AccountTokenGroup
  * Declares an account-owned API token. Its value is written to a secret in
  * the account's Secrets Store when the token is created, and a Worker binds
  * it with `secretsStore.bind(token)`. The secret has the id of the token, and
- * `notation secret set` refuses it. Notation never records the value.
+ * `notation secret set` and `notation secret delete` refuse it. Notation never records the value.
  * `CLOUDFLARE_API_TOKEN` needs the Account API Tokens: Edit permission.
  * @resource
  */

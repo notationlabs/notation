@@ -43,7 +43,6 @@ export {
   containsOutputRef,
   isOutputRef,
   resolveOutputRefs,
-  toCanonicalOutputRefs,
   deployLookup,
   planLookup,
   type OutputLookup,
