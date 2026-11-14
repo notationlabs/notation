@@ -85,7 +85,8 @@ export class AccountTokenGroup
  * Declares an account-owned API token. Its value is written to a secret in
  * the account's Secrets Store when the token is created, and a Worker binds
  * it with `secretsStore.bind(token)`. The secret has the id of the token, and
- * `notation secret set` and `notation secret delete` refuse it. Notation never records the value.
+ * `notation secret set` and `notation secret delete` refuse it. Notation
+ * never records the value.
  * `CLOUDFLARE_API_TOKEN` needs the Account API Tokens: Edit permission.
  * @resource
  */

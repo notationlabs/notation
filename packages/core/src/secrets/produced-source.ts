@@ -64,10 +64,10 @@ export function isProducedSource(source: unknown): source is ProducedSource {
 /**
  * Makes the produced source `name` of `resource`. Each target that a secret
  * registers is contributed to the collected param `param` of `resource`.
- * Output refs in a target make `resource` depend on
- * the resources they refer to, such as the store. When evaluation ends, it
- * throws if no secret takes the source, as the value would be lost. It is
- * an engine mechanism for resource packages, not user-facing API.
+ * Output refs in a target make `resource` depend on the resources they refer
+ * to, such as the store. When evaluation ends, it throws if no secret takes
+ * the source, as the value would be lost. It is an engine mechanism for
+ * resource packages, not user-facing API.
  */
 export function producedSource(options: {
   producer: string;

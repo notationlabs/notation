@@ -292,8 +292,10 @@ export const AccountToken = accountTokenSchema
       });
     },
 
-    // A token that a replace deletes would otherwise delete the value that
-    // its replacement wrote.
+    // Each secret's own resource deletes its value, so a replace or a removed
+    // token leaves the secrets in place. A delete of the secrets here would
+    // empty them until the new create writes them, and leave them empty if
+    // that create fails.
     delete: async (key) => {
       await deleteToken(key.AccountId, key.TokenId);
     },

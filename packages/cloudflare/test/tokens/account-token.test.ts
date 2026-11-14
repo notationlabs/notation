@@ -358,6 +358,26 @@ describe("accountToken in a deploy", () => {
     expect(operations).not.toContain("update binding api");
   });
 
+  it("rotates the token when a secret stops taking its value", async () => {
+    const withCopy = () => {
+      const token = accountToken({ id: "deploy", policies });
+      bind(token);
+      secret({ id: "copy", source: token.sources.value });
+    };
+    await deploy("first", withCopy);
+
+    expect(decisions(await plan(after))).toMatchObject({
+      "token:deploy": "replace",
+      "secret:deploy": "noop",
+      "secret:copy": "delete-orphan",
+    });
+    await deploy("second", after);
+
+    expect([...tokens.keys()]).toEqual(["t2"]);
+    expect(secrets.get(NAME)?.value).toBe("token-value-2");
+    expect(secrets.has("shop--dev--copy")).toBe(false);
+  });
+
   it("doesn't rotate the token when the secrets that take its value are declared in another order", async () => {
     const withCopies = (ids: string[]) => () => {
       const token = accountToken({ id: "deploy", policies });

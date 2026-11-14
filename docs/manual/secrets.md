@@ -203,7 +203,7 @@ create: async (params) => {
 The other operations of a producer follow from the fact that the secrets own the value:
 
 - `read` doesn't check the secrets. The secret's own read reports a missing secret as drift. A producer that threw on it would fail the plan before plan shows the drift.
-- `delete` removes only the producer's remote resource, and leaves the secrets. In a rotation, the old producer's delete would otherwise delete the value that its replacement wrote.
+- `delete` removes only the producer's remote resource, and leaves the secrets. Each secret's own resource deletes its value, so a rotation or a removed producer leaves the secrets in place. For a producer that is replaced delete-first, a delete of the secrets would empty them until the new create writes them, and leave them empty if that create fails. For a producer that is replaced create-first, it would delete the value that the replacement wrote.
 
 ### The secret
 

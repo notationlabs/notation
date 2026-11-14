@@ -165,7 +165,7 @@ export const worker = $worker({
 - A change to the policies or the condition updates the token, which keeps its value.
 - If the IP ranges or the policies are changed in the dashboard, deploy changes them back to the declaration.
 - Plan looks up the ID of each permission group by its name, and compares the IDs with the token's. A name can belong to more than one group, one for each scope. Then the scope of the policy's `resources` picks the group: `com.cloudflare.api.account.<account id>` picks the account group, and `com.cloudflare.api.account.zone.<zone id>` picks the zone group. If the resources have more than one scope, plan fails and lists the groups. Give each scope its own policy.
-- The token's secret follows the rules of [produced sources](#produced-sources). If the secret is deleted, plan shows drift and deploy fails. To rotate the token, delete it in the Cloudflare dashboard and run `notation deploy`, as in [Rotating a producer](#rotating-a-producer). A secret that starts to take `sources.value` also rotates the token.
+- The token's secret follows the rules of [produced sources](#produced-sources). If the secret is deleted, plan shows drift and deploy fails. To rotate the token, delete it in the Cloudflare dashboard and run `notation deploy`, as in [Rotating a producer](#rotating-a-producer). A secret that starts or stops taking `sources.value` also rotates the token.
 - Destroy deletes the secret, then the token.
 - `notation secret set` and `notation secret delete` refuse the token's secret.
 
