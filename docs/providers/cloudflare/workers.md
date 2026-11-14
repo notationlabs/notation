@@ -154,23 +154,47 @@ import { workerSecret } from "@notation/cloudflare/workers";
 export const adminPassword = workerSecret({ id: "admin-password" });
 ```
 
-Each Worker that binds the secret has its own copy of it. Deploy adds a `cloudflare/workers/WorkerSecret` resource, with the ID `worker:<worker id>:secret:<binding name>`, for each binding. The resource sets the secret with Cloudflare's secrets API for the Worker, after the Worker is uploaded.
+Each Worker that binds the secret has its own copy of it. Deploy adds a `cloudflare/workers/WorkerSecret` resource, with the ID `worker:<worker id>:secret:<binding name>`, for each binding. The resource sets the secret with Cloudflare's secrets API for the Worker.
 
 - Notation records the binding's name, the source, the key and the source's version of the key. It never records the value.
 - An upload of the Worker keeps its secrets, so an upload never needs a secret's value. A change to the Worker's code or bindings doesn't write its secrets.
 - A secret with a source is written when the source's version of the key changes. For `env` and `dotenv`, that is every deploy. Each write deploys a new version of the Worker.
 - A secret without a source is written only when the Worker doesn't have it. Deploy asks for the value then, or fails without a terminal. A value set with `notation secret set`, or given at an earlier prompt, is kept. So is a secret by that name that the Worker already has, such as one set with `wrangler secret put`: deploy records it without asking.
-- When a Worker stops binding the secret, deploy deletes the secret from the Worker. When the Worker is removed, deploy deletes its secrets first, and then the Worker. Each of those deletes deploys a new version of the Worker. If the delete of the Worker then fails, the Worker stays deployed without its secrets. When the Worker is replaced, the new Worker has none of the old Worker's secrets, so deploy writes them again, and asks for each one that has no source.
-- On a Worker's first deploy, the Worker is uploaded before its secrets are set. For a short time, its secrets are missing from `env`.
 - An upload also keeps a secret that wasn't set by Notation, such as one set with `wrangler secret put`. A binding in `bindings` with the name of such a secret replaces it.
 - A value changed in the dashboard or with wrangler stays until deploy next writes the secret.
 
-`notation secret set <id>` writes the value to each Worker in the stage that binds the secret. `notation secret delete <id>` deletes it from each of those Workers. Neither command reads state, so each finds a Worker in the account by the name that deploy gives it, `<app>--<stage>--<id>-` followed by 8 hex characters.
+#### Order of deploy
+
+Cloudflare's secrets API only sets a secret on a Worker that exists. Deploy sets a Worker's secrets before it uploads the Worker's code, so the code never runs without them. For this, a Worker that binds a Worker secret also gets a `cloudflare/workers/WorkerScriptPlaceholder` resource, with the ID `worker:<worker id>:placeholder`. Deploy runs these steps:
+
+1. The placeholder makes sure that a Worker exists by the name that the Worker takes. For a new Worker, it uploads a module that answers every request with 503, and tags the Worker `notation-placeholder`.
+2. Deploy sets the Worker's secrets on that Worker.
+3. Deploy uploads the Worker's code over the placeholder. The upload removes the tag.
+
+A Worker that is already deployed and gains its first secret keeps its name. The placeholder takes the Worker's name from state, and uploads nothing. Deploy sets the secret, and then uploads the new code, if the code changed.
+
+The placeholder refuses a Worker that exists without the tag, unless it is the Worker of the same `$worker` in state. So deploy never sets secrets on, or uploads over, a Worker that it didn't create.
+
+When a Worker stops binding a secret, deploy deletes the secret from the Worker after the upload of the new code. When the Worker is removed, deploy deletes the Worker first, which deletes its secrets with it. If the delete of the Worker fails, deploy stops there, and the Worker keeps its secrets. A placeholder that still has the tag is deleted last.
+
+When a Worker's `id` changes, the Worker gets a new name. Deploy creates a new placeholder by that name, writes the secrets again, and asks for each one that has no source. Then it uploads the code, and deletes the old Worker.
+
+As an alternative, a Worker can bind a [Secrets Store secret](secrets.md) with `secretsStore.bind()`. That secret belongs to the account, and several Workers can share it. The Worker depends on the secret, so the secret also exists before the code is uploaded.
+
+#### `notation secret set` for a Worker secret
+
+`notation secret set <id>` writes the value to each Worker in the stage that binds the secret. `notation secret delete <id>` deletes it from each of those Workers. Neither command reads state, so each finds a Worker in the account by the name that deploy gives it, `<app>--<stage>--<id>-` followed by 8 hex characters. A placeholder has that name too.
 
 - `set` skips a Worker that isn't deployed yet. That Worker's first deploy asks for the value.
-- `set` fails when none of those Workers is deployed. Without a terminal, such as in CI, deploy once, run `set`, and deploy again.
+- `set` fails when none of those Workers is deployed.
 - Both commands fail, and change nothing, when two Workers in the account have the name of one Worker that binds the secret, such as a Worker left over from a failed deploy. Delete the one that is left over.
 - `delete` succeeds when none of those Workers is deployed. The next deploy writes the secret again.
+
+Without a terminal, such as in CI, a new Worker's secret without a source needs three steps:
+
+1. Run `notation deploy`. Deploy creates the placeholder, and then fails at the secret, because it can't ask for the value. Only the placeholder is live, and it answers 503.
+2. Run `notation secret set <id>`. It writes the value to the placeholder.
+3. Run `notation deploy` again. Deploy finds the secret set, and uploads the code.
 
 ### Deleting a Worker that other Workers bind
 
