@@ -3,6 +3,7 @@ import {
   type DurableObject,
   type ResourceOperationContext,
 } from "@notation/resource";
+import { scrubError } from "@notation/utils";
 import type { StepRunner } from "./operation.types";
 
 export const DEFAULT_MAX_OPERATION_ATTEMPTS = 30;
@@ -50,7 +51,11 @@ export async function* retryPending<T>(
   );
 }
 
-/** Retries a pending operation, running each attempt as a `step.run`. */
+/**
+ * Retries a pending operation, running each attempt as a `step.run`. An
+ * error has the secret values of the process removed before the step records
+ * it, as a provider can echo a value back in an error.
+ */
 export function runPendingOperation(
   step: StepRunner,
   key: string,
@@ -62,7 +67,12 @@ export function runPendingOperation(
   return retryPending(
     step,
     key,
-    (n, context) => step.run(`${key}:attempt:${n}`, () => operation(context)),
+    (n, context) =>
+      step.run(`${key}:attempt:${n}`, () =>
+        operation(context).catch((error: unknown) => {
+          throw scrubError(error);
+        }),
+      ),
     maxAttempts,
   );
 }

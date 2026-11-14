@@ -37,6 +37,7 @@ export const deploy = {
             { label: "Project Config", slug: "manual/project-config" },
             { label: "File Conventions", slug: "manual/file-conventions" },
             { label: "End-to-End Types", slug: "manual/types" },
+            { label: "Secrets", slug: "manual/secrets" },
           ],
         },
         {
@@ -59,6 +60,7 @@ export const deploy = {
             { label: "notation plan", slug: "cli/plan" },
             { label: "notation deploy", slug: "cli/deploy" },
             { label: "notation destroy", slug: "cli/destroy" },
+            { label: "notation secret", slug: "cli/secret" },
             { label: "notation dashboard", slug: "cli/dashboard" },
             { label: "notation viz", slug: "cli/viz" },
           ],
@@ -103,7 +105,19 @@ export const deploy = {
           links: [
             { label: "Overview", slug: "providers/cloudflare/overview" },
             { label: "Workers", slug: "providers/cloudflare/workers" },
+            { label: "Secrets", slug: "providers/cloudflare/secrets" },
           ],
+        },
+      ],
+    },
+    {
+      label: "Infisical",
+      slug: "infisical",
+      sections: [
+        {
+          heading: "Sources",
+          icon: "database",
+          links: [{ label: "Infisical", slug: "providers/infisical/sources" }],
         },
       ],
     },

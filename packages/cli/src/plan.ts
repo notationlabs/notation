@@ -1,6 +1,7 @@
 import {
   createLoggerReconcilerSubscriber,
   planApp,
+  PROMPT_SOURCE,
   resolveDeploymentId,
   type Deployment,
   type Plan,
@@ -125,6 +126,11 @@ function printPlanSummary(result: Plan, logger: Logger) {
           : `    deleted if ${node.replacedDependency} is replaced`,
       );
     }
+    if (promptsForValue(node)) {
+      logger.info(
+        "    value not set: deploy asks for it if the secret doesn't exist, and fails without a terminal",
+      );
+    }
     if (node.placeholder) {
       logger.info(
         `    created first without the contributions that refer to ${(node.cycle ?? []).join(", ")}, the other members of its cycle`,
@@ -145,4 +151,20 @@ function printPlanSummary(result: Plan, logger: Logger) {
   ].join(", ");
 
   logger.info(`${changedNodes.length > 0 ? "\n" : ""}Plan: ${summary}.`);
+}
+
+const creatingDecisions = new Set<PlanNode["decision"]>([
+  "create",
+  "replace",
+  "drift-replace",
+  "drift-recreate",
+]);
+
+// A secret without a source has `ValueFrom: { Source: PROMPT_SOURCE }`. Plan
+// never asks for the value, so it says that deploy will.
+function promptsForValue(node: PlanNode): boolean {
+  const valueFrom = node.params.ValueFrom as { Source?: unknown } | undefined;
+  return (
+    creatingDecisions.has(node.decision) && valueFrom?.Source === PROMPT_SOURCE
+  );
 }

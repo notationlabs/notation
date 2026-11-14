@@ -23,6 +23,10 @@ notation watch --stage dev
 4. On change, redeploys – only changed resources are updated (same reconciler as `deploy`).
 5. Queues deploys if one is already in progress.
 
+## Secrets
+
+Each deploy runs in its own process, which shares the terminal with `watch`. A deploy that needs the value of a secret without a source asks for it on the terminal. `watch` doesn't keep the answer, so each later deploy that needs the value asks again. See [Secrets](../manual/secrets.md).
+
 ## Changing the config
 
 `watch` reads the config once, when it starts. If the config file changes, `watch` waits for any running deploy to finish, then exits with code 1. Start `watch` again to use the new config.

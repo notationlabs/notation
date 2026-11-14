@@ -11,3 +11,10 @@ export function isErrorWithCode(
 }
 
 export { sortedJson } from "./sorted-json";
+export {
+  SCRUBBED,
+  clearSecretValues,
+  recordSecretValue,
+  scrubError,
+  scrubSecretValues,
+} from "./secret-values";

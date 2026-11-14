@@ -5,8 +5,10 @@ import {
   type ReconcilerEventEmitter,
   type ResourceRegistry,
 } from "@notation/reconciler";
+import { randomUUID } from "node:crypto";
 import type { Deployment } from "src/config/deployment";
 import { getResourceGraph } from "src/orchestrator/graph";
+import { runWithSecretContext } from "src/secrets/context";
 import {
   loadPlanProviderRegistry,
   mergeResourceRegistries,
@@ -25,7 +27,15 @@ export type PlanAppOptions = {
   emit?: ReconcilerEventEmitter;
 };
 
-export async function planApp({
+export function planApp(opts: PlanAppOptions): Promise<Plan> {
+  // Plan never asks for a secret's value, so it has no prompt.
+  return runWithSecretContext(
+    { stage: opts.deployment.stage, runId: randomUUID() },
+    () => plan(opts),
+  );
+}
+
+async function plan({
   deployment,
   // Defaulted in one place: the reconciler's drift gate treats absent as on.
   driftDetection,

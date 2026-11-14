@@ -1,6 +1,6 @@
 # Cloudflare
 
-`@notation/cloudflare` deploys to Cloudflare. It declares [Workers and Durable Object namespaces](workers.md).
+`@notation/cloudflare` deploys to Cloudflare. It declares [Workers and Durable Object namespaces](workers.md), and [secrets](secrets.md) that Workers bind.
 
 ```sh
 npm install @notation/cloudflare

@@ -1,0 +1,28 @@
+{
+  "type": "module",
+  "name": "@notation/infisical",
+  "version": "0.16.0",
+  "sideEffects": false,
+  "exports": {
+    "./sources": {
+      "types": "./dist/sources/index.d.ts",
+      "default": "./dist/sources/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@notation/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@notation/resource": "workspace:*",
+    "@notation/std": "workspace:*",
+    "@types/node": "^22.20.5"
+  }
+}

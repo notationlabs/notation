@@ -15,6 +15,12 @@ Compiles the entry file and deploys it to the stage. Each stage has its own stat
 notation deploy --stage prod
 ```
 
+## Secrets
+
+Deploy writes each secret from its source. For a secret without a source that doesn't exist yet, deploy asks for the value with a hidden prompt on a terminal. With no terminal, or with `--json`, it fails with the [`notation secret set`](./secret.md) command to run first. See [Secrets](../manual/secrets.md).
+
+Deploy removes every secret value that it read from the errors that it records and prints.
+
 ## Event stream
 
 `--json` writes versioned reconciler events to stdout as newline-delimited JSON. Build output, the execution ID, and diagnostics move to stderr.

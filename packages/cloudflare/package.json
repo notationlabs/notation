@@ -9,6 +9,14 @@
       "notation-runtime": "./dist/workers/runtime.js",
       "import": "./dist/workers/index.js"
     },
+    "./secrets-store": {
+      "types": "./dist/secrets-store/index.d.ts",
+      "import": "./dist/secrets-store/index.js"
+    },
+    "./tokens": {
+      "types": "./dist/tokens/index.d.ts",
+      "import": "./dist/tokens/index.js"
+    },
     "./resources": {
       "types": "./dist/resources/index.d.ts",
       "default": "./dist/resources/index.js"
@@ -27,6 +35,7 @@
     "@notation/core": "workspace:*",
     "@notation/resource": "workspace:*",
     "@notation/std": "workspace:*",
+    "@notation/utils": "workspace:*",
     "valibot": "^1.5.0"
   },
   "devDependencies": {

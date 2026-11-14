@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { program } from "commander";
+import { Option, program } from "commander";
 import { compile } from "./compile";
 import { deploy } from "./deploy";
 import { destroy } from "./destroy";
 import { plan } from "./plan";
 import { defaultLogger } from "./logger";
 import { runWithErrorHandling } from "./run-with-error-handling";
+import { secretDelete, secretSet } from "./secret";
 import { visualise } from "./visualise";
 import { watch } from "./watch";
 import { startDashboardServer } from "@notation/dashboard";
@@ -66,6 +67,12 @@ program
   .option("--execution-id <id>", "resume a durable execution")
   .option("--no-compile", "deploy the existing build without compiling")
   .option("--no-drift-detection", "skip drift detection")
+  .addOption(
+    new Option(
+      "--prompt-secrets",
+      "ask on the terminal for secret values even with --json",
+    ).hideHelp(),
+  )
   .action(async (options) => {
     const project = await load(options);
     const deployment = await resolveResumableDeployment(project, options);
@@ -75,6 +82,7 @@ program
       resumeCommand: resumeCommand("deploy", options),
       compile: options.compile,
       driftDetection: options.driftDetection,
+      promptSecrets: options.promptSecrets,
     });
   });
 
@@ -125,6 +133,35 @@ program
     const project = await load(options);
     const deployment = resolveDeployment(project, { stage: options.stage });
     await watch(deployment);
+  });
+
+const secret = program
+  .command("secret")
+  .description("Set or delete the values of secrets");
+
+secret
+  .command("set <id>")
+  .option(...configOption)
+  .option(...stageOption)
+  .description(
+    "Set a secret's value, from a hidden prompt on a terminal or from stdin",
+  )
+  .action(async (id: string, options) => {
+    const project = await load(options);
+    const deployment = resolveDeployment(project, { stage: options.stage });
+    await secretSet(deployment, id);
+  });
+
+secret
+  .command("delete <id>")
+  .option(...configOption)
+  .option(...stageOption)
+  .option("--yes", "delete without asking for confirmation")
+  .description("Delete a secret from its store")
+  .action(async (id: string, options) => {
+    const project = await load(options);
+    const deployment = resolveDeployment(project, { stage: options.stage });
+    await secretDelete(deployment, id, { yes: options.yes });
   });
 
 function load(options: { config?: string }) {

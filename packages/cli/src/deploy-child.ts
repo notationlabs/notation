@@ -12,6 +12,11 @@ export type DeployChildOptions = {
   deployment: DeploymentIdentity;
   executionId: string;
   logger: Logger;
+  /**
+   * Lets the child ask on this process's terminal for the values of secrets
+   * without a source. Without it, the child fails when it needs one.
+   */
+  promptSecrets?: boolean;
   spawn?: typeof nodeSpawn;
   proc?: Pick<NodeJS.Process, "on" | "off" | "kill" | "pid">;
 };
@@ -27,11 +32,15 @@ const forwardedSignals = ["SIGINT", "SIGTERM"] as const;
  * The child loads the same config file again and resolves the deployment
  * from the stage. `watch` stops when the config changes, so the child reads
  * the same config as the parent.
+ *
+ * With `promptSecrets`, the child shares this process's stdin and stderr, and
+ * asks for secret values there.
  */
 export function deployInChild({
   deployment,
   executionId,
   logger,
+  promptSecrets = false,
   spawn = nodeSpawn,
   proc = process,
 }: DeployChildOptions): Promise<void> {
@@ -49,11 +58,12 @@ export function deployInChild({
     "--no-drift-detection",
     "--execution-id",
     executionId,
+    ...(promptSecrets ? ["--prompt-secrets"] : []),
   ];
 
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
-      stdio: ["ignore", "pipe", "inherit"],
+      stdio: [promptSecrets ? "inherit" : "ignore", "pipe", "inherit"],
     });
 
     // A parent signalled on its own (e.g. by a task runner) would otherwise

@@ -1,3 +1,4 @@
+import { scrubError } from "@notation/core";
 import type { Logger } from "./logger";
 
 export async function runWithErrorHandling(
@@ -16,7 +17,7 @@ export async function runWithErrorHandling(
       );
       return 1;
     }
-    opts.logger.error(error);
+    opts.logger.error(scrubError(error));
     return 1;
   }
 }

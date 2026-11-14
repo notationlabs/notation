@@ -4,10 +4,12 @@ import {
   deployApp,
   resolveDeploymentId,
   type Deployment,
+  type SecretPrompt,
 } from "@notation/core";
 import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
+import { canPrompt, terminalSecretPrompt } from "./prompt";
 import { redirectStdoutToStderr } from "./stdio";
 
 export type DeployCommandOptions = {
@@ -19,6 +21,13 @@ export type DeployCommandOptions = {
   compile?: boolean;
   driftDetection?: boolean;
   logger?: Logger;
+  /**
+   * Asks on the terminal for secret values even with `json`. `watch` sets it
+   * for the deploys it runs, whose stdout carries events to `watch`.
+   */
+  promptSecrets?: boolean;
+  /** Defaults to the prompt that `secretPrompt` picks. */
+  promptSecret?: SecretPrompt;
 };
 
 export async function deploy(
@@ -47,5 +56,23 @@ export async function deploy(
     emit,
     executionId,
     driftDetection: opts.driftDetection,
+    promptSecret:
+      opts.promptSecret ??
+      secretPrompt({ json: opts.json, promptSecrets: opts.promptSecrets }),
   });
+}
+
+/**
+ * How deploy asks for the value of a secret without a source: on the
+ * terminal, with the question on stderr. There is no prompt without a
+ * terminal, or with `--json` unless `promptSecrets` is set, so deploy fails
+ * with the command that sets the secret.
+ */
+export function secretPrompt(opts: {
+  json?: boolean;
+  promptSecrets?: boolean;
+}): SecretPrompt | undefined {
+  if (opts.json && !opts.promptSecrets) return undefined;
+  if (!canPrompt()) return undefined;
+  return terminalSecretPrompt();
 }
