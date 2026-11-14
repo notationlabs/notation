@@ -150,13 +150,9 @@ export function decideAction(opts: {
     params,
     { canUpdate: Boolean(resource.update) },
   );
-  assertChangeAllowed(
-    resource.id,
-    resource.rejectChange,
-    previous,
-    params,
-    { replace: replaceFields.length > 0 },
-  );
+  assertChangeAllowed(resource.id, resource.rejectChange, previous, params, {
+    replace: replaceFields.length > 0,
+  });
 
   if (replaceFields.length > 0) {
     assertReplaceAllowed(resource, previous, params, replaceFields);

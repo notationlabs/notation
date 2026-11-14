@@ -1,9 +1,10 @@
-import { declareSecret } from "@notation/core";
+import { producedSource, type ProducedSource } from "@notation/core";
 import { ResourceGroup, scopedPhysicalName } from "@notation/resource";
 import * as cloudflare from "src/resources";
 import { TOKEN_NAME_MAX_LENGTH } from "src/resources/tokens/account-token";
+import { SecretGroup } from "src/secrets-store";
+import { secretsStoreGroup } from "src/secrets-store/store";
 import { assertSecretId } from "src/secrets/value";
-import { claimSecretName, secretsStoreGroup } from "src/secrets-store/store";
 import type { BindableSecret } from "src/workers/declaration";
 
 export type {
@@ -34,13 +35,17 @@ export class AccountTokenGroup
 {
   platform = "cloudflare";
   readonly token: cloudflare.tokens.AccountTokenInstance;
+  /** The token's value, which another secret can also take as its source. */
+  readonly sources: { value: ProducedSource };
+  /** The secret that holds the token's value, with the id of the token. */
+  readonly secret: SecretGroup;
 
   constructor(config: AccountTokenConfig) {
     assertSecretId("accountToken()", config.id);
+    const declaration = `accountToken({ id: "${config.id}" })`;
     const name = scopedPhysicalName(config.id, {
       maxLength: TOKEN_NAME_MAX_LENGTH,
     });
-    claimSecretName(name, `accountToken({ id: "${config.id}" })`);
     super("cloudflare/accountToken", config.id, config);
     this.token = this.add(
       new cloudflare.tokens.AccountToken(`token:${config.id}`, {
@@ -52,21 +57,32 @@ export class AccountTokenGroup
         dependencies: { store: secretsStoreGroup().store },
       }),
     );
-    declareSecret({
-      id: config.id,
-      refusal: `\`${config.id}\` is the secret of an API token, and only the token's create writes its value. To get a new value, rotate the token: change the id of its accountToken() declaration, and deploy.`,
-    });
+    this.sources = {
+      value: producedSource({
+        producer: declaration,
+        resource: this.token,
+        name: "value",
+        param: "ValueTargets",
+      }),
+    };
+    // The secret has the token's name, which is the name that the token's
+    // value was written to before the token wrote through `sources.value`.
+    this.secret = new SecretGroup(
+      { id: config.id, source: this.sources.value },
+      { scopedName: name, declaration },
+    );
   }
 
   "~secret"() {
-    return this.token;
+    return this.secret["~secret"]();
   }
 }
 
 /**
  * Declares an account-owned API token. Its value is written to a secret in
  * the account's Secrets Store when the token is created, and a Worker binds
- * it with `secretsStore.bind(token)`. Notation never records the value.
+ * it with `secretsStore.bind(token)`. The secret has the id of the token, and
+ * `notation secret set` refuses it. Notation never records the value.
  * `CLOUDFLARE_API_TOKEN` needs the Account API Tokens: Edit permission.
  * @resource
  */

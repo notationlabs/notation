@@ -76,9 +76,9 @@ describe("writeSecretValues", () => {
   it("throws the error of a first write that fails as it is", async () => {
     rejected = ["bad"];
 
-    await expect(
-      writeSecretValues([[target("bad"), "value"]]),
-    ).rejects.toThrow(/^rejected$/);
+    await expect(writeSecretValues([[target("bad"), "value"]])).rejects.toThrow(
+      /^rejected$/,
+    );
   });
 });
 

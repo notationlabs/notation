@@ -195,7 +195,7 @@ describe("secret", () => {
       return secretContext()!.declared;
     });
 
-  it("declares secrets and tokens by id, without set or delete for a token, or delete for an explicit name", async () => {
+  it("declares secrets and tokens by id, without set for a token, or delete for an explicit name", async () => {
     const declared = await declare(() => {
       secret({ id: "stripe-key", source: vault, key: "STRIPE_KEY" });
       secret({ id: "sentry", name: "SENTRY_DSN" });
@@ -211,13 +211,15 @@ describe("secret", () => {
     });
     expect(declared.get("sentry")!.delete).toBeUndefined();
     expect(declared.get("deploy")!.set).toBeUndefined();
-    expect(declared.get("deploy")!.delete).toBeUndefined();
+    expect(declared.get("deploy")!.source).toBeUndefined();
     expect(declared.get("sentry")).toMatchObject({
       set: expect.any(Function),
       refusal: expect.stringContaining("has the explicit name SENTRY_DSN"),
     });
     expect(declared.get("deploy")).toMatchObject({
-      refusal: expect.stringContaining("is the secret of an API token"),
+      delete: expect.any(Function),
+      refusal:
+        '`deploy` is written by accountToken({ id: "deploy" }), and only its create writes the value. To get a new value, rotate accountToken({ id: "deploy" }).',
     });
   });
 
@@ -314,7 +316,9 @@ describe("secret", () => {
         secret({ id: "deploy" });
         accountToken({ id: "deploy", policies });
       }),
-    ).rejects.toThrow(`give two secrets the same name, "shop--dev--deploy"`);
+    ).rejects.toThrow(
+      `secret({ id: "deploy" }) and accountToken({ id: "deploy" }) give two secrets the same name, "shop--dev--deploy"`,
+    );
   });
 });
 
@@ -353,6 +357,101 @@ describe("accountToken", () => {
       ],
     });
   });
+
+  it("writes its value to a secret with the id and name of the token, which depends on the token", async () => {
+    const graph = await collect(() => {
+      accountToken({ id: "deploy", policies });
+    });
+    const group = groupOf<AccountTokenGroup>(
+      graph,
+      "cloudflare/accountToken",
+      "deploy",
+    );
+    const secretGroup = groupOf<SecretGroup>(
+      graph,
+      "cloudflare/secret",
+      "deploy",
+    );
+
+    expect(group.secret).toBe(secretGroup);
+    expect(secretGroup.secret.id).toBe("secret:deploy");
+    expect(secretGroup.secret.config).toEqual({
+      Name: "shop--dev--deploy",
+      StageScoped: true,
+      ValueFrom: {
+        Secret: "deploy",
+        Source: "produced",
+        Producer: 'accountToken({ id: "deploy" })',
+      },
+    });
+    expect(secretGroup.secret.getDependencies()).toContain(group.token);
+    expect(group["~secret"]()).toBe(secretGroup.secret);
+
+    group.token.dependencies.store.setOutput({
+      AccountId: "acc",
+      StoreId: "store",
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({
+        success: true,
+        errors: [],
+        result: [
+          {
+            id: "g1",
+            name: "Workers Scripts Write",
+            scopes: ["com.cloudflare.api.account"],
+          },
+        ],
+      }),
+    );
+    vi.stubEnv("CLOUDFLARE_API_TOKEN", "token");
+    try {
+      expect((await group.token.getParams()).ValueTargets).toEqual([
+        {
+          provider: "@notation/cloudflare/resources",
+          params: {
+            AccountId: "acc",
+            StoreId: "store",
+            Name: "shop--dev--deploy",
+          },
+        },
+      ]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("gives the secret the token's name, which is shorter than a secret's limit", async () => {
+    const id = "t".repeat(130);
+    const graph = await collect(() => {
+      accountToken({ id, policies });
+    });
+    const group = groupOf<AccountTokenGroup>(
+      graph,
+      "cloudflare/accountToken",
+      id,
+    );
+
+    expect(group.token.config.Name).toHaveLength(120);
+    expect(group.secret.secret.config.Name).toBe(group.token.config.Name);
+  });
+
+  it("lets another secret take the token's value", async () => {
+    const graph = await collect(() => {
+      const token = accountToken({ id: "deploy", policies });
+      secret({ id: "deploy-copy", source: token.sources.value });
+    });
+    const copy = groupOf<SecretGroup>(
+      graph,
+      "cloudflare/secret",
+      "deploy-copy",
+    );
+
+    expect(copy.secret.config.ValueFrom).toMatchObject({
+      Source: "produced",
+      Producer: 'accountToken({ id: "deploy" })',
+    });
+  });
 });
 
 describe("secretsStore.bind", () => {
@@ -383,7 +482,7 @@ describe("secretsStore.bind", () => {
       graph,
       "cloudflare/accountToken",
       "deploy",
-    ).token;
+    ).secret.secret;
 
     expect(api.script.getDependencies()).toEqual(
       expect.arrayContaining([stripeKey, deployToken]),
@@ -407,8 +506,12 @@ describe("secretsStore.bind", () => {
       AccountId: "acc",
       StoreId: "store",
       Name: "shop--dev--deploy",
-      Policies: policies,
-      TokenId: "t1",
+      StageScoped: true,
+      ValueFrom: {
+        Secret: "deploy",
+        Source: "produced",
+        Producer: 'accountToken({ id: "deploy" })',
+      },
       SecretId: "s2",
     });
 
