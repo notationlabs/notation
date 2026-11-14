@@ -150,10 +150,10 @@ type Params = ContainerApplicationSchema["CreateParams"];
  *
  * A change to `Configuration` starts a rollout that replaces the instances,
  * 25% of them at a time. Pin the image by its digest: a new image pushed under
- * the same tag doesn't change `Configuration`, so it starts no rollout. The
- * read doesn't return `Configuration`, because Cloudflare fills in defaults
- * for keys that were not set, so a change made outside notation to the
- * configuration is not seen.
+ * the same tag doesn't change `Configuration`, so it starts no rollout. See
+ * `ContainerImage`. The read doesn't return `Configuration`, because
+ * Cloudflare fills in defaults for keys that were not set, so a change made
+ * outside notation to the configuration is not seen.
  *
  * Cloudflare merges a rollout's target configuration with the current
  * configuration. So for each key that is removed from `Configuration`, the

@@ -39,6 +39,9 @@ variables from the environment:
 
 A Cloudflare test is skipped when its variables are missing. An AWS test fails.
 
+The Cloudflare `ContainerImage` test builds an image with Docker, and is
+skipped unless the Docker daemon is running.
+
 The accounts need:
 
 - Cloudflare: a token with Edit on Workers Scripts, Workers R2 Storage, Workers
@@ -52,6 +55,8 @@ Each run names what it creates with `ne2e-` and a random suffix, and deletes it
 when it ends. A run that is killed leaves its resources behind. You can delete
 anything whose name starts with `ne2e-`, except a `ne2e-lock-*` secret that is
 less than 60 minutes old: that is a lock another run holds.
+Delete a repository in the Cloudflare registry with
+`wrangler containers images delete`.
 
 ## Publishing Packages
 
