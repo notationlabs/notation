@@ -129,6 +129,14 @@ export default {
 - A binding to a bucket in a jurisdiction other than `default` names the jurisdiction.
 - `json(value)` takes a JSON value. Deploy stores the value in state, and plan shows it. Bind a secret with `workerSecret` instead.
 
+Two Workers can bind each other as services. Each service binding is a [contribution](../../reference/resource.md#cycles) to the Worker's script, so deploy can break the cycle:
+
+1. Deploy uploads one of the Workers without its service bindings.
+2. It uploads the other Worker, which binds the first.
+3. It uploads the first Worker again, with its service bindings.
+
+Between steps 1 and 3, the first Worker's `env` has no service bindings, so a request that calls the other Worker fails.
+
 ### `workerSecret(config)`
 
 `workerSecret` declares a secret that a Worker binds as secret text. In the Worker, the binding is a string. The value comes from a [source](../../manual/secrets.md#sources). Cloudflare stores the value with the Worker, not in a Secrets Store.
@@ -143,14 +151,6 @@ export default {
 - Deploy reads the value from the source each time it uploads a Worker that binds the secret. A Worker is uploaded when one of its params changes, and the source's version of the key is one of them. For `env` and `dotenv`, the version is the deploy's execution ID, so deploy uploads the Worker on every deploy. A source with versions, such as `infisical()`, uploads it only when the version changes.
 - A secret without a source isn't supported, so deploy never asks for the value. `notation secret set` refuses a Worker secret. Change the value in the source.
 - A value changed in the dashboard or with wrangler stays until deploy next uploads the Worker.
-
-Two Workers can bind each other as services. Each service binding is a [contribution](../../reference/resource.md#cycles) to the Worker's script, so deploy can break the cycle:
-
-1. Deploy uploads one of the Workers without its service bindings.
-2. It uploads the other Worker, which binds the first.
-3. It uploads the first Worker again, with its service bindings.
-
-Between steps 1 and 3, the first Worker's `env` has no service bindings, so a request that calls the other Worker fails.
 
 ### Deleting a Worker that other Workers bind
 
