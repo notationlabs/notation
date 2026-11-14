@@ -60,6 +60,7 @@ import {
   assertNamesNotSupplied,
   generateNames,
   recordedNames,
+  suppliedNames,
   nameFields,
   replaceOrder,
   unknownNames,
@@ -155,18 +156,21 @@ export async function* reconcileResource(
   );
   const names = nameFields(resource);
   assertNamesNotSupplied(resource, names, configParams);
-  // A name in the record wins over a new one, so that a resource that
-  // exists, or that an earlier deploy started to create, is not renamed.
+  // A name in the record wins over a supplied one, and a supplied one over
+  // a new one, so that a resource that exists, or that an earlier deploy
+  // started to create, is not renamed.
   const recorded = recordedNames(names, session.node);
+  const supplied = suppliedNames(names, configParams);
   const params = fillPhysicalNames(configParams, {
-    ...recorded,
     ...(yield* generateNamesStep(
       step,
       opts,
       resource,
-      names.filter(({ field }) => !(field in recorded)),
+      names.filter(({ field }) => !(field in recorded || field in supplied)),
       configParams,
     )),
+    ...supplied,
+    ...recorded,
   });
   await validateParams(resource, params, "deploy");
   // A placeholder's record leaves out the edges to the peers that its params
@@ -360,6 +364,30 @@ async function* generateNamesStep(
 }
 
 /**
+ * The names of a replacement: the supplied value of each suppliable
+ * `physicalName` param that the params supply, and a generated name for
+ * each other one.
+ */
+async function* replacementNamesStep(
+  step: DurableStepRunner,
+  opts: DeployContext,
+  shared: SharedParams,
+): AsyncGenerator<any, Record<string, unknown>, any> {
+  const fields = nameFields(shared.resource);
+  const supplied = suppliedNames(fields, shared.unnamedParams);
+  return {
+    ...(yield* generateNamesStep(
+      step,
+      opts,
+      shared.resource,
+      fields.filter(({ field }) => !(field in supplied)),
+      shared.unnamedParams,
+    )),
+    ...supplied,
+  };
+}
+
+/**
  * Compares a resource that create took over with the desired params, and
  * updates, replaces or keeps it, as for any recorded resource. Its record
  * was just written from a read, so drift detection is skipped. The record
@@ -497,7 +525,7 @@ async function* withoutContributions(
   opts: DeployContext,
   shared: SharedParams,
   excluded: ReadonlySet<BaseResource>,
-  names: Record<string, string>,
+  names: Record<string, unknown>,
 ): AsyncGenerator<any, SharedParams, any> {
   const { resource } = shared;
   const unnamed = yield* step.run("replace:params", () =>
@@ -522,7 +550,7 @@ async function* withoutContributions(
 /**
  * Replaces the resource without deleting it first:
  *
- * 1. Generate new physical names for the replacement.
+ * 1. Take the supplied physical names, and generate new ones for the rest.
  * 2. Write the "creating" record, which adds the replaced resource to the
  *    record's retired instances in the same write.
  * 3. Create the replacement.
@@ -546,13 +574,7 @@ async function* replaceCreateFirst(
 ): AsyncGenerator<any, void, any> {
   const createStep = step.scope("replace:create");
   const emit = durableEmitter(createStep, opts.emit);
-  const names = yield* generateNamesStep(
-    createStep,
-    opts,
-    shared.resource,
-    nameFields(shared.resource),
-    shared.unnamedParams,
-  );
+  const names = yield* replacementNamesStep(createStep, opts, shared);
   const created = {
     ...shared,
     resourceParams: fillPhysicalNames(shared.unnamedParams, names),
@@ -647,13 +669,7 @@ async function* replaceDeleteFirst(
   });
 
   const createStep = step.scope("replace:create");
-  const names = yield* generateNamesStep(
-    createStep,
-    opts,
-    shared.resource,
-    nameFields(shared.resource),
-    shared.unnamedParams,
-  );
+  const names = yield* replacementNamesStep(createStep, opts, shared);
   const renamed = {
     ...shared,
     resourceParams: fillPhysicalNames(shared.unnamedParams, names),
@@ -737,12 +753,17 @@ async function* deleteBlockingDependents(
     // A step, as deriveParams is user code and need not be deterministic.
     const params = yield* step.run(
       `params:${encodeURIComponent(id)}`,
-      async () =>
-        // The dependent is created again, with a new name.
-        fillPhysicalNames(
-          await declared.planParams({ recordedOutputs: opts.recordedOutputs }),
-          unknownNames(declared),
-        ) as DurableObject,
+      async () => {
+        // The dependent is created again, with a new name or the name its
+        // params supply.
+        const unnamed = await declared.planParams({
+          recordedOutputs: opts.recordedOutputs,
+        });
+        return fillPhysicalNames(
+          unnamed,
+          unknownNames(declared, unnamed),
+        ) as DurableObject;
+      },
     );
     assertChangeAllowed(id, declared.rejectChange, record.params, params, {
       replace: true,
