@@ -155,7 +155,9 @@ export async function putKVValue(
     query.set("expiration_ttl", String(options.expirationTtl));
   }
   const form = new FormData();
-  form.set("value", encode(value));
+  // A Blob part is sent byte for byte. A string part would have each line
+  // break turned into CRLF.
+  form.set("value", new Blob([encode(value)]));
   if (options.metadata !== undefined) {
     form.set("metadata", JSON.stringify(options.metadata));
   }
@@ -168,9 +170,10 @@ export async function putKVValue(
 }
 
 /**
- * Returns the value of the key as text, or parsed as JSON when `type` is
- * `"json"`. Returns `undefined` if the namespace has no such key. KV is
- * eventually consistent, so the value can be up to about 60 seconds old.
+ * Returns the value of the key as UTF-8 text, or parsed as JSON when `type`
+ * is `"json"`. Returns `undefined` if the namespace has no such key. Throws if
+ * `type` is `"json"` and the value isn't JSON. KV is eventually consistent,
+ * so the value can be up to about 60 seconds old.
  */
 export async function getKVValue(
   account: string,
@@ -197,7 +200,17 @@ export async function getKVValue(
     if (isKeyNotFound(error)) return undefined;
     throw error;
   }
-  return type === "json" ? JSON.parse(text) : text;
+  if (type === "text") return text;
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(
+      `The value of the KV key ${JSON.stringify(key)} isn't JSON`,
+      {
+        cause: error,
+      },
+    );
+  }
 }
 
 /** Succeeds if the namespace has no such key. */

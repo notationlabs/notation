@@ -85,6 +85,9 @@ const WRITE_CHECK_INTERVAL_MS = 2_000;
  * Without the wait, the read that the reconciler makes after a create could
  * find no key and fail the deploy, and the read after an update could record
  * the old value in the outputs.
+ *
+ * If the read never returns the written value, a create fails with no state
+ * record, and the key stays in KV with the written value.
  */
 async function writeValue(
   params: KVValueKey & { Value: string },

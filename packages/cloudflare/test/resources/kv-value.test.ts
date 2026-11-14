@@ -20,9 +20,12 @@ const text = (body: string) => new Response(body);
 const keyNotFound = () => fail(404, 10009, "get: 'key not found'");
 const namespaceNotFound = () => fail(404, 10013, "namespace not found");
 
-const form = (body: unknown) => {
+const form = async (body: unknown) => {
   const data = body as FormData;
-  return { value: data.get("value"), metadata: data.get("metadata") };
+  return {
+    value: await (data.get("value") as Blob).text(),
+    metadata: data.get("metadata"),
+  };
 };
 
 beforeEach(() => {
@@ -45,7 +48,10 @@ describe("KV value calls", () => {
       method: "PUT",
       url: `${NS}/values/routes%2Fa%20b`,
     });
-    expect(form(calls[0]!.body)).toEqual({ value: "hello", metadata: null });
+    expect(await form(calls[0]!.body)).toEqual({
+      value: "hello",
+      metadata: null,
+    });
   });
 
   it("puts any other value as JSON, with metadata and an expiration", async () => {
@@ -62,10 +68,19 @@ describe("KV value calls", () => {
     expect(calls[0]!.url).toBe(
       `${NS}/values/config?expiration=1900000000&expiration_ttl=120`,
     );
-    expect(form(calls[0]!.body)).toEqual({
+    expect(await form(calls[0]!.body)).toEqual({
       value: '{"routes":["/a"]}',
       metadata: '{"v":1}',
     });
+  });
+
+  it("sends the line breaks of a value as they are", async () => {
+    mockFetch(() => ok({}));
+
+    await putKVValue("acc", "ns1", "k", "a\nb\rc");
+
+    const sent = await new Response(calls[0]!.body as FormData).text();
+    expect(sent).toContain("\r\n\r\na\nb\rc\r\n");
   });
 
   it("gets a value as text, even when the text looks like an API response", async () => {
@@ -82,6 +97,14 @@ describe("KV value calls", () => {
     await expect(getKVValue("acc", "ns1", "k", "json")).resolves.toEqual({
       routes: ["/a"],
     });
+  });
+
+  it("names the key when a value to parse as JSON isn't JSON", async () => {
+    mockFetch(() => text("plain"));
+
+    await expect(getKVValue("acc", "ns1", "k", "json")).rejects.toThrow(
+      `The value of the KV key "k" isn't JSON`,
+    );
   });
 
   it("gets undefined for a missing key, and throws for a missing namespace", async () => {
@@ -191,7 +214,7 @@ describe("KVValue", () => {
       `PUT ${NS}/values/config`,
       `GET ${NS}/values/config`,
     ]);
-    expect(form(calls[0]!.body).value).toBe("v2");
+    expect((await form(calls[0]!.body)).value).toBe("v2");
   });
 
   it("waits while a read after the write finds no key, and doesn't write again", async () => {

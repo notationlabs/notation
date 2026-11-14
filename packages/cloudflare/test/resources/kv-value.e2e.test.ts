@@ -35,7 +35,10 @@ describeE2e("KVValue", () => {
   let namespaceId: string;
 
   it("writes the value on deploy", async () => {
-    project.write("infra/main.ts", infraModule(title, "routes", '{"a":1}'));
+    project.write(
+      "infra/main.ts",
+      infraModule(title, "routes", '{\n  "a": 1\n}'),
+    );
     await project.notation("deploy");
 
     const namespaces = await kvNamespacesWithPrefix(runPrefix);
@@ -83,15 +86,17 @@ describeE2e("KVValue", () => {
     const id = created.result.id;
 
     await putKVValue(accountId, id, "one", { n: 1 }, { metadata: { v: 1 } });
+    await putKVValue(accountId, id, "lines", "a\nb\r\nc");
+    expect(await getKVValue(accountId, id, "lines")).toBe("a\nb\r\nc");
     await putKVValues(accountId, id, [
-      { key: "two", value: "2" },
+      { key: "two", value: "2\n" },
       { key: "three", value: [3] },
     ]);
     expect(await getKVValue(accountId, id, "one", "json")).toEqual({ n: 1 });
-    expect(await getKVValue(accountId, id, "two")).toBe("2");
+    expect(await getKVValue(accountId, id, "two")).toBe("2\n");
     expect(await getKVValue(accountId, id, "three", "json")).toEqual([3]);
 
-    await deleteKVValues(accountId, id, ["one", "two", "three"]);
+    await deleteKVValues(accountId, id, ["one", "lines", "two", "three"]);
     await expect
       .poll(() => getKVValue(accountId, id, "one"), consistency)
       .toBeUndefined();
