@@ -1,5 +1,13 @@
 # @notation/cli
 
+## 0.21.0
+
+### Patch Changes
+
+- @notation/build@0.21.0
+- @notation/core@0.21.0
+- @notation/dashboard@0.21.0
+
 ## 0.20.0
 
 ### Minor Changes

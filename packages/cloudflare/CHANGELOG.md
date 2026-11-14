@@ -1,5 +1,52 @@
 # @notation/cloudflare
 
+## 0.21.0
+
+### Minor Changes
+
+- de720c2: `@notation/cloudflare/resources` exports `cloudflare/containers/ContainerImage`, which builds a container image with Docker and pushes it to the account's Cloudflare registry, `registry.cloudflare.com/<account>/<Repository>`.
+
+  - `Context` is the build context directory, and `Dockerfile` defaults to `Dockerfile` in it. Both are relative to the project root. `BuildArgs` are passed to `docker build --build-arg`.
+  - The output `Image` is the image pinned by its digest. Place `image.outputRef("Image")` in a `ContainerApplication`'s `Configuration.image`. The application then depends on the image.
+  - The tag is the start of a SHA-256 of the files in the build context, the Dockerfile, the build args and the platform. When any of them changes, deploy replaces the image: it builds and pushes the image under the new tag, then rolls out the new digest to the application. Plan and deploy skip each `.git` directory when they hash the context, and don't read `.dockerignore`. Base images are not part of the hash.
+  - Deploy runs `docker info`, `docker build --load --platform linux/amd64 --provenance=false`, `docker login` and `docker push`. Docker, with buildx, must be installed and running on the machine that deploys. `docker login` saves credentials in the user's Docker config that expire after 15 minutes.
+  - Each read gets the tag's digest from the registry. A read requests short-lived pull credentials, so plan needs a token with the Containers: Edit permission. When the registry no longer has the tag, deploy builds and pushes the image again.
+  - Delete leaves the image in the registry, because Cloudflare may still start instances from the old digest while a rollout of the new digest runs.
+
+- f71b13d: `$durableObject` takes `container`, which runs a container for each object of the namespace. It sets the image (`context`, `dockerfile`, `buildArgs` and `repository`), `maxInstances`, and the size, environment variables and network of the containers. The hosting Worker's group then has a `ContainerImage` and a `ContainerApplication` for the namespace, and the Worker's upload sends the class in `containers`. The application is named `<app>-<stage>-<id>-<hash>`, as Cloudflare refuses a name with `--`. A namespace without `container` has no `container` key, so the params of a Worker that was deployed before this change stay the same.
+- 3cf5a05: `@notation/cloudflare/resources` exports the resource `cloudflare/kv/KVValue`, which sets the value of one key in a Workers KV namespace. It depends on a `KVNamespace`, as `dependencies: { namespace }`.
+
+  - `Key` is required, and is 1 to 512 bytes. A change to `Key` writes the new key, then deletes the old key at the end of the deploy. If the new key already exists, the deploy fails and the old key stays as it was.
+  - `Value` is a string, and is stored as it is. To store JSON, pass `JSON.stringify(value)`. A change to `Value` writes the key again.
+  - Create fails when the key already exists in the namespace, rather than overwrite it. KV is eventually consistent, so a key deleted in the last minute can still read as existing, and a key written elsewhere in the last minute may not be seen. Delete deletes the key.
+  - Create waits while the KV calls report that the namespace doesn't exist, for up to about 60 seconds. A namespace that the same deploy created can be missing from them for a few seconds.
+  - KV is eventually consistent. After a write, create and update read the key until it returns the written value, for up to about 60 seconds, and fail after that. A later deploy that reads an older value plans an update, which writes the value again.
+
+- 1125cdc: A Worker can bind an R2 bucket, a KV namespace, a JSON value and a secret.
+
+  - `$worker` bindings take an `R2Bucket` resource, a `KVNamespace` resource, a value from `json(value)` and a secret from `workerSecret()`. In `env`, these are an `R2Bucket`, a `KVNamespace`, the JSON value and a `string`. A Worker that binds a bucket or a namespace is uploaded after it.
+  - `workerSecret({ id, source, key })` from `@notation/cloudflare/workers` declares a secret that a Worker binds as secret text. A source and a key are required. Deploy reads the value from the source each time it uploads the Worker. State records the source, the key and the source's version, and never the value. A new version from the source uploads the Worker again. For `env` and `dotenv`, that is every deploy.
+  - `WorkerScript` takes `r2_bucket` and `json` bindings, and a `SecretBindings` param, which uploads each secret as a `secret_text` binding.
+
+- ce4a9e1: A Worker's secrets are set with Cloudflare's secrets API for the Worker, before its code is uploaded, and `notation secret set` can set them.
+
+  - `workerSecret({ id, source?, key? })` takes an optional source and key. The value comes from the source, or from the prompt when there is no source. `notation secret set` writes a Worker secret to each deployed Worker that binds it, and fails when none is deployed. `notation secret delete` deletes it from each of them.
+  - The new `WorkerSecret` resource sets one secret of a Worker with Cloudflare's secrets API for the Worker. A Worker gets one for each Worker secret that it binds. It writes a sourced value when the source's version changes, and a value without a source only when the Worker doesn't have it. It deletes the secret when the Worker stops binding it.
+  - The new `WorkerScriptPlaceholder` resource makes sure a Worker exists before its secrets are set. Deploy sets a Worker's secrets before it uploads the Worker's code, so the code never runs without them. A new Worker that binds a Worker secret is first uploaded as a placeholder that answers 503 and has the tag `notation-placeholder`. Then deploy sets its secrets, and then uploads its code, which removes the tag. A live Worker that gains its first secret keeps its name, and gets no placeholder upload. The placeholder refuses a Worker that exists without the tag, unless it is the Worker in state.
+  - A deploy that stops at a secret without a source, such as in CI with no terminal, leaves only the placeholder live. `notation secret set` writes the value to the placeholder, and the next deploy uploads the code.
+  - Destroy deletes a Worker first, which deletes its secrets with it, and then the placeholder if it still has the tag. If the Worker's delete fails, destroy stops there.
+  - `WorkerScript` takes `ScriptName` in config, for a Worker created with the name of its placeholder. The name in its state record wins. Its create uploads over a Worker with the placeholder tag.
+  - `WorkerScript` no longer takes the `SecretBindings` param, and no longer uploads secrets as `secret_text` bindings. Each upload keeps the Worker's `secret_text` bindings, so an upload never needs a secret's value. This also keeps a secret set with `wrangler secret put`, which an upload deleted before.
+
+### Patch Changes
+
+- Updated dependencies [c290823]
+- Updated dependencies [ce4a9e1]
+  - @notation/resource@0.21.0
+  - @notation/core@0.21.0
+  - @notation/std@0.21.0
+  - @notation/utils@0.21.0
+
 ## 0.20.0
 
 ### Minor Changes

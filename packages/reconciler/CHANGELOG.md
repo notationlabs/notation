@@ -1,5 +1,24 @@
 # @notation/reconciler
 
+## 0.21.0
+
+### Minor Changes
+
+- c290823: A resource class can set `replaceCreatesFirst` in its meta, in `@notation/resource`. The reconciler then replaces a resource of that class create-first, as it does a class with a `physicalName` param: deploy creates the replacement, and deletes the old resource at the end of the deploy. If the create fails, the old resource stays as it was. Set it when every replace changes the resource's key, so that the replacement can exist beside the old resource.
+- ce4a9e1: A `physicalName` rule can have `suppliable: true`, so that the params can supply the name.
+
+  - With `suppliable`, the param is optional in config, and config, a contribution or `deriveParams` can supply it. Without it, the params still can't supply the name.
+  - The name in the state record wins over a supplied name, and a supplied name wins over a generated one. So a supplied name names the resource when deploy first creates it, and never renames a resource that exists. A replacement takes the supplied name, or a generated one when the params supply none.
+  - Plan shows the supplied name for a resource with no record. It shows the recorded name for a resource with a record, even when the supplied name is unknown at plan, so an unknown supplied name does not show as a replace.
+
+### Patch Changes
+
+- Updated dependencies [c290823]
+- Updated dependencies [ce4a9e1]
+  - @notation/resource@0.21.0
+  - @notation/state@0.21.0
+  - @notation/utils@0.21.0
+
 ## 0.20.0
 
 ### Minor Changes
