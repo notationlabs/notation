@@ -58,9 +58,91 @@ Deploy generates a Worker's name when it creates the Worker: `<app>--<stage>--<i
 | A namespace from [`$durableObject`](#durableobjectconfig) | Durable Object namespace | `DurableObjectNamespace<Class>` |
 | A Worker from `$worker`                                   | Service binding          | `Fetcher`                       |
 | A secret from [`secretsStore.bind`](secrets.md)           | Secrets Store secret     | `SecretsStoreSecret`            |
+| A secret from [`workerSecret`](#workersecretconfig)       | Secret text              | `string`                        |
+| An `R2Bucket` resource                                    | R2 bucket                | `R2Bucket`                      |
+| A `KVNamespace` resource                                  | KV namespace             | `KVNamespace`                   |
+| A value from `json(value)`                                | JSON                     | the type of `value`             |
 | A string                                                  | Plain text               | `string`                        |
 
-`WorkerEnv<typeof worker>` is the type of `env`, and `WorkerHandler<typeof worker>` is the type of the default export. A Worker that binds another Worker is uploaded after it.
+`WorkerEnv<typeof worker>` is the type of `env`, and `WorkerHandler<typeof worker>` is the type of the default export. A Worker that binds another Worker, an R2 bucket or a KV namespace is uploaded after it.
+
+An infra module declares the R2 bucket, the KV namespace and the Worker secret, and the runtime module imports them. `R2Bucket` and `KVNamespace` are resources from `@notation/cloudflare/resources`:
+
+::code-group
+
+```ts [infra/main.ts]
+import { kv, r2 } from "@notation/cloudflare/resources";
+import { workerSecret } from "@notation/cloudflare/workers";
+import { env } from "@notation/std/sources";
+
+export const uploads = new r2.R2Bucket("uploads", {
+  config: {
+    BucketName: "shop-uploads",
+    Jurisdiction: "default",
+    StorageClass: "Standard",
+  },
+});
+
+export const cache = new kv.KVNamespace("cache", {
+  config: { Title: "shop-cache" },
+});
+
+export const apiKey = workerSecret({
+  id: "api-key",
+  source: env,
+  key: "API_KEY",
+});
+```
+
+```ts [runtime/api.ts]
+import {
+  $worker,
+  json,
+  type WorkerHandler,
+} from "@notation/cloudflare/workers";
+import { apiKey, cache, uploads } from "../infra/main";
+
+export const worker = $worker({
+  id: "api",
+  compatibilityDate: "2026-10-12",
+  bindings: () => ({
+    UPLOADS: uploads,
+    CACHE: cache,
+    CONFIG: json({ retries: 3 }),
+    API_KEY: apiKey,
+  }),
+});
+
+export default {
+  async fetch(request, env) {
+    await env.CACHE.put("last", new Date().toISOString());
+    const object = await env.UPLOADS.get("logo.png");
+    return new Response(object?.body ?? null, {
+      headers: { "x-retries": String(env.CONFIG.retries) },
+    });
+  },
+} satisfies WorkerHandler<typeof worker>;
+```
+
+::
+
+- A binding to a bucket in a jurisdiction other than `default` names the jurisdiction.
+- `json(value)` takes a JSON value. Deploy stores the value in state, and plan shows it. Bind a secret with `workerSecret` instead.
+
+### `workerSecret(config)`
+
+`workerSecret` declares a secret that a Worker binds as secret text. In the Worker, the binding is a string. The value comes from a [source](../../manual/secrets.md#sources). Cloudflare stores the value with the Worker, not in a Secrets Store.
+
+| Option   | Description                                                                                                              |
+| -------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `id`     | Keys the secret's `SourceValue` resource in state, with the ID `value:<id>`. It must differ from the id of every secret. |
+| `source` | Required. Where the value comes from, such as `env` or `dotenv(".env.local")` from `@notation/std/sources`.              |
+| `key`    | Required. The key that the source is asked for.                                                                          |
+
+- Notation records the source, the key and the source's version of the key. It never records the value. Plan shows the binding's name, source, key and version.
+- Deploy reads the value from the source each time it uploads a Worker that binds the secret. A Worker is uploaded when one of its params changes, and the source's version of the key is one of them. For `env` and `dotenv`, the version is the deploy's execution ID, so deploy uploads the Worker on every deploy.
+- A secret without a source isn't supported, so deploy never asks for the value. `notation secret set` refuses a Worker secret. Change the value in the source.
+- A value changed in the dashboard or with wrangler stays until deploy next uploads the Worker.
 
 Two Workers can bind each other as services. Each service binding is a [contribution](../../reference/resource.md#cycles) to the Worker's script, so deploy can break the cycle:
 
