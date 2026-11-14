@@ -192,7 +192,8 @@ describeWithAws("ContainerRegistry", () => {
   // the record is deleted. Registered first, so it is released last. The
   // hooks and tests below must finish within the lock's stale age of 60
   // minutes, or another run takes the lock over. Their timeouts add up to
-  // about 50 minutes.
+  // about 50 minutes. A killed run leaves the record behind, and its name
+  // has no `ne2e-` prefix. Delete it by hand if no run holds the lock.
   useAccountLock("container-registry");
 
   const ecr = new ECRClient({ region });
