@@ -153,6 +153,10 @@ export async function withAccountLock<T>(
  * Holds the account-wide lock named `name` for the tests of the enclosing
  * `describe`. See `takeAccountLock`.
  *
+ * Everything that runs under the lock, from this `beforeAll` to its
+ * `afterAll`, must finish within `maxAgeMs` (60 minutes). After that, another
+ * run treats the lock as stale and takes it over.
+ *
  * Call it before the hooks that create and destroy the resource. Vitest runs
  * `afterAll` hooks in the reverse order that they were added, so the lock is
  * released after the resource is destroyed.
