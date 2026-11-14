@@ -29,6 +29,21 @@ export const configurationSchema = v.pipe(
     vcpu: v.optional(v.number()),
     memory_mib: v.optional(v.number()),
     /**
+     * The disk size of each instance, in MB. It can only be set with `vcpu`
+     * and `memory_mib`, because an instance type sets its own disk size.
+     * Without `disk`, custom sizes get 2000 MB. Cloudflare refuses a size
+     * below 512 MB or above the account's limit, which is 20000 MB by default.
+     */
+    disk: v.optional(
+      v.strictObject({
+        size_mb: v.pipe(
+          v.number(),
+          v.integer(),
+          v.minValue(512, "Cloudflare refuses a disk size below 512 MB"),
+        ),
+      }),
+    ),
+    /**
      * Don't put secrets here. The values are stored as plain text in state and
      * shown in plan output.
      */
@@ -52,21 +67,30 @@ export const configurationSchema = v.pipe(
         configuration.memory_mib === undefined),
     "Set either instance_type, or vcpu and memory_mib, not both",
   ),
+  // Cloudflare refuses `disk` next to an instance type in a create, and
+  // ignores it in a rollout.
+  v.check(
+    (configuration) =>
+      configuration.disk === undefined ||
+      configuration.instance_type === undefined,
+    "Set disk only with vcpu and memory_mib. An instance type sets its own disk size",
+  ),
+  // Without vcpu and memory_mib, Cloudflare uses those of `lite`, which
+  // can't take a custom disk size.
+  v.check(
+    (configuration) =>
+      configuration.disk === undefined ||
+      (configuration.vcpu !== undefined &&
+        configuration.memory_mib !== undefined),
+    "Set disk only with vcpu and memory_mib",
+  ),
 );
 
 export type ContainerConfiguration = v.InferOutput<typeof configurationSchema>;
 
-/**
- * A rollout's target configuration. `disk` is not a key of
- * `ContainerConfiguration`, but `rolloutTarget` sets it to undo the disk size
- * of a removed instance type.
- */
-export type RolloutTarget = ContainerConfiguration & {
-  disk?: { size_mb: number };
-};
-
 // The values that Cloudflare gives an application whose configuration leaves
-// the key out. They are those of the `lite` instance type.
+// the key out. They are those of the `lite` instance type, and the disk size
+// is also that of custom sizes without `disk`.
 const DEFAULT_INSTANCE_TYPE = "lite";
 const DEFAULT_VCPU = 0.0625;
 const DEFAULT_MEMORY_MIB = 256;
@@ -88,13 +112,14 @@ const DEFAULT_DISK_MB = 2000;
  * - A removed `vcpu` or `memory_mib` next to the other gets its default.
  * - An instance type also sets the disk size, and a later `vcpu` and
  *   `memory_mib` keep it. So a target that replaces an instance type with
- *   them sets the default disk size.
+ *   them, or that removes `disk`, sets the default disk size. With no size
+ *   left, `instance_type: "lite"` also sets the default disk size.
  */
 export function rolloutTarget(
   previous: ContainerConfiguration | undefined,
   desired: ContainerConfiguration,
-): RolloutTarget {
-  const target: RolloutTarget = { ...desired };
+): ContainerConfiguration {
+  const target: ContainerConfiguration = { ...desired };
   if (!previous) return target;
   if (previous.environment_variables && !desired.environment_variables) {
     target.environment_variables = [];
@@ -115,7 +140,10 @@ export function rolloutTarget(
   if (previous.memory_mib !== undefined && desired.memory_mib === undefined) {
     target.memory_mib = DEFAULT_MEMORY_MIB;
   }
-  if (previous.instance_type !== undefined) {
+  if (
+    desired.disk === undefined &&
+    (previous.instance_type !== undefined || previous.disk !== undefined)
+  ) {
     target.disk = { size_mb: DEFAULT_DISK_MB };
   }
   return target;
@@ -241,7 +269,7 @@ export async function updateApplication(
 export async function rollOutConfiguration(
   account: string,
   applicationId: string,
-  configuration: RolloutTarget,
+  configuration: ContainerConfiguration,
 ): Promise<void> {
   await cloudflare(
     "POST",

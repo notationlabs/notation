@@ -477,6 +477,51 @@ describe("ContainerApplication", () => {
     });
   });
 
+  it("sends a declared disk size", async () => {
+    const configuration = {
+      image: "img:1",
+      vcpu: 1,
+      memory_mib: 3072,
+      disk: { size_mb: 6000 },
+    };
+    const target = await rollOut(
+      { image: "img:1", instance_type: "basic" },
+      configuration,
+    );
+
+    expect(target).toEqual(configuration);
+  });
+
+  it("sets the default disk size when disk is removed", async () => {
+    const target = await rollOut(
+      { image: "img:1", vcpu: 1, memory_mib: 3072, disk: { size_mb: 6000 } },
+      { image: "img:1", vcpu: 1, memory_mib: 3072 },
+    );
+
+    expect(target).toEqual({
+      image: "img:1",
+      vcpu: 1,
+      memory_mib: 3072,
+      disk: { size_mb: 2000 },
+    });
+  });
+
+  it.each([{}, { instance_type: "standard-1" }])(
+    "sends no disk when disk and the custom size are replaced by %j",
+    async (size) => {
+      const target = await rollOut(
+        { image: "img:1", vcpu: 1, memory_mib: 3072, disk: { size_mb: 6000 } },
+        { image: "img:1", ...size },
+      );
+
+      expect(target).toEqual({
+        image: "img:1",
+        instance_type: "lite",
+        ...size,
+      });
+    },
+  );
+
   it("sets the default of a removed vcpu or memory_mib next to the other", async () => {
     expect(
       await rollOut(
@@ -773,7 +818,7 @@ describe("ContainerApplication configuration", () => {
   });
 
   it("rejects a key that is not supported", async () => {
-    const result = await validate({ image: "img:1", disk: { size_mb: 2000 } });
+    const result = await validate({ image: "img:1", command: ["sh"] });
     expect(result.issues).toBeDefined();
   });
 
@@ -809,8 +854,41 @@ describe("ContainerApplication configuration", () => {
       image: "img:1",
       vcpu: 1,
       memory_mib: 1024,
+      disk: { size_mb: 4000 },
       environment_variables: [{ name: "A", value: "1" }],
       network: { assign_ipv4: "predefined", mode: "public" },
+    });
+    expect(result.issues).toBeUndefined();
+  });
+
+  it.each([{ instance_type: "basic" }, {}, { vcpu: 1 }, { memory_mib: 3072 }])(
+    "rejects disk together with %j",
+    async (size) => {
+      const result = await validate({
+        image: "img:1",
+        ...size,
+        disk: { size_mb: 4000 },
+      });
+      expect(result.issues).toBeDefined();
+    },
+  );
+
+  it.each([511, 1000.5])("rejects a disk size of %j MB", async (size_mb) => {
+    const result = await validate({
+      image: "img:1",
+      vcpu: 1,
+      memory_mib: 3072,
+      disk: { size_mb },
+    });
+    expect(result.issues).toBeDefined();
+  });
+
+  it("accepts a disk size of 512 MB", async () => {
+    const result = await validate({
+      image: "img:1",
+      vcpu: 1,
+      memory_mib: 3072,
+      disk: { size_mb: 512 },
     });
     expect(result.issues).toBeUndefined();
   });

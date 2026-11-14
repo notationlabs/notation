@@ -158,8 +158,9 @@ type Params = ContainerApplicationSchema["CreateParams"];
  * Cloudflare merges a rollout's target configuration with the current
  * configuration. So for each key that is removed from `Configuration`, the
  * rollout sends the value that a create without the key gives: no
- * environment variables, the default network, and the resources of the
- * `lite` instance type. Cloudflare can't change the network mode of an
+ * environment variables, the default network, the resources of the `lite`
+ * instance type, and a 2000 MB disk next to `vcpu` and `memory_mib`.
+ * Cloudflare can't change the network mode of an
  * application, so the plan rejects a change to it. A deploy soon after
  * another may fail while the earlier rollout is still running.
  *
