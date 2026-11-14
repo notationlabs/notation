@@ -12,6 +12,7 @@ import {
   type ResourceDeletion,
 } from "@notation/resource";
 import type { fs } from "@notation/std/resources";
+import { getValue } from "@notation/std/sources";
 import { accountId, cloudflareCreate } from "src/api/client";
 import { matchesWorkerNames, workerNameRule } from "src/id";
 import {
@@ -28,7 +29,9 @@ import {
   type DurableObjectExport,
   type ScriptBinding,
   type ScriptUpload,
+  type SecretTextBinding,
 } from "src/api/workers";
+import { secretValueFromSchema } from "src/resources/secrets-store/secrets-store-secret";
 
 export type { DurableObjectExport };
 
@@ -58,6 +61,18 @@ const boundNamespaceSchema = v.object({
 /** A Durable Object namespace that the Worker binds on another Worker. */
 export type BoundNamespace = v.InferOutput<typeof boundNamespaceSchema>;
 
+const secretBindingSchema = v.object({
+  /** The binding's name in `env`. */
+  Name: v.string(),
+  ValueFrom: secretValueFromSchema,
+});
+
+/**
+ * A `secret_text` binding. It holds where the value comes from, and never
+ * the value.
+ */
+export type SecretBinding = v.InferOutput<typeof secretBindingSchema>;
+
 const transferSourceSchema = v.object({
   /** The id of a namespace that the Worker hosts. */
   namespaceId: v.string(),
@@ -84,6 +99,12 @@ type WorkerScriptParams = {
   CompatibilityDate: string;
   CompatibilityFlags?: string[];
   Bindings?: WorkerBinding[];
+  /**
+   * Create and update read each value with `getValue`, and upload it as a
+   * `secret_text` binding. A change to `ValueFrom`, such as a new version
+   * from the source, updates the Worker.
+   */
+  SecretBindings?: SecretBinding[];
   DurableObjectNamespaces?: HostedNamespace[];
   /**
    * The ids of hosted namespaces that set `protect: false`. A later plan
@@ -240,6 +261,11 @@ const workerScriptSchema = workerScript.defineSchema({
     value: v.array(bindingSchema),
     collect: (items: unknown[]) => items.flat() as WorkerBinding[],
   },
+  SecretBindings: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.array(secretBindingSchema),
+  },
   DurableObjectNamespaces: {
     propertyType: "param",
     presence: "optional",
@@ -360,7 +386,10 @@ async function upload(
     code,
     compatibilityDate: params.CompatibilityDate,
     compatibilityFlags: params.CompatibilityFlags ?? [],
-    bindings: params.Bindings ?? [],
+    bindings: [
+      ...(params.Bindings ?? []),
+      ...(await secretTextBindings(params.SecretBindings ?? [])),
+    ],
     exports,
     containers: hosted
       .filter((namespace) => namespace.container)
@@ -370,6 +399,21 @@ async function upload(
     await transferNamespaces(params, upload, found.transfers, found.account);
   }
   await putScript(params.AccountId, params.ScriptName, upload);
+}
+
+async function secretTextBindings(
+  secrets: SecretBinding[],
+): Promise<SecretTextBinding[]> {
+  const bindings: SecretTextBinding[] = [];
+  for (const secret of secrets) {
+    const value = await getValue(secret.ValueFrom.Secret);
+    bindings.push({
+      type: "secret_text",
+      name: secret.Name,
+      text: value.unwrap(),
+    });
+  }
+  return bindings;
 }
 
 type Transfer = {

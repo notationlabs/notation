@@ -11,3 +11,9 @@ export {
   type WorkerGroupConfig,
 } from "./worker";
 export { secretsStore } from "./secrets-store";
+export { json } from "./json";
+export {
+  workerSecret,
+  WorkerSecretGroup,
+  type WorkerSecretConfig,
+} from "./secret";

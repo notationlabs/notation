@@ -50,9 +50,32 @@ export const bindingSchema = v.variant("type", [
     name: v.string(),
     namespace_id: v.string(),
   }),
+  v.object({
+    type: v.literal("r2_bucket"),
+    name: v.string(),
+    bucket_name: v.string(),
+    /** Left out for a bucket in the default jurisdiction. */
+    jurisdiction: v.optional(v.picklist(["eu", "us", "fedramp", "fedramp-high"])),
+  }),
+  v.object({
+    type: v.literal("json"),
+    name: v.string(),
+    json: v.any(),
+  }),
 ]);
 
+/**
+ * A binding that can be kept in params and state. It never holds a secret
+ * value.
+ */
 export type ScriptBinding = v.InferOutput<typeof bindingSchema>;
+
+/** A secret binding, which holds the value. It is built only for an upload. */
+export type SecretTextBinding = {
+  type: "secret_text";
+  name: string;
+  text: string;
+};
 
 export type DurableObjectExport =
   | { type: "durable-object"; storage: "sqlite" }
@@ -78,7 +101,7 @@ export type ScriptUpload = {
   code: Buffer;
   compatibilityDate: string;
   compatibilityFlags: string[];
-  bindings: ScriptBinding[];
+  bindings: (ScriptBinding | SecretTextBinding)[];
   exports: Record<string, DurableObjectExport>;
   /** The Durable Object classes whose namespaces run containers. */
   containers: { class_name: string }[];
