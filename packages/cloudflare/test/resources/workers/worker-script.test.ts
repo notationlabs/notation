@@ -258,7 +258,7 @@ describe("WorkerScript", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_, init) => {
       if ((init?.method ?? "GET") === "GET") return fail(404, 10007);
       const response = new Response("{}");
-      vi.spyOn(response, "text").mockRejectedValue(
+      vi.spyOn(response, "arrayBuffer").mockRejectedValue(
         new DOMException("The operation timed out.", "TimeoutError"),
       );
       return response;
