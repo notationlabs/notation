@@ -297,6 +297,7 @@ export const WorkerScript = workerScriptSchema
     // An upload replaces a Worker with the same name, so check first. The
     // check is outside `cloudflareCreate`: if it throws, nothing was created.
     create: async (params) => {
+      assertUniqueBindingNames(params);
       if (await getScriptSettings(params.AccountId, params.ScriptName)) {
         throw new ResourceAlreadyExistsError(
           `A Worker named ${params.ScriptName} already exists in the Cloudflare account ${params.AccountId}`,
@@ -331,6 +332,7 @@ export const WorkerScript = workerScriptSchema
     // compares the namespaces in state with the new ones, to rename, delete
     // or move those that changed.
     update: async (_key, _patch, params, state) => {
+      assertUniqueBindingNames(params);
       const previous = state.DurableObjectNamespaces ?? [];
       await upload(params, previous, await findTransfers(params, previous));
     },
@@ -400,6 +402,18 @@ async function upload(
     await transferNamespaces(params, upload, found.transfers, found.account);
   }
   await putScript(params.AccountId, params.ScriptName, upload);
+}
+
+function assertUniqueBindingNames(params: WorkerScriptParams) {
+  const names = new Set((params.Bindings ?? []).map((binding) => binding.name));
+  const clashes = (params.SecretBindings ?? [])
+    .map((secret) => secret.Name)
+    .filter((name) => names.has(name));
+  if (clashes.length > 0) {
+    throw new Error(
+      `The Worker ${params.ScriptName} has ${clashes.map((name) => `"${name}"`).join(", ")} in both Bindings and SecretBindings. Each binding name in env must be unique, so remove the name from one of them.`,
+    );
+  }
 }
 
 const secretTextBindings = (

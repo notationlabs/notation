@@ -26,6 +26,11 @@ export class WorkerSecretGroup
 
   constructor(config: WorkerSecretConfig) {
     assertSecretId("workerSecret()", config.id);
+    if (!config.source || typeof config.key !== "string") {
+      throw new Error(
+        `workerSecret({ id: "${config.id}" }) requires a source and a key. Deploy reads the value from the source each time it uploads a Worker that binds the secret.`,
+      );
+    }
     super("cloudflare/workerSecret", config.id, config);
     const { id, source, key } = config;
     this.value = this.add(

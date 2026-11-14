@@ -217,6 +217,21 @@ describe("WorkerScript", () => {
       expect(action).toMatchObject({ decision: "update" });
     });
 
+    it("rejects a name in both Bindings and SecretBindings before any request", async () => {
+      mockFetch(untilUploaded());
+      const clash = {
+        ...withSecret,
+        Bindings: [
+          { type: "plain_text" as const, name: "API_KEY", text: "plain" },
+        ],
+      };
+
+      await expect(script.create(clash)).rejects.toThrow(
+        '"API_KEY" in both Bindings and SecretBindings',
+      );
+      expect(calls).toEqual([]);
+    });
+
     it("fails the upload outside a deploy, as the value can't be read", async () => {
       mockFetch(untilUploaded());
 

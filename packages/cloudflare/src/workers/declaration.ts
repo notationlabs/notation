@@ -36,7 +36,7 @@ export interface SecretsStoreSecretBinding {
 }
 
 /** A JSON binding, from `json(value)`. */
-export interface JsonBinding<T extends Json = Json> {
+export interface JsonBinding<T = Json> {
   readonly "~json": T;
 }
 
@@ -47,6 +47,19 @@ export type Json =
   | null
   | readonly Json[]
   | { readonly [key: string]: Json };
+
+/**
+ * `T` if it is a JSON value, and `never` where it is not. An interface has no
+ * index signature, so it is not assignable to `Json`, but it passes this
+ * check.
+ */
+export type JsonValue<T> = T extends string | number | boolean | null
+  ? T
+  : T extends (...args: any[]) => unknown
+    ? never
+    : T extends object
+      ? { [K in keyof T]: JsonValue<T[K]> }
+      : never;
 
 /** A secret declared with `workerSecret()`. */
 export interface WorkerSecret {

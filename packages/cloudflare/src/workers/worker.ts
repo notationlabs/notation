@@ -371,7 +371,7 @@ function resolveBindings(
       resolved.secrets.push(value.binding(name));
       continue;
     }
-    if (value instanceof cloudflare.r2.R2Bucket) {
+    if (hasResourceType(value, "cloudflare/r2/R2Bucket")) {
       const bucket = value as cloudflare.r2.R2BucketInstance;
       // The name is an output ref, so that the Worker depends on the bucket.
       const jurisdiction = bucket.config.Jurisdiction;
@@ -383,7 +383,7 @@ function resolveBindings(
       });
       continue;
     }
-    if (value instanceof cloudflare.kv.KVNamespace) {
+    if (hasResourceType(value, "cloudflare/kv/KVNamespace")) {
       const kv = value as cloudflare.kv.KVNamespaceInstance;
       resolved.bindings.push({
         type: "kv_namespace",
@@ -407,6 +407,13 @@ function resolveBindings(
   }
   return resolved;
 }
+
+// Compared by type, not instanceof, so that a resource from another loaded
+// copy of the package is still recognised.
+const hasResourceType = (value: unknown, type: string): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as { type?: unknown }).type === type;
 
 function addHosted(
   self: Entry,

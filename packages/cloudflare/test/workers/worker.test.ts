@@ -282,6 +282,17 @@ describe("$worker", () => {
     ]);
   });
 
+  it("rejects a Worker secret with no source or key", async () => {
+    await collect(() => {
+      expect(() => workerSecret({ id: "api-key", source: env } as any)).toThrow(
+        'workerSecret({ id: "api-key" }) requires a source and a key',
+      );
+      expect(() =>
+        workerSecret({ id: "api-key", key: "API_KEY" } as any),
+      ).toThrow("requires a source and a key");
+    });
+  });
+
   it("hosts a namespace whose class its module exports", async () => {
     const graph = await collect(() => {
       const counters = inModule(
@@ -1054,6 +1065,24 @@ describe("WorkerEnv", () => {
       regions: string[];
     }>();
     expectTypeOf<Env["API_KEY"]>().toEqualTypeOf<string>();
+  });
+
+  it("lets json() take a value typed as an interface, and no function", () => {
+    interface Config {
+      retries: number;
+      region?: string;
+      tags: readonly string[];
+    }
+    const config: Config = { retries: 3, tags: [] };
+    const worker = runtime.$worker({
+      id: "api",
+      compatibilityDate,
+      bindings: () => ({ CONFIG: runtime.json(config) }),
+    });
+
+    expectTypeOf<WorkerEnv<typeof worker>["CONFIG"]>().toEqualTypeOf<Config>();
+    // @ts-expect-error a function is not a JSON value
+    runtime.json({ retries: 3, fetch: () => 1 });
   });
 
   it("rejects a binding that is another object with an id", () => {
