@@ -33,16 +33,18 @@ export function replaceOrder(resource: BaseResource): ReplaceOrder {
 
 /**
  * Throws when `params`, the params before deploy or plan fills in a name,
- * hold a value for one of `fields`. Deploy generates these fields, and a
- * generated or recorded name would replace the value. The config type leaves
- * them out, so the value comes from `deriveParams` or from untyped config.
+ * hold a value for one of `fields` whose rule does not have `suppliable`.
+ * Deploy generates these fields, and a generated or recorded name would
+ * replace the value. The config type leaves them out, so the value comes
+ * from `deriveParams` or from untyped config.
  */
 export function assertNamesNotSupplied(
   resource: BaseResource,
   fields: NameField[],
   params: Record<string, unknown>,
 ): void {
-  for (const { field } of fields) {
+  for (const { field, rule } of fields) {
+    if (rule.suppliable) continue;
     const value = params[field];
     if (value === undefined || isUnknownAfterApply(value)) continue;
     throw new Error(
@@ -52,13 +54,39 @@ export function assertNamesNotSupplied(
 }
 
 /**
- * `UNKNOWN_AFTER_APPLY` for each of the resource's `physicalName` params,
- * for a plan of a resource whose name deploy generates.
+ * The values that `params`, the params before deploy or plan fills in a
+ * name, hold for those of `fields` whose rule has `suppliable`. At plan, a
+ * value can be `UNKNOWN_AFTER_APPLY`.
  */
-export function unknownNames(resource: BaseResource): Record<string, unknown> {
+export function suppliedNames(
+  fields: NameField[],
+  params: Record<string, unknown>,
+): Record<string, unknown> {
   return Object.fromEntries(
-    nameFields(resource).map(({ field }) => [field, UNKNOWN_AFTER_APPLY]),
+    fields
+      .filter(({ rule }) => rule.suppliable)
+      .map(({ field }) => [field, params[field]] as const)
+      .filter(([, value]) => value !== undefined),
   );
+}
+
+/**
+ * The names a plan shows for a resource whose name deploy has not yet
+ * chosen: the supplied value for each suppliable `physicalName` param that
+ * `params` supply, and `UNKNOWN_AFTER_APPLY` for each other one.
+ * @param params The params before plan fills in a name.
+ */
+export function unknownNames(
+  resource: BaseResource,
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  const fields = nameFields(resource);
+  return {
+    ...Object.fromEntries(
+      fields.map(({ field }) => [field, UNKNOWN_AFTER_APPLY]),
+    ),
+    ...suppliedNames(fields, params),
+  };
 }
 
 /**

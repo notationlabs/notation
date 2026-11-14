@@ -6542,7 +6542,10 @@ describe("generated physical names", () => {
    * called, before it makes anything. A generated name ends in `.fifo` when
    * `fifo` is true.
    */
-  function defineGenerated(type: ResourceType) {
+  function defineGenerated(
+    type: ResourceType,
+    options: { suppliable?: true } = {},
+  ) {
     const remote = new Map<string, { name: string; path: string }>();
     const calls: string[] = [];
     const control: { beforeCreate?: () => Promise<void> } = {};
@@ -6559,6 +6562,7 @@ describe("generated physical names", () => {
             maxLength: 64,
             ending: (params: Record<string, unknown>) =>
               params.fifo === true ? ".fifo" : "",
+            ...options,
           },
         },
         path: {
@@ -7139,6 +7143,108 @@ describe("generated physical names", () => {
       params: { name: replacement, path: "/" },
     });
     runtime.close();
+  });
+
+  describe("with suppliable", () => {
+    it("generates the name when the params supply none", async () => {
+      const { Generated, remote } = defineGenerated(
+        "test/durable/name-suppliable-none",
+        { suppliable: true },
+      );
+      const runtime = createRuntime(
+        [new Generated("queue:orders", { config: { path: "/" } as any })],
+        "name-suppliable-none",
+      );
+
+      await runtime.run("deploy-1");
+
+      const [name] = [...remote.keys()];
+      expect(name).toMatch(GENERATED);
+      expect(await runtime.state.get("queue:orders")).toMatchObject({
+        params: { name, path: "/" },
+      });
+      runtime.close();
+    });
+
+    it("creates the resource with the supplied name", async () => {
+      const { Generated, calls } = defineGenerated(
+        "test/durable/name-suppliable-first",
+        { suppliable: true },
+      );
+      const runtime = createRuntime(
+        [
+          new Generated("queue:orders", {
+            config: { name: "orders", path: "/" } as any,
+          }),
+        ],
+        "name-suppliable-first",
+      );
+
+      await runtime.run("deploy-1");
+
+      expect(calls).toEqual(["create:orders"]);
+      expect(await runtime.state.get("queue:orders")).toMatchObject({
+        lastOperation: "create",
+        params: { name: "orders", path: "/" },
+        output: { name: "orders" },
+      });
+      runtime.close();
+    });
+
+    it("keeps the recorded name when the params supply another", async () => {
+      const { Generated, calls } = defineGenerated(
+        "test/durable/name-suppliable-recorded",
+        { suppliable: true },
+      );
+      const queue = new Generated("queue:orders", {
+        config: { name: "orders", path: "/" } as any,
+      });
+      const events: ReconcilerEvent[] = [];
+      const runtime = createRuntime([queue], "name-suppliable-recorded", {
+        emit: (event) => void events.push(event),
+      });
+      await runtime.run("deploy-1");
+
+      (queue.config as any).name = "renamed";
+      await runtime.run("deploy-2");
+
+      expect(calls).toEqual(["create:orders"]);
+      expect(
+        events
+          .filter((event) => event.event === "reconciler.deploy.decision")
+          .map((event) => event.decision),
+      ).toEqual(["create", "noop"]);
+      expect(await runtime.state.get("queue:orders")).toMatchObject({
+        params: { name: "orders", path: "/" },
+      });
+      runtime.close();
+    });
+
+    it("gives a replacement the supplied name", async () => {
+      const { Generated, calls } = defineGenerated(
+        "test/durable/name-suppliable-replace",
+        { suppliable: true },
+      );
+      const queue = new Generated("queue:orders", {
+        config: { name: "orders", path: "/" } as any,
+      });
+      const runtime = createRuntime([queue], "name-suppliable-replace");
+      await runtime.run("deploy-1");
+
+      (queue.config as any).name = "orders-2";
+      (queue.config as any).path = "/new/";
+      await runtime.run("deploy-2");
+
+      expect(calls).toEqual([
+        "create:orders",
+        "create:orders-2",
+        "delete:orders",
+      ]);
+      expect(await runtime.state.get("queue:orders")).toMatchObject({
+        params: { name: "orders-2", path: "/new/" },
+      });
+      runtime.close();
+    });
   });
 });
 

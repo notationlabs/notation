@@ -2341,6 +2341,159 @@ describe("createPlan with a generated physical name", () => {
   });
 });
 
+describe("createPlan with a suppliable physical name", () => {
+  const Queue = resource({ type: "test/planner/suppliable", provider: "test" })
+    // Cast: as for the Queue of a generated physical name.
+    .defineSchema({
+      name: {
+        propertyType: "param",
+        presence: "required",
+        primaryKey: true,
+        immutable: true,
+        value: v.string(),
+        physicalName: { maxLength: 64, suppliable: true },
+      },
+      path: {
+        propertyType: "param",
+        presence: "required",
+        immutable: true,
+        value: v.string(),
+      },
+    } as any)
+    .defineOperations({
+      create: async () => undefined,
+      update: async () => undefined,
+      delete: async () => undefined,
+    });
+  const queue = (id: string, config: Record<string, unknown>): BaseResource =>
+    new Queue(id, { config: config as any });
+  const record = (
+    id: string,
+    params: Record<string, DurableObject[string]>,
+  ) => ({
+    version: 1,
+    id,
+    type: Queue.type,
+    provider: "test",
+    config: {},
+    params,
+    output: { name: params.name! },
+    lastOperation: "create" as const,
+    lastOperationAt: "2026-07-22T00:00:00.000Z",
+  });
+  const name = "shop--prod--orders-1a2b3c4d";
+
+  it("plans a create with an unknown name when the params supply none", async () => {
+    const plan = await createPlan({
+      resources: [queue("orders", { path: "/" })],
+      state: new MemoryStateBackend({}),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({
+        id: "orders",
+        decision: "create",
+        params: { name: UNKNOWN_AFTER_APPLY, path: "/" },
+      }),
+    ]);
+  });
+
+  it("plans a create with the supplied name for a resource with no record", async () => {
+    const plan = await createPlan({
+      resources: [queue("orders", { name: "orders", path: "/" })],
+      state: new MemoryStateBackend({}),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({
+        id: "orders",
+        decision: "create",
+        params: { name: "orders", path: "/" },
+      }),
+    ]);
+  });
+
+  it("plans a create with an unknown name when the supplied name is unknown", async () => {
+    const source = queue("source", { path: "/" });
+    const orders = queue("orders", { path: "/" });
+    orders.config.name = source.outputRef("name");
+
+    const plan = await createPlan({
+      resources: [source, orders],
+      state: new MemoryStateBackend({}),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toContainEqual(
+      expect.objectContaining({
+        id: "orders",
+        decision: "create",
+        params: { name: UNKNOWN_AFTER_APPLY, path: "/" },
+      }),
+    );
+  });
+
+  it("plans a noop with the recorded name when the params supply another", async () => {
+    const plan = await createPlan({
+      resources: [queue("orders", { name: "renamed", path: "/" })],
+      state: new MemoryStateBackend({
+        orders: record("orders", { name, path: "/" }),
+      }),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({
+        id: "orders",
+        decision: "noop",
+        params: { name, path: "/" },
+      }),
+    ]);
+  });
+
+  it("plans a noop with the recorded name when the supplied name is unknown", async () => {
+    const source = queue("source", { path: "/" });
+    const orders = queue("orders", { path: "/" });
+    orders.config.name = source.outputRef("name");
+
+    const plan = await createPlan({
+      resources: [source, orders],
+      state: new MemoryStateBackend({
+        orders: record("orders", { name, path: "/" }),
+      }),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toContainEqual(
+      expect.objectContaining({
+        id: "orders",
+        decision: "noop",
+        params: { name, path: "/" },
+      }),
+    );
+  });
+
+  it("plans a replace with the supplied name", async () => {
+    const plan = await createPlan({
+      resources: [queue("orders", { name: "orders-2", path: "/new/" })],
+      state: new MemoryStateBackend({
+        orders: record("orders", { name, path: "/" }),
+      }),
+      driftDetection: false,
+    });
+
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({
+        id: "orders",
+        decision: "replace",
+        params: { name: "orders-2", path: "/new/" },
+      }),
+    ]);
+  });
+});
+
 describe("createPlan with refs that add no dependency", () => {
   const Worker = resource({ type: "test/planner/worker", provider: "test" })
     // Cast: as for Queue in "createPlan with a generated physical name".
