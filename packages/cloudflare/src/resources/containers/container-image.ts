@@ -174,7 +174,7 @@ export const ContainerImage = containerImageSchema
       await runDocker(["push", reference]);
     },
 
-    // `Image` uses the digest that the registry holds for the tag, which is
+    // `Image` holds the digest that the registry has for the tag, which is
     // the digest that Cloudflare pulls.
     read: async (key) => {
       const namespace = await registryNamespace(key.AccountId);

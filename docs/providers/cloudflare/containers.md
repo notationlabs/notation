@@ -89,7 +89,7 @@ The image's tag is the first 32 hex characters of a SHA-256 of the build's input
 
 Plan and deploy hash the input on each run. When the input changes, the tag changes, and deploy replaces the image: it builds and pushes the image under the new tag. The application's `Configuration.image` then holds the new digest, so deploy starts a rollout. When the input is the same, the tag is the same, and deploy builds nothing. The input doesn't include base images or anything that a `RUN` step downloads. To build again after a base image changes, pin `FROM` by digest and change the digest, or change a build arg.
 
-The hash skips each `.git` directory in the build context. It doesn't read `.dockerignore`, so a change to a file that `.dockerignore` excludes also builds the image again. A rebuild from Docker's cache usually has the same digest, and the same digest starts no rollout. To keep plans fast, use a build context directory that holds only the files that the image needs.
+Plan and deploy skip each `.git` directory in the build context when they hash it. They don't read `.dockerignore`, so a change to a file that `.dockerignore` excludes also builds the image again. A rebuild from Docker's cache usually has the same digest, and when the digest is the same, deploy starts no rollout. To keep plans fast, use a build context directory that holds only the files that the image needs.
 
 A change to `Context`, `Dockerfile` or `BuildArgs` that leaves the input the same changes nothing. These params are not kept in state.
 
