@@ -39,6 +39,31 @@ when its tests end.
   workers.dev subdomain.
 - Prefix: `ne2e-<6 hex characters>`. A Worker whose name starts with `ne2e-` is
   left over from a run that was killed, and can be deleted.
+- Account locks: some resources can't have a name with the run's prefix,
+  because the account can have only one of them, such as a container registry
+  for a domain. A test that manages such a resource must hold that resource's
+  lock, so that only one run at a time uses it. The lock is a Secrets Store
+  secret named `ne2e-lock-<name>`, whose comment holds the run's prefix and the
+  time it took the lock, so the token also needs the Secrets Store: Edit
+  permission. The tests use the account's store, or create one and leave it.
+
+  ```ts
+  import { useAccountLock } from "../account-lock";
+
+  describeE2e("ContainerRegistry", () => {
+    // Before useProject, so that the lock is released after the destroy.
+    useAccountLock("container-registry");
+    const project = useProject();
+    // ...
+  });
+  ```
+
+  Outside a `describe`, `withAccountLock(name, async () => { ... })` holds the
+  lock while the function runs. A run waits up to 15 minutes for another run's
+  lock, and then fails with an error that names the holder. A `ne2e-lock-*`
+  secret older than 30 minutes is left over from a run that was killed. The
+  next run that wants the lock deletes it and takes it. Don't delete a younger
+  one, as another run holds it.
 
 ### AWS
 
