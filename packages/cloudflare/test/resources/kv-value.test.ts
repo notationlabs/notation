@@ -1,5 +1,11 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NodeDurableRuntime, runDurableWorkflow } from "@notation/core";
+import * as durable from "@notation/reconciler/durable";
 import {
+  collectResourceGraph,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
@@ -11,6 +17,7 @@ import {
   putKVValue,
   putKVValues,
 } from "src/api/kv";
+import { KVNamespace } from "src/resources/kv/kv-namespace";
 import { KVValue } from "src/resources/kv/kv-value";
 import { calls, fail, mockFetch, ok } from "../mock-api";
 
@@ -317,5 +324,121 @@ describe("KVValue", () => {
     await expect(kvValue.delete(key, params as any)).rejects.toThrow(
       "Authentication error (10000)",
     );
+  });
+});
+
+describe("KVValue in a deploy", () => {
+  let directory: string;
+  let runtime: NodeDurableRuntime;
+  let values: Map<string, string>;
+
+  // The KV API of one account with the namespace ns1, once it is created.
+  function fakeKV() {
+    let created = false;
+    mockFetch(async (call) => {
+      const url = new URL(call.url);
+      const route = url.pathname.replace(
+        "/client/v4/accounts/acc/storage/kv/namespaces",
+        "",
+      );
+      const namespace = { id: "ns1", title: "config" };
+      if (route === "" && call.method === "GET") {
+        return ok(created ? [namespace] : []);
+      }
+      if (route === "" && call.method === "POST") {
+        created = true;
+        return ok(namespace);
+      }
+      if (route === "/ns1" && call.method === "GET") return ok(namespace);
+      const key = route.match(/^\/ns1\/values\/(.+)$/)?.[1];
+      if (key === undefined) return fail(400, 1, `unexpected ${route}`);
+      const name = decodeURIComponent(key);
+      if (call.method === "PUT") {
+        values.set(name, (await form(call.body)).value);
+        return ok({});
+      }
+      if (!values.has(name)) return keyNotFound();
+      if (call.method === "DELETE") {
+        values.delete(name);
+        return ok({});
+      }
+      return text(values.get(name)!);
+    });
+  }
+
+  async function deploy(executionId: string, key: string) {
+    const { resources } = await collectResourceGraph(
+      () => {
+        const namespace = new KVNamespace("config", {
+          config: { Title: "config" },
+        });
+        new KVValue("config:routes", {
+          config: { Key: key, Value: "v1" },
+          dependencies: { namespace },
+        });
+      },
+      { scope: { app: "shop", stage: "dev" } },
+    );
+    await runDurableWorkflow(
+      { workflowId: "deploy", runtime, executionId },
+      (step, id) =>
+        durable.deploy(step, {
+          executionId: id,
+          resources,
+          state: runtime.state,
+          nameScope: { app: "shop", stage: "dev" },
+        }),
+    );
+  }
+
+  beforeEach(async () => {
+    directory = await mkdtemp(path.join(tmpdir(), "notation-cf-kv-"));
+    runtime = new NodeDurableRuntime({
+      deployment: { app: "shop", stage: "dev" },
+      databasePath: path.join(directory, "workflows.db"),
+    });
+    values = new Map();
+    vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "acc");
+    fakeKV();
+  });
+
+  afterEach(async () => {
+    runtime.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  it("writes the new key before it deletes the old one when the key changes", async () => {
+    await deploy("first", "routes");
+    calls.length = 0;
+
+    await deploy("second", "routes-v2");
+
+    expect(values).toEqual(new Map([["routes-v2", "v1"]]));
+    const writes = calls
+      .filter((call) => call.method !== "GET")
+      .map(
+        (call) =>
+          `${call.method} ${new URL(call.url).pathname.split("/").pop()}`,
+      );
+    expect(writes).toEqual(["PUT routes-v2", "DELETE routes"]);
+  });
+
+  it("keeps the old key when the new key already exists", async () => {
+    await deploy("first", "routes");
+    values.set("taken", "theirs");
+
+    await expect(deploy("second", "taken")).rejects.toThrow(
+      `already has the key "taken"`,
+    );
+
+    expect(values).toEqual(
+      new Map([
+        ["routes", "v1"],
+        ["taken", "theirs"],
+      ]),
+    );
+    expect((await runtime.state.get("config:routes"))?.params).toMatchObject({
+      Key: "routes",
+    });
   });
 });

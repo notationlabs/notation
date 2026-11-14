@@ -25,6 +25,9 @@ export type KVValueDependencies = {
 const kvValue = resource<KVValueSchema>({
   type: "cloudflare/kv/KVValue",
   provider: "@notation/cloudflare/resources",
+  // A replace changes the key, the namespace or the account, so the new key
+  // never collides with the old one.
+  replaceCreatesFirst: true,
 });
 
 const kvValueSchema = kvValue.defineSchema({
@@ -43,10 +46,9 @@ const kvValueSchema = kvValue.defineSchema({
     value: v.string(),
   },
   /**
-   * The key's name: 1 to 512 bytes, and not `.` or `..`. A change deletes the
-   * old key, then writes the new one, so for a moment neither key exists. If
-   * the new key already exists, the deploy fails after the old key is
-   * deleted.
+   * The key's name: 1 to 512 bytes, and not `.` or `..`. A change writes the
+   * new key, then deletes the old key at the end of the deploy. If the new
+   * key already exists, the deploy fails and the old key stays as it was.
    */
   Key: {
     propertyType: "param",

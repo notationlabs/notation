@@ -56,7 +56,7 @@ describeE2e("KVValue", () => {
     expect(await getKVValue(accountId, namespaceId, "routes")).toBe('{"a":2}');
   });
 
-  it("deletes the old key and writes the new one when the key changes", async () => {
+  it("writes the new key and deletes the old one when the key changes", async () => {
     project.write("infra/main.ts", infraModule(title, "routes-v2", '{"a":2}'));
     await project.notation("deploy");
 
