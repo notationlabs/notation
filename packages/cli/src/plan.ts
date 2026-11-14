@@ -1,6 +1,7 @@
 import {
   createLoggerReconcilerSubscriber,
   planApp,
+  PRODUCED_SOURCE,
   PROMPT_SOURCE,
   resolveDeploymentId,
   type Deployment,
@@ -126,6 +127,12 @@ function printPlanSummary(result: Plan, logger: Logger) {
           : `    deleted if ${node.replacedDependency} is replaced`,
       );
     }
+    const rotated = rotatedSecrets(result, node);
+    if (rotated.length > 0) {
+      logger.info(
+        `    rotation: writes a new value to the secrets ${rotated.join(", ")}`,
+      );
+    }
     if (promptsForValue(node)) {
       logger.info(
         "    value not set: deploy asks for it if the secret doesn't exist, and fails without a terminal",
@@ -167,4 +174,26 @@ function promptsForValue(node: PlanNode): boolean {
   return (
     creatingDecisions.has(node.decision) && valueFrom?.Source === PROMPT_SOURCE
   );
+}
+
+const rotatingDecisions = new Set<PlanNode["decision"]>([
+  "replace",
+  "drift-replace",
+  "drift-recreate",
+]);
+
+// A secret whose source a resource produces has `ValueFrom: { Source:
+// PRODUCED_SOURCE }` and depends on that resource. The producer's create
+// writes the value, so a producer that is created again writes a new value
+// to each such secret. Returns the ids of the secrets.
+function rotatedSecrets(result: Plan, node: PlanNode): string[] {
+  if (!rotatingDecisions.has(node.decision)) return [];
+  return result.nodes.flatMap((other) => {
+    const valueFrom = other.params.ValueFrom as
+      { Source?: unknown; Secret?: unknown } | undefined;
+    return valueFrom?.Source === PRODUCED_SOURCE &&
+      other.dependsOn.includes(node.id)
+      ? [String(valueFrom.Secret)]
+      : [];
+  });
 }
