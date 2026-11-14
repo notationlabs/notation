@@ -1,7 +1,6 @@
 import {
   createLoggerReconcilerSubscriber,
   planApp,
-  ONE_TIME_SOURCE,
   PROMPT_SOURCE,
   resolveDeploymentId,
   type Deployment,
@@ -127,12 +126,6 @@ function printPlanSummary(result: Plan, logger: Logger) {
           : `    deleted if ${node.replacedDependency} is replaced`,
       );
     }
-    const rotated = rotatedSecrets(result, node);
-    if (rotated.length > 0) {
-      logger.info(
-        `    rotation: writes a new value to the ${rotated.length === 1 ? "secret" : "secrets"} ${rotated.join(", ")}`,
-      );
-    }
     if (promptsForValue(node)) {
       logger.info(
         "    value not set: deploy asks for it if the secret doesn't exist, and fails without a terminal",
@@ -174,34 +167,4 @@ function promptsForValue(node: PlanNode): boolean {
   return (
     creatingDecisions.has(node.decision) && valueFrom?.Source === PROMPT_SOURCE
   );
-}
-
-const deletingDecisions = new Set<PlanNode["decision"]>([
-  "delete-orphan",
-  "delete-retired",
-]);
-
-const rotatingDecisions = new Set<PlanNode["decision"]>([
-  "replace",
-  "drift-replace",
-  "drift-recreate",
-]);
-
-// A secret whose source a resource produces has `ValueFrom: { Source:
-// ONE_TIME_SOURCE, Producer }`, where `Producer` is the id of that resource.
-// The producer's create writes the value, so a producer that is created
-// again writes a new value to such a secret, unless it is being deleted.
-// One secret takes each one-time source, and a producer can have more than
-// one. Returns the ids of the secrets.
-function rotatedSecrets(result: Plan, node: PlanNode): string[] {
-  if (!rotatingDecisions.has(node.decision)) return [];
-  return result.nodes.flatMap((other) => {
-    if (deletingDecisions.has(other.decision)) return [];
-    const valueFrom = other.params.ValueFrom as
-      { Source?: unknown; Secret?: unknown; Producer?: unknown } | undefined;
-    return valueFrom?.Source === ONE_TIME_SOURCE &&
-      valueFrom.Producer === node.id
-      ? [String(valueFrom.Secret)]
-      : [];
-  });
 }

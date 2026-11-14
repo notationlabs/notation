@@ -68,13 +68,7 @@ Deploy creates the resources in this order: the store, the producer, the secret,
 
 - **Evaluation fails when no secret takes a one-time source.** Only the producer's create gets the value, so without a secret the value would be lost. The error names the source, such as `No secret takes keyPair({ id: "app" }).sources.privateKey.`
 - **Evaluation fails when a second secret takes a one-time source.** The producer writes the value to one secret. To use the value in more than one Worker, bind that secret in each Worker.
-- **A change to the secret's name or store replaces the producer.** The producer holds where the secret is in an immutable param, because only a create gets a value to write to a new secret. The new producer writes a new value to the secret, so the replace is a rotation. Plan prints the secret under the producer's replace:
-
-  ```text
-  -/+ replace cloudflare/tokens/AccountToken token:deploy (delete, then create)
-      rotation: writes a new value to the secret deploy
-  ```
-
+- **A change to the secret's name or store replaces the producer.** The producer holds where the secret is in an immutable param, because only a create gets a value to write to a new secret. The new producer writes a new value to the secret, so the replace is a rotation.
 - **A failed write loses the value.** When the producer's create fails to write the value to the secret, no later operation can get the value. The create of `accountToken()` then deletes the new token, so the next deploy creates a new one.
 - **A secret deleted outside notation is drift.** The secret's read finds no secret with the name, and plan shows the secret as `drift-recreate`. Deploy then fails at the secret, because only the producer's create writes the value. The error names the producer's resource:
 
@@ -91,11 +85,10 @@ Deploy creates the resources in this order: the store, the producer, the secret,
 To rotate a producer, delete its remote resource outside notation, then deploy. For `accountToken({ id: "deploy" })`, the steps are:
 
 1. Delete (or revoke) the API token `shop--dev--deploy` in the Cloudflare dashboard.
-2. Run `notation deploy`. The token's read finds no token, so plan shows the token as `drift-recreate`, with the secret that gets a new value:
+2. Run `notation deploy`. The token's read finds no token, so plan shows the token as `drift-recreate`:
 
    ```text
    ± drift-recreate cloudflare/tokens/AccountToken token:deploy
-       rotation: writes a new value to the secret deploy
    ```
 
 3. The new token's create writes its value to the token's secret. If the secret was also deleted, the secret's create then finds it again, and succeeds.

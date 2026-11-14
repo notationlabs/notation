@@ -217,7 +217,7 @@ The other operations of a producer follow from the fact that the secret owns the
 A secret's declaration accepts a `SecretSource`, and checks it with `isOneTimeSource`. For a one-time source, the Cloudflare `secret()` does this:
 
 - It calls `register` with the target `{ provider: "@notation/cloudflare/resources", params: { AccountId, StoreId, Name } }`, where `AccountId` and `StoreId` are output refs of the store, and with its declaration.
-- It records `ValueFrom: { Secret: id, Source: "one-time", Producer }`. `"one-time"` is `ONE_TIME_SOURCE` from `@notation/core`. `Producer` is the id of the producer's resource, such as `token:deploy`. Plan finds the secret that a replace or recreate of that resource rotates by it.
+- It records `ValueFrom: { Secret: id, Source: "one-time", Producer }`. `"one-time"` is `ONE_TIME_SOURCE` from `@notation/core`. `Producer` is the id of the producer's resource, such as `token:deploy`. The error for a missing secret names it.
 - It makes the secret depend on the producer's resource.
 - It declares the secret with no `set` and no `delete`, so `notation secret set` and `notation secret delete` refuse it. The refusal names the producer and holds the `rotation` text.
 
