@@ -1,6 +1,12 @@
 import * as v from "valibot";
 import { recordSecretValue } from "@notation/core";
-import { resource, ResourceNotFoundError } from "@notation/resource";
+import {
+  containsOutputRef,
+  planLookup,
+  resolveOutputRefs,
+  resource,
+  ResourceNotFoundError,
+} from "@notation/resource";
 import { sortedJson } from "@notation/utils";
 import { cloudflareCreate } from "src/api/client";
 import {
@@ -15,6 +21,8 @@ import {
   findTokensByName,
   getToken,
   updateToken,
+  type Token,
+  type TokenCondition,
   type TokenResources,
 } from "src/api/tokens";
 import type { SecretsStoreInstance } from "src/resources/secrets-store";
@@ -43,18 +51,58 @@ const policySchema = v.strictObject({
 
 export type AccountTokenPolicy = v.InferOutput<typeof policySchema>;
 
+const conditionSchema = v.strictObject({
+  /** The client IP ranges, in CIDR notation, that may or may not use the token. */
+  requestIp: v.optional(
+    v.strictObject({
+      in: v.optional(v.array(v.string())),
+      notIn: v.optional(v.array(v.string())),
+    }),
+  ),
+});
+
+export type AccountTokenCondition = v.InferOutput<typeof conditionSchema>;
+
+// An ISO 8601 time in UTC, with or without milliseconds. `deriveParams`
+// and the read both drop the milliseconds, so that the two compare equal.
+const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+
+const timestampSchema = v.pipe(
+  v.string(),
+  v.regex(
+    timestampPattern,
+    "Use an ISO 8601 time in UTC, such as 2027-01-01T00:00:00Z",
+  ),
+  // The check passes a time in another format, which the regex reports.
+  // `Date` reads a day past the end of the month as a day in the next month,
+  // so the check compares the parsed time with the input.
+  v.check(
+    (time) =>
+      !timestampPattern.test(time) ||
+      (!Number.isNaN(Date.parse(time)) &&
+        toSeconds(time) === `${time.slice(0, 19)}Z`),
+    "Use a date and time that exist, such as 2027-02-28T00:00:00Z",
+  ),
+);
+
 type AccountTokenParams = {
   AccountId: string;
   StoreId: string;
   /** The token's name, and the name of the secret that holds its value. */
   Name: string;
   Policies: AccountTokenPolicy[];
+  Condition?: AccountTokenCondition;
+  ExpiresOn?: string;
+  NotBefore?: string;
 };
 
 export type AccountTokenSchema = {
   Key: { AccountId: string; TokenId: string; StoreId: string; Name: string };
   CreateParams: AccountTokenParams;
-  UpdateParams: Pick<AccountTokenParams, "Policies">;
+  UpdateParams: Pick<
+    AccountTokenParams,
+    "Policies" | "Condition" | "ExpiresOn" | "NotBefore"
+  >;
   ReadResult: { SecretId: string };
 };
 
@@ -98,6 +146,27 @@ const accountTokenSchema = accountToken.defineSchema({
     presence: "required",
     value: v.pipe(v.array(policySchema), v.minLength(1)),
   },
+  Condition: {
+    propertyType: "param",
+    presence: "optional",
+    value: conditionSchema,
+  },
+  /**
+   * The time from which Cloudflare rejects the token. Use a fixed time. A
+   * time computed at deploy, such as a year from now, changes on every
+   * deploy, so every deploy updates the token.
+   */
+  ExpiresOn: {
+    propertyType: "param",
+    presence: "optional",
+    value: timestampSchema,
+  },
+  /** The time before which Cloudflare rejects the token. */
+  NotBefore: {
+    propertyType: "param",
+    presence: "optional",
+    value: timestampSchema,
+  },
   TokenId: {
     propertyType: "computed",
     presence: "required",
@@ -119,11 +188,18 @@ const accountTokenSchema = accountToken.defineSchema({
  * Create writes the new token's value into the secret in the same step,
  * because Cloudflare returns the value only in the create's response. A
  * create with an unknown outcome deletes the tokens with the name, and runs
- * again. A change to the policies updates the token in place, and the token
- * keeps its value. Delete deletes the token and its secret.
+ * again. A change to the policies, the condition or the times updates the
+ * token in place, and the token keeps its value. Delete deletes the token
+ * and its secret.
  *
  * Read fails when the secret is missing, as the value can't be fetched
  * again. The token has to be rotated.
+ *
+ * A change made in the dashboard to the policies or the IP ranges is seen
+ * as drift, and the deploy updates the token back to the config. A removed
+ * expiry or not-before time is not seen as drift. The read doesn't check the
+ * token's status, so a token that is disabled in the dashboard stays
+ * disabled.
  */
 export const AccountToken = accountTokenSchema
   .defineOperations({
@@ -131,6 +207,9 @@ export const AccountToken = accountTokenSchema
       const token = await cloudflareCreate(createToken)(params.AccountId, {
         name: params.Name,
         policies: policyRequests(params.Policies),
+        condition: conditionRequest(params.Condition),
+        expires_on: params.ExpiresOn,
+        not_before: params.NotBefore,
       });
       recordSecretValue(token.value);
       try {
@@ -194,13 +273,23 @@ export const AccountToken = accountTokenSchema
             resources: policy.resources,
           })),
         ),
+        ...readTimes(token),
+        // `{}` and not undefined, so that drift is seen when the IP ranges
+        // are removed in the dashboard. A config without a condition is not
+        // compared.
+        Condition: sortedCondition(readCondition(token)) ?? {},
       };
     },
 
+    // The update sends the whole config. It sends an empty condition and null
+    // times when the config doesn't set them, to remove them from the token.
     update: async (key, _patch, params) => {
       await updateToken(key.AccountId, key.TokenId, {
         name: params.Name,
         policies: policyRequests(params.Policies),
+        condition: conditionRequest(params.Condition) ?? {},
+        expires_on: params.ExpiresOn ?? null,
+        not_before: params.NotBefore ?? null,
       });
     },
 
@@ -213,8 +302,22 @@ export const AccountToken = accountTokenSchema
   .deriveParams(async ({ config, deps }) => {
     const { AccountId, StoreId } = deps.store.output;
     const Policies = await resolvePolicies(AccountId, config.Policies);
-    // The cast keeps Policies in the config, where the groups have names.
-    return { AccountId, StoreId, Policies } as typeof deps.store.output;
+    const derived: Partial<AccountTokenParams> = { Policies };
+    // Config still holds output refs when this runs. `planLookup` replaces
+    // each one whose resource has an output. A value that still holds an
+    // output ref is left as it is.
+    const resolve = <T>(value: T) => resolveOutputRefs(value, planLookup) as T;
+    const condition = resolve(config.Condition);
+    if (!containsOutputRef(condition)) {
+      derived.Condition = sortedCondition(condition);
+    }
+    for (const field of ["ExpiresOn", "NotBefore"] as const) {
+      const time = resolve(config[field]);
+      if (time && !containsOutputRef(time)) derived[field] = toSeconds(time);
+    }
+    // The cast keeps the derived values out of the declared return type, so
+    // that config keeps Policies with the groups' names.
+    return { AccountId, StoreId, ...derived } as typeof deps.store.output;
   });
 
 export type AccountTokenInstance = InstanceType<typeof AccountToken>;
@@ -225,6 +328,32 @@ const policyRequests = (policies: AccountTokenPolicy[]) =>
     permission_groups: policy.permissionGroups.map((id) => ({ id })),
     resources: policy.resources,
   }));
+
+const conditionRequest = (
+  condition: AccountTokenCondition | undefined,
+): TokenCondition | undefined =>
+  condition?.requestIp && {
+    request_ip: {
+      in: condition.requestIp.in,
+      not_in: condition.requestIp.notIn,
+    },
+  };
+
+const readCondition = (token: Token): AccountTokenCondition => ({
+  requestIp: {
+    in: token.condition?.request_ip?.in ?? undefined,
+    notIn: token.condition?.request_ip?.not_in ?? undefined,
+  },
+});
+
+function readTimes(
+  token: Token,
+): Pick<AccountTokenParams, "ExpiresOn" | "NotBefore"> {
+  const times: Pick<AccountTokenParams, "ExpiresOn" | "NotBefore"> = {};
+  if (token.expires_on) times.ExpiresOn = toSeconds(token.expires_on);
+  if (token.not_before) times.NotBefore = toSeconds(token.not_before);
+  return times;
+}
 
 /** The policies, with each permission group's name replaced by its ID. */
 async function resolvePolicies(
@@ -285,6 +414,25 @@ export function sortedPolicies(
       permissionGroups: [...new Set(policy.permissionGroups)].sort(),
     }))
     .sort((a, b) => compare(sortedJson.encode(a), sortedJson.encode(b)));
+}
+
+/**
+ * Sorts the IP ranges, and leaves out empty lists. Returns `undefined` for a
+ * condition with no ranges, which Cloudflare reads the same as no condition.
+ */
+export function sortedCondition(
+  condition: AccountTokenCondition | undefined,
+): AccountTokenCondition | undefined {
+  const requestIp: NonNullable<AccountTokenCondition["requestIp"]> = {};
+  for (const list of ["in", "notIn"] as const) {
+    const ranges = condition?.requestIp?.[list];
+    if (ranges?.length) requestIp[list] = [...ranges].sort();
+  }
+  return Object.keys(requestIp).length > 0 ? { requestIp } : undefined;
+}
+
+function toSeconds(time: string): string {
+  return `${new Date(time).toISOString().slice(0, 19)}Z`;
 }
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);

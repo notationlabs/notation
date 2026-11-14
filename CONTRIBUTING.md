@@ -36,12 +36,14 @@ when its tests end.
 
 - Credentials: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. The token
   needs the Workers Scripts: Edit permission, and the account needs a
-  workers.dev subdomain.
-- Prefix: `ne2e-<6 hex characters>`. A Worker whose name starts with `ne2e-` is
-  left over from a run that was killed, and can be deleted.
-- Account locks: a Secrets Store secret named `ne2e-lock-<name>` is a lock
-  from `@notation/test-utils`. One older than 30 minutes is left over from a
-  run that was killed, and can be deleted.
+  workers.dev subdomain. The tests of account tokens also need the Secrets
+  Store: Edit and Account API Tokens: Edit permissions. They use the account's
+  Secrets Store, or create one, and leave it.
+- Prefix: `ne2e-<6 hex characters>`. A Worker, an account API token or a
+  Secrets Store secret whose name starts with `ne2e-` is left over from a run
+  that was killed, and can be deleted. The exception is a `ne2e-lock-*`
+  secret, which is a lock from `@notation/test-utils`. Delete one only if it
+  is older than 30 minutes.
 
 ### AWS
 
