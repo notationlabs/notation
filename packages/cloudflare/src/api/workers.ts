@@ -45,6 +45,11 @@ export const bindingSchema = v.variant("type", [
     store_id: v.string(),
     secret_name: v.string(),
   }),
+  v.object({
+    type: v.literal("kv_namespace"),
+    name: v.string(),
+    namespace_id: v.string(),
+  }),
 ]);
 
 export type ScriptBinding = v.InferOutput<typeof bindingSchema>;
