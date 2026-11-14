@@ -15,7 +15,7 @@ A secret takes its value from a source and a key, or from a prompt when it has n
 
 Other sources are in their own packages, such as [`infisical()`](../providers/infisical/sources.md) from `@notation/infisical/sources`.
 
-A secret can also take a produced source: a value that another resource gets only in the response to its create, such as the value of an API token. The resource exposes the value at `<producer>.sources.<name>`, such as `token.sources.value`, and the secret takes it without a `key`. That resource's create writes the value, and deploy never asks a source or a prompt for it. See [Produced sources](../providers/cloudflare/secrets.md#produced-sources).
+A secret can also take a produced source: a value that another resource gets only in the response to its create, such as the value of an API token. The resource exposes the value at `<producer>.sources.<name>`, such as `app.sources.privateKey`, and one secret takes it without a `key`. That resource's create writes the value, and deploy never asks a source or a prompt for it. See [Produced sources](../providers/cloudflare/secrets.md#produced-sources).
 
 ```ts [infra/secrets.ts]
 import { secret } from "@notation/cloudflare/secrets-store";
@@ -119,7 +119,7 @@ The reconciler removes every value that `getValue` returned from the errors of o
 
 ## Writing a producer
 
-A producer is a resource that gets a value only in the response to its create, and writes it to secrets. The `AccountToken` resource in `@notation/cloudflare` is one. Its group, `accountToken()`, is the example in this section. `@notation/core` exports the parts:
+A producer is a resource that gets a value only in the response to its create, and writes it to a secret. The `AccountToken` resource in `@notation/cloudflare` is one. Its group, `accountToken()`, is the example in this section. `@notation/core` exports the parts:
 
 | Export                | Use                                                                          |
 | --------------------- | ---------------------------------------------------------------------------- |
@@ -127,25 +127,30 @@ A producer is a resource that gets a value only in the response to its create, a
 | `SecretSource`        | `Source \| ProducedSource`, what a secret's `source` can be.                 |
 | `producedSource()`    | Makes a produced source for a resource.                                      |
 | `SecretTarget`        | Where a value is written: `{ provider, params }`.                            |
-| `writeSecretValues()` | Writes values to targets, in the producer's create.                          |
+| `writeSecretValue()`  | Writes a value to a target, in the producer's create.                        |
 | `registerSecretStore` | Registers the store implementation that writes to targets of one `provider`. |
 | `isProducedSource()`  | Tells a produced source from a `Source`, in a secret's declaration.          |
 
-### The targets param
+### The target param
 
-The producer holds the secrets that it writes to in a collected param, as a list of `SecretTarget`. The param must be `immutable`, because only a create gets a value to write to a new target. So a change to the list replaces the producer, which is a rotation. The `AccountToken` resource calls the param `ValueTargets`:
+The producer holds the secret that it writes to in a collected param, as one `SecretTarget`. The secret's declaration contributes the target. The param must be `immutable`, because only a create gets a value to write to a new target. So a change to the target, such as a new secret name, replaces the producer, which is a rotation. The `AccountToken` resource calls the param `ValueTarget`:
 
 ```ts
-ValueTargets: {
+ValueTarget: {
   propertyType: "param",
   presence: "required",
   immutable: true,
-  value: v.array(v.object({ provider: v.string(), params: v.record(v.string(), v.any()) })),
-  collect: (items: unknown[]) => items.flat() as SecretTarget[],
+  value: v.object({ provider: v.string(), params: v.record(v.string(), v.any()) }),
+  collect: (items: unknown[], { resourceId, contributors }) => {
+    if (items.length > 1) {
+      throw new Error(`${resourceId} writes its value to one secret, and ${contributors.join(", ")} each contributed a target.`);
+    }
+    return items[0] as SecretTarget;
+  },
 },
 ```
 
-The `collect` doesn't sort the targets. The engine sorts the contributions to a collected param by content before it calls `collect`, so the order of the secrets in code doesn't change the list, and doesn't replace the producer.
+`producedSource` already throws when a second secret takes the source. The check in `collect` also catches a second target that code contributed to the param directly.
 
 ### `producedSource(options)`
 
@@ -157,8 +162,8 @@ this.sources = {
     producer: `accountToken({ id: "${config.id}" })`,
     resource: this.token,
     name: "value",
-    param: "ValueTargets",
-    rotation: `To rotate accountToken({ id: "${config.id}" }), delete the API token ${name} in the Cloudflare dashboard, then run \`notation deploy\`. Deploy creates a new token and writes its value to each secret that takes it.`,
+    param: "ValueTarget",
+    rotation: `To rotate accountToken({ id: "${config.id}" }), delete the API token ${name} in the Cloudflare dashboard, then run \`notation deploy\`. Deploy creates a new token and writes its value to the secret.`,
   }),
 };
 ```
@@ -166,26 +171,32 @@ this.sources = {
 | Option     | Meaning                                                                                                                                                                               |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `producer` | Names the declaration, such as `accountToken({ id: "deploy" })`, in the error for a source that no secret takes, and in the refusal of `notation secret`.                             |
-| `resource` | The resource whose create writes the value. Each secret that takes the source depends on it.                                                                                          |
+| `resource` | The resource whose create writes the value. The secret that takes the source depends on it.                                                                                           |
 | `name`     | The name in `sources`, such as `value`.                                                                                                                                               |
-| `param`    | The collected param of `resource` that holds the targets.                                                                                                                             |
+| `param`    | The collected param of `resource` that holds the target.                                                                                                                              |
 | `rotation` | Optional. Text that says how to rotate the producer, such as which resource to delete in a dashboard before the next deploy. The default is `Rotate <producer> to write a new value.` |
 
 The `rotation` text is shown in two places: the refusal of `notation secret set` and `notation secret delete`, and the error of a secret's create when the secret is missing. Name the producer by its declaration in it, because the user wrote the declaration and not the resource id.
 
-The produced source holds `producer`, `rotation`, `resource` and a method `register(target)` under the key `"~producedSource"`. A secret's declaration calls `register` with its own target, and `register` contributes the target to `param`. When the target holds output refs, such as the store's `StoreId`, the producer depends on the resources that they refer to. So deploy creates the store, then the producer, then the secret.
+The produced source holds `producer`, `rotation`, `resource` and a method `register(target, consumer)` under the key `"~producedSource"`. A secret's declaration calls `register` with its own target and its declaration, such as `secret({ id: "app-key" })`, and `register` contributes the target to `param`. When the target holds output refs, such as the store's `StoreId`, the producer depends on the resources that they refer to. So deploy creates the store, then the producer, then the secret.
+
+**One secret takes a produced source.** A second call to `register` throws, and the error names both secrets:
+
+```text
+secret({ id: "app-key-2" }) can't take keyPair({ id: "app" }).sources.privateKey, because secret({ id: "app-key" }) takes it. Only one secret can take a produced source.
+```
 
 **When evaluation of the infra ends, collection throws if no secret registered a target with a produced source.** The value would otherwise be lost, because only the producer's create gets it. `producedSource` adds this check only while a resource graph is being collected.
 
 ### The create
 
-The producer's create writes the value to each target with `writeSecretValues`, in the same step as the API call that returns the value:
+The producer's create writes the value to the target with `writeSecretValue`, in the same step as the API call that returns the value:
 
 ```ts
 create: async (params) => {
   const token = await createToken(/* ... */);
   try {
-    await writeSecretValues(params.ValueTargets.map((target) => [target, token.value]));
+    await writeSecretValue(params.ValueTarget, token.value);
   } catch (error) {
     await deleteToken(params.AccountId, token.id); // the value is lost, so delete the token
     throw error;
@@ -194,23 +205,22 @@ create: async (params) => {
 },
 ```
 
-`writeSecretValues` takes a list of `[target, value]` pairs, and writes them in order:
+`writeSecretValue(target, value)` does this:
 
-1. It adds each value to the values that the reconciler removes from errors, as `getValue` does.
-2. It looks up the store that is registered for each target's `provider`, and calls its `write` with the target's `params`. It throws if no store is registered for the provider.
-3. When a write fails, it deletes the values that it wrote before, and throws an error that says a secret may now be empty. When the first write fails, it throws that error as it is.
+1. It adds the value to the values that the reconciler removes from errors, as `getValue` does.
+2. It looks up the store that is registered for the target's `provider`, and calls its `write` with the target's `params`. It throws if no store is registered for the provider, and throws the store's error when the write fails.
 
-The other operations of a producer follow from the fact that the secrets own the value:
+The other operations of a producer follow from the fact that the secret owns the value:
 
-- `read` doesn't check the secrets. The secret's own read reports a missing secret as drift. A producer that threw on it would fail the plan before plan shows the drift.
-- `delete` removes only the producer's remote resource, and leaves the secrets. Each secret's own resource deletes its value, so a rotation or a removed producer leaves the secrets in place. For a producer that is replaced delete-first, a delete of the secrets would empty them until the new create writes them, and leave them empty if that create fails. For a producer that is replaced create-first, it would delete the value that the replacement wrote.
+- `read` doesn't check the secret. The secret's own read reports a missing secret as drift. A producer that threw on it would fail the plan before plan shows the drift.
+- `delete` removes only the producer's remote resource, and leaves the secret. The secret's own resource deletes its value, so a rotation or a removed producer leaves the secret in place. For a producer that is replaced delete-first, a delete of the secret would empty it until the new create writes it, and leave it empty if that create fails. For a producer that is replaced create-first, it would delete the value that the replacement wrote.
 
 ### The secret
 
 A secret's declaration accepts a `SecretSource`, and checks it with `isProducedSource`. For a produced source, the Cloudflare `secret()` does this:
 
-- It calls `register` with the target `{ provider: "@notation/cloudflare/resources", params: { AccountId, StoreId, Name } }`, where `AccountId` and `StoreId` are output refs of the store.
-- It records `ValueFrom: { Secret: id, Source: "produced", Producer, Rotation }`. `"produced"` is `PRODUCED_SOURCE` from `@notation/core`. `Producer` is the id of the producer's resource, such as `token:deploy`. Plan finds the secrets that a replace or recreate of that resource rotates by it. `Rotation` is the producer's `rotation` text, which is not secret data.
+- It calls `register` with the target `{ provider: "@notation/cloudflare/resources", params: { AccountId, StoreId, Name } }`, where `AccountId` and `StoreId` are output refs of the store, and with its declaration.
+- It records `ValueFrom: { Secret: id, Source: "produced", Producer, Rotation }`. `"produced"` is `PRODUCED_SOURCE` from `@notation/core`. `Producer` is the id of the producer's resource, such as `token:deploy`. Plan finds the secret that a replace or recreate of that resource rotates by it. `Rotation` is the producer's `rotation` text, which is not secret data.
 - It makes the secret depend on the producer's resource.
 - It declares the secret with no `set` and no `delete`, so `notation secret set` and `notation secret delete` refuse it. The refusal names the producer and holds the `rotation` text.
 
@@ -218,13 +228,11 @@ The secret's create writes nothing. It finds the secret by name and records it. 
 
 ### `registerSecretStore(provider, store)`
 
-A provider package registers the store that writes to its targets when the module of its secret resource loads. The resource registry loads that module for a secret's record that is no longer in code, so a producer whose secrets were removed still finds the store.
+A provider package registers the store that writes to its targets when the module of its secret resource loads. The resource registry loads that module for a secret's record that is no longer in code, so a producer whose secret was removed still finds the store.
 
 ```ts
 registerSecretStore("@notation/cloudflare/resources", {
   write: (params, value) => /* create the secret, or overwrite its value */,
-  delete: (params) => /* succeed when the secret is already gone */,
-  has: (params) => /* true when the secret exists */,
 });
 ```
 

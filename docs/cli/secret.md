@@ -39,7 +39,7 @@ Both commands fail when no secret has the id. The message lists the declared ids
 Both commands refuse a secret with a [produced source](../providers/cloudflare/secrets.md#produced-sources), such as the secret of an `accountToken()`. Only the producer's create writes the value, so a deleted value can't be written again from a source or the prompt. The message says how to rotate the producer:
 
 ```text
-Only the create of accountToken({ id: "deploy" }) writes the value of `deploy`, so `notation secret` can't set or delete it. To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to each secret that takes it.
+Only the create of accountToken({ id: "deploy" }) writes the value of `deploy`, so `notation secret` can't set or delete it. To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to the secret.
 ```
 
 `delete` also refuses a secret that a provider adopted rather than created, such as a Cloudflare secret with an explicit `name`.

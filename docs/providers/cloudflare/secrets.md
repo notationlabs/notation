@@ -45,12 +45,12 @@ export default {
 
 ::
 
-| Option   | Description                                                                                                                                                                                                                                                              |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`     | Keys the secret in state, and is what `notation secret set <id>` takes. The secret's name in the store is `<app>--<stage>--<id>`, such as `shop--dev--stripe-key`.                                                                                                       |
-| `source` | Where the value comes from, such as `env` or `dotenv(".env.local")` from `@notation/std/sources`. Given together with `key`. Without a source, deploy asks for the value. A [produced source](#produced-sources), such as `token.sources.value`, is given without `key`. |
-| `key`    | The key that the source is asked for. Not given with a produced source.                                                                                                                                                                                                  |
-| `name`   | An exact name in the store, in place of `<app>--<stage>--<id>`. The name isn't scoped to the stage. Use it to adopt a secret that exists, or to share one between stages. Cloudflare rejects a name with a dot.                                                          |
+| Option   | Description                                                                                                                                                                                                                                                                 |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`     | Keys the secret in state, and is what `notation secret set <id>` takes. The secret's name in the store is `<app>--<stage>--<id>`, such as `shop--dev--stripe-key`.                                                                                                          |
+| `source` | Where the value comes from, such as `env` or `dotenv(".env.local")` from `@notation/std/sources`. Given together with `key`. Without a source, deploy asks for the value. A [produced source](#produced-sources), such as `app.sources.privateKey`, is given without `key`. |
+| `key`    | The key that the source is asked for. Not given with a produced source.                                                                                                                                                                                                     |
+| `name`   | An exact name in the store, in place of `<app>--<stage>--<id>`. The name isn't scoped to the stage. Use it to adopt a secret that exists, or to share one between stages. Cloudflare rejects a name with a dot.                                                             |
 
 - Deploy writes the value when it creates the secret, and when the source's version of the key changes. For `env` and `dotenv`, that is every deploy. A new secret gets the scope Workers. A secret that exists keeps its scopes.
 - A secret without a source is written only when it is missing. Deploy asks for the value on a terminal, and fails without one. Set it first with [`notation secret set`](../../cli/secret.md), or with wrangler or in the dashboard.
@@ -62,39 +62,27 @@ export default {
 
 Some resources get a value only once, in the response to their create. For example, Cloudflare returns the value of an API token only when it creates the token. Deploy can't ask such a resource for the value later, so the value can't come from a source such as `env`.
 
-A resource like this is a producer. A producer exposes each such value as a produced source, at `<producer>.sources.<name>`. A secret takes the produced source as its `source`, without a `key`:
+A resource like this is a producer. A producer exposes each such value as a produced source, at `<producer>.sources.<name>`. One `secret()` takes the produced source as its `source`, without a `key`, and the producer's create writes the value to that secret. `accountToken()` is a producer: it declares the token and the secret that takes the token's value, so a config doesn't declare that secret.
 
-```ts [infra/tokens.ts]
-import { secret } from "@notation/cloudflare/secrets-store";
-import { accountToken } from "@notation/cloudflare/tokens";
+Deploy creates the resources in this order: the store, the producer, the secret, and then a Worker that binds the secret. The secret's create writes nothing. It checks that the secret exists in the store, and records it.
 
-export const deployToken = accountToken({ id: "deploy", policies });
-
-// A second secret that holds the same token value.
-export const ciToken = secret({
-  id: "ci-token",
-  source: deployToken.sources.value,
-});
-```
-
-Deploy creates the resources in this order: the store, the producer, the secret, and then a Worker that binds the secret. The producer's create writes the value to each secret that takes the source. The secret's create writes nothing. It checks that the secret exists in the store, and records it.
-
-- **Evaluation fails when no secret takes a produced source.** Only the producer's create gets the value, so without a secret the value would be lost. The error names the source, such as `No secret takes accountToken({ id: "deploy" }).sources.value.`
-- **A change to the secrets that take a produced source replaces the producer.** The producer holds the list of secrets in an immutable param, because only a create gets a value to write to a new secret. The new producer writes a new value to every secret that takes the source, so the replace is a rotation. Plan prints the secrets under the producer's replace:
+- **Evaluation fails when no secret takes a produced source.** Only the producer's create gets the value, so without a secret the value would be lost. The error names the source, such as `No secret takes keyPair({ id: "app" }).sources.privateKey.`
+- **Evaluation fails when a second secret takes a produced source.** The producer writes the value to one secret. To use the value in more than one Worker, bind that secret in each Worker.
+- **A change to the secret's name or store replaces the producer.** The producer holds where the secret is in an immutable param, because only a create gets a value to write to a new secret. The new producer writes a new value to the secret, so the replace is a rotation. Plan prints the secret under the producer's replace:
 
   ```text
   -/+ replace cloudflare/tokens/AccountToken token:deploy (delete, then create)
-      rotation: writes a new value to the secrets deploy, ci-token
+      rotation: writes a new value to the secret deploy
   ```
 
-- **A write that fails is rolled back.** When the producer's create fails to write to one secret, it deletes the secrets that it wrote to before it. The rollback also deletes a secret with an explicit `name` that took the value, although destroy leaves such a secret. The token's create also deletes the new token. In a rotation, a secret that held the earlier value can then be empty. The error says so, and the next plan shows each empty secret as drift.
+- **A failed write loses the value.** When the producer's create fails to write the value to the secret, no later operation can get the value. The create of `accountToken()` then deletes the new token, so the next deploy creates a new one.
 - **A secret deleted outside notation is drift.** The secret's read finds no secret with the name, and plan shows the secret as `drift-recreate`. Deploy then fails at the secret, because only the producer's create writes the value. The error says how to rotate the producer:
 
   ```text
-  The secret shop--dev--deploy of `deploy` is missing. Only the create of its producer writes the value. To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to each secret that takes it.
+  The secret shop--dev--deploy of `deploy` is missing. Only the create of its producer writes the value. To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to the secret.
   ```
 
-- Destroy deletes the secret and its value, as for any secret named `<app>--<stage>--<id>`. The producer's delete removes only the producer's own resource, such as the API token, and leaves the secrets.
+- Destroy deletes the secret and its value, as for any secret named `<app>--<stage>--<id>`. The producer's delete removes only the producer's own resource, such as the API token, and leaves the secret.
 - When the producer is removed from the code and the secret stays, the secret keeps its last value. From then on, the secret takes its value from its new source. With no source, deploy finds that the secret exists and doesn't ask for a value.
 - `notation secret set` and `notation secret delete` refuse a secret with a produced source. The message says how to rotate the producer.
 
@@ -103,20 +91,20 @@ Deploy creates the resources in this order: the store, the producer, the secret,
 To rotate a producer, delete its remote resource outside notation, then deploy. For `accountToken({ id: "deploy" })`, the steps are:
 
 1. Delete (or revoke) the API token `shop--dev--deploy` in the Cloudflare dashboard.
-2. Run `notation deploy`. The token's read finds no token, so plan shows the token as `drift-recreate`, with the secrets that get a new value:
+2. Run `notation deploy`. The token's read finds no token, so plan shows the token as `drift-recreate`, with the secret that gets a new value:
 
    ```text
    ± drift-recreate cloudflare/tokens/AccountToken token:deploy
-       rotation: writes a new value to the secrets deploy, ci-token
+       rotation: writes a new value to the secret deploy
    ```
 
-3. The new token's create writes its value to each secret that takes `sources.value`. A secret that was also deleted is then found again, so its create succeeds.
+3. The new token's create writes its value to the token's secret. If the secret was also deleted, the secret's create then finds it again, and succeeds.
 
-**Changing the token's `id` is not a rotation of the same secrets.** The secret's name comes from the `id`, so a new `id` makes a new token and a new secret, and a missing secret under the old name stays missing.
+**Changing the token's `id` is not a rotation of the same secret.** The secret's name comes from the `id`, so a new `id` makes a new token and a new secret, and a missing secret under the old name stays missing.
 
 ## `accountToken(config)`
 
-`accountToken` declares an account-owned API token, and a secret that holds the token's value. The token is a producer, and the secret takes its `sources.value`. So the token's create writes the value to the secret in the same step, and the value never reaches state. The token and the secret are both named `<app>--<stage>--<id>`, and the secret has the token's `id`.
+`accountToken` declares an account-owned API token, and a secret that holds the token's value. The token is a producer, and the secret takes its produced source. So the token's create writes the value to the secret in the same step, and the value never reaches state. The token and the secret are both named `<app>--<stage>--<id>`, and the secret has the token's `id`.
 
 ::code-group
 
@@ -156,22 +144,21 @@ export const worker = $worker({
 
 `accountToken` returns an `AccountTokenGroup`, with these fields:
 
-| Field           | Description                                                                                       |
-| --------------- | ------------------------------------------------------------------------------------------------- |
-| `token`         | The `cloudflare/tokens/AccountToken` resource, with the ID `token:<id>`.                          |
-| `secret`        | The secret that holds the value. Its resource has the ID `secret:<id>`.                           |
-| `sources.value` | The token's value, as a [produced source](#produced-sources). Another `secret()` can take it too. |
+| Field    | Description                                                              |
+| -------- | ------------------------------------------------------------------------ |
+| `token`  | The `cloudflare/tokens/AccountToken` resource, with the ID `token:<id>`. |
+| `secret` | The secret that holds the value. Its resource has the ID `secret:<id>`.  |
 
 - A change to the policies or the condition updates the token, which keeps its value.
 - If the IP ranges or the policies are changed in the dashboard, deploy changes them back to the declaration.
 - Plan looks up the ID of each permission group by its name, and compares the IDs with the token's. A name can belong to more than one group, one for each scope. Then the scope of the policy's `resources` picks the group: `com.cloudflare.api.account.<account id>` picks the account group, and `com.cloudflare.api.account.zone.<zone id>` picks the zone group. If the resources have more than one scope, plan fails and lists the groups. Give each scope its own policy.
-- The token's secret follows the rules of [produced sources](#produced-sources). If the secret is deleted, plan shows drift and deploy fails. To rotate the token, delete it in the Cloudflare dashboard and run `notation deploy`, as in [Rotating a producer](#rotating-a-producer). A secret that starts or stops taking `sources.value` also rotates the token.
+- The token's secret follows the rules of [produced sources](#produced-sources). If the secret is deleted, plan shows drift and deploy fails. To rotate the token, delete it in the Cloudflare dashboard and run `notation deploy`, as in [Rotating a producer](#rotating-a-producer).
 - Destroy deletes the secret, then the token.
 - `notation secret set` and `notation secret delete` refuse the token's secret.
 
 ## `secretsStore.bind(secret)`
 
-`secretsStore.bind` binds a secret from `secret()` or a token from `accountToken()` to a Worker, as a Secrets Store binding. For a token, it binds the token's secret. A rotation that keeps the secret, such as one caused by a new secret that takes `sources.value`, writes the new value to the same secret, so the binding stays the same. A change to the token's `id` makes a new secret, so the binding changes. In the Worker, the binding has the type `SecretsStoreSecret`, and the code reads the value with `await env.NAME.get()`. The Worker is uploaded after the secret, because Cloudflare fails an upload that binds a secret that doesn't exist.
+`secretsStore.bind` binds a secret from `secret()` or a token from `accountToken()` to a Worker, as a Secrets Store binding. For a token, it binds the token's secret. A rotation that keeps the secret, such as one after the token was deleted in the dashboard, writes the new value to the same secret, so the binding stays the same. A change to the token's `id` makes a new secret, so the binding changes. In the Worker, the binding has the type `SecretsStoreSecret`, and the code reads the value with `await env.NAME.get()`. The Worker is uploaded after the secret, because Cloudflare fails an upload that binds a secret that doesn't exist.
 
 ## The store
 
