@@ -46,7 +46,10 @@ const workerModule = `
 // name doesn't follow the <app>--<stage>-- form of the Worker's name.
 // Only resources that a group adds are deployed, so the module declares
 // the resources in a group.
-const infraModule = (settings: { maxInstances: number; image: string }) => `
+const infraModule = (settings: {
+  maxInstances: number;
+  configuration: Record<string, unknown>;
+}) => `
   import { containers, workers } from "@notation/cloudflare/resources";
   import { ResourceGroup } from "@notation/resource";
   import { fs } from "@notation/std/resources";
@@ -84,7 +87,7 @@ const infraModule = (settings: { maxInstances: number; image: string }) => `
             Name: "${runPrefix}-sandbox",
             HostedNamespaceId: "sandboxes",
             MaxInstances: ${settings.maxInstances},
-            Configuration: { image: "${settings.image}", instance_type: "lite" },
+            Configuration: ${JSON.stringify(settings.configuration)},
           },
           dependencies: { script },
         }),
@@ -99,8 +102,15 @@ type Application = {
   id: string;
   name: string;
   max_instances: number;
-  configuration: { image: string; vcpu?: number; memory_mib?: number };
+  configuration: {
+    image: string;
+    vcpu?: number;
+    memory_mib?: number;
+    disk?: { size_mb: number };
+    environment_variables?: { name: string; value: string }[];
+  };
   durable_objects?: { namespace_id: string };
+  active_rollout_id?: string;
 };
 
 async function applicationsWithPrefix(prefix: string): Promise<Application[]> {
@@ -116,6 +126,25 @@ async function applicationsWithPrefix(prefix: string): Promise<Application[]> {
   return (response.result ?? []).filter((application) =>
     application.name.startsWith(prefix),
   );
+}
+
+// Cloudflare refuses a rollout while another is running, and only updates
+// the application's configuration when the rollout ends.
+async function waitForRollout(applicationId: string): Promise<Application> {
+  const deadline = Date.now() + 480_000;
+  for (;;) {
+    const response = await api<Application>(
+      "GET",
+      `/containers/applications/${applicationId}`,
+    );
+    if (response.success && !response.result.active_rollout_id) {
+      return response.result;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`The rollout of ${applicationId} didn't end in time`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+  }
 }
 
 async function namespaceIdOf(script: string, className: string) {
@@ -148,7 +177,10 @@ describeE2e("ContainerApplication", () => {
     project.write("worker/index.js", workerModule);
     project.write(
       "infra/main.ts",
-      infraModule({ maxInstances: 1, image: IMAGE_V1 }),
+      infraModule({
+        maxInstances: 1,
+        configuration: { image: IMAGE_V1, instance_type: "lite" },
+      }),
     );
     await project.notation("deploy");
 
@@ -185,11 +217,18 @@ describeE2e("ContainerApplication", () => {
     });
   }, 600_000);
 
-  it("updates the instance limit and rolls out a new image on a second deploy", async () => {
+  it("updates the instance limit and rolls out a new image, instance type and variables on a second deploy", async () => {
     expect(applicationId, "the first deploy made no application").toBeDefined();
     project.write(
       "infra/main.ts",
-      infraModule({ maxInstances: 2, image: IMAGE_V2 }),
+      infraModule({
+        maxInstances: 2,
+        configuration: {
+          image: IMAGE_V2,
+          instance_type: "basic",
+          environment_variables: [{ name: "GREETING", value: "hello" }],
+        },
+      }),
     );
     await project.notation("deploy");
 
@@ -207,6 +246,33 @@ describeE2e("ContainerApplication", () => {
     expect(
       rollouts.result.map((rollout) => rollout.target_configuration?.image),
     ).toContain(IMAGE_V2);
+
+    expect((await waitForRollout(applicationId)).configuration).toMatchObject({
+      image: IMAGE_V2,
+      vcpu: 0.25,
+      memory_mib: 1024,
+      disk: { size_mb: 4000 },
+      environment_variables: [{ name: "GREETING", value: "hello" }],
+    });
+  }, 600_000);
+
+  it("removes the instance type and the variables that a third deploy leaves out", async () => {
+    expect(applicationId, "the first deploy made no application").toBeDefined();
+    project.write(
+      "infra/main.ts",
+      infraModule({ maxInstances: 2, configuration: { image: IMAGE_V2 } }),
+    );
+    await project.notation("deploy");
+
+    const application = await waitForRollout(applicationId);
+    // The resources of a create that sets no size.
+    expect(application.configuration).toMatchObject({
+      image: IMAGE_V2,
+      vcpu: 0.0625,
+      memory_mib: 256,
+      disk: { size_mb: 2000 },
+    });
+    expect(application.configuration.environment_variables ?? []).toEqual([]);
   }, 600_000);
 
   it("deletes the application and the Worker on destroy", async () => {

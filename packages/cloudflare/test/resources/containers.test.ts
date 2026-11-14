@@ -405,7 +405,7 @@ describe("ContainerApplication", () => {
     await application.update!(
       key,
       { Configuration: desired } as any,
-      { ...params, Configuration: desired },
+      { ...params, Configuration: desired as any },
       { ...params, Configuration: previous } as any,
     );
     return (calls[0]!.body as any).target_configuration;
