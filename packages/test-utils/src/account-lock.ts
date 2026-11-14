@@ -1,9 +1,9 @@
+import { hostname } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterAll, beforeAll } from "vitest";
-import { api, runPrefix } from "./e2e";
 
 export type LockHolder = {
-  /** The `runPrefix` of the run that holds the lock. */
+  /** Names the run that holds the lock, in the error of a run that waits. */
   holder: string;
   takenAt: Date;
 };
@@ -31,6 +31,8 @@ export type AccountLockOptions = {
   maxAgeMs?: number;
   /** The delay between attempts to take the lock. */
   retryMs?: number;
+  /** Names this run in the lock. Defaults to `defaultHolder`. */
+  holder?: string;
   store?: LockStore;
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
@@ -46,11 +48,25 @@ const DEFAULT_WAIT_MS = 15 * 60_000;
 const DEFAULT_MAX_AGE_MS = 30 * 60_000;
 const DEFAULT_RETRY_MS = 10_000;
 
+/** The machine and the process ID of this test run. */
+export const defaultHolder = `${hostname()}:${process.pid}`;
+
 export const lockName = (name: string) => `ne2e-lock-${name}`;
 
 /**
- * Takes the account-wide lock named `name`. If another run holds it, retries
- * until `waitMs` passes, and then throws an error that names the holder.
+ * Takes the account-wide lock named `name`. A test takes a lock before it
+ * manages a resource that the account can have only one of, so that only one
+ * test run at a time uses it.
+ *
+ * If another run holds the lock, this retries until `waitMs` (15 minutes)
+ * passes, and then throws an error that names the holder. A lock older than
+ * `maxAgeMs` (30 minutes) was left by a run that was killed, so this deletes
+ * it and takes it.
+ *
+ * By default the lock is a secret named `ne2e-lock-<name>` in the Cloudflare
+ * Secrets Store of `CLOUDFLARE_ACCOUNT_ID`. `CLOUDFLARE_API_TOKEN` needs the
+ * Secrets Store: Edit permission. If the account has no store, one is created
+ * and left.
  */
 export async function takeAccountLock(
   name: string,
@@ -60,6 +76,7 @@ export async function takeAccountLock(
     waitMs = DEFAULT_WAIT_MS,
     maxAgeMs = DEFAULT_MAX_AGE_MS,
     retryMs = DEFAULT_RETRY_MS,
+    holder = defaultHolder,
     store = secretsStoreLocks(),
     now = Date.now,
     sleep: wait = sleep,
@@ -68,7 +85,7 @@ export async function takeAccountLock(
   const deadline = now() + waitMs;
   for (;;) {
     const id = await store.create(fullName, {
-      holder: runPrefix,
+      holder,
       takenAt: new Date(now()),
     });
     if (id) {
@@ -91,8 +108,8 @@ export async function takeAccountLock(
     }
     if (now() >= deadline) {
       const holder = current
-        ? `The run ${current.holder} took it at ${current.takenAt.toISOString()}.`
-        : "No run holds it now.";
+        ? `${current.holder} took it at ${current.takenAt.toISOString()}.`
+        : "Nothing holds it now.";
       throw new Error(
         `Timed out after ${Math.round(waitMs / 1000)}s waiting for the lock ${fullName}. ${holder}`,
       );
@@ -120,9 +137,21 @@ export async function withAccountLock<T>(
 
 /**
  * Holds the account-wide lock named `name` for the tests of the enclosing
- * `describe`. Call it before `useProject`: vitest runs `afterAll` hooks in
- * the reverse order that they were added, so the lock is released after the
- * project is destroyed.
+ * `describe`. See `takeAccountLock`.
+ *
+ * Call it before the hooks that create and destroy the resource. Vitest runs
+ * `afterAll` hooks in the reverse order that they were added, so the lock is
+ * released after the resource is destroyed.
+ *
+ * ```ts
+ * import { useAccountLock } from "@notation/test-utils";
+ *
+ * describeE2e("ContainerRegistry", () => {
+ *   useAccountLock("container-registry");
+ *   const project = useProject();
+ *   // ...
+ * });
+ * ```
  */
 export function useAccountLock(
   name: string,
@@ -249,4 +278,62 @@ async function accountStoreId(): Promise<string> {
   const other = await list();
   if (other) return other;
   throw new Error(`Creating a store failed: ${JSON.stringify(created.errors)}`);
+}
+
+/**
+ * True when `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` are set. The
+ * Secrets Store locks need both.
+ */
+export function hasCloudflareCredentials(): boolean {
+  return Boolean(
+    process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN,
+  );
+}
+
+type ApiResponse<T> = {
+  status: number;
+  success: boolean;
+  errors: { code?: number; message: string }[];
+  result: T;
+};
+
+// Reads the credentials on each call, so that a test can set them after this
+// module is imported.
+async function api<T = any>(
+  method: "GET" | "POST" | "DELETE",
+  // The path after `/accounts/<id>`.
+  path: string,
+  body?: object,
+): Promise<ApiResponse<T>> {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+  if (!accountId || !apiToken) {
+    throw new Error(
+      "The account locks need CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN.",
+    );
+  }
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}${path}`,
+    {
+      method,
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        ...(body && { "Content-Type": "application/json" }),
+      },
+      body: body && JSON.stringify(body),
+    },
+  );
+  const text = await response.text();
+  let envelope: any = {};
+  try {
+    envelope = JSON.parse(text);
+  } catch {
+    envelope = { errors: [{ message: text.slice(0, 200) }] };
+  }
+  return {
+    status: response.status,
+    success: response.ok && envelope.success !== false,
+    errors: envelope.errors ?? [],
+    result: envelope.result,
+  };
 }

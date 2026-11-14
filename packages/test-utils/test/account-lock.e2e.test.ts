@@ -1,11 +1,16 @@
+import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
-import { expect, it } from "vitest";
-import { lockName, secretsStoreLocks, withAccountLock } from "./account-lock";
-import { describeE2e, runPrefix } from "./e2e";
+import { describe, expect, it } from "vitest";
+import {
+  hasCloudflareCredentials,
+  lockName,
+  secretsStoreLocks,
+  withAccountLock,
+} from "../src";
 
-describeE2e("withAccountLock", () => {
+describe.skipIf(!hasCloudflareCredentials())("withAccountLock", () => {
   // A name of this run's own, so that this test never waits for real runs.
-  const name = `selftest-${runPrefix}`;
+  const name = `selftest-${randomBytes(3).toString("hex")}`;
 
   it("runs the work of two holders of the same lock one after the other", async () => {
     const store = secretsStoreLocks();
@@ -20,8 +25,8 @@ describeE2e("withAccountLock", () => {
     const options = { retryMs: 1_000, waitMs: 120_000 };
     try {
       await Promise.all([
-        withAccountLock(name, work("a"), options),
-        withAccountLock(name, work("b"), options),
+        withAccountLock(name, work("a"), { ...options, holder: "a" }),
+        withAccountLock(name, work("b"), { ...options, holder: "b" }),
       ]);
     } finally {
       const left = await store.read(lockName(name));
@@ -34,7 +39,7 @@ describeE2e("withAccountLock", () => {
       `start ${second}`,
       `end ${second}`,
     ]);
-    expect(holders).toEqual([runPrefix, runPrefix]);
+    expect(holders).toEqual([first, second]);
     expect(await store.read(lockName(name))).toBeUndefined();
   });
 });

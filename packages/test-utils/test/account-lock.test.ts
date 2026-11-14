@@ -3,10 +3,10 @@ import {
   type AccountLockOptions,
   type LockRecord,
   type LockStore,
+  defaultHolder,
   takeAccountLock,
   withAccountLock,
-} from "./account-lock";
-import { runPrefix } from "./e2e";
+} from "../src";
 
 const MINUTE = 60_000;
 
@@ -59,12 +59,12 @@ function setup() {
 }
 
 describe("takeAccountLock", () => {
-  it("takes a free lock, and records the run and the time", async () => {
+  it("takes a free lock, and records the holder and the time", async () => {
     const { locks, options, now } = setup();
     const lock = await takeAccountLock("registry", options);
     expect(lock.name).toBe("ne2e-lock-registry");
     expect(locks.get("ne2e-lock-registry")).toMatchObject({
-      holder: runPrefix,
+      holder: defaultHolder,
       takenAt: new Date(now()),
     });
   });
@@ -90,14 +90,14 @@ describe("takeAccountLock", () => {
     expect(locks.get("ne2e-lock-registry")?.id).toBe("id-2");
   });
 
-  it("times out with the holder's run and time", async () => {
+  it("times out with the holder and the time", async () => {
     const { options, hold, now } = setup();
     hold("ne2e-abc123", now() - MINUTE);
     await expect(
       takeAccountLock("registry", { ...options, waitMs: 5 * MINUTE }),
     ).rejects.toThrow(
       "Timed out after 300s waiting for the lock ne2e-lock-registry. " +
-        "The run ne2e-abc123 took it at 2026-11-14T11:59:00.000Z.",
+        "ne2e-abc123 took it at 2026-11-14T11:59:00.000Z.",
     );
   });
 
@@ -106,7 +106,7 @@ describe("takeAccountLock", () => {
     const stale = hold("ne2e-abc123", now() - 31 * MINUTE);
     await takeAccountLock("registry", options);
     expect(log).toEqual([`delete ${stale}`, "create id-2"]);
-    expect(locks.get("ne2e-lock-registry")?.holder).toBe(runPrefix);
+    expect(locks.get("ne2e-lock-registry")?.holder).toBe(defaultHolder);
   });
 
   it("waits for a lock younger than a maximum age that is set", async () => {
@@ -132,7 +132,7 @@ describe("takeAccountLock", () => {
     // remove the lock that the first run then created.
     expect(log.filter((entry) => entry.startsWith("create"))).toHaveLength(1);
     expect(log).toContain(`delete ${stale}`);
-    expect(locks.get("ne2e-lock-registry")?.holder).toBe(runPrefix);
+    expect(locks.get("ne2e-lock-registry")?.holder).toBe(defaultHolder);
     expect([first.status, second.status].sort()).toEqual([
       "fulfilled",
       "rejected",
