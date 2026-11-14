@@ -3,6 +3,7 @@ import {
   type AccountLockOptions,
   type LockRecord,
   type LockStore,
+  RetryableLockError,
   defaultHolder,
   takeAccountLock,
   withAccountLock,
@@ -104,9 +105,76 @@ describe("takeAccountLock", () => {
   it("deletes a lock older than the maximum age, and takes it", async () => {
     const { locks, log, options, hold, now } = setup();
     const stale = hold("ne2e-abc123", now() - 61 * MINUTE);
+    const start = now();
     await takeAccountLock("registry", options);
     expect(log).toEqual([`delete ${stale}`, "create id-2"]);
     expect(locks.get("ne2e-lock-registry")?.holder).toBe(defaultHolder);
+    expect(now() - start).toBe(MINUTE);
+  });
+
+  it("sleeps after deleting a stale lock, and stops at the deadline", async () => {
+    const { options } = setup();
+    // A lock that always looks stale, as it would with a local clock that is
+    // far ahead.
+    let deletes = 0;
+    const store: LockStore = {
+      create: async () => undefined,
+      read: async () => ({ id: "x", holder: "other", created: new Date(0) }),
+      delete: async () => {
+        deletes++;
+      },
+    };
+    await expect(
+      takeAccountLock("registry", { ...options, store, waitMs: 5 * MINUTE }),
+    ).rejects.toThrow("Timed out after 300s");
+    expect(deletes).toBe(6);
+  });
+
+  it("tries again after a retryable error", async () => {
+    const { locks, options, now } = setup();
+    const start = now();
+    let failures = 2;
+    const store: LockStore = {
+      ...options.store!,
+      create: async (name, holder) => {
+        if (failures-- > 0) throw new RetryableLockError("rate limited");
+        return options.store!.create(name, holder);
+      },
+    };
+    await takeAccountLock("registry", { ...options, store });
+    expect(now() - start).toBe(2 * MINUTE);
+    expect(locks.get("ne2e-lock-registry")?.holder).toBe(defaultHolder);
+  });
+
+  it("times out when every attempt fails with a retryable error", async () => {
+    const { options } = setup();
+    const store: LockStore = {
+      ...options.store!,
+      create: async () => {
+        throw new RetryableLockError("POST failed with 503");
+      },
+    };
+    await expect(
+      takeAccountLock("registry", { ...options, store, waitMs: 5 * MINUTE }),
+    ).rejects.toThrow(
+      "Timed out after 300s waiting for the lock ne2e-lock-registry. " +
+        "The last attempt failed: POST failed with 503",
+    );
+  });
+
+  it("throws an error that is not retryable at once", async () => {
+    const { options, now } = setup();
+    const start = now();
+    const store: LockStore = {
+      ...options.store!,
+      create: async () => {
+        throw new Error("Forbidden");
+      },
+    };
+    await expect(
+      takeAccountLock("registry", { ...options, store }),
+    ).rejects.toThrow("Forbidden");
+    expect(now()).toBe(start);
   });
 
   it("takes over a lock that a killed run just took, with the default times", async () => {
@@ -134,8 +202,8 @@ describe("takeAccountLock", () => {
     const { locks, log, options, hold, now } = setup();
     const stale = hold("ne2e-abc123", now() - 61 * MINUTE);
     const [first, second] = await Promise.allSettled([
-      takeAccountLock("registry", { ...options, waitMs: 0 }),
-      takeAccountLock("registry", { ...options, waitMs: 0 }),
+      takeAccountLock("registry", { ...options, waitMs: 2 * MINUTE }),
+      takeAccountLock("registry", { ...options, waitMs: 2 * MINUTE }),
     ]);
     // Both delete the stale lock by its ID, so the second delete doesn't
     // remove the lock that the first run then created.

@@ -60,6 +60,12 @@ export const defaultHolder = `${hostname()}:${process.pid}`;
 export const lockName = (name: string) => `ne2e-lock-${name}`;
 
 /**
+ * A failed request that may succeed if it is sent again: a rate limit or a
+ * server error. `takeAccountLock` tries again on the next attempt.
+ */
+export class RetryableLockError extends Error {}
+
+/**
  * Takes the account-wide lock named `name`. A test takes a lock before it
  * manages a resource that the account can have only one of, so that only one
  * test run at a time uses it.
@@ -68,7 +74,8 @@ export const lockName = (name: string) => `ne2e-lock-${name}`;
  * passes, and then throws an error that names the holder. A lock older than
  * `maxAgeMs` (60 minutes) was left by a run that was killed, so this deletes
  * it and takes it. With the defaults, a run waits for a killed run's lock to
- * become stale and then takes it.
+ * become stale and then takes it. A `RetryableLockError` from the store also
+ * counts as a failed attempt.
  *
  * By default the lock is a secret named `ne2e-lock-<name>` in the Cloudflare
  * Secrets Store of `CLOUDFLARE_ACCOUNT_ID`. `CLOUDFLARE_API_TOKEN` needs the
@@ -90,25 +97,35 @@ export async function takeAccountLock(
   const fullName = lockName(name);
   const deadline = now() + waitMs;
   for (;;) {
-    const id = await store.create(fullName, holder);
-    if (id) {
-      return { name: fullName, release: () => store.delete(id) };
-    }
-    // `undefined` if the holder released the lock after the create failed.
-    const current = await store.read(fullName);
-    if (current && now() - current.created.getTime() > maxAgeMs) {
-      // Deleting by ID means that of two runs that steal the same stale lock,
-      // the slower one can't delete the lock that the faster one then takes.
-      // Both then try the create, and only one of them gets the lock.
-      await store.delete(current.id);
-      continue;
+    // The lock as this attempt last saw it, for the timeout error.
+    let current: LockRecord | undefined;
+    let retryable: RetryableLockError | undefined;
+    try {
+      const id = await store.create(fullName, holder);
+      if (id) {
+        return { name: fullName, release: () => store.delete(id) };
+      }
+      // `undefined` if the holder released the lock after the create failed.
+      current = await store.read(fullName);
+      if (current && now() - current.created.getTime() > maxAgeMs) {
+        // Deleting by ID means that of two runs that steal the same stale
+        // lock, the slower one can't delete the lock that the faster one then
+        // takes. Both then try the create, and only one of them gets the lock.
+        await store.delete(current.id);
+        current = undefined;
+      }
+    } catch (error) {
+      if (!(error instanceof RetryableLockError)) throw error;
+      retryable = error;
     }
     if (now() >= deadline) {
-      const holder = current
+      const state = current
         ? `${current.holder} took it at ${current.created.toISOString()}.`
-        : "Nothing holds it now.";
+        : retryable
+          ? `The last attempt failed: ${retryable.message}`
+          : "Nothing holds it now.";
       throw new Error(
-        `Timed out after ${Math.round(waitMs / 1000)}s waiting for the lock ${fullName}. ${holder}`,
+        `Timed out after ${Math.round(waitMs / 1000)}s waiting for the lock ${fullName}. ${state}`,
       );
     }
     await wait(retryMs);
@@ -184,7 +201,11 @@ type StoreSecret = {
 export function secretsStoreLocks(): LockStore {
   let store: Promise<string> | undefined;
   const secretsPath = async () => {
-    store ??= accountStoreId();
+    // Forget a failed lookup, so that the next attempt sends it again.
+    store ??= accountStoreId().catch((error) => {
+      store = undefined;
+      throw error;
+    });
     return `/secrets_store/stores/${await store}/secrets`;
   };
   return {
@@ -263,15 +284,33 @@ export function hasCloudflareCredentials(): boolean {
   );
 }
 
+// Cloudflare's code for "Please wait and consider throttling your request
+// speed".
+const THROTTLED = 971;
+
+type ApiError = { code?: number; message: string };
+
+// Cloudflare can report a rate limit with another status than 429, even 200.
+function isRateLimited(errors: ApiError[]): boolean {
+  return errors.some(
+    (error) =>
+      error.code === THROTTLED ||
+      /\b(rate ?limit(ed|ing)?|throttl(ed|ing) your request)\b/i.test(
+        error.message,
+      ),
+  );
+}
+
 type ApiResponse<T> = {
   status: number;
   success: boolean;
-  errors: { code?: number; message: string }[];
+  errors: ApiError[];
   result: T;
 };
 
 // Reads the credentials on each call, so that a test can set them after this
-// module is imported.
+// module is imported. Throws a `RetryableLockError` for a rate limit or a
+// server error.
 async function api<T = any>(
   method: "GET" | "POST" | "DELETE",
   // The path after `/accounts/<id>`.
@@ -296,17 +335,29 @@ async function api<T = any>(
       body: body && JSON.stringify(body),
     },
   );
+  const request = `Cloudflare API ${method} ${path}`;
   const text = await response.text();
-  let envelope: any = {};
+  let envelope: any;
   try {
     envelope = JSON.parse(text);
   } catch {
+    if (response.ok) {
+      throw new Error(
+        `${request} returned ${response.status} with a body that is not JSON: ${text.slice(0, 200)}`,
+      );
+    }
     envelope = { errors: [{ message: text.slice(0, 200) }] };
   }
-  return {
-    status: response.status,
-    success: response.ok && envelope.success !== false,
-    errors: envelope.errors ?? [],
-    result: envelope.result,
-  };
+  const errors: ApiError[] = envelope.errors ?? [];
+  const success = response.ok && envelope.success !== false;
+  if (
+    response.status === 429 ||
+    response.status >= 500 ||
+    (!success && isRateLimited(errors))
+  ) {
+    throw new RetryableLockError(
+      `${request} failed with ${response.status}: ${JSON.stringify(errors)}`,
+    );
+  }
+  return { status: response.status, success, errors, result: envelope.result };
 }
