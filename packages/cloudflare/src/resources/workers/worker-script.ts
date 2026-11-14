@@ -38,6 +38,11 @@ const hostedNamespaceSchema = v.object({
   /** The `$durableObject` id. Stable when the class is renamed. */
   id: v.string(),
   className: v.string(),
+  /**
+   * Declares the class as a container class, so that a
+   * `ContainerApplication` can run containers for the namespace.
+   */
+  container: v.optional(v.boolean()),
 });
 
 /** A Durable Object namespace that the Worker hosts. */
@@ -344,8 +349,9 @@ async function upload(
   found: FoundTransfers,
 ): Promise<void> {
   const code = await readCode(params.CodeFilePath, params.CodeSha256);
+  const hosted = params.DurableObjectNamespaces ?? [];
   const exports = durableObjectExports(
-    params.DurableObjectNamespaces ?? [],
+    hosted,
     previous,
     params.BoundDurableObjects ?? [],
   );
@@ -356,6 +362,9 @@ async function upload(
     compatibilityFlags: params.CompatibilityFlags ?? [],
     bindings: params.Bindings ?? [],
     exports,
+    containers: hosted
+      .filter((namespace) => namespace.container)
+      .map((namespace) => ({ class_name: namespace.className })),
   };
   if (found.transfers.length > 0) {
     await transferNamespaces(params, upload, found.transfers, found.account);

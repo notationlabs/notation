@@ -39,13 +39,24 @@ when its tests end.
   Storage: Edit permissions, and the account needs a workers.dev subdomain.
   The tests of account tokens also need the Secrets Store: Edit and Account
   API Tokens: Edit permissions. They use the account's Secrets Store, or
-  create one, and leave it.
-- Prefix: `ne2e-<6 hex characters>`. A Worker, an R2 bucket in the default or
-  EU jurisdiction, an account API token or a Secrets Store secret whose name
-  starts with `ne2e-`, or a KV namespace whose title starts with `ne2e-`, is
-  left over from a run that was killed, and can be deleted. The exception is a
-  `ne2e-lock-*` secret, which is a lock from `@notation/test-utils`. Delete one
-  only if it is older than 60 minutes.
+  create one, and leave it. The Containers tests also need the Containers:
+  Edit permission, and an account on the Workers Paid plan.
+- Prefix: `ne2e-<6 hex characters>`. A Worker, a container application, an R2
+  bucket in the default or EU jurisdiction, an account API token or a Secrets
+  Store secret whose name starts with `ne2e-`, or a KV namespace whose title
+  starts with `ne2e-`, is left over from a run that was killed, and can be
+  deleted. Delete the container application before its Worker. The exception
+  is a `ne2e-lock-*` secret, which is a lock from `@notation/test-utils`.
+  Delete one only if it is older than 60 minutes.
+- Private registries: the `ContainerRegistry` test pulls an image from AWS
+  ECR, so it also needs the AWS credentials and permissions below, and is
+  skipped without them. The token also needs the Secrets Store: Edit
+  permission, and the account needs a Secrets Store. The test holds the
+  `container-registry` lock while it manages the account's registry record for
+  `<aws account id>.dkr.ecr.<AWS_REGION>.amazonaws.com`. A record for that
+  domain while no run holds the lock is left over, and can be deleted. So
+  can a Secrets Store secret named `ne2e-<6 hex characters>-ecr`, which holds
+  the pull user's secret access key for the record.
 
 ### AWS
 
@@ -53,6 +64,12 @@ when its tests end.
   user, and `AWS_REGION`. The provider deploys to `AWS_REGION`, and the tests
   check the results there. When any is missing, each AWS test fails with an
   error that names the missing variables. The tests are not skipped.
+- The Cloudflare `ContainerRegistry` test also needs `ECR_PULL_ACCESS_KEY_ID`
+  and `ECR_PULL_SECRET_ACCESS_KEY`, for a second IAM user that can only pull
+  images. The `AWS_*` user creates the ECR repository and pushes the image
+  into it. Cloudflare pulls the image with the pull user's keys, which the
+  test gives to the registry record. The test is skipped when any of the five
+  variables is missing.
 - Permissions: the user needs these actions on resources whose names start
   with `ne2e-`, in that region. An organization's service control policy must
   not deny them.
@@ -71,9 +88,19 @@ when its tests end.
     `DescribeLogGroups` and `DeleteLogGroup`.
   - SQS: `ListQueues` and `DeleteQueue`, to find and delete leftovers.
   - STS: `GetCallerIdentity`.
+  - ECR, for the Cloudflare `ContainerRegistry` test: `CreateRepository`,
+    `DescribeRepositories`, `DeleteRepository`, `InitiateLayerUpload`,
+    `UploadLayerPart`, `CompleteLayerUpload` and `PutImage`, to copy an image
+    into a repository.
+- Pull user permissions: `ecr:GetAuthorizationToken` on all resources, and
+  `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer` and
+  `ecr:BatchCheckLayerAvailability` on repositories whose names start with
+  `ne2e-`, in `AWS_REGION`. Give it nothing else, as its keys are stored in
+  Cloudflare.
 - Prefix: `ne2e-<6 hex characters>`. An IAM role, Lambda function, EventBridge
-  bus or rule, SQS queue, or log group under `/aws/lambda/` whose name starts
-  with `ne2e-` is left over from a run that was killed, and can be deleted.
+  bus or rule, SQS queue, log group under `/aws/lambda/`, or ECR repository
+  whose name starts with `ne2e-` is left over from a run that was killed, and
+  can be deleted. Delete an ECR repository with its images (`force`).
 
 ## Publishing Packages
 
