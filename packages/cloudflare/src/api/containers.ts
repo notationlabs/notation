@@ -153,9 +153,9 @@ export async function updateApplication(
  * `configuration`, 25% of them at a time. Cloudflare finishes the rollout
  * after the call returns.
  *
- * The target configuration is sent whole. Whether a key that is left out of
- * it is removed from the application has not been checked against the live
- * API.
+ * Cloudflare merges the target configuration with the current one, so a key
+ * that is left out of it stays as it was. `environment_variables: []` clears
+ * the variables.
  */
 export async function rollOutConfiguration(
   account: string,

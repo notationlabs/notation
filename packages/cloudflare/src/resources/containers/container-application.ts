@@ -151,11 +151,16 @@ type Params = ContainerApplicationSchema["CreateParams"];
  * for keys that were not set, so a change made outside notation to the
  * configuration is not seen.
  *
- * Cloudflare may merge a rollout's target configuration with the current
- * configuration. If it does, a key that is removed from `Configuration` stays
- * in force, and the read can't show it. This has not been checked against the
- * live API. A deploy soon after another may fail while the earlier rollout
- * is still running.
+ * Cloudflare merges a rollout's target configuration with the current
+ * configuration. So a key that is removed from `Configuration` stays in
+ * force, and the read can't show it. `environment_variables: []` clears the
+ * variables. A deploy soon after another may
+ * fail while the earlier rollout is still running.
+ *
+ * Cloudflare refuses an application name that is empty, is longer than 253
+ * bytes, starts with a dash or a digit, ends with a dash, or contains two
+ * consecutive dashes. So the name can't take the `<app>--<stage>--` form of
+ * generated Worker names.
  */
 export const ContainerApplication = containerApplicationSchema
   .defineOperations({
