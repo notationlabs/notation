@@ -192,7 +192,7 @@ describe("ContainerImage", () => {
     return await sandboxImage({ BuildArgs: { VERSION: "1" } }).getParams();
   }
 
-  it("checks Docker, logs in to the registry, then builds and pushes the image under its tag", async () => {
+  it("checks Docker, builds the image under its tag, then logs in to the registry and pushes it", async () => {
     mockRegistry();
     const p = await params();
 
@@ -201,16 +201,6 @@ describe("ContainerImage", () => {
     const reference = `registry.cloudflare.com/ext1/sandbox:${p.Tag}`;
     expect(docker.mock.calls).toEqual([
       [["info", "--format", "{{.ServerVersion}}"]],
-      [
-        [
-          "login",
-          "--password-stdin",
-          "--username",
-          "user",
-          "registry.cloudflare.com",
-        ],
-        { stdin: "secret" },
-      ],
       [
         [
           "build",
@@ -226,6 +216,16 @@ describe("ContainerImage", () => {
           "VERSION=1",
           path.join(root, "sandbox"),
         ],
+      ],
+      [
+        [
+          "login",
+          "--password-stdin",
+          "--username",
+          "user",
+          "registry.cloudflare.com",
+        ],
+        { stdin: "secret" },
       ],
       [["push", reference]],
     ]);

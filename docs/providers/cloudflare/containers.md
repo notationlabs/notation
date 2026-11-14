@@ -72,8 +72,8 @@ Deploy runs the `docker` CLI on the machine that runs `notation deploy`. Docker,
 To push an image, deploy:
 
 1. Gets the account's namespace in the registry from Cloudflare.
-2. Gets push credentials for `registry.cloudflare.com` that expire after 15 minutes, and runs `docker login` with them.
-3. Runs `docker build --load --platform linux/amd64 --provenance=false`. Cloudflare runs containers on `linux/amd64` only. Provenance is turned off so that the push makes one image manifest, not an index.
+2. Runs `docker build --load --platform linux/amd64 --provenance=false`. Cloudflare runs containers on `linux/amd64` only. Provenance is turned off so that the push makes one image manifest, not an index.
+3. Gets push credentials for `registry.cloudflare.com` that expire after 15 minutes, and runs `docker login` with them. This step comes after the build, because a build can take longer than 15 minutes.
 4. Runs `docker push`.
 
 `docker login` saves the credentials in your Docker config, as `wrangler deploy` does. They expire after 15 minutes.

@@ -158,22 +158,6 @@ export const ContainerImage = containerImageSchema
       const input = buildInput(params);
       const namespace = await registryNamespace(params.AccountId);
       const reference = `${CLOUDFLARE_REGISTRY}/${namespace}/${params.Repository}:${params.Tag}`;
-      const credentials = await registryCredentials(params.AccountId, [
-        "push",
-        "pull",
-      ]);
-      // `docker login` saves the credentials in the user's Docker config.
-      // They expire after 15 minutes.
-      await runDocker(
-        [
-          "login",
-          "--password-stdin",
-          "--username",
-          credentials.username,
-          CLOUDFLARE_REGISTRY,
-        ],
-        { stdin: credentials.password },
-      );
       await runDocker([
         "build",
         "--load",
@@ -190,6 +174,23 @@ export const ContainerImage = containerImageSchema
         ]),
         input.context,
       ]);
+      const credentials = await registryCredentials(params.AccountId, [
+        "push",
+        "pull",
+      ]);
+      // The credentials expire after 15 minutes, so they are made after the
+      // build, which can take longer. `docker login` saves them in the
+      // user's Docker config.
+      await runDocker(
+        [
+          "login",
+          "--password-stdin",
+          "--username",
+          credentials.username,
+          CLOUDFLARE_REGISTRY,
+        ],
+        { stdin: credentials.password },
+      );
       await runDocker(["push", reference]);
     },
 
