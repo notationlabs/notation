@@ -55,7 +55,9 @@ export const bindingSchema = v.variant("type", [
     name: v.string(),
     bucket_name: v.string(),
     /** Left out for a bucket in the default jurisdiction. */
-    jurisdiction: v.optional(v.picklist(["eu", "us", "fedramp", "fedramp-high"])),
+    jurisdiction: v.optional(
+      v.picklist(["eu", "us", "fedramp", "fedramp-high"]),
+    ),
   }),
   v.object({
     type: v.literal("json"),

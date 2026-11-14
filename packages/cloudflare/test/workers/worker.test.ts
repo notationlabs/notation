@@ -26,10 +26,14 @@ import {
   $durableObject,
   $worker,
   isWorkerGroup,
+  json,
+  workerSecret,
   type WorkerEnv,
   type WorkerGroup,
 } from "src/workers";
 import * as runtime from "src/workers/runtime";
+import { kv, r2 } from "src/resources";
+import { env } from "@notation/std/sources";
 
 const projectDir = "/some/project";
 const compatibilityDate = "2026-10-12";
@@ -190,6 +194,98 @@ describe("$worker", () => {
         { type: "service", name: "AUTH", service: nameOf("auth") },
       ],
     });
+  });
+
+  it("binds an R2 bucket, a KV namespace and a JSON value, and uploads after the bucket and namespace", async () => {
+    let uploads!: InstanceType<typeof r2.R2Bucket>;
+    let euUploads!: InstanceType<typeof r2.R2Bucket>;
+    let cache!: InstanceType<typeof kv.KVNamespace>;
+    const graph = await collect(() => {
+      uploads = new r2.R2Bucket("uploads", {
+        config: {
+          BucketName: "uploads",
+          Jurisdiction: "default",
+          StorageClass: "Standard",
+        },
+      });
+      euUploads = new r2.R2Bucket("eu-uploads", {
+        config: {
+          BucketName: "eu-uploads",
+          Jurisdiction: "eu",
+          StorageClass: "Standard",
+        },
+      });
+      cache = new kv.KVNamespace("cache", { config: { Title: "cache" } });
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({
+            UPLOADS: uploads,
+            EU_UPLOADS: euUploads,
+            CACHE: cache,
+            CONFIG: json({ retries: 3 }),
+          }),
+        }),
+        "runtime/api.ts",
+      );
+    });
+    const api = group(graph, "api");
+
+    expect(api.script.getDependencies()).toEqual(
+      expect.arrayContaining([uploads, euUploads, cache]),
+    );
+    uploads.setOutput({ BucketName: "uploads" } as any);
+    euUploads.setOutput({ BucketName: "eu-uploads" } as any);
+    cache.setOutput({ NamespaceId: "ns1" } as any);
+    expect((await deployParams(api, [])).Bindings).toEqual([
+      { type: "r2_bucket", name: "UPLOADS", bucket_name: "uploads" },
+      {
+        type: "r2_bucket",
+        name: "EU_UPLOADS",
+        bucket_name: "eu-uploads",
+        jurisdiction: "eu",
+      },
+      { type: "kv_namespace", name: "CACHE", namespace_id: "ns1" },
+      { type: "json", name: "CONFIG", json: { retries: 3 } },
+    ]);
+  });
+
+  it("binds a Worker secret by its source, and never by its value", async () => {
+    let apiKey!: ReturnType<typeof workerSecret>;
+    const graph = await collect(() => {
+      apiKey = workerSecret({ id: "api-key", source: env, key: "API_KEY" });
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ API_KEY: apiKey }),
+        }),
+        "runtime/api.ts",
+      );
+    });
+    const api = group(graph, "api");
+
+    expect(api.script.config.Bindings).toEqual([]);
+    expect(api.script.getDependencies()).toContain(apiKey.value);
+    apiKey.value.setOutput({ Version: "run-1" } as any);
+    expect((await deployParams(api, [])).SecretBindings).toEqual([
+      {
+        Name: "API_KEY",
+        ValueFrom: {
+          Secret: "api-key",
+          Source: "env",
+          Key: "API_KEY",
+          Version: "run-1",
+        },
+      },
+    ]);
+  });
+
+  it("fails for a Worker secret without a source", () => {
+    expect(() => workerSecret({ id: "api-key" } as any)).toThrow(
+      `workerSecret({ id: "api-key" }) requires a source and a key.`,
+    );
   });
 
   it("hosts a namespace whose class its module exports", async () => {
@@ -942,6 +1038,28 @@ describe("WorkerEnv", () => {
     expectTypeOf<Env["GREETING"]>().toEqualTypeOf<string>();
     // @ts-expect-error a name that the declaration doesn't bind
     type _ = Env["MISSING"];
+  });
+
+  it("types R2, KV, JSON and Worker secret bindings", () => {
+    const worker = runtime.$worker({
+      id: "api",
+      compatibilityDate,
+      bindings: () => ({
+        UPLOADS: {} as InstanceType<typeof r2.R2Bucket>,
+        CACHE: {} as InstanceType<typeof kv.KVNamespace>,
+        CONFIG: runtime.json({ retries: 3, regions: ["weur"] }),
+        API_KEY: {} as ReturnType<typeof workerSecret>,
+      }),
+    });
+    type Env = WorkerEnv<typeof worker>;
+
+    expectTypeOf<Env["UPLOADS"]>().toEqualTypeOf<cf.R2Bucket>();
+    expectTypeOf<Env["CACHE"]>().toEqualTypeOf<cf.KVNamespace>();
+    expectTypeOf<Env["CONFIG"]>().toEqualTypeOf<{
+      retries: number;
+      regions: string[];
+    }>();
+    expectTypeOf<Env["API_KEY"]>().toEqualTypeOf<string>();
   });
 
   it("rejects a binding that is another object with an id", () => {
