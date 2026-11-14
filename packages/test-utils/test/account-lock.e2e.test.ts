@@ -6,7 +6,7 @@ import {
   lockName,
   secretsStoreLocks,
   withAccountLock,
-} from "../src";
+} from "../src/account-lock";
 
 describe.skipIf(!hasCloudflareCredentials())("withAccountLock", () => {
   // A name of this run's own, so that this test never waits for real runs.

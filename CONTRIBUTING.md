@@ -43,7 +43,7 @@ when its tests end.
   Secrets Store secret whose name starts with `ne2e-` is left over from a run
   that was killed, and can be deleted. The exception is a `ne2e-lock-*`
   secret, which is a lock from `@notation/test-utils`. Delete one only if it
-  is older than 30 minutes.
+  is older than 60 minutes.
 
 ### AWS
 

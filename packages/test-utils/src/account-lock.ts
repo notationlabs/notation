@@ -2,13 +2,12 @@ import { hostname } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterAll, beforeAll } from "vitest";
 
-export type LockHolder = {
+export type LockRecord = {
+  id: string;
   /** Names the run that holds the lock, in the error of a run that waits. */
   holder: string;
-  takenAt: Date;
+  created: Date;
 };
-
-export type LockRecord = LockHolder & { id: string };
 
 /** Where the locks are kept. The tests of the lock logic pass a fake. */
 export type LockStore = {
@@ -17,7 +16,7 @@ export type LockStore = {
    * if a lock with that name exists. Of several creates of the same name at
    * once, only one may succeed.
    */
-  create(name: string, holder: LockHolder): Promise<string | undefined>;
+  create(name: string, holder: string): Promise<string | undefined>;
   /** Returns `undefined` if there is no lock named `name`. */
   read(name: string): Promise<LockRecord | undefined>;
   /** Does nothing if there is no lock with the ID. */
@@ -40,12 +39,19 @@ export type AccountLockOptions = {
 
 export type HeldLock = {
   name: string;
-  /** Deletes the lock if this run still holds it. */
+  /**
+   * Deletes the lock by its ID. If another run took the lock over, the ID is
+   * gone and this does nothing.
+   */
   release(): Promise<void>;
 };
 
-const DEFAULT_WAIT_MS = 15 * 60_000;
-const DEFAULT_MAX_AGE_MS = 30 * 60_000;
+// The ContainerRegistry e2e test can hold its lock for up to 50 minutes, the
+// sum of its hook and test timeouts. A waiter must wait longer than the
+// maximum age, so that it takes over a lock left by a killed run instead of
+// failing.
+const DEFAULT_MAX_AGE_MS = 60 * 60_000;
+const DEFAULT_WAIT_MS = 70 * 60_000;
 const DEFAULT_RETRY_MS = 10_000;
 
 /** The machine and the process ID of this test run. */
@@ -58,15 +64,15 @@ export const lockName = (name: string) => `ne2e-lock-${name}`;
  * manages a resource that the account can have only one of, so that only one
  * test run at a time uses it.
  *
- * If another run holds the lock, this retries until `waitMs` (15 minutes)
+ * If another run holds the lock, this retries until `waitMs` (70 minutes)
  * passes, and then throws an error that names the holder. A lock older than
- * `maxAgeMs` (30 minutes) was left by a run that was killed, so this deletes
- * it and takes it.
+ * `maxAgeMs` (60 minutes) was left by a run that was killed, so this deletes
+ * it and takes it. With the defaults, a run waits for a killed run's lock to
+ * become stale and then takes it.
  *
  * By default the lock is a secret named `ne2e-lock-<name>` in the Cloudflare
  * Secrets Store of `CLOUDFLARE_ACCOUNT_ID`. `CLOUDFLARE_API_TOKEN` needs the
- * Secrets Store: Edit permission. If the account has no store, one is created
- * and left.
+ * Secrets Store: Edit permission. The account must have a store.
  */
 export async function takeAccountLock(
   name: string,
@@ -84,22 +90,13 @@ export async function takeAccountLock(
   const fullName = lockName(name);
   const deadline = now() + waitMs;
   for (;;) {
-    const id = await store.create(fullName, {
-      holder,
-      takenAt: new Date(now()),
-    });
+    const id = await store.create(fullName, holder);
     if (id) {
-      return {
-        name: fullName,
-        release: async () => {
-          const held = await store.read(fullName);
-          if (held?.id === id) await store.delete(id);
-        },
-      };
+      return { name: fullName, release: () => store.delete(id) };
     }
     // `undefined` if the holder released the lock after the create failed.
     const current = await store.read(fullName);
-    if (current && now() - current.takenAt.getTime() > maxAgeMs) {
+    if (current && now() - current.created.getTime() > maxAgeMs) {
       // Deleting by ID means that of two runs that steal the same stale lock,
       // the slower one can't delete the lock that the faster one then takes.
       // Both then try the create, and only one of them gets the lock.
@@ -108,7 +105,7 @@ export async function takeAccountLock(
     }
     if (now() >= deadline) {
       const holder = current
-        ? `${current.holder} took it at ${current.takenAt.toISOString()}.`
+        ? `${current.holder} took it at ${current.created.toISOString()}.`
         : "Nothing holds it now.";
       throw new Error(
         `Timed out after ${Math.round(waitMs / 1000)}s waiting for the lock ${fullName}. ${holder}`,
@@ -182,7 +179,7 @@ type StoreSecret = {
  * Keeps each lock as a secret in the account's Secrets Store. Cloudflare
  * refuses to create a secret whose name another secret in the store has, so
  * only one create of a name succeeds. A secret's value can't be read back, so
- * the holder and the time are kept in its comment.
+ * the holder is kept in its comment.
  */
 export function secretsStoreLocks(): LockStore {
   let store: Promise<string> | undefined;
@@ -191,13 +188,9 @@ export function secretsStoreLocks(): LockStore {
     return `/secrets_store/stores/${await store}/secrets`;
   };
   return {
-    async create(name, { holder, takenAt }) {
-      const comment = JSON.stringify({
-        holder,
-        takenAt: takenAt.toISOString(),
-      });
+    async create(name, holder) {
       const response = await api<StoreSecret[]>("POST", await secretsPath(), [
-        { name, value: "lock", scopes: ["workers"], comment },
+        { name, value: "lock", scopes: ["workers"], comment: holder },
       ]);
       if (response.success) return response.result[0]!.id;
       if (
@@ -227,7 +220,11 @@ export function secretsStoreLocks(): LockStore {
         (item) => item.name === name && item.status !== "deleted",
       );
       if (!secret) return undefined;
-      return { id: secret.id, ...parseHolder(secret) };
+      return {
+        id: secret.id,
+        holder: secret.comment ?? "unknown",
+        created: new Date(secret.created),
+      };
     },
     async delete(id) {
       const response = await api("DELETE", `${await secretsPath()}/${id}`);
@@ -240,44 +237,20 @@ export function secretsStoreLocks(): LockStore {
   };
 }
 
-// A secret whose comment isn't a holder record counts as taken when it was
-// created, by an unknown run.
-function parseHolder(secret: StoreSecret): LockHolder {
-  try {
-    const parsed = JSON.parse(secret.comment ?? "");
-    const takenAt = new Date(parsed.takenAt);
-    if (typeof parsed.holder === "string" && !isNaN(takenAt.getTime())) {
-      return { holder: parsed.holder, takenAt };
-    }
-  } catch {}
-  return { holder: "unknown", takenAt: new Date(secret.created) };
-}
-
-// Cloudflare allows one store per account. If the account has none, this
-// creates one with the name that the dashboard gives it, and leaves it.
 async function accountStoreId(): Promise<string> {
-  const list = async () => {
-    const response = await api<{ id: string }[]>(
-      "GET",
-      "/secrets_store/stores",
+  const response = await api<{ id: string }[]>("GET", "/secrets_store/stores");
+  if (!response.success) {
+    throw new Error(
+      `Listing stores failed: ${JSON.stringify(response.errors)}`,
     );
-    if (!response.success) {
-      throw new Error(
-        `Listing stores failed: ${JSON.stringify(response.errors)}`,
-      );
-    }
-    return response.result?.[0]?.id;
-  };
-  const existing = await list();
-  if (existing) return existing;
-  const created = await api<{ id: string }>("POST", "/secrets_store/stores", {
-    name: "default_secrets_store",
-  });
-  if (created.success) return created.result.id;
-  // Another run created the store first.
-  const other = await list();
-  if (other) return other;
-  throw new Error(`Creating a store failed: ${JSON.stringify(created.errors)}`);
+  }
+  const id = response.result?.[0]?.id;
+  if (!id) {
+    throw new Error(
+      "The account locks need a Secrets Store, and the account has none. Create one in the Cloudflare dashboard.",
+    );
+  }
+  return id;
 }
 
 /**
