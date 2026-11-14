@@ -64,7 +64,13 @@ export type Project = {
  * the deployment, deletes each Worker that starts with `runPrefix`, and checks
  * that the account has none left.
  */
-export function useProject({ stage = "e2e" } = {}): Project {
+export function useProject({
+  stage = "e2e",
+  // Also deletes and checks the account tokens and Secrets Store secrets
+  // that start with `runPrefix`. Listing them needs the token permissions
+  // that only the token tests need.
+  accountTokens = false,
+} = {}): Project {
   const scope = `${runPrefix}--${stage}--`;
   const project: Project = {
     root: "",
@@ -129,10 +135,15 @@ export function useProject({ stage = "e2e" } = {}): Project {
       // Catches what a failed deploy or destroy left behind, and what a test
       // created through the API.
       await deleteScriptsWithPrefix(runPrefix);
+      if (accountTokens) await deleteTokensAndSecretsWithPrefix(runPrefix);
       if (project.root) rmSync(project.root, { recursive: true, force: true });
     }
     expect(await scriptsWithPrefix(runPrefix)).toEqual([]);
     expect(await namespacesWithPrefix(runPrefix)).toEqual([]);
+    if (accountTokens) {
+      expect(await tokensWithPrefix(runPrefix)).toEqual([]);
+      expect(await secretsWithPrefix(runPrefix)).toEqual([]);
+    }
   });
 
   return project;
@@ -238,6 +249,97 @@ export async function namespacesWithPrefix(
 async function deleteScriptsWithPrefix(prefix: string): Promise<void> {
   for (const name of await scriptsWithPrefix(prefix)) {
     await api("DELETE", `/workers/scripts/${name}?force=true`);
+  }
+}
+
+export type AccountTokenSummary = {
+  id: string;
+  name: string;
+  status: string;
+  modified_on: string;
+  policies: {
+    effect: string;
+    permission_groups: { id: string; name: string }[];
+    resources: Record<string, unknown>;
+  }[];
+  condition?: {
+    request_ip?: { in?: string[] | null; not_in?: string[] | null } | null;
+  } | null;
+  expires_on?: string | null;
+  not_before?: string | null;
+};
+
+/** The account's API tokens whose name starts with `prefix`. */
+export async function tokensWithPrefix(
+  prefix: string,
+): Promise<AccountTokenSummary[]> {
+  const found: AccountTokenSummary[] = [];
+  for (let page = 1; ; page++) {
+    const response = await api<AccountTokenSummary[]>(
+      "GET",
+      `/tokens?page=${page}&per_page=50`,
+    );
+    if (!response.success) {
+      throw new Error(
+        `Listing tokens failed: ${JSON.stringify(response.errors)}`,
+      );
+    }
+    const tokens = response.result ?? [];
+    found.push(...tokens.filter((token) => token.name.startsWith(prefix)));
+    if (tokens.length < 50) return found;
+  }
+}
+
+export type StoreSecretSummary = { id: string; name: string; status: string };
+
+/** The account's store ID, or `undefined` if the account has no store. */
+async function storeId(): Promise<string | undefined> {
+  const response = await api<{ id: string }[]>("GET", "/secrets_store/stores");
+  if (!response.success) {
+    throw new Error(
+      `Listing stores failed: ${JSON.stringify(response.errors)}`,
+    );
+  }
+  return response.result?.[0]?.id;
+}
+
+/**
+ * The Secrets Store secrets whose name starts with `prefix`, except those
+ * with the status `deleted`.
+ */
+export async function secretsWithPrefix(
+  prefix: string,
+): Promise<StoreSecretSummary[]> {
+  const store = await storeId();
+  if (!store) return [];
+  const found: StoreSecretSummary[] = [];
+  for (let page = 1; ; page++) {
+    const response = await api<StoreSecretSummary[]>(
+      "GET",
+      `/secrets_store/stores/${store}/secrets?search=${prefix}&page=${page}&per_page=100`,
+    );
+    if (!response.success) {
+      throw new Error(
+        `Listing secrets failed: ${JSON.stringify(response.errors)}`,
+      );
+    }
+    const secrets = response.result ?? [];
+    for (const secret of secrets) {
+      if (secret.name.startsWith(prefix) && secret.status !== "deleted") {
+        found.push({ id: secret.id, name: secret.name, status: secret.status });
+      }
+    }
+    if (secrets.length < 100) return found;
+  }
+}
+
+async function deleteTokensAndSecretsWithPrefix(prefix: string) {
+  for (const token of await tokensWithPrefix(prefix)) {
+    await api("DELETE", `/tokens/${token.id}`);
+  }
+  const store = await storeId();
+  for (const secret of await secretsWithPrefix(prefix)) {
+    await api("DELETE", `/secrets_store/stores/${store}/secrets/${secret.id}`);
   }
 }
 
