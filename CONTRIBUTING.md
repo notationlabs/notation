@@ -42,13 +42,12 @@ when its tests end.
 
 ### AWS
 
-- Credentials: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, for an IAM
-  user. When either is missing, each AWS test fails with an error that names
-  the missing variables. The tests are not skipped.
-- Region: `us-west-2`. The provider deploys only to this region, and the tests
-  check the results there.
+- Environment: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, for an IAM
+  user, and `AWS_REGION`. The provider deploys to `AWS_REGION`, and the tests
+  check the results there. When any is missing, each AWS test fails with an
+  error that names the missing variables. The tests are not skipped.
 - Permissions: the user needs these actions on resources whose names start
-  with `ne2e-`, in `us-west-2`. An organization's service control policy must
+  with `ne2e-`, in that region. An organization's service control policy must
   not deny them.
   - IAM: `CreateRole`, `GetRole`, `UpdateRole`, `DeleteRole`, `PassRole`,
     `UpdateAssumeRolePolicy`, `PutRolePolicy`, `GetRolePolicy`,

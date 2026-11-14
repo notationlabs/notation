@@ -15,12 +15,16 @@ function lazy<T>(create: () => T): () => T {
   return () => (client ??= create());
 }
 
-export const stsClient = lazy(() => new STSClient({ region }));
+export const stsClient = lazy(() => new STSClient({ region: region() }));
 export const cloudWatchLogsClient = lazy(
-  () => new CloudWatchLogsClient({ region }),
+  () => new CloudWatchLogsClient({ region: region() }),
 );
-export const lambdaClient = lazy(() => new LambdaClient({ region }));
-export const apiGatewayClient = lazy(() => new ApiGatewayV2Client({ region }));
-export const iamClient = lazy(() => new IAMClient({ region }));
-export const eventBridgeClient = lazy(() => new EventBridgeClient({ region }));
-export const sqsClient = lazy(() => new SQSClient({ region }));
+export const lambdaClient = lazy(() => new LambdaClient({ region: region() }));
+export const apiGatewayClient = lazy(
+  () => new ApiGatewayV2Client({ region: region() }),
+);
+export const iamClient = lazy(() => new IAMClient({ region: region() }));
+export const eventBridgeClient = lazy(
+  () => new EventBridgeClient({ region: region() }),
+);
+export const sqsClient = lazy(() => new SQSClient({ region: region() }));

@@ -18,16 +18,17 @@ import * as lambda from "@aws-sdk/client-lambda";
 import * as sqs from "@aws-sdk/client-sqs";
 import { afterAll, beforeAll, describe, expect } from "vitest";
 
-// The provider deploys to this region only.
-export const region = "us-west-2";
+export const region = process.env.AWS_REGION;
 
-const credentialVariables = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"];
-const missingVariables = credentialVariables.filter(
-  (name) => !process.env[name],
-);
+const requiredVariables = [
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_REGION",
+];
+const missingVariables = requiredVariables.filter((name) => !process.env[name]);
 
 /**
- * A `describe` whose tests fail when the AWS credentials are not set. Unlike
+ * A `describe` whose tests fail when the AWS credentials or region are not set. Unlike
  * the Cloudflare suite, the AWS suite is not skipped without them.
  */
 export function describeE2e(name: string, tests: () => void): void {
@@ -35,7 +36,7 @@ export function describeE2e(name: string, tests: () => void): void {
     beforeAll(() => {
       if (missingVariables.length > 0) {
         throw new Error(
-          `The AWS end-to-end tests need AWS credentials in the environment. Missing: ${missingVariables.join(", ")}.`,
+          `The AWS end-to-end tests need AWS credentials and a region in the environment. Missing: ${missingVariables.join(", ")}.`,
         );
       }
     });
