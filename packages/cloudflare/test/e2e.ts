@@ -70,10 +70,6 @@ export function useProject({
   // that start with `runPrefix`. Listing them needs the token permissions
   // that only the token tests need.
   accountTokens = false,
-  // Also deletes and checks the container applications that start with
-  // `runPrefix`. Listing them needs the Containers permission that only the
-  // Containers tests need.
-  containers = false,
 } = {}): Project {
   const scope = `${runPrefix}--${stage}--`;
   const project: Project = {
@@ -139,7 +135,7 @@ export function useProject({
       // Catches what a failed deploy or destroy left behind, and what a test
       // created through the API. Cloudflare refuses to delete a Worker while
       // a container application uses its namespace.
-      if (containers) await deleteContainerApplicationsWithPrefix(runPrefix);
+      await deleteContainerApplicationsWithPrefix(runPrefix);
       await deleteScriptsWithPrefix(runPrefix);
       await deleteBucketsWithPrefix(runPrefix);
       await deleteKvNamespacesWithPrefix(runPrefix);
@@ -150,9 +146,7 @@ export function useProject({
     expect(await namespacesWithPrefix(runPrefix)).toEqual([]);
     expect(await bucketsWithPrefix(runPrefix)).toEqual([]);
     expect(await kvNamespacesWithPrefix(runPrefix)).toEqual([]);
-    if (containers) {
-      expect(await containerApplicationsWithPrefix(runPrefix)).toEqual([]);
-    }
+    expect(await containerApplicationsWithPrefix(runPrefix)).toEqual([]);
     if (accountTokens) {
       expect(await tokensWithPrefix(runPrefix)).toEqual([]);
       expect(await secretsWithPrefix(runPrefix)).toEqual([]);

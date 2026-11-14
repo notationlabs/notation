@@ -35,12 +35,11 @@ when its tests end.
 ### Cloudflare
 
 - Credentials: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. The token
-  needs the Workers Scripts: Edit, Workers R2 Storage: Edit and Workers KV
-  Storage: Edit permissions, and the account needs a workers.dev subdomain.
-  The tests of account tokens also need the Secrets Store: Edit and Account
-  API Tokens: Edit permissions. They use the account's Secrets Store, or
-  create one, and leave it. The Containers tests also need the Containers:
-  Edit permission, and an account on the Workers Paid plan.
+  needs the Workers Scripts: Edit, Workers R2 Storage: Edit, Workers KV
+  Storage: Edit and Containers: Edit permissions. The account needs a
+  workers.dev subdomain and the Workers Paid plan. The tests of account tokens
+  also need the Secrets Store: Edit and Account API Tokens: Edit permissions.
+  They use the account's Secrets Store, or create one, and leave it.
 - Prefix: `ne2e-<6 hex characters>`. A Worker, a container application, an R2
   bucket in the default or EU jurisdiction, an account API token or a Secrets
   Store secret whose name starts with `ne2e-`, or a KV namespace whose title

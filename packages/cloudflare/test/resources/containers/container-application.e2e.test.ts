@@ -114,7 +114,7 @@ async function namespaceIdOf(script: string, className: string) {
 }
 
 describeE2e("ContainerApplication", () => {
-  const project = useProject({ containers: true });
+  const project = useProject();
 
   let scriptName: string;
   let applicationId: string;

@@ -267,7 +267,7 @@ describeWithAws("ContainerRegistry", () => {
     if (storeId) expect(await findSecret(storeId, secretName)).toBeUndefined();
   });
 
-  const project = useProject({ containers: true });
+  const project = useProject();
 
   let scriptName: string;
 
