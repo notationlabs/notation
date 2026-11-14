@@ -275,6 +275,48 @@ describeE2e("ContainerApplication", () => {
     expect(application.configuration.environment_variables ?? []).toEqual([]);
   }, 600_000);
 
+  // Cloudflare refuses custom sizes below 1 vCPU and 3 GiB per vCPU.
+  it("rolls out a disk size next to vcpu and memory_mib on a fourth deploy", async () => {
+    expect(applicationId, "the first deploy made no application").toBeDefined();
+    project.write(
+      "infra/main.ts",
+      infraModule({
+        maxInstances: 2,
+        configuration: {
+          image: IMAGE_V2,
+          vcpu: 1,
+          memory_mib: 3072,
+          disk: { size_mb: 6000 },
+        },
+      }),
+    );
+    await project.notation("deploy");
+
+    expect((await waitForRollout(applicationId)).configuration).toMatchObject({
+      vcpu: 1,
+      memory_mib: 3072,
+      disk: { size_mb: 6000 },
+    });
+  }, 600_000);
+
+  it("resets the disk size that a fifth deploy leaves out", async () => {
+    expect(applicationId, "the first deploy made no application").toBeDefined();
+    project.write(
+      "infra/main.ts",
+      infraModule({
+        maxInstances: 2,
+        configuration: { image: IMAGE_V2, vcpu: 1, memory_mib: 3072 },
+      }),
+    );
+    await project.notation("deploy");
+
+    expect((await waitForRollout(applicationId)).configuration).toMatchObject({
+      vcpu: 1,
+      memory_mib: 3072,
+      disk: { size_mb: 2000 },
+    });
+  }, 600_000);
+
   it("deletes the application and the Worker on destroy", async () => {
     await project.notation("destroy");
 
