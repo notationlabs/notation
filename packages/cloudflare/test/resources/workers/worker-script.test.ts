@@ -216,6 +216,8 @@ describe("WorkerScript", () => {
     }).catch((e) => e);
     expect(error).toBeInstanceOf(ResourceOperationPendingError);
     expect(error.retryAfterMs).toBe(2_000);
+    // A create lookup must not read a throttled read as a found resource.
+    expect(error.throttled).toBe(true);
   });
 
   it("waits and tries again when Cloudflare reports a rate limit with status 200", async () => {
