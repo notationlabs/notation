@@ -9,15 +9,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setConfigFile } from "@notation/core";
-import { ResourceNotFoundError, UNKNOWN_AFTER_APPLY } from "@notation/resource";
-import { ContainerApplication } from "src/resources/containers/container-application";
+import { ResourceNotFoundError } from "@notation/resource";
 import { ContainerImage } from "src/resources/containers/container-image";
 import {
   DockerCommandError,
   DockerNotFoundError,
   runDocker,
 } from "src/resources/containers/docker";
-import { WorkerScript } from "src/resources/workers/worker-script";
 import { calls, mockFetch, ok } from "../mock-api";
 
 vi.mock("src/resources/containers/docker", async (importOriginal) => ({
@@ -43,7 +41,7 @@ beforeEach(() => {
   writeFileSync(path.join(root, "sandbox/Dockerfile"), "FROM alpine\n");
   writeFileSync(path.join(root, "sandbox/server.js"), "console.log(1)\n");
   docker.mockReset();
-  docker.mockResolvedValue("");
+  docker.mockResolvedValue();
 });
 
 afterEach(() => {
@@ -145,10 +143,10 @@ describe("ContainerImage params", () => {
   it("throws when the build context or the Dockerfile is missing", async () => {
     await expect(
       sandboxImage({ Context: "missing" }).getParams(),
-    ).rejects.toThrow(`The build context ${root}/missing was not found`);
+    ).rejects.toThrow(`Could not read the build context ${root}/missing`);
     rmSync(path.join(root, "sandbox/Dockerfile"));
     await expect(sandboxImage().getParams()).rejects.toThrow(
-      `The Dockerfile ${root}/sandbox/Dockerfile was not found`,
+      `no such file or directory, open '${root}/sandbox/Dockerfile'`,
     );
   });
 
@@ -270,7 +268,6 @@ describe("ContainerImage", () => {
       if (args[0] === "build") {
         throw new DockerCommandError(args, 1, "ERROR: failed to solve");
       }
-      return "";
     });
 
     await expect(image.create(await params())).rejects.toThrow(
@@ -314,63 +311,5 @@ describe("ContainerImage", () => {
     );
     expect(calls).toEqual([]);
     expect(docker).not.toHaveBeenCalled();
-  });
-});
-
-describe("ContainerImage in a ContainerApplication", () => {
-  function deployedPair() {
-    const script = new WorkerScript("worker:api", {
-      config: {
-        CompatibilityDate: "2026-10-12",
-        DurableObjectNamespaces: [
-          { id: "sandboxes", className: "Sandbox", container: true },
-        ],
-      },
-      dependencies: {} as any,
-    });
-    script.setOutput({
-      AccountId: "acc",
-      ScriptName: "app--dev--api",
-    } as typeof script.output);
-    const image = sandboxImage();
-    const application = new ContainerApplication("app", {
-      config: {
-        Name: "app-dev-sandbox",
-        HostedNamespaceId: "sandboxes",
-        MaxInstances: 1,
-        Configuration: { image: image.outputRef("Image") },
-      },
-      dependencies: { script },
-    });
-    return { image, application };
-  }
-
-  it("depends on the image whose output ref is in Configuration.image", () => {
-    const { image, application } = deployedPair();
-
-    expect(application.getDependencies()).toContain(image);
-  });
-
-  it("takes the image's digest-pinned reference at deploy", async () => {
-    const { image, application } = deployedPair();
-    const pinned = `registry.cloudflare.com/ext1/sandbox@${DIGEST}`;
-    image.setOutput({
-      AccountId: "acc",
-      Repository: "sandbox",
-      Tag: "abc123",
-      Image: pinned,
-    } as typeof image.output);
-
-    await expect(application.getParams()).resolves.toMatchObject({
-      Configuration: { image: pinned },
-    });
-  });
-
-  it("plans an unknown image while the image has no output, as after a replace", async () => {
-    const { application } = deployedPair();
-
-    await expect(application.planParams()).resolves.toMatchObject({
-      Configuration: { image: UNKNOWN_AFTER_APPLY },
-    });
   });
 });

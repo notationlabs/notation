@@ -150,11 +150,8 @@ type Params = ContainerApplicationSchema["CreateParams"];
  *
  * A change to `Configuration` starts a rollout that replaces the instances,
  * 25% of them at a time. Pin the image by its digest: a new image pushed under
- * the same tag doesn't change `Configuration`, so it starts no rollout. A
- * `ContainerImage`'s `outputRef("Image")` is pinned by its digest, and can be
- * placed in `Configuration.image`. The application then depends on the
- * image, and a new image starts a rollout. The
- * read doesn't return `Configuration`, because Cloudflare fills in defaults
+ * the same tag doesn't change `Configuration`, so it starts no rollout. See
+ * `ContainerImage`. The read doesn't return `Configuration`, because Cloudflare fills in defaults
  * for keys that were not set, so a change made outside notation to the
  * configuration is not seen.
  *

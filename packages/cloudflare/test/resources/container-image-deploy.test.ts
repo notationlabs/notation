@@ -180,7 +180,6 @@ beforeEach(() => {
       const tag = args[1]!.split(":").at(-1)!;
       pushed.set(tag, `sha256:${tag.padEnd(64, "0")}`);
     }
-    return "";
   });
   fakeCloudflare();
 });

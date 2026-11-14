@@ -9,11 +9,8 @@ import {
   registryCredentials,
   registryNamespace,
 } from "src/api/image-registry";
-import { hashBuildInput, type BuildInput } from "./build-context";
-import { DockerCommandError, DockerNotFoundError, runDocker } from "./docker";
-
-// Cloudflare runs containers on linux/amd64 only.
-const PLATFORM = "linux/amd64";
+import { hashBuildInput, PLATFORM, type BuildInput } from "./build-context";
+import { DockerCommandError, runDocker } from "./docker";
 
 // 128 bits of the hash. A tag can be at most 128 characters.
 const TAG_LENGTH = 32;
@@ -62,10 +59,6 @@ const containerImage = resource<ContainerImageSchema>({
   provider: "@notation/cloudflare/resources",
 });
 
-// The rules for a repository name in the Docker registry API: lowercase
-// components separated by `/`, each joined by `.`, `_`, `__` or dashes.
-const REPOSITORY_COMPONENT = /^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$/;
-
 const containerImageSchema = containerImage.defineSchema({
   AccountId: {
     propertyType: "param",
@@ -82,10 +75,9 @@ const containerImageSchema = containerImage.defineSchema({
     value: v.pipe(
       v.string(),
       v.maxLength(255, "A repository name must be at most 255 characters"),
-      v.check(
-        (name) =>
-          name.split("/").every((part) => REPOSITORY_COMPONENT.test(part)),
-        "A repository name must be lowercase letters and digits, joined by single dots, one or two underscores or dashes, in parts separated by slashes, such as sandbox or team/sandbox",
+      v.regex(
+        /^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:\/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*$/,
+        "A repository name must be lowercase, such as sandbox or team/sandbox",
       ),
     ),
   },
@@ -94,12 +86,11 @@ const containerImageSchema = containerImage.defineSchema({
     presence: "required",
     immutable: true,
     primaryKey: true,
-    value: v.pipe(v.string(), v.regex(/^[a-f0-9]+$/)),
+    value: v.string(),
   },
   // The paths and build args are hidden, so that a change to them that
   // leaves the build's input the same doesn't replace the image. The tag
-  // changes when the input changes. They are immutable only because the
-  // image has no update.
+  // changes when the input changes.
   Context: {
     propertyType: "param",
     presence: "required",
@@ -129,30 +120,19 @@ const containerImageSchema = containerImage.defineSchema({
 } as const);
 
 /**
- * Builds a container image with Docker, and pushes it to the account's
- * Cloudflare registry. `Image` is the image pinned by its digest. Place
- * `outputRef("Image")` in a `ContainerApplication`'s `Configuration.image`.
+ * Builds a container image with Docker for `linux/amd64`, and pushes it to
+ * the account's Cloudflare registry. The tag is the start of a SHA-256 of
+ * the files in the build context, the Dockerfile, the build args and the
+ * platform, so a change to any of them replaces the image. `.dockerignore`
+ * is not read. Delete leaves the image in the registry.
  *
- * The tag is the start of a SHA-256 of the build's input: the files in the
- * build context, the Dockerfile, the build args and the platform. A change
- * to any of them changes the tag, which replaces the image. Deploy builds
- * and pushes the new image, and the application rolls out its digest.
- * `.dockerignore` is not read, so a change to a file that it excludes also
- * builds the image again. Each `.git` directory is skipped. Docker's build
- * cache usually gives the same digest for such a build, and the same digest
- * starts no rollout.
- *
- * The image is built for `linux/amd64`, the only platform that Cloudflare
- * runs, with provenance turned off, so that the push makes one manifest.
- *
- * The delete leaves the image in the registry. An application that rolls
- * out a new image may still start instances from the old digest, and the
- * delete can't tell a replace from a destroy.
+ * Each read requests short-lived pull credentials, so plan needs a token
+ * with the Containers: Edit permission.
  */
 export const ContainerImage = containerImageSchema
   .defineOperations({
-    // A push of the same input pushes the same tag, so a create that runs
-    // again after a stop takes over the image that it pushed before.
+    // Running create again with the same input pushes the same tag, so a
+    // retried deploy is safe.
     create: async (params) => {
       await assertDockerRunning();
       const input = buildInput(params);
@@ -162,7 +142,7 @@ export const ContainerImage = containerImageSchema
         "build",
         "--load",
         "--platform",
-        input.platform,
+        PLATFORM,
         "--provenance=false",
         "-t",
         reference,
@@ -178,8 +158,8 @@ export const ContainerImage = containerImageSchema
         "push",
         "pull",
       ]);
-      // The credentials expire after 15 minutes, so they are made after the
-      // build, which can take longer. `docker login` saves them in the
+      // The credentials expire after 15 minutes, so they are requested after
+      // the build, which can take longer. `docker login` saves them in the
       // user's Docker config.
       await runDocker(
         [
@@ -194,11 +174,11 @@ export const ContainerImage = containerImageSchema
       await runDocker(["push", reference]);
     },
 
-    // The read takes the digest from the registry, so `Image` is the digest
-    // that Cloudflare pulls.
+    // `Image` uses the digest that the registry holds for the tag, which is
+    // the digest that Cloudflare pulls.
     read: async (key) => {
       const namespace = await registryNamespace(key.AccountId);
-      const credentials = await registryCredentials(key.AccountId, ["pull"], 5);
+      const credentials = await registryCredentials(key.AccountId, ["pull"]);
       const digest = await manifestDigest(
         credentials,
         namespace,
@@ -238,7 +218,6 @@ function buildInput(
       ? fromProjectRoot(params.Dockerfile)
       : path.join(context, "Dockerfile"),
     buildArgs: params.BuildArgs ?? {},
-    platform: PLATFORM,
   };
 }
 
@@ -246,13 +225,10 @@ async function assertDockerRunning(): Promise<void> {
   try {
     await runDocker(["info", "--format", "{{.ServerVersion}}"]);
   } catch (error) {
-    if (error instanceof DockerNotFoundError) throw error;
-    if (error instanceof DockerCommandError) {
-      throw new Error(
-        `Building a container image needs a running Docker daemon, and \`docker info\` failed. Start Docker, and deploy again.\n${error.output.slice(-1_000)}`,
-        { cause: error },
-      );
-    }
-    throw error;
+    if (!(error instanceof DockerCommandError)) throw error;
+    throw new Error(
+      `Building a container image needs a running Docker daemon, and \`docker info\` failed. Start Docker, and deploy again.\n${error.output}`,
+      { cause: error },
+    );
   }
 }

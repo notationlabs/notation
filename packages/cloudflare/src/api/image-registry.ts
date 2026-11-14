@@ -30,17 +30,16 @@ export async function registryNamespace(account: string): Promise<string> {
 
 /**
  * Makes credentials for the account's Cloudflare registry, which expire
- * after `expirationMinutes`.
+ * after 15 minutes.
  */
 export async function registryCredentials(
   account: string,
   permissions: ("push" | "pull")[],
-  expirationMinutes = 15,
 ): Promise<RegistryCredentials> {
   return await cloudflare<RegistryCredentials>(
     "POST",
     `/accounts/${encodeURIComponent(account)}/containers/registries/${CLOUDFLARE_REGISTRY}/credentials`,
-    { expiration_minutes: expirationMinutes, permissions },
+    { expiration_minutes: 15, permissions },
   );
 }
 
@@ -56,24 +55,16 @@ export async function manifestDigest(
   reference: string,
 ): Promise<string | undefined> {
   const url = `https://${CLOUDFLARE_REGISTRY}/v2/${namespace}/${repository}/manifests/${reference}`;
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: "HEAD",
-      headers: {
-        // The registry takes the password with the username `v1`, as
-        // Wrangler sends it, not with the username that Cloudflare returns.
-        Authorization: `Basic ${Buffer.from(`v1:${credentials.password}`).toString("base64")}`,
-        Accept: MANIFEST_TYPES,
-      },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch (error) {
-    throw new Error(
-      `HEAD ${url} failed: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
+  const response = await fetch(url, {
+    method: "HEAD",
+    headers: {
+      // The registry takes the password with the username `v1`, as
+      // Wrangler sends it, not with the username that Cloudflare returns.
+      Authorization: `Basic ${Buffer.from(`v1:${credentials.password}`).toString("base64")}`,
+      Accept: MANIFEST_TYPES,
+    },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
   if (response.status === 404) return undefined;
   if (!response.ok) {
     throw new Error(`HEAD ${url} failed with status ${response.status}`);
