@@ -46,14 +46,19 @@ describe("logger reconciler subscriber", () => {
       errorMessage: "boom",
     });
 
-    expect(info).toHaveBeenCalledOnce();
+    expect(info).toHaveBeenCalledWith(
+      "create start: resource-1 (test/service/subscriber)",
+    );
     expect(warn).toHaveBeenCalledTimes(2);
     expect(warn).toHaveBeenNthCalledWith(
       2,
-      "reconciler.hold.waiting",
-      expect.objectContaining({ level: "warn" }),
+      "waiting: execution execution-1 holds deployment deployment-1 " +
+        "(this execution: execution-2)",
     );
-    expect(error).toHaveBeenCalledOnce();
+    expect(error).toHaveBeenCalledWith(
+      "delete error: resource-3 (test/service/subscriber) " +
+        "error: DeleteFailed: boom",
+    );
   });
 
   it("prints a line for a create that took over an existing resource", async () => {
