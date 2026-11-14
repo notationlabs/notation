@@ -27,9 +27,10 @@ files side by side, such as `test/resources/workers/worker-script.test.ts` and
   pre-commit hook leave them out. Run them with `pok test e2e`.
 
 Each provider's end-to-end tests share one setup, in `test/e2e.ts` in the
-provider's package. They read the provider's credentials from the environment,
-and are skipped when any is missing. Each test file names what it creates with
-a prefix for the run, and deletes it when its tests end.
+provider's package. They read the provider's credentials from the environment.
+The Cloudflare tests are skipped when any is missing, and the AWS tests fail.
+Each test file names what it creates with a prefix for the run, and deletes it
+when its tests end.
 
 ### Cloudflare
 
@@ -38,6 +39,35 @@ a prefix for the run, and deletes it when its tests end.
   workers.dev subdomain.
 - Prefix: `ne2e-<6 hex characters>`. A Worker whose name starts with `ne2e-` is
   left over from a run that was killed, and can be deleted.
+
+### AWS
+
+- Credentials: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, for an IAM
+  user. When either is missing, each AWS test fails with an error that names
+  the missing variables. The tests are not skipped.
+- Region: `us-west-2`. The provider deploys only to this region, and the tests
+  check the results there.
+- Permissions: the user needs these actions on resources whose names start
+  with `ne2e-`, in `us-west-2`. An organization's service control policy must
+  not deny them.
+  - IAM: `CreateRole`, `GetRole`, `UpdateRole`, `DeleteRole`, `PassRole`,
+    `UpdateAssumeRolePolicy`, `PutRolePolicy`, `GetRolePolicy`,
+    `DeleteRolePolicy`, `AttachRolePolicy`, `DetachRolePolicy`,
+    `ListRolePolicies`, `ListAttachedRolePolicies` and `ListRoles`.
+  - Lambda: `CreateFunction`, `GetFunction`, `GetFunctionConfiguration`,
+    `UpdateFunctionCode`, `UpdateFunctionConfiguration`, `DeleteFunction`,
+    `ListFunctions`, `AddPermission`, `RemovePermission`, `GetPolicy`,
+    `TagResource`, `UntagResource` and `ListTags`.
+  - EventBridge: `CreateEventBus`, `DescribeEventBus`, `DeleteEventBus`,
+    `ListEventBuses`, `PutRule`, `DescribeRule`, `DeleteRule`, `ListRules`,
+    `PutTargets`, `RemoveTargets` and `ListTargetsByRule`.
+  - CloudWatch Logs: `CreateLogGroup`, `PutRetentionPolicy`,
+    `DescribeLogGroups` and `DeleteLogGroup`.
+  - SQS: `ListQueues` and `DeleteQueue`, to find and delete leftovers.
+  - STS: `GetCallerIdentity`.
+- Prefix: `ne2e-<6 hex characters>`. An IAM role, Lambda function, EventBridge
+  bus or rule, SQS queue, or log group under `/aws/lambda/` whose name starts
+  with `ne2e-` is left over from a run that was killed, and can be deleted.
 
 ## Publishing Packages
 
