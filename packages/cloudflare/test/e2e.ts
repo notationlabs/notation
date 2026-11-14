@@ -133,7 +133,9 @@ export function useProject({
       if (project.root) await project.notation("destroy");
     } finally {
       // Catches what a failed deploy or destroy left behind, and what a test
-      // created through the API.
+      // created through the API. Cloudflare refuses to delete a Worker while
+      // a container application uses its namespace.
+      await deleteContainerApplicationsWithPrefix(runPrefix);
       await deleteScriptsWithPrefix(runPrefix);
       await deleteBucketsWithPrefix(runPrefix);
       await deleteKvNamespacesWithPrefix(runPrefix);
@@ -144,6 +146,7 @@ export function useProject({
     expect(await namespacesWithPrefix(runPrefix)).toEqual([]);
     expect(await bucketsWithPrefix(runPrefix)).toEqual([]);
     expect(await kvNamespacesWithPrefix(runPrefix)).toEqual([]);
+    expect(await containerApplicationsWithPrefix(runPrefix)).toEqual([]);
     if (accountTokens) {
       expect(await tokensWithPrefix(runPrefix)).toEqual([]);
       expect(await secretsWithPrefix(runPrefix)).toEqual([]);
@@ -419,6 +422,47 @@ export async function kvNamespacesWithPrefix(
 async function deleteKvNamespacesWithPrefix(prefix: string): Promise<void> {
   for (const namespace of await kvNamespacesWithPrefix(prefix)) {
     await api("DELETE", `/storage/kv/namespaces/${namespace.id}`);
+  }
+}
+
+export type ContainerApplication = {
+  id: string;
+  name: string;
+  max_instances: number;
+  configuration: {
+    image: string;
+    vcpu?: number;
+    memory_mib?: number;
+    disk?: { size_mb: number };
+    environment_variables?: { name: string; value: string }[];
+  };
+  durable_objects?: { namespace_id: string };
+  active_rollout_id?: string;
+};
+
+/** The account's container applications whose name starts with `prefix`. */
+export async function containerApplicationsWithPrefix(
+  prefix: string,
+): Promise<ContainerApplication[]> {
+  const response = await api<ContainerApplication[] | null>(
+    "GET",
+    "/containers/applications",
+  );
+  if (!response.success) {
+    throw new Error(
+      `Listing container applications failed: ${JSON.stringify(response.errors)}`,
+    );
+  }
+  return (response.result ?? []).filter((application) =>
+    application.name.startsWith(prefix),
+  );
+}
+
+async function deleteContainerApplicationsWithPrefix(
+  prefix: string,
+): Promise<void> {
+  for (const application of await containerApplicationsWithPrefix(prefix)) {
+    await api("DELETE", `/containers/applications/${application.id}`);
   }
 }
 

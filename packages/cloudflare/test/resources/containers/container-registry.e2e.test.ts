@@ -7,7 +7,14 @@ import {
 } from "@aws-sdk/client-ecr";
 import { useAccountLock } from "@notation/test-utils";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { api, describeE2e, poll, runPrefix, useProject } from "../../e2e";
+import {
+  api,
+  containerApplicationsWithPrefix,
+  describeE2e,
+  poll,
+  runPrefix,
+  useProject,
+} from "../../e2e";
 import { copyDockerHubImageToEcr } from "./ecr-image";
 
 // traefik/whoami serves its hostname and the request's headers on port 80.
@@ -103,30 +110,9 @@ const infraModule = (settings: {
   application.dependOn(registry);
 `;
 
-type Application = {
-  id: string;
-  name: string;
-  configuration: { image: string };
-};
-
 type Registry = { domain: string; kind?: string };
 
 type StoreSecret = { id: string; name: string; status: string };
-
-async function applicationsWithPrefix(prefix: string): Promise<Application[]> {
-  const response = await api<Application[] | null>(
-    "GET",
-    "/containers/applications",
-  );
-  if (!response.success) {
-    throw new Error(
-      `Listing container applications failed: ${JSON.stringify(response.errors)}`,
-    );
-  }
-  return (response.result ?? []).filter((application) =>
-    application.name.startsWith(prefix),
-  );
-}
 
 async function findRegistry(domain: string): Promise<Registry | undefined> {
   const response = await api<Registry[] | null>(
@@ -206,7 +192,8 @@ describeWithAws("ContainerRegistry", () => {
   // the record is deleted. Registered first, so it is released last. The
   // hooks and tests below must finish within the lock's stale age of 60
   // minutes, or another run takes the lock over. Their timeouts add up to
-  // about 50 minutes.
+  // about 50 minutes. A killed run leaves the record behind, and its name
+  // has no `ne2e-` prefix. Delete it by hand if no run holds the lock.
   useAccountLock("container-registry");
 
   const ecr = new ECRClient({ region });
@@ -283,16 +270,6 @@ describeWithAws("ContainerRegistry", () => {
 
   const project = useProject();
 
-  // Registered after useProject, so it runs before useProject's cleanup.
-  // An application that a failed deploy or destroy left behind is deleted
-  // before its Worker.
-  afterAll(async () => {
-    for (const application of await applicationsWithPrefix(runPrefix)) {
-      await api("DELETE", `/containers/applications/${application.id}`);
-    }
-    expect(await applicationsWithPrefix(runPrefix)).toEqual([]);
-  });
-
   let scriptName: string;
 
   it("creates the registry and an application whose image is in it", async () => {
@@ -307,7 +284,7 @@ describeWithAws("ContainerRegistry", () => {
     const names = await project.workerNames();
     expect(names).toHaveLength(1);
     scriptName = names[0]!;
-    const applications = await applicationsWithPrefix(runPrefix);
+    const applications = await containerApplicationsWithPrefix(runPrefix);
     expect(applications).toHaveLength(1);
     expect(applications[0]!.configuration).toMatchObject({ image });
   });
@@ -326,7 +303,7 @@ describeWithAws("ContainerRegistry", () => {
   it("deletes the application, the registry and the Worker on destroy", async () => {
     await project.notation("destroy");
 
-    expect(await applicationsWithPrefix(runPrefix)).toEqual([]);
+    expect(await containerApplicationsWithPrefix(runPrefix)).toEqual([]);
     expect(await findRegistry(domain)).toBeUndefined();
     expect(await project.workerNames()).toEqual([]);
   }, 600_000);

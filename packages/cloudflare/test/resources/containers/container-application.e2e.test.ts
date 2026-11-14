@@ -1,6 +1,8 @@
-import { afterAll, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import {
   api,
+  type ContainerApplication,
+  containerApplicationsWithPrefix,
   describeE2e,
   namespacesWithPrefix,
   poll,
@@ -80,42 +82,14 @@ const infraModule = (settings: {
   });
 `;
 
-type Application = {
-  id: string;
-  name: string;
-  max_instances: number;
-  configuration: {
-    image: string;
-    vcpu?: number;
-    memory_mib?: number;
-    disk?: { size_mb: number };
-    environment_variables?: { name: string; value: string }[];
-  };
-  durable_objects?: { namespace_id: string };
-  active_rollout_id?: string;
-};
-
-async function applicationsWithPrefix(prefix: string): Promise<Application[]> {
-  const response = await api<Application[] | null>(
-    "GET",
-    "/containers/applications",
-  );
-  if (!response.success) {
-    throw new Error(
-      `Listing container applications failed: ${JSON.stringify(response.errors)}`,
-    );
-  }
-  return (response.result ?? []).filter((application) =>
-    application.name.startsWith(prefix),
-  );
-}
-
 // Cloudflare refuses a rollout while another is running, and only updates
 // the application's configuration when the rollout ends.
-async function waitForRollout(applicationId: string): Promise<Application> {
+async function waitForRollout(
+  applicationId: string,
+): Promise<ContainerApplication> {
   const deadline = Date.now() + 480_000;
   for (;;) {
-    const response = await api<Application>(
+    const response = await api<ContainerApplication>(
       "GET",
       `/containers/applications/${applicationId}`,
     );
@@ -142,16 +116,6 @@ async function namespaceIdOf(script: string, className: string) {
 describeE2e("ContainerApplication", () => {
   const project = useProject();
 
-  // Registered after useProject, so it runs before useProject's cleanup.
-  // An application that a failed deploy or destroy left behind is deleted
-  // before its Worker.
-  afterAll(async () => {
-    for (const application of await applicationsWithPrefix(runPrefix)) {
-      await api("DELETE", `/containers/applications/${application.id}`);
-    }
-    expect(await applicationsWithPrefix(runPrefix)).toEqual([]);
-  });
-
   let scriptName: string;
   let applicationId: string;
 
@@ -173,7 +137,7 @@ describeE2e("ContainerApplication", () => {
       { script: scriptName, class: "Sandbox" },
     ]);
 
-    const applications = await applicationsWithPrefix(runPrefix);
+    const applications = await containerApplicationsWithPrefix(runPrefix);
     expect(applications).toHaveLength(1);
     const application = applications[0]!;
     applicationId = application.id;
@@ -214,7 +178,7 @@ describeE2e("ContainerApplication", () => {
     );
     await project.notation("deploy");
 
-    const applications = await applicationsWithPrefix(runPrefix);
+    const applications = await containerApplicationsWithPrefix(runPrefix);
     expect(applications).toHaveLength(1);
     expect(applications[0]).toMatchObject({
       id: applicationId,
@@ -302,7 +266,7 @@ describeE2e("ContainerApplication", () => {
   it("deletes the application and the Worker on destroy", async () => {
     await project.notation("destroy");
 
-    expect(await applicationsWithPrefix(runPrefix)).toEqual([]);
+    expect(await containerApplicationsWithPrefix(runPrefix)).toEqual([]);
     expect(await project.workerNames()).toEqual([]);
   }, 600_000);
 });

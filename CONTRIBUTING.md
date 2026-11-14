@@ -26,81 +26,32 @@ files side by side, such as `test/resources/workers/worker-script.test.ts` and
   the result in a real account with the provider. `pok test run` and the
   pre-commit hook leave them out. Run them with `pok test e2e`.
 
-Each provider's end-to-end tests share one setup, in `test/e2e.ts` in the
-provider's package. They read the provider's credentials from the environment.
-The Cloudflare tests are skipped when any is missing, and the AWS tests fail.
-Each test file names what it creates with a prefix for the run, and deletes it
-when its tests end.
+### End-to-end tests
 
-### Cloudflare
+`pok test e2e` deploys to real Cloudflare and AWS accounts. It reads these
+variables from the environment:
 
-- Credentials: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. The token
-  needs the Workers Scripts: Edit, Workers R2 Storage: Edit and Workers KV
-  Storage: Edit permissions, and the account needs a workers.dev subdomain.
-  The tests of account tokens also need the Secrets Store: Edit and Account
-  API Tokens: Edit permissions. They use the account's Secrets Store, or
-  create one, and leave it. The Containers tests also need the Containers:
-  Edit permission, and an account on the Workers Paid plan.
-- Prefix: `ne2e-<6 hex characters>`. A Worker, a container application, an R2
-  bucket in the default or EU jurisdiction, an account API token or a Secrets
-  Store secret whose name starts with `ne2e-`, or a KV namespace whose title
-  starts with `ne2e-`, is left over from a run that was killed, and can be
-  deleted. Delete the container application before its Worker. The exception
-  is a `ne2e-lock-*` secret, which is a lock from `@notation/test-utils`.
-  Delete one only if it is older than 60 minutes.
-- Private registries: the `ContainerRegistry` test pulls an image from AWS
-  ECR, so it also needs the AWS credentials and permissions below, and is
-  skipped without them. The token also needs the Secrets Store: Edit
-  permission, and the account needs a Secrets Store. The test holds the
-  `container-registry` lock while it manages the account's registry record for
-  `<aws account id>.dkr.ecr.<AWS_REGION>.amazonaws.com`. A record for that
-  domain while no run holds the lock is left over, and can be deleted. So
-  can a Secrets Store secret named `ne2e-<6 hex characters>-ecr`, which holds
-  the pull user's secret access key for the record.
+| Variable                                                   | Used by                                                    |
+| ---------------------------------------------------------- | ---------------------------------------------------------- |
+| `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`            | The Cloudflare tests                                       |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | The AWS tests, and the Cloudflare `ContainerRegistry` test |
+| `ECR_PULL_ACCESS_KEY_ID`, `ECR_PULL_SECRET_ACCESS_KEY`     | The Cloudflare `ContainerRegistry` test                    |
 
-### AWS
+A Cloudflare test is skipped when its variables are missing. An AWS test fails.
 
-- Environment: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, for an IAM
-  user, and `AWS_REGION`. The provider deploys to `AWS_REGION`, and the tests
-  check the results there. When any is missing, each AWS test fails with an
-  error that names the missing variables. The tests are not skipped.
-- The Cloudflare `ContainerRegistry` test also needs `ECR_PULL_ACCESS_KEY_ID`
-  and `ECR_PULL_SECRET_ACCESS_KEY`, for a second IAM user that can only pull
-  images. The `AWS_*` user creates the ECR repository and pushes the image
-  into it. Cloudflare pulls the image with the pull user's keys, which the
-  test gives to the registry record. The test is skipped when any of the five
-  variables is missing.
-- Permissions: the user needs these actions on resources whose names start
-  with `ne2e-`, in that region. An organization's service control policy must
-  not deny them.
-  - IAM: `CreateRole`, `GetRole`, `UpdateRole`, `DeleteRole`, `PassRole`,
-    `UpdateAssumeRolePolicy`, `PutRolePolicy`, `GetRolePolicy`,
-    `DeleteRolePolicy`, `AttachRolePolicy`, `DetachRolePolicy`,
-    `ListRolePolicies`, `ListAttachedRolePolicies` and `ListRoles`.
-  - Lambda: `CreateFunction`, `GetFunction`, `GetFunctionConfiguration`,
-    `UpdateFunctionCode`, `UpdateFunctionConfiguration`, `DeleteFunction`,
-    `ListFunctions`, `AddPermission`, `RemovePermission`, `GetPolicy`,
-    `TagResource`, `UntagResource` and `ListTags`.
-  - EventBridge: `CreateEventBus`, `DescribeEventBus`, `DeleteEventBus`,
-    `ListEventBuses`, `PutRule`, `DescribeRule`, `DeleteRule`, `ListRules`,
-    `PutTargets`, `RemoveTargets` and `ListTargetsByRule`.
-  - CloudWatch Logs: `CreateLogGroup`, `PutRetentionPolicy`,
-    `DescribeLogGroups` and `DeleteLogGroup`.
-  - SQS: `ListQueues` and `DeleteQueue`, to find and delete leftovers.
-  - STS: `GetCallerIdentity`.
-  - ECR, for the Cloudflare `ContainerRegistry` test: `CreateRepository`,
-    `DescribeRepositories`, `DeleteRepository`, `InitiateLayerUpload`,
-    `UploadLayerPart`, `CompleteLayerUpload` and `PutImage`, to copy an image
-    into a repository.
-- Pull user permissions: `ecr:GetAuthorizationToken` on all resources, and
-  `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer` and
-  `ecr:BatchCheckLayerAvailability` on repositories whose names start with
-  `ne2e-`, in `AWS_REGION`. Give it nothing else, as its keys are stored in
-  Cloudflare.
-- Prefix: `ne2e-<6 hex characters>`. An IAM role, Lambda function, EventBridge
-  bus or rule, SQS queue, log group under `/aws/lambda/`, or ECR repository
-  whose name starts with `ne2e-` is left over from a run that was killed, and
-  can be deleted. Delete an ECR repository with its images (`force`).
+The accounts need:
+
+- Cloudflare: a token with Edit on Workers Scripts, Workers R2 Storage, Workers
+  KV Storage, Containers, Secrets Store and Account API Tokens. The account
+  needs a workers.dev subdomain, a Secrets Store and the Workers Paid plan.
+- AWS: an IAM user with the policy in `packages/aws/test/policies/e2e-user.json`,
+  and a second user that can only pull images, with the policy in
+  `packages/aws/test/policies/ecr-pull-user.json`.
+
+Each run names what it creates with `ne2e-` and a random suffix, and deletes it
+when it ends. A run that is killed leaves its resources behind. You can delete
+anything whose name starts with `ne2e-`, except a `ne2e-lock-*` secret that is
+less than 60 minutes old: that is a lock another run holds.
 
 ## Publishing Packages
 
