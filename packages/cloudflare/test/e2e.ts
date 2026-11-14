@@ -61,8 +61,8 @@ export type Project = {
 /**
  * Sets up a temp project for the tests of the enclosing `describe`, with a
  * `notation.config.ts` whose app is `runPrefix`. After the tests, destroys
- * the deployment, deletes each Worker that starts with `runPrefix`, and checks
- * that the account has none left.
+ * the deployment, deletes each Worker and R2 bucket that starts with
+ * `runPrefix`, and checks that the account has none left.
  */
 export function useProject({
   stage = "e2e",
@@ -135,11 +135,13 @@ export function useProject({
       // Catches what a failed deploy or destroy left behind, and what a test
       // created through the API.
       await deleteScriptsWithPrefix(runPrefix);
+      await deleteBucketsWithPrefix(runPrefix);
       if (accountTokens) await deleteTokensAndSecretsWithPrefix(runPrefix);
       if (project.root) rmSync(project.root, { recursive: true, force: true });
     }
     expect(await scriptsWithPrefix(runPrefix)).toEqual([]);
     expect(await namespacesWithPrefix(runPrefix)).toEqual([]);
+    expect(await bucketsWithPrefix(runPrefix)).toEqual([]);
     if (accountTokens) {
       expect(await tokensWithPrefix(runPrefix)).toEqual([]);
       expect(await secretsWithPrefix(runPrefix)).toEqual([]);
@@ -162,8 +164,10 @@ export async function api<T = any>(
   /** The path after `/accounts/<id>`. */
   path: string,
   body?: FormData | object,
+  requestHeaders: Record<string, string> = {},
 ): Promise<ApiResponse<T>> {
   const headers: Record<string, string> = {
+    ...requestHeaders,
     Authorization: `Bearer ${apiToken}`,
   };
   let payload: FormData | string | undefined;
@@ -244,6 +248,46 @@ export async function namespacesWithPrefix(
     }
   }
   return found;
+}
+
+export type AccountBucket = { name: string; jurisdiction: string };
+
+// The list of buckets has only the buckets of the jurisdiction that the
+// request names, so each jurisdiction that the tests use is listed.
+const bucketJurisdictions = ["default", "eu"];
+
+/** The account's R2 buckets whose name starts with `prefix`. */
+export async function bucketsWithPrefix(
+  prefix: string,
+): Promise<AccountBucket[]> {
+  const found: AccountBucket[] = [];
+  for (const jurisdiction of bucketJurisdictions) {
+    const response = await api<{ buckets: { name: string }[] }>(
+      "GET",
+      `/r2/buckets?name_contains=${prefix}&per_page=1000`,
+      undefined,
+      { "cf-r2-jurisdiction": jurisdiction },
+    );
+    if (!response.success) {
+      throw new Error(
+        `Listing the R2 buckets in the ${jurisdiction} jurisdiction failed: ${JSON.stringify(response.errors)}`,
+      );
+    }
+    for (const bucket of response.result.buckets) {
+      if (bucket.name.startsWith(prefix)) {
+        found.push({ name: bucket.name, jurisdiction });
+      }
+    }
+  }
+  return found.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function deleteBucketsWithPrefix(prefix: string): Promise<void> {
+  for (const bucket of await bucketsWithPrefix(prefix)) {
+    await api("DELETE", `/r2/buckets/${bucket.name}`, undefined, {
+      "cf-r2-jurisdiction": bucket.jurisdiction,
+    });
+  }
 }
 
 async function deleteScriptsWithPrefix(prefix: string): Promise<void> {
