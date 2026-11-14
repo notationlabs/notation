@@ -61,8 +61,8 @@ export type Project = {
 /**
  * Sets up a temp project for the tests of the enclosing `describe`, with a
  * `notation.config.ts` whose app is `runPrefix`. After the tests, destroys
- * the deployment, deletes each Worker and R2 bucket that starts with
- * `runPrefix`, and checks that the account has none left.
+ * the deployment, deletes each Worker, R2 bucket and KV namespace that starts
+ * with `runPrefix`, and checks that the account has none left.
  */
 export function useProject({
   stage = "e2e",
@@ -136,12 +136,14 @@ export function useProject({
       // created through the API.
       await deleteScriptsWithPrefix(runPrefix);
       await deleteBucketsWithPrefix(runPrefix);
+      await deleteKvNamespacesWithPrefix(runPrefix);
       if (accountTokens) await deleteTokensAndSecretsWithPrefix(runPrefix);
       if (project.root) rmSync(project.root, { recursive: true, force: true });
     }
     expect(await scriptsWithPrefix(runPrefix)).toEqual([]);
     expect(await namespacesWithPrefix(runPrefix)).toEqual([]);
     expect(await bucketsWithPrefix(runPrefix)).toEqual([]);
+    expect(await kvNamespacesWithPrefix(runPrefix)).toEqual([]);
     if (accountTokens) {
       expect(await tokensWithPrefix(runPrefix)).toEqual([]);
       expect(await secretsWithPrefix(runPrefix)).toEqual([]);
@@ -384,6 +386,39 @@ async function deleteTokensAndSecretsWithPrefix(prefix: string) {
   const store = await storeId();
   for (const secret of await secretsWithPrefix(prefix)) {
     await api("DELETE", `/secrets_store/stores/${store}/secrets/${secret.id}`);
+  }
+}
+
+export type KvNamespace = { id: string; title: string };
+
+/** The account's KV namespaces whose title starts with `prefix`. */
+export async function kvNamespacesWithPrefix(
+  prefix: string,
+): Promise<KvNamespace[]> {
+  const found: KvNamespace[] = [];
+  for (let page = 1; ; page++) {
+    const response = await api<KvNamespace[]>(
+      "GET",
+      `/storage/kv/namespaces?page=${page}&per_page=1000&order=id&direction=asc`,
+    );
+    if (!response.success) {
+      throw new Error(
+        `Listing KV namespaces failed: ${JSON.stringify(response.errors)}`,
+      );
+    }
+    if (!response.result?.length) break;
+    for (const namespace of response.result) {
+      if (namespace.title.startsWith(prefix)) {
+        found.push({ id: namespace.id, title: namespace.title });
+      }
+    }
+  }
+  return found;
+}
+
+async function deleteKvNamespacesWithPrefix(prefix: string): Promise<void> {
+  for (const namespace of await kvNamespacesWithPrefix(prefix)) {
+    await api("DELETE", `/storage/kv/namespaces/${namespace.id}`);
   }
 }
 
