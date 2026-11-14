@@ -298,6 +298,9 @@ export abstract class Resource<
     this.id = id;
     this.config = config || ({} as C);
     this.dependencies = dependencies || ({} as D);
+    // A resource joins the graph when it is declared, with no group. A
+    // group that adds it later sets its group.
+    this.#collection?.graph.resources.push(this);
     const declaredAt = captureCallSiteLazily(new.target, {
       skipLibraryFrames: true,
     });

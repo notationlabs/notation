@@ -109,6 +109,66 @@ it("collects resources", async () => {
   expect(graph.resources).toEqual([testResource, testResource2]);
 });
 
+it("collects a resource that is in no group", async () => {
+  let resource!: TestResource;
+  const graph = await collectResourceGraph(() => {
+    resource = new TestResource("loose", { config: testResourceConfig });
+  });
+
+  expect(graph.resources).toEqual([resource]);
+  expect(resource.group).toBeNull();
+});
+
+it("sets the group of a collected resource when a group adds it", async () => {
+  let first!: TestResource;
+  let second!: TestResource;
+  let group!: TestResourceGroup;
+  const graph = await collectResourceGraph(() => {
+    first = new TestResource("first", { config: testResourceConfig });
+    second = new TestResource("second", { config: testResourceConfig });
+    group = new TestResourceGroup("test-group", "group-a");
+    group.add(second);
+  });
+
+  expect(graph.resources).toEqual([first, second]);
+  expect(group.resources).toEqual([second]);
+  expect(first.group).toBeNull();
+  expect(second.group).toEqual({ type: "test-group", id: "group-a" });
+});
+
+it("throws when a collected resource is added to two groups", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const resource = new TestResource("shared", {
+        config: testResourceConfig,
+      });
+      new TestResourceGroup("test-group", "group-a").add(resource);
+      new TestResourceGroup("test-group", "group-b").add(resource);
+    }),
+  ).rejects.toThrow("has already been registered");
+});
+
+it("throws when a collected resource is added to a group twice", async () => {
+  await expect(
+    collectResourceGraph(() => {
+      const group = new TestResourceGroup("test-group", "group-a");
+      const resource = new TestResource("twice", {
+        config: testResourceConfig,
+      });
+      group.add(resource);
+      group.add(resource);
+    }),
+  ).rejects.toThrow("has already been registered");
+});
+
+it("leaves out a resource made with no collection active", async () => {
+  const outside = new TestResource("outside", { config: testResourceConfig });
+  const graph = await collectResourceGraph(() => {});
+
+  expect(graph.resources).toEqual([]);
+  expect(outside.group).toBeNull();
+});
+
 it("throws an error when adding an existing resource", () => {
   const resourceGroup = new TestResourceGroup("test-group", "group-a");
   resourceGroup.add(testResource);
