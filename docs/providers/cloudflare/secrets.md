@@ -96,7 +96,7 @@ export const worker = $worker({
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `id`        | Keys the token in state, and names the token and its secret `<app>--<stage>--<id>`. Changing the id rotates the token: deploy creates a new token and secret, and deletes the old ones.                         |
 | `policies`  | What the token can do. Each policy has an `effect`, `allow` or `deny`, the names of its `permissionGroups` as the dashboard shows them, and the `resources` it applies to. A change updates the token in place. |
-| `condition` | Optional. The client IP ranges, in CIDR notation, that may use the token, as `{ requestIp: { in, notIn } }`. A change updates the token in place.                                                               |
+| `condition` | Optional. The client IP ranges, in CIDR notation, as `{ requestIp: { in, notIn } }`. Only clients in `in` may use the token, and clients in `notIn` may not. A change updates the token in place.               |
 
 - A change to the policies or the condition updates the token, which keeps its value.
 - If the IP ranges or the policies are changed in the dashboard, deploy changes them back to the declaration.
