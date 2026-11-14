@@ -347,7 +347,7 @@ it("writes the order of a replace in the JSON plan", async () => {
     .mockImplementation((chunk) => chunks.push(String(chunk)) > 0);
 
   try {
-    await plan(deployment, { json: true, logger: { ...console } });
+    await plan(deployment, { output: "json", logger: { ...console } });
   } finally {
     write.mockRestore();
   }

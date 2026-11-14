@@ -1,12 +1,12 @@
 import {
   configPath,
-  createLoggerReconcilerSubscriber,
   type DeploymentIdentity,
   type ReconcilerEventEmitter,
 } from "@notation/core";
 import { spawn as nodeSpawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Logger } from "./logger";
+import { createEventRenderer } from "./output";
 
 export type DeployChildOptions = {
   deployment: DeploymentIdentity;
@@ -44,7 +44,7 @@ export function deployInChild({
   spawn = nodeSpawn,
   proc = process,
 }: DeployChildOptions): Promise<void> {
-  const emit = createLoggerReconcilerSubscriber({ logger });
+  const emit = createEventRenderer("pretty", logger);
   const args = [
     ...process.execArgv,
     process.argv[1]!,

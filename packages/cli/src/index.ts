@@ -4,6 +4,7 @@ import { compile } from "./compile";
 import { deploy } from "./deploy";
 import { destroy } from "./destroy";
 import { plan } from "./plan";
+import { resolveOutputMode } from "./output";
 import { defaultLogger } from "./logger";
 import { runWithErrorHandling } from "./run-with-error-handling";
 import { secretDelete, secretSet } from "./secret";
@@ -34,6 +35,11 @@ const stageOption = [
   "--stage <stage>",
   "stage to deploy to (defaults to defaultStage in the config)",
 ] as const;
+const jsonOption = [
+  "--json",
+  "stream reconciler events as NDJSON (the default when stdout is not a terminal)",
+] as const;
+const noJsonOption = ["--no-json", "print pretty output"] as const;
 
 program
   .command("compile")
@@ -63,7 +69,8 @@ program
   .option(...configOption)
   .option(...stageOption)
   .description("Deploy Notation App")
-  .option("--json", "stream reconciler events as NDJSON")
+  .option(...jsonOption)
+  .option(...noJsonOption)
   .option("--execution-id <id>", "resume a durable execution")
   .option("--no-compile", "deploy the existing build without compiling")
   .option("--no-drift-detection", "skip drift detection")
@@ -77,12 +84,13 @@ program
     const project = await load(options);
     const deployment = await resolveResumableDeployment(project, options);
     await deploy(deployment, {
-      json: options.json,
+      output: resolveOutputMode(options.json),
       executionId: options.executionId,
       resumeCommand: resumeCommand("deploy", options),
       compile: options.compile,
       driftDetection: options.driftDetection,
-      promptSecrets: options.promptSecrets,
+      // Without --json, a person may still be at the terminal.
+      promptSecrets: options.promptSecrets || options.json !== true,
     });
   });
 
@@ -91,13 +99,14 @@ program
   .option(...configOption)
   .option(...stageOption)
   .description("Destroy Notation App")
-  .option("--json", "stream reconciler events as NDJSON")
+  .option(...jsonOption)
+  .option(...noJsonOption)
   .option("--execution-id <id>", "resume a durable execution")
   .action(async (options) => {
     const project = await load(options);
     const deployment = await resolveResumableDeployment(project, options);
     await destroy(deployment, {
-      json: options.json,
+      output: resolveOutputMode(options.json),
       executionId: options.executionId,
       resumeCommand: resumeCommand("destroy", options),
     });
@@ -108,11 +117,12 @@ program
   .option(...configOption)
   .option(...stageOption)
   .description("Plan Notation App")
-  .option("--json", "print the plan as JSON")
+  .option("--json", "print the plan as JSON (the default when stdout is not a terminal)")
+  .option(...noJsonOption)
   .action(async (options) => {
     const project = await load(options);
     const deployment = resolveDeployment(project, { stage: options.stage });
-    await plan(deployment, { json: options.json });
+    await plan(deployment, { output: resolveOutputMode(options.json) });
   });
 
 program

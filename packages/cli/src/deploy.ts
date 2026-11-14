@@ -1,6 +1,4 @@
 import {
-  createLoggerReconcilerSubscriber,
-  createNdjsonEventEmitter,
   deployApp,
   resolveDeploymentId,
   type Deployment,
@@ -9,11 +7,11 @@ import {
 import { randomUUID } from "node:crypto";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
+import { createEventRenderer, type OutputMode } from "./output";
 import { canPrompt, terminalSecretPrompt } from "./prompt";
-import { redirectStdoutToStderr } from "./stdio";
 
 export type DeployCommandOptions = {
-  json?: boolean;
+  output?: OutputMode;
   executionId?: string;
   // Printed with the execution ID, such as `notation deploy`.
   resumeCommand?: string;
@@ -22,8 +20,10 @@ export type DeployCommandOptions = {
   driftDetection?: boolean;
   logger?: Logger;
   /**
-   * Asks on the terminal for secret values even with `json`. `watch` sets it
-   * for the deploys it runs, whose stdout carries events to `watch`.
+   * Asks on the terminal for secret values even in JSON output. `watch` sets
+   * it for the deploys it runs, whose stdout carries events to `watch`. The
+   * CLI also sets it when the output is JSON only because stdout is not a
+   * terminal.
    */
   promptSecrets?: boolean;
   /** Defaults to the prompt that `secretPrompt` picks. */
@@ -35,9 +35,8 @@ export async function deploy(
   opts: DeployCommandOptions = {},
 ) {
   const logger = opts.logger ?? defaultLogger;
-  const emit = opts.json
-    ? createNdjsonEventEmitter(redirectStdoutToStderr().write)
-    : createLoggerReconcilerSubscriber({ logger });
+  const output = opts.output ?? "pretty";
+  const emit = createEventRenderer(output, logger);
 
   if (opts.compile !== false) {
     await compile(deployment, { logger });
@@ -58,7 +57,10 @@ export async function deploy(
     driftDetection: opts.driftDetection,
     promptSecret:
       opts.promptSecret ??
-      secretPrompt({ json: opts.json, promptSecrets: opts.promptSecrets }),
+      secretPrompt({
+        json: output === "json",
+        promptSecrets: opts.promptSecrets,
+      }),
   });
 }
 
