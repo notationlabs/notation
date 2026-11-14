@@ -8,10 +8,21 @@ import {
 } from "@notation/resource";
 import * as std from "@notation/std/resources";
 import * as cloudflare from "src/resources";
-import { assertWorkerId, workerNames, workerResourceId } from "src/id";
+import {
+  assertWorkerId,
+  containerApplicationName,
+  containerRepositoryName,
+  workerNames,
+  workerResourceId,
+} from "src/id";
 import type { SecretValueFrom } from "src/secrets/value";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
-import { describeNamespace, registeredNamespace } from "./durable-object";
+import {
+  describeNamespace,
+  registeredNamespace,
+  type DurableObjectContainerConfig,
+  type Registered,
+} from "./durable-object";
 import { isJsonBinding } from "./json";
 import { isWorkerSecret } from "./secret";
 import { boundSecret } from "./secrets-store";
@@ -59,7 +70,25 @@ export type WorkerGroupConfig = {
   unprotectedNamespaces?: string[];
   /** The namespaces that the Worker binds on other Workers. */
   boundNamespaces: cloudflare.workers.BoundNamespace[];
+  /** The containers of the hosted namespaces. */
+  containers?: WorkerGroupContainer[];
   url: boolean;
+};
+
+/** The image and the container application of a hosted namespace. */
+export type WorkerGroupContainer = {
+  /** The id of the hosted namespace. */
+  namespaceId: string;
+  image: cloudflare.containers.ContainerImageInstance["config"];
+  application: Omit<
+    cloudflare.containers.ContainerApplicationInstance["config"],
+    "HostedNamespaceId" | "Configuration"
+  > & {
+    Configuration: Omit<
+      cloudflare.containers.ContainerApplicationInstance["config"]["Configuration"],
+      "image"
+    >;
+  };
 };
 
 const workerGroupMark = Symbol.for("@notation/cloudflare/WorkerGroup");
@@ -72,6 +101,11 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
   readonly secrets: cloudflare.workers.WorkerSecretInstance[];
   /** Set when the Worker binds a Worker secret. */
   readonly placeholder?: cloudflare.workers.WorkerScriptPlaceholderInstance;
+  readonly containers: {
+    namespaceId: string;
+    image: cloudflare.containers.ContainerImageInstance;
+    application: cloudflare.containers.ContainerApplicationInstance;
+  }[] = [];
 
   get [workerGroupMark]() {
     return true;
@@ -142,8 +176,43 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
         ),
       );
     }
+    // The ids don't depend on the Worker, so that when the namespace moves
+    // to another Worker, deploy changes the same resources.
+    for (const { namespaceId, image, application } of config.containers ?? []) {
+      const imageResource = this.add(
+        new cloudflare.containers.ContainerImage(
+          containerImageResourceId(namespaceId),
+          { config: image },
+        ),
+      );
+      const applicationResource = this.add(
+        new cloudflare.containers.ContainerApplication(
+          containerResourceId(namespaceId),
+          {
+            config: {
+              ...application,
+              HostedNamespaceId: namespaceId,
+              Configuration: {
+                image: imageResource.outputRef("Image"),
+                ...application.Configuration,
+              },
+            },
+            dependencies: { script: this.script },
+          },
+        ),
+      );
+      this.containers.push({
+        namespaceId,
+        image: imageResource,
+        application: applicationResource,
+      });
+    }
   }
 }
+
+const containerResourceId = (namespaceId: string) => `container:${namespaceId}`;
+const containerImageResourceId = (namespaceId: string) =>
+  `container:${namespaceId}:image`;
 
 export function isWorkerGroup(value: unknown): value is WorkerGroup {
   return (value as any)?.[workerGroupMark] === true;
@@ -248,6 +317,11 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
           ? [...resolved.unprotected].sort()
           : undefined,
         boundNamespaces: resolved.bound,
+        // Undefined when empty, so that the config of a Worker without
+        // containers stays the same.
+        containers: resolved.containers.length
+          ? resolved.containers
+          : undefined,
         url: config.url ?? true,
       });
       // Each service binding is a contribution, so that deploy can create
@@ -333,6 +407,7 @@ type ResolvedBindings = {
   transferSources: { id: string; binders: Entry[] }[];
   /** The Workers that the Worker binds as services, itself included. */
   services: { name: string; worker: Entry }[];
+  containers: WorkerGroupContainer[];
 };
 
 /**
@@ -352,6 +427,7 @@ function resolveBindings(
     bound: [],
     transferSources: [],
     services: [],
+    containers: [],
   };
   for (const [name, value] of Object.entries(self.bindings())) {
     if (typeof value === "string") {
@@ -363,7 +439,11 @@ function resolveBindings(
       const ns = value as DurableObjectDeclaration;
       const host = hostOf(self, ns, namespace.className, name);
       if (host === self) {
-        addHosted(self, resolved.namespaces, ns, namespace.className);
+        if (addHosted(self, resolved.namespaces, ns, namespace)) {
+          if (namespace.container) {
+            resolved.containers.push(containerOf(ns.id, namespace.container));
+          }
+        }
         if (!namespace.protect) resolved.unprotected.add(ns.id);
         addTransferSources(self, resolved.transferSources, ns);
         resolved.bindings.push({
@@ -461,17 +541,70 @@ function addHosted(
   self: Entry,
   namespaces: cloudflare.workers.HostedNamespace[],
   namespace: DurableObjectDeclaration,
-  className: string,
-) {
-  if (namespaces.some((hosted) => hosted.id === namespace.id)) return;
+  { className, container }: Registered,
+): boolean {
+  if (namespaces.some((hosted) => hosted.id === namespace.id)) return false;
   const clash = namespaces.find((hosted) => hosted.className === className);
   if (clash) {
     throw new Error(
       `${self.describe()} hosts the namespaces "${clash.id}" and "${namespace.id}", which both have the class ${className}. Cloudflare keeps one namespace for each class that a Worker exports, so give each namespace its own class.`,
     );
   }
-  namespaces.push({ id: namespace.id, className });
+  // `container` is left out for a namespace without a container, so that the
+  // params of a Worker deployed before this option existed don't change.
+  namespaces.push({
+    id: namespace.id,
+    className,
+    ...(container && { container: true }),
+  });
+  return true;
 }
+
+function containerOf(
+  namespaceId: string,
+  container: DurableObjectContainerConfig,
+): WorkerGroupContainer {
+  const { image, network } = container;
+  return {
+    namespaceId,
+    image: {
+      Repository: image.repository ?? containerRepositoryName(namespaceId),
+      Context: image.context,
+      ...(image.dockerfile !== undefined && { Dockerfile: image.dockerfile }),
+      ...(image.buildArgs !== undefined && { BuildArgs: image.buildArgs }),
+    },
+    application: {
+      Name: containerApplicationName(namespaceId),
+      MaxInstances: container.maxInstances,
+      Configuration: definedValues({
+        instance_type: container.instanceType,
+        vcpu: container.vcpu,
+        memory_mib: container.memoryMib,
+        disk:
+          container.diskMb === undefined
+            ? undefined
+            : { size_mb: container.diskMb },
+        environment_variables:
+          container.environmentVariables &&
+          Object.entries(container.environmentVariables).map(
+            ([name, value]) => ({ name, value }),
+          ),
+        network:
+          network &&
+          definedValues({
+            mode: network.mode,
+            assign_ipv4: network.assignIpv4,
+            assign_ipv6: network.assignIpv6,
+          }),
+      }),
+    },
+  };
+}
+
+const definedValues = <T extends Record<string, unknown>>(value: T): T =>
+  Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined),
+  ) as T;
 
 // A Worker that binds a namespace on its host may have hosted it before. It
 // doesn't export the class, or it would host the namespace too.

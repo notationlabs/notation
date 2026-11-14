@@ -27,9 +27,64 @@ export type DurableObjectDeclarationConfig<
    * remove the namespace or its Worker.
    */
   protect?: boolean;
+  /**
+   * Runs a container for each object of the namespace. The hosting Worker's
+   * upload declares the class as a container class, and deploy builds the
+   * image and creates a container application for the namespace.
+   */
+  container?: DurableObjectContainerConfig;
 };
 
-type Registered = { className: string; protect: boolean };
+export type DurableObjectContainerConfig = {
+  /** The image that deploy builds with Docker and pushes to the account's Cloudflare registry. */
+  image: {
+    /** The build context directory, relative to the project root. */
+    context: string;
+    /**
+     * The Dockerfile, relative to the project root. Defaults to `Dockerfile`
+     * in the build context.
+     */
+    dockerfile?: string;
+    /**
+     * Passed to `docker build` as `--build-arg`. Don't put secrets here: the
+     * values are kept in the image's history.
+     */
+    buildArgs?: Record<string, string>;
+    /**
+     * The repository in the account's Cloudflare registry. Defaults to
+     * `<app>--<stage>--<id>`, with the id in lower case.
+     */
+    repository?: string;
+  };
+  /** The most containers that can run at once. */
+  maxInstances: number;
+  /**
+   * Such as `"lite"`, `"basic"` or `"standard-1"`. Set either this, or
+   * `vcpu` and `memoryMib`. Without any of them, Cloudflare uses `lite`.
+   */
+  instanceType?: string;
+  vcpu?: number;
+  memoryMib?: number;
+  /** The disk size in MB. Set it only with `vcpu` and `memoryMib`. */
+  diskMb?: number;
+  /**
+   * Don't put secrets here. The values are stored as plain text in state and
+   * shown in plan output.
+   */
+  environmentVariables?: Record<string, string>;
+  network?: {
+    /** Cloudflare can't change the mode of an existing application. */
+    mode?: "private" | "public";
+    assignIpv4?: "none" | "predefined";
+    assignIpv6?: "none" | "predefined";
+  };
+};
+
+export type Registered = {
+  className: string;
+  protect: boolean;
+  container?: DurableObjectContainerConfig;
+};
 
 // `Symbol.for`, so two installed copies of this package share it.
 const registration = Symbol.for(
@@ -72,12 +127,18 @@ export function $durableObject<
       `Duplicate $durableObject id "${config.id}": another namespace in this deployment already uses it. Give each namespace a unique id.`,
     );
   }
+  if (config.container !== undefined)
+    assertContainer(config.id, config.container);
   ids?.add(config.id);
   const declaration = {
     id: config.id,
   } as unknown as DurableObjectDeclaration<C>;
   Object.defineProperty(declaration, registration, {
-    value: { className, protect: config.protect ?? true } satisfies Registered,
+    value: {
+      className,
+      protect: config.protect ?? true,
+      container: config.container,
+    } satisfies Registered,
   });
   return declaration;
 }
@@ -87,4 +148,13 @@ export function describeNamespace(namespace: DurableObjectDeclaration): string {
   const where = getDeclaredIn(namespace)?.path;
   const call = `$durableObject({ id: "${namespace.id}" })`;
   return where ? `${call} in ${where}` : call;
+}
+
+function assertContainer(id: string, container: unknown) {
+  const image = (container as { image?: { context?: unknown } } | null)?.image;
+  if (typeof container !== "object" || typeof image?.context !== "string") {
+    throw new Error(
+      `$durableObject({ id: "${id}" }) expects container to be an object with image.context, the build context directory of the image, such as \`container: { image: { context: "containers/sandbox" }, maxInstances: 1 }\`.`,
+    );
+  }
 }

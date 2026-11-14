@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import {
   GENERATED_INSTANCE_LENGTH,
   generatedNameBody,
@@ -99,4 +100,47 @@ export function matchesWorkerNames(
       scriptName.slice(prefix.length),
     )
   );
+}
+
+// The namespace id in lower case, with each run of other characters than
+// `a-z` and `0-9` replaced by one `-`.
+const namespaceBase = (namespaceId: string) =>
+  namespaceId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+
+/**
+ * The name of the container application of the namespace with the id
+ * `namespaceId`: `<app>-<stage>-<id>-<hash>`, with the id as `namespaceBase`
+ * makes it. Cloudflare refuses a name with `--`, so the name can't take the
+ * `<app>--<stage>--` form, and app, stage and id can't be told apart by the
+ * hyphens. The hash is the start of a SHA-256 of the app, stage and id, so
+ * the name is unique for each of them. The name doesn't depend on the
+ * hosting Worker, so a move to another Worker keeps it.
+ */
+export function containerApplicationName(namespaceId: string): string {
+  const scope = getActiveResourceCollection()?.scope;
+  const hash = crypto
+    .createHash("sha256")
+    .update(JSON.stringify([scope?.app, scope?.stage, namespaceId]))
+    .digest("hex")
+    .slice(0, 8);
+  const name = [scope?.app, scope?.stage, namespaceBase(namespaceId), hash]
+    .filter(Boolean)
+    .join("-");
+  // Cloudflare refuses a name that starts with a digit, and an app name can.
+  return /^[0-9]/.test(name) ? `c-${name}` : name;
+}
+
+/**
+ * The default repository of the image of the namespace with the id
+ * `namespaceId`: `<app>--<stage>--<id>`, with the id as `namespaceBase` makes
+ * it. Two ids that give the same repository share it, which does no harm, as
+ * each image's tag is a hash of its build input.
+ */
+export function containerRepositoryName(namespaceId: string): string {
+  const scope = getActiveResourceCollection()?.scope;
+  const base = namespaceBase(namespaceId) || "namespace";
+  return scope ? `${scope.app}--${scope.stage}--${base}` : base;
 }
