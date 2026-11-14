@@ -420,7 +420,7 @@ Deploy runs the `docker` CLI, so Docker must be running on the machine that depl
 
 A namespace with `container` can move to another Worker, as in [Moving a namespace](#moving-a-namespace). The first upload of the new host sends the class in `containers`, before the namespace arrives. The namespace keeps its ID. The application is now for another Worker, so after the move, deploy deletes the application and creates it again with the same name and image. The containers stop until the new application has started them. The image is not built again.
 
-To stop running containers, remove `container`. Deploy uploads the Worker without the class in `containers`, and then deletes the application. The namespace and its objects stay. The image stays in the registry.
+To stop running containers, remove `container`. Deploy uploads the Worker without the class in `containers`, and then deletes the application. The namespace and its objects stay. The image stays in the registry. After this deploy, requests to the objects can time out for several minutes, and Cloudflare still sets `ctx.container` on them. No application runs containers for them, so the class must stop starting containers.
 
 A namespace with `container` is deleted as in [Deleting a namespace](#deleting-a-namespace). Deploy uploads the Worker with the `deleted` entry, and then deletes the application.
 

@@ -134,7 +134,7 @@ const sandboxModule = ({ container }: { container: boolean }) => `
   export class Sandbox extends DurableObject {
     async fetch(request) {
       const container = this.ctx.container;
-      if (!container) return new Response("no container");
+      ${container ? "" : `return new Response("served without a container");`}
       if (!container.running) container.start();
       try {
         return await container.getTcpPort(80).fetch("http://container/");
@@ -307,12 +307,17 @@ describeE2e("$durableObject with a container", () => {
       expect(await namespaceIdOf(names.jobs, "Sandbox")).toBe(
         application.durable_objects?.namespace_id,
       );
+      // After the upload without the class in `containers`, Cloudflare still
+      // sets ctx.container, so the class doesn't start one. The objects
+      // don't answer for some minutes.
       const fetched = await poll(`${project.url(names.jobs)}/`, {
-        done: (fetched) => fetched.body === "no container",
+        timeoutMs: 480_000,
+        done: (fetched) => fetched.body === "served without a container",
       });
-      expect(fetched).toMatchObject({
+      expect(fetched).toEqual({
         ok: true,
-        body: "no container",
+        status: 200,
+        body: "served without a container",
       });
     }, 600_000);
   });
