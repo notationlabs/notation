@@ -10,13 +10,13 @@ class TestResourceGroup extends ResourceGroup {
   platform = "test-platform";
 }
 
-const testResource = new TestResource("test-resource-1", {
-  config: testResourceConfig,
-});
+function newTestResource() {
+  return new TestResource("test-resource-1", { config: testResourceConfig });
+}
 
-const testResource2 = new TestResource2("test-resource-2", {
-  config: testResourceConfig,
-});
+function newTestResource2() {
+  return new TestResource2("test-resource-2", { config: testResourceConfig });
+}
 
 it("creates a resource group", async () => {
   const graph = await collectResourceGraph(() => {
@@ -85,7 +85,7 @@ it("allows an id to be reused across types", async () => {
 
 it("creates a resource within a group", () => {
   const resourceGroup = new TestResourceGroup("test-group", "group-a");
-  const resource = resourceGroup.add(testResource);
+  const resource = resourceGroup.add(newTestResource());
   expect(resourceGroup.resources).toContain(resource);
 });
 
@@ -100,6 +100,8 @@ it("records the group on the resources it adds", () => {
 });
 
 it("collects resources", async () => {
+  const testResource = newTestResource();
+  const testResource2 = newTestResource2();
   const graph = await collectResourceGraph(() => {
     const resourceGroup = new TestResourceGroup("test-group", "group-a");
     resourceGroup.add(testResource);
@@ -171,8 +173,20 @@ it("leaves out a resource made with no collection active", async () => {
 
 it("throws an error when adding an existing resource", () => {
   const resourceGroup = new TestResourceGroup("test-group", "group-a");
+  const testResource = newTestResource();
   resourceGroup.add(testResource);
   expect(() => resourceGroup.add(testResource)).toThrow();
+});
+
+it("throws when a resource made with no collection active is added to two groups", () => {
+  const resource = new TestResource("shared", { config: testResourceConfig });
+  new TestResourceGroup("test-group", "group-a").add(resource);
+
+  expect(() =>
+    new TestResourceGroup("test-group", "group-b").add(resource),
+  ).toThrow(
+    'Resource provider/service/resource "shared" has already been registered in group test-group "group-a".',
+  );
 });
 
 it("adds a resource once per id", () => {

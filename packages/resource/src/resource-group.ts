@@ -40,21 +40,18 @@ export abstract class ResourceGroup<
   }
 
   /**
-   * Puts the resource in this group. A resource that was declared while the
-   * graph was being collected is already in the graph, with no group; one
-   * declared outside it joins the graph here.
+   * Puts the resource in this group. A resource that was constructed while
+   * the graph was being collected is already in the graph; any other resource
+   * joins the graph here. A resource can be in one group only.
    */
   add<T extends BaseResource>(resource: T) {
-    if (this.#graph?.resources.includes(resource)) {
-      if (resource.group) {
-        throw new Error(
-          `Resource ${resource.type} has already been registered.`,
-        );
-      }
-    } else if (this.#graph) {
+    if (resource.group) {
+      throw new Error(
+        `Resource ${resource.type} "${resource.id}" has already been registered in group ${resource.group.type} "${resource.group.id}".`,
+      );
+    }
+    if (this.#graph && !this.#graph.resources.includes(resource)) {
       this.#graph.resources.push(resource);
-    } else if (this.resources.includes(resource)) {
-      throw new Error(`Resource ${resource.type} has already been registered.`);
     }
     resource.group = { type: this.type, id: this.id };
     this.resources.push(resource);
