@@ -1,6 +1,7 @@
 export type * from "./declaration";
 export {
   $durableObject,
+  type DurableObjectContainerConfig,
   type DurableObjectDeclarationConfig,
 } from "./durable-object";
 export {

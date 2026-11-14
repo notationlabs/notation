@@ -19,7 +19,14 @@ import {
   generatedPhysicalName,
   UNKNOWN_AFTER_APPLY,
 } from "@notation/resource";
-import { matchesWorkerNames, workerNameRule, workerNames } from "src/id";
+import * as v from "valibot";
+import { applicationNameSchema } from "src/api/containers";
+import {
+  containerApplicationName as scopedApplicationName,
+  matchesWorkerNames,
+  workerNameRule,
+  workerNames,
+} from "src/id";
 import { decideAction, planKnownParams } from "@notation/reconciler";
 import { WorkerScript } from "src/resources/workers/worker-script";
 import {
@@ -82,6 +89,20 @@ const collect = async (evaluate: () => unknown) => {
   );
   return graph;
 };
+
+// The name of the container application of a namespace, in the scope of
+// `app` and `stage`.
+async function containerApplicationName(
+  app: string,
+  stage: string,
+  id: string,
+): Promise<string> {
+  let name = "";
+  await collectResourceGraph(() => (name = scopedApplicationName(id)), {
+    scope: { app, stage },
+  });
+  return name;
+}
 
 // The name that deploy generated for a Worker in these tests.
 const nameOf = (id: string) => `shop--dev--${id}-1a2b3c4d`;
@@ -428,14 +449,28 @@ describe("$worker", () => {
     ).toBeUndefined();
   });
 
-  it("declares the class of a namespace that sets container: true as a container class, and leaves container out of other namespaces", async () => {
+  const sandboxContainer = {
+    image: {
+      context: "containers/sandbox",
+      buildArgs: { VERSION: "1" },
+    },
+    maxInstances: 2,
+    instanceType: "basic",
+    environmentVariables: { MODE: "test" },
+  };
+
+  it("declares the class of a namespace with a container as a container class, and adds its image and container application", async () => {
     const graph = await collect(() => {
       const counters = inModule(
         $durableObject({ id: "counters", class: Counter }),
         "runtime/counter.ts",
       );
       const rooms = inModule(
-        $durableObject({ id: "rooms", class: Room, container: true }),
+        $durableObject({
+          id: "rooms",
+          class: Room,
+          container: sandboxContainer,
+        }),
         "runtime/room.ts",
       );
       inWorker(
@@ -448,11 +483,187 @@ describe("$worker", () => {
         ["Counter", "Room"],
       );
     });
+    const api = group(graph, "api");
 
-    expect(group(graph, "api").script.config.DurableObjectNamespaces).toEqual([
+    expect(api.script.config.DurableObjectNamespaces).toEqual([
       { id: "counters", className: "Counter" },
       { id: "rooms", className: "Room", container: true },
     ]);
+    expect(api.containers).toHaveLength(1);
+    const [{ image, application }] = api.containers as [
+      WorkerGroup["containers"][number],
+    ];
+    expect(image.id).toBe("container:rooms:image");
+    expect(image.config).toEqual({
+      Repository: "shop--dev--rooms",
+      Context: "containers/sandbox",
+      BuildArgs: { VERSION: "1" },
+    });
+    expect(application.id).toBe("container:rooms");
+    expect(application.config).toEqual({
+      Name: await containerApplicationName("shop", "dev", "rooms"),
+      HostedNamespaceId: "rooms",
+      MaxInstances: 2,
+      Configuration: {
+        image: image.outputRef("Image"),
+        instance_type: "basic",
+        environment_variables: [{ name: "MODE", value: "test" }],
+      },
+    });
+    expect(application.dependencies).toEqual({ script: api.script });
+  });
+
+  it("maps the container's sizes and network to the application's configuration, and takes the image's repository and Dockerfile", async () => {
+    const graph = await collect(() => {
+      const rooms = inModule(
+        $durableObject({
+          id: "rooms",
+          class: Room,
+          container: {
+            image: {
+              context: "containers/sandbox",
+              dockerfile: "containers/Dockerfile.sandbox",
+              repository: "team/sandbox",
+            },
+            maxInstances: 1,
+            vcpu: 1,
+            memoryMib: 1024,
+            diskMb: 4000,
+            network: { mode: "public", assignIpv4: "predefined" },
+          },
+        }),
+        "runtime/room.ts",
+      );
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ ROOMS: rooms }),
+        }),
+        "runtime/api.ts",
+        ["Room"],
+      );
+    });
+    const [{ image, application }] = group(graph, "api").containers as [
+      WorkerGroup["containers"][number],
+    ];
+
+    expect(image.config).toEqual({
+      Repository: "team/sandbox",
+      Context: "containers/sandbox",
+      Dockerfile: "containers/Dockerfile.sandbox",
+    });
+    expect(application.config.Configuration).toEqual({
+      image: image.outputRef("Image"),
+      vcpu: 1,
+      memory_mib: 1024,
+      disk: { size_mb: 4000 },
+      network: { mode: "public", assign_ipv4: "predefined" },
+    });
+  });
+
+  it("adds no container resources, and no containers to the config, for a Worker whose namespaces have no container", async () => {
+    const graph = await collect(() => {
+      const counters = inModule(
+        $durableObject({ id: "counters", class: Counter }),
+        "runtime/counter.ts",
+      );
+      inWorker(
+        $worker({
+          id: "api",
+          compatibilityDate,
+          bindings: () => ({ COUNTERS: counters }),
+        }),
+        "runtime/api.ts",
+        ["Counter"],
+      );
+    });
+
+    expect(group(graph, "api").config.containers).toBeUndefined();
+    expect(
+      graph.resources.filter((resource) =>
+        resource.type.startsWith("cloudflare/containers/"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("puts the container resources in the group of the hosting Worker, under ids that don't depend on the Worker", async () => {
+    const collectHostedBy = (hostId: string) =>
+      collect(() => {
+        const rooms = inModule(
+          $durableObject({
+            id: "rooms",
+            class: Room,
+            container: sandboxContainer,
+          }),
+          "runtime/room.ts",
+        );
+        for (const id of ["api", "jobs"]) {
+          inWorker(
+            $worker({
+              id,
+              compatibilityDate,
+              bindings: () => ({ ROOMS: rooms }),
+            }),
+            `runtime/${id}.ts`,
+            id === hostId ? ["Room"] : [],
+          );
+        }
+      });
+
+    for (const [host, guest] of [
+      ["api", "jobs"],
+      ["jobs", "api"],
+    ] as const) {
+      const graph = await collectHostedBy(host);
+      const hosting = group(graph, host);
+      expect(
+        hosting.containers.map(({ application }) => application.id),
+      ).toEqual(["container:rooms"]);
+      expect(hosting.containers[0]!.application.dependencies).toEqual({
+        script: hosting.script,
+      });
+      expect(group(graph, guest).containers).toEqual([]);
+    }
+  });
+
+  it("fails for a container that is not an object with an image context", async () => {
+    await expect(
+      collect(() => {
+        $durableObject({
+          id: "rooms",
+          class: Room,
+          container: true as any,
+        });
+      }),
+    ).rejects.toThrow(/expects container to be an object with image.context/);
+  });
+
+  it("names container applications without two consecutive hyphens, uniquely for each app, stage and namespace", async () => {
+    const names: string[] = [];
+    for (const [app, stage, id] of [
+      ["shop", "dev", "rooms"],
+      ["shop-dev", "x", "rooms"],
+      ["shop", "dev-x", "rooms"],
+      ["shop", "dev", "Rooms"],
+      ["shop", "dev", "ro_oms"],
+      ["shop", "dev", "ro-oms"],
+      ["1shop", "dev", "rooms"],
+      ["shop", "dev", "__"],
+    ] as const) {
+      names.push(await containerApplicationName(app, stage, id));
+    }
+
+    expect(names[0]).toMatch(/^shop-dev-rooms-[0-9a-f]{8}$/);
+    expect(names[6]).toMatch(/^c-1shop-dev-rooms-[0-9a-f]{8}$/);
+    expect(names[7]).toMatch(/^shop-dev-[0-9a-f]{8}$/);
+    expect(new Set(names).size).toBe(names.length);
+    for (const name of names) {
+      expect(v.safeParse(applicationNameSchema, name).success, name).toBe(true);
+    }
+    expect(await containerApplicationName("shop", "dev", "rooms")).toBe(
+      names[0],
+    );
   });
 
   it("fails for a namespace that no Worker that binds it exports the class of", async () => {
