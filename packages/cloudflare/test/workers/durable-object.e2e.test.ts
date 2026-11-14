@@ -109,3 +109,60 @@ describeE2e("$durableObject", () => {
     await expectNextCount(names.host, "host");
   });
 });
+
+const sandboxModule = `
+  import { DurableObject } from "cloudflare:workers";
+  import { $durableObject } from "@notation/cloudflare/workers";
+
+  export class Sandbox extends DurableObject {
+    async ping() {
+      return "pong";
+    }
+  }
+
+  export const sandboxes = $durableObject({
+    id: "sandboxes",
+    class: Sandbox,
+    container: true,
+  });
+`;
+
+const sandboxWorkerModule = `
+  import { $worker, type WorkerHandler } from "@notation/cloudflare/workers";
+  import { sandboxes } from "./sandbox";
+  export { Sandbox } from "./sandbox";
+
+  export const worker = $worker({
+    id: "api",
+    compatibilityDate: "2026-10-12",
+    bindings: () => ({ SANDBOXES: sandboxes }),
+  });
+
+  export default {
+    async fetch(request, env) {
+      return new Response(await env.SANDBOXES.getByName("one").ping());
+    },
+  } satisfies WorkerHandler<typeof worker>;
+`;
+
+// Needs the Containers permission and the Workers Paid plan. No container
+// application runs containers for the namespace, so the object runs without
+// a container.
+describeE2e("$durableObject with container: true", () => {
+  const project = useProject({ stage: "container" });
+
+  it("uploads the class as a container class, and hosts the namespace", async () => {
+    project.write("runtime/sandbox.ts", sandboxModule);
+    project.write("runtime/api.ts", sandboxWorkerModule);
+    await project.notation("deploy");
+    const [name] = await project.workerNames();
+
+    expect(await namespacesWithPrefix(project.scope)).toEqual([
+      { script: name, class: "Sandbox" },
+    ]);
+    expect(await poll(`${project.url(name!)}/`)).toMatchObject({
+      ok: true,
+      body: "pong",
+    });
+  });
+});

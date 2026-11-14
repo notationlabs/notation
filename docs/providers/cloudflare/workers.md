@@ -249,11 +249,12 @@ export default {
 
 ::
 
-| Option    | Description                                                                                                                                                                                                                     |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`      | Keys the namespace. Use 1 to 64 letters, digits, hyphens or underscores. It can't change while the namespace exists: see [Renaming, moving and deleting](#renaming-moving-and-deleting).                                        |
-| `class`   | The namespace's class, by name, such as `class: Counter`. Cloudflare finds the class by its export name, so the hosting Worker exports the class under the name written here.                                                   |
-| `protect` | Defaults to `true`. Plan fails for a change that would delete a protected namespace. Plan reads the value from state, so `protect: false` takes effect after it is deployed. See [Deleting a namespace](#deleting-a-namespace). |
+| Option      | Description                                                                                                                                                                                                                     |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`        | Keys the namespace. Use 1 to 64 letters, digits, hyphens or underscores. It can't change while the namespace exists: see [Renaming, moving and deleting](#renaming-moving-and-deleting).                                        |
+| `class`     | The namespace's class, by name, such as `class: Counter`. Cloudflare finds the class by its export name, so the hosting Worker exports the class under the name written here.                                                   |
+| `protect`   | Defaults to `true`. Plan fails for a change that would delete a protected namespace. Plan reads the value from state, so `protect: false` takes effect after it is deployed. See [Deleting a namespace](#deleting-a-namespace). |
+| `container` | Defaults to `false`. When `true`, the hosting Worker's upload declares the class as a container class. See [Container classes](#container-classes).                                                                             |
 
 The infra build doesn't load the class, or its imports such as `cloudflare:workers`. It replaces the class with a function of the same name.
 
@@ -366,6 +367,22 @@ This deploy saves the value in the state of the hosting Worker. Plan lists the W
 In a later deploy, remove the declaration, its binding and its class. Deploy uploads a `deleted` entry for the namespace's class. The Worker's module must no longer export the class, or Cloudflare rejects the upload. In the same way, a later deploy can remove the hosting Worker, or change its `id`, once all its namespaces are unprotected in state.
 
 Plan reads `protect` from state, not from code. A deploy that sets `protect: false` and also stops hosting the namespace fails at plan.
+
+### Container classes
+
+A namespace whose class is a container class can run [Cloudflare Containers](https://developers.cloudflare.com/containers/). Set `container: true` to declare the class as a container class:
+
+```ts [runtime/sandbox.ts]
+export const sandboxes = $durableObject({
+  id: "sandboxes",
+  class: Sandbox,
+  container: true,
+});
+```
+
+Deploy sends the class in the `containers` list of the hosting Worker's upload. The objects get containers only when a container application runs containers for the namespace. `$worker` and `$durableObject` don't declare a container application, and `$worker` gives no access to its `WorkerScript`. So for now, a `ContainerApplication` from `@notation/cloudflare/resources` can only use a namespace of a `WorkerScript` that is declared with the resources API.
+
+Containers need an account on the Workers Paid plan.
 
 ## Credentials
 
