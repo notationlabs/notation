@@ -8,7 +8,7 @@ import {
   putScriptSecret,
 } from "src/api/workers";
 import { secretValueFromSchema, type SecretValueFrom } from "src/secrets/value";
-import type { WorkerScriptInstance } from "./worker-script";
+import type { WorkerScriptPlaceholderInstance } from "./worker-script-placeholder";
 
 type WorkerSecretParams = {
   AccountId: string;
@@ -26,7 +26,7 @@ export type WorkerSecretSchema = {
 };
 
 export type WorkerSecretDependencies = {
-  script: WorkerScriptInstance;
+  placeholder: WorkerScriptPlaceholderInstance;
 };
 
 const workerSecret = resource<WorkerSecretSchema>({
@@ -86,8 +86,10 @@ async function writeValue(params: WorkerSecretParams): Promise<void> {
  * the value. An upload of the Worker keeps its secrets, so it never needs
  * their values.
  *
- * Create and update write the value. Each write deploys a new version of
- * the Worker. A change to `ValueFrom`, such as a new version from the
+ * It depends on the Worker's `WorkerScriptPlaceholder`, and the Worker's
+ * script depends on it, so the secret is set before the code that reads
+ * it is uploaded. Create and update write the value. Each write deploys a
+ * new version of the Worker. A change to `ValueFrom`, such as a new version from the
  * source, updates the secret. A secret deleted from the Worker outside
  * notation shows as drift, which the next deploy creates again.
  */
@@ -109,14 +111,16 @@ export const WorkerSecret = workerSecretSchema
       if (patch.ValueFrom) await writeValue(params);
     },
 
+    // The script is deleted first, and Cloudflare deletes its secrets with
+    // it, so a missing Worker or secret counts as deleted.
     delete: async (key) => {
       await deleteScriptSecret(key.AccountId, key.ScriptName, key.Name);
     },
   })
   .requireDependencies<WorkerSecretDependencies>()
   .deriveParams(async ({ deps }) => ({
-    AccountId: deps.script.output.AccountId,
-    ScriptName: deps.script.output.ScriptName,
+    AccountId: deps.placeholder.output.AccountId,
+    ScriptName: deps.placeholder.output.ScriptName,
   }));
 
 export type WorkerSecretInstance = InstanceType<typeof WorkerSecret>;

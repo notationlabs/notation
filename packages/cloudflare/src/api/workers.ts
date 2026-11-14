@@ -88,7 +88,14 @@ export type DurableObjectExport =
 export type ScriptSettings = {
   compatibility_date?: string;
   compatibility_flags?: string[];
+  tags?: string[] | null;
 };
+
+/** The tag of a Worker that `WorkerScriptPlaceholder` uploaded. */
+export const PLACEHOLDER_TAG = "notation-placeholder";
+
+export const isPlaceholderScript = (settings: ScriptSettings): boolean =>
+  settings.tags?.includes(PLACEHOLDER_TAG) ?? false;
 
 export type ScriptUpload = {
   /** The uploaded file name of the main module. */
@@ -100,6 +107,11 @@ export type ScriptUpload = {
   exports: Record<string, DurableObjectExport>;
   /** The Durable Object classes whose namespaces run containers. */
   containers: { class_name: string }[];
+  /**
+   * Replaces the Worker's tags. `[]` removes them. Without it, the upload
+   * keeps the tags that the Worker has.
+   */
+  tags?: string[];
 };
 
 /**
@@ -143,6 +155,7 @@ export async function putScript(
       ? { exports: upload.exports }
       : {}),
     ...(upload.containers.length > 0 ? { containers: upload.containers } : {}),
+    ...(upload.tags ? { tags: upload.tags } : {}),
   };
   const form = new FormData();
   form.set("metadata", JSON.stringify(metadata));

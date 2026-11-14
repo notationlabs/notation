@@ -103,6 +103,7 @@ describe("WorkerScript", () => {
         bindings: params.Bindings,
         keep_bindings: ["secret_text"],
         exports: { Counter: { type: "durable-object", storage: "sqlite" } },
+        tags: [],
       },
       module: { type: "application/javascript+module", text: code },
     });

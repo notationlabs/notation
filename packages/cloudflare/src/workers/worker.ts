@@ -70,6 +70,8 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
   readonly script: cloudflare.workers.WorkerScriptInstance;
   readonly subdomain?: cloudflare.workers.WorkerSubdomainInstance;
   readonly secrets: cloudflare.workers.WorkerSecretInstance[];
+  /** Set when the Worker binds a Worker secret. */
+  readonly placeholder?: cloudflare.workers.WorkerScriptPlaceholderInstance;
 
   get [workerGroupMark]() {
     return true;
@@ -82,9 +84,36 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
         config: { filePath: config.codePath },
       }),
     );
+    // A Worker that binds a Worker secret is created as a placeholder first,
+    // then its secrets are set, then its code is uploaded. So the code never
+    // runs without its secrets.
+    if (config.secrets.length > 0) {
+      this.placeholder = this.add(
+        new cloudflare.workers.WorkerScriptPlaceholder(
+          `${workerResourceId(config.id)}:placeholder`,
+        ),
+      );
+    }
+    const placeholder = this.placeholder;
+    this.secrets = config.secrets.map(({ name, valueFrom }) =>
+      this.add(
+        new cloudflare.workers.WorkerSecret(
+          `worker:${config.id}:secret:${name}`,
+          {
+            config: { Name: name, ValueFrom: valueFrom },
+            dependencies: { placeholder: placeholder! },
+          },
+        ),
+      ),
+    );
     this.script = this.add(
       new cloudflare.workers.WorkerScript(workerResourceId(config.id), {
         config: {
+          // An output ref in config, so that only the name is unknown at
+          // plan. The name in the script's record wins over it.
+          ...(placeholder && {
+            ScriptName: placeholder.outputRef("ScriptName"),
+          }),
           CompatibilityDate: config.compatibilityDate,
           CompatibilityFlags: config.compatibilityFlags,
           Bindings: config.bindings,
@@ -95,17 +124,16 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
         dependencies: { code: this.code },
       }),
     );
-    this.secrets = config.secrets.map(({ name, valueFrom }) =>
-      this.add(
-        new cloudflare.workers.WorkerSecret(
-          `worker:${config.id}:secret:${name}`,
-          {
-            config: { Name: name, ValueFrom: valueFrom },
-            dependencies: { script: this.script },
-          },
-        ),
-      ),
-    );
+    for (const secret of this.secrets) this.script.dependOn(secret);
+    if (placeholder) {
+      // The script's recorded name, so that a live Worker that gains its
+      // first secret keeps its name. A `~state` ref adds no dependency.
+      const recorded = this.script["~state"].outputRef("ScriptName");
+      placeholder.contribute({
+        ScriptName: recorded,
+        AdoptedScriptName: recorded,
+      });
+    }
     if (config.url) {
       this.subdomain = this.add(
         new cloudflare.workers.WorkerSubdomain(

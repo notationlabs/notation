@@ -20,6 +20,7 @@ import {
   getScriptReferences,
   getScriptSettings,
   isNotFound,
+  isPlaceholderScript,
   isReferenced,
   listAccountNamespaces,
   patchScriptExports,
@@ -129,7 +130,7 @@ const READABLE_RETRY_MS = 250;
 // Cloudflare sometimes reports a Worker as not found for about a second
 // after the upload that created it. The reconciler reads the Worker straight
 // after create, and fails on not found, so create waits until it can read it.
-async function waitUntilReadable(account: string, scriptName: string) {
+export async function waitUntilReadable(account: string, scriptName: string) {
   const deadline = Date.now() + READABLE_WITHIN_MS;
   while (!(await getScriptSettings(account, scriptName))) {
     if (Date.now() >= deadline) {
@@ -204,13 +205,17 @@ const workerScriptSchema = workerScript.defineSchema({
       `CLOUDFLARE_ACCOUNT_ID is ${desired}, but this Worker was deployed to the account ${previous}. A Worker can't move to another account, and replacing it would delete the objects of the Durable Object namespaces that it hosts. Set CLOUDFLARE_ACCOUNT_ID back to ${previous}. To deploy to the other account, first run \`notation destroy\` with the old account, or deploy to another stage.`,
     value: v.string(),
   },
+  // A Worker that binds a Worker secret takes the name of its
+  // `WorkerScriptPlaceholder`. A replace that creates first would collide
+  // with that name, but only an AccountId change replaces the Worker, and
+  // rejectReplace refuses it.
   ScriptName: {
     propertyType: "param",
     presence: "required",
     immutable: true,
     primaryKey: true,
     value: v.string(),
-    physicalName: workerNameRule,
+    physicalName: { ...workerNameRule, suppliable: true },
   },
   MainModule: {
     propertyType: "param",
@@ -273,8 +278,14 @@ export const WorkerScript = workerScriptSchema
   .defineOperations({
     // An upload replaces a Worker with the same name, so check first. The
     // check is outside `cloudflareCreate`: if it throws, nothing was created.
+    // A Worker that `WorkerScriptPlaceholder` uploaded is replaced, and the
+    // upload removes its tag.
     create: async (params) => {
-      if (await getScriptSettings(params.AccountId, params.ScriptName)) {
+      const existing = await getScriptSettings(
+        params.AccountId,
+        params.ScriptName,
+      );
+      if (existing && !isPlaceholderScript(existing)) {
         throw new ResourceAlreadyExistsError(
           `A Worker named ${params.ScriptName} already exists in the Cloudflare account ${params.AccountId}`,
         );
@@ -284,7 +295,7 @@ export const WorkerScript = workerScriptSchema
         throw new Error(newHostError(params, found.transfers));
       }
       await cloudflareCreate(async () => {
-        await upload(params, [], found);
+        await upload(params, [], found, { tags: [] });
         await waitUntilReadable(params.AccountId, params.ScriptName);
       })();
     },
@@ -351,6 +362,7 @@ async function upload(
   params: WorkerScriptParams,
   previous: HostedNamespace[],
   found: FoundTransfers,
+  options: Pick<ScriptUpload, "tags"> = {},
 ): Promise<void> {
   const code = await readCode(params.CodeFilePath, params.CodeSha256);
   const hosted = params.DurableObjectNamespaces ?? [];
@@ -369,6 +381,7 @@ async function upload(
     containers: hosted
       .filter((namespace) => namespace.container)
       .map((namespace) => ({ class_name: namespace.className })),
+    ...options,
   };
   if (found.transfers.length > 0) {
     await transferNamespaces(params, upload, found.transfers, found.account);

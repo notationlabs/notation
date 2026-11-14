@@ -61,7 +61,7 @@ const collect = (evaluate: () => unknown) =>
   collectResourceGraph(evaluate, { scope: { app: "shop", stage: "dev" } });
 
 describe("workerSecret", () => {
-  it("adds a WorkerSecret to the Worker for each binding, after its script", async () => {
+  it("adds a WorkerSecret to the Worker for each binding, after its placeholder and before its script", async () => {
     const graph = await collect(infra);
     const api = worker(graph, "api");
     const jobs = worker(graph, "jobs");
@@ -70,7 +70,13 @@ describe("workerSecret", () => {
     expect(api.secrets.map((secret) => secret.id)).toEqual([
       "worker:api:secret:ADMIN",
     ]);
-    expect(api.secrets[0]!.getDependencies()).toContain(api.script);
+    expect(api.placeholder!.id).toBe("worker:api:placeholder");
+    expect(api.secrets[0]!.getDependencies()).toContain(api.placeholder);
+    expect(api.secrets[0]!.getDependencies()).not.toContain(api.script);
+    expect(api.script.getDependencies()).toEqual(
+      expect.arrayContaining([api.placeholder, api.secrets[0]]),
+    );
+    expect(api.placeholder!.getDependencies()).toEqual([]);
     expect(api.secrets[0]!.config).toEqual({
       Name: "ADMIN",
       ValueFrom: { Secret: "admin", Source: PROMPT_SOURCE },
@@ -96,7 +102,7 @@ describe("workerSecret", () => {
 
     expect(secret!.getDependencies()).toContain(apiKey.value);
     apiKey.value!.setOutput({ Version: "run-1" } as any);
-    worker(graph, "api").script.setOutput({
+    worker(graph, "api").placeholder!.setOutput({
       AccountId: "acc",
       ScriptName: "shop--dev--api-1a2b3c4d",
     } as any);
