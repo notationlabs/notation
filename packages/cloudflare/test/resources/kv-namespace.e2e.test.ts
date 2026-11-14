@@ -13,44 +13,34 @@ import {
 } from "../e2e";
 
 // `$worker` can't bind a KV namespace, so the project declares the resources
-// itself. Deploy only sees resources that a group adds.
+// itself.
 const infraModule = (title: string) => `
   import { kv, workers } from "@notation/cloudflare/resources";
-  import { ResourceGroup } from "@notation/resource";
   import { fs } from "@notation/std/resources";
 
-  class KvWorker extends ResourceGroup {}
-  const group = new KvWorker("KvWorker", "kv");
+  const cache = new kv.KVNamespace("cache", { config: { Title: "${title}" } });
 
-  const cache = group.add(
-    new kv.KVNamespace("cache", { config: { Title: "${title}" } }),
-  );
+  const code = new fs.File("worker:kv:code", {
+    config: { filePath: "code/worker.js" },
+  });
 
-  const code = group.add(
-    new fs.File("worker:kv:code", { config: { filePath: "code/worker.js" } }),
-  );
+  const script = new workers.WorkerScript("worker:kv", {
+    config: {
+      CompatibilityDate: "2026-10-12",
+      Bindings: [
+        {
+          type: "kv_namespace",
+          name: "CACHE",
+          namespace_id: cache.outputRef("NamespaceId"),
+        },
+      ],
+    },
+    dependencies: { code, cache },
+  });
 
-  const script = group.add(
-    new workers.WorkerScript("worker:kv", {
-      config: {
-        CompatibilityDate: "2026-10-12",
-        Bindings: [
-          {
-            type: "kv_namespace",
-            name: "CACHE",
-            namespace_id: cache.outputRef("NamespaceId"),
-          },
-        ],
-      },
-      dependencies: { code, cache },
-    }),
-  );
-
-  group.add(
-    new workers.WorkerSubdomain("worker:kv:subdomain", {
-      dependencies: { script },
-    }),
-  );
+  new workers.WorkerSubdomain("worker:kv:subdomain", {
+    dependencies: { script },
+  });
 `;
 
 // "/put?key=k&value=v" writes through the binding, and "/get?key=k" reads.
@@ -84,18 +74,16 @@ describeE2e("KVNamespace", () => {
   let workerName: string;
 
   // The project links only @notation/cloudflare, and the infra module also
-  // imports @notation/resource and @notation/std. Each link goes to the copy
-  // that @notation/cloudflare uses, as the resource collection is state in
-  // the module.
+  // imports @notation/std. The link goes to the copy that
+  // @notation/cloudflare uses, so both share one copy of @notation/resource,
+  // whose module state holds the resource collection.
   beforeAll(() => {
-    for (const name of ["resource", "std"]) {
-      const target = fileURLToPath(
-        new URL(`../../node_modules/@notation/${name}`, import.meta.url),
-      );
-      const link = path.join(project.root, `node_modules/@notation/${name}`);
-      mkdirSync(path.dirname(link), { recursive: true });
-      symlinkSync(target, link, "dir");
-    }
+    const target = fileURLToPath(
+      new URL("../../node_modules/@notation/std", import.meta.url),
+    );
+    const link = path.join(project.root, "node_modules/@notation/std");
+    mkdirSync(path.dirname(link), { recursive: true });
+    symlinkSync(target, link, "dir");
   });
 
   it("creates the namespace, and a Worker that reads and writes it through the binding", async () => {
