@@ -7,14 +7,16 @@ import {
 
 describe("resolveOutputMode", () => {
   it("follows the flag when it is given", () => {
-    expect(resolveOutputMode(true, { isTTY: true })).toBe("json");
-    expect(resolveOutputMode(false, { isTTY: false })).toBe("pretty");
+    expect(resolveOutputMode({ json: true }, { isTTY: true })).toBe("json");
+    expect(resolveOutputMode({ pretty: true }, { isTTY: false })).toBe(
+      "pretty",
+    );
   });
 
   it("is pretty on a terminal and JSON otherwise", () => {
-    expect(resolveOutputMode(undefined, { isTTY: true })).toBe("pretty");
-    expect(resolveOutputMode(undefined, { isTTY: false })).toBe("json");
-    expect(resolveOutputMode(undefined, {})).toBe("json");
+    expect(resolveOutputMode({}, { isTTY: true })).toBe("pretty");
+    expect(resolveOutputMode({}, { isTTY: false })).toBe("json");
+    expect(resolveOutputMode({}, {})).toBe("json");
   });
 });
 

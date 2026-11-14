@@ -12,14 +12,15 @@ export type OutputMode = "pretty" | "json";
 type Style = (format: Parameters<typeof styleText>[0], text: string) => string;
 
 /**
- * `--json` gives JSON and `--no-json` gives pretty output. Without either
+ * `--json` gives JSON and `--pretty` gives pretty output. Without either
  * flag, the output is pretty on a terminal and JSON otherwise.
  */
 export function resolveOutputMode(
-  json: boolean | undefined,
+  flags: { json?: boolean; pretty?: boolean },
   stdout: { isTTY?: boolean } = process.stdout,
 ): OutputMode {
-  if (json !== undefined) return json ? "json" : "pretty";
+  if (flags.json) return "json";
+  if (flags.pretty) return "pretty";
   return stdout.isTTY ? "pretty" : "json";
 }
 
@@ -59,8 +60,7 @@ export function formatPrettyEvent(
   event: ReconcilerEvent,
   style: Style = (_, text) => text,
 ): string | undefined {
-  const target = (id: string, type: string) =>
-    `${id} ${style("dim", type)}`;
+  const target = (id: string, type: string) => `${id} ${style("dim", type)}`;
 
   switch (event.event) {
     case "reconciler.operation.lifecycle": {

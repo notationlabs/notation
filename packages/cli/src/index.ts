@@ -39,7 +39,11 @@ const jsonOption = [
   "--json",
   "stream reconciler events as NDJSON (the default when stdout is not a terminal)",
 ] as const;
-const noJsonOption = ["--no-json", "print pretty output"] as const;
+const prettyOption = () =>
+  new Option(
+    "--pretty",
+    "print pretty output (the default on a terminal)",
+  ).conflicts("json");
 
 program
   .command("compile")
@@ -70,7 +74,7 @@ program
   .option(...stageOption)
   .description("Deploy Notation App")
   .option(...jsonOption)
-  .option(...noJsonOption)
+  .addOption(prettyOption())
   .option("--execution-id <id>", "resume a durable execution")
   .option("--no-compile", "deploy the existing build without compiling")
   .option("--no-drift-detection", "skip drift detection")
@@ -84,7 +88,7 @@ program
     const project = await load(options);
     const deployment = await resolveResumableDeployment(project, options);
     await deploy(deployment, {
-      output: resolveOutputMode(options.json),
+      output: resolveOutputMode(options),
       executionId: options.executionId,
       resumeCommand: resumeCommand("deploy", options),
       compile: options.compile,
@@ -100,13 +104,13 @@ program
   .option(...stageOption)
   .description("Destroy Notation App")
   .option(...jsonOption)
-  .option(...noJsonOption)
+  .addOption(prettyOption())
   .option("--execution-id <id>", "resume a durable execution")
   .action(async (options) => {
     const project = await load(options);
     const deployment = await resolveResumableDeployment(project, options);
     await destroy(deployment, {
-      output: resolveOutputMode(options.json),
+      output: resolveOutputMode(options),
       executionId: options.executionId,
       resumeCommand: resumeCommand("destroy", options),
     });
@@ -117,12 +121,15 @@ program
   .option(...configOption)
   .option(...stageOption)
   .description("Plan Notation App")
-  .option("--json", "print the plan as JSON (the default when stdout is not a terminal)")
-  .option(...noJsonOption)
+  .option(
+    "--json",
+    "print the plan as JSON (the default when stdout is not a terminal)",
+  )
+  .addOption(prettyOption())
   .action(async (options) => {
     const project = await load(options);
     const deployment = resolveDeployment(project, { stage: options.stage });
-    await plan(deployment, { output: resolveOutputMode(options.json) });
+    await plan(deployment, { output: resolveOutputMode(options) });
   });
 
 program
