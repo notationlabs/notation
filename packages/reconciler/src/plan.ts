@@ -1,4 +1,5 @@
 import {
+  backfillParams,
   diffParams,
   type BaseResource,
   type ParamsDiffDisplay,
@@ -142,22 +143,23 @@ export function decideAction(opts: {
     return { decision: "create" };
   }
 
+  const previous = backfillParams(resource.schema, stateNode.params);
   const { patch, diff, replaceFields } = diffParams(
     resource.schema,
-    stateNode.params,
+    previous,
     params,
     { canUpdate: Boolean(resource.update) },
   );
   assertChangeAllowed(
     resource.id,
     resource.rejectChange,
-    stateNode.params,
+    previous,
     params,
     { replace: replaceFields.length > 0 },
   );
 
   if (replaceFields.length > 0) {
-    assertReplaceAllowed(resource, stateNode.params, params, replaceFields);
+    assertReplaceAllowed(resource, previous, params, replaceFields);
     return { decision: "replace", patch, diff, replaceFields };
   }
   if (Object.keys(patch).length > 0) {

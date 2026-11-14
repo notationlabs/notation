@@ -49,6 +49,15 @@ export type SchemaItem<T = any> = {
        */
       rejectReplace?: (previous: T, desired: T) => string;
       /**
+       * Gives the param's value for a state record that was written before
+       * the param was in the schema, from the params that the record holds.
+       * Plan and deploy compare the desired value with it in place of the
+       * missing value, so adding the param to the schema doesn't update or
+       * replace the resources that exist. It is not called for a record
+       * that holds the param.
+       */
+      backfill?: (recorded: Record<string, unknown>) => T;
+      /**
        * Makes the param collected: any code can add to it with the
        * resource's `contribute`, and this rule combines what was added. The
        * items are the value set in config, if any, followed by every

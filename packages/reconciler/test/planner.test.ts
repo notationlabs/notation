@@ -432,6 +432,55 @@ describe("createPlan", () => {
     ).toMatchObject({ decision: "replace" });
   });
 
+  it("compares a param added to the schema with its backfill, for a record that doesn't hold it", async () => {
+    const Token = resource({ type: "test/planner/token", provider: "test" })
+      .defineSchema({
+        name: {
+          presence: "required",
+          propertyType: "param",
+          primaryKey: true,
+          value: v.string(),
+        },
+        targets: {
+          presence: "required",
+          propertyType: "param",
+          immutable: true,
+          backfill: (recorded: Record<string, unknown>) => [recorded.name],
+          value: v.array(v.string()),
+        },
+      } as any)
+      .defineOperations({
+        create: async () => undefined,
+        delete: async () => undefined,
+      });
+    const plan = (targets: string[]) =>
+      createPlan({
+        resources: [
+          new Token("token", { config: { name: "app", targets } as any }),
+        ],
+        state: new MemoryStateBackend({
+          token: {
+            version: 1,
+            id: "token",
+            type: Token.type,
+            provider: "test",
+            config: {},
+            params: { name: "app" },
+            output: { name: "app" },
+            lastOperation: "create",
+            lastOperationAt: "2026-07-22T00:00:00.000Z",
+          },
+        }),
+        driftDetection: false,
+      });
+
+    expect((await plan(["app"])).nodes[0]).toMatchObject({ decision: "noop" });
+    expect((await plan(["app", "other"])).nodes[0]).toMatchObject({
+      decision: "replace",
+      replaceFields: [{ name: "targets", known: true }],
+    });
+  });
+
   describe("rejectChange", () => {
     const Store = resource<{
       Key: { name: string };

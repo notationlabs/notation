@@ -75,6 +75,24 @@ export function toComparableParams(
 }
 
 /**
+ * The params of a state record, with the value from `backfill` for each
+ * param that the record doesn't hold.
+ */
+export function backfillParams(
+  schema: Schema,
+  recorded: Record<string, unknown>,
+): Record<string, unknown> {
+  let filled: Record<string, unknown> | undefined;
+  for (const [key, item] of Object.entries(schema)) {
+    if (item.propertyType !== "param" || !item.backfill) continue;
+    if (recorded[key] !== undefined) continue;
+    filled ??= { ...recorded };
+    filled[key] = item.backfill(recorded);
+  }
+  return filled ?? recorded;
+}
+
+/**
  * Compares previous and desired params field by field, and reads the schema
  * to decide which changes no update can apply: a change to an immutable or
  * key param, or any change at all when the resource cannot update. Pure: it
