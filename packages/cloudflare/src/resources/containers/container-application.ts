@@ -10,6 +10,7 @@ import {
   cloudflareCreate,
 } from "src/api/client";
 import {
+  applicationNameSchema,
   configurationSchema,
   createApplication,
   deleteApplication,
@@ -89,7 +90,7 @@ const containerApplicationSchema = containerApplication.defineSchema({
     propertyType: "param",
     presence: "required",
     immutable: true,
-    value: v.string(),
+    value: applicationNameSchema,
   },
   HostedNamespaceId: {
     propertyType: "param",
@@ -174,6 +175,8 @@ export const ContainerApplication = containerApplicationSchema
         try {
           const application = await createApplication(params.AccountId, {
             name: params.Name,
+            scheduling_policy: "default",
+            instances: 0,
             durable_objects: { namespace_id: namespaceId },
             configuration: params.Configuration,
             max_instances: params.MaxInstances,

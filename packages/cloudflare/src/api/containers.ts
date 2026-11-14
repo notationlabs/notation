@@ -55,9 +55,39 @@ export const configurationSchema = v.pipe(
 
 export type ContainerConfiguration = v.InferOutput<typeof configurationSchema>;
 
+// The rules that Cloudflare checks when it validates an application's name.
+export const applicationNameSchema = v.pipe(
+  v.string(),
+  v.nonEmpty("An application name must not be empty"),
+  v.maxBytes(253, "An application name must be at most 253 bytes"),
+  v.check(
+    (name) => !/^[-0-9]/.test(name),
+    "An application name must not start with a dash or a digit",
+  ),
+  v.check(
+    (name) => !name.endsWith("-"),
+    "An application name must not end with a dash",
+  ),
+  v.check(
+    (name) => !name.includes("--"),
+    "An application name must not contain two consecutive dashes",
+  ),
+);
+
 export type CreateApplication = {
   name: string;
   max_instances: number;
+  /**
+   * Under the `default` policy the image is set on the application. Under
+   * the `durable_object` policy the application takes no image, and the
+   * images are set in the Worker's upload.
+   */
+  scheduling_policy: "default";
+  /**
+   * Cloudflare requires this key, though `max_instances` replaces it.
+   * Wrangler sends 0.
+   */
+  instances: 0;
   configuration: ContainerConfiguration;
   durable_objects: { namespace_id: string };
 };

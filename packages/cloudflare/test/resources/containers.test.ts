@@ -54,7 +54,7 @@ describe("ContainerApplication", () => {
 
   const params = {
     AccountId: "acc",
-    Name: "app--dev--sandbox",
+    Name: "app-dev-sandbox",
     HostedNamespaceId: "sandboxes",
     ScriptName: "app--dev--api",
     ClassName: "Sandbox",
@@ -101,7 +101,9 @@ describe("ContainerApplication", () => {
         method: "POST",
         url: `${API}/applications`,
         body: {
-          name: "app--dev--sandbox",
+          name: "app-dev-sandbox",
+          scheduling_policy: "default",
+          instances: 0,
           durable_objects: { namespace_id: "ns1" },
           configuration: params.Configuration,
           max_instances: 5,
@@ -548,7 +550,7 @@ describe("ContainerApplication namespace", () => {
     });
     const application = new ContainerApplication("app", {
       config: {
-        Name: "app--dev--sandbox",
+        Name: "app-dev-sandbox",
         HostedNamespaceId: hostedNamespaceId,
         MaxInstances: 1,
         Configuration: { image: "img:1" },
@@ -622,6 +624,27 @@ describe("ContainerApplication configuration", () => {
   it("rejects a key that is not supported", async () => {
     const result = await validate({ image: "img:1", disk: { size_mb: 2000 } });
     expect(result.issues).toBeDefined();
+  });
+
+  it.each([
+    "app--dev--sandbox",
+    "-sandbox",
+    "sandbox-",
+    "1sandbox",
+    "",
+    "a".repeat(254),
+  ])("rejects the name %j, which Cloudflare refuses", async (name) => {
+    const result =
+      await application.schema.Name.value["~standard"].validate(name);
+    expect(result.issues).toBeDefined();
+  });
+
+  it("accepts a name with single dashes", async () => {
+    const result =
+      await application.schema.Name.value["~standard"].validate(
+        "app-dev-sandbox",
+      );
+    expect(result.issues).toBeUndefined();
   });
 
   it("rejects a max instances below 1", async () => {
