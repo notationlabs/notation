@@ -185,6 +185,37 @@ describe("WorkerScript", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("uploads over a placeholder Worker, and removes its tag", async () => {
+    mockFetch(() =>
+      ok({ compatibility_date: "2025-01-01", tags: ["notation-placeholder"] }),
+    );
+
+    await script.create(params);
+
+    expect(calls.map((call) => call.method)).toEqual(["GET", "PUT", "GET"]);
+    const { metadata, module } = await uploadedMetadata(calls[1]!);
+    expect(metadata.tags).toEqual([]);
+    expect(module.text).toBe(code);
+  });
+
+  it("reports a Worker with other tags as ResourceAlreadyExistsError", async () => {
+    mockFetch(() => ok({ tags: ["team-a"] }));
+
+    await expect(script.create(params)).rejects.toSatisfy(
+      ResourceAlreadyExistsError.is,
+    );
+    expect(calls).toHaveLength(1);
+  });
+
+  it("keeps the Worker's tags in an update", async () => {
+    mockFetch(() => ok({}));
+
+    await script.update!(params as any, {} as any, params as any, {} as any);
+
+    const { metadata } = await uploadedMetadata(calls[0]!);
+    expect(metadata).not.toHaveProperty("tags");
+  });
+
   it("fails when the bundle changed after the params were computed", async () => {
     mockFetch(() => fail(404, 10007));
 
