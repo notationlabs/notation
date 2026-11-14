@@ -104,7 +104,7 @@ describeE2e("$worker bindings", () => {
     const checked = await poll(`${project.url(workerName)}/check`);
     expect(checked.ok).toBe(true);
     // Parsed, as Cloudflare doesn't keep the key order of a JSON binding.
-    expect(JSON.parse(checked.body)).toEqual({
+    expect(JSON.parse(checked.body ?? "")).toEqual({
       r2: "from r2",
       kv: "from kv",
       config: { retries: 3, regions: ["weur"] },
