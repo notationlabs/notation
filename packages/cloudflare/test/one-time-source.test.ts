@@ -26,7 +26,7 @@ import {
   fakeKeyPairGroup,
   fakeKeys,
   operations,
-  producedValues,
+  oneTimeValues,
 } from "./fake-producer";
 
 const NAME = "shop--dev--app-key";
@@ -178,7 +178,7 @@ const created = () =>
   );
 
 beforeEach(async () => {
-  directory = await mkdtemp(path.join(tmpdir(), "notation-cf-produced-"));
+  directory = await mkdtemp(path.join(tmpdir(), "notation-cf-one-time-"));
   runtime = new NodeDurableRuntime({
     deployment: { app: "shop", stage: "dev" },
     databasePath: path.join(directory, "workflows.db"),
@@ -187,7 +187,7 @@ beforeEach(async () => {
   secrets = new Map();
   rejectWrites = () => false;
   fakeKeys.clear();
-  producedValues.length = 0;
+  oneTimeValues.length = 0;
   operations.length = 0;
   vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "acc");
   vi.stubEnv("CLOUDFLARE_API_TOKEN", "token");
@@ -238,7 +238,7 @@ describe("a secret whose source a resource produces", () => {
     expect(node("binding:api").dependsOn).toEqual(["secret:app-key"]);
   });
 
-  it("writes the produced value, and records only where it is", async () => {
+  it("writes the one-time value, and records only where it is", async () => {
     await deploy("first");
 
     expect(created()).toEqual([
@@ -247,8 +247,8 @@ describe("a secret whose source a resource produces", () => {
       "secret:app-key",
       "binding:api",
     ]);
-    expect(producedValues).toHaveLength(1);
-    expect(secrets.get(NAME)?.value).toBe(producedValues[0]);
+    expect(oneTimeValues).toHaveLength(1);
+    expect(secrets.get(NAME)?.value).toBe(oneTimeValues[0]);
     expect((await runtime.state.get("key-pair:ci"))?.params).toEqual({
       Name: "ci",
       PrivateKeyTarget: {
@@ -263,7 +263,7 @@ describe("a secret whose source a resource produces", () => {
       StageScoped: true,
       ValueFrom: {
         Secret: "app-key",
-        Source: "produced",
+        Source: "one-time",
         Producer: "key-pair:ci",
         Rotation: 'Rotate fakeKeyPair({ id: "ci" }) to write a new value.',
       },
@@ -283,9 +283,9 @@ describe("a secret whose source a resource produces", () => {
       events: JSON.stringify(events),
     };
     for (const [where, text] of Object.entries(recorded)) {
-      expect(text, `${where} holds the value`).not.toContain(producedValues[0]);
+      expect(text, `${where} holds the value`).not.toContain(oneTimeValues[0]);
     }
-    expect((await recordedFiles()).includes(producedValues[0]!)).toBe(false);
+    expect((await recordedFiles()).includes(oneTimeValues[0]!)).toBe(false);
   });
 
   it("deletes the producer when the write fails", async () => {
@@ -295,7 +295,7 @@ describe("a secret whose source a resource produces", () => {
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain("invalid secret value");
-    expect((error as Error).message).not.toContain(producedValues[0]);
+    expect((error as Error).message).not.toContain(oneTimeValues[0]);
     expect(fakeKeys.size).toBe(0);
     expect(secrets.size).toBe(0);
     expect(await runtime.state.get("key-pair:ci")).toBeUndefined();
@@ -304,7 +304,7 @@ describe("a secret whose source a resource produces", () => {
     rejectWrites = () => false;
     await deploy("second");
     expect(fakeKeys.size).toBe(1);
-    expect(secrets.get(NAME)?.value).toBe(producedValues[1]);
+    expect(secrets.get(NAME)?.value).toBe(oneTimeValues[1]);
   });
 
   it("keeps the new value when rotation changes the producer's id", async () => {
@@ -315,8 +315,8 @@ describe("a secret whose source a resource produces", () => {
     await deploy("second", infra("ci-2"));
 
     expect(fakeKeys.size).toBe(1);
-    expect(producedValues).toHaveLength(2);
-    expect(secrets.get(NAME)?.value).toBe(producedValues[1]);
+    expect(oneTimeValues).toHaveLength(2);
+    expect(secrets.get(NAME)?.value).toBe(oneTimeValues[1]);
     // The new producer writes before the sweep deletes the old one, and
     // the binding is left as it was.
     expect(operations).toEqual(["create key pair ci-2", "delete key pair ci"]);
@@ -324,7 +324,7 @@ describe("a secret whose source a resource produces", () => {
     expect(after?.params.Name).toBe(secretRecord?.params.Name);
     expect(after?.params.ValueFrom).toEqual({
       Secret: "app-key",
-      Source: "produced",
+      Source: "one-time",
       Producer: "key-pair:ci-2",
       Rotation: 'Rotate fakeKeyPair({ id: "ci-2" }) to write a new value.',
     });
@@ -337,7 +337,7 @@ describe("a secret whose source a resource produces", () => {
     await deploy("second", infra("ci", { name: "ci-rotated" }));
 
     expect(fakeKeys.size).toBe(1);
-    expect(secrets.get(NAME)?.value).toBe(producedValues[1]);
+    expect(secrets.get(NAME)?.value).toBe(oneTimeValues[1]);
     expect(operations).not.toContain(`delete value ${NAME}`);
     expect(operations).not.toContain("update binding api");
   });
@@ -360,7 +360,7 @@ describe("a secret whose source a resource produces", () => {
     // keeps the value, and the sweep deletes only the key pair.
     expect(prompt).not.toHaveBeenCalled();
     expect(operations).toEqual(["delete key pair ci"]);
-    expect(secrets.get(NAME)?.value).toBe(producedValues[0]);
+    expect(secrets.get(NAME)?.value).toBe(oneTimeValues[0]);
     expect(
       (await runtime.state.get("secret:app-key"))?.params.ValueFrom,
     ).toEqual({ Secret: "app-key", Source: "prompt" });
@@ -383,7 +383,7 @@ describe("a secret whose source a resource produces", () => {
     // Rotating the producer writes the value again, and the secret
     // claims it.
     await deploy("third", infra("ci", { name: "ci-rotated" }));
-    expect(secrets.get(NAME)?.value).toBe(producedValues[1]);
+    expect(secrets.get(NAME)?.value).toBe(oneTimeValues[1]);
     expect(decisions(await plan(infra("ci", { name: "ci-rotated" })))).toEqual({
       "secrets-store": "noop",
       "key-pair:ci": "noop",
@@ -406,7 +406,7 @@ describe("a secret whose source a resource produces", () => {
         StageScoped: true,
         ValueFrom: {
           Secret: "app-key",
-          Source: "produced",
+          Source: "one-time",
           Producer: "key-pair:ci",
           Rotation: 'Rotate fakeKeyPair({ id: "ci" }) to write a new value.',
         },
@@ -456,7 +456,7 @@ describe("a secret whose source a resource produces", () => {
         secret({ id: "app-key-2", source: app.sources.privateKey });
       }),
     ).rejects.toThrow(
-      'secret({ id: "app-key-2" }) can\'t take fakeKeyPair({ id: "ci" }).sources.privateKey, because secret({ id: "app-key" }) takes it. Only one secret can take a produced source.',
+      'secret({ id: "app-key-2" }) can\'t take fakeKeyPair({ id: "ci" }).sources.privateKey, because secret({ id: "app-key" }) takes it. Only one secret can take a one-time source.',
     );
   });
 
@@ -470,11 +470,11 @@ describe("a secret whose source a resource produces", () => {
     );
   });
 
-  it("rejects a key with a produced source in the types", () => {
+  it("rejects a key with a one-time source in the types", () => {
     // Only type-checked, never called.
     const declarations = () => {
       const app = fakeKeyPairGroup({ id: "ci" });
-      // @ts-expect-error A produced source isn't asked for a key.
+      // @ts-expect-error A one-time source isn't asked for a key.
       secret({ id: "app-key", source: app.sources.privateKey, key: "X" });
       // @ts-expect-error A source that deploy reads needs a key.
       secret({ id: "other", source: env });

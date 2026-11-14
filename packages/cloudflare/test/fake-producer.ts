@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import * as v from "valibot";
 import {
-  producedSource,
+  oneTimeSource,
   writeSecretValue,
-  type ProducedSource,
+  type OneTimeSource,
   type SecretTarget,
 } from "@notation/core";
 import {
@@ -16,7 +16,7 @@ import {
 export const fakeKeys = new Map<string, { name: string }>();
 
 /** The values that creates made, so that tests can look for them. */
-export const producedValues: string[] = [];
+export const oneTimeValues: string[] = [];
 
 /**
  * The creates and deletes of the fake resources, in order. Tests add the
@@ -75,7 +75,7 @@ export const FakeKeyPair = fakeKeyPair
       const id = randomUUID();
       const privateKey = `private-key-${randomUUID()}`;
       fakeKeys.set(id, { name: params.Name });
-      producedValues.push(privateKey);
+      oneTimeValues.push(privateKey);
       try {
         await writeSecretValue(params.PrivateKeyTarget, privateKey);
       } catch (error) {
@@ -106,7 +106,7 @@ export const FakeKeyPair = fakeKeyPair
 export class FakeKeyPairGroup extends ResourceGroup<{ id: string }> {
   platform = "test";
   readonly keyPair: InstanceType<typeof FakeKeyPair>;
-  readonly sources: { privateKey: ProducedSource };
+  readonly sources: { privateKey: OneTimeSource };
 
   constructor(config: { id: string; name?: string }) {
     super("test/fakeKeyPair", config.id, { id: config.id });
@@ -116,7 +116,7 @@ export class FakeKeyPairGroup extends ResourceGroup<{ id: string }> {
       }),
     );
     this.sources = {
-      privateKey: producedSource({
+      privateKey: oneTimeSource({
         producer: `fakeKeyPair({ id: "${config.id}" })`,
         resource: this.keyPair,
         name: "privateKey",

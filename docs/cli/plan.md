@@ -70,7 +70,7 @@ A resource that writes more than one value, each to its own secret, lists each s
     rotation: writes a new value to the secret deploy
 ```
 
-See [Produced sources](../providers/cloudflare/secrets.md#produced-sources).
+See [One-time sources](../providers/cloudflare/secrets.md#one-time-sources).
 
 When an earlier deploy started the create of a resource and did not finish it, state holds a `creating` record for the resource. The plan prints a line under the create:
 

@@ -32,9 +32,9 @@ export const PROMPT_SOURCE = "prompt";
 
 /**
  * The source name that a secret records when its source is a
- * `ProducedSource`, as the producer's create writes its value.
+ * `OneTimeSource`, as the producer's create writes its value.
  */
-export const PRODUCED_SOURCE = "produced";
+export const ONE_TIME_SOURCE = "one-time";
 
 /** A secret that the infra declares, by its id. */
 export type DeclaredSecret = {

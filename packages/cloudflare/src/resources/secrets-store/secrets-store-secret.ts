@@ -1,6 +1,6 @@
 import * as v from "valibot";
 import {
-  PRODUCED_SOURCE,
+  ONE_TIME_SOURCE,
   PROMPT_SOURCE,
   registerSecretStore,
 } from "@notation/core";
@@ -109,7 +109,7 @@ async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
  * secret without a value, so the producer creates the secret, and this
  * create only records it.
  */
-async function claimProduced(params: SecretsStoreSecretParams): Promise<void> {
+async function claimOneTime(params: SecretsStoreSecretParams): Promise<void> {
   const { AccountId, StoreId, Name, ValueFrom } = params;
   if (await findSecretByName(AccountId, StoreId, Name)) return;
   throw new Error(
@@ -122,8 +122,8 @@ async function claimProduced(params: SecretsStoreSecretParams): Promise<void> {
   );
 }
 
-const isProduced = (params: Pick<SecretsStoreSecretParams, "ValueFrom">) =>
-  params.ValueFrom.Source === PRODUCED_SOURCE;
+const isOneTime = (params: Pick<SecretsStoreSecretParams, "ValueFrom">) =>
+  params.ValueFrom.Source === ONE_TIME_SOURCE;
 
 /**
  * A reference to a secret in a Cloudflare Secrets Store. Its record holds
@@ -133,7 +133,7 @@ const isProduced = (params: Pick<SecretsStoreSecretParams, "ValueFrom">) =>
  * version from the source, updates the secret. A change to `StageScoped`
  * only changes the record.
  *
- * When `ValueFrom.Source` is `produced`, the producer's create writes the
+ * When `ValueFrom.Source` is `one-time`, the producer's create writes the
  * value. Create then only checks that the secret exists, and update writes
  * nothing. Delete deletes the secret as for any other source.
  *
@@ -144,7 +144,7 @@ const isProduced = (params: Pick<SecretsStoreSecretParams, "ValueFrom">) =>
 export const SecretsStoreSecret = secretsStoreSecretSchema
   .defineOperations({
     create: async (params) => {
-      await (isProduced(params) ? claimProduced(params) : writeValue(params));
+      await (isOneTime(params) ? claimOneTime(params) : writeValue(params));
     },
 
     read: async (key) => {
@@ -160,7 +160,7 @@ export const SecretsStoreSecret = secretsStoreSecretSchema
     },
 
     update: async (_key, patch, params) => {
-      if (patch.ValueFrom && !isProduced(params)) await writeValue(params);
+      if (patch.ValueFrom && !isOneTime(params)) await writeValue(params);
     },
 
     delete: async (key, state) => {
@@ -174,7 +174,7 @@ export const SecretsStoreSecret = secretsStoreSecretSchema
     StoreId: deps.store.output.StoreId,
   }));
 
-/** The provider of the targets that secrets with a produced source register. */
+/** The provider of the targets that secrets with a one-time source register. */
 export const SECRETS_STORE_PROVIDER = "@notation/cloudflare/resources";
 
 type TargetParams = { AccountId: string; StoreId: string; Name: string };

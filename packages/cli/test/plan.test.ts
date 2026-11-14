@@ -15,7 +15,7 @@ const { planApp } = vi.hoisted(() => ({
 vi.mock("@notation/core", () => ({
   createLoggerReconcilerSubscriber: () => () => undefined,
   planApp,
-  PRODUCED_SOURCE: "produced",
+  ONE_TIME_SOURCE: "one-time",
   PROMPT_SOURCE: "prompt",
   resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}`,
 }));
@@ -389,7 +389,7 @@ it("prints that deploy asks for the value of a new secret without a source", asy
   ]);
 });
 
-it("labels the replacement of a resource that writes a produced secret as a rotation", async () => {
+it("labels the replacement of a resource that writes a secret with a one-time source as a rotation", async () => {
   planApp.mockResolvedValueOnce({
     createdAt: "",
     nodes: [
@@ -409,7 +409,7 @@ it("labels the replacement of a resource that writes a produced secret as a rota
         params: {
           ValueFrom: {
             Secret: "deploy",
-            Source: "produced",
+            Source: "one-time",
             Producer: "token:deploy",
           },
         },
@@ -438,7 +438,7 @@ it("lists only the secrets of the producer that aren't being deleted", async () 
     type: "cloudflare/secrets-store/SecretsStoreSecret",
     decision,
     params: {
-      ValueFrom: { Secret: id, Source: "produced", Producer: "token:deploy" },
+      ValueFrom: { Secret: id, Source: "one-time", Producer: "token:deploy" },
     },
     dependsOn: ["secrets-store", "token:deploy"],
   });
@@ -481,7 +481,7 @@ it("lists only the secrets of the producer that aren't being deleted", async () 
   );
 });
 
-it("doesn't label the first create of a resource that writes a produced secret", async () => {
+it("doesn't label the first create of a resource that writes a secret with a one-time source", async () => {
   planApp.mockResolvedValueOnce({
     createdAt: "",
     nodes: [
@@ -496,7 +496,7 @@ it("doesn't label the first create of a resource that writes a produced secret",
         id: "secret:deploy",
         type: "cloudflare/secrets-store/SecretsStoreSecret",
         decision: "create",
-        params: { ValueFrom: { Secret: "deploy", Source: "produced" } },
+        params: { ValueFrom: { Secret: "deploy", Source: "one-time" } },
         dependsOn: ["token:deploy"],
       },
     ],
@@ -527,7 +527,7 @@ it("labels the create of a producer that was deleted outside notation as a rotat
         params: {
           ValueFrom: {
             Secret: "deploy",
-            Source: "produced",
+            Source: "one-time",
             Producer: "token:deploy",
           },
         },

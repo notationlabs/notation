@@ -162,7 +162,7 @@ const accountTokenSchema = accountToken.defineSchema({
   },
   /**
    * The secret that create writes the token's value to. The secret whose
-   * source is the token's produced source contributes its target. It is
+   * source is the token's one-time source contributes its target. It is
    * immutable, because only a create gets a value to write to a new target.
    */
   ValueTarget: {

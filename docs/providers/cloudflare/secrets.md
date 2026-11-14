@@ -2,7 +2,7 @@
 
 `@notation/cloudflare` keeps secrets in the account's [Secrets Store](https://developers.cloudflare.com/secrets-store/), and binds them to Workers. Notation records where a secret is, such as the store ID and the name, and where its value comes from. It never records the secret's value.
 
-Deploy writes a secret's value from its source, or asks for it when the secret has no source. See [Secrets](../../manual/secrets.md). A secret can also take a value that another resource gets when it is created, such as the value of an API token from `accountToken()`. See [Produced sources](#produced-sources).
+Deploy writes a secret's value from its source, or asks for it when the secret has no source. See [Secrets](../../manual/secrets.md). A secret can also take a value that another resource gets when it is created, such as the value of an API token from `accountToken()`. See [One-time sources](#one-time-sources).
 
 ## `secret(config)`
 
@@ -48,8 +48,8 @@ export default {
 | Option   | Description                                                                                                                                                                                                                                                                 |
 | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `id`     | Keys the secret in state, and is what `notation secret set <id>` takes. The secret's name in the store is `<app>--<stage>--<id>`, such as `shop--dev--stripe-key`.                                                                                                          |
-| `source` | Where the value comes from, such as `env` or `dotenv(".env.local")` from `@notation/std/sources`. Given together with `key`. Without a source, deploy asks for the value. A [produced source](#produced-sources), such as `app.sources.privateKey`, is given without `key`. |
-| `key`    | The key that the source is asked for. Not given with a produced source.                                                                                                                                                                                                     |
+| `source` | Where the value comes from, such as `env` or `dotenv(".env.local")` from `@notation/std/sources`. Given together with `key`. Without a source, deploy asks for the value. A [one-time source](#one-time-sources), such as `app.sources.privateKey`, is given without `key`. |
+| `key`    | The key that the source is asked for. Not given with a one-time source.                                                                                                                                                                                                     |
 | `name`   | An exact name in the store, in place of `<app>--<stage>--<id>`. The name isn't scoped to the stage. Use it to adopt a secret that exists, or to share one between stages. Cloudflare rejects a name with a dot.                                                             |
 
 - Deploy writes the value when it creates the secret, and when the source's version of the key changes. For `env` and `dotenv`, that is every deploy. A new secret gets the scope Workers. A secret that exists keeps its scopes.
@@ -58,16 +58,16 @@ export default {
 - Destroy deletes a secret whose name is `<app>--<stage>--<id>`. It leaves a secret with an explicit `name`.
 - Cloudflare never returns a secret's value, so a value changed in the dashboard or with wrangler isn't seen as a change. It stays until the next write.
 
-## Produced sources
+## One-time sources
 
 Some resources get a value only once, in the response to their create. For example, Cloudflare returns the value of an API token only when it creates the token. Deploy can't ask such a resource for the value later, so the value can't come from a source such as `env`.
 
-A resource like this is a producer. Its construct may expose each such value as a produced source, at `<producer>.sources.<name>`. One `secret()` takes the produced source as its `source`, without a `key`, and the producer's create writes the value to that secret. `accountToken()` is a producer that keeps its produced source internal: it declares the token and the secret that takes the token's value, so a config doesn't declare that secret.
+A resource like this is a producer. Its construct may expose each such value as a one-time source, at `<producer>.sources.<name>`. One `secret()` takes the one-time source as its `source`, without a `key`, and the producer's create writes the value to that secret. `accountToken()` is a producer that keeps its one-time source internal: it declares the token and the secret that takes the token's value, so a config doesn't declare that secret.
 
 Deploy creates the resources in this order: the store, the producer, the secret, and then a Worker that binds the secret. The secret's create writes nothing. It checks that the secret exists in the store, and records it.
 
-- **Evaluation fails when no secret takes a produced source.** Only the producer's create gets the value, so without a secret the value would be lost. The error names the source, such as `No secret takes keyPair({ id: "app" }).sources.privateKey.`
-- **Evaluation fails when a second secret takes a produced source.** The producer writes the value to one secret. To use the value in more than one Worker, bind that secret in each Worker.
+- **Evaluation fails when no secret takes a one-time source.** Only the producer's create gets the value, so without a secret the value would be lost. The error names the source, such as `No secret takes keyPair({ id: "app" }).sources.privateKey.`
+- **Evaluation fails when a second secret takes a one-time source.** The producer writes the value to one secret. To use the value in more than one Worker, bind that secret in each Worker.
 - **A change to the secret's name or store replaces the producer.** The producer holds where the secret is in an immutable param, because only a create gets a value to write to a new secret. The new producer writes a new value to the secret, so the replace is a rotation. Plan prints the secret under the producer's replace:
 
   ```text
@@ -84,7 +84,7 @@ Deploy creates the resources in this order: the store, the producer, the secret,
 
 - Destroy deletes the secret and its value, as for any secret named `<app>--<stage>--<id>`. The producer's delete removes only the producer's own resource, such as the API token, and leaves the secret.
 - When the producer is removed from the code and the secret stays, the secret keeps its last value. From then on, the secret takes its value from its new source. With no source, deploy finds that the secret exists and doesn't ask for a value.
-- `notation secret set` and `notation secret delete` refuse a secret with a produced source. The message says how to rotate the producer.
+- `notation secret set` and `notation secret delete` refuse a secret with a one-time source. The message says how to rotate the producer.
 
 ### Rotating a producer
 
@@ -104,7 +104,7 @@ To rotate a producer, delete its remote resource outside notation, then deploy. 
 
 ## `accountToken(config)`
 
-`accountToken` declares an account-owned API token, and a secret that holds the token's value. The token is a producer, and the secret takes its produced source. So the token's create writes the value to the secret in the same step, and the value never reaches state. The token and the secret are both named `<app>--<stage>--<id>`, and the secret has the token's `id`.
+`accountToken` declares an account-owned API token, and a secret that holds the token's value. The token is a producer, and the secret takes its one-time source. So the token's create writes the value to the secret in the same step, and the value never reaches state. The token and the secret are both named `<app>--<stage>--<id>`, and the secret has the token's `id`.
 
 ::code-group
 
@@ -152,7 +152,7 @@ export const worker = $worker({
 - A change to the policies or the condition updates the token, which keeps its value.
 - If the IP ranges or the policies are changed in the dashboard, deploy changes them back to the declaration.
 - Plan looks up the ID of each permission group by its name, and compares the IDs with the token's. A name can belong to more than one group, one for each scope. Then the scope of the policy's `resources` picks the group: `com.cloudflare.api.account.<account id>` picks the account group, and `com.cloudflare.api.account.zone.<zone id>` picks the zone group. If the resources have more than one scope, plan fails and lists the groups. Give each scope its own policy.
-- The token's secret follows the rules of [produced sources](#produced-sources). If the secret is deleted, plan shows drift and deploy fails. To rotate the token, delete it in the Cloudflare dashboard and run `notation deploy`, as in [Rotating a producer](#rotating-a-producer).
+- The token's secret follows the rules of [one-time sources](#one-time-sources). If the secret is deleted, plan shows drift and deploy fails. To rotate the token, delete it in the Cloudflare dashboard and run `notation deploy`, as in [Rotating a producer](#rotating-a-producer).
 - Destroy deletes the secret, then the token.
 - `notation secret set` and `notation secret delete` refuse the token's secret.
 

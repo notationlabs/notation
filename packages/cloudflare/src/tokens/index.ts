@@ -1,4 +1,4 @@
-import { producedSource } from "@notation/core";
+import { oneTimeSource } from "@notation/core";
 import { ResourceGroup, scopedPhysicalName } from "@notation/resource";
 import * as cloudflare from "src/resources";
 import { TOKEN_NAME_MAX_LENGTH } from "src/resources/tokens/account-token";
@@ -57,9 +57,9 @@ export class AccountTokenGroup
         dependencies: { store: secretsStoreGroup().store },
       }),
     );
-    // The group's own secret takes the value, so the produced source isn't
+    // The group's own secret takes the value, so the one-time source isn't
     // exposed: a second secret that took it would throw.
-    const value = producedSource({
+    const value = oneTimeSource({
       producer: declaration,
       resource: this.token,
       name: "value",

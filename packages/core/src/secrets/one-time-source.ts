@@ -26,13 +26,15 @@ export type SecretStore = {
 /**
  * A value that a resource gets only once, in the response to its create,
  * such as the value of an API token. A resource's construct may expose a
- * produced source for a secret to take, and `accountToken()` keeps its own
+ * one-time source for a secret to take, and `accountToken()` keeps its own
  * internal. One secret takes it as its `source`, and the resource's create
  * writes the value to that secret's target. Deploy can't ask it for a
- * value, so it is not a `Source`.
+ * value, so it is not a `Source`. "One-time" means that the value can be
+ * read only once, in the create response, and a rotation writes a new value
+ * to the secret.
  */
-export interface ProducedSource {
-  "~producedSource": {
+export interface OneTimeSource {
+  "~oneTimeSource": {
     /** Names the producer's declaration, such as `accountToken({ id: "ci" })`. */
     producer: string;
     /**
@@ -56,16 +58,16 @@ export interface ProducedSource {
 }
 
 /** What a secret's `source` can be. */
-export type SecretSource = Source | ProducedSource;
+export type SecretSource = Source | OneTimeSource;
 
-export function isProducedSource(source: unknown): source is ProducedSource {
+export function isOneTimeSource(source: unknown): source is OneTimeSource {
   return (
-    typeof source === "object" && source !== null && "~producedSource" in source
+    typeof source === "object" && source !== null && "~oneTimeSource" in source
   );
 }
 
 /**
- * Makes the produced source `name` of `resource`. The target that a secret
+ * Makes the one-time source `name` of `resource`. The target that a secret
  * registers is contributed to the collected param `param` of `resource`.
  * Output refs in the target make `resource` depend on the resources they
  * refer to, such as the store. A second secret that registers a target
@@ -73,7 +75,7 @@ export function isProducedSource(source: unknown): source is ProducedSource {
  * the value would be lost. It is an engine mechanism for resource packages,
  * not user-facing API.
  */
-export function producedSource(options: {
+export function oneTimeSource(options: {
   producer: string;
   resource: BaseResource;
   /** The name in `sources`, such as `value`. */
@@ -91,7 +93,7 @@ export function producedSource(options: {
    * rotate the producer.
    */
   rotation?: string;
-}): ProducedSource {
+}): OneTimeSource {
   const { producer, resource, name, param } = options;
   const rotation =
     options.rotation ?? `Rotate ${producer} to write a new value.`;
@@ -105,14 +107,14 @@ export function producedSource(options: {
     });
   }
   return {
-    "~producedSource": {
+    "~oneTimeSource": {
       producer,
       rotation,
       resource,
       register: (target, by) => {
         if (consumer !== undefined) {
           throw new Error(
-            `${by} can't take ${producer}.sources.${name}, because ${consumer} takes it. Only one secret can take a produced source.`,
+            `${by} can't take ${producer}.sources.${name}, because ${consumer} takes it. Only one secret can take a one-time source.`,
           );
         }
         consumer = by;

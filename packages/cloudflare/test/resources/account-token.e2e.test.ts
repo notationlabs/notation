@@ -57,7 +57,7 @@ describeE2e("cloudflare/tokens/AccountToken", () => {
               config: {
                 Name: "${name}",
                 StageScoped: true,
-                ValueFrom: { Secret: "raw", Source: "produced", Producer: "token:raw" },
+                ValueFrom: { Secret: "raw", Source: "one-time", Producer: "token:raw" },
               },
               dependencies: { store },
             }),

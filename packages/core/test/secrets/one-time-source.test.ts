@@ -2,8 +2,8 @@ import * as v from "valibot";
 import { beforeEach, describe, expect, it } from "vitest";
 import { collectResourceGraph, resource } from "@notation/resource";
 import {
-  isProducedSource,
-  producedSource,
+  isOneTimeSource,
+  oneTimeSource,
   registerSecretStore,
   writeSecretValue,
   type SecretTarget,
@@ -90,9 +90,9 @@ const Holder = resource<HolderSchema>({
     delete: async () => {},
   });
 
-describe("producedSource", () => {
+describe("oneTimeSource", () => {
   const source = (holder: InstanceType<typeof Holder>) =>
-    producedSource({
+    oneTimeSource({
       producer: 'holder({ id: "h" })',
       resource: holder,
       name: "value",
@@ -104,8 +104,8 @@ describe("producedSource", () => {
     await collectResourceGraph(() => {
       holder = new Holder("holder", { config: { Id: "h" } });
       const value = source(holder);
-      expect(isProducedSource(value)).toBe(true);
-      value["~producedSource"].register(target("a"), 'secret({ id: "a" })');
+      expect(isOneTimeSource(value)).toBe(true);
+      value["~oneTimeSource"].register(target("a"), 'secret({ id: "a" })');
     });
 
     expect((await holder.getParams()).Target).toEqual(target("a"));
@@ -115,11 +115,11 @@ describe("producedSource", () => {
     await expect(
       collectResourceGraph(() => {
         const value = source(new Holder("holder", { config: { Id: "h" } }));
-        value["~producedSource"].register(target("a"), 'secret({ id: "a" })');
-        value["~producedSource"].register(target("b"), 'secret({ id: "b" })');
+        value["~oneTimeSource"].register(target("a"), 'secret({ id: "a" })');
+        value["~oneTimeSource"].register(target("b"), 'secret({ id: "b" })');
       }),
     ).rejects.toThrow(
-      'secret({ id: "b" }) can\'t take holder({ id: "h" }).sources.value, because secret({ id: "a" }) takes it. Only one secret can take a produced source.',
+      'secret({ id: "b" }) can\'t take holder({ id: "h" }).sources.value, because secret({ id: "a" }) takes it. Only one secret can take a one-time source.',
     );
   });
 

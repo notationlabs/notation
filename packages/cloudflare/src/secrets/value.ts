@@ -7,16 +7,16 @@ import type { Source } from "@notation/std/sources";
 export const secretValueFromSchema = v.object({
   /** The id of the secret's declaration, which `getValue` takes. */
   Secret: v.string(),
-  /** The name of the source, such as `infisical`, `prompt` or `produced`. */
+  /** The name of the source, such as `infisical`, `prompt` or `one-time`. */
   Source: v.string(),
   /**
-   * The id of the resource whose create writes a produced value, such as
+   * The id of the resource whose create writes a one-time value, such as
    * `token:ci`. Plan finds the secrets that a replace of that resource
    * rotates by it.
    */
   Producer: v.optional(v.string()),
   /**
-   * How to rotate the producer of a produced value. The secret's create
+   * How to rotate the producer of a one-time value. The secret's create
    * shows it when the secret is missing. It is not secret data.
    */
   Rotation: v.optional(v.string()),

@@ -1,8 +1,8 @@
 import {
   declareSecret,
-  isProducedSource,
-  PRODUCED_SOURCE,
-  type ProducedSource,
+  isOneTimeSource,
+  ONE_TIME_SOURCE,
+  type OneTimeSource,
 } from "@notation/core";
 import { ResourceGroup, scopedPhysicalName } from "@notation/resource";
 import * as std from "@notation/std/resources";
@@ -64,7 +64,7 @@ export type SecretConfig = {
        * value, and `notation secret set` and `notation secret delete`
        * refuse the secret.
        */
-      source: ProducedSource;
+      source: OneTimeSource;
       key?: never;
     }
   | { source?: undefined; key?: undefined }
@@ -100,15 +100,15 @@ export class SecretGroup
     super("cloudflare/secret", config.id, config);
     const { id } = config;
     const store = secretsStoreGroup().store;
-    const produced = isProducedSource(config.source)
-      ? config.source["~producedSource"]
+    const oneTime = isOneTimeSource(config.source)
+      ? config.source["~oneTimeSource"]
       : undefined;
-    const source = produced ? undefined : (config.source as Source | undefined);
+    const source = oneTime ? undefined : (config.source as Source | undefined);
     let valueFrom: SecretValueFrom;
-    if (produced) {
+    if (oneTime) {
       // The target holds only outputs of resources that the producer
       // depends on, so the producer's create can resolve it.
-      produced.register(
+      oneTime.register(
         {
           provider: SECRETS_STORE_PROVIDER,
           params: {
@@ -121,9 +121,9 @@ export class SecretGroup
       );
       valueFrom = {
         Secret: id,
-        Source: PRODUCED_SOURCE,
-        Producer: produced.resource.id,
-        Rotation: produced.rotation,
+        Source: ONE_TIME_SOURCE,
+        Producer: oneTime.resource.id,
+        Rotation: oneTime.rotation,
       };
     } else {
       const added = addSecretValue(this, declaration, {
@@ -144,7 +144,7 @@ export class SecretGroup
         dependencies: { store },
       }),
     );
-    if (produced) this.secret.dependOn(produced.resource);
+    if (oneTime) this.secret.dependOn(oneTime.resource);
 
     const explicitName =
       config.name === undefined
@@ -154,7 +154,7 @@ export class SecretGroup
       id,
       source,
       key: source ? config.key : undefined,
-      set: produced
+      set: oneTime
         ? undefined
         : async (value) => {
             const account = accountId();
@@ -164,15 +164,15 @@ export class SecretGroup
             await writeSecret(account, storeId, name, value);
           },
       delete:
-        produced || explicitName
+        oneTime || explicitName
           ? undefined
           : async () => {
               const account = accountId();
               const [store] = await listStores(account);
               if (store) await deleteSecret(account, store.id, name);
             },
-      refusal: produced
-        ? `Only the create of ${produced.producer} writes the value of \`${id}\`, so \`notation secret\` can't set or delete it. ${produced.rotation}`
+      refusal: oneTime
+        ? `Only the create of ${oneTime.producer} writes the value of \`${id}\`, so \`notation secret\` can't set or delete it. ${oneTime.rotation}`
         : explicitName,
     });
   }
@@ -190,7 +190,7 @@ const describe = (config: SecretConfig) =>
 /**
  * Declares a secret in the account's Secrets Store, which a Worker binds
  * with `secretsStore.bind(secret)`. Deploy writes the value from `source`,
- * or asks for it when there is no source. When `source` is a produced
+ * or asks for it when there is no source. When `source` is a one-time
  * source, such as `app.sources.privateKey`, the create of the resource that
  * produces it writes the value. A replacement of that resource writes a new
  * value to the same secret. Notation records where the secret is and where

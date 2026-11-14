@@ -231,8 +231,8 @@ describe("secret", () => {
     expect(declared.get("deploy")!.refusal).toBe(
       `Only the create of accountToken({ id: "deploy" }) writes the value of \`deploy\`, so \`notation secret\` can't set or delete it. ${TOKEN_ROTATION}`,
     );
-    // The refusal of a produced secret with an explicit name is only the
-    // produced text.
+    // The refusal of a secret with a one-time source and an explicit name is
+    // only the one-time text.
     expect(declared.get("copy")!.set).toBeUndefined();
     expect(declared.get("copy")!.delete).toBeUndefined();
     expect(declared.get("copy")!.refusal).toBe(
@@ -397,7 +397,7 @@ describe("accountToken", () => {
       StageScoped: true,
       ValueFrom: {
         Secret: "deploy",
-        Source: "produced",
+        Source: "one-time",
         Producer: "token:deploy",
         Rotation: TOKEN_ROTATION,
       },
@@ -493,7 +493,7 @@ describe("secretsStore.bind", () => {
       StageScoped: true,
       ValueFrom: {
         Secret: "deploy",
-        Source: "produced",
+        Source: "one-time",
         Producer: "token:deploy",
       },
       SecretId: "s2",

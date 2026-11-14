@@ -1,6 +1,6 @@
 # Secrets
 
-A secret is a reference to a value that lives in a secret store, such as Cloudflare's Secrets Store. Notation writes the value to the store when it creates or updates the secret, or, for a [produced source](#writing-a-producer), when it creates the resource that produces the value. It never records the value, or anything derived from it, in state, the journal, plan output or events.
+A secret is a reference to a value that lives in a secret store, such as Cloudflare's Secrets Store. Notation writes the value to the store when it creates or updates the secret, or, for a [one-time source](#writing-a-producer), when it creates the resource that produces the value. It never records the value, or anything derived from it, in state, the journal, plan output or events.
 
 A provider package declares secrets. See [Cloudflare secrets](../providers/cloudflare/secrets.md), and [`workerSecret`](../providers/cloudflare/workers.md#workersecretconfig) for a secret that a Worker binds as secret text.
 
@@ -15,7 +15,7 @@ A secret takes its value from a source and a key, or from a prompt when it has n
 
 Other sources are in their own packages, such as [`infisical()`](../providers/infisical/sources.md) from `@notation/infisical/sources`.
 
-A secret can also take a produced source: a value that another resource gets only in the response to its create, such as the value of an API token. A producer's construct may expose the value at `<producer>.sources.<name>`, such as `app.sources.privateKey`, and one secret takes it without a `key`. `accountToken()` keeps its produced source internal, and declares the secret that takes it. The producer's create writes the value, and deploy never asks a source or a prompt for it. See [Produced sources](../providers/cloudflare/secrets.md#produced-sources).
+A secret can also take a one-time source: a value that another resource gets only in the response to its create, such as the value of an API token. A producer's construct may expose the value at `<producer>.sources.<name>`, such as `app.sources.privateKey`, and one secret takes it without a `key`. `accountToken()` keeps its one-time source internal, and declares the secret that takes it. The producer's create writes the value, and deploy never asks a source or a prompt for it. See [One-time sources](../providers/cloudflare/secrets.md#one-time-sources).
 
 ```ts [infra/secrets.ts]
 import { secret } from "@notation/cloudflare/secrets-store";
@@ -52,7 +52,7 @@ A secret is written when its version changes:
 | A versioned one, such as `infisical()` | the source's version      | when the version changes                             |
 | `env`, `dotenv`                        | the deploy's execution ID | on every deploy                                      |
 | none (prompt)                          | none                      | when the secret is created, or recreated after drift |
-| a produced source                      | none                      | when the producer is created or replaced             |
+| a one-time source                      | none                      | when the producer is created or replaced             |
 
 `env` and `dotenv` have no versions, so plan shows an update of their `SourceValue` on every run. The same applies to a key that a versioned source gives no version, such as an `infisical()` secret that references another secret. A move from one source to another writes the secret from the new source.
 
@@ -123,13 +123,13 @@ A producer is a resource that gets a value only in the response to its create, a
 
 | Export                | Use                                                                          |
 | --------------------- | ---------------------------------------------------------------------------- |
-| `ProducedSource`      | The type of `<producer>.sources.<name>`.                                     |
-| `SecretSource`        | `Source \| ProducedSource`, what a secret's `source` can be.                 |
-| `producedSource()`    | Makes a produced source for a resource.                                      |
+| `OneTimeSource`       | The type of `<producer>.sources.<name>`.                                     |
+| `SecretSource`        | `Source \| OneTimeSource`, what a secret's `source` can be.                  |
+| `oneTimeSource()`     | Makes a one-time source for a resource.                                      |
 | `SecretTarget`        | Where a value is written: `{ provider, params }`.                            |
 | `writeSecretValue()`  | Writes a value to a target, in the producer's create.                        |
 | `registerSecretStore` | Registers the store implementation that writes to targets of one `provider`. |
-| `isProducedSource()`  | Tells a produced source from a `Source`, in a secret's declaration.          |
+| `isOneTimeSource()`   | Tells a one-time source from a `Source`, in a secret's declaration.          |
 
 ### The target param
 
@@ -145,14 +145,14 @@ ValueTarget: {
 },
 ```
 
-`collect` returns the one target. `producedSource` throws when a second secret takes the source, so the param gets one target from a secret.
+`collect` returns the one target. `oneTimeSource` throws when a second secret takes the source, so the param gets one target from a secret.
 
-### `producedSource(options)`
+### `oneTimeSource(options)`
 
-The group makes one produced source for each value. A group that exposes its produced sources puts them in a `sources` field, named after the value, so that users write `<producer>.sources.<value>`. `accountToken()` keeps its produced source internal, and passes it to the secret that the group declares:
+The group makes a one-time source for each value. A group that exposes its one-time sources puts them in a `sources` field, named after the value, so that users write `<producer>.sources.<value>`. `accountToken()` keeps its one-time source internal, and passes it to the secret that the group declares:
 
 ```ts
-const value = producedSource({
+const value = oneTimeSource({
   producer: `accountToken({ id: "${config.id}" })`,
   resource: this.token,
   name: "value",
@@ -175,15 +175,15 @@ this.secret = new SecretGroup(
 
 The `rotation` text is shown in two places: the refusal of `notation secret set` and `notation secret delete`, and the error of a secret's create when the secret is missing. Name the producer by its declaration in it, because the user wrote the declaration and not the resource id.
 
-The produced source holds `producer`, `rotation`, `resource` and a method `register(target, consumer)` under the key `"~producedSource"`. A secret's declaration calls `register` with its own target and its declaration, such as `secret({ id: "app-key" })`, and `register` contributes the target to `param`. When the target holds output refs, such as the store's `StoreId`, the producer depends on the resources that they refer to. So deploy creates the store, then the producer, then the secret.
+The one-time source holds `producer`, `rotation`, `resource` and a method `register(target, consumer)` under the key `"~oneTimeSource"`. A secret's declaration calls `register` with its own target and its declaration, such as `secret({ id: "app-key" })`, and `register` contributes the target to `param`. When the target holds output refs, such as the store's `StoreId`, the producer depends on the resources that they refer to. So deploy creates the store, then the producer, then the secret.
 
-**One secret takes a produced source.** A second call to `register` throws, and the error names both secrets:
+**One secret takes a one-time source.** A second call to `register` throws, and the error names both secrets:
 
 ```text
-secret({ id: "app-key-2" }) can't take keyPair({ id: "app" }).sources.privateKey, because secret({ id: "app-key" }) takes it. Only one secret can take a produced source.
+secret({ id: "app-key-2" }) can't take keyPair({ id: "app" }).sources.privateKey, because secret({ id: "app-key" }) takes it. Only one secret can take a one-time source.
 ```
 
-**When evaluation of the infra ends, collection throws if no secret registered a target with a produced source.** The value would otherwise be lost, because only the producer's create gets it. `producedSource` adds this check only while a resource graph is being collected.
+**When evaluation of the infra ends, collection throws if no secret registered a target with a one-time source.** The value would otherwise be lost, because only the producer's create gets it. `oneTimeSource` adds this check only while a resource graph is being collected.
 
 ### The create
 
@@ -214,10 +214,10 @@ The other operations of a producer follow from the fact that the secret owns the
 
 ### The secret
 
-A secret's declaration accepts a `SecretSource`, and checks it with `isProducedSource`. For a produced source, the Cloudflare `secret()` does this:
+A secret's declaration accepts a `SecretSource`, and checks it with `isOneTimeSource`. For a one-time source, the Cloudflare `secret()` does this:
 
 - It calls `register` with the target `{ provider: "@notation/cloudflare/resources", params: { AccountId, StoreId, Name } }`, where `AccountId` and `StoreId` are output refs of the store, and with its declaration.
-- It records `ValueFrom: { Secret: id, Source: "produced", Producer, Rotation }`. `"produced"` is `PRODUCED_SOURCE` from `@notation/core`. `Producer` is the id of the producer's resource, such as `token:deploy`. Plan finds the secret that a replace or recreate of that resource rotates by it. `Rotation` is the producer's `rotation` text, which is not secret data.
+- It records `ValueFrom: { Secret: id, Source: "one-time", Producer, Rotation }`. `"one-time"` is `ONE_TIME_SOURCE` from `@notation/core`. `Producer` is the id of the producer's resource, such as `token:deploy`. Plan finds the secret that a replace or recreate of that resource rotates by it. `Rotation` is the producer's `rotation` text, which is not secret data.
 - It makes the secret depend on the producer's resource.
 - It declares the secret with no `set` and no `delete`, so `notation secret set` and `notation secret delete` refuse it. The refusal names the producer and holds the `rotation` text.
 
