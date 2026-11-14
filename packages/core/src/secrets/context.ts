@@ -30,6 +30,12 @@ export type Source = {
  */
 export const PROMPT_SOURCE = "prompt";
 
+/**
+ * The source name that a secret records when the create of another
+ * resource writes its value, such as the API token of `accountToken()`.
+ */
+export const ONE_TIME_SOURCE = "one-time";
+
 /** A secret that the infra declares, by its id. */
 export type DeclaredSecret = {
   id: string;

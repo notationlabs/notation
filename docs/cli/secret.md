@@ -34,9 +34,12 @@ The next `notation deploy` finds the secret missing and creates it again, from i
 
 ## Errors
 
-Both commands fail when:
+Both commands fail when no secret has the id. The message lists the declared ids.
 
-- No secret has the id. The message lists the declared ids.
-- The id is an API token's, whose value only the token's create can write.
+Both commands refuse the secret of an [`accountToken()`](../providers/cloudflare/secrets.md#accounttokenconfig). Only the token's create writes the value, so a deleted value can't be written again from a source or the prompt. The message says how to [rotate the token](../providers/cloudflare/secrets.md#rotating-a-token):
+
+```text
+Only the create of accountToken({ id: "deploy" }) writes the value of `deploy`, so `notation secret` can't set or delete it. To rotate the token, delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to the secret.
+```
 
 `delete` also refuses a secret that a provider adopted rather than created, such as a Cloudflare secret with an explicit `name`.

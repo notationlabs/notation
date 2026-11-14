@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { PROMPT_SOURCE } from "@notation/core";
+import { ONE_TIME_SOURCE, PROMPT_SOURCE } from "@notation/core";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { getValue } from "@notation/std/sources";
 import {
@@ -99,20 +99,42 @@ async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
 }
 
 /**
+ * Checks that the producer wrote the value. The secret depends on the
+ * producer, so the producer's create has run. Cloudflare can't create a
+ * secret without a value, so the producer creates the secret, and this
+ * create only records it.
+ */
+async function claimOneTime(params: SecretsStoreSecretParams): Promise<void> {
+  const { AccountId, StoreId, Name, ValueFrom } = params;
+  if (await findSecretByName(AccountId, StoreId, Name)) return;
+  throw new Error(
+    `The secret ${Name} of \`${ValueFrom.Secret}\` is missing. Only the create of the resource that produces its value writes it. Run \`notation secret set ${ValueFrom.Secret}\` to see how to rotate that resource.`,
+  );
+}
+
+const isOneTime = (params: Pick<SecretsStoreSecretParams, "ValueFrom">) =>
+  params.ValueFrom.Source === ONE_TIME_SOURCE;
+
+/**
  * A reference to a secret in a Cloudflare Secrets Store. Its record holds
  * where the secret is and where its value comes from, and never the value.
  *
  * Create and update write the value. A change to `ValueFrom`, such as a new
  * version from the source, updates the secret. A change to `StageScoped`
- * only changes the record. Read finds the secret by
- * name, so a secret recreated outside notation shows as a changed
- * `SecretId`, and a deleted one as drift, which the next deploy creates
- * again.
+ * only changes the record.
+ *
+ * When `ValueFrom.Source` is `one-time`, the producer's create writes the
+ * value. Create then only checks that the secret exists, and update writes
+ * nothing. Delete deletes the secret as for any other source.
+ *
+ * Read finds the secret by name, so a secret recreated outside notation
+ * shows as a changed `SecretId`, and a deleted one as drift, which the next
+ * deploy creates again.
  */
 export const SecretsStoreSecret = secretsStoreSecretSchema
   .defineOperations({
     create: async (params) => {
-      await writeValue(params);
+      await (isOneTime(params) ? claimOneTime(params) : writeValue(params));
     },
 
     read: async (key) => {
@@ -128,7 +150,7 @@ export const SecretsStoreSecret = secretsStoreSecretSchema
     },
 
     update: async (_key, patch, params) => {
-      if (patch.ValueFrom) await writeValue(params);
+      if (patch.ValueFrom && !isOneTime(params)) await writeValue(params);
     },
 
     delete: async (key, state) => {

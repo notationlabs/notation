@@ -1,4 +1,4 @@
-import { declareSecret } from "@notation/core";
+import { declareSecret, ONE_TIME_SOURCE } from "@notation/core";
 import { ResourceGroup, scopedPhysicalName } from "@notation/resource";
 import * as std from "@notation/std/resources";
 import type { Source } from "@notation/std/sources";
@@ -12,7 +12,11 @@ import {
 } from "src/api/secrets-store";
 import * as cloudflare from "src/resources";
 import type { BindableSecret } from "src/workers/declaration";
-import { addSecretValue, assertSecretId } from "src/secrets/value";
+import {
+  addSecretValue,
+  assertSecretId,
+  type SecretValueFrom,
+} from "src/secrets/value";
 import {
   claimSecretName,
   SECRET_NAME_MAX_LENGTH,
@@ -49,6 +53,23 @@ export type SecretConfig = {
   | { source?: undefined; key?: undefined }
 );
 
+/**
+ * Set by a declaration that makes its secret with `SecretGroup`, such as
+ * `accountToken()`.
+ */
+export type SecretGroupOptions = {
+  /** Names the declaration in errors, such as `accountToken({ id: "ci" })`. */
+  declaration?: string;
+  /**
+   * Set when the create of another resource writes the value, as the
+   * token's create does for `accountToken()`. The caller makes the secret
+   * depend on that resource. The secret's create then only checks that the
+   * secret exists, and `notation secret set` and `notation secret delete`
+   * refuse the secret with `refusal`.
+   */
+  oneTime?: { refusal: string };
+};
+
 export class SecretGroup
   extends ResourceGroup<SecretConfig>
   implements BindableSecret
@@ -57,20 +78,30 @@ export class SecretGroup
   readonly secret: cloudflare.secretsStore.SecretsStoreSecretInstance;
   /** Records the source and key of a secret that has a source. */
   readonly value?: std.sources.SourceValueInstance;
+  /** The secret's name in the store. */
+  readonly name: string;
 
-  constructor(config: SecretConfig) {
+  constructor(config: SecretConfig, options: SecretGroupOptions = {}) {
     assertSecretId("secret()", config.id);
     const name =
       config.name ??
       scopedPhysicalName(config.id, {
         maxLength: SECRET_NAME_MAX_LENGTH,
       });
-    const declaration = describe(config);
+    const declaration = options.declaration ?? describe(config);
     claimSecretName(name, declaration);
     super("cloudflare/secret", config.id, config);
+    this.name = name;
     const { id, source, key } = config;
-    const { value, valueFrom } = addSecretValue(this, declaration, config);
-    this.value = value;
+    const { oneTime } = options;
+    let valueFrom: SecretValueFrom;
+    if (oneTime) {
+      valueFrom = { Secret: id, Source: ONE_TIME_SOURCE };
+    } else {
+      const added = addSecretValue(this, declaration, { id, source, key });
+      this.value = added.value;
+      valueFrom = added.valueFrom;
+    }
     this.secret = this.add(
       new cloudflare.secretsStore.SecretsStoreSecret(`secret:${id}`, {
         config: {
@@ -81,28 +112,33 @@ export class SecretGroup
         dependencies: { store: secretsStoreGroup().store },
       }),
     );
+
+    const explicitName =
+      config.name === undefined
+        ? undefined
+        : `\`${id}\` has the explicit name ${config.name}, so notation didn't create it and doesn't delete it. Delete it with wrangler or in the Cloudflare dashboard.`;
     declareSecret({
       id,
       source,
       key,
-      set: async (value) => {
-        const account = accountId();
-        const [store] = await listStores(account);
-        const storeId =
-          store?.id ?? (await createStore(account, DEFAULT_STORE_NAME)).id;
-        await writeSecret(account, storeId, name, value);
-      },
-      ...(config.name === undefined
-        ? {
-            delete: async () => {
+      set: oneTime
+        ? undefined
+        : async (value) => {
+            const account = accountId();
+            const [store] = await listStores(account);
+            const storeId =
+              store?.id ?? (await createStore(account, DEFAULT_STORE_NAME)).id;
+            await writeSecret(account, storeId, name, value);
+          },
+      delete:
+        oneTime || explicitName
+          ? undefined
+          : async () => {
               const account = accountId();
               const [store] = await listStores(account);
               if (store) await deleteSecret(account, store.id, name);
             },
-          }
-        : {
-            refusal: `\`${id}\` has the explicit name ${config.name}, so notation didn't create it and doesn't delete it. Delete it with wrangler or in the Cloudflare dashboard.`,
-          }),
+      refusal: oneTime?.refusal ?? explicitName,
     });
   }
 

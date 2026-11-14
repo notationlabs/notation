@@ -60,7 +60,7 @@ export default {
 
 ## `accountToken(config)`
 
-`accountToken` declares an account-owned API token. Cloudflare returns a token's value only when it creates the token. So the create writes the value to a secret in the same step, and the value never reaches state. The secret has the token's name, `<app>--<stage>--<id>`.
+`accountToken` declares an account-owned API token, and a secret that holds the token's value. Cloudflare returns a token's value only when it creates the token. So the token's create writes the value to the secret in the same step, and the value never reaches state. The token and the secret are both named `<app>--<stage>--<id>`, and the secret has the token's `id`.
 
 ::code-group
 
@@ -94,20 +94,45 @@ export const worker = $worker({
 
 | Option      | Description                                                                                                                                                                                                     |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`        | Keys the token in state, and names the token and its secret `<app>--<stage>--<id>`. Changing the id rotates the token: deploy creates a new token and secret, and deletes the old ones.                         |
+| `id`        | Keys the token in state, and names the token and its secret `<app>--<stage>--<id>`. Changing the id replaces both: deploy creates a new token and secret, and deletes the old ones.                             |
 | `policies`  | What the token can do. Each policy has an `effect`, `allow` or `deny`, the names of its `permissionGroups` as the dashboard shows them, and the `resources` it applies to. A change updates the token in place. |
 | `condition` | Optional. The client IP ranges, in CIDR notation, as `{ requestIp: { in, notIn } }`. Only clients in `in` may use the token, and clients in `notIn` may not. A change updates the token in place.               |
+
+`accountToken` returns an `AccountTokenGroup`, with these fields:
+
+| Field    | Description                                                              |
+| -------- | ------------------------------------------------------------------------ |
+| `token`  | The `cloudflare/tokens/AccountToken` resource, with the ID `token:<id>`. |
+| `secret` | The secret that holds the value. Its resource has the ID `secret:<id>`.  |
 
 - A change to the policies or the condition updates the token, which keeps its value.
 - If the IP ranges or the policies are changed in the dashboard, deploy changes them back to the declaration.
 - Plan looks up the ID of each permission group by its name, and compares the IDs with the token's. A name can belong to more than one group, one for each scope. Then the scope of the policy's `resources` picks the group: `com.cloudflare.api.account.<account id>` picks the account group, and `com.cloudflare.api.account.zone.<zone id>` picks the zone group. If the resources have more than one scope, plan fails and lists the groups. Give each scope its own policy.
-- If the token's secret is deleted, plan fails, because the value can't be fetched again. Rotate the token by changing its `id`.
-- Destroy deletes the token and its secret.
-- `notation secret set` and `notation secret delete` refuse a token's secret.
+- Deploy creates the store, the token, the secret, and then a Worker that binds the secret. The secret's create writes nothing. It checks that the token's create wrote the secret, and records it.
+- When the token's create fails to write the value, the value is lost. The create then deletes the new token, so the next deploy creates a new one.
+- If the secret is deleted outside notation, plan shows the secret as `drift-recreate`, and deploy fails at the secret. Only the token's create writes the value, so rotate the token, as in [Rotating a token](#rotating-a-token):
+
+  ```text
+  The secret shop--dev--deploy of `deploy` is missing. Only the create of the resource that produces its value writes it. Run `notation secret set deploy` to see how to rotate that resource.
+  ```
+
+- The token's delete leaves the secret. So a replaced token writes its value to the same secret, and a Worker that binds the secret keeps the same binding. If the new token's create fails during a replace, the secret holds the old token's value, which no longer works, until a deploy succeeds.
+- Destroy deletes the secret, then the token.
+- `notation secret set` and `notation secret delete` refuse the token's secret. The message says how to rotate the token.
+
+### Rotating a token
+
+To rotate `accountToken({ id: "deploy" })`:
+
+1. Delete (or revoke) the API token `shop--dev--deploy` in the Cloudflare dashboard.
+2. Run `notation deploy`. The token's read finds no token, so plan shows the token as `drift-recreate`.
+3. The new token's create writes its value to the token's secret. If the secret was also deleted, the secret's create then finds it again, and succeeds.
+
+Changing the token's `id` does not rotate the same secret. The secret's name comes from the `id`, so a new `id` makes a new token and a new secret, and a missing secret under the old name stays missing.
 
 ## `secretsStore.bind(secret)`
 
-`secretsStore.bind` binds a secret from `secret()` or a token from `accountToken()` to a Worker, as a Secrets Store binding. In the Worker, the binding has the type `SecretsStoreSecret`, and the code reads the value with `await env.NAME.get()`. The Worker is uploaded after the secret, because Cloudflare fails an upload that binds a secret that doesn't exist.
+`secretsStore.bind` binds a secret from `secret()` or a token from `accountToken()` to a Worker, as a Secrets Store binding. For a token, it binds the token's secret. A change to the token's `id` makes a new secret, so the binding changes. In the Worker, the binding has the type `SecretsStoreSecret`, and the code reads the value with `await env.NAME.get()`. The Worker is uploaded after the secret, because Cloudflare fails an upload that binds a secret that doesn't exist.
 
 ## The store
 

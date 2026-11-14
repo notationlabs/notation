@@ -50,6 +50,7 @@ A secret is written when its version changes:
 | A versioned one, such as `infisical()` | the source's version      | when the version changes                             |
 | `env`, `dotenv`                        | the deploy's execution ID | on every deploy                                      |
 | none (prompt)                          | none                      | when the secret is created, or recreated after drift |
+| the secret of an `accountToken()`      | none                      | when the token is created or replaced                |
 
 `env` and `dotenv` have no versions, so plan shows an update of their `SourceValue` on every run. The same applies to a key that a versioned source gives no version, such as an `infisical()` secret that references another secret. A move from one source to another writes the secret from the new source.
 

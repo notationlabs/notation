@@ -33,6 +33,9 @@ import * as runtime from "src/workers/runtime";
 
 const compatibilityDate = "2026-10-12";
 
+const TOKEN_REFUSAL =
+  'Only the create of accountToken({ id: "deploy" }) writes the value of `deploy`, so `notation secret` can\'t set or delete it. To rotate the token, delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to the secret.';
+
 beforeEach(() => setConfigFile("/some/project/notation.config.ts"));
 afterEach(() => {
   setConfigFile(undefined);
@@ -211,14 +214,13 @@ describe("secret", () => {
     });
     expect(declared.get("sentry")!.delete).toBeUndefined();
     expect(declared.get("deploy")!.set).toBeUndefined();
-    expect(declared.get("deploy")!.delete).toBeUndefined();
+    expect(declared.get("deploy")!.source).toBeUndefined();
     expect(declared.get("sentry")).toMatchObject({
       set: expect.any(Function),
       refusal: expect.stringContaining("has the explicit name SENTRY_DSN"),
     });
-    expect(declared.get("deploy")).toMatchObject({
-      refusal: expect.stringContaining("is the secret of an API token"),
-    });
+    expect(declared.get("deploy")!.delete).toBeUndefined();
+    expect(declared.get("deploy")!.refusal).toBe(TOKEN_REFUSAL);
   });
 
   describe("set and delete", () => {
@@ -314,7 +316,9 @@ describe("secret", () => {
         secret({ id: "deploy" });
         accountToken({ id: "deploy", policies });
       }),
-    ).rejects.toThrow(`give two secrets the same name, "shop--dev--deploy"`);
+    ).rejects.toThrow(
+      `secret({ id: "deploy" }) and accountToken({ id: "deploy" }) give two secrets the same name, "shop--dev--deploy"`,
+    );
   });
 });
 
@@ -342,7 +346,7 @@ describe("accountToken", () => {
     );
 
     expect(group.token.id).toBe("token:deploy");
-    expect(group.token.config).toEqual({
+    expect(group.token.config).toMatchObject({
       Name: "shop--dev--deploy",
       Policies: [
         {
@@ -352,6 +356,63 @@ describe("accountToken", () => {
         },
       ],
     });
+  });
+
+  it("writes its value to a secret with the id of the token, which depends on the token", async () => {
+    const graph = await collect(() => {
+      accountToken({ id: "deploy", policies });
+    });
+    const group = groupOf<AccountTokenGroup>(
+      graph,
+      "cloudflare/accountToken",
+      "deploy",
+    );
+    const secretGroup = groupOf<SecretGroup>(
+      graph,
+      "cloudflare/secret",
+      "deploy",
+    );
+
+    expect(group.secret).toBe(secretGroup);
+    expect(secretGroup.secret.id).toBe("secret:deploy");
+    expect(secretGroup.secret.config).toEqual({
+      Name: "shop--dev--deploy",
+      StageScoped: true,
+      ValueFrom: {
+        Secret: "deploy",
+        Source: "one-time",
+      },
+    });
+    expect(secretGroup.secret.getDependencies()).toContain(group.token);
+    expect(group["~secret"]()).toBe(secretGroup.secret);
+
+    group.token.dependencies.store.setOutput({
+      AccountId: "acc",
+      StoreId: "store",
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({
+        success: true,
+        errors: [],
+        result: [
+          {
+            id: "g1",
+            name: "Workers Scripts Write",
+            scopes: ["com.cloudflare.api.account"],
+          },
+        ],
+      }),
+    );
+    vi.stubEnv("CLOUDFLARE_API_TOKEN", "token");
+    try {
+      expect((await group.token.getParams()).ValueTarget).toEqual({
+        AccountId: "acc",
+        StoreId: "store",
+        Name: "shop--dev--deploy",
+      });
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });
 
@@ -383,7 +444,7 @@ describe("secretsStore.bind", () => {
       graph,
       "cloudflare/accountToken",
       "deploy",
-    ).token;
+    ).secret.secret;
 
     expect(api.script.getDependencies()).toEqual(
       expect.arrayContaining([stripeKey, deployToken]),
@@ -407,8 +468,8 @@ describe("secretsStore.bind", () => {
       AccountId: "acc",
       StoreId: "store",
       Name: "shop--dev--deploy",
-      Policies: policies,
-      TokenId: "t1",
+      StageScoped: true,
+      ValueFrom: { Secret: "deploy", Source: "one-time" },
       SecretId: "s2",
     });
 

@@ -55,23 +55,24 @@ const ZONES = {
 
 const policies = [policy(["Workers Scripts Write"])];
 
+const target = (Name: string) => ({ AccountId: "acc", StoreId: "store", Name });
+
 const params = {
   AccountId: "acc",
-  StoreId: "store",
   Name: "shop--dev--deploy",
   Policies: [policy(["g1"])],
+  ValueTarget: target("shop--dev--deploy"),
 };
 
 const key = {
   AccountId: "acc",
-  StoreId: "store",
   Name: "shop--dev--deploy",
   TokenId: "t1",
 };
 
 const tokenWith = (Policies: ReturnType<typeof policy>[]) =>
   new AccountToken("token:deploy", {
-    config: { Name: params.Name, Policies },
+    config: { Name: params.Name, Policies, ValueTarget: params.ValueTarget },
     dependencies: {
       store: { output: { AccountId: "acc", StoreId: "store" } },
     } as any,
@@ -99,8 +100,9 @@ type Routes = {
   listTokens?: (page: string) => Response;
   deleteToken?: () => Response;
   listSecrets?: () => Response;
-  createSecret?: () => Response;
+  createSecret?: (name: string) => Response;
   patchSecret?: () => Response;
+  deleteSecret?: () => Response;
 };
 
 function route(routes: Routes) {
@@ -138,12 +140,14 @@ function route(routes: Routes) {
       return (routes.listSecrets ?? (() => ok([])))();
     }
     if (path === SECRETS && call.method === "POST") {
-      return (
-        routes.createSecret ?? (() => ok([{ id: "s1", name: params.Name }]))
-      )();
+      const [{ name }] = call.body as [{ name: string }];
+      return (routes.createSecret ?? (() => ok([{ id: "s1", name }])))(name);
     }
     if (path.startsWith(`${SECRETS}/`) && call.method === "PATCH") {
       return (routes.patchSecret ?? (() => ok()))();
+    }
+    if (path.startsWith(`${SECRETS}/`) && call.method === "DELETE") {
+      return (routes.deleteSecret ?? (() => ok()))();
     }
     return ok();
   });
@@ -161,7 +165,7 @@ afterEach(() => {
 });
 
 describe("AccountToken", () => {
-  it("creates the token with its permission groups by ID, and writes its value to a new secret", async () => {
+  it("creates the token with its permission groups by ID, and writes its value to the target's secret", async () => {
     route({});
 
     await expect(token.create(params)).resolves.toEqual({ TokenId: "t1" });
@@ -330,7 +334,7 @@ describe("AccountToken", () => {
     ).toEqual([`${TOKENS}/lost-1`, `${TOKENS}/lost-2`]);
   });
 
-  it("reads the policies by group ID, and the ID of the secret", async () => {
+  it("reads the policies by group ID", async () => {
     route({
       getToken: () =>
         ok({
@@ -344,16 +348,14 @@ describe("AccountToken", () => {
             },
           ],
         }),
-      listSecrets: () =>
-        ok([{ id: "s1", name: params.Name, status: "active" }]),
     });
 
     await expect(token.read!(key)).resolves.toEqual({
       ...key,
-      SecretId: "s1",
       Policies: params.Policies,
       Condition: {},
     });
+    expect(calls.some((c) => c.url.pathname === SECRETS)).toBe(false);
   });
 
   it("reads a missing token as not found", async () => {
@@ -361,14 +363,6 @@ describe("AccountToken", () => {
 
     await expect(token.read!(key)).rejects.toBeInstanceOf(
       ResourceNotFoundError,
-    );
-  });
-
-  it("fails to read when the secret is missing, and says to rotate the token", async () => {
-    route({});
-
-    await expect(token.read!(key)).rejects.toThrow(
-      "Rotate the token: change the id of its accountToken() declaration, and deploy.",
     );
   });
 
@@ -387,15 +381,13 @@ describe("AccountToken", () => {
     expect(calls.at(-1)!.url.pathname).toBe(`${TOKENS}/t1`);
   });
 
-  it("deletes the token, and its secret by the ID that its name has now", async () => {
-    route({ listSecrets: () => ok([{ id: "s2", name: params.Name }]) });
+  it("deletes the token, and leaves its secret", async () => {
+    route({});
 
-    await token.delete(key, { SecretId: "s1" } as any);
+    await token.delete(key, {} as any);
 
     expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([
       `DELETE ${TOKENS}/t1`,
-      `GET ${SECRETS}`,
-      `DELETE ${SECRETS}/s2`,
     ]);
   });
 
@@ -416,8 +408,6 @@ describe("AccountToken", () => {
               resources: policy.resources,
             })),
           }),
-        listSecrets: () =>
-          ok([{ id: "s1", name: params.Name, status: "active" }]),
       });
       return token.read!(key);
     };
@@ -455,7 +445,12 @@ describe("AccountToken", () => {
 
     const tokenWithConfig = (config: Record<string, unknown>) =>
       new AccountToken("token:deploy", {
-        config: { Name: params.Name, Policies: policies, ...config },
+        config: {
+          Name: params.Name,
+          Policies: policies,
+          ValueTarget: params.ValueTarget,
+          ...config,
+        },
         dependencies: {
           store: { output: { AccountId: "acc", StoreId: "store" } },
         } as any,
@@ -486,8 +481,6 @@ describe("AccountToken", () => {
             ],
             ...fields,
           }),
-        listSecrets: () =>
-          ok([{ id: "s1", name: params.Name, status: "active" }]),
       });
       return token.read!(key);
     };
@@ -563,7 +556,6 @@ describe("AccountToken", () => {
         }),
       ).resolves.toEqual({
         ...key,
-        SecretId: "s1",
         Policies: params.Policies,
         Condition: { requestIp: { in: [...RANGES].sort() } },
         ExpiresOn: "2027-01-01T00:00:00Z",
