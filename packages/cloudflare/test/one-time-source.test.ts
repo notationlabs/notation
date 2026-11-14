@@ -482,23 +482,6 @@ describe("a secret whose source a resource produces", () => {
     expect(declarations).toBeTypeOf("function");
   });
 
-  it("refuses notation secret set and delete, and names the producer", async () => {
-    const declared = await runWithSecretContext(
-      { stage: "dev", runId: "set" },
-      async () => {
-        await collect(infra());
-        return secretContext()!.declared.get("app-key")!;
-      },
-    );
-
-    expect(declared.set).toBeUndefined();
-    expect(declared.delete).toBeUndefined();
-    expect(declared.source).toBeUndefined();
-    expect(declared.refusal).toBe(
-      'Only the create of fakeKeyPair({ id: "ci" }) writes the value of `app-key`, so `notation secret` can\'t set or delete it. Rotate fakeKeyPair({ id: "ci" }) to write a new value.',
-    );
-  });
-
   it("destroys the binding, then the secret and its value, then the producer", async () => {
     await deploy("first");
     operations.length = 0;

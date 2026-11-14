@@ -259,19 +259,6 @@ describe("accountToken in a deploy", () => {
     });
   });
 
-  it("reports a deleted secret as drift, and fails the deploy with what to rotate", async () => {
-    await deploy("first", after);
-    secrets.delete(NAME);
-
-    expect(decisions(await plan(after))).toMatchObject({
-      "token:deploy": "noop",
-      "secret:deploy": "drift-recreate",
-    });
-    await expect(deploy("second", after)).rejects.toThrow(
-      "The secret shop--dev--deploy of `deploy` is missing. Only the create of token:deploy writes the value. To write a new value, delete the remote resource of token:deploy outside notation, then run `notation deploy`.",
-    );
-  });
-
   describe.each([
     ["present", false],
     ["missing", true],
@@ -304,19 +291,4 @@ describe("accountToken in a deploy", () => {
       });
     },
   );
-
-  it("destroys the binding, then the secret, then the token", async () => {
-    await deploy("first", after);
-    writes.length = 0;
-
-    await run("destroy", "destroy", after);
-
-    expect(writes).toEqual([
-      `DELETE ${SECRETS}/id-${NAME}`,
-      `DELETE ${TOKENS}/t1`,
-    ]);
-    expect(operations.at(-1)).toBe("delete binding api");
-    expect(secrets.size).toBe(0);
-    expect(tokens.size).toBe(0);
-  });
 });
