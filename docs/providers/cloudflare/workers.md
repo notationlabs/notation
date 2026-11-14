@@ -159,13 +159,18 @@ Each Worker that binds the secret has its own copy of it. Deploy adds a `cloudfl
 - Notation records the binding's name, the source, the key and the source's version of the key. It never records the value.
 - An upload of the Worker keeps its secrets, so an upload never needs a secret's value. A change to the Worker's code or bindings doesn't write its secrets.
 - A secret with a source is written when the source's version of the key changes. For `env` and `dotenv`, that is every deploy. Each write deploys a new version of the Worker.
-- A secret without a source is written only when the Worker doesn't have it. Deploy asks for the value then, or fails without a terminal. A value set with `notation secret set`, or given at an earlier prompt, is kept.
+- A secret without a source is written only when the Worker doesn't have it. Deploy asks for the value then, or fails without a terminal. A value set with `notation secret set`, or given at an earlier prompt, is kept. So is a secret by that name that the Worker already has, such as one set with `wrangler secret put`: deploy records it without asking.
 - When a Worker stops binding the secret, deploy deletes the secret from the Worker. When the Worker is removed, deploy deletes its secrets first, and then the Worker. Each of those deletes deploys a new version of the Worker. If the delete of the Worker then fails, the Worker stays deployed without its secrets. When the Worker is replaced, the new Worker has none of the old Worker's secrets, so deploy writes them again, and asks for each one that has no source.
 - On a Worker's first deploy, the Worker is uploaded before its secrets are set. For a short time, its secrets are missing from `env`.
 - An upload also keeps a secret that wasn't set by Notation, such as one set with `wrangler secret put`. A binding in `bindings` with the name of such a secret replaces it.
 - A value changed in the dashboard or with wrangler stays until deploy next writes the secret.
 
-`notation secret set <id>` writes the value to each Worker in the stage that binds the secret. It doesn't read state, so it finds each Worker in the account by the name that deploy gives it, `<app>--<stage>--<id>-` followed by 8 hex characters. It skips a Worker that isn't deployed yet, whose first deploy asks for the value. It fails when none of those Workers is deployed. It also fails, and writes nothing, when two Workers in the account have the name of one Worker that binds the secret, such as a Worker left over from a failed deploy. Delete the one that is left over. `notation secret delete <id>` deletes the secret from each of those Workers, and succeeds when none is deployed. The next deploy writes it again.
+`notation secret set <id>` writes the value to each Worker in the stage that binds the secret. `notation secret delete <id>` deletes it from each of those Workers. Neither command reads state, so each finds a Worker in the account by the name that deploy gives it, `<app>--<stage>--<id>-` followed by 8 hex characters.
+
+- `set` skips a Worker that isn't deployed yet. That Worker's first deploy asks for the value.
+- `set` fails when none of those Workers is deployed. Without a terminal, such as in CI, deploy once, run `set`, and deploy again.
+- Both commands fail, and change nothing, when two Workers in the account have the name of one Worker that binds the secret, such as a Worker left over from a failed deploy. Delete the one that is left over.
+- `delete` succeeds when none of those Workers is deployed. The next deploy writes the secret again.
 
 ### Deleting a Worker that other Workers bind
 

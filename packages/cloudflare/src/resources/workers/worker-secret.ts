@@ -7,10 +7,7 @@ import {
   hasScriptSecret,
   putScriptSecret,
 } from "src/api/workers";
-import {
-  secretValueFromSchema,
-  type SecretValueFrom,
-} from "src/resources/secrets-store/secrets-store-secret";
+import { secretValueFromSchema, type SecretValueFrom } from "src/secrets/value";
 import type { WorkerScriptInstance } from "./worker-script";
 
 type WorkerSecretParams = {

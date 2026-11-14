@@ -8,21 +8,10 @@ import {
   findSecretByName,
   setSecretValue,
 } from "src/api/secrets-store";
+import { secretValueFromSchema, type SecretValueFrom } from "src/secrets/value";
 import type { SecretsStoreInstance } from "./secrets-store";
 
-export const secretValueFromSchema = v.object({
-  /** The id of the secret's declaration, which `getValue` takes. */
-  Secret: v.string(),
-  /** The name of the source, such as `infisical`, or `prompt`. */
-  Source: v.string(),
-  /** The key that the source is asked for. */
-  Key: v.optional(v.string()),
-  /** The source's version of the key. It is never derived from the value. */
-  Version: v.optional(v.string()),
-});
-
-/** Where a secret's value comes from. It never holds the value. */
-export type SecretValueFrom = v.InferOutput<typeof secretValueFromSchema>;
+export { secretValueFromSchema, type SecretValueFrom };
 
 type SecretsStoreSecretParams = {
   AccountId: string;

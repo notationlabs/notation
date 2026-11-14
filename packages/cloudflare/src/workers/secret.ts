@@ -9,8 +9,11 @@ import {
   putScriptSecret,
 } from "src/api/workers";
 import { matchesWorkerNames } from "src/id";
-import type { SecretValueFrom } from "src/resources/secrets-store/secrets-store-secret";
-import { addSecretValue, assertSecretId } from "src/secrets/value";
+import {
+  addSecretValue,
+  assertSecretId,
+  type SecretValueFrom,
+} from "src/secrets/value";
 import type { WorkerSecret } from "./declaration";
 
 export type WorkerSecretConfig = {
@@ -69,6 +72,11 @@ export class WorkerSecretGroup
       key,
       set: async (secret) => {
         const account = accountId();
+        if (this.#boundBy.length === 0) {
+          throw new Error(
+            `No Worker binds the Worker secret \`${id}\`. Bind it in a Worker's \`bindings\`, and deploy.`,
+          );
+        }
         const targets = await this.#targets(account);
         if (targets.length === 0) {
           throw new Error(

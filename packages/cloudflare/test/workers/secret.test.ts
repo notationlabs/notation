@@ -127,6 +127,14 @@ describe("workerSecret", () => {
     });
   });
 
+  it("rejects a key without a source", async () => {
+    await collect(() => {
+      expect(() =>
+        workerSecret({ id: "api-key", key: "API_KEY" } as any),
+      ).toThrow('workerSecret({ id: "api-key" }) has a key but no source');
+    });
+  });
+
   describe("set and delete", () => {
     let calls: { method: string; path: string; body: unknown }[];
     let deployed: string[];
@@ -257,7 +265,7 @@ describe("workerSecret", () => {
       );
 
       await expect(secret.set!("hunter2")).rejects.toThrow(
-        "No deployed Worker binds the Worker secret `admin`",
+        "No Worker binds the Worker secret `admin`.",
       );
     });
   });

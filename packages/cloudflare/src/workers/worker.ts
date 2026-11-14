@@ -9,10 +9,10 @@ import {
 import * as std from "@notation/std/resources";
 import * as cloudflare from "src/resources";
 import { assertWorkerId, workerNames, workerResourceId } from "src/id";
+import type { SecretValueFrom } from "src/secrets/value";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
 import { describeNamespace, registeredNamespace } from "./durable-object";
 import { isJsonBinding } from "./json";
-import type { SecretValueFrom } from "src/resources/secrets-store/secrets-store-secret";
 import { isWorkerSecret } from "./secret";
 import { boundSecret } from "./secrets-store";
 
