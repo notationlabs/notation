@@ -108,7 +108,7 @@ describe("WorkerScript", () => {
   });
 
   it("uploads a KV namespace binding", async () => {
-    mockFetch((call) => (call.method === "GET" ? fail(404, 10007) : ok({})));
+    mockFetch(untilUploaded());
     const binding = {
       type: "kv_namespace" as const,
       name: "CACHE",

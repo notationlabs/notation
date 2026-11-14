@@ -126,7 +126,7 @@ describe("KVNamespace", () => {
         : ok([{ id: "ns1", title: params.Title }]),
     );
 
-    await expect(namespace.find!(params, "token")).resolves.toEqual({
+    await expect(namespace.find!(params)).resolves.toEqual({
       NamespaceId: "ns1",
     });
     expect(calls.map((call) => call.url)).toEqual([
@@ -138,7 +138,7 @@ describe("KVNamespace", () => {
   it("finds nothing when no namespace has the title", async () => {
     mockFetch(() => ok([{ id: "other", title: "other" }]));
 
-    await expect(namespace.find!(params, "token")).rejects.toBeInstanceOf(
+    await expect(namespace.find!(params)).rejects.toBeInstanceOf(
       ResourceNotFoundError,
     );
     expect(calls).toHaveLength(1);
