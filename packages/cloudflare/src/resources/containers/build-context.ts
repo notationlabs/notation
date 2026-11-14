@@ -35,11 +35,11 @@ export async function hashBuildInput(input: BuildInput): Promise<string> {
   field(HASH_VERSION);
   field(input.platform);
   field(JSON.stringify(Object.entries(input.buildArgs).sort()));
-  field(await readInput(input.dockerfile, "Dockerfile"));
   const stat = await statInput(input.context, "build context");
   if (!stat.isDirectory()) {
     throw new Error(`The build context ${input.context} is not a directory`);
   }
+  field(await readInput(input.dockerfile, "Dockerfile"));
   for await (const entry of walk(input.context, "")) {
     field(entry.type);
     field(entry.path);
