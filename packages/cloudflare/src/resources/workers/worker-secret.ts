@@ -78,6 +78,29 @@ async function writeValue(params: WorkerSecretParams): Promise<void> {
   }
   const value = (await getValue(ValueFrom.Secret)).unwrap();
   await putScriptSecret(AccountId, ScriptName, Name, value);
+  await waitUntilSecretReadable(AccountId, ScriptName, Name);
+}
+
+const READABLE_WITHIN_MS = 15_000;
+const READABLE_RETRY_MS = 250;
+
+// Cloudflare sometimes reports a secret as not found for a moment after the
+// write that set it. The reconciler reads the secret straight after the
+// write, and fails on not found, so the write waits until it can read it.
+async function waitUntilSecretReadable(
+  account: string,
+  scriptName: string,
+  name: string,
+) {
+  const deadline = Date.now() + READABLE_WITHIN_MS;
+  while (!(await hasScriptSecret(account, scriptName, name))) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Cloudflare accepted the secret ${name} of the Worker ${scriptName}, but still reported it as not found ${READABLE_WITHIN_MS / 1_000} seconds later`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, READABLE_RETRY_MS));
+  }
 }
 
 /**

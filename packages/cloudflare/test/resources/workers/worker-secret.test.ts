@@ -82,6 +82,7 @@ describe("WorkerSecret", () => {
 
     expect(calls.map((call) => [call.method, call.url])).toEqual([
       ["PUT", secretUrl],
+      ["GET", `${secretUrl}/API_KEY`],
     ]);
     expect(JSON.parse(calls[0]!.body as string)).toEqual({
       name: "API_KEY",
@@ -90,10 +91,32 @@ describe("WorkerSecret", () => {
     });
   });
 
-  it("asks for a secret without a source that the Worker doesn't have", async () => {
+  it("waits after a write until Cloudflare reports the secret", async () => {
+    let reads = 0;
     mockFetch((call) =>
-      call.method === "GET" ? fail(404, 10056) : ok({ type: "secret_text" }),
+      call.method === "GET" && ++reads < 3
+        ? fail(404, 10056)
+        : ok({ name: "API_KEY", type: "secret_text" }),
     );
+
+    await deploying(() => resource.create(sourced), { source: vault });
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "PUT",
+      "GET",
+      "GET",
+      "GET",
+    ]);
+  });
+
+  it("asks for a secret without a source that the Worker doesn't have", async () => {
+    let written = false;
+    mockFetch((call) => {
+      if (call.method === "PUT") written = true;
+      return call.method === "GET" && !written
+        ? fail(404, 10056)
+        : ok({ type: "secret_text" });
+    });
     const prompt = vi.fn(async () => "typed");
 
     await deploying(() => resource.create(prompted), { prompt });
@@ -129,7 +152,7 @@ describe("WorkerSecret", () => {
       { source: vault },
     );
 
-    expect(calls.map((call) => call.method)).toEqual(["PUT"]);
+    expect(calls.map((call) => call.method)).toEqual(["PUT", "GET"]);
   });
 
   it("updates when the source's version changes", () => {
