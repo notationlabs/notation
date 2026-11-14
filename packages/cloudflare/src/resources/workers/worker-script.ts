@@ -12,7 +12,6 @@ import {
   type ResourceDeletion,
 } from "@notation/resource";
 import type { fs } from "@notation/std/resources";
-import { getValue } from "@notation/std/sources";
 import { accountId, cloudflareCreate } from "src/api/client";
 import { matchesWorkerNames, workerNameRule } from "src/id";
 import {
@@ -29,9 +28,7 @@ import {
   type DurableObjectExport,
   type ScriptBinding,
   type ScriptUpload,
-  type SecretTextBinding,
 } from "src/api/workers";
-import { secretValueFromSchema } from "src/resources/secrets-store/secrets-store-secret";
 
 export type { DurableObjectExport };
 
@@ -61,18 +58,6 @@ const boundNamespaceSchema = v.object({
 /** A Durable Object namespace that the Worker binds on another Worker. */
 export type BoundNamespace = v.InferOutput<typeof boundNamespaceSchema>;
 
-const secretBindingSchema = v.object({
-  /** The binding's name in `env`. */
-  Name: v.string(),
-  ValueFrom: secretValueFromSchema,
-});
-
-/**
- * A `secret_text` binding. It holds where the value comes from, and never
- * the value.
- */
-export type SecretBinding = v.InferOutput<typeof secretBindingSchema>;
-
 const transferSourceSchema = v.object({
   /** The id of a namespace that the Worker hosts. */
   namespaceId: v.string(),
@@ -98,14 +83,11 @@ type WorkerScriptParams = {
   CodeSha256: string;
   CompatibilityDate: string;
   CompatibilityFlags?: string[];
-  Bindings?: WorkerBinding[];
   /**
-   * Create and update read each value with `getValue`, and upload it as a
-   * `secret_text` binding. A change to `ValueFrom`, such as a new version
-   * from the source, updates the Worker. Each `ValueFrom.Secret` must be
-   * the id of a declared secret, such as one from `workerSecret()`.
+   * An upload keeps the Worker's secrets, which `WorkerSecret` sets. A
+   * binding here with the name of a secret replaces the secret.
    */
-  SecretBindings?: SecretBinding[];
+  Bindings?: WorkerBinding[];
   DurableObjectNamespaces?: HostedNamespace[];
   /**
    * The ids of hosted namespaces that set `protect: false`. A later plan
@@ -262,11 +244,6 @@ const workerScriptSchema = workerScript.defineSchema({
     value: v.array(bindingSchema),
     collect: (items: unknown[]) => items.flat() as WorkerBinding[],
   },
-  SecretBindings: {
-    propertyType: "param",
-    presence: "optional",
-    value: v.array(secretBindingSchema),
-  },
   DurableObjectNamespaces: {
     propertyType: "param",
     presence: "optional",
@@ -297,7 +274,6 @@ export const WorkerScript = workerScriptSchema
     // An upload replaces a Worker with the same name, so check first. The
     // check is outside `cloudflareCreate`: if it throws, nothing was created.
     create: async (params) => {
-      assertUniqueBindingNames(params);
       if (await getScriptSettings(params.AccountId, params.ScriptName)) {
         throw new ResourceAlreadyExistsError(
           `A Worker named ${params.ScriptName} already exists in the Cloudflare account ${params.AccountId}`,
@@ -332,7 +308,6 @@ export const WorkerScript = workerScriptSchema
     // compares the namespaces in state with the new ones, to rename, delete
     // or move those that changed.
     update: async (_key, _patch, params, state) => {
-      assertUniqueBindingNames(params);
       const previous = state.DurableObjectNamespaces ?? [];
       await upload(params, previous, await findTransfers(params, previous));
     },
@@ -389,10 +364,7 @@ async function upload(
     code,
     compatibilityDate: params.CompatibilityDate,
     compatibilityFlags: params.CompatibilityFlags ?? [],
-    bindings: [
-      ...(params.Bindings ?? []),
-      ...(await secretTextBindings(params.SecretBindings ?? [])),
-    ],
+    bindings: params.Bindings ?? [],
     exports,
     containers: hosted
       .filter((namespace) => namespace.container)
@@ -403,29 +375,6 @@ async function upload(
   }
   await putScript(params.AccountId, params.ScriptName, upload);
 }
-
-function assertUniqueBindingNames(params: WorkerScriptParams) {
-  const names = new Set((params.Bindings ?? []).map((binding) => binding.name));
-  const clashes = (params.SecretBindings ?? [])
-    .map((secret) => secret.Name)
-    .filter((name) => names.has(name));
-  if (clashes.length > 0) {
-    throw new Error(
-      `The Worker ${params.ScriptName} has ${clashes.map((name) => `"${name}"`).join(", ")} in both Bindings and SecretBindings. Each binding name in env must be unique, so remove the name from one of them.`,
-    );
-  }
-}
-
-const secretTextBindings = (
-  secrets: SecretBinding[],
-): Promise<SecretTextBinding[]> =>
-  Promise.all(
-    secrets.map(async (secret) => ({
-      type: "secret_text",
-      name: secret.Name,
-      text: (await getValue(secret.ValueFrom.Secret)).unwrap(),
-    })),
-  );
 
 type Transfer = {
   id: string;

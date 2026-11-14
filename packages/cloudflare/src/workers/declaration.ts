@@ -62,7 +62,7 @@ export type JsonValue<T> = T extends string | number | boolean | null
       : never;
 
 /** A secret declared with `workerSecret()`. */
-export interface WorkerSecret {
+export interface WorkerSecretDeclaration {
   readonly "~workerSecret": true;
 }
 
@@ -76,7 +76,7 @@ export type BindingValue =
   | string
   | DurableObjectDeclaration<any>
   | SecretsStoreSecretBinding
-  | WorkerSecret
+  | WorkerSecretDeclaration
   | R2BucketInstance
   | KVNamespaceInstance
   | JsonBinding<any>

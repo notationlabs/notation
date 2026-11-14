@@ -72,13 +72,6 @@ export const bindingSchema = v.variant("type", [
  */
 export type ScriptBinding = v.InferOutput<typeof bindingSchema>;
 
-/** A secret binding, which holds the value. It is built only for an upload. */
-export type SecretTextBinding = {
-  type: "secret_text";
-  name: string;
-  text: string;
-};
-
 export type DurableObjectExport =
   | { type: "durable-object"; storage: "sqlite" }
   | { type: "durable-object"; state: "deleted" }
@@ -103,7 +96,7 @@ export type ScriptUpload = {
   code: Buffer;
   compatibilityDate: string;
   compatibilityFlags: string[];
-  bindings: (ScriptBinding | SecretTextBinding)[];
+  bindings: ScriptBinding[];
   exports: Record<string, DurableObjectExport>;
   /** The Durable Object classes whose namespaces run containers. */
   containers: { class_name: string }[];
@@ -142,6 +135,10 @@ export async function putScript(
     compatibility_date: upload.compatibilityDate,
     compatibility_flags: upload.compatibilityFlags,
     bindings: upload.bindings,
+    // The Worker's secrets are set one at a time, with `putScriptSecret`, so
+    // an upload doesn't need their values. A binding in `bindings` with the
+    // name of a kept secret replaces the secret.
+    keep_bindings: ["secret_text"],
     ...(Object.keys(upload.exports).length > 0
       ? { exports: upload.exports }
       : {}),
@@ -156,6 +153,79 @@ export async function putScript(
     }),
   );
   await cloudflare("PUT", scriptPath(account, scriptName), form);
+}
+
+/** Cloudflare's error code for a binding that the Worker doesn't have. */
+const BINDING_NOT_FOUND = 10056;
+
+const isBindingNotFound = (error: unknown): boolean =>
+  error instanceof CloudflareApiError && error.hasCode(BINDING_NOT_FOUND);
+
+const secretPath = (account: string, scriptName: string, name: string) =>
+  `${scriptPath(account, scriptName)}/secrets/${encodeURIComponent(name)}`;
+
+/**
+ * True if the Worker has a `secret_text` binding named `name`. False if it
+ * doesn't, or if the Worker doesn't exist.
+ */
+export async function hasScriptSecret(
+  account: string,
+  scriptName: string,
+  name: string,
+): Promise<boolean> {
+  try {
+    // The endpoint also returns a binding of another type with the name.
+    const binding = await cloudflare<{ type: string }>(
+      "GET",
+      secretPath(account, scriptName, name),
+    );
+    return binding.type === "secret_text";
+  } catch (error) {
+    if (isNotFound(error) || isBindingNotFound(error)) return false;
+    throw error;
+  }
+}
+
+/**
+ * Creates or replaces the Worker's secret, and deploys a new version of the
+ * Worker with it. Fails if the Worker doesn't exist.
+ */
+export async function putScriptSecret(
+  account: string,
+  scriptName: string,
+  name: string,
+  value: string,
+): Promise<void> {
+  await cloudflare("PUT", `${scriptPath(account, scriptName)}/secrets`, {
+    name,
+    text: value,
+    type: "secret_text",
+  });
+}
+
+/**
+ * Deletes the Worker's secret. Succeeds if the Worker or the secret is gone.
+ * Cloudflare leaves a binding of another type with the name.
+ */
+export async function deleteScriptSecret(
+  account: string,
+  scriptName: string,
+  name: string,
+): Promise<void> {
+  try {
+    await cloudflare("DELETE", secretPath(account, scriptName, name));
+  } catch (error) {
+    if (!isNotFound(error) && !isBindingNotFound(error)) throw error;
+  }
+}
+
+/** The names of the account's Workers. */
+export async function listScriptNames(account: string): Promise<string[]> {
+  const scripts = await cloudflare<{ id: string }[]>(
+    "GET",
+    `/accounts/${encodeURIComponent(account)}/workers/scripts`,
+  );
+  return (scripts ?? []).map((script) => script.id);
 }
 
 /**

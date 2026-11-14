@@ -12,7 +12,8 @@ import { assertWorkerId, workerNames, workerResourceId } from "src/id";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
 import { describeNamespace, registeredNamespace } from "./durable-object";
 import { isJsonBinding } from "./json";
-import { isWorkerSecret } from "./secret";
+import type { SecretValueFrom } from "src/resources/secrets-store/secrets-store-secret";
+import { isWorkerSecret, type WorkerSecretGroup } from "./secret";
 import { boundSecret } from "./secrets-store";
 
 // Always set: the build imports Node's built-in modules as `node:` modules,
@@ -49,7 +50,8 @@ export type WorkerGroupConfig = {
   compatibilityDate: string;
   compatibilityFlags: string[];
   bindings: cloudflare.workers.WorkerBinding[];
-  secretBindings?: cloudflare.workers.SecretBinding[];
+  /** The `secret_text` bindings, each set by a `WorkerSecret`. */
+  secrets: { name: string; valueFrom: SecretValueFrom }[];
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotectedNamespaces?: string[];
@@ -65,6 +67,7 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
   readonly code: std.fs.FileInstance;
   readonly script: cloudflare.workers.WorkerScriptInstance;
   readonly subdomain?: cloudflare.workers.WorkerSubdomainInstance;
+  readonly secrets: cloudflare.workers.WorkerSecretInstance[];
 
   get [workerGroupMark]() {
     return true;
@@ -83,13 +86,23 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
           CompatibilityDate: config.compatibilityDate,
           CompatibilityFlags: config.compatibilityFlags,
           Bindings: config.bindings,
-          SecretBindings: config.secretBindings,
           DurableObjectNamespaces: config.namespaces,
           UnprotectedDurableObjects: config.unprotectedNamespaces,
           BoundDurableObjects: config.boundNamespaces,
         },
         dependencies: { code: this.code },
       }),
+    );
+    this.secrets = config.secrets.map(({ name, valueFrom }) =>
+      this.add(
+        new cloudflare.workers.WorkerSecret(
+          `worker:${config.id}:secret:${name}`,
+          {
+            config: { Name: name, ValueFrom: valueFrom },
+            dependencies: { script: this.script },
+          },
+        ),
+      ),
     );
     if (config.url) {
       this.subdomain = this.add(
@@ -197,9 +210,10 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
           ...(config.compatibilityFlags ?? []),
         ]),
         bindings: resolved.bindings,
-        // Undefined when empty, so that the params of a Worker deployed
-        // before this option existed don't change.
-        secretBindings: resolved.secrets.length ? resolved.secrets : undefined,
+        secrets: resolved.secrets.map(({ name, secret }) => ({
+          name,
+          valueFrom: secret.valueFrom(),
+        })),
         namespaces: resolved.namespaces,
         // Undefined when empty, so that the params of a Worker deployed
         // before this option existed don't change.
@@ -213,6 +227,10 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
       // one of two Workers that bind each other first, without its binding.
       // A binding of the Worker to itself refers to its own name, which is
       // no dependency.
+      const { nameBody } = workerNames(config.id);
+      for (const { name, secret } of resolved.secrets) {
+        secret.boundBy({ workerId: config.id, nameBody, name });
+      }
       const script = group.script;
       for (const { name, worker } of resolved.services) {
         worker.whenBuilt((bound) =>
@@ -283,7 +301,7 @@ function bindingCycleError(cycle: Entry[]): Error {
 
 type ResolvedBindings = {
   bindings: cloudflare.workers.WorkerBinding[];
-  secrets: cloudflare.workers.SecretBinding[];
+  secrets: { name: string; secret: WorkerSecretGroup }[];
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotected: Set<string>;
@@ -368,7 +386,7 @@ function resolveBindings(
       continue;
     }
     if (isWorkerSecret(value)) {
-      resolved.secrets.push(value.binding(name));
+      resolved.secrets.push({ name, secret: value });
       continue;
     }
     if (hasResourceType(value, "cloudflare/r2/R2Bucket")) {
