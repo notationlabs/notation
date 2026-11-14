@@ -1,9 +1,10 @@
 import {
   getActiveResourceCollection,
   onEvaluationEnd,
+  toCanonicalOutputRefs,
   type BaseResource,
 } from "@notation/resource";
-import { recordSecretValue } from "@notation/utils";
+import { recordSecretValue, sortedJson } from "@notation/utils";
 import type { Source } from "./context";
 
 /**
@@ -58,8 +59,8 @@ export function isProducedSource(source: unknown): source is ProducedSource {
 
 /**
  * Makes the produced source `name` of `resource`. Each target that a secret
- * registers is contributed to the collected param `param` of `resource`, as
- * a list with one target. Output refs in a target make `resource` depend on
+ * registers is contributed to the collected param `param` of `resource`.
+ * Output refs in a target make `resource` depend on
  * the resources they refer to, such as the store. When evaluation ends, it
  * throws if no secret takes the source, as the value would be lost. It is
  * an engine mechanism for resource packages, not user-facing API.
@@ -70,8 +71,9 @@ export function producedSource(options: {
   /** The name in `sources`, such as `value`. */
   name: string;
   /**
-   * A collected param of `resource` that holds a list of `SecretTarget`.
-   * Make it immutable: only a create gets a value to write to a new target.
+   * A collected param of `resource` that holds a list of `SecretTarget`,
+   * with `collectSecretTargets` as its `collect`. Make it immutable: only a
+   * create gets a value to write to a new target.
    */
   param: string;
 }): ProducedSource {
@@ -91,10 +93,27 @@ export function producedSource(options: {
       resource,
       register: (target) => {
         consumers += 1;
-        resource.contribute({ [param]: [target] });
+        resource.contribute({ [param]: target });
       },
     },
   };
+}
+
+/**
+ * The `collect` of a producer's param of targets. It sorts the targets by
+ * content, so that a change to the order of the secrets in code doesn't
+ * change the param, which would replace the producer.
+ */
+export function collectSecretTargets(items: unknown[]): SecretTarget[] {
+  return (items as SecretTarget[])
+    .map((target) => ({
+      target,
+      // A target can still hold output refs, which can't be encoded as they
+      // are.
+      key: sortedJson.encode(toCanonicalOutputRefs(target)),
+    }))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .map(({ target }) => target);
 }
 
 // On globalThis, so that the infra bundle's copy of this package, the CLI's

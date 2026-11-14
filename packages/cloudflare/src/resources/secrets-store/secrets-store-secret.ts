@@ -93,7 +93,6 @@ const secretsStoreSecretSchema = secretsStoreSecret.defineSchema({
  */
 async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
   const { AccountId, StoreId, Name, ValueFrom } = params;
-  if (ValueFrom.Source === PRODUCED_SOURCE) return;
   const existing = await findSecretByName(AccountId, StoreId, Name);
   if (existing && ValueFrom.Source === PROMPT_SOURCE) return;
   const value = (await getValue(ValueFrom.Secret)).unwrap();
@@ -114,11 +113,16 @@ async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
 async function claimProduced(params: SecretsStoreSecretParams): Promise<void> {
   const { AccountId, StoreId, Name, ValueFrom } = params;
   if (await findSecretByName(AccountId, StoreId, Name)) return;
-  const producer = ValueFrom.Producer ?? "the resource that produces it";
+  const producer = ValueFrom.Producer
+    ? `the resource ${ValueFrom.Producer}`
+    : "the resource that produces it";
   throw new Error(
-    `The secret ${Name} of \`${ValueFrom.Secret}\` is missing. ${producer} writes its value only when it is created. Rotate ${producer} to write a new value.`,
+    `The secret ${Name} of \`${ValueFrom.Secret}\` is missing. Only the create of ${producer} writes its value. Replace ${producer} to write a new value.`,
   );
 }
+
+const isProduced = (params: Pick<SecretsStoreSecretParams, "ValueFrom">) =>
+  params.ValueFrom.Source === PRODUCED_SOURCE;
 
 /**
  * A reference to a secret in a Cloudflare Secrets Store. Its record holds
@@ -139,11 +143,7 @@ async function claimProduced(params: SecretsStoreSecretParams): Promise<void> {
 export const SecretsStoreSecret = secretsStoreSecretSchema
   .defineOperations({
     create: async (params) => {
-      if (params.ValueFrom.Source === PRODUCED_SOURCE) {
-        await claimProduced(params);
-        return;
-      }
-      await writeValue(params);
+      await (isProduced(params) ? claimProduced(params) : writeValue(params));
     },
 
     read: async (key) => {
@@ -159,7 +159,7 @@ export const SecretsStoreSecret = secretsStoreSecretSchema
     },
 
     update: async (_key, patch, params) => {
-      if (patch.ValueFrom) await writeValue(params);
+      if (patch.ValueFrom && !isProduced(params)) await writeValue(params);
     },
 
     delete: async (key, state) => {

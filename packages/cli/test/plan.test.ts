@@ -398,7 +398,7 @@ it("labels the replacement of a resource that writes a produced secret as a rota
       ValueFrom: {
         Secret: id,
         Source: "produced",
-        Producer: 'accountToken({ id: "deploy" })',
+        Producer: "token:deploy",
       },
     },
     dependsOn: ["secrets-store", "token:deploy"],
@@ -429,6 +429,58 @@ it("labels the replacement of a resource that writes a produced secret as a rota
     "    ValueTargets forces replacement",
     "    rotation: writes a new value to the secrets deploy, copy",
   ]);
+});
+
+it("lists only the secrets of the producer that aren't being deleted", async () => {
+  const secretNode = (
+    id: string,
+    decision: "noop" | "replace" | "delete-orphan",
+  ) => ({
+    id: `secret:${id}`,
+    type: "cloudflare/secrets-store/SecretsStoreSecret",
+    decision,
+    params: {
+      ValueFrom: { Secret: id, Source: "produced", Producer: "token:deploy" },
+    },
+    dependsOn: ["secrets-store", "token:deploy"],
+  });
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "secrets-store",
+        type: "cloudflare/secrets-store/SecretsStore",
+        decision: "replace",
+        replaceOrder: "delete-first",
+        replaceFields: [{ name: "Name", known: true }],
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "token:deploy",
+        type: "cloudflare/tokens/AccountToken",
+        decision: "replace",
+        replaceOrder: "delete-first",
+        replaceFields: [{ name: "ValueTargets", known: true }],
+        params: {},
+        dependsOn: ["secrets-store"],
+      },
+      secretNode("deploy", "replace"),
+      secretNode("old", "delete-orphan"),
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.filter((line) => line.includes("rotation"))).toEqual([
+    "    rotation: writes a new value to the secrets deploy",
+  ]);
+  const token = lines.findIndex((line) => line.includes("token:deploy"));
+  expect(lines[token + 2]).toBe(
+    "    rotation: writes a new value to the secrets deploy",
+  );
 });
 
 it("doesn't label the first create of a resource that writes a produced secret", async () => {

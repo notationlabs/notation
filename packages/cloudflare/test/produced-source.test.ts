@@ -268,7 +268,7 @@ describe("a secret whose source a resource produces", () => {
       ValueFrom: {
         Secret: "app-key",
         Source: "produced",
-        Producer: 'fakeKeyPair({ id: "ci" })',
+        Producer: "key-pair:ci",
       },
     });
 
@@ -338,7 +338,7 @@ describe("a secret whose source a resource produces", () => {
     expect(after?.params.ValueFrom).toEqual({
       Secret: "app-key",
       Source: "produced",
-      Producer: 'fakeKeyPair({ id: "ci-2" })',
+      Producer: "key-pair:ci-2",
     });
   });
 
@@ -389,7 +389,7 @@ describe("a secret whose source a resource produces", () => {
       "binding:api": "noop",
     });
     await expect(deploy("second")).rejects.toThrow(
-      'The secret shop--dev--app-key of `app-key` is missing. fakeKeyPair({ id: "ci" }) writes its value only when it is created. Rotate fakeKeyPair({ id: "ci" }) to write a new value.',
+      "The secret shop--dev--app-key of `app-key` is missing. Only the create of the resource key-pair:ci writes its value. Replace the resource key-pair:ci to write a new value.",
     );
 
     // Rotating the producer writes the value again, and the secret
@@ -419,11 +419,11 @@ describe("a secret whose source a resource produces", () => {
         ValueFrom: {
           Secret: "app-key",
           Source: "produced",
-          Producer: 'fakeKeyPair({ id: "ci" })',
+          Producer: "key-pair:ci",
         },
       }),
     ).rejects.toThrow(
-      'The secret shop--dev--app-key of `app-key` is missing. fakeKeyPair({ id: "ci" }) writes its value only when it is created. Rotate fakeKeyPair({ id: "ci" }) to write a new value.',
+      "The secret shop--dev--app-key of `app-key` is missing. Only the create of the resource key-pair:ci writes its value. Replace the resource key-pair:ci to write a new value.",
     );
   });
 

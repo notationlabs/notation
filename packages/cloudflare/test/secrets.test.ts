@@ -381,7 +381,7 @@ describe("accountToken", () => {
       ValueFrom: {
         Secret: "deploy",
         Source: "produced",
-        Producer: 'accountToken({ id: "deploy" })',
+        Producer: "token:deploy",
       },
     });
     expect(secretGroup.secret.getDependencies()).toContain(group.token);
@@ -449,7 +449,7 @@ describe("accountToken", () => {
 
     expect(copy.secret.config.ValueFrom).toMatchObject({
       Source: "produced",
-      Producer: 'accountToken({ id: "deploy" })',
+      Producer: "token:deploy",
     });
   });
 });
@@ -510,7 +510,7 @@ describe("secretsStore.bind", () => {
       ValueFrom: {
         Secret: "deploy",
         Source: "produced",
-        Producer: 'accountToken({ id: "deploy" })',
+        Producer: "token:deploy",
       },
       SecretId: "s2",
     });

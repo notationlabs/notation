@@ -176,6 +176,11 @@ function promptsForValue(node: PlanNode): boolean {
   );
 }
 
+const deletingDecisions = new Set<PlanNode["decision"]>([
+  "delete-orphan",
+  "delete-retired",
+]);
+
 const rotatingDecisions = new Set<PlanNode["decision"]>([
   "replace",
   "drift-replace",
@@ -183,16 +188,18 @@ const rotatingDecisions = new Set<PlanNode["decision"]>([
 ]);
 
 // A secret whose source a resource produces has `ValueFrom: { Source:
-// PRODUCED_SOURCE }` and depends on that resource. The producer's create
-// writes the value, so a producer that is created again writes a new value
-// to each such secret. Returns the ids of the secrets.
+// PRODUCED_SOURCE, Producer }`, where `Producer` is the id of that resource.
+// The producer's create writes the value, so a producer that is created
+// again writes a new value to each such secret that isn't being deleted.
+// Returns the ids of the secrets.
 function rotatedSecrets(result: Plan, node: PlanNode): string[] {
   if (!rotatingDecisions.has(node.decision)) return [];
   return result.nodes.flatMap((other) => {
+    if (deletingDecisions.has(other.decision)) return [];
     const valueFrom = other.params.ValueFrom as
-      { Source?: unknown; Secret?: unknown } | undefined;
+      { Source?: unknown; Secret?: unknown; Producer?: unknown } | undefined;
     return valueFrom?.Source === PRODUCED_SOURCE &&
-      other.dependsOn.includes(node.id)
+      valueFrom.Producer === node.id
       ? [String(valueFrom.Secret)]
       : [];
   });

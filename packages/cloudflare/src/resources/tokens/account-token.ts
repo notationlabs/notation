@@ -1,5 +1,9 @@
 import * as v from "valibot";
-import { writeSecretValues, type SecretTarget } from "@notation/core";
+import {
+  collectSecretTargets,
+  writeSecretValues,
+  type SecretTarget,
+} from "@notation/core";
 import {
   containsOutputRef,
   planLookup,
@@ -171,7 +175,7 @@ const accountTokenSchema = accountToken.defineSchema({
     presence: "required",
     immutable: true,
     value: v.array(targetSchema),
-    collect: (items: unknown[]) => items.flat() as SecretTarget[],
+    collect: collectSecretTargets,
     // Up to 0.20, the token wrote its value to the secret with its own name,
     // in the store `StoreId`, and its record held no targets.
     backfill: (recorded) => [

@@ -2,7 +2,6 @@ import {
   declareSecret,
   isProducedSource,
   PRODUCED_SOURCE,
-  type DeclaredSecret,
   type ProducedSource,
 } from "@notation/core";
 import { ResourceGroup, scopedPhysicalName } from "@notation/resource";
@@ -125,7 +124,7 @@ export class SecretGroup
       valueFrom = {
         Secret: id,
         Source: PRODUCED_SOURCE,
-        Producer: produced.producer,
+        Producer: produced.resource.id,
       };
     } else {
       const added = addSecretValue(this, declaration, {
@@ -148,38 +147,38 @@ export class SecretGroup
     );
     if (produced) this.secret.dependOn(produced.resource);
 
-    const commands: Pick<DeclaredSecret, "set" | "delete" | "refusal"> = {
-      set: async (value) => {
-        const account = accountId();
-        const [store] = await listStores(account);
-        const storeId =
-          store?.id ?? (await createStore(account, DEFAULT_STORE_NAME)).id;
-        await writeSecret(account, storeId, name, value);
-      },
-    };
-    if (config.name === undefined) {
-      commands.delete = async () => {
-        const account = accountId();
-        const [store] = await listStores(account);
-        if (store) await deleteSecret(account, store.id, name);
-      };
-    } else {
-      commands.refusal = `\`${id}\` has the explicit name ${config.name}, so notation didn't create it and doesn't delete it. Delete it with wrangler or in the Cloudflare dashboard.`;
-    }
-    if (produced) {
-      delete commands.set;
-      commands.refusal = [
-        `\`${id}\` is written by ${produced.producer}, and only its create writes the value. To get a new value, rotate ${produced.producer}.`,
-        commands.refusal,
-      ]
-        .filter(Boolean)
-        .join(" ");
-    }
+    const explicitName =
+      config.name === undefined
+        ? undefined
+        : `\`${id}\` has the explicit name ${config.name}, so notation didn't create it and doesn't delete it. Delete it with wrangler or in the Cloudflare dashboard.`;
     declareSecret({
       id,
       source,
       key: source ? config.key : undefined,
-      ...commands,
+      set: produced
+        ? undefined
+        : async (value) => {
+            const account = accountId();
+            const [store] = await listStores(account);
+            const storeId =
+              store?.id ?? (await createStore(account, DEFAULT_STORE_NAME)).id;
+            await writeSecret(account, storeId, name, value);
+          },
+      delete: explicitName
+        ? undefined
+        : async () => {
+            const account = accountId();
+            const [store] = await listStores(account);
+            if (store) await deleteSecret(account, store.id, name);
+          },
+      refusal: produced
+        ? [
+            `\`${id}\` is written by ${produced.producer}, and only its create writes the value. To get a new value, rotate ${produced.producer}.`,
+            explicitName,
+          ]
+            .filter(Boolean)
+            .join(" ")
+        : explicitName,
     });
   }
 

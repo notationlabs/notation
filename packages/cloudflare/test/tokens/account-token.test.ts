@@ -278,7 +278,7 @@ describe("accountToken in a deploy", () => {
       "secret:deploy": "drift-recreate",
     });
     await expect(deploy("second", after)).rejects.toThrow(
-      'The secret shop--dev--deploy of `deploy` is missing. accountToken({ id: "deploy" }) writes its value only when it is created.',
+      "The secret shop--dev--deploy of `deploy` is missing. Only the create of the resource token:deploy writes its value.",
     );
   });
 
@@ -301,6 +301,31 @@ describe("accountToken in a deploy", () => {
     expect(secrets.get(NAME)?.value).toBe("token-value-2");
     expect(secrets.get("shop--dev--copy")?.value).toBe("token-value-2");
     expect(operations).not.toContain("update binding api");
+  });
+
+  it("doesn't rotate the token when the secrets that take its value are declared in another order", async () => {
+    const withCopies = (ids: string[]) => () => {
+      const token = accountToken({ id: "deploy", policies });
+      bind(token);
+      for (const id of ids) secret({ id, source: token.sources.value });
+    };
+    await deploy("first", withCopies(["copy-b", "copy-a"]));
+
+    expect(
+      (
+        (await runtime.state.get("token:deploy"))?.params.ValueTargets as {
+          params: { Name: string };
+        }[]
+      ).map((target) => target.params.Name),
+    ).toEqual(["shop--dev--copy-a", "shop--dev--copy-b", NAME]);
+    expect(decisions(await plan(withCopies(["copy-a", "copy-b"])))).toEqual({
+      "secrets-store": "noop",
+      "token:deploy": "noop",
+      "secret:deploy": "noop",
+      "secret:copy-a": "noop",
+      "secret:copy-b": "noop",
+      "binding:api": "noop",
+    });
   });
 
   it("destroys the binding, then the secret, then the token", async () => {
@@ -359,7 +384,7 @@ describe("the upgrade from notation 0.20", () => {
       ValueFrom: {
         Secret: "deploy",
         Source: "produced",
-        Producer: 'accountToken({ id: "deploy" })',
+        Producer: "token:deploy",
       },
     });
     expect((await runtime.state.get("binding:api"))?.dependsOn).toEqual([

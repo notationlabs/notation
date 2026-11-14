@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as v from "valibot";
 import {
+  collectSecretTargets,
   producedSource,
   writeSecretValues,
   type ProducedSource,
@@ -61,7 +62,7 @@ export const FakeKeyPair = fakeKeyPair
       presence: "required",
       immutable: true,
       value: v.array(targetSchema),
-      collect: (items: unknown[]) => items.flat() as SecretTarget[],
+      collect: collectSecretTargets,
     },
     KeyId: {
       propertyType: "computed",
