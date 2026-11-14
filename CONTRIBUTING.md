@@ -48,6 +48,14 @@ when its tests end.
   deleted. Delete the container application before its Worker. The exception
   is a `ne2e-lock-*` secret, which is a lock from `@notation/test-utils`.
   Delete one only if it is older than 60 minutes.
+- Private registries: the `ContainerRegistry` test pulls an image from AWS
+  ECR, so it also needs the AWS credentials and permissions below, and is
+  skipped without them. It holds the `container-registry` lock while it
+  manages the account's registry record for
+  `<aws account id>.dkr.ecr.<AWS_REGION>.amazonaws.com`. A record for that
+  domain while no run holds the lock is left over, and can be deleted. So
+  can a Secrets Store secret named `ne2e-<6 hex characters>-ecr`, which holds
+  the AWS secret access key for the record.
 
 ### AWS
 
@@ -73,9 +81,17 @@ when its tests end.
     `DescribeLogGroups` and `DeleteLogGroup`.
   - SQS: `ListQueues` and `DeleteQueue`, to find and delete leftovers.
   - STS: `GetCallerIdentity`.
+  - ECR, for the Cloudflare `ContainerRegistry` test: `CreateRepository`,
+    `DescribeRepositories`, `DeleteRepository`, `InitiateLayerUpload`,
+    `UploadLayerPart`, `CompleteLayerUpload` and `PutImage`, to copy an image
+    into a repository. Cloudflare pulls the image with the same user, so it
+    also needs `GetAuthorizationToken` on all resources, and
+    `BatchCheckLayerAvailability`, `GetDownloadUrlForLayer` and
+    `BatchGetImage`.
 - Prefix: `ne2e-<6 hex characters>`. An IAM role, Lambda function, EventBridge
-  bus or rule, SQS queue, or log group under `/aws/lambda/` whose name starts
-  with `ne2e-` is left over from a run that was killed, and can be deleted.
+  bus or rule, SQS queue, log group under `/aws/lambda/`, or ECR repository
+  whose name starts with `ne2e-` is left over from a run that was killed, and
+  can be deleted. Delete an ECR repository with its images (`force`).
 
 ## Publishing Packages
 
