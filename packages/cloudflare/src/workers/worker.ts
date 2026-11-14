@@ -11,6 +11,8 @@ import * as cloudflare from "src/resources";
 import { assertWorkerId, workerNames, workerResourceId } from "src/id";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
 import { describeNamespace, registeredNamespace } from "./durable-object";
+import { isJsonBinding } from "./json";
+import { isWorkerSecret } from "./secret";
 import { boundSecret } from "./secrets-store";
 
 // Always set: the build imports Node's built-in modules as `node:` modules,
@@ -26,8 +28,10 @@ export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
   id: Id;
   /**
    * The values that the Worker reads from `env`: a `$durableObject`
-   * namespace, another Worker, a secret from `secretsStore.bind()` or a
-   * string. Return an object literal with no spread or computed keys.
+   * namespace, another Worker, a secret from `secretsStore.bind()` or
+   * `workerSecret()`, an `R2Bucket`, a `KVNamespace`, a value from
+   * `json()` or a string. Return an object literal with no spread or
+   * computed keys.
    */
   bindings?: () => B;
   /** Such as `"2026-10-12"`. */
@@ -45,6 +49,7 @@ export type WorkerGroupConfig = {
   compatibilityDate: string;
   compatibilityFlags: string[];
   bindings: cloudflare.workers.WorkerBinding[];
+  secretBindings?: cloudflare.workers.SecretBinding[];
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotectedNamespaces?: string[];
@@ -78,6 +83,7 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
           CompatibilityDate: config.compatibilityDate,
           CompatibilityFlags: config.compatibilityFlags,
           Bindings: config.bindings,
+          SecretBindings: config.secretBindings,
           DurableObjectNamespaces: config.namespaces,
           UnprotectedDurableObjects: config.unprotectedNamespaces,
           BoundDurableObjects: config.boundNamespaces,
@@ -191,6 +197,9 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
           ...(config.compatibilityFlags ?? []),
         ]),
         bindings: resolved.bindings,
+        // Undefined when empty, so that the params of a Worker deployed
+        // before this option existed don't change.
+        secretBindings: resolved.secrets.length ? resolved.secrets : undefined,
         namespaces: resolved.namespaces,
         // Undefined when empty, so that the params of a Worker deployed
         // before this option existed don't change.
@@ -274,6 +283,7 @@ function bindingCycleError(cycle: Entry[]): Error {
 
 type ResolvedBindings = {
   bindings: cloudflare.workers.WorkerBinding[];
+  secrets: cloudflare.workers.SecretBinding[];
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotected: Set<string>;
@@ -295,6 +305,7 @@ function resolveBindings(
 ): ResolvedBindings {
   const resolved: ResolvedBindings = {
     bindings: [],
+    secrets: [],
     namespaces: [],
     unprotected: new Set(),
     bound: [],
@@ -356,17 +367,53 @@ function resolveBindings(
       resolved.services.push({ name, worker });
       continue;
     }
+    if (isWorkerSecret(value)) {
+      resolved.secrets.push(value.binding(name));
+      continue;
+    }
+    if (hasResourceType(value, "cloudflare/r2/R2Bucket")) {
+      const bucket = value as cloudflare.r2.R2BucketInstance;
+      // The name is an output ref, so that the Worker depends on the bucket.
+      const jurisdiction = bucket.config.Jurisdiction;
+      resolved.bindings.push({
+        type: "r2_bucket",
+        name,
+        bucket_name: bucket.outputRef("BucketName"),
+        ...(jurisdiction !== "default" ? { jurisdiction } : {}),
+      });
+      continue;
+    }
+    if (hasResourceType(value, "cloudflare/kv/KVNamespace")) {
+      const kv = value as cloudflare.kv.KVNamespaceInstance;
+      resolved.bindings.push({
+        type: "kv_namespace",
+        name,
+        namespace_id: kv.outputRef("NamespaceId"),
+      });
+      continue;
+    }
+    if (isJsonBinding(value)) {
+      resolved.bindings.push({ type: "json", name, json: value["~json"] });
+      continue;
+    }
     if (typeof value === "object" && value !== null && "~secret" in value) {
       throw new Error(
         `${self.describe()} binds ${name} to a secret directly. Bind it with \`${name}: secretsStore.bind(secret)\`.`,
       );
     }
     throw new Error(
-      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker, a secret with secretsStore.bind(), or a string.`,
+      `${self.describe()} binds ${name} to a value that a Worker can't bind. Bind a Durable Object namespace from $durableObject, a Worker from $worker, a secret with secretsStore.bind() or workerSecret(), an R2Bucket, a KVNamespace, a value with json(), or a string.`,
     );
   }
   return resolved;
 }
+
+// Compared by type, not instanceof, so that a resource from another loaded
+// copy of the package is still recognised.
+const hasResourceType = (value: unknown, type: string): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as { type?: unknown }).type === type;
 
 function addHosted(
   self: Entry,

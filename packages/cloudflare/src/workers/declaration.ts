@@ -1,4 +1,6 @@
 import type * as cf from "@cloudflare/workers-types";
+import type { KVNamespaceInstance } from "src/resources/kv/kv-namespace";
+import type { R2BucketInstance } from "src/resources/r2/r2-bucket";
 
 // The runtime build also loads this module, so it must only import types.
 
@@ -33,15 +35,51 @@ export interface SecretsStoreSecretBinding {
   readonly "~secretsStoreSecret": BindableSecret;
 }
 
+/** A JSON binding, from `json(value)`. */
+export interface JsonBinding<T = Json> {
+  readonly "~json": T;
+}
+
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly Json[]
+  | { readonly [key: string]: Json };
+
+/**
+ * `T` if it is a JSON value, and `never` where it is not. An interface has no
+ * index signature, so it is not assignable to `Json`, but it passes this
+ * check.
+ */
+export type JsonValue<T> = T extends string | number | boolean | null
+  ? T
+  : T extends (...args: any[]) => unknown
+    ? never
+    : T extends object
+      ? { [K in keyof T]: JsonValue<T[K]> }
+      : never;
+
+/** A secret declared with `workerSecret()`. */
+export interface WorkerSecret {
+  readonly "~workerSecret": true;
+}
+
 /**
  * A value that a Worker can bind: a Durable Object namespace, another Worker
- * (a service binding), a secret from `secretsStore.bind()` or a string
- * (plain text).
+ * (a service binding), a secret from `secretsStore.bind()` or
+ * `workerSecret()`, an R2 bucket, a KV namespace, a value from `json()` or a
+ * string (plain text).
  */
 export type BindingValue =
   | string
   | DurableObjectDeclaration<any>
   | SecretsStoreSecretBinding
+  | WorkerSecret
+  | R2BucketInstance
+  | KVNamespaceInstance
+  | JsonBinding<any>
   | { readonly "~worker": { bindings: Bindings } };
 
 export type Bindings = Record<string, BindingValue>;
@@ -71,7 +109,13 @@ type BindingType<V> =
       ? cf.SecretsStoreSecret
       : V extends { readonly "~worker": unknown }
         ? cf.Fetcher
-        : string;
+        : V extends JsonBinding<infer T>
+          ? T
+          : V extends R2BucketInstance
+            ? cf.R2Bucket
+            : V extends KVNamespaceInstance
+              ? cf.KVNamespace
+              : string;
 
 /** The `env` type of a Worker's handlers: `WorkerEnv<typeof worker>`. */
 export type WorkerEnv<
