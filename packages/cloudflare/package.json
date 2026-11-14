@@ -39,6 +39,7 @@
     "valibot": "^1.5.0"
   },
   "devDependencies": {
+    "@aws-sdk/client-ecr": "^3.1168.0",
     "@notation/cli": "workspace:*",
     "@notation/reconciler": "workspace:*"
   }
