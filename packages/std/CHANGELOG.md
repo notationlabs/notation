@@ -1,5 +1,16 @@
 # @notation/std
 
+## 0.19.0
+
+### Patch Changes
+
+- Updated dependencies [3628aa5]
+- Updated dependencies [19036ae]
+- Updated dependencies [e41a52e]
+  - @notation/resource@0.19.0
+  - @notation/core@0.19.0
+  - @notation/utils@0.19.0
+
 ## 0.18.0
 
 ### Patch Changes
