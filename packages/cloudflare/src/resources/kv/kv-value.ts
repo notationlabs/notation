@@ -130,13 +130,34 @@ export const KVValue = kvValueSchema
     // `cloudflareCreate`: if it throws, nothing was written.
     create: async (params, context) => {
       const { AccountId, NamespaceId, Key, Value } = params;
-      if (!context?.Written) {
-        if ((await getKVValue(AccountId, NamespaceId, Key)) !== undefined) {
-          throw new Error(keyTakenMessage(params));
+      let written = Boolean(context?.Written);
+      try {
+        if (!written) {
+          if ((await getKVValue(AccountId, NamespaceId, Key)) !== undefined) {
+            throw new Error(keyTakenMessage(params));
+          }
+          await cloudflareCreate(putKVValue)(
+            AccountId,
+            NamespaceId,
+            Key,
+            Value,
+          );
+          written = true;
         }
-        await cloudflareCreate(putKVValue)(AccountId, NamespaceId, Key, Value);
+        await confirmWrite(params);
+      } catch (error) {
+        if (!isNotFound(error)) throw error;
+        // A namespace created in the same deploy can be missing from the KV
+        // calls for a few seconds after the namespace calls return it.
+        throw new ResourceOperationPendingError(
+          `The KV namespace ${NamespaceId} in the Cloudflare account ${AccountId} isn't found yet. If it is still missing after about a minute, it may have been deleted outside notation.`,
+          {
+            retryAfterMs: WRITE_CHECK_INTERVAL_MS,
+            cause: error,
+            ...(written ? { callbackContext: { Written: true } } : {}),
+          },
+        );
       }
-      await confirmWrite(params);
     },
 
     read: async (key) => {

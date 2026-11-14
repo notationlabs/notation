@@ -277,6 +277,29 @@ describe("KVValue", () => {
     expect(calls.map((call) => call.method)).toEqual(["GET"]);
   });
 
+  it("waits while the KV calls don't find a namespace that was just created", async () => {
+    mockFetch(() => namespaceNotFound());
+
+    const error = await kvValue.create(params).catch((e) => e);
+    expect(error).toBeInstanceOf(ResourceOperationPendingError);
+    expect(error.message).toContain("The KV namespace ns1");
+    expect(error.callbackContext).toBeUndefined();
+    expect(calls.map((call) => call.method)).toEqual(["GET"]);
+  });
+
+  it("keeps the write when the read after it doesn't find the namespace yet", async () => {
+    let reads = 0;
+    mockFetch((call) => {
+      if (call.method === "PUT") return ok({});
+      return reads++ === 0 ? keyNotFound() : namespaceNotFound();
+    });
+
+    const error = await kvValue.create(params).catch((e) => e);
+    expect(error).toBeInstanceOf(ResourceOperationPendingError);
+    expect(error.callbackContext).toEqual({ Written: true });
+    expect(calls.map((call) => call.method)).toEqual(["GET", "PUT", "GET"]);
+  });
+
   it("waits while a read after an update returns the old value", async () => {
     mockFetch((call) => (call.method === "PUT" ? ok({}) : text("v1")));
 
