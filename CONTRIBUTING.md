@@ -39,8 +39,8 @@ variables from the environment:
 
 A Cloudflare test is skipped when its variables are missing. An AWS test fails.
 
-The Cloudflare `ContainerImage` test builds an image with Docker, and is
-skipped unless the Docker daemon is running.
+The Cloudflare `ContainerImage` test and the container test of `$durableObject`
+build an image with Docker, and are skipped unless the Docker daemon is running.
 
 The accounts need:
 

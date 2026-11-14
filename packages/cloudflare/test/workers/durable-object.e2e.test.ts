@@ -127,13 +127,14 @@ describeE2e("$durableObject", () => {
   });
 });
 
-const sandboxModule = `
+const sandboxModule = ({ container }: { container: boolean }) => `
   import { DurableObject } from "cloudflare:workers";
   import { $durableObject } from "@notation/cloudflare/workers";
 
   export class Sandbox extends DurableObject {
     async fetch(request) {
       const container = this.ctx.container;
+      if (!container) return new Response("no container");
       if (!container.running) container.start();
       try {
         return await container.getTcpPort(80).fetch("http://container/");
@@ -146,11 +147,15 @@ const sandboxModule = `
   export const sandboxes = $durableObject({
     id: "sandboxes",
     class: Sandbox,
-    container: {
+    ${
+      container
+        ? `container: {
       image: { context: "image" },
       maxInstances: 1,
       instanceType: "lite",
-    },
+    },`
+        : ""
+    }
   });
 `;
 
@@ -191,13 +196,19 @@ describeE2e("$durableObject with a container", () => {
 
     // The api Worker hosts the sandboxes, and the jobs Worker binds them on
     // it. `apiHosts: false` swaps the roles.
-    function writeProject({ apiHosts }: { apiHosts: boolean }) {
+    function writeProject({
+      apiHosts,
+      container = true,
+    }: {
+      apiHosts: boolean;
+      container?: boolean;
+    }) {
       project.write(
         "image/Dockerfile",
         `FROM ${BASE_IMAGE}\nCOPY version.txt /version.txt\n`,
       );
       project.write("image/version.txt", "1\n");
-      project.write("runtime/sandbox.ts", sandboxModule);
+      project.write("runtime/sandbox.ts", sandboxModule({ container }));
       project.write(
         "runtime/api.ts",
         sandboxWorkerModule("api", { hosts: apiHosts }),
@@ -286,6 +297,37 @@ describeE2e("$durableObject with a container", () => {
       await expectContainerResponse(names.jobs);
       await expectContainerResponse(names.api);
     }, 900_000);
+
+    it("deletes the container application, and keeps the namespace, when container is removed", async () => {
+      expect(application, "the first deploy made no application").toBeDefined();
+      writeProject({ apiHosts: false, container: false });
+      await project.notation("deploy");
+
+      expect(await applicationsWithPrefix(runPrefix)).toEqual([]);
+      expect(await namespaceIdOf(names.jobs, "Sandbox")).toBe(
+        application.durable_objects?.namespace_id,
+      );
+    }, 600_000);
+
+    // Deploy uploads the Worker without the class in `containers` before it
+    // deletes the application, which still uses the namespace.
+    it("deletes the container application when container is removed, and keeps the namespace", async () => {
+      expect(application, "the first deploy made no application").toBeDefined();
+      writeProject({ apiHosts: false, container: false });
+      await project.notation("deploy");
+
+      expect(await applicationsWithPrefix(runPrefix)).toEqual([]);
+      expect(await namespaceIdOf(names.jobs, "Sandbox")).toBe(
+        application.durable_objects?.namespace_id,
+      );
+      const fetched = await poll(`${project.url(names.jobs)}/`, {
+        done: (fetched) => fetched.body === "no container",
+      });
+      expect(fetched).toMatchObject({
+        ok: true,
+        body: "no container",
+      });
+    }, 600_000);
   });
 });
 
