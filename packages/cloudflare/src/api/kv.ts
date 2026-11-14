@@ -13,9 +13,6 @@ const TITLE_TAKEN = 10014;
 // The largest page that the list accepts.
 const LIST_PAGE_SIZE = 1000;
 
-// The most keys that one bulk write or bulk delete accepts.
-const BULK_SIZE = 10_000;
-
 export const jurisdictionSchema = v.picklist(["eu", "fedramp", "us"]);
 
 export type Jurisdiction = v.InferOutput<typeof jurisdictionSchema>;
@@ -106,110 +103,38 @@ export async function deleteNamespace(
   await cloudflare("DELETE", namespacePath(account, namespaceId));
 }
 
-export type JsonValue =
-  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
-
-export type KVWriteOptions = {
-  /** Stored with the key, as JSON. */
-  metadata?: JsonValue;
-  /** When the key expires, in seconds since the UNIX epoch. */
-  expiration?: number;
-  /** Seconds until the key expires. Cloudflare's minimum is 60. */
-  expirationTtl?: number;
-};
-
-export type KVEntry = KVWriteOptions & {
-  key: string;
-  /** A string is stored as it is. Any other value is stored as JSON. */
-  value: JsonValue;
-};
-
-type BulkResult = {
-  successful_key_count?: number;
-  unsuccessful_keys?: string[];
-};
-
 const valuePath = (account: string, namespaceId: string, key: string) =>
   `${namespacePath(account, namespaceId)}/values/${encodeURIComponent(key)}`;
 
-const encode = (value: JsonValue): string =>
-  typeof value === "string" ? value : JSON.stringify(value);
-
-/**
- * Writes the value of the key. It replaces the value, metadata and
- * expiration that the key had.
- */
+/** Writes the value of the key, as it is. */
 export async function putKVValue(
   account: string,
   namespaceId: string,
   key: string,
-  /** A string is stored as it is. Any other value is stored as JSON. */
-  value: JsonValue,
-  options: KVWriteOptions = {},
+  value: string,
 ): Promise<void> {
-  const query = new URLSearchParams();
-  if (options.expiration !== undefined) {
-    query.set("expiration", String(options.expiration));
-  }
-  if (options.expirationTtl !== undefined) {
-    query.set("expiration_ttl", String(options.expirationTtl));
-  }
   const form = new FormData();
   // A Blob part is sent byte for byte. A string part would have each line
   // break turned into CRLF.
-  form.set("value", new Blob([encode(value)]));
-  if (options.metadata !== undefined) {
-    form.set("metadata", JSON.stringify(options.metadata));
-  }
-  const search = query.size > 0 ? `?${query}` : "";
-  await cloudflare(
-    "PUT",
-    `${valuePath(account, namespaceId, key)}${search}`,
-    form,
-  );
+  form.set("value", new Blob([value]));
+  await cloudflare("PUT", valuePath(account, namespaceId, key), form);
 }
 
 /**
- * Returns the value of the key as UTF-8 text, or parsed as JSON when `type`
- * is `"json"`. Returns `undefined` if the namespace has no such key. Throws if
- * `type` is `"json"` and the value isn't JSON. KV is eventually consistent,
- * so the value can be up to about 60 seconds old.
+ * Returns the value of the key as UTF-8 text, or `undefined` if the namespace
+ * has no such key. KV is eventually consistent, so the value can be up to
+ * about 60 seconds old.
  */
 export async function getKVValue(
   account: string,
   namespaceId: string,
   key: string,
-  type?: "text",
-): Promise<string | undefined>;
-export async function getKVValue(
-  account: string,
-  namespaceId: string,
-  key: string,
-  type: "json",
-): Promise<JsonValue | undefined>;
-export async function getKVValue(
-  account: string,
-  namespaceId: string,
-  key: string,
-  type: "text" | "json" = "text",
-): Promise<JsonValue | undefined> {
-  let text: string;
+): Promise<string | undefined> {
   try {
-    text = await cloudflareGetText(valuePath(account, namespaceId, key));
+    return await cloudflareGetText(valuePath(account, namespaceId, key));
   } catch (error) {
     if (isKeyNotFound(error)) return undefined;
     throw error;
-  }
-  if (type === "text") return text;
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    throw new Error(
-      `The value of the KV key ${JSON.stringify(key)} isn't JSON`,
-      {
-        cause: error,
-      },
-    );
   }
 }
 
@@ -224,61 +149,4 @@ export async function deleteKVValue(
   } catch (error) {
     if (!isKeyNotFound(error)) throw error;
   }
-}
-
-/**
- * Writes the entries in requests of up to 10,000 keys. Cloudflare also
- * limits a request to 100 MB. Throws if Cloudflare reports keys that it
- * didn't write. The keys of earlier requests stay written.
- */
-export async function putKVValues(
-  account: string,
-  namespaceId: string,
-  entries: KVEntry[],
-): Promise<void> {
-  for (let i = 0; i < entries.length; i += BULK_SIZE) {
-    const body = entries.slice(i, i + BULK_SIZE).map((entry) => ({
-      key: entry.key,
-      value: encode(entry.value),
-      metadata: entry.metadata,
-      expiration: entry.expiration,
-      expiration_ttl: entry.expirationTtl,
-    }));
-    const result = await cloudflare<BulkResult | null>(
-      "PUT",
-      `${namespacePath(account, namespaceId)}/bulk`,
-      body,
-    );
-    assertEveryKey("write", result);
-  }
-}
-
-/**
- * Deletes the keys in requests of up to 10,000 keys. A key that the
- * namespace doesn't have counts as deleted. Throws if Cloudflare reports keys
- * that it didn't delete.
- */
-export async function deleteKVValues(
-  account: string,
-  namespaceId: string,
-  keys: string[],
-): Promise<void> {
-  for (let i = 0; i < keys.length; i += BULK_SIZE) {
-    const result = await cloudflare<BulkResult | null>(
-      "POST",
-      `${namespacePath(account, namespaceId)}/bulk/delete`,
-      keys.slice(i, i + BULK_SIZE),
-    );
-    assertEveryKey("delete", result);
-  }
-}
-
-function assertEveryKey(action: string, result: BulkResult | null): void {
-  const failed = result?.unsuccessful_keys ?? [];
-  if (failed.length === 0) return;
-  const shown = failed.slice(0, 10).map((key) => JSON.stringify(key));
-  if (failed.length > 10) shown.push("...");
-  throw new Error(
-    `Cloudflare didn't ${action} ${failed.length} of the KV keys. Send them again: ${shown.join(", ")}`,
-  );
 }

@@ -10,13 +10,7 @@ import {
   ResourceNotFoundError,
   ResourceOperationPendingError,
 } from "@notation/resource";
-import {
-  deleteKVValue,
-  deleteKVValues,
-  getKVValue,
-  putKVValue,
-  putKVValues,
-} from "src/api/kv";
+import { deleteKVValue, getKVValue, putKVValue } from "src/api/kv";
 import { KVNamespace } from "src/resources/kv/kv-namespace";
 import { KVValue } from "src/resources/kv/kv-value";
 import { calls, fail, mockFetch, ok } from "../mock-api";
@@ -62,26 +56,6 @@ describe("KV value calls", () => {
     });
   });
 
-  it("puts any other value as JSON, with metadata and an expiration", async () => {
-    mockFetch(() => ok({}));
-
-    await putKVValue(
-      "acc",
-      "ns1",
-      "config",
-      { routes: ["/a"] },
-      { metadata: { v: 1 }, expiration: 1_900_000_000, expirationTtl: 120 },
-    );
-
-    expect(calls[0]!.url).toBe(
-      `${NS}/values/config?expiration=1900000000&expiration_ttl=120`,
-    );
-    expect(await form(calls[0]!.body)).toEqual({
-      value: '{"routes":["/a"]}',
-      metadata: '{"v":1}',
-    });
-  });
-
   it("sends the line breaks of a value as they are", async () => {
     mockFetch(() => ok({}));
 
@@ -104,22 +78,6 @@ describe("KV value calls", () => {
     mockFetch(() => text(stored));
 
     await expect(getKVValue("acc", "ns1", "k")).resolves.toBe(stored);
-  });
-
-  it("gets a value parsed as JSON", async () => {
-    mockFetch(() => text('{"routes":["/a"]}'));
-
-    await expect(getKVValue("acc", "ns1", "k", "json")).resolves.toEqual({
-      routes: ["/a"],
-    });
-  });
-
-  it("names the key when a value to parse as JSON isn't JSON", async () => {
-    mockFetch(() => text("plain"));
-
-    await expect(getKVValue("acc", "ns1", "k", "json")).rejects.toThrow(
-      `The value of the KV key "k" isn't JSON`,
-    );
   });
 
   it("gets undefined for a missing key, and throws for a missing namespace", async () => {
@@ -148,68 +106,6 @@ describe("KV value calls", () => {
     expect(calls[0]).toMatchObject({ method: "DELETE", url: `${NS}/values/k` });
   });
 
-  it("puts values in bulk, in requests of 10,000 keys", async () => {
-    mockFetch(() => ok({ successful_key_count: 1, unsuccessful_keys: [] }));
-    const entries = Array.from({ length: 10_001 }, (_, i) => ({
-      key: `k${i}`,
-      value: i === 0 ? "text" : { i },
-    }));
-    entries[0] = { ...entries[0]!, expirationTtl: 60 } as any;
-
-    await putKVValues("acc", "ns1", entries);
-
-    expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
-      `PUT ${NS}/bulk`,
-      `PUT ${NS}/bulk`,
-    ]);
-    const first = JSON.parse(calls[0]!.body as string);
-    expect(first).toHaveLength(10_000);
-    expect(first[0]).toEqual({ key: "k0", value: "text", expiration_ttl: 60 });
-    expect(first[1]).toEqual({ key: "k1", value: '{"i":1}' });
-    expect(JSON.parse(calls[1]!.body as string)).toEqual([
-      { key: "k10000", value: '{"i":10000}' },
-    ]);
-  });
-
-  it("deletes values in bulk", async () => {
-    mockFetch(() => ok({ successful_key_count: 2, unsuccessful_keys: [] }));
-
-    await deleteKVValues("acc", "ns1", ["a", "b"]);
-
-    expect(calls[0]).toMatchObject({
-      method: "POST",
-      url: `${NS}/bulk/delete`,
-    });
-    expect(JSON.parse(calls[0]!.body as string)).toEqual(["a", "b"]);
-  });
-
-  it("sends no request for an empty bulk call", async () => {
-    mockFetch(() => ok({}));
-
-    await putKVValues("acc", "ns1", []);
-    await deleteKVValues("acc", "ns1", []);
-
-    expect(calls).toEqual([]);
-  });
-
-  it("throws when Cloudflare reports keys that a bulk call didn't change", async () => {
-    mockFetch(() =>
-      ok({ successful_key_count: 1, unsuccessful_keys: ["b", "c"] }),
-    );
-
-    await expect(
-      putKVValues("acc", "ns1", [
-        { key: "a", value: "1" },
-        { key: "b", value: "2" },
-        { key: "c", value: "3" },
-      ]),
-    ).rejects.toThrow(
-      `Cloudflare didn't write 2 of the KV keys. Send them again: "b", "c"`,
-    );
-    await expect(deleteKVValues("acc", "ns1", ["b", "c"])).rejects.toThrow(
-      "Cloudflare didn't delete 2 of the KV keys",
-    );
-  });
 });
 
 describe("KVValue", () => {

@@ -1,17 +1,11 @@
 import { expect, it } from "vitest";
-import {
-  deleteKVValues,
-  getKVValue,
-  putKVValue,
-  putKVValues,
-} from "src/api/kv";
+import { getKVValue, putKVValue } from "src/api/kv";
 import {
   accountId,
   describeE2e,
   kvNamespacesWithPrefix,
   runPrefix,
   useProject,
-  api,
 } from "../e2e";
 
 const infraModule = (title: string, key: string, value: string) => `
@@ -44,9 +38,9 @@ describeE2e("KVValue", () => {
     const namespaces = await kvNamespacesWithPrefix(runPrefix);
     expect(namespaces.map((namespace) => namespace.title)).toEqual([title]);
     namespaceId = namespaces[0]!.id;
-    expect(await getKVValue(accountId, namespaceId, "routes", "json")).toEqual({
-      a: 1,
-    });
+    expect(await getKVValue(accountId, namespaceId, "routes")).toBe(
+      '{\n  "a": 1\n}',
+    );
   });
 
   it("updates the value in place", async () => {
@@ -82,33 +76,5 @@ describeE2e("KVValue", () => {
     await project.notation("destroy");
 
     expect(await kvNamespacesWithPrefix(runPrefix)).toEqual([]);
-  });
-
-  it("puts, gets and deletes values through the exported calls", async () => {
-    const created = await api<{ id: string }>(
-      "POST",
-      "/storage/kv/namespaces",
-      {
-        title: `${runPrefix}-calls`,
-      },
-    );
-    expect(created.success).toBe(true);
-    const id = created.result.id;
-
-    await putKVValue(accountId, id, "one", { n: 1 }, { metadata: { v: 1 } });
-    await putKVValue(accountId, id, "lines", "a\nb\r\nc");
-    expect(await getKVValue(accountId, id, "lines")).toBe("a\nb\r\nc");
-    await putKVValues(accountId, id, [
-      { key: "two", value: "2\n" },
-      { key: "three", value: [3] },
-    ]);
-    expect(await getKVValue(accountId, id, "one", "json")).toEqual({ n: 1 });
-    expect(await getKVValue(accountId, id, "two")).toBe("2\n");
-    expect(await getKVValue(accountId, id, "three", "json")).toEqual([3]);
-
-    await deleteKVValues(accountId, id, ["one", "lines", "two", "three"]);
-    await expect
-      .poll(() => getKVValue(accountId, id, "one"), consistency)
-      .toBeUndefined();
   });
 });
