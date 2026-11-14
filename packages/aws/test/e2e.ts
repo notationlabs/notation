@@ -142,9 +142,14 @@ export function useProject({ stage = "e2e" } = {}): Project {
     try {
       if (project.root) await project.notation("destroy");
     } finally {
-      // Catches what a failed deploy or destroy left behind.
-      await deleteResourcesWithPrefix(runPrefix);
-      if (project.root) rmSync(project.root, { recursive: true, force: true });
+      try {
+        // Catches what a failed deploy or destroy left behind.
+        await deleteResourcesWithPrefix(runPrefix);
+      } finally {
+        if (project.root) {
+          rmSync(project.root, { recursive: true, force: true });
+        }
+      }
     }
     expect(await resourcesWithPrefix(runPrefix)).toEqual(noResources);
   });
