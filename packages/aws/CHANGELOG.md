@@ -1,5 +1,16 @@
 # @notation/aws
 
+## 0.20.0
+
+### Patch Changes
+
+- Updated dependencies [aa8eea2]
+- Updated dependencies [a9e3fe4]
+  - @notation/resource@0.20.0
+  - @notation/core@0.20.0
+  - @notation/std@0.20.0
+  - @notation/utils@0.20.0
+
 ## 0.19.0
 
 ### Minor Changes

@@ -1,5 +1,12 @@
 # @notation/build
 
+## 0.20.0
+
+### Patch Changes
+
+- Updated dependencies [a9e3fe4]
+  - @notation/core@0.20.0
+
 ## 0.19.0
 
 ### Patch Changes

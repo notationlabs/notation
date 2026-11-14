@@ -1,5 +1,63 @@
 # @notation/cloudflare
 
+## 0.20.0
+
+### Minor Changes
+
+- b94c07e: The `cloudflare/tokens/AccountToken` resource has the params `Condition`, `ExpiresOn` and `NotBefore`. `Condition` holds the client IP ranges that may or may not use the token, and the times are ISO 8601 times in UTC. A change to any of them updates the token in place, and the token keeps its value. If the IP ranges are changed in the dashboard, deploy changes them back.
+
+  `accountToken()` from `@notation/cloudflare/tokens` has the option `condition`. It has no option for an expiry time, because the token isn't rotated when it expires.
+
+- dcfd909: `@notation/cloudflare/resources` exports two resources for Cloudflare Containers.
+
+  - `cloudflare/containers/ContainerApplication` runs the containers of a Durable Object namespace. A change to `Configuration` starts a rollout that replaces the instances 25% at a time. The application depends on the `WorkerScript` that hosts the namespace, and `HostedNamespaceId` picks the namespace from the Worker's `DurableObjectNamespaces`. The Worker is deployed first. The create then looks up the namespace's ID in the namespaces that Cloudflare lists for the Worker, and tries again until the namespace is listed. Cloudflare sometimes reports a new application as not found for a second or two, so the create reads the application every 250 ms until Cloudflare finds it, for up to 15 seconds. A replaced Worker gets new namespaces, so deploy deletes the application first and creates it again after the Worker. Cloudflare merges a rollout's configuration with the current one, so for each key that is removed from `Configuration`, the rollout sends the value that a create without the key gives: no environment variables, the default network, the resources of the `lite` instance type, and a 2000 MB disk next to `vcpu` and `memory_mib`. `Configuration` takes `disk: { size_mb }`, which sets the disk size next to `vcpu` and `memory_mib`. The plan rejects `disk` next to an instance type, because an instance type sets its own disk size. It also rejects a disk size below 512 MB, which Cloudflare refuses. Cloudflare can't change an application's network mode, so the plan rejects a change to it. The read doesn't return the configuration. The application uses Cloudflare's `default` scheduling policy, under which the image is set on the application. The application name can't contain two consecutive dashes, start with a dash or a digit, or end with a dash, and the plan rejects such a name. A deploy soon after another may fail while the earlier rollout is still running.
+  - `cloudflare/workers/WorkerScript` takes `container: true` on an entry of `DurableObjectNamespaces`, which declares the class as a container class in the upload. The upload sends it as `containers: [{ class_name }]`.
+  - `cloudflare/containers/ContainerRegistry` gives Containers the credentials to pull images from a private registry. A change to the credentials replaces the registry.
+
+  For now, containers can only be used through `@notation/cloudflare/resources`. The Durable Object namespaces that `$worker` and `$durableObject` declare never set `container`, so a `ContainerApplication` can't use them.
+
+  The API token in `CLOUDFLARE_API_TOKEN` also needs the Containers permission.
+
+- 0f3319f: `@notation/cloudflare/resources` exports the resource `cloudflare/kv/KVNamespace`, which makes a Workers KV namespace. `WorkerScript` takes a `kv_namespace` binding, which binds a namespace by its ID. Both are at the resource level only: `$worker` can't bind a namespace yet.
+
+  - `Title` is required, and must be unique in the account. A change to `Title` renames the namespace. Create fails when the account already has a namespace with the title.
+  - `Jurisdiction` is optional, and is one of `eu`, `fedramp` or `us`. Cloudflare sets it only when it creates the namespace, so plan fails when it changes.
+  - The API token also needs the Workers KV Storage: Edit permission.
+
+- 2da0583: `@notation/cloudflare/resources` exports the resource `cloudflare/r2/R2Bucket`, which creates an R2 bucket. A Worker can't bind a bucket yet.
+
+  - Its key is the account, `BucketName` and `Jurisdiction`. Every request sends the `cf-r2-jurisdiction` header. Plan fails when the account, the name or the jurisdiction changes, because a replace would delete the old bucket first.
+  - `StorageClass` is required, and a change to it is applied in place. `LocationHint` is only used when the bucket is created.
+  - Create fails when a bucket with the name already exists. Delete fails with a clear message when the bucket still has objects.
+  - The API token also needs the Workers R2 Storage: Edit permission.
+
+- a9e3fe4: Secrets for Workers, part 1 of RFC 0017. Notation records where a secret is, and never its value.
+
+  - `secret({ id, name })` from `@notation/cloudflare/secrets-store` declares a secret in the account's Secrets Store. Its name is `<app>--<stage>--<id>`, or `name` when it is set. Deploy writes its value from a source or a prompt; see the entry for part 2. Destroy deletes a secret with a stage-scoped name, and leaves a secret with an explicit `name`.
+  - `accountToken({ id, policies })` from `@notation/cloudflare/tokens` declares an account-owned API token. Each policy names its permission groups as Cloudflare lists them, such as `Workers Scripts Write`. Plan looks up each group's ID, and the scope of the policy's resources picks the group of a name that has one group for each scope. When the token is created, its value is written to a secret with the token's name, `<app>--<stage>--<id>`, in the same step. A change to the policies updates the token, which keeps its value. If the secret is deleted, plan fails and says to rotate the token by changing its `id`. Destroy deletes the token and its secret. `CLOUDFLARE_API_TOKEN` needs the Account API Tokens: Edit permission.
+  - `secretsStore.bind(secret)` from `@notation/cloudflare/workers` binds a secret or a token to a Worker as a `secrets_store_secret` binding. In the Worker, `env.NAME` is a `SecretsStoreSecret`, read with `await env.NAME.get()`. The Worker is uploaded after the secret.
+  - Notation adds the account's Secrets Store as the resource `secrets-store`. It adopts the store if the account has one, and otherwise creates one named `default_secrets_store`. Destroy leaves the store. `CLOUDFLARE_API_TOKEN` needs the Secrets Store: Edit permission.
+  - `@notation/cloudflare/resources` exports the resources `cloudflare/secrets-store/SecretsStore`, `cloudflare/secrets-store/SecretsStoreSecret` and `cloudflare/tokens/AccountToken`.
+
+- a9e3fe4: Secrets take their values from sources, part 2 of RFC 0017. Notation writes a secret's value to its store, and never records the value.
+
+  - `secret({ id, source, key })` from `@notation/cloudflare/secrets-store` takes its value from a source. `@notation/std/sources` exports `env`, which reads `process.env`, and `dotenv(path)`, which reads a `.env` file relative to the project root. `source` and `key` are given together. Each secret with a source has a `SourceValue` resource, `value:<id>`, which records the secret's id, the source's name, the key and a version. `env` and `dotenv` have no versions, so their secrets are written on every deploy. A source's `version` may return `undefined` for one key, which is then written on every deploy too. Plan and deploy fail when the source doesn't have the key.
+  - A secret without a source takes its value from a hidden prompt, when deploy creates it. With no terminal, or with `--json`, deploy fails with the command that sets the secret. `notation watch` asks at each deploy that needs the value. Plan never asks, and notes that deploy will. A secret without a source that already exists is recorded without asking.
+  - `notation secret set <id>` writes a secret's value, read from a hidden prompt or from stdin. `notation secret delete <id>` deletes a secret, and needs `--yes` without a terminal. Both refuse an API token's secret.
+  - `SecretsStoreSecret` now requires `ValueFrom`, and its create and update write the value.
+  - `Redacted` from `@notation/core` holds a secret value. Turning it into a string or JSON throws, and `console.log` prints `Redacted(<hidden>)`. A source implements the `Source` interface from `@notation/std/sources`, and a resource reads a value with `getValue(id)`.
+  - The reconciler removes every secret value that the process read from the errors of operations before it records them, and the CLI removes them from the error that it prints when a command fails.
+
+### Patch Changes
+
+- 5f2bde9: A rate-limited Cloudflare request now throws a pending error marked as throttled, so a create lookup that is rate-limited runs again later instead of counting as finding the resource.
+- Updated dependencies [aa8eea2]
+- Updated dependencies [a9e3fe4]
+  - @notation/resource@0.20.0
+  - @notation/core@0.20.0
+  - @notation/std@0.20.0
+  - @notation/utils@0.20.0
+
 ## 0.19.0
 
 ### Minor Changes

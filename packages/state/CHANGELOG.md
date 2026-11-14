@@ -1,5 +1,12 @@
 # @notation/state
 
+## 0.20.0
+
+### Patch Changes
+
+- Updated dependencies [aa8eea2]
+  - @notation/resource@0.20.0
+
 ## 0.19.0
 
 ### Minor Changes
