@@ -23,27 +23,17 @@ describeE2e("R2Bucket", () => {
   const taken = `${project.scope}taken`;
   let uploadsCreatedAt: string;
 
-  // The resource has no construct yet, so the project adds the buckets to a
-  // resource group of its own.
   function writeProject(buckets: Record<string, BucketConfig>) {
     const declarations = Object.entries(buckets).map(
       ([id, config]) =>
-        `this.add(new r2.R2Bucket(${JSON.stringify(id)}, { config: ${JSON.stringify(config)} }));`,
+        `new r2.R2Bucket(${JSON.stringify(id)}, { config: ${JSON.stringify(config)} });`,
     );
     project.write(
       "infra/main.ts",
       `
-      import { ResourceGroup } from "@notation/resource";
       import { r2 } from "@notation/cloudflare/resources";
 
-      class Storage extends ResourceGroup {
-        constructor() {
-          super("e2e/storage", "storage");
-          ${declarations.join("\n          ")}
-        }
-      }
-
-      new Storage();
+      ${declarations.join("\n      ")}
       `,
     );
   }
