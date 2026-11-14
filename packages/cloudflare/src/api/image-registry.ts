@@ -1,0 +1,86 @@
+import { cloudflare } from "./client";
+
+/** The hostname of the account's Cloudflare registry. */
+export const CLOUDFLARE_REGISTRY = "registry.cloudflare.com";
+
+const REQUEST_TIMEOUT_MS = 30_000;
+
+// The manifest types that `docker push` can make, so that the registry
+// returns the digest of the manifest as it was pushed.
+const MANIFEST_TYPES = [
+  "application/vnd.oci.image.manifest.v1+json",
+  "application/vnd.docker.distribution.manifest.v2+json",
+  "application/vnd.oci.image.index.v1+json",
+  "application/vnd.docker.distribution.manifest.list.v2+json",
+].join(", ");
+
+export type RegistryCredentials = { username: string; password: string };
+
+/**
+ * Returns the account's namespace in the Cloudflare registry. Wrangler pushes
+ * to `registry.cloudflare.com/<external_account_id>/<repository>`.
+ */
+export async function registryNamespace(account: string): Promise<string> {
+  const me = await cloudflare<{ external_account_id: string }>(
+    "GET",
+    `/accounts/${encodeURIComponent(account)}/containers/me`,
+  );
+  return me.external_account_id;
+}
+
+/**
+ * Makes credentials for the account's Cloudflare registry, which expire
+ * after `expirationMinutes`.
+ */
+export async function registryCredentials(
+  account: string,
+  permissions: ("push" | "pull")[],
+  expirationMinutes = 15,
+): Promise<RegistryCredentials> {
+  return await cloudflare<RegistryCredentials>(
+    "POST",
+    `/accounts/${encodeURIComponent(account)}/containers/registries/${CLOUDFLARE_REGISTRY}/credentials`,
+    { expiration_minutes: expirationMinutes, permissions },
+  );
+}
+
+/**
+ * Returns the digest of the manifest that `reference`, a tag or a digest,
+ * names in `namespace/repository`, or `undefined` if the registry has no
+ * such manifest.
+ */
+export async function manifestDigest(
+  credentials: RegistryCredentials,
+  namespace: string,
+  repository: string,
+  reference: string,
+): Promise<string | undefined> {
+  const url = `https://${CLOUDFLARE_REGISTRY}/v2/${namespace}/${repository}/manifests/${reference}`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "HEAD",
+      headers: {
+        // The registry takes the password with the username `v1`, as
+        // Wrangler sends it, not with the username that Cloudflare returns.
+        Authorization: `Basic ${Buffer.from(`v1:${credentials.password}`).toString("base64")}`,
+        Accept: MANIFEST_TYPES,
+      },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new Error(
+      `HEAD ${url} failed: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (response.status === 404) return undefined;
+  if (!response.ok) {
+    throw new Error(`HEAD ${url} failed with status ${response.status}`);
+  }
+  const digest = response.headers.get("Docker-Content-Digest");
+  if (!digest) {
+    throw new Error(`HEAD ${url} returned no Docker-Content-Digest header`);
+  }
+  return digest;
+}

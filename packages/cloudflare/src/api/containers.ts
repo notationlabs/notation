@@ -22,7 +22,8 @@ export const configurationSchema = v.pipe(
     /**
      * Pin the image by its digest, such as `registry.cloudflare.com/<account>/app@sha256:...`.
      * A rollout starts only when `Configuration` changes, so pushing a new image
-     * under the same tag starts no rollout.
+     * under the same tag starts no rollout. A `ContainerImage`'s
+     * `outputRef("Image")` is pinned by its digest.
      */
     image: v.string(),
     instance_type: v.optional(v.string()),
