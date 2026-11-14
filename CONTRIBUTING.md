@@ -55,7 +55,7 @@ when its tests end.
   `<aws account id>.dkr.ecr.<AWS_REGION>.amazonaws.com`. A record for that
   domain while no run holds the lock is left over, and can be deleted. So
   can a Secrets Store secret named `ne2e-<6 hex characters>-ecr`, which holds
-  the AWS secret access key for the record.
+  the pull user's secret access key for the record.
 
 ### AWS
 
@@ -63,6 +63,12 @@ when its tests end.
   user, and `AWS_REGION`. The provider deploys to `AWS_REGION`, and the tests
   check the results there. When any is missing, each AWS test fails with an
   error that names the missing variables. The tests are not skipped.
+- The Cloudflare `ContainerRegistry` test also needs `ECR_PULL_ACCESS_KEY_ID`
+  and `ECR_PULL_SECRET_ACCESS_KEY`, for a second IAM user that can only pull
+  images. The `AWS_*` user creates the ECR repository and pushes the image
+  into it. Cloudflare pulls the image with the pull user's keys, which the
+  test gives to the registry record. The test is skipped when any of the five
+  variables is missing.
 - Permissions: the user needs these actions on resources whose names start
   with `ne2e-`, in that region. An organization's service control policy must
   not deny them.
@@ -84,10 +90,12 @@ when its tests end.
   - ECR, for the Cloudflare `ContainerRegistry` test: `CreateRepository`,
     `DescribeRepositories`, `DeleteRepository`, `InitiateLayerUpload`,
     `UploadLayerPart`, `CompleteLayerUpload` and `PutImage`, to copy an image
-    into a repository. Cloudflare pulls the image with the same user, so it
-    also needs `GetAuthorizationToken` on all resources, and
-    `BatchCheckLayerAvailability`, `GetDownloadUrlForLayer` and
-    `BatchGetImage`.
+    into a repository.
+- Pull user permissions: `ecr:GetAuthorizationToken` on all resources, and
+  `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer` and
+  `ecr:BatchCheckLayerAvailability` on repositories whose names start with
+  `ne2e-`, in `AWS_REGION`. Give it nothing else, as its keys are stored in
+  Cloudflare.
 - Prefix: `ne2e-<6 hex characters>`. An IAM role, Lambda function, EventBridge
   bus or rule, SQS queue, log group under `/aws/lambda/`, or ECR repository
   whose name starts with `ne2e-` is left over from a run that was killed, and
