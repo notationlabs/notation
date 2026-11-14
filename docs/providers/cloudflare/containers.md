@@ -52,7 +52,7 @@ new containers.ContainerApplication("sandbox", {
 });
 ```
 
-`image.outputRef("Image")` is the image's reference, pinned by its digest, such as `registry.cloudflare.com/<account>/sandbox@sha256:...`. Deploy fills it in once the image is pushed. The application depends on the image, so deploy pushes the image before it creates or updates the application.
+`image.outputRef("Image")` is the image's reference, pinned by its digest, such as `registry.cloudflare.com/<account>/sandbox@sha256:...`. Deploy sets the reference after it pushes the image. The application depends on the image, so deploy pushes the image before it creates or updates the application.
 
 ## `ContainerImage`
 
@@ -67,7 +67,7 @@ The output `Image` is the image pinned by the digest that the registry holds for
 
 ### Docker
 
-Deploy runs the `docker` CLI on the machine that runs `notation deploy`. Docker, or a tool that provides the `docker` CLI and daemon such as OrbStack or Colima, must be installed and running. Deploy runs `docker info` first, and fails with a message to start Docker when the daemon doesn't answer. Plan doesn't need Docker. To read an image, plan and deploy request pull credentials for the registry, and ask the registry for the tag's digest.
+Deploy runs the `docker` CLI on the machine that runs `notation deploy`. Docker, or a tool that provides the `docker` CLI and daemon such as OrbStack or Colima, must be installed and running, with the buildx plugin, which `docker build --load` and `--provenance` need. Deploy runs `docker info` first, and fails with a message to start Docker when the daemon doesn't answer. Plan doesn't need Docker. To read an image, plan and deploy request pull credentials for the registry, and ask the registry for the tag's digest.
 
 To push an image, deploy:
 
@@ -87,9 +87,9 @@ The image's tag is the first 32 hex characters of a SHA-256 of the build's input
 - the build args,
 - the platform.
 
-Plan and deploy hash the input on each run. When the input changes, the tag changes, and deploy replaces the image: it builds and pushes the image under the new tag. The application's `Configuration.image` then holds the new digest, so deploy starts a rollout. When the input is the same, the tag is the same, and deploy builds nothing.
+Plan and deploy hash the input on each run. When the input changes, the tag changes, and deploy replaces the image: it builds and pushes the image under the new tag. The application's `Configuration.image` then holds the new digest, so deploy starts a rollout. When the input is the same, the tag is the same, and deploy builds nothing. The input doesn't include base images or anything that a `RUN` step downloads. To build again after a base image changes, pin `FROM` by digest and change the digest, or change a build arg.
 
-Each `.git` directory in the build context is skipped. `.dockerignore` is not read, so a change to a file that it excludes also builds the image again. A rebuild from Docker's cache usually has the same digest, and the same digest starts no rollout. To keep plans fast, use a build context directory that holds only the files that the image needs.
+The hash skips each `.git` directory in the build context. It doesn't read `.dockerignore`, so a change to a file that `.dockerignore` excludes also builds the image again. A rebuild from Docker's cache usually has the same digest, and the same digest starts no rollout. To keep plans fast, use a build context directory that holds only the files that the image needs.
 
 A change to `Context`, `Dockerfile` or `BuildArgs` that leaves the input the same changes nothing. These params are not kept in state.
 
@@ -97,7 +97,7 @@ When a deploy stops after the push and runs again, it pushes the same tag again,
 
 ### Delete
 
-Deleting a `ContainerImage` leaves the image in the registry. When deploy replaces an image, it deletes the old image before the application's rollout of the new image ends, and the application may still start instances from the old digest until then. The delete runs the same way for a replace and a destroy, so it deletes no image in either case. To delete old images, run `wrangler containers images list` and `wrangler containers images delete`.
+Delete does nothing: the image stays in the registry after a replace or a destroy. After a replace, the application can start instances from the old digest until its rollout ends, so the old image must stay available. To delete old images, run `wrangler containers images list` and `wrangler containers images delete`.
 
 When the registry no longer has the image's tag, deploy builds and pushes the image again.
 

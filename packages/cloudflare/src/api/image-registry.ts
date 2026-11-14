@@ -58,8 +58,8 @@ export async function manifestDigest(
   const response = await fetch(url, {
     method: "HEAD",
     headers: {
-      // The registry takes the password with the username `v1`, as
-      // Wrangler sends it, not with the username that Cloudflare returns.
+      // Wrangler sends the username `v1` on registry HTTP requests, and the
+      // returned username only to `docker login`. This follows Wrangler.
       Authorization: `Basic ${Buffer.from(`v1:${credentials.password}`).toString("base64")}`,
       Accept: MANIFEST_TYPES,
     },

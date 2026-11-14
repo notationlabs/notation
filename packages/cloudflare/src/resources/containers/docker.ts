@@ -39,14 +39,14 @@ export async function runDocker(
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn("docker", args, {
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     let output = "";
     const append = (chunk: Buffer) => {
       output = (output + chunk).slice(-OUTPUT_TAIL);
     };
-    child.stdout.on("data", append);
-    child.stderr.on("data", append);
+    child.stdout!.on("data", append);
+    child.stderr!.on("data", append);
     child.on("error", (error: NodeJS.ErrnoException) => {
       reject(
         error.code === "ENOENT"
@@ -58,6 +58,11 @@ export async function runDocker(
       if (code === 0) resolve();
       else reject(new DockerCommandError(args, code, output));
     });
-    child.stdin.end(options.stdin);
+    if (child.stdin) {
+      // Docker may exit before it reads stdin. The EPIPE would otherwise be
+      // uncaught, and the exit code already reports the failure.
+      child.stdin.on("error", () => {});
+      child.stdin.end(options.stdin);
+    }
   });
 }
