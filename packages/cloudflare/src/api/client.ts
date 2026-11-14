@@ -126,16 +126,15 @@ export async function cloudflare<T>(
 }
 
 /**
- * Returns the response body as text, for an endpoint whose success response
- * is not a JSON envelope, such as a read of a KV value. An error response is
- * an envelope, and throws as in `cloudflare`.
+ * Sends a GET and returns the response body as text, for an endpoint whose
+ * success response is not a JSON envelope, such as a read of a KV value. An
+ * error response is an envelope, and throws as in `cloudflare`.
  */
-export async function cloudflareText(
-  method: Method,
+export async function cloudflareGetText(
   /** The path after `/client/v4`. */
   path: string,
 ): Promise<string> {
-  const { request, response, text } = await send(method, path);
+  const { request, response, text } = await send("GET", path);
   // A success body is the stored value, which can itself look like an
   // envelope, so it is parsed only for an error status.
   checkResponse(request, response, response.ok ? {} : parseEnvelope(text));

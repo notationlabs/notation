@@ -42,8 +42,8 @@ const kvValueSchema = kvValue.defineSchema({
     value: v.string(),
   },
   /**
-   * The key's name: 1 to 512 bytes, and not `.` or `..`. A change writes the
-   * new key, then deletes the old one.
+   * The key's name: 1 to 512 bytes, and not `.` or `..`. A change deletes the
+   * old key, then writes the new one, so for a moment neither key exists.
    */
   Key: {
     propertyType: "param",
@@ -61,8 +61,9 @@ const kvValueSchema = kvValue.defineSchema({
     ),
   },
   /**
-   * The value, stored as it is. Up to 25 MiB. To store JSON, pass
-   * `JSON.stringify(value)`.
+   * The value, stored as it is. To store JSON, pass `JSON.stringify(value)`.
+   * Cloudflare allows up to 25 MiB, but state holds the value in both the
+   * params and the outputs, so keep large values in R2.
    */
   Value: {
     propertyType: "param",

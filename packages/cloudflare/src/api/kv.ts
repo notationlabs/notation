@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { CloudflareApiError, cloudflare, cloudflareText } from "./client";
+import { CloudflareApiError, cloudflare, cloudflareGetText } from "./client";
 
 /** Cloudflare's error code for a KV namespace that doesn't exist. */
 const NAMESPACE_NOT_FOUND = 10013;
@@ -34,7 +34,7 @@ export type NamespaceCreate = {
 export const isNotFound = (error: unknown): boolean =>
   error instanceof CloudflareApiError && error.hasCode(NAMESPACE_NOT_FOUND);
 
-export const isKeyNotFound = (error: unknown): boolean =>
+const isKeyNotFound = (error: unknown): boolean =>
   error instanceof CloudflareApiError && error.hasCode(KEY_NOT_FOUND);
 
 export const isTitleTaken = (error: unknown): boolean =>
@@ -192,7 +192,7 @@ export async function getKVValue(
 ): Promise<JsonValue | undefined> {
   let text: string;
   try {
-    text = await cloudflareText("GET", valuePath(account, namespaceId, key));
+    text = await cloudflareGetText(valuePath(account, namespaceId, key));
   } catch (error) {
     if (isKeyNotFound(error)) return undefined;
     throw error;
