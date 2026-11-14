@@ -68,6 +68,16 @@ describeE2e("KVValue", () => {
       .toBeUndefined();
   });
 
+  it("refuses to change to a key that already exists, and leaves its value", async () => {
+    await putKVValue(accountId, namespaceId, "taken", "theirs");
+    project.write("infra/main.ts", infraModule(title, "taken", '{"a":2}'));
+
+    await expect(project.notation("deploy")).rejects.toThrow(
+      `already has the key "taken"`,
+    );
+    expect(await getKVValue(accountId, namespaceId, "taken")).toBe("theirs");
+  });
+
   it("deletes the key and the namespace on destroy", async () => {
     await project.notation("destroy");
 

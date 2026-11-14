@@ -5,6 +5,7 @@ import {
   ResourceOperationPendingError,
   type ResourceOperationContext,
 } from "@notation/resource";
+import { cloudflareCreate } from "src/api/client";
 import { deleteKVValue, getKVValue, isNotFound, putKVValue } from "src/api/kv";
 import type { KVNamespaceInstance } from "./kv-namespace";
 
@@ -43,7 +44,9 @@ const kvValueSchema = kvValue.defineSchema({
   },
   /**
    * The key's name: 1 to 512 bytes, and not `.` or `..`. A change deletes the
-   * old key, then writes the new one, so for a moment neither key exists.
+   * old key, then writes the new one, so for a moment neither key exists. If
+   * the new key already exists, the deploy fails after the old key is
+   * deleted.
    */
   Key: {
     propertyType: "param",
@@ -77,10 +80,11 @@ const kvValueSchema = kvValue.defineSchema({
 const WRITE_CHECK_INTERVAL_MS = 2_000;
 
 /**
- * Writes the value, then reads it back. KV is eventually consistent, so the
- * read can return an older value, or no value for a new key. Until the read
- * returns the written value, the write throws a pending error, and the
- * reconciler calls it again. The next attempt only reads.
+ * Reads the key until it returns the written value. KV is eventually
+ * consistent, so the read can return an older value, or no value for a new
+ * key. Until then, this throws a pending error with `Written` in its
+ * callback context, and the reconciler calls the operation again. The next
+ * attempt only reads.
  *
  * Without the wait, the read that the reconciler makes after a create could
  * find no key and fail the deploy, and the read after an update could record
@@ -89,14 +93,10 @@ const WRITE_CHECK_INTERVAL_MS = 2_000;
  * If the read never returns the written value, a create fails with no state
  * record, and the key stays in KV with the written value.
  */
-async function writeValue(
+async function confirmWrite(
   params: KVValueKey & { Value: string },
-  context?: ResourceOperationContext,
 ): Promise<void> {
   const { AccountId, NamespaceId, Key, Value } = params;
-  if (!context?.Written) {
-    await putKVValue(AccountId, NamespaceId, Key, Value);
-  }
   const stored = await getKVValue(AccountId, NamespaceId, Key);
   if (stored !== Value) {
     throw new ResourceOperationPendingError(
@@ -109,9 +109,12 @@ async function writeValue(
   }
 }
 
+const keyTakenMessage = (key: KVValueKey) =>
+  `The KV namespace ${key.NamespaceId} in the Cloudflare account ${key.AccountId} already has the key ${JSON.stringify(key.Key)}. Give this KVValue another key, or delete the existing key and deploy again. If a previous deploy failed partway, the key may be the one it wrote, so check it before you delete it. A key deleted in the last minute can still read as existing.`;
+
 /**
- * The value of a key in a Workers KV namespace. Create overwrites a value
- * that the key already has. Delete deletes the key.
+ * The value of a key in a Workers KV namespace. Create fails when the key
+ * already exists, rather than overwrite it. Delete deletes the key.
  *
  * Read gets the value from Cloudflare. A read within about 60 seconds of a
  * write made elsewhere can return the older value. Deploy then plans an
@@ -119,8 +122,19 @@ async function writeValue(
  */
 export const KVValue = kvValueSchema
   .defineOperations({
+    // Check first, so that create doesn't overwrite a key that existed
+    // before. An attempt after this create's own write skips the check,
+    // because it would find that write. The check is outside
+    // `cloudflareCreate`: if it throws, nothing was written.
     create: async (params, context) => {
-      await writeValue(params, context);
+      const { AccountId, NamespaceId, Key, Value } = params;
+      if (!context?.Written) {
+        if ((await getKVValue(AccountId, NamespaceId, Key)) !== undefined) {
+          throw new Error(keyTakenMessage(params));
+        }
+        await cloudflareCreate(putKVValue)(AccountId, NamespaceId, Key, Value);
+      }
+      await confirmWrite(params);
     },
 
     read: async (key) => {
@@ -137,7 +151,11 @@ export const KVValue = kvValueSchema
     },
 
     update: async (key, _patch, params, _state, context) => {
-      await writeValue({ ...key, Value: params.Value }, context);
+      const { AccountId, NamespaceId, Key } = key;
+      if (!context?.Written) {
+        await putKVValue(AccountId, NamespaceId, Key, params.Value);
+      }
+      await confirmWrite({ ...key, Value: params.Value });
     },
 
     // The namespace may be gone, with its keys, when it was replaced or

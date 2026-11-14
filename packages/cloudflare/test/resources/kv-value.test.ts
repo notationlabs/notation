@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ResourceCreationUnknownError,
   ResourceNotFoundError,
   ResourceOperationPendingError,
 } from "@notation/resource";
@@ -212,19 +213,48 @@ describe("KVValue", () => {
   const key = { AccountId: "acc", NamespaceId: "ns1", Key: "config" };
   const params = { ...key, Value: "v2" };
 
-  it("writes the value, and finishes when a read returns it", async () => {
-    mockFetch((call) => (call.method === "PUT" ? ok({}) : text("v2")));
+  it("checks that the key is missing, writes the value, and finishes when a read returns it", async () => {
+    let written = false;
+    mockFetch((call) => {
+      if (call.method === "PUT") {
+        written = true;
+        return ok({});
+      }
+      return written ? text("v2") : keyNotFound();
+    });
 
     await expect(kvValue.create(params)).resolves.toBeUndefined();
 
     expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+      `GET ${NS}/values/config`,
       `PUT ${NS}/values/config`,
       `GET ${NS}/values/config`,
     ]);
-    expect((await form(calls[0]!.body)).value).toBe("v2");
+    expect((await form(calls[1]!.body)).value).toBe("v2");
   });
 
-  it("waits while a read after the write finds no key, and doesn't write again", async () => {
+  it("refuses a key that already exists, and doesn't write it", async () => {
+    mockFetch(() => text("v1"));
+
+    await expect(kvValue.create(params)).rejects.toThrow(
+      `The KV namespace ns1 in the Cloudflare account acc already has the key "config".`,
+    );
+    expect(calls.map((call) => call.method)).toEqual(["GET"]);
+  });
+
+  it("reports an unknown outcome when the write fails with a server error", async () => {
+    mockFetch((call) =>
+      call.method === "PUT"
+        ? fail(500, 10001, "Internal error")
+        : keyNotFound(),
+    );
+
+    await expect(kvValue.create(params)).rejects.toBeInstanceOf(
+      ResourceCreationUnknownError,
+    );
+  });
+
+  it("waits while a read after the write finds no key, then neither checks nor writes again", async () => {
     mockFetch((call) => (call.method === "PUT" ? ok({}) : keyNotFound()));
 
     const error = await kvValue.create(params).catch((e) => e);
