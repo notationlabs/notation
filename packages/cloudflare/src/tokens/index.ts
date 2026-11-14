@@ -2,11 +2,8 @@ import { declareSecret } from "@notation/core";
 import { ResourceGroup, scopedPhysicalName } from "@notation/resource";
 import * as cloudflare from "src/resources";
 import { TOKEN_NAME_MAX_LENGTH } from "src/resources/tokens/account-token";
-import {
-  assertSecretId,
-  claimSecretName,
-  secretsStoreGroup,
-} from "src/secrets-store/store";
+import { assertSecretId } from "src/secrets/value";
+import { claimSecretName, secretsStoreGroup } from "src/secrets-store/store";
 import type { BindableSecret } from "src/workers/declaration";
 
 export type {

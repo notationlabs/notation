@@ -32,18 +32,6 @@ const claimedNames = perCollection(
   () => new Map<string, string>(),
 );
 
-/** Throws if `id` is missing. */
-export function assertSecretId(
-  caller: string,
-  id: unknown,
-): asserts id is string {
-  if (typeof id !== "string" || id === "") {
-    throw new Error(
-      `${caller} requires an id. The id keys the secret in state and is the default base of its name, so keep it stable.`,
-    );
-  }
-}
-
 /**
  * Throws if Cloudflare would reject `name` as a secret's name, or if
  * another secret or token of the app has it.

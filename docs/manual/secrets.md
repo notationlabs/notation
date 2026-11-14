@@ -2,7 +2,7 @@
 
 A secret is a reference to a value that lives in a secret store, such as Cloudflare's Secrets Store. Notation writes the value to the store when it creates or updates the secret. It never records the value, or anything derived from it, in state, the journal, plan output or events.
 
-A provider package declares secrets. See [Cloudflare secrets](../providers/cloudflare/secrets.md), and [`workerSecret`](../providers/cloudflare/workers.md#workersecretconfig) for a secret that a Worker binds as secret text. A Worker secret needs a source: it has no prompt, and `notation secret set` refuses it.
+A provider package declares secrets. See [Cloudflare secrets](../providers/cloudflare/secrets.md), and [`workerSecret`](../providers/cloudflare/workers.md#workersecretconfig) for a secret that a Worker binds as secret text.
 
 ## Sources
 
@@ -69,7 +69,7 @@ A secret without a source takes its value from a prompt:
 - `notation watch` asks at each deploy that needs the value. It doesn't keep the answer between deploys.
 - Plan never asks. It notes that deploy will ask, or fail without a terminal.
 
-The prompt only fills a missing secret. When the secret already exists, such as after `notation secret set`, deploy records it without asking. See [notation secret](../cli/secret.md).
+The prompt only fills a missing secret. When the secret already exists, such as after `notation secret set`, deploy records it without asking. See [notation secret](../cli/secret.md). A Worker secret can only be set on a Worker that exists, so a new Worker's first deploy without a terminal creates a placeholder Worker and fails. `notation secret set` then writes the value to the placeholder, and the next deploy goes on. See [the order of deploy](../providers/cloudflare/workers.md#order-of-deploy).
 
 ## Writing a source
 

@@ -9,6 +9,7 @@ import {
 import * as std from "@notation/std/resources";
 import * as cloudflare from "src/resources";
 import { assertWorkerId, workerNames, workerResourceId } from "src/id";
+import type { SecretValueFrom } from "src/secrets/value";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
 import { describeNamespace, registeredNamespace } from "./durable-object";
 import { isJsonBinding } from "./json";
@@ -42,6 +43,8 @@ export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
   url?: boolean;
 };
 
+type SecretBinding = { name: string; valueFrom: SecretValueFrom };
+
 export type WorkerGroupConfig = {
   id: string;
   /** The bundle to upload, relative to the project root. */
@@ -49,7 +52,8 @@ export type WorkerGroupConfig = {
   compatibilityDate: string;
   compatibilityFlags: string[];
   bindings: cloudflare.workers.WorkerBinding[];
-  secretBindings?: cloudflare.workers.SecretBinding[];
+  /** The `secret_text` bindings, each set by a `WorkerSecret`. */
+  secrets: SecretBinding[];
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotectedNamespaces?: string[];
@@ -65,6 +69,9 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
   readonly code: std.fs.FileInstance;
   readonly script: cloudflare.workers.WorkerScriptInstance;
   readonly subdomain?: cloudflare.workers.WorkerSubdomainInstance;
+  readonly secrets: cloudflare.workers.WorkerSecretInstance[];
+  /** Set when the Worker binds a Worker secret. */
+  readonly placeholder?: cloudflare.workers.WorkerScriptPlaceholderInstance;
 
   get [workerGroupMark]() {
     return true;
@@ -77,13 +84,39 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
         config: { filePath: config.codePath },
       }),
     );
+    // A Worker that binds a Worker secret is created as a placeholder first,
+    // then its secrets are set, then its code is uploaded. So the code never
+    // runs without its secrets.
+    if (config.secrets.length > 0) {
+      this.placeholder = this.add(
+        new cloudflare.workers.WorkerScriptPlaceholder(
+          `${workerResourceId(config.id)}:placeholder`,
+        ),
+      );
+    }
+    const placeholder = this.placeholder;
+    this.secrets = config.secrets.map(({ name, valueFrom }) =>
+      this.add(
+        new cloudflare.workers.WorkerSecret(
+          `worker:${config.id}:secret:${name}`,
+          {
+            config: { Name: name, ValueFrom: valueFrom },
+            dependencies: { placeholder: placeholder! },
+          },
+        ),
+      ),
+    );
     this.script = this.add(
       new cloudflare.workers.WorkerScript(workerResourceId(config.id), {
         config: {
+          // An output ref in config, so that only the name is unknown at
+          // plan. The name in the script's record wins over it.
+          ...(placeholder && {
+            ScriptName: placeholder.outputRef("ScriptName"),
+          }),
           CompatibilityDate: config.compatibilityDate,
           CompatibilityFlags: config.compatibilityFlags,
           Bindings: config.bindings,
-          SecretBindings: config.secretBindings,
           DurableObjectNamespaces: config.namespaces,
           UnprotectedDurableObjects: config.unprotectedNamespaces,
           BoundDurableObjects: config.boundNamespaces,
@@ -91,6 +124,16 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
         dependencies: { code: this.code },
       }),
     );
+    for (const secret of this.secrets) this.script.dependOn(secret);
+    if (placeholder) {
+      // The script's recorded name, so that a live Worker that gains its
+      // first secret keeps its name. A `~state` ref adds no dependency.
+      const recorded = this.script["~state"].outputRef("ScriptName");
+      placeholder.contribute({
+        ScriptName: recorded,
+        AdoptedScriptName: recorded,
+      });
+    }
     if (config.url) {
       this.subdomain = this.add(
         new cloudflare.workers.WorkerSubdomain(
@@ -197,9 +240,7 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
           ...(config.compatibilityFlags ?? []),
         ]),
         bindings: resolved.bindings,
-        // Undefined when empty, so that the params of a Worker deployed
-        // before this option existed don't change.
-        secretBindings: resolved.secrets.length ? resolved.secrets : undefined,
+        secrets: resolved.secrets,
         namespaces: resolved.namespaces,
         // Undefined when empty, so that the params of a Worker deployed
         // before this option existed don't change.
@@ -283,7 +324,7 @@ function bindingCycleError(cycle: Entry[]): Error {
 
 type ResolvedBindings = {
   bindings: cloudflare.workers.WorkerBinding[];
-  secrets: cloudflare.workers.SecretBinding[];
+  secrets: SecretBinding[];
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotected: Set<string>;
@@ -368,7 +409,8 @@ function resolveBindings(
       continue;
     }
     if (isWorkerSecret(value)) {
-      resolved.secrets.push(value.binding(name));
+      value.boundBy({ nameBody: workerNames(self.id).nameBody, name });
+      resolved.secrets.push({ name, valueFrom: value.valueFrom });
       continue;
     }
     if (hasResourceType(value, "cloudflare/r2/R2Bucket")) {

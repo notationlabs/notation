@@ -3,7 +3,7 @@ import { mkdirSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { describeE2e, poll, runPrefix, useProject } from "../e2e";
+import { api, describeE2e, poll, runPrefix, useProject } from "../e2e";
 
 const SECRET_KEY = "NOTATION_E2E_WORKER_SECRET";
 
@@ -14,7 +14,51 @@ describeE2e("$worker bindings", () => {
     `first-${crypto.randomBytes(8).toString("hex")}`,
     `second-${crypto.randomBytes(8).toString("hex")}`,
   ];
+  const admin = `admin-${crypto.randomBytes(8).toString("hex")}`;
   let workerName: string;
+
+  // "/check" writes and reads through the R2 and KV bindings, and returns
+  // the JSON binding. "/secret" returns the sourced secret, and "/admin" the
+  // secret without a source, or "unset".
+  const writeWorker = ({ bindAdmin }: { bindAdmin: boolean }) =>
+    project.write(
+      "runtime/api.ts",
+      `
+      import { $worker, json, type WorkerHandler } from "@notation/cloudflare/workers";
+      import { admin, apiKey, cache, uploads } from "../infra/main";
+
+      export const worker = $worker({
+        id: "api",
+        compatibilityDate: "2026-10-12",
+        bindings: () => ({
+          UPLOADS: uploads,
+          CACHE: cache,
+          CONFIG: json({ retries: 3, regions: ["weur"] }),
+          API_KEY: apiKey,
+          ${bindAdmin ? "ADMIN: admin," : ""}
+        }),
+      });
+
+      export default {
+        async fetch(request, env) {
+          const url = new URL(request.url);
+          if (url.pathname === "/secret") return new Response(env.API_KEY);
+          if (url.pathname === "/admin") {
+            return new Response((env as { ADMIN?: string }).ADMIN ?? "unset");
+          }
+          await env.UPLOADS.put("greeting", "from r2");
+          await env.CACHE.put("greeting", "from kv");
+          const object = await env.UPLOADS.get("greeting");
+          await env.UPLOADS.delete("greeting");
+          return Response.json({
+            r2: await object?.text(),
+            kv: await env.CACHE.get("greeting"),
+            config: env.CONFIG,
+          });
+        },
+      } satisfies WorkerHandler<typeof worker>;
+      `,
+    );
 
   // The infra module imports @notation/std. The link goes to the copy that
   // @notation/cloudflare uses, so both share one copy of @notation/resource.
@@ -39,44 +83,10 @@ describeE2e("$worker bindings", () => {
         config: { Title: "${runPrefix}-bindings-cache" },
       });
       export const apiKey = workerSecret({ id: "api-key", source: env, key: "${SECRET_KEY}" });
+      export const admin = workerSecret({ id: "admin" });
       `,
     );
-    // "/check" writes and reads through the R2 and KV bindings, and returns
-    // the JSON binding. "/secret" returns the secret.
-    project.write(
-      "runtime/api.ts",
-      `
-      import { $worker, json, type WorkerHandler } from "@notation/cloudflare/workers";
-      import { apiKey, cache, uploads } from "../infra/main";
-
-      export const worker = $worker({
-        id: "api",
-        compatibilityDate: "2026-10-12",
-        bindings: () => ({
-          UPLOADS: uploads,
-          CACHE: cache,
-          CONFIG: json({ retries: 3, regions: ["weur"] }),
-          API_KEY: apiKey,
-        }),
-      });
-
-      export default {
-        async fetch(request, env) {
-          const url = new URL(request.url);
-          if (url.pathname === "/secret") return new Response(env.API_KEY);
-          await env.UPLOADS.put("greeting", "from r2");
-          await env.CACHE.put("greeting", "from kv");
-          const object = await env.UPLOADS.get("greeting");
-          await env.UPLOADS.delete("greeting");
-          return Response.json({
-            r2: await object?.text(),
-            kv: await env.CACHE.get("greeting"),
-            config: env.CONFIG,
-          });
-        },
-      } satisfies WorkerHandler<typeof worker>;
-      `,
-    );
+    writeWorker({ bindAdmin: false });
   });
 
   afterAll(() => {
@@ -93,6 +103,11 @@ describeE2e("$worker bindings", () => {
       )
       .join("\n");
   }
+
+  const fetchPath = (route: string, expected: string) =>
+    poll(`${project.url(workerName)}${route}`, {
+      done: (fetched) => fetched.body === expected,
+    });
 
   it("deploys a Worker that binds an R2 bucket, a KV namespace, a JSON value and a secret", async () => {
     process.env[SECRET_KEY] = secrets[0];
@@ -115,21 +130,53 @@ describeE2e("$worker bindings", () => {
     });
   });
 
-  it("uploads the new value of the secret on the next deploy", async () => {
+  it("writes the new value of the secret on the next deploy", async () => {
     process.env[SECRET_KEY] = secrets[1];
     await project.notation("deploy");
 
-    expect(
-      await poll(`${project.url(workerName)}/secret`, {
-        done: (fetched) => fetched.body === secrets[1],
-      }),
-    ).toMatchObject({ ok: true, body: secrets[1] });
+    expect(await fetchPath("/secret", secrets[1]!)).toMatchObject({
+      ok: true,
+      body: secrets[1],
+    });
   });
 
-  it("keeps the secret out of state, the journal and the runtime bundle", () => {
+  it("keeps a secret set with notation secret set, and doesn't ask for it at deploy", async () => {
+    writeWorker({ bindAdmin: true });
+    await project.notation(["secret", "set", "admin"], { input: `${admin}\n` });
+
+    // There is no terminal, so deploy fails if it asks for the value. The
+    // upload of the new code keeps both secrets.
+    await project.notation("deploy");
+
+    expect(await fetchPath("/admin", admin)).toMatchObject({
+      ok: true,
+      body: admin,
+    });
+    expect(await fetchPath("/secret", secrets[1]!)).toMatchObject({
+      ok: true,
+      body: secrets[1],
+    });
+  });
+
+  it("deletes the secret from the Worker when the Worker stops binding it", async () => {
+    writeWorker({ bindAdmin: false });
+    await project.notation("deploy");
+
+    const found = await api(
+      "GET",
+      `/workers/scripts/${workerName}/secrets/ADMIN`,
+    );
+    expect(found.errors.map((error) => error.code)).toEqual([10056]);
+    expect(await fetchPath("/admin", "unset")).toMatchObject({
+      ok: true,
+      body: "unset",
+    });
+  });
+
+  it("keeps the secrets out of state, the journal and the runtime bundle", () => {
     const stored = notationFiles();
     const bundle = project.read("dist/runtime/api/index.mjs");
-    for (const secret of secrets) {
+    for (const secret of [...secrets, admin]) {
       expect(stored).not.toContain(secret);
       expect(bundle).not.toContain(secret);
     }

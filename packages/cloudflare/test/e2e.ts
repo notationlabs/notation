@@ -50,8 +50,14 @@ export type Project = {
   subdomain: string;
   write(file: string, contents: string): void;
   read(file: string): string;
-  /** Runs the built CLI in the project, as a user would. */
-  notation(command: "deploy" | "destroy"): Promise<void>;
+  /**
+   * Runs the built CLI in the project, as a user would, with no terminal.
+   * `input` is written to its stdin.
+   */
+  notation(
+    command: "deploy" | "destroy" | string[],
+    options?: { input?: string },
+  ): Promise<void>;
   /** The names of the account's Workers that deploy created. */
   workerNames(): Promise<string[]>;
   /** The workers.dev URL of the Worker named `name`. */
@@ -82,26 +88,32 @@ export function useProject({
       writeFileSync(target, contents);
     },
     read: (file) => readFileSync(path.join(project.root, file), "utf8"),
-    notation: async (command) => {
+    notation: async (command, options) => {
+      const args = typeof command === "string" ? [command] : command;
       try {
-        await promisify(execFile)(
+        const run = promisify(execFile)(
           process.execPath,
           [
             cli,
-            command,
+            ...args,
             "--config",
             path.join(project.root, "notation.config.ts"),
           ],
           { cwd: project.root, env: process.env, maxBuffer: 16 * 1024 * 1024 },
         );
+        run.child.stdin?.end(options?.input ?? "");
+        await run;
       } catch (error) {
         const { stdout, stderr } = error as {
           stdout?: string;
           stderr?: string;
         };
-        throw new Error(`notation ${command} failed:\n${stdout}\n${stderr}`, {
-          cause: error,
-        });
+        throw new Error(
+          `notation ${args.join(" ")} failed:\n${stdout}\n${stderr}`,
+          {
+            cause: error,
+          },
+        );
       }
     },
     workerNames: () => scriptsWithPrefix(scope),

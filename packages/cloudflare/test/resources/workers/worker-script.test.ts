@@ -3,15 +3,8 @@ import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setConfigFile } from "@notation/core";
 import {
-  declareSecret,
-  Redacted,
-  runWithSecretContext,
-  setConfigFile,
-  type Source,
-} from "@notation/core";
-import {
-  collectResourceGraph,
   ResourceAlreadyExistsError,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
@@ -108,7 +101,9 @@ describe("WorkerScript", () => {
         compatibility_date: "2026-10-12",
         compatibility_flags: ["nodejs_compat"],
         bindings: params.Bindings,
+        keep_bindings: ["secret_text"],
         exports: { Counter: { type: "durable-object", storage: "sqlite" } },
+        tags: [],
       },
       module: { type: "application/javascript+module", text: code },
     });
@@ -150,98 +145,6 @@ describe("WorkerScript", () => {
     expect(metadata.bindings).toEqual(bindings);
   });
 
-  describe("secret bindings", () => {
-    const valueFrom = {
-      Secret: "api-key",
-      Source: "vault",
-      Key: "API_KEY",
-      Version: "7",
-    };
-    const withSecret = {
-      ...params,
-      Bindings: [],
-      SecretBindings: [{ Name: "API_KEY", ValueFrom: valueFrom }],
-    };
-    const vault: Source = {
-      name: "vault",
-      has: async () => true,
-      get: async () => new Redacted("sk_from_vault"),
-    };
-
-    // Runs `fn` as deploy does, with the secret declared.
-    const deploying = <T>(fn: () => Promise<T>) =>
-      runWithSecretContext({ stage: "dev", runId: "run" }, async () => {
-        await collectResourceGraph(() =>
-          declareSecret({ id: "api-key", source: vault, key: "API_KEY" }),
-        );
-        return fn();
-      });
-
-    it("uploads the value from the source as a secret_text binding at create", async () => {
-      mockFetch(untilUploaded());
-
-      await deploying(() => script.create(withSecret));
-
-      const { metadata } = await uploadedMetadata(calls[1]!);
-      expect(metadata.bindings).toEqual([
-        { type: "secret_text", name: "API_KEY", text: "sk_from_vault" },
-      ]);
-    });
-
-    it("uploads the value again at update", async () => {
-      mockFetch(() => ok({}));
-      const key = { AccountId: "acc", ScriptName: params.ScriptName };
-
-      await deploying(() =>
-        script.update!(key, {} as any, withSecret, withSecret),
-      );
-
-      const { metadata } = await uploadedMetadata(calls[0]!);
-      expect(metadata.bindings).toEqual([
-        { type: "secret_text", name: "API_KEY", text: "sk_from_vault" },
-      ]);
-    });
-
-    it("updates the Worker when the source's version changes", () => {
-      const action = decideAction({
-        resource: script,
-        stateNode: { params: withSecret } as any,
-        params: {
-          ...withSecret,
-          SecretBindings: [
-            { Name: "API_KEY", ValueFrom: { ...valueFrom, Version: "8" } },
-          ],
-        },
-      });
-
-      expect(action).toMatchObject({ decision: "update" });
-    });
-
-    it("rejects a name in both Bindings and SecretBindings before any request", async () => {
-      mockFetch(untilUploaded());
-      const clash = {
-        ...withSecret,
-        Bindings: [
-          { type: "plain_text" as const, name: "API_KEY", text: "plain" },
-        ],
-      };
-
-      await expect(script.create(clash)).rejects.toThrow(
-        '"API_KEY" in both Bindings and SecretBindings',
-      );
-      expect(calls).toEqual([]);
-    });
-
-    it("fails the upload outside a deploy, as the value can't be read", async () => {
-      mockFetch(untilUploaded());
-
-      await expect(script.create(withSecret)).rejects.toThrow(
-        "can only be read during notation deploy",
-      );
-      expect(calls.some((call) => call.method === "PUT")).toBe(false);
-    });
-  });
-
   it("leaves exports out for a Worker that hosts no namespace", async () => {
     mockFetch(untilUploaded());
 
@@ -280,6 +183,37 @@ describe("WorkerScript", () => {
     );
     await expect(created).rejects.toSatisfy(ResourceAlreadyExistsError.is);
     expect(calls).toHaveLength(1);
+  });
+
+  it("uploads over a placeholder Worker, and removes its tag", async () => {
+    mockFetch(() =>
+      ok({ compatibility_date: "2025-01-01", tags: ["notation-placeholder"] }),
+    );
+
+    await script.create(params);
+
+    expect(calls.map((call) => call.method)).toEqual(["GET", "PUT", "GET"]);
+    const { metadata, module } = await uploadedMetadata(calls[1]!);
+    expect(metadata.tags).toEqual([]);
+    expect(module.text).toBe(code);
+  });
+
+  it("reports a Worker with other tags as ResourceAlreadyExistsError", async () => {
+    mockFetch(() => ok({ tags: ["team-a"] }));
+
+    await expect(script.create(params)).rejects.toSatisfy(
+      ResourceAlreadyExistsError.is,
+    );
+    expect(calls).toHaveLength(1);
+  });
+
+  it("keeps the Worker's tags in an update", async () => {
+    mockFetch(() => ok({}));
+
+    await script.update!(params as any, {} as any, params as any, {} as any);
+
+    const { metadata } = await uploadedMetadata(calls[0]!);
+    expect(metadata).not.toHaveProperty("tags");
   });
 
   it("fails when the bundle changed after the params were computed", async () => {

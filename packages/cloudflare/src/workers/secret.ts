@@ -2,17 +2,45 @@ import { declareSecret } from "@notation/core";
 import { ResourceGroup } from "@notation/resource";
 import * as std from "@notation/std/resources";
 import type { Source } from "@notation/std/sources";
-import type { SecretBinding } from "src/resources/workers/worker-script";
-import { assertSecretId } from "src/secrets-store/store";
+import { accountId } from "src/api/client";
+import {
+  deleteScriptSecret,
+  listScriptNames,
+  putScriptSecret,
+} from "src/api/workers";
+import { matchesWorkerNames } from "src/id";
+import {
+  addSecretValue,
+  assertSecretId,
+  type SecretValueFrom,
+} from "src/secrets/value";
 import type { WorkerSecret } from "./declaration";
 
 export type WorkerSecretConfig = {
-  /** Keys the secret in state. It must differ from the id of every other secret. */
+  /**
+   * Keys the secret in state, and is what `notation secret set <id>` takes.
+   * It must differ from the id of every other secret.
+   */
   id: string;
-  /** Where the value comes from, such as `env` or `dotenv(".env.local")`. */
-  source: Source;
-  /** The key that the source is asked for. */
-  key: string;
+} & (
+  | {
+      /**
+       * Where the value comes from, such as `env` or `dotenv(".env.local")`
+       * from `@notation/std/sources`. Without a source, deploy asks for the
+       * value when it creates the secret, and `notation secret set` sets it.
+       */
+      source: Source;
+      /** The key that the source is asked for. */
+      key: string;
+    }
+  | { source?: undefined; key?: undefined }
+);
+
+/** A Worker that binds the secret, and the name of the binding. */
+type BoundBy = {
+  /** The Worker's generated name without its instance, from `workerNames`. */
+  nameBody: string;
+  name: string;
 };
 
 export class WorkerSecretGroup
@@ -21,43 +49,91 @@ export class WorkerSecretGroup
 {
   platform = "cloudflare";
   readonly "~workerSecret" = true as const;
-  /** Records the source and key, and the source's version of the key. */
-  readonly value: std.sources.SourceValueInstance;
+  /** Records the source and key of a secret that has a source. */
+  readonly value?: std.sources.SourceValueInstance;
+  /** Where the value comes from. It never holds the value. */
+  readonly valueFrom: SecretValueFrom;
+  readonly #boundBy: BoundBy[] = [];
 
   constructor(config: WorkerSecretConfig) {
-    assertSecretId("workerSecret()", config.id);
-    if (!config.source || typeof config.key !== "string") {
-      throw new Error(
-        `workerSecret({ id: "${config.id}" }) requires a source and a key. Deploy reads the value from the source each time it uploads a Worker that binds the secret.`,
-      );
-    }
-    super("cloudflare/workerSecret", config.id, config);
     const { id, source, key } = config;
-    this.value = this.add(
-      new std.sources.SourceValue(`value:${id}`, {
-        config: { Secret: id, Source: source.name, Key: key },
-      }),
+    assertSecretId("workerSecret()", id);
+    super("cloudflare/workerSecret", id, config);
+    const { value, valueFrom } = addSecretValue(
+      this,
+      `workerSecret({ id: "${id}" })`,
+      config,
     );
+    this.value = value;
+    this.valueFrom = valueFrom;
     declareSecret({
       id,
       source,
       key,
-      refusal: `\`${id}\` is a Worker secret. Deploy reads its value from the ${source.name} source each time it uploads a Worker that binds it, so change the value in the source.`,
+      set: async (secret) => {
+        const account = accountId();
+        if (this.#boundBy.length === 0) {
+          throw new Error(
+            `No Worker binds the Worker secret \`${id}\`. Bind it in a Worker's \`bindings\`, and deploy.`,
+          );
+        }
+        const targets = await this.#targets(account);
+        if (targets.length === 0) {
+          throw new Error(
+            `No deployed Worker binds the Worker secret \`${id}\`. Run \`notation deploy\` first.`,
+          );
+        }
+        const written: string[] = [];
+        for (const { script, name } of targets) {
+          try {
+            await putScriptSecret(account, script, name, secret);
+          } catch (error) {
+            if (written.length === 0) throw error;
+            throw new Error(
+              `Wrote \`${id}\` to ${written.join(", ")}, then failed on ${script}.`,
+              { cause: error },
+            );
+          }
+          written.push(script);
+        }
+      },
+      delete: async () => {
+        const account = accountId();
+        for (const { script, name } of await this.#targets(account)) {
+          await deleteScriptSecret(account, script, name);
+        }
+      },
     });
   }
 
-  /** The binding of the secret as `name`, which holds no value. */
-  binding(name: string): SecretBinding {
-    const { id, source, key } = this.config;
-    return {
-      Name: name,
-      ValueFrom: {
-        Secret: id,
-        Source: source.name,
-        Key: key,
-        Version: this.value.outputRef("Version") as string,
-      },
-    };
+  /**
+   * The deployed Workers that bind the secret, with the binding's name. The
+   * commands don't read state, so a Worker's name, which has a random
+   * instance, is matched against its name body. Throws if more than one
+   * Worker matches one binding, as a write could then reach a Worker that
+   * doesn't bind the secret.
+   */
+  async #targets(account: string) {
+    const names = await listScriptNames(account);
+    return this.#boundBy.flatMap((bound) => {
+      const scripts = names.filter((script) =>
+        matchesWorkerNames(script, bound),
+      );
+      if (scripts.length > 1) {
+        throw new Error(
+          `More than one Worker matches the Worker that binds \`${this.config.id}\` as ${bound.name}: ${scripts.join(", ")}. Notation can't tell which one the stage deployed, so it wrote nothing. Delete the Workers that are left over, and run the command again.`,
+        );
+      }
+      return scripts.map((script) => ({ script, name: bound.name }));
+    });
+  }
+
+  /** Records that a Worker binds the secret, for `notation secret set`. */
+  boundBy(bound: BoundBy): void {
+    const recorded = this.#boundBy.some(
+      (other) => other.nameBody === bound.nameBody && other.name === bound.name,
+    );
+    if (!recorded) this.#boundBy.push(bound);
   }
 }
 
@@ -66,10 +142,11 @@ export const isWorkerSecret = (value: unknown): value is WorkerSecretGroup =>
 
 /**
  * Declares a secret that a Worker binds as a `secret_text` binding. In the
- * Worker, the binding is a string. Deploy reads the value from `source` when
- * it uploads the Worker, and uploads the Worker again when the source's
- * version of the key changes. Notation records the source and key, and never
- * the value.
+ * Worker, the binding is a string. Each Worker that binds it has its own
+ * copy of the secret, which deploy writes with Cloudflare's secrets API for
+ * the Worker. Deploy writes the value from `source`, or asks for it when
+ * there is no source. Notation records where the value comes from, and
+ * never the value.
  * @resource
  */
 export function workerSecret(config: WorkerSecretConfig): WorkerSecretGroup {

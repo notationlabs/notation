@@ -219,3 +219,40 @@ it("leaves a param that has physicalName out of the config type", async () => {
 
   expect(await generated.getParams()).toEqual({ Path: "/" });
 });
+
+it("makes a param with a suppliable physicalName optional in the config type", async () => {
+  const rule = { maxLength: 64 };
+  const Role = resource<{
+    Key: { RoleName: string };
+    CreateParams: { RoleName: string; Path: string };
+    UpdateParams: { RoleName: string };
+    ReadResult: {};
+  }>({ type: "test/physical-name/suppliable-role", provider: "test" })
+    .defineSchema({
+      RoleName: {
+        propertyType: "param",
+        presence: "required",
+        value: string(),
+        primaryKey: true,
+        physicalName: { ...rule, suppliable: true },
+      },
+      Path: {
+        propertyType: "param",
+        presence: "required",
+        value: string(),
+        immutable: true,
+      },
+    })
+    .defineOperations({
+      create: async (params) => void (params.RoleName satisfies string),
+      delete: async () => undefined,
+    });
+
+  const generated = new Role("generated", { config: { Path: "/" } });
+  const supplied = new Role("supplied", {
+    config: { Path: "/", RoleName: "role" },
+  });
+
+  expect(await generated.getParams()).toEqual({ Path: "/" });
+  expect(await supplied.getParams()).toEqual({ Path: "/", RoleName: "role" });
+});

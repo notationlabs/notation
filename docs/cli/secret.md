@@ -22,9 +22,9 @@ notation secret set admin-password --stage prod
 op read op://prod/admin/password | notation secret set admin-password --stage prod
 ```
 
-`set` compiles the infra, finds the secret's declaration, and writes the value to the store. It doesn't read state, run the reconciler, or record anything, so it works before the first deploy. For a Cloudflare secret, it creates the account's Secrets Store if the account has none.
+`set` compiles the infra, finds the secret's declaration, and writes the value to the store. It doesn't read state, run the reconciler, or record anything, so it works before the first deploy. For a Cloudflare secret, it creates the account's Secrets Store if the account has none. A [Worker secret](../providers/cloudflare/workers.md#workersecretconfig) is the exception. It is stored with each Worker that binds it, so `set` writes it to each of those Workers that is deployed, and fails when none is deployed. `delete` deletes it from each of those Workers.
 
-Run `set` before a deploy without a terminal, such as in CI, for each secret that has no source. If the secret has a source, the source wins at its next write: on the next deploy for `env` and `dotenv`, and when the version changes for a versioned source.
+Run `set` before a deploy without a terminal, such as in CI, for each secret that has no source. A Worker secret can only be set on a Worker that exists. Deploy sets a Worker's secrets before it uploads the Worker's code, on a placeholder Worker that answers 503 until the first upload. Without a terminal, the first deploy of a new Worker creates the placeholder, and then fails at the secret, so only the placeholder is live. Run `set`, which writes the value to the placeholder, then deploy again. See [the order of deploy](../providers/cloudflare/workers.md#order-of-deploy). If the secret has a source, the source wins at its next write: on the next deploy for `env` and `dotenv`, and when the version changes for a versioned source.
 
 ## `delete`
 

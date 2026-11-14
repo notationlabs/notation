@@ -21,6 +21,20 @@ export type PhysicalNameRule = {
    * base is the whole resource ID.
    */
   base?: (resourceId: string) => string;
+  /**
+   * Lets the params supply the name, from config, a contribution or
+   * `deriveParams`. The name in the state record wins over a supplied one,
+   * and a supplied one wins over a generated one. So a supplied name names
+   * the resource when it is first created, and never renames a resource
+   * that exists. A replacement takes the supplied name, or a generated one
+   * when none is supplied.
+   *
+   * The config type makes the param optional only when the schema item
+   * holds the literal `true`. A rule in a variable typed `PhysicalNameRule`
+   * does not, so set the flag in the schema, as in
+   * `physicalName: { ...rule, suppliable: true }`.
+   */
+  suppliable?: true;
 };
 
 const HASH_LENGTH = 8;

@@ -251,48 +251,6 @@ describe("$worker", () => {
     ]);
   });
 
-  it("binds a Worker secret by its source, and never by its value", async () => {
-    let apiKey!: ReturnType<typeof workerSecret>;
-    const graph = await collect(() => {
-      apiKey = workerSecret({ id: "api-key", source: env, key: "API_KEY" });
-      inWorker(
-        $worker({
-          id: "api",
-          compatibilityDate,
-          bindings: () => ({ API_KEY: apiKey }),
-        }),
-        "runtime/api.ts",
-      );
-    });
-    const api = group(graph, "api");
-
-    expect(api.script.config.Bindings).toEqual([]);
-    expect(api.script.getDependencies()).toContain(apiKey.value);
-    apiKey.value.setOutput({ Version: "run-1" } as any);
-    expect((await deployParams(api, [])).SecretBindings).toEqual([
-      {
-        Name: "API_KEY",
-        ValueFrom: {
-          Secret: "api-key",
-          Source: "env",
-          Key: "API_KEY",
-          Version: "run-1",
-        },
-      },
-    ]);
-  });
-
-  it("rejects a Worker secret with no source or key", async () => {
-    await collect(() => {
-      expect(() => workerSecret({ id: "api-key", source: env } as any)).toThrow(
-        'workerSecret({ id: "api-key" }) requires a source and a key',
-      );
-      expect(() =>
-        workerSecret({ id: "api-key", key: "API_KEY" } as any),
-      ).toThrow("requires a source and a key");
-    });
-  });
-
   it("hosts a namespace whose class its module exports", async () => {
     const graph = await collect(() => {
       const counters = inModule(

@@ -1,4 +1,4 @@
-import { declareSecret, PROMPT_SOURCE } from "@notation/core";
+import { declareSecret } from "@notation/core";
 import { ResourceGroup, scopedPhysicalName } from "@notation/resource";
 import * as std from "@notation/std/resources";
 import type { Source } from "@notation/std/sources";
@@ -12,8 +12,8 @@ import {
 } from "src/api/secrets-store";
 import * as cloudflare from "src/resources";
 import type { BindableSecret } from "src/workers/declaration";
+import { addSecretValue, assertSecretId } from "src/secrets/value";
 import {
-  assertSecretId,
   claimSecretName,
   SECRET_NAME_MAX_LENGTH,
   secretsStoreGroup,
@@ -65,29 +65,18 @@ export class SecretGroup
       scopedPhysicalName(config.id, {
         maxLength: SECRET_NAME_MAX_LENGTH,
       });
-    claimSecretName(name, describe(config));
+    const declaration = describe(config);
+    claimSecretName(name, declaration);
     super("cloudflare/secret", config.id, config);
     const { id, source, key } = config;
-    if (source) {
-      this.value = this.add(
-        new std.sources.SourceValue(`value:${id}`, {
-          config: { Secret: id, Source: source.name, Key: key! },
-        }),
-      );
-    }
+    const { value, valueFrom } = addSecretValue(this, declaration, config);
+    this.value = value;
     this.secret = this.add(
       new cloudflare.secretsStore.SecretsStoreSecret(`secret:${id}`, {
         config: {
           Name: name,
           StageScoped: config.name === undefined,
-          ValueFrom: this.value
-            ? {
-                Secret: id,
-                Source: source!.name,
-                Key: key!,
-                Version: this.value.outputRef("Version"),
-              }
-            : { Secret: id, Source: PROMPT_SOURCE },
+          ValueFrom: valueFrom,
         },
         dependencies: { store: secretsStoreGroup().store },
       }),
