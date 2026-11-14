@@ -88,7 +88,7 @@ export function useProject({
       writeFileSync(target, contents);
     },
     read: (file) => readFileSync(path.join(project.root, file), "utf8"),
-    notation: async (command, { input } = {}) => {
+    notation: async (command, options) => {
       const args = typeof command === "string" ? [command] : command;
       try {
         const run = promisify(execFile)(
@@ -101,7 +101,7 @@ export function useProject({
           ],
           { cwd: project.root, env: process.env, maxBuffer: 16 * 1024 * 1024 },
         );
-        run.child.stdin?.end(input ?? "");
+        run.child.stdin?.end(options?.input ?? "");
         await run;
       } catch (error) {
         const { stdout, stderr } = error as {
