@@ -90,7 +90,7 @@ const LambdaFunction = defineResource<{
 | `blocksDeleteOf`        | `ResourceType[]?`. The types that the provider refuses to delete while a resource of this type depends on them. Defaults to `[]`.                                    |
 | `deleteTakesDependents` | `boolean?`. Set when `delete` uses its `deletion` argument. See [Deletes of a resource that others refer to](#deletes-of-a-resource-that-others-refer-to).           |
 
-When deploy replaces a resource of a listed type, it first deletes each resource of this type that depends on it, and creates it again after the new resource. AWS, for example, does not delete an EventBridge bus that has rules, so `aws/eventBridge/rule` lists the bus type:
+When deploy replaces a resource of a listed type delete-first, it first deletes each resource of this type that depends on it, and creates it again after the new resource. A type with a `physicalName` param is replaced create-first, and then no dependent is deleted in advance. See [Create-first replacement](../internals/reconciler.md#create-first-replacement). AWS, for example, does not delete an EventBridge bus that has rules, so `aws/eventBridge/rule` lists the bus type. A bus has a generated name and is replaced create-first, so no class in Notation's provider packages uses the list today:
 
 ```ts
 const eventBridgeRule = resource<EventBridgeRuleSchema>({
@@ -105,7 +105,7 @@ List a type only when the provider refuses the delete. A dependent of a type tha
 
 Some providers refuse to delete a resource while another resource refers to it, and can force the delete. Cloudflare does this for a Worker that another Worker binds. Deploy must delete such a resource while a dependent still refers to it in three cases: when it replaces the resource, when resources that depend on each other are destroyed, and when they are removed from code.
 
-Set `deleteTakesDependents` on the type. `delete` then gets `deletion.dependents`: the resources whose state records depend on the deleted resource, each with its `id`, `type` and the `params` in its record. Deploy updates or deletes each of them in the same run. Force the delete only when every reference to the resource comes from one of the dependents, and fail otherwise, as nothing repairs a reference from a resource that the deployment does not manage:
+Set `deleteTakesDependents` on the type. `delete` then gets `deletion.dependents`: the resources whose state records depend on the deleted resource, each with its `id`, `type` and the `params` in its record. Deploy updates or deletes each of them in the same run. For the delete of a retired instance, which a create-first replace left, the list leaves out the resources in code, as deploy has updated them to use the replacement. It lists the retired instances of other resources that depend on the instance, each with the ID of its record and its own params. Force the delete only when every reference to the resource comes from one of the dependents, and fail otherwise, as nothing repairs a reference from a resource that the deployment does not manage:
 
 ```ts
 const workerScript = resource<WorkerScriptSchema>({
@@ -437,7 +437,7 @@ Define `find` when the provider assigns the resource's key, or part of it. The r
 | None    | Throw `ResourceNotFoundError`.                                                              |
 | Several | Throw another error that names the matches. The reconciler never takes over one of several. |
 
-`find` should not match a resource that the provider reports as being deleted. The reconciler calls `find` before the create of a replacement too, just after the delete. If `find` returns the deleted resource there, the replace fails.
+`find` should not match a resource that the provider reports as being deleted. The reconciler calls `find` before the create of a replacement too. In a delete-first replace, this is just after the delete. If `find` returns the deleted resource there, the replace fails.
 
 The third row applies when the provider does not keep the attribute unique. API Gateway allows two APIs with the same name, so `Api`'s `find` reads every page of `GetApis` before it returns:
 

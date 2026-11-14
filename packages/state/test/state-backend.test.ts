@@ -59,3 +59,22 @@ describe("MemoryStateBackend", () => {
     });
   });
 });
+
+describe("retired instances", () => {
+  const instance = {
+    config: {},
+    params: { name: "old" },
+    output: { name: "old" },
+    dependsOn: ["role"],
+    retiredAt: "2027-01-01T00:00:00.000Z",
+  };
+
+  it("are read back with the record", async () => {
+    const node = createStateNode("resource-a", { retired: [instance] });
+    const backend = new MemoryStateBackend({ [node.id]: node });
+
+    await expect(backend.get(node.id)).resolves.toMatchObject({
+      retired: [instance],
+    });
+  });
+});

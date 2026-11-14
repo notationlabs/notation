@@ -6706,7 +6706,7 @@ describe("generated physical names", () => {
     runtime.close();
   });
 
-  it("creates a replacement with a new generated name, after the delete", async () => {
+  it("creates a replacement with a new generated name, and then deletes the replaced resource", async () => {
     const { Generated, remote, calls } = defineGenerated(
       "test/durable/name-replace",
     );
@@ -6727,8 +6727,8 @@ describe("generated physical names", () => {
     expect(second).not.toBe(first);
     expect(calls).toEqual([
       `create:${first}`,
-      `delete:${first}`,
       `create:${second}`,
+      `delete:${first}`,
     ]);
     expect(await runtime.state.get("queue:orders")).toMatchObject({
       params: { name: second, path: "/new/" },
@@ -6914,6 +6914,86 @@ describe("generated physical names", () => {
     runtime.close();
   });
 
+  it("keeps the replaced resource retired when the create of a create-first replace takes over a resource that find finds", async () => {
+    const remote = new Map<string, { name: string; path: string }>();
+    const calls: string[] = [];
+    const Api = resource({
+      type: "test/durable/name-find-path",
+      provider: "test",
+    })
+      .defineSchema({
+        id: {
+          presence: "required",
+          propertyType: "computed",
+          primaryKey: true,
+          value: v.string(),
+        },
+        name: {
+          presence: "required",
+          propertyType: "param",
+          value: v.string(),
+          physicalName: { maxLength: 64 },
+        },
+        path: {
+          presence: "required",
+          propertyType: "param",
+          immutable: true,
+          value: v.string(),
+        },
+      } as any)
+      .defineOperations({
+        create: (async (params: any) => {
+          const id = `api-${remote.size + 1}`;
+          remote.set(id, { name: params.name, path: params.path });
+          calls.push(`create ${id}`);
+          return { id };
+        }) as any,
+        update: (async (key: any, _patch: any, params: any) => {
+          remote.set(key.id, { name: params.name, path: params.path });
+          calls.push(`update ${key.id}`);
+        }) as any,
+        // Matches on the path, so that it finds a resource that another
+        // deploy made under another name.
+        find: (async (params: any) => {
+          const found = [...remote].find(
+            ([, item]) => item.path === params.path,
+          );
+          if (found) return { id: found[0] };
+          throw new ResourceNotFoundError(`nothing has ${params.path}`);
+        }) as any,
+        read: async (key: any) => {
+          const found = remote.get(key.id);
+          if (!found) throw new ResourceNotFoundError(`${key.id} not found`);
+          return { id: key.id, ...found };
+        },
+        delete: async (key: any) => {
+          remote.delete(key.id);
+          calls.push(`delete ${key.id}`);
+        },
+      });
+    const resources = [new Api("api", { config: { path: "/" } as any })];
+    const runtime = createRuntime(resources, "name-find-retired");
+
+    await runtime.run("deploy-1");
+    remote.set("api-2", { name: "shop--prod--api-00000000", path: "/new/" });
+    resources.splice(
+      0,
+      resources.length,
+      new Api("api", { config: { path: "/new/" } as any }),
+    );
+    await runtime.run("deploy-2");
+
+    // The takeover is followed by an update to the generated name.
+    expect(calls).toEqual(["create api-1", "update api-2", "delete api-1"]);
+    expect([...remote.keys()]).toEqual(["api-2"]);
+    expect(await runtime.state.get("api")).toMatchObject({
+      lastOperation: "update",
+      output: { id: "api-2" },
+    });
+    expect(await runtime.state.get("api")).not.toHaveProperty("retired");
+    runtime.close();
+  });
+
   it("creates the placeholder of a cycle with a generated name, and keeps the name in the later passes", async () => {
     const remote = new Map<string, string[]>();
     const calls: string[] = [];
@@ -7003,14 +7083,1011 @@ describe("generated physical names", () => {
     expect(replacement).not.toBe(name);
     expect(calls).toEqual([
       `create:${name}`,
-      `delete:${name}`,
       `create:${replacement}`,
+      `delete:${name}`,
     ]);
     expect(await runtime.state.get("queue:orders")).toMatchObject({
       lastOperation: "create",
       params: { name: replacement, path: "/" },
     });
     runtime.close();
+  });
+});
+
+describe("create-first replacement", () => {
+  /**
+   * A bus, a rule on it and a function, whose names deploy generates, and a
+   * permission on the rule, whose name comes from config. A bus or a rule
+   * can't change its `path`, and a rule or a permission can't change its
+   * parent. The provider refuses to delete a bus that a rule names as its
+   * parent, as AWS does. Each call is recorded with a label for the name,
+   * such as `bus#2` for the second bus.
+   */
+  function defineNamedWorld() {
+    const calls: string[] = [];
+    const live = new Map<string, Record<string, unknown>>();
+    const labels = new Map<string, string>();
+    const control: {
+      beforeCreate?: (params: any) => Promise<void>;
+      failCreate?: (params: any) => Error | undefined;
+      failRead?: () => Error | undefined;
+      failUpdate?: (params: any) => Error | undefined;
+      beforeDelete?: (label: string) => Promise<void>;
+      failDelete?: (label: string) => Error | undefined;
+    } = {};
+    const label = (name: string) => {
+      const known = labels.get(name);
+      if (known) return known;
+      const base = name.match(/^shop--prod--(.+)-[0-9a-f]{8}$/)?.[1];
+      const next = base
+        ? `${base}#${[...labels.values()].filter((l) => l.startsWith(`${base}#`)).length + 1}`
+        : name;
+      labels.set(name, next);
+      return next;
+    };
+    const operations = (blocks: boolean) => ({
+      create: async (params: any) => {
+        await control.beforeCreate?.(params);
+        const error = control.failCreate?.(params);
+        if (error) throw error;
+        if (live.has(params.name)) {
+          throw new ResourceAlreadyExistsError(`${params.name} exists`);
+        }
+        if (params.parent && !live.has(params.parent)) {
+          throw new Error(`${label(params.parent)} does not exist`);
+        }
+        live.set(params.name, { ...params, blocks });
+        calls.push(`create ${label(params.name)}`);
+      },
+      read: async (key: any) => {
+        const error = control.failRead?.();
+        if (error) throw error;
+        const found = live.get(key.name);
+        if (!found) throw new ResourceNotFoundError(`${key.name} not found`);
+        const { blocks: _, ...params } = found;
+        return params;
+      },
+      update: async (_key: any, _patch: any, params: any) => {
+        const error = control.failUpdate?.(params);
+        if (error) throw error;
+        live.set(params.name, { ...params, blocks });
+        calls.push(`update ${label(params.name)}`);
+      },
+      delete: async (key: any) => {
+        await control.beforeDelete?.(label(key.name));
+        const error = control.failDelete?.(label(key.name));
+        if (error) throw error;
+        const users = [...live.values()].filter(
+          (user) => user.blocks && user.parent === key.name,
+        );
+        if (users.length > 0) {
+          throw new Error(`${label(key.name)} is in use`);
+        }
+        live.delete(key.name);
+        calls.push(`delete ${label(key.name)}`);
+      },
+    });
+    const name = (generated: boolean) => ({
+      presence: "required",
+      propertyType: "param",
+      primaryKey: true,
+      value: v.string(),
+      ...(generated ? { physicalName: { maxLength: 64 } } : {}),
+    });
+    const path = {
+      presence: "optional",
+      propertyType: "param",
+      immutable: true,
+      value: v.string(),
+    };
+    // Cast: a resource declared without API types constrains every schema
+    // key to be a key of an `any` API schema, which no named key satisfies.
+    const Bus = resource({ type: "test/durable/named-bus", provider: "test" })
+      .defineSchema({ name: name(true), path } as any)
+      .defineOperations(operations(false) as any);
+    const defineChild = (
+      type: ResourceType,
+      opts: {
+        generated: boolean;
+        immutableParent: boolean;
+        blocksDeleteOf?: ResourceType[];
+      },
+    ) =>
+      resource({ type, provider: "test", blocksDeleteOf: opts.blocksDeleteOf })
+        .defineSchema({
+          name: name(opts.generated),
+          path,
+          parent: {
+            presence: "required",
+            propertyType: "param",
+            immutable: opts.immutableParent,
+            value: v.string(),
+          },
+        } as any)
+        .defineOperations(operations(Boolean(opts.blocksDeleteOf)) as any)
+        .requireDependencies<{ parent: BaseResource }>()
+        .deriveParams(({ deps }) => ({
+          parent: (deps.parent.output as any).name,
+        }));
+    // The rule lists the bus in blocksDeleteOf, as on AWS. A create-first
+    // replace of the bus doesn't use it.
+    const Rule = defineChild("test/durable/named-rule", {
+      generated: true,
+      immutableParent: true,
+      blocksDeleteOf: [Bus.type],
+    });
+    const Permission = defineChild("test/durable/named-permission", {
+      generated: false,
+      immutableParent: true,
+    });
+    const Fn = defineChild("test/durable/named-fn", {
+      generated: true,
+      immutableParent: false,
+    });
+    // The bus class after it has lost its physicalName param. Its name
+    // comes from config, so a replace of it deletes first.
+    const PlainBus = resource({ type: Bus.type, provider: "test" })
+      .defineSchema({ name: name(false), path } as any)
+      .defineOperations(operations(false) as any);
+    return { calls, live, label, control, Bus, PlainBus, Rule, Permission, Fn };
+  }
+
+  type NamedWorld = ReturnType<typeof defineNamedWorld>;
+
+  function declareBus(world: NamedWorld, busPath: string) {
+    const bus = new world.Bus("bus", { config: { path: busPath } as any });
+    const fn = new world.Fn("fn", {
+      config: {} as any,
+      dependencies: { parent: bus },
+    });
+    return [bus, fn];
+  }
+
+  function declareAll(world: NamedWorld, busPath: string) {
+    const [bus, fn] = declareBus(world, busPath);
+    const rule = new world.Rule("rule", {
+      config: {} as any,
+      dependencies: { parent: bus! },
+    });
+    const permission = new world.Permission("permission", {
+      config: { name: "permission" } as any,
+      dependencies: { parent: rule },
+    });
+    return [bus!, rule, permission, fn!];
+  }
+
+  const replaceDecisions = (events: ReconcilerEvent[]) =>
+    Object.fromEntries(
+      events
+        .filter(
+          (event) =>
+            event.event === "reconciler.deploy.decision" &&
+            event.decision === "replace",
+        )
+        .map((event: any) => [event.resourceId, event.replaceOrder]),
+    );
+
+  const retiredNames = async (
+    runtime: ReturnType<typeof createRuntime>,
+    world: NamedWorld,
+    id: string,
+  ) =>
+    ((await runtime.state.get(id))?.retired ?? []).map((instance) =>
+      world.label(instance.params.name as string),
+    );
+
+  function clearHold(
+    runtime: ReturnType<typeof createRuntime>,
+    deploymentId: string,
+    fromExecutionId: string,
+  ) {
+    return durable.clearDeploymentHold({
+      storeClient: runtime.storeClient,
+      deploymentId,
+      fromExecutionId,
+    });
+  }
+
+  it("creates the replacement first, moves the dependents to it, and deletes the replaced resources at the end", async () => {
+    const world = defineNamedWorld();
+    const resources = declareAll(world, "/");
+    const events: ReconcilerEvent[] = [];
+    const runtime = createRuntime(resources, "cbd-replace", {
+      emit: (event) => void events.push(event),
+    });
+
+    await runtime.run("deploy-1");
+    const before = await runtime.state.snapshot("bus");
+    resources.splice(0, resources.length, ...declareAll(world, "/new/"));
+    world.calls.length = 0;
+    await runtime.run("deploy-2");
+
+    // The rule has a generated name, so it is replaced create-first too. The
+    // permission's name comes from config, so it is replaced delete-first.
+    // The old rule is deleted before the old bus, which it uses.
+    expect(world.calls).toEqual([
+      "create bus#2",
+      "create rule#2",
+      "update fn#1",
+      "delete permission",
+      "create permission",
+      "delete rule#1",
+      "delete bus#1",
+    ]);
+    expect(replaceDecisions(events)).toEqual({
+      bus: "create-first",
+      rule: "create-first",
+      permission: "delete-first",
+    });
+    // No dependent was deleted before the bus because it blocks the delete.
+    expect(
+      events.filter(
+        (event) =>
+          event.event === "reconciler.operation.lifecycle" &&
+          event.reason === "dependency-replaced",
+      ),
+    ).toEqual([]);
+    expect(
+      events
+        .filter(
+          (event) =>
+            event.event === "reconciler.operation.lifecycle" &&
+            event.operation === "delete" &&
+            event.status === "success" &&
+            event.reason === "retired",
+        )
+        .map((event: any) => event.resourceId),
+    ).toEqual(["rule", "bus"]);
+    const after = await runtime.state.snapshot("bus");
+    expect(after.instanceId).toBe(before.instanceId);
+    expect(after.state).not.toHaveProperty("retired");
+    expect(after.state!.params).toMatchObject({ path: "/new/" });
+    expect(await runtime.state.get("rule")).not.toHaveProperty("retired");
+    runtime.close();
+  });
+
+  it("retires the replaced resource in the write of the replacement's creating record", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-creating");
+
+    await runtime.run("deploy-1");
+    const before = (await runtime.state.get("bus"))!;
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    let creating: Awaited<ReturnType<typeof runtime.state.get>>;
+    world.control.beforeCreate = async () => {
+      creating = await runtime.state.get("bus");
+    };
+    await runtime.run("deploy-2");
+
+    expect(creating!).toMatchObject({
+      version: before.version + 1,
+      lastOperation: "creating",
+      params: { path: "/new/" },
+      retired: [
+        {
+          config: before.config,
+          params: before.params,
+          output: before.output,
+          dependsOn: [],
+          retiredAt: expect.any(String),
+        },
+      ],
+    });
+    expect(creating!.params.name).not.toBe(before.params.name);
+    expect(await runtime.state.get("bus")).not.toHaveProperty("retired");
+    runtime.close();
+  });
+
+  it("writes back the record of the replaced resource when the create fails, and deletes nothing", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-create-fails");
+
+    await runtime.run("deploy-1");
+    const before = await runtime.state.get("bus");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    world.control.failCreate = (params) =>
+      params.path === "/new/" ? new Error("create rejected") : undefined;
+    world.calls.length = 0;
+    await expect(runtime.run("deploy-2")).rejects.toThrow("create rejected");
+
+    expect(world.calls).toEqual([]);
+    expect([...world.live.keys()].map(world.label)).toEqual(["bus#1", "fn#1"]);
+    const { version: _, ...restored } = before!;
+    expect(await runtime.state.get("bus")).toEqual({
+      ...restored,
+      version: before!.version + 2,
+      lastOperationAt: expect.any(String),
+    });
+
+    await clearHold(runtime, "cbd-create-fails", "deploy-2");
+    world.control.failCreate = undefined;
+    await runtime.run("deploy-3");
+    expect(world.calls).toEqual([
+      "create bus#2",
+      "update fn#1",
+      "delete bus#1",
+    ]);
+    runtime.close();
+  });
+
+  it("writes back the retired instances that the record listed when the create of a second replacement fails", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-create-fails-retired");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/2/"));
+    world.control.failUpdate = () => new Error("update rejected");
+    await expect(runtime.run("deploy-2")).rejects.toThrow("update rejected");
+    expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
+
+    await clearHold(runtime, "cbd-create-fails-retired", "deploy-2");
+    resources.splice(0, resources.length, ...declareBus(world, "/3/"));
+    world.control.failCreate = () => new Error("create rejected");
+    await expect(runtime.run("deploy-3")).rejects.toThrow("create rejected");
+    expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
+    expect(await runtime.state.get("bus")).toMatchObject({
+      lastOperation: "create",
+      params: { path: "/2/" },
+    });
+    runtime.close();
+  });
+
+  it("keeps the replaced resource retired when the create has an unknown outcome, and deletes it once the next deploy resolves the create", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-unknown", {
+      maxOperationAttempts: 2,
+    });
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    // The create makes the bus, but its outcome is unknown, and the lookup
+    // can't read it.
+    world.control.failCreate = (params) => {
+      if (params.path !== "/new/") return undefined;
+      world.live.set(params.name, { ...params, blocks: false });
+      return new ResourceCreationUnknownError("socket timed out");
+    };
+    world.control.failRead = () => new Error("access denied");
+    world.calls.length = 0;
+    await expect(runtime.run("deploy-2")).resolves.toMatchObject({
+      status: "suspended",
+    });
+    runtime.advance(1_000);
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      code: "EFFECT_OUTCOME_UNKNOWN",
+    });
+    expect(await runtime.state.get("bus")).toMatchObject({
+      lastOperation: "creating",
+    });
+    expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
+
+    await clearHold(runtime, "cbd-unknown", "deploy-2");
+    world.control.failCreate = undefined;
+    world.control.failRead = undefined;
+    await runtime.run("deploy-3");
+    // Deploy takes over the bus that the create made.
+    expect(world.calls).toEqual(["update fn#1", "delete bus#1"]);
+    expect([...world.live.values()].map((item) => item.path)).toEqual([
+      undefined,
+      "/new/",
+    ]);
+    expect(await runtime.state.get("bus")).not.toHaveProperty("retired");
+    runtime.close();
+  });
+
+  it("deletes a retired resource at the end of the next deploy when a deploy stops after the create, and plans it as a delete", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-stopped");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    world.control.failUpdate = () => new Error("update rejected");
+    world.calls.length = 0;
+    await expect(runtime.run("deploy-2")).rejects.toThrow("update rejected");
+    expect(world.calls).toEqual(["create bus#2"]);
+    expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
+
+    const retired = (await runtime.state.get("bus"))!.retired![0]!;
+    const plan = await createPlan({
+      resources,
+      state: runtime.state,
+      driftDetection: false,
+    });
+    expect(plan.nodes).toEqual([
+      expect.objectContaining({ id: "bus", decision: "noop" }),
+      expect.objectContaining({ id: "fn", decision: "update" }),
+      {
+        id: "bus",
+        type: world.Bus.type,
+        decision: "delete-retired",
+        retiredIndex: 0,
+        retiredAt: retired.retiredAt,
+        params: retired.params,
+        dependsOn: [],
+      },
+    ]);
+
+    // The function still uses the old bus, so deploy deletes the old bus
+    // only after it has updated the function.
+    await clearHold(runtime, "cbd-stopped", "deploy-2");
+    world.control.failUpdate = undefined;
+    await runtime.run("deploy-3");
+    expect(world.calls).toEqual([
+      "create bus#2",
+      "update fn#1",
+      "delete bus#1",
+    ]);
+    expect(await runtime.state.get("bus")).not.toHaveProperty("retired");
+    runtime.close();
+  });
+
+  it("keeps several retired instances of a resource, and deletes them oldest first", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-several");
+
+    await runtime.run("deploy-1");
+    world.control.failUpdate = () => new Error("update rejected");
+    resources.splice(0, resources.length, ...declareBus(world, "/2/"));
+    await expect(runtime.run("deploy-2")).rejects.toThrow("update rejected");
+    await clearHold(runtime, "cbd-several", "deploy-2");
+    resources.splice(0, resources.length, ...declareBus(world, "/3/"));
+    await expect(runtime.run("deploy-3")).rejects.toThrow("update rejected");
+    expect(await retiredNames(runtime, world, "bus")).toEqual([
+      "bus#1",
+      "bus#2",
+    ]);
+
+    await clearHold(runtime, "cbd-several", "deploy-3");
+    world.control.failUpdate = undefined;
+    world.calls.length = 0;
+    await runtime.run("deploy-4");
+    expect(world.calls).toEqual([
+      "update fn#1",
+      "delete bus#1",
+      "delete bus#2",
+    ]);
+    expect([...world.live.keys()].map(world.label)).toEqual(["fn#1", "bus#3"]);
+    runtime.close();
+  });
+
+  it("deletes a dependent that is no longer in code before the retired resource that it uses", async () => {
+    const world = defineNamedWorld();
+    const resources = declareAll(world, "/");
+    const runtime = createRuntime(resources, "cbd-orphan-dependent", {
+      registry: createResourceRegistry([world.Rule, world.Permission]),
+    });
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    world.calls.length = 0;
+    await runtime.run("deploy-2");
+
+    expect(world.calls).toEqual([
+      "create bus#2",
+      "update fn#1",
+      "delete permission",
+      "delete rule#1",
+      "delete bus#1",
+    ]);
+    runtime.close();
+  });
+
+  it("deletes the retired instances of an orphan just before the orphan", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-orphan-retired", {
+      registry: createResourceRegistry([world.Bus, world.Fn]),
+    });
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    world.control.failUpdate = () => new Error("update rejected");
+    await expect(runtime.run("deploy-2")).rejects.toThrow("update rejected");
+
+    await clearHold(runtime, "cbd-orphan-retired", "deploy-2");
+    resources.splice(0, resources.length);
+    world.calls.length = 0;
+    await runtime.run("deploy-3");
+    expect(world.calls).toEqual([
+      "delete fn#1",
+      "delete bus#1",
+      "delete bus#2",
+    ]);
+    expect(await runtime.state.values()).toEqual([]);
+    runtime.close();
+  });
+
+  it("fails when the provider refuses to delete a retired resource, names the dependents in code, and keeps the resource retired", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-delete-refused");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    world.control.failDelete = (label) =>
+      label === "bus#1" ? new Error("bus#1 is still in use") : undefined;
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "Cannot delete a retired instance of bus: bus#1 is still in use. These resources in code depend on bus, and deploy treats them as using its replacement: fn.",
+    );
+    expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
+
+    await clearHold(runtime, "cbd-delete-refused", "deploy-2");
+    world.control.failDelete = undefined;
+    world.calls.length = 0;
+    await runtime.run("deploy-3");
+    expect(world.calls).toEqual(["delete bus#1"]);
+    expect(await runtime.state.get("bus")).not.toHaveProperty("retired");
+    runtime.close();
+  });
+
+  it("fails with the version conflict when another writer moves the record during the delete of a retired resource", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-retired-race");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    world.control.beforeDelete = async (label) => {
+      if (label !== "bus#1") return;
+      await runtime.storeClient.updateStore({
+        definition: durable.resourceStateStore,
+        id: runtime.state.storeId("bus"),
+        updater: (draft: any) => {
+          draft.lastOperationAt = "1999-01-01T00:00:00.000Z";
+        },
+      });
+    };
+    await expect(runtime.run("deploy-2")).rejects.toMatchObject({
+      name: "VersionConflict",
+    });
+    expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
+    runtime.close();
+  });
+
+  it("resumes the delete of a retired resource after a crash that follows the remote delete", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-resume-retired", {
+      crashAfterStep: "notation:retired:bus:retired:0:delete:remote:attempt:0",
+    });
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    world.calls.length = 0;
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "simulated process crash",
+    );
+    expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
+    // The crash ends the delivery, not the execution, so the hold is kept.
+    expect(await readHolder(runtime, "cbd-resume-retired")).toBe("deploy-2");
+
+    await runtime.run("deploy-2");
+    expect(world.calls).toEqual([
+      "create bus#2",
+      "update fn#1",
+      "delete bus#1",
+    ]);
+    expect(await runtime.state.get("bus")).not.toHaveProperty("retired");
+    runtime.close();
+  });
+
+  it("deletes a record's retired instances just before the record in destroy, after the dependents in code", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-destroy");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    world.control.failUpdate = () => new Error("update rejected");
+    await expect(runtime.run("deploy-2")).rejects.toThrow("update rejected");
+
+    // The function still uses the old bus.
+    await clearHold(runtime, "cbd-destroy", "deploy-2");
+    world.calls.length = 0;
+    await runtime.destroy("destroy-1");
+    expect(world.calls).toEqual([
+      "delete fn#1",
+      "delete bus#1",
+      "delete bus#2",
+    ]);
+    expect(await runtime.state.values()).toEqual([]);
+    runtime.close();
+  });
+
+  it("deletes a record and its retired instances in destroy before a resource that a retired instance depends on and the record's resource does not", async () => {
+    const world = defineNamedWorld();
+    // In code, the rule comes before the function, so destroy deletes the
+    // function first. The old rule is on the function, and the new rule is
+    // on the bus.
+    const declare = (onFn: boolean) => {
+      const bus = new world.Bus("bus", { config: { path: "/" } as any });
+      const fn = new world.Fn("fn", {
+        config: {} as any,
+        dependencies: { parent: bus },
+      });
+      const rule = new world.Rule("rule", {
+        config: { path: onFn ? "/" : "/new/" } as any,
+        dependencies: { parent: onFn ? fn : bus },
+      });
+      return [bus, rule, fn];
+    };
+    const resources = declare(true);
+    const runtime = createRuntime(resources, "cbd-destroy-retired-edge");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declare(false));
+    world.control.failDelete = (label) =>
+      label === "rule#1" ? new Error("rule#1 is busy") : undefined;
+    await expect(runtime.run("deploy-2")).rejects.toThrow("rule#1 is busy");
+    expect(await retiredNames(runtime, world, "rule")).toEqual(["rule#1"]);
+
+    await clearHold(runtime, "cbd-destroy-retired-edge", "deploy-2");
+    world.control.failDelete = undefined;
+    world.calls.length = 0;
+    await runtime.destroy("destroy-1");
+    expect(world.calls).toEqual([
+      "delete rule#1",
+      "delete rule#2",
+      "delete fn#1",
+      "delete bus#1",
+    ]);
+    expect(await runtime.state.values()).toEqual([]);
+    runtime.close();
+  });
+
+  it("deletes a dependent that a stopped deploy did not reach in destroy before the retired instance that it uses, also when destroy reaches what that instance depends on first", async () => {
+    const world = defineNamedWorld();
+    // The old rule is on b, and the new rule is on the bus. d is on the rule.
+    // In the second deploy, b comes after d in deploy order, so destroy
+    // reaches b before d.
+    const declare = (onB: boolean) => {
+      const bus = new world.Bus("bus", { config: { path: "/" } as any });
+      const x = new world.Fn("x", {
+        config: {} as any,
+        dependencies: { parent: bus },
+      });
+      const b = new world.Fn("b", {
+        config: {} as any,
+        dependencies: { parent: x },
+      });
+      const rule = new world.Rule("rule", {
+        config: { path: onB ? "/" : "/new/" } as any,
+        dependencies: { parent: onB ? b : bus },
+      });
+      const d = new world.Fn("d", {
+        config: {} as any,
+        dependencies: { parent: rule },
+      });
+      return onB ? [bus, x, b, rule, d] : [bus, x, rule, d, b];
+    };
+    const resources = declare(true);
+    const runtime = createRuntime(resources, "cbd-destroy-unreached");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declare(false));
+    world.control.failUpdate = () => new Error("update rejected");
+    await expect(runtime.run("deploy-2")).rejects.toThrow("update rejected");
+    expect(await retiredNames(runtime, world, "rule")).toEqual(["rule#1"]);
+
+    await clearHold(runtime, "cbd-destroy-unreached", "deploy-2");
+    world.control.failUpdate = undefined;
+    world.calls.length = 0;
+    await runtime.destroy("destroy-1");
+    expect(world.calls).toEqual([
+      "delete d#1",
+      "delete rule#1",
+      "delete rule#2",
+      "delete b#1",
+      "delete x#1",
+      "delete bus#1",
+    ]);
+    expect(await runtime.state.values()).toEqual([]);
+    runtime.close();
+  });
+
+  it("fails destroy when the provider refuses to delete a retired resource, and keeps it retired", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-destroy-refused");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    world.control.failDelete = (label) =>
+      label === "bus#1" ? new Error("bus#1 is still in use") : undefined;
+    await expect(runtime.run("deploy-2")).rejects.toThrow(
+      "bus#1 is still in use",
+    );
+
+    await clearHold(runtime, "cbd-destroy-refused", "deploy-2");
+    await expect(runtime.destroy("destroy-1")).rejects.toThrow(
+      "Cannot delete a retired instance of bus: bus#1 is still in use. The instance and its record stay in state, and the next destroy tries to delete them again.",
+    );
+    expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
+    runtime.close();
+  });
+
+  it("deletes the retired instances of a class that has lost its physicalName param before a delete-first replace of the resource", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const runtime = createRuntime(resources, "cbd-lost-physical-name");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/2/"));
+    world.control.failUpdate = () => new Error("update rejected");
+    await expect(runtime.run("deploy-2")).rejects.toThrow("update rejected");
+    expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
+
+    await clearHold(runtime, "cbd-lost-physical-name", "deploy-2");
+    world.control.failUpdate = undefined;
+    const bus = new world.PlainBus("bus", {
+      config: { name: "plain-bus", path: "/3/" } as any,
+    });
+    const fn = new world.Fn("fn", {
+      config: {} as any,
+      dependencies: { parent: bus },
+    });
+    resources.splice(0, resources.length, bus, fn);
+    world.calls.length = 0;
+    await runtime.run("deploy-3");
+
+    expect(world.calls).toEqual([
+      "delete bus#1",
+      "delete bus#2",
+      "create plain-bus",
+      "update fn#1",
+    ]);
+    expect(await runtime.state.get("bus")).not.toHaveProperty("retired");
+    runtime.close();
+  });
+
+  it("deletes a dependent that blocks a delete-first replace through the edge of its retired instance, with its retired instances", async () => {
+    const world = defineNamedWorld();
+    // The old rule is on the bus, and the new rule is on the function.
+    const declare = (busPath: string, onBus: boolean) => {
+      const bus = new world.PlainBus("bus", {
+        config: { name: "plain-bus", path: busPath } as any,
+      });
+      const fn = new world.Fn("fn", {
+        config: {} as any,
+        dependencies: { parent: bus },
+      });
+      const rule = new world.Rule("rule", {
+        config: {} as any,
+        dependencies: { parent: onBus ? bus : fn },
+      });
+      return [bus, fn, rule];
+    };
+    const resources = declare("/", true);
+    const runtime = createRuntime(resources, "cbd-cascade-retired-edge");
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declare("/", false));
+    world.control.failDelete = (label) =>
+      label === "rule#1" ? new Error("rule#1 is busy") : undefined;
+    await expect(runtime.run("deploy-2")).rejects.toThrow("rule#1 is busy");
+    expect(await retiredNames(runtime, world, "rule")).toEqual(["rule#1"]);
+
+    await clearHold(runtime, "cbd-cascade-retired-edge", "deploy-2");
+    world.control.failDelete = undefined;
+    resources.splice(0, resources.length, ...declare("/new/", false));
+    world.calls.length = 0;
+    await runtime.run("deploy-3");
+
+    // Without the cascade, the provider refuses the delete of the bus, as
+    // the old rule names it as its parent.
+    expect(world.calls).toEqual([
+      "delete rule#1",
+      "delete rule#2",
+      "delete plain-bus",
+      "create plain-bus",
+      "create rule#3",
+    ]);
+    expect(await runtime.state.get("rule")).not.toHaveProperty("retired");
+    runtime.close();
+  });
+
+  it("keeps the retired instances of a record in code that an orphan with no class depends on", async () => {
+    const world = defineNamedWorld();
+    const resources = declareAll(world, "/");
+    const runtime = createRuntime(resources, "cbd-kept-by-unregistered", {
+      registry: createResourceRegistry([]),
+    });
+
+    await runtime.run("deploy-1");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    world.calls.length = 0;
+    await runtime.run("deploy-2");
+
+    // The rule and the permission have no class. The rule depends on the
+    // bus, so the sweep keeps the old bus, which the rule still uses.
+    expect(world.calls).toEqual(["create bus#2", "update fn#1"]);
+    expect(await retiredNames(runtime, world, "bus")).toEqual(["bus#1"]);
+    runtime.close();
+  });
+
+  it("in a dry run, reports both halves and changes nothing", async () => {
+    const world = defineNamedWorld();
+    const resources = declareBus(world, "/");
+    const events: ReconcilerEvent[] = [];
+    const options = {
+      dryRun: false,
+      emit: (event: ReconcilerEvent) => void events.push(event),
+    };
+    const runtime = createRuntime(resources, "cbd-dry-run", options);
+
+    await runtime.run("deploy-1");
+    const before = await runtime.state.snapshot("bus");
+    resources.splice(0, resources.length, ...declareBus(world, "/new/"));
+    options.dryRun = true;
+    world.calls.length = 0;
+    events.length = 0;
+    await runtime.run("dry-run");
+
+    expect(world.calls).toEqual([]);
+    expect(await runtime.state.snapshot("bus")).toEqual(before);
+    expect(
+      events
+        .filter(
+          (event) =>
+            event.event === "reconciler.operation.lifecycle" &&
+            event.status === "dry-run",
+        )
+        .map((event: any) => `${event.operation} ${event.resourceId}`),
+    ).toEqual(["create bus", "delete bus"]);
+    runtime.close();
+  });
+
+  describe("in a dependency cycle", () => {
+    /**
+     * Workers whose names deploy generates, and which bind each other by
+     * name. The provider refuses the delete of a Worker that another Worker
+     * binds, unless that Worker is one of the dependents that deploy passes
+     * to the delete.
+     */
+    function defineWorkers() {
+      const remote = new Map<string, { path: string; bindings: string[] }>();
+      const calls: string[] = [];
+      const labels = new Map<string, string>();
+      const label = (name: string) => {
+        if (!labels.has(name)) {
+          const base = name.match(/^shop--prod--(.+)-[0-9a-f]{8}$/)![1]!;
+          const count = [...labels.values()].filter((known) =>
+            known.startsWith(`${base}#`),
+          ).length;
+          labels.set(name, `${base}#${count + 1}`);
+        }
+        return labels.get(name)!;
+      };
+      const put = (verb: string, params: any) => {
+        const bindings: string[] = params.bindings ?? [];
+        remote.set(params.name, { path: params.path, bindings });
+        calls.push(
+          `${verb} ${label(params.name)} [${bindings.map(label).join(", ")}]`,
+        );
+      };
+      const Worker = resource({
+        type: "test/durable/cbd-worker",
+        provider: "test",
+        deleteTakesDependents: true,
+      })
+        // Cast: see defineNamedWorld.
+        .defineSchema({
+          name: {
+            propertyType: "param",
+            presence: "required",
+            primaryKey: true,
+            value: v.string(),
+            physicalName: { maxLength: 64 },
+          },
+          path: {
+            propertyType: "param",
+            presence: "required",
+            immutable: true,
+            value: v.string(),
+          },
+          bindings: {
+            propertyType: "param",
+            presence: "optional",
+            value: v.array(v.string()),
+            collect: (items: string[][]) => items.flat(),
+          },
+        } as any)
+        .defineOperations({
+          create: async (params: any) => put("create", params),
+          update: async (_key: any, _patch: any, params: any) =>
+            put("update", params),
+          delete: async (
+            key: any,
+            _state: any,
+            _context: any,
+            deletion?: ResourceDeletion,
+          ) => {
+            const dependents = new Set(
+              deletion?.dependents.map(({ params }) => params.name),
+            );
+            for (const [other, { bindings }] of remote) {
+              if (dependents.has(other)) continue;
+              if (other !== key.name && bindings.includes(key.name)) {
+                throw new Error(
+                  `${label(other)} still binds ${label(key.name)}`,
+                );
+              }
+            }
+            remote.delete(key.name);
+            calls.push(`delete ${label(key.name)}`);
+          },
+        });
+      const declare = (pathA: string) => {
+        const a: BaseResource = new Worker("a", {
+          config: { path: pathA } as any,
+        });
+        const b: BaseResource = new Worker("b", {
+          config: { path: "/" } as any,
+        });
+        a.contribute({ bindings: [b.outputRef("name")] } as any);
+        b.contribute({ bindings: [a.outputRef("name")] } as any);
+        return [a, b];
+      };
+      return { calls, declare };
+    }
+
+    it("creates the replacement of a member first, and deletes the replaced member after the cycle has settled", async () => {
+      const { calls, declare } = defineWorkers();
+      const resources = declare("/");
+      const events: ReconcilerEvent[] = [];
+      const runtime = createRuntime(resources, "cbd-cycle", {
+        emit: (event) => void events.push(event),
+      });
+
+      await runtime.run("deploy-1");
+      resources.splice(0, resources.length, ...declare("/new/"));
+      calls.length = 0;
+      await runtime.run("deploy-2");
+
+      // The replacement is created with all its contributions, as no member
+      // was deleted. The other member then moves to it.
+      expect(calls).toEqual([
+        "create a#2 [b#1]",
+        "update b#1 [a#2]",
+        "delete a#1",
+      ]);
+      expect(replaceDecisions(events)).toEqual({ a: "create-first" });
+      expect(await runtime.state.get("a")).not.toHaveProperty("retired");
+      runtime.close();
+    });
+
+    it("replaces two members that refer to each other in one deploy", async () => {
+      const { calls, declare } = defineWorkers();
+      const resources = declare("/");
+      const runtime = createRuntime(resources, "cbd-cycle-two");
+
+      await runtime.run("deploy-1");
+      const both = () => {
+        const [a, b] = declare("/new/");
+        b!.config.path = "/new/";
+        return [a!, b!];
+      };
+      resources.splice(0, resources.length, ...both());
+      calls.length = 0;
+      await runtime.run("deploy-2");
+
+      // The retired members refer to each other, so neither can be deleted
+      // first. Each delete is passed the other as a dependent.
+      expect(calls).toEqual([
+        "create b#2 [a#1]",
+        "create a#2 [b#2]",
+        "update b#2 [a#2]",
+        "delete a#1",
+        "delete b#1",
+      ]);
+      runtime.close();
+    });
   });
 });
 
@@ -7125,8 +8202,8 @@ describe("refs that add no dependency", () => {
       expect(second).not.toBe(first);
       expect(calls).toEqual([
         `create:${first}`,
-        `delete:${first}`,
         `create:${second}`,
+        `delete:${first}`,
       ]);
       expect(remote.get(second)).toMatchObject({
         bindings: [{ name: "SELF", service: second }],

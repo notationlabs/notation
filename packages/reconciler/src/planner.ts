@@ -18,13 +18,14 @@ import { isCycle, orderDeployUnits, type DeployUnit } from "./cycles";
 import { createBlocksDelete } from "./delete-cascade";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
-import { orphansDeployDeletes } from "./orphan-sweep";
+import { sweepSteps, sweptRecords } from "./orphan-sweep";
 import {
   assertChangeAllowed,
   assertOrphanDeleteAllowed,
   decideAction,
   getDependencyIds,
   recordedEdges,
+  retiredEdges,
   type Plan,
   type PlanNode,
 } from "./plan";
@@ -33,6 +34,7 @@ import {
   assertNamesNotSupplied,
   recordedNames,
   nameFields,
+  replaceOrder,
   unknownNames,
 } from "./physical-names";
 import { readRecordedOutputs } from "./recorded-outputs";
@@ -89,6 +91,13 @@ export async function createPlan({
   const edgesById = new Map(
     stateNodes.map((node) => [node.id, recordedEdges(node, resourceById)]),
   );
+  // The edges of the retired instances that each record lists, as deploy
+  // finds them. A retired instance that depends on a resource blocks its
+  // delete as the record does.
+  const retiredEdgesById = new Map(
+    stateNodes.map((node) => [node.id, retiredEdges(node)]),
+  );
+  const stateById = new Map(stateNodes.map((node) => [node.id, node]));
   const classes = workflowRegistry({ resources, registry });
   const blocksDelete = createBlocksDelete(stateNodes, classes);
   // The resources that deploy deletes before a replaced resource, by ID, with
@@ -125,6 +134,9 @@ export async function createPlan({
       "replaceFields" in action ? action.replaceFields : undefined;
     const replacedDependency = cascaded.get(resource.id);
     const replaced = Boolean(replaceFields || replacedDependency);
+    // A resource deleted in a cascade is deleted before it is created again,
+    // whatever its class.
+    const order = replacedDependency ? "delete-first" : replaceOrder(resource);
 
     // A resource with no `read` can't recover a missing output, and update
     // doesn't write one. A replace, including one that is only possible,
@@ -132,21 +144,33 @@ export async function createPlan({
     // known.
     if (!replaced) assertOutputsRecoverable(resource, stateNode);
 
-    if (replaceFields) {
+    // A create-first replace deletes no dependent in advance.
+    if (replaceFields && order === "delete-first") {
+      const cascadeEdges = new Map(
+        [...edgesById].map(([id, edges]) => [
+          id,
+          [...edges, ...(retiredEdgesById.get(id) ?? [])],
+        ]),
+      );
       for (const id of collectDependents(
         resource.id,
-        edgesById,
+        cascadeEdges,
         blocksDelete,
       )) {
         cascaded.set(id, resource.id);
         edgesById.delete(id);
+        retiredEdgesById.delete(id);
       }
     }
 
     // As deploy lists them for the delete: by the edges in state for a
     // resource it has not reached, and by the edges in code for one it has.
+    // A create-first replace deletes the resource after deploy has moved its
+    // dependents in code to the replacement.
     const brokenDependents =
-      replaceFields && resource.deleteTakesDependents
+      replaceFields &&
+      order === "delete-first" &&
+      resource.deleteTakesDependents
         ? [...edgesById]
             .filter(
               ([id, edges]) =>
@@ -167,6 +191,17 @@ export async function createPlan({
       params = fillPhysicalNames(known.unnamed, unknownNames(resource));
     }
     edgesById.set(resource.id, dependsOn);
+    // A delete-first replace deletes the retired instances, and a create-first
+    // replace retires the resource.
+    if (replaced && order === "delete-first") {
+      retiredEdgesById.delete(resource.id);
+    }
+    if (replaced && order === "create-first") {
+      retiredEdgesById.set(resource.id, [
+        ...retiredEdges(stateNode),
+        ...(stateNode?.dependsOn ?? dependsOn),
+      ]);
+    }
 
     // A resource deleted in a cascade is created again, so a diff of an
     // update does not apply to it.
@@ -190,6 +225,7 @@ export async function createPlan({
       decision,
       ...("diff" in action && !cascadeOnly ? { diff: action.diff } : {}),
       ...(replaceFields ? { replaceFields } : {}),
+      ...(replaced ? { replaceOrder: order } : {}),
       ...(replacedDependency ? { replacedDependency } : {}),
       ...(brokenDependents.length > 0 ? { brokenDependents } : {}),
       ...(cycle
@@ -208,35 +244,51 @@ export async function createPlan({
     };
   };
 
+  // The records whose retired instances deploy deletes with the record, in a
+  // delete-first replace or a cascade, and not at the end of the deploy.
+  const deletedWithRecord = new Set<string>();
   for (const unit of orderDeployUnits(resources)) {
     const cycle = isCycle(unit) ? unit : undefined;
     const members = await loadUnit(unit, state);
-    const start = nodes.length;
+    const unitNodes: PlanNode[] = [];
     for (const resource of members) {
-      nodes.push(await planResource(resource, cycle));
+      unitNodes.push(await planResource(resource, cycle));
     }
-    if (!cycle) continue;
-    // A member planned before a replaced member took the output of the old
-    // resource from state. Deploy updates it with the unknown output of the
-    // replacement once it is created, so it is planned again. The first plan
-    // read it for drift, so the second plan doesn't, and a member with drift
-    // keeps its first node.
-    const isReplaced = (node: PlanNode) =>
-      node.decision === "replace" || node.decision === "drift-replace";
-    const last = nodes.slice(start).findLastIndex(isReplaced);
-    for (let index = 0; index < last; index += 1) {
-      const node = nodes[start + index]!;
-      if (node.decision !== "noop" && node.decision !== "update") continue;
-      nodes[start + index] = await planResource(members[index]!, cycle, false);
+    if (cycle) {
+      // A member planned before a replaced member took the output of the old
+      // resource from state. Deploy updates it with the unknown output of the
+      // replacement once it is created, so it is planned again. The first
+      // plan read it for drift, so the second plan doesn't, and a member with
+      // drift keeps its first node.
+      const isReplaced = (node: PlanNode) =>
+        node.decision === "replace" || node.decision === "drift-replace";
+      const last = unitNodes.findLastIndex(isReplaced);
+      for (let index = 0; index < last; index += 1) {
+        const node = unitNodes[index]!;
+        if (node.decision !== "noop" && node.decision !== "update") continue;
+        unitNodes[index] = await planResource(members[index]!, cycle, false);
+      }
+    }
+    for (const node of unitNodes) {
+      if (node.replaceOrder === "delete-first") {
+        deletedWithRecord.add(node.id);
+        nodes.push(...retiredNodes(stateById.get(node.id)));
+      }
+      nodes.push(node);
     }
   }
 
   const inCode = new Set(resourceById.keys());
-  for (const stateNode of orphansDeployDeletes(stateNodes, inCode, classes)) {
-    assertOrphanDeleteAllowed(classes, stateNode);
+  const { swept, edgesById: sweptEdges } = sweptRecords(stateNodes, inCode);
+  const steps = sweepSteps(swept, classes, sweptEdges, new Set());
+  for (const { node, orphan, Resource } of steps) {
+    if (orphan && Resource) assertOrphanDeleteAllowed(classes, node);
   }
-  for (const stateNode of stateNodes) {
-    if (inCode.has(stateNode.id)) continue;
+  // The retired instances and the orphans, in the order of the sweep. An
+  // orphan that the sweep keeps is still planned as a delete, after them.
+  const plannedOrphans = new Set<string>();
+  const pushOrphan = (stateNode: StateNode) => {
+    plannedOrphans.add(stateNode.id);
     nodes.push({
       id: stateNode.id,
       type: stateNode.type,
@@ -244,9 +296,33 @@ export async function createPlan({
       params: stateNode.params,
       dependsOn: stateNode.dependsOn ?? [],
     });
+  };
+  for (const { node, orphan, Resource } of steps) {
+    if (Resource && !deletedWithRecord.has(node.id)) {
+      nodes.push(...retiredNodes(node));
+    }
+    if (orphan) pushOrphan(node);
+  }
+  for (const stateNode of stateNodes) {
+    if (!inCode.has(stateNode.id) && !plannedOrphans.has(stateNode.id)) {
+      pushOrphan(stateNode);
+    }
   }
 
   return { createdAt: new Date().toISOString(), nodes };
+}
+
+/** A `delete-retired` node for each retired instance that `node` lists. */
+function retiredNodes(node: StateNode | undefined): PlanNode[] {
+  return (node?.retired ?? []).map((instance, index) => ({
+    id: node!.id,
+    type: node!.type,
+    decision: "delete-retired",
+    retiredIndex: index,
+    retiredAt: instance.retiredAt,
+    params: instance.params,
+    dependsOn: instance.dependsOn,
+  }));
 }
 
 /**

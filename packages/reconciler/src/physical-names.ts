@@ -8,6 +8,7 @@ import {
   type PhysicalNameRule,
 } from "@notation/resource";
 import type { StateNode } from "@notation/state";
+import type { ReplaceOrder } from "./events";
 
 type NameField = { field: string; rule: PhysicalNameRule };
 
@@ -18,6 +19,16 @@ export function nameFields(resource: BaseResource): NameField[] {
       ? [{ field, rule: item.physicalName }]
       : [],
   );
+}
+
+/**
+ * A replace creates first when the resource has a `physicalName` param:
+ * deploy generates a new name for the replacement, so the replacement can
+ * exist beside the resource it replaces. Any other replacement would collide
+ * with it, so it deletes first.
+ */
+export function replaceOrder(resource: BaseResource): ReplaceOrder {
+  return nameFields(resource).length > 0 ? "create-first" : "delete-first";
 }
 
 /**

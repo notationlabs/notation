@@ -41,6 +41,8 @@ AWS does not delete a bus that has rules. When a deploy deletes a bus, it delete
 
 This also works when the same deploy removes the last EventBridge rule in your code. Notation loads the class of the old rule from the provider package that its state record names, so it knows to delete the rule before the bus.
 
+When a deploy replaces a bus, it creates the new bus first. Each rule on the bus is then replaced, because its bus changed, and the new rule is created first too. At the end of the deploy, deploy deletes the old rules and then the old bus.
+
 A bus has no schema. One bus carries events of many types, and each function declares the schema of the events that it receives.
 
 ### `arn` and `name`

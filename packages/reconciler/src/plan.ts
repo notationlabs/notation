@@ -8,6 +8,7 @@ import {
   type ResourceType,
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
+import type { ReplaceOrder } from "./events";
 import {
   resolveResourceClass,
   type ResourceRegistry,
@@ -27,6 +28,7 @@ export type PlanDecision =
   | "drift-replace"
   | "drift-recreate"
   | "delete-orphan"
+  | "delete-retired"
   | "noop";
 
 export type PlanDiff = ParamsDiffDisplay;
@@ -38,6 +40,28 @@ export type PlanNode = {
   diff?: PlanDiff;
   replaceFields?: ReplaceField[];
   /**
+   * Set with the decisions `replace` and `drift-replace`: whether deploy
+   * creates the replacement before it deletes the resource, or deletes the
+   * resource first. A resource with a `physicalName` param creates first,
+   * unless deploy deletes it because it blocks the delete of a dependency,
+   * as `replacedDependency` says.
+   */
+  replaceOrder?: ReplaceOrder;
+  /**
+   * Set with the decision `delete-retired`, for an instance of the resource
+   * that an earlier create-first replace retired: when that replace started.
+   * The node has the ID of the resource, and the params and edges of the
+   * instance. Deploy deletes it in the sweep at the end of the deploy, or
+   * with the resource when it replaces the resource delete-first.
+   */
+  retiredAt?: string;
+  /**
+   * Set with the decision `delete-retired`: the position of the instance in
+   * its record's list of retired instances, oldest first. With `id`, it
+   * names the instance.
+   */
+  retiredIndex?: number;
+  /**
    * Set when deploy deletes this resource before it replaces a resource this
    * one depends on, directly or through other deleted resources, because
    * this resource blocks that delete. Deploy then creates it again, so it is
@@ -46,9 +70,10 @@ export type PlanNode = {
    */
   replacedDependency?: string;
   /**
-   * Set when deploy replaces the resource and passes dependents to its
-   * delete (`deleteTakesDependents`): the IDs of the declared resources whose
-   * records depend on it and that deploy does not delete first. The delete
+   * Set when deploy replaces the resource delete-first and passes
+   * dependents to its delete (`deleteTakesDependents`): the IDs of the
+   * declared resources whose records depend on it and that deploy does not
+   * delete first. The delete
    * can break their references to it, which stay broken until deploy updates
    * each of them.
    */
@@ -266,6 +291,11 @@ export function recordedEdges(
   if (node.dependsOn) return node.dependsOn;
   const resource = resourceById.get(node.id);
   return resource ? getDependencyIds(resource) : [];
+}
+
+/** The edges of the retired instances that a state record lists. */
+export function retiredEdges(node: StateNode | undefined): string[] {
+  return (node?.retired ?? []).flatMap((instance) => instance.dependsOn);
 }
 
 export function hasSameEdges(

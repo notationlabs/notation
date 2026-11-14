@@ -191,18 +191,23 @@ describe("LambdaFunctionConcurrency", () => {
         driftDetection: false,
       });
 
+      // The function is replaced create-first, under a new name, so the
+      // reservation is replaced when deploy reaches it, as its key changes.
       expect(plan.nodes).toMatchObject([
         {
           id: "lambda:orders",
           decision: "replace",
           replaceFields: [{ name: "Tags" }],
+          replaceOrder: "create-first",
         },
         {
           id: "lambda:orders:concurrency",
           decision: "replace",
-          replacedDependency: "lambda:orders",
+          replaceFields: [{ name: "FunctionName", known: false }],
+          replaceOrder: "delete-first",
         },
       ]);
+      expect(plan.nodes[1]).not.toHaveProperty("replacedDependency");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

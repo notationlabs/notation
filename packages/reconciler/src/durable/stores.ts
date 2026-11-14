@@ -36,6 +36,22 @@ const resourceRecordSchema = v.objectWithRest(
     // before a create is attempted.
     lastOperation: v.picklist(["creating", "create", "update"]),
     lastOperationAt: v.string(),
+    // Optional, because a record with no retired instances leaves it out.
+    // `objectWithRest` for the same reason as the record.
+    retired: v.optional(
+      v.array(
+        v.objectWithRest(
+          {
+            config: durableRecord,
+            params: durableRecord,
+            output: durableRecord,
+            dependsOn: v.array(v.string()),
+            retiredAt: v.string(),
+          },
+          durableValue,
+        ),
+      ),
+    ),
   },
   durableValue,
 );

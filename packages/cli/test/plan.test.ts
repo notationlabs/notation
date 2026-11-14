@@ -162,3 +162,195 @@ it("prints the dependents whose references a replacement breaks", async () => {
     "    the references from web are broken until deploy updates them, if it is replaced",
   ]);
 });
+
+it("prints the order of each replace", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "role",
+        type: "test/plan/role",
+        decision: "replace",
+        replaceFields: [{ name: "path", known: true }],
+        replaceOrder: "create-first",
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "permission",
+        type: "test/plan/permission",
+        decision: "drift-replace",
+        replaceFields: [{ name: "principal", known: true }],
+        replaceOrder: "delete-first",
+        params: {},
+        dependsOn: [],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 5)).toEqual([
+    "+/- replace test/plan/role role (create, then delete)",
+    "    path forces replacement",
+    "-/+ drift-replace test/plan/permission permission (delete, then create)",
+    "    principal forces replacement",
+  ]);
+});
+
+it("prints the delete of a retired instance, and counts it in the summary", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "role",
+        type: "test/plan/role",
+        decision: "noop",
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "role",
+        type: "test/plan/role",
+        decision: "delete-retired",
+        retiredAt: "2026-11-13T00:00:00.000Z",
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "queue",
+        type: "test/plan/queue",
+        decision: "delete-orphan",
+        params: {},
+        dependsOn: [],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1)).toEqual([
+    "- delete-retired test/plan/role role",
+    "    the instance that a replace retired at 2026-11-13T00:00:00.000Z, deleted at the end of the deploy",
+    "- delete-orphan test/plan/queue queue",
+    "\nPlan: 0 to create, 0 to update, 0 to replace, 0 to recreate, 2 to delete, 1 unchanged.",
+  ]);
+});
+
+it("prints the delete of a retired instance before a delete-first replace of its record", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "role",
+        type: "test/plan/role",
+        decision: "delete-retired",
+        retiredAt: "2026-11-13T00:00:00.000Z",
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "role",
+        type: "test/plan/role",
+        decision: "replace",
+        replaceFields: [{ name: "path", known: true }],
+        replaceOrder: "delete-first",
+        params: {},
+        dependsOn: [],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 3)).toEqual([
+    "- delete-retired test/plan/role role",
+    "    the instance that a replace retired at 2026-11-13T00:00:00.000Z, deleted before the resource is replaced",
+  ]);
+});
+
+it("reads the replace of a delete-first dependency, not its retired instance", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "rule",
+        type: "test/plan/rule",
+        decision: "delete-retired",
+        retiredAt: "2026-11-13T00:00:00.000Z",
+        params: {},
+        dependsOn: ["bus"],
+      },
+      {
+        id: "bus",
+        type: "test/plan/bus",
+        decision: "delete-retired",
+        retiredAt: "2026-11-13T00:00:00.000Z",
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "rule",
+        type: "test/plan/rule",
+        decision: "replace",
+        replaceOrder: "delete-first",
+        replacedDependency: "bus",
+        params: {},
+        dependsOn: ["bus"],
+      },
+      {
+        id: "bus",
+        type: "test/plan/bus",
+        decision: "replace",
+        replaceFields: [{ name: "name", known: true }],
+        replaceOrder: "delete-first",
+        params: {},
+        dependsOn: [],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 7)).toEqual([
+    "- delete-retired test/plan/rule rule",
+    "    the instance that a replace retired at 2026-11-13T00:00:00.000Z, deleted before the resource is replaced",
+    "- delete-retired test/plan/bus bus",
+    "    the instance that a replace retired at 2026-11-13T00:00:00.000Z, deleted before the resource is replaced",
+    "-/+ replace test/plan/rule rule (delete, then create)",
+    "    deleted before bus is replaced",
+  ]);
+});
+
+it("writes the order of a replace in the JSON plan", async () => {
+  const node = {
+    id: "role",
+    type: "test/plan/role",
+    decision: "replace" as const,
+    replaceOrder: "create-first" as const,
+    params: {},
+    dependsOn: [],
+  };
+  planApp.mockResolvedValueOnce({ createdAt: "", nodes: [node] });
+  const chunks: string[] = [];
+  const write = vi
+    .spyOn(process.stdout, "write")
+    .mockImplementation((chunk) => chunks.push(String(chunk)) > 0);
+
+  try {
+    await plan(deployment, { json: true, logger: { ...console } });
+  } finally {
+    write.mockRestore();
+  }
+
+  const output = chunks.join("");
+  expect(JSON.parse(output).nodes).toEqual([node]);
+});

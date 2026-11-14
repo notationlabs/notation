@@ -1,5 +1,8 @@
 import { useState, useEffect } from "react";
 import { BaseResource } from "@notation/core";
+import type { RetiredInstance } from "@notation/state";
+
+export type DashboardResource = BaseResource & { retired?: RetiredInstance[] };
 
 export const useRemoteState = () => {
   const [state, setState] = useState({});
@@ -16,5 +19,5 @@ export const useRemoteState = () => {
     };
   }, []);
 
-  return state as Record<string, BaseResource>;
+  return state as Record<string, DashboardResource>;
 };

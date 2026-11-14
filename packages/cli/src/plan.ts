@@ -23,7 +23,16 @@ const decisionSymbols: Record<PlanNode["decision"], string> = {
   "drift-replace": "-/+",
   "drift-recreate": "±",
   "delete-orphan": "-",
+  "delete-retired": "-",
   noop: " ",
+};
+
+const replaceOrders: Record<
+  NonNullable<PlanNode["replaceOrder"]>,
+  { symbol: string; label: string }
+> = {
+  "create-first": { symbol: "+/-", label: " (create, then delete)" },
+  "delete-first": { symbol: "-/+", label: " (delete, then create)" },
 };
 
 export async function plan(
@@ -51,13 +60,43 @@ export async function plan(
   printPlanSummary(result, logger);
 }
 
+// A delete-first replace plans the record's retired instances before it, with
+// the same ID, so a lookup by ID skips them.
+function findRecordNode(result: Plan, id: string): PlanNode | undefined {
+  return result.nodes.find(
+    (node) => node.id === id && node.decision !== "delete-retired",
+  );
+}
+
+// A delete-first replace of the record deletes its retired instances with
+// the resource. When the replace is only possible, the sweep deletes them if
+// deploy does not replace the resource.
+function retiredDeleteTime(result: Plan, id: string): string {
+  const replace = result.nodes.find(
+    (node) => node.id === id && node.replaceOrder === "delete-first",
+  );
+  if (!replace) return "deleted at the end of the deploy";
+  const forcing = replace.replacedDependency
+    ? findRecordNode(result, replace.replacedDependency)
+    : replace;
+  return forcing?.replaceFields?.some((field) => field.known)
+    ? "deleted before the resource is replaced"
+    : "deleted before the resource is replaced, or at the end of the deploy if it is not replaced";
+}
+
 function printPlanSummary(result: Plan, logger: Logger) {
   const changedNodes = result.nodes.filter((node) => node.decision !== "noop");
 
   for (const node of changedNodes) {
+    const order = node.replaceOrder && replaceOrders[node.replaceOrder];
     logger.info(
-      `${decisionSymbols[node.decision]} ${node.decision} ${node.type} ${node.id}`,
+      `${order?.symbol ?? decisionSymbols[node.decision]} ${node.decision} ${node.type} ${node.id}${order?.label ?? ""}`,
     );
+    if (node.retiredAt) {
+      logger.info(
+        `    the instance that a replace retired at ${node.retiredAt}, ${retiredDeleteTime(result, node.id)}`,
+      );
+    }
     for (const field of node.replaceFields ?? []) {
       logger.info(
         field.known
@@ -77,9 +116,7 @@ function printPlanSummary(result: Plan, logger: Logger) {
       );
     }
     if (node.replacedDependency) {
-      const replaced = result.nodes.find(
-        ({ id }) => id === node.replacedDependency,
-      );
+      const replaced = findRecordNode(result, node.replacedDependency);
       // Deploy deletes the dependent only if it replaces the dependency.
       const certain = replaced?.replaceFields?.some((field) => field.known);
       logger.info(
@@ -103,7 +140,7 @@ function printPlanSummary(result: Plan, logger: Logger) {
     `${count("update") + count("drift-update")} to update`,
     `${count("replace") + count("drift-replace")} to replace`,
     `${count("drift-recreate")} to recreate`,
-    `${count("delete-orphan")} to delete`,
+    `${count("delete-orphan") + count("delete-retired")} to delete`,
     `${count("noop")} unchanged`,
   ].join(", ");
 

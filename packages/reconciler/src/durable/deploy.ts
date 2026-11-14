@@ -1,10 +1,11 @@
+import type { StateNode } from "@notation/state";
 import { isCycle, orderDeployUnits } from "../cycles";
 import { assertDependenciesPresent } from "../dependency-graph";
-import { orphansDeployDeletes } from "../orphan-sweep";
+import { sweepSteps, sweptRecords } from "../orphan-sweep";
 import { assertOrphanDeleteAllowed, decideAction } from "../plan";
 import { loadUnit, planKnownParams } from "../planner";
 import { readRecordedOutputs } from "../recorded-outputs";
-import { workflowRegistry } from "../resource-registry";
+import { workflowRegistry, type ResourceRegistry } from "../resource-registry";
 import { reconcileCycle } from "./cycle";
 import { withDeploymentHold } from "./deployment-hold";
 import { reconcileResource, sweepOrphans } from "./reconcile";
@@ -48,7 +49,7 @@ export async function* deploy(
       );
     }
 
-    yield* sweepOrphans(step, deployOpts, "deploy");
+    yield* sweepOrphans(step, deployOpts);
   });
 }
 
@@ -87,4 +88,16 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
   )) {
     assertOrphanDeleteAllowed(registry, stateNode);
   }
+}
+
+/** The orphans that deploy's sweep deletes, in delete order. */
+function orphansDeployDeletes(
+  records: StateNode[],
+  inCode: ReadonlySet<string>,
+  registry: ResourceRegistry,
+): StateNode[] {
+  const { swept, edgesById } = sweptRecords(records, inCode);
+  return sweepSteps(swept, registry, edgesById, new Set())
+    .filter((step) => step.Resource && step.orphan)
+    .map((step) => step.node);
 }

@@ -1,14 +1,13 @@
-import { useRemoteState } from "./hooks/remote-state";
+import { useRemoteState, type DashboardResource } from "./hooks/remote-state";
 import { Header } from "./blocks/header";
 import { ResourceList } from "./blocks/resource-list";
 import { useEffect, useState } from "react";
-import { BaseResource } from "@notation/core";
 import { Resource } from "./blocks/resource";
 
 function App() {
   const state = useRemoteState();
   const resources = Object.values(state);
-  const [activeResource, setActiveResource] = useState<BaseResource>();
+  const [activeResource, setActiveResource] = useState<DashboardResource>();
 
   useEffect(() => {
     if (resources.length > 0 && !activeResource) {

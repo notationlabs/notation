@@ -24,7 +24,26 @@ export type StateNode = {
    */
   lastOperation: "creating" | "create" | "update";
   lastOperationAt: string;
+  /**
+   * The instances of the resource that a create-first replace retired and
+   * that deploy has not deleted yet, oldest first. Absent when there are
+   * none.
+   */
+  retired?: RetiredInstance[];
   [key: string]: DurableValue;
+};
+
+/**
+ * What the record held for an instance of the resource that a replacement
+ * superseded. The instance has the type and provider of its record.
+ */
+export type RetiredInstance = {
+  config: DurableObject;
+  params: DurableObject;
+  output: DurableObject;
+  dependsOn: string[];
+  /** When the replace that retired the instance started. */
+  retiredAt: string;
 };
 
 // The predicate names the "creating" operation, so that a false result
