@@ -222,7 +222,7 @@ describe("ContainerApplication", () => {
       ]),
     );
 
-    await expect(application.find!(params, "token")).resolves.toEqual({
+    await expect(application.find!(params)).resolves.toEqual({
       ApplicationId: "app1",
     });
     expect(calls[1]).toMatchObject({
@@ -236,7 +236,7 @@ describe("ContainerApplication", () => {
       ok([{ id: "x", name: "x", durable_objects: { namespace_id: "ns1" } }]),
     );
 
-    await expect(application.find!(params, "token")).rejects.toBeInstanceOf(
+    await expect(application.find!(params)).rejects.toBeInstanceOf(
       ResourceNotFoundError,
     );
   });
@@ -244,7 +244,7 @@ describe("ContainerApplication", () => {
   it("finds nothing, without listing the applications, when Cloudflare lists no namespace for the class", async () => {
     mockApi(() => ok([{ id: "app1", name: params.Name }]), []);
 
-    await expect(application.find!(params, "token")).rejects.toBeInstanceOf(
+    await expect(application.find!(params)).rejects.toBeInstanceOf(
       ResourceNotFoundError,
     );
     expect(calls).toHaveLength(1);
@@ -538,7 +538,6 @@ describe("ContainerApplication namespace", () => {
   function deployedPair(hostedNamespaceId = "sandboxes", container = true) {
     const script = new WorkerScript("worker:api", {
       config: {
-        ScriptName: "app--dev--api",
         CompatibilityDate: "2026-10-12",
         DurableObjectNamespaces: [
           { id: "counters", className: "Counter" },
@@ -556,6 +555,10 @@ describe("ContainerApplication namespace", () => {
       },
       dependencies: { script },
     });
+    script.setOutput({
+      AccountId: "acc",
+      ScriptName: "app--dev--api",
+    } as typeof script.output);
     return { script, application };
   }
 
@@ -570,7 +573,7 @@ describe("ContainerApplication namespace", () => {
     expect(ContainerApplication.blocksDeleteOf).toEqual([WorkerScript.type]);
   });
 
-  it("takes the Worker's name and the class of the hosted namespace from the Worker's config", async () => {
+  it("takes the Worker's name from its output, and the class of the hosted namespace from its config", async () => {
     const { application } = deployedPair();
 
     await expect(application.getParams()).resolves.toMatchObject({

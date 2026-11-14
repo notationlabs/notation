@@ -250,12 +250,15 @@ export const ContainerApplication = containerApplicationSchema
   .requireDependencies<ContainerApplicationDependencies>()
   .deriveParams(async ({ config, deps }) => {
     const script = deps.script.config;
+    // The Worker's name is generated, so it is in the Worker's output, not
+    // its config.
+    const { ScriptName } = deps.script.output;
     const hosted = script.DurableObjectNamespaces?.find(
       (namespace) => namespace.id === config.HostedNamespaceId,
     );
     if (!hosted) {
       throw new Error(
-        `The Worker ${script.ScriptName} hosts no Durable Object namespace with the id "${config.HostedNamespaceId}". Set HostedNamespaceId to the id of an entry in the Worker's DurableObjectNamespaces.`,
+        `The Worker ${ScriptName} hosts no Durable Object namespace with the id "${config.HostedNamespaceId}". Set HostedNamespaceId to the id of an entry in the Worker's DurableObjectNamespaces.`,
       );
     }
     if (!hosted.container) {
@@ -265,7 +268,7 @@ export const ContainerApplication = containerApplicationSchema
     }
     return {
       AccountId: accountId(),
-      ScriptName: script.ScriptName,
+      ScriptName,
       ClassName: hosted.className,
     };
   });
