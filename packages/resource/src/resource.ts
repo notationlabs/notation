@@ -170,6 +170,8 @@ export interface BaseResource {
   ) => Promise<void>;
   /** See `DefineResourceMeta.deleteTakesDependents`. */
   readonly deleteTakesDependents?: boolean;
+  /** See `DefineResourceMeta.replaceCreatesFirst`. */
+  readonly replaceCreatesFirst?: boolean;
   /** See `ResourceOperationsOptions.rejectChange`. */
   readonly rejectChange?: RejectChange<any>;
   /**
@@ -270,6 +272,7 @@ export abstract class Resource<
   abstract type: ResourceType;
   abstract provider: string;
   declare readonly deleteTakesDependents?: boolean;
+  declare readonly replaceCreatesFirst?: boolean;
   abstract schema: Schema;
   abstract create: (
     params: T["params"],
@@ -856,6 +859,14 @@ export type DefineResourceMeta = {
    */
   deleteTakesDependents?: boolean;
   /**
+   * Set when every replace gives the replacement a key that differs from the
+   * replaced resource's key, so the two can exist side by side. Deploy then
+   * replaces a resource of this type create-first, as it does a type with a
+   * `physicalName` param. A create that fails then leaves the replaced
+   * resource as it was.
+   */
+  replaceCreatesFirst?: boolean;
+  /**
    * The package or package subpath that exports this class, such as
    * `@notation/aws/resources`. Stored in state, so the class can be loaded
    * after its type is removed from code.
@@ -1045,6 +1056,7 @@ export function defineResource<ApiSchema extends DefineResourceApiSchema>(
             type = meta.type;
             static blocksDeleteOf = meta.blocksDeleteOf ?? [];
             deleteTakesDependents = meta.deleteTakesDependents ?? false;
+            replaceCreatesFirst = meta.replaceCreatesFirst ?? false;
             static rejectChange = opts.rejectChange;
             get rejectChange() {
               return SimpleResource.rejectChange;

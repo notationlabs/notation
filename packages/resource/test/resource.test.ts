@@ -38,6 +38,19 @@ describe("resource basics", () => {
     expect(Child.blocksDeleteOf).toEqual(["provider/service/parent"]);
   });
 
+  test("replaceCreatesFirst", () => {
+    const Value = resource({
+      type: "provider/service/value",
+      provider: "test",
+      replaceCreatesFirst: true,
+    })
+      .defineSchema({})
+      .defineOperations({} as any);
+
+    expect(testResource.replaceCreatesFirst).toBe(false);
+    expect(new Value("value").replaceCreatesFirst).toBe(true);
+  });
+
   test("setOutput", () => {
     testResource.setOutput({ a: 1 });
     expect(testResource.output).toEqual({ a: 1 });
