@@ -24,13 +24,29 @@ export type TokenPolicy = {
   resources: TokenResources;
 };
 
+export type TokenCondition = {
+  /** The client IP ranges, in CIDR notation, that may or may not use the token. */
+  request_ip?: { in?: string[]; not_in?: string[] };
+};
+
 export type TokenRequest = {
   name: string;
   policies: TokenPolicy[];
+  condition?: TokenCondition;
+  // null removes the time from the token.
+  expires_on?: string | null;
+  not_before?: string | null;
 };
 
 /** The fields of a token that the read uses. */
-export type Token = { policies: TokenPolicy[] };
+export type Token = {
+  policies: TokenPolicy[];
+  condition?: {
+    request_ip?: { in?: string[] | null; not_in?: string[] | null } | null;
+  } | null;
+  expires_on?: string | null;
+  not_before?: string | null;
+};
 
 export type PermissionGroup = { id: string; name: string; scopes?: string[] };
 
@@ -100,7 +116,10 @@ export async function findTokensByName(
   }
 }
 
-/** Replaces the token's name and policies. The token keeps its value. */
+/**
+ * Replaces the token's name, policies, condition and times. The token keeps
+ * its value.
+ */
 export async function updateToken(
   account: string,
   tokenId: string,
