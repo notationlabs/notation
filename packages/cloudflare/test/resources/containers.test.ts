@@ -109,7 +109,77 @@ describe("ContainerApplication", () => {
           max_instances: 5,
         },
       },
+      { method: "GET", url: `${API}/applications/app1`, body: undefined },
     ]);
+  });
+
+  describe("read after the create", () => {
+    const isRead = ({ method, url }: Call) =>
+      method === "GET" && url === `${API}/applications/app1`;
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // Moves the fake clock on until `promise` settles, and returns the fake
+    // time that passed.
+    async function elapsedUntilSettled(promise: Promise<unknown>) {
+      const start = Date.now();
+      let settled = false;
+      promise.finally(() => (settled = true)).catch(() => {});
+      for (let step = 0; !settled && step < 1_000; step++) {
+        await new Promise((resolve) => setImmediate(resolve));
+        await vi.advanceTimersByTimeAsync(50);
+      }
+      return Date.now() - start;
+    }
+
+    it("waits until Cloudflare stops reporting the new application as not found", async () => {
+      let reads = 0;
+      mockApi((call) => {
+        if (!isRead(call)) return ok({ id: "app1" });
+        reads += 1;
+        return reads <= 3
+          ? fail(404, 1609, "APPLICATION_NOT_FOUND")
+          : ok({ id: "app1" });
+      });
+
+      const created = application.create(params);
+
+      expect(await elapsedUntilSettled(created)).toBeLessThan(1_000);
+      await expect(created).resolves.toEqual({ ApplicationId: "app1" });
+      expect(calls.filter(isRead)).toHaveLength(4);
+    });
+
+    it("returns the key when Cloudflare still reports the application as not found 15 seconds after the create", async () => {
+      mockApi((call) =>
+        isRead(call)
+          ? fail(404, 1609, "APPLICATION_NOT_FOUND")
+          : ok({ id: "app1" }),
+      );
+
+      const created = application.create(params);
+
+      expect(await elapsedUntilSettled(created)).toBeGreaterThanOrEqual(15_000);
+      await expect(created).resolves.toEqual({ ApplicationId: "app1" });
+    });
+
+    // A throttled error would tell the reconciler that the create made
+    // nothing, and it would drop the record of the application.
+    it("returns the key, and doesn't throw, when the read is rate limited", async () => {
+      mockApi((call) =>
+        isRead(call) ? new Response("", { status: 429 }) : ok({ id: "app1" }),
+      );
+
+      await expect(application.create(params)).resolves.toEqual({
+        ApplicationId: "app1",
+      });
+      expect(calls.filter(isRead)).toHaveLength(1);
+    });
   });
 
   it("tries again, and makes nothing, while Cloudflare doesn't list a namespace for the class", async () => {
@@ -154,6 +224,7 @@ describe("ContainerApplication", () => {
       `${NAMESPACES}?page=1&per_page=1000`,
       `${NAMESPACES}?page=2&per_page=1000`,
       `${API}/applications`,
+      `${API}/applications/app1`,
     ]);
     expect(calls[2]!.body).toMatchObject({
       durable_objects: { namespace_id: "ns1" },

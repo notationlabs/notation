@@ -183,7 +183,7 @@ export const ContainerApplication = containerApplicationSchema
           { retryAfterMs: 5_000 },
         );
       }
-      return await cloudflareCreate(async () => {
+      const key = await cloudflareCreate(async () => {
         try {
           const application = await createApplication(params.AccountId, {
             name: params.Name,
@@ -198,6 +198,8 @@ export const ContainerApplication = containerApplicationSchema
           throw createError(params, namespaceId, error);
         }
       })();
+      await waitUntilReadable(params.AccountId, key.ApplicationId);
+      return key;
     },
 
     // Only one application can use a namespace, so the application with the
@@ -295,6 +297,35 @@ export const ContainerApplication = containerApplicationSchema
 export type ContainerApplicationInstance = InstanceType<
   typeof ContainerApplication
 >;
+
+const READABLE_WITHIN_MS = 15_000;
+const READABLE_RETRY_MS = 250;
+
+/**
+ * Waits until Cloudflare can read the application that a create made.
+ * Cloudflare sometimes reports a new application as not found for a second
+ * or two, while its list already has it. The reconciler reads the
+ * application straight after create, and fails on not found.
+ *
+ * The application exists by now, so the wait doesn't throw: an error from
+ * create would tell the reconciler that nothing was made, and it would drop
+ * the record of the application. On a read error, or after 15 seconds, it
+ * returns, and the reconciler's read reports what it finds.
+ */
+async function waitUntilReadable(
+  account: string,
+  applicationId: string,
+): Promise<void> {
+  const deadline = Date.now() + READABLE_WITHIN_MS;
+  while (Date.now() < deadline) {
+    try {
+      if (await getApplication(account, applicationId)) return;
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, READABLE_RETRY_MS));
+  }
+}
 
 /**
  * Rejects a change to the network mode, which Cloudflare refuses in a
