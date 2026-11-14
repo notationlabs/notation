@@ -6,7 +6,7 @@
 - `containers.ContainerApplication` runs the containers of a Durable Object namespace that a `WorkerScript` hosts.
 - `containers.ContainerRegistry` gives Containers the credentials to pull images from a private registry, such as AWS ECR.
 
-For now, containers can only be declared with the resources API. The Durable Object namespaces that `$worker` and `$durableObject` declare can't run containers.
+A namespace that `$durableObject` declares runs containers with the `container` option, and deploy declares the image and the application for it. See [Containers](workers.md#containers) on the Workers page. The resources below declare containers with the resources API.
 
 ## Example
 

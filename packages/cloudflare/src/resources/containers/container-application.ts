@@ -144,10 +144,8 @@ type Params = ContainerApplicationSchema["CreateParams"];
  * An application that pulls its image from a private registry should
  * `dependOn` the `ContainerRegistry` for that registry.
  *
- * `$durableObject({ container: true })` sets `container` on its namespace.
- * But `$worker` gives no access to the `WorkerScript` that it declares, so
- * for now an application can only use a namespace of a `WorkerScript` that
- * is declared with the resources API.
+ * For a `$durableObject` with `container`, `$worker` declares the
+ * application in the group of the hosting Worker.
  *
  * A change to `Configuration` starts a rollout that replaces the instances,
  * 25% of them at a time. Pin the image by its digest: a new image pushed under
