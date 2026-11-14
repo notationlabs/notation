@@ -100,18 +100,54 @@ function isRateLimited(errors: CloudflareErrorItem[]): boolean {
   );
 }
 
+type Method = "GET" | "PUT" | "POST" | "PATCH" | "DELETE";
+
 /**
  * Returns the response's `result`. Throws a throttled
  * `ResourceOperationPendingError` when the request is rate limited, so the
  * reconciler retries.
  */
 export async function cloudflare<T>(
-  method: "GET" | "PUT" | "POST" | "PATCH" | "DELETE",
+  method: Method,
   /** The path after `/client/v4`, such as `/accounts/<id>/workers/scripts`. */
   path: string,
   body?: FormData | object,
   requestHeaders: Record<string, string> = {},
 ): Promise<T> {
+  const { request, response, text } = await send(
+    method,
+    path,
+    body,
+    requestHeaders,
+  );
+  const envelope = parseEnvelope<T>(text);
+  checkResponse(request, response, envelope);
+  return envelope.result as T;
+}
+
+/**
+ * Returns the response body as text, for an endpoint whose success response
+ * is not a JSON envelope, such as a read of a KV value. An error response is
+ * an envelope, and throws as in `cloudflare`.
+ */
+export async function cloudflareText(
+  method: Method,
+  /** The path after `/client/v4`. */
+  path: string,
+): Promise<string> {
+  const { request, response, text } = await send(method, path);
+  // A success body is the stored value, which can itself look like an
+  // envelope, so it is parsed only for an error status.
+  checkResponse(request, response, response.ok ? {} : parseEnvelope(text));
+  return text;
+}
+
+async function send(
+  method: Method,
+  path: string,
+  body?: FormData | object,
+  requestHeaders: Record<string, string> = {},
+): Promise<{ request: string; response: Response; text: string }> {
   const request = `${method} ${path}`;
   const headers: Record<string, string> = {
     ...requestHeaders,
@@ -126,16 +162,14 @@ export async function cloudflare<T>(
   }
   // The timeout also covers reading the body, so the body is read inside
   // the try.
-  let response: Response;
-  let text: string;
   try {
-    response = await fetch(`${API_URL}${path}`, {
+    const response = await fetch(`${API_URL}${path}`, {
       method,
       headers,
       body: payload,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    text = await response.text();
+    return { request, response, text: await response.text() };
   } catch (error) {
     if ((error as Error)?.name === "TimeoutError") {
       throw new CloudflareNetworkError(
@@ -151,13 +185,23 @@ export async function cloudflare<T>(
     }
     throw error;
   }
-  let envelope: Envelope<T> = {};
+}
+
+function parseEnvelope<T>(text: string): Envelope<T> {
   try {
-    envelope = text ? JSON.parse(text) : {};
+    return text ? JSON.parse(text) : {};
   } catch {
     // The response is not JSON, such as an HTML error page. The error then
     // has only the status.
+    return {};
   }
+}
+
+function checkResponse(
+  request: string,
+  response: Response,
+  envelope: Envelope<unknown>,
+): void {
   const errors = envelope.errors ?? [];
   const failed = !response.ok || envelope.success === false;
   if (response.status === 429 || (failed && isRateLimited(errors))) {
@@ -176,7 +220,6 @@ export async function cloudflare<T>(
   if (failed) {
     throw new CloudflareApiError(request, response.status, errors);
   }
-  return envelope.result as T;
 }
 
 /**
