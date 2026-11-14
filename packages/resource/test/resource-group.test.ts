@@ -110,7 +110,7 @@ it("collects resources", async () => {
 });
 
 it("collects a resource that is in no group", async () => {
-  let resource!: TestResource;
+  let resource!: InstanceType<typeof TestResource>;
   const graph = await collectResourceGraph(() => {
     resource = new TestResource("loose", { config: testResourceConfig });
   });
@@ -120,8 +120,8 @@ it("collects a resource that is in no group", async () => {
 });
 
 it("sets the group of a collected resource when a group adds it", async () => {
-  let first!: TestResource;
-  let second!: TestResource;
+  let first!: InstanceType<typeof TestResource>;
+  let second!: InstanceType<typeof TestResource>;
   let group!: TestResourceGroup;
   const graph = await collectResourceGraph(() => {
     first = new TestResource("first", { config: testResourceConfig });
