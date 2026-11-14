@@ -44,58 +44,40 @@ const workerModule = `
 
 // Cloudflare refuses an application name with two consecutive dashes, so the
 // name doesn't follow the <app>--<stage>-- form of the Worker's name.
-// Only resources that a group adds are deployed, so the module declares
-// the resources in a group.
 const infraModule = (settings: {
   maxInstances: number;
   configuration: Record<string, unknown>;
 }) => `
   import { containers, workers } from "@notation/cloudflare/resources";
-  import { ResourceGroup } from "@notation/resource";
   import { fs } from "@notation/std/resources";
 
-  class Sandbox extends ResourceGroup {
-    platform = "cloudflare";
-
-    constructor() {
-      super("Sandbox", "sandbox");
-      const code = this.add(
-        new fs.File("worker:api:code", { config: { filePath: "worker/index.js" } }),
-      );
-      const script = this.add(
-        new workers.WorkerScript("worker:api", {
-          config: {
-            CompatibilityDate: "2026-10-12",
-            Bindings: [
-              { type: "durable_object_namespace", name: "SANDBOX", class_name: "Sandbox" },
-            ],
-            DurableObjectNamespaces: [
-              { id: "sandboxes", className: "Sandbox", container: true },
-            ],
-          },
-          dependencies: { code },
-        }),
-      );
-      this.add(
-        new workers.WorkerSubdomain("worker:api:subdomain", {
-          dependencies: { script },
-        }),
-      );
-      this.add(
-        new containers.ContainerApplication("sandbox", {
-          config: {
-            Name: "${runPrefix}-sandbox",
-            HostedNamespaceId: "sandboxes",
-            MaxInstances: ${settings.maxInstances},
-            Configuration: ${JSON.stringify(settings.configuration)},
-          },
-          dependencies: { script },
-        }),
-      );
-    }
-  }
-
-  new Sandbox();
+  const code = new fs.File("worker:api:code", {
+    config: { filePath: "worker/index.js" },
+  });
+  const script = new workers.WorkerScript("worker:api", {
+    config: {
+      CompatibilityDate: "2026-10-12",
+      Bindings: [
+        { type: "durable_object_namespace", name: "SANDBOX", class_name: "Sandbox" },
+      ],
+      DurableObjectNamespaces: [
+        { id: "sandboxes", className: "Sandbox", container: true },
+      ],
+    },
+    dependencies: { code },
+  });
+  new workers.WorkerSubdomain("worker:api:subdomain", {
+    dependencies: { script },
+  });
+  new containers.ContainerApplication("sandbox", {
+    config: {
+      Name: "${runPrefix}-sandbox",
+      HostedNamespaceId: "sandboxes",
+      MaxInstances: ${settings.maxInstances},
+      Configuration: ${JSON.stringify(settings.configuration)},
+    },
+    dependencies: { script },
+  });
 `;
 
 type Application = {

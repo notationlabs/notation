@@ -58,67 +58,49 @@ const infraModule = (settings: {
   secretName: string;
 }) => `
   import { containers, workers } from "@notation/cloudflare/resources";
-  import { ResourceGroup } from "@notation/resource";
   import { fs } from "@notation/std/resources";
 
-  class Sandbox extends ResourceGroup {
-    platform = "cloudflare";
-
-    constructor() {
-      super("Sandbox", "sandbox");
-      const code = this.add(
-        new fs.File("worker:api:code", { config: { filePath: "worker/index.js" } }),
-      );
-      const script = this.add(
-        new workers.WorkerScript("worker:api", {
-          config: {
-            CompatibilityDate: "2026-10-12",
-            Bindings: [
-              { type: "durable_object_namespace", name: "SANDBOX", class_name: "Sandbox" },
-            ],
-            DurableObjectNamespaces: [
-              { id: "sandboxes", className: "Sandbox", container: true },
-            ],
-          },
-          dependencies: { code },
-        }),
-      );
-      this.add(
-        new workers.WorkerSubdomain("worker:api:subdomain", {
-          dependencies: { script },
-        }),
-      );
-      const registry = this.add(
-        new containers.ContainerRegistry("registry", {
-          config: {
-            Domain: ${JSON.stringify(settings.domain)},
-            Kind: "ECR",
-            Auth: {
-              public_credential: process.env.ECR_PULL_ACCESS_KEY_ID!,
-              private_credential: {
-                store_id: ${JSON.stringify(settings.storeId)},
-                secret_name: ${JSON.stringify(settings.secretName)},
-              },
-            },
-          },
-        }),
-      );
-      const application = this.add(
-        new containers.ContainerApplication("sandbox", {
-          config: {
-            Name: "${runPrefix}-sandbox",
-            HostedNamespaceId: "sandboxes",
-            MaxInstances: 1,
-            Configuration: { image: ${JSON.stringify(settings.image)}, instance_type: "lite" },
-          },
-          dependencies: { script },
-        }),
-      );
-      application.dependOn(registry);
-    }
-  }
-
-  new Sandbox();
+  const code = new fs.File("worker:api:code", {
+    config: { filePath: "worker/index.js" },
+  });
+  const script = new workers.WorkerScript("worker:api", {
+    config: {
+      CompatibilityDate: "2026-10-12",
+      Bindings: [
+        { type: "durable_object_namespace", name: "SANDBOX", class_name: "Sandbox" },
+      ],
+      DurableObjectNamespaces: [
+        { id: "sandboxes", className: "Sandbox", container: true },
+      ],
+    },
+    dependencies: { code },
+  });
+  new workers.WorkerSubdomain("worker:api:subdomain", {
+    dependencies: { script },
+  });
+  const registry = new containers.ContainerRegistry("registry", {
+    config: {
+      Domain: ${JSON.stringify(settings.domain)},
+      Kind: "ECR",
+      Auth: {
+        public_credential: process.env.ECR_PULL_ACCESS_KEY_ID!,
+        private_credential: {
+          store_id: ${JSON.stringify(settings.storeId)},
+          secret_name: ${JSON.stringify(settings.secretName)},
+        },
+      },
+    },
+  });
+  const application = new containers.ContainerApplication("sandbox", {
+    config: {
+      Name: "${runPrefix}-sandbox",
+      HostedNamespaceId: "sandboxes",
+      MaxInstances: 1,
+      Configuration: { image: ${JSON.stringify(settings.image)}, instance_type: "lite" },
+    },
+    dependencies: { script },
+  });
+  application.dependOn(registry);
 `;
 
 type Application = {
