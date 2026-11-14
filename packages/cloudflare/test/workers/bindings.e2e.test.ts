@@ -101,13 +101,13 @@ describeE2e("$worker bindings", () => {
     expect(names).toHaveLength(1);
     workerName = names[0]!;
 
-    expect(await poll(`${project.url(workerName)}/check`)).toMatchObject({
-      ok: true,
-      body: JSON.stringify({
-        r2: "from r2",
-        kv: "from kv",
-        config: { retries: 3, regions: ["weur"] },
-      }),
+    const checked = await poll(`${project.url(workerName)}/check`);
+    expect(checked.ok).toBe(true);
+    // Parsed, as Cloudflare doesn't keep the key order of a JSON binding.
+    expect(JSON.parse(checked.body)).toEqual({
+      r2: "from r2",
+      kv: "from kv",
+      config: { retries: 3, regions: ["weur"] },
     });
     expect(await poll(`${project.url(workerName)}/secret`)).toMatchObject({
       ok: true,
