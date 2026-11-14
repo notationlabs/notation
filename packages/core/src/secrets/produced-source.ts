@@ -28,8 +28,8 @@ export type SecretStore = {
  * such as the value of an API token. A resource's construct may expose a
  * produced source for a secret to take, and `accountToken()` keeps its own
  * internal. One secret takes it as its `source`, and the resource's create
- * writes the value to that secret's target. Deploy can't ask it for a value, so it is
- * not a `Source`.
+ * writes the value to that secret's target. Deploy can't ask it for a
+ * value, so it is not a `Source`.
  */
 export interface ProducedSource {
   "~producedSource": {
