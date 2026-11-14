@@ -298,19 +298,6 @@ describeE2e("$durableObject with a container", () => {
       await expectContainerResponse(names.api);
     }, 900_000);
 
-    it("deletes the container application, and keeps the namespace, when container is removed", async () => {
-      expect(application, "the first deploy made no application").toBeDefined();
-      writeProject({ apiHosts: false, container: false });
-      await project.notation("deploy");
-
-      expect(await applicationsWithPrefix(runPrefix)).toEqual([]);
-      expect(await namespaceIdOf(names.jobs, "Sandbox")).toBe(
-        application.durable_objects?.namespace_id,
-      );
-    }, 600_000);
-
-    // Deploy uploads the Worker without the class in `containers` before it
-    // deletes the application, which still uses the namespace.
     it("deletes the container application when container is removed, and keeps the namespace", async () => {
       expect(application, "the first deploy made no application").toBeDefined();
       writeProject({ apiHosts: false, container: false });
