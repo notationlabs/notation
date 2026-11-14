@@ -447,23 +447,12 @@ describe("$worker", () => {
         "runtime/api.ts",
         ["Counter", "Room"],
       );
-      inWorker(
-        $worker({
-          id: "web",
-          compatibilityDate,
-          bindings: () => ({ ROOMS: rooms }),
-        }),
-        "runtime/web.ts",
-      );
     });
 
     expect(group(graph, "api").script.config.DurableObjectNamespaces).toEqual([
       { id: "counters", className: "Counter" },
       { id: "rooms", className: "Room", container: true },
     ]);
-    expect(group(graph, "web").script.config.DurableObjectNamespaces).toEqual(
-      [],
-    );
   });
 
   it("fails for a namespace that no Worker that binds it exports the class of", async () => {

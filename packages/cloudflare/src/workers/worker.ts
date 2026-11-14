@@ -11,7 +11,11 @@ import * as cloudflare from "src/resources";
 import { assertWorkerId, workerNames, workerResourceId } from "src/id";
 import type { SecretValueFrom } from "src/secrets/value";
 import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
-import { describeNamespace, registeredNamespace } from "./durable-object";
+import {
+  describeNamespace,
+  registeredNamespace,
+  type Registered,
+} from "./durable-object";
 import { isJsonBinding } from "./json";
 import { isWorkerSecret } from "./secret";
 import { boundSecret } from "./secrets-store";
@@ -461,7 +465,7 @@ function addHosted(
   self: Entry,
   namespaces: cloudflare.workers.HostedNamespace[],
   namespace: DurableObjectDeclaration,
-  { className, container }: { className: string; container: boolean },
+  { className, container }: Registered,
 ) {
   if (namespaces.some((hosted) => hosted.id === namespace.id)) return;
   const clash = namespaces.find((hosted) => hosted.className === className);
@@ -475,7 +479,7 @@ function addHosted(
   namespaces.push({
     id: namespace.id,
     className,
-    ...(container ? { container } : {}),
+    ...(container && { container }),
   });
 }
 

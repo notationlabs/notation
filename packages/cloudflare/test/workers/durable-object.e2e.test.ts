@@ -151,7 +151,7 @@ const sandboxWorkerModule = `
 describeE2e("$durableObject with container: true", () => {
   const project = useProject({ stage: "container" });
 
-  it("uploads the class as a container class, and hosts the namespace", async () => {
+  it("deploys a Worker that declares the class as a container class, and hosts the namespace", async () => {
     project.write("runtime/sandbox.ts", sandboxModule);
     project.write("runtime/api.ts", sandboxWorkerModule);
     await project.notation("deploy");

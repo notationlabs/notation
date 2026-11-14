@@ -29,13 +29,17 @@ export type DurableObjectDeclarationConfig<
   protect?: boolean;
   /**
    * Declares the class as a container class in the upload of the hosting
-   * Worker, so that a `ContainerApplication` can run containers for the
-   * namespace. Defaults to `false`.
+   * Worker. Defaults to `false`. No `ContainerApplication` can use the
+   * namespace yet, as `$worker` gives no access to its `WorkerScript`.
    */
   container?: boolean;
 };
 
-type Registered = { className: string; protect: boolean; container: boolean };
+export type Registered = {
+  className: string;
+  protect: boolean;
+  container: boolean;
+};
 
 // `Symbol.for`, so two installed copies of this package share it.
 const registration = Symbol.for(
