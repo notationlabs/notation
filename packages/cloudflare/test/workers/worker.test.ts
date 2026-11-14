@@ -457,12 +457,10 @@ describe("$worker", () => {
       );
     });
 
-    expect(group(graph, "api").script.config.DurableObjectNamespaces).toEqual(
-      [
-        { id: "counters", className: "Counter" },
-        { id: "rooms", className: "Room", container: true },
-      ],
-    );
+    expect(group(graph, "api").script.config.DurableObjectNamespaces).toEqual([
+      { id: "counters", className: "Counter" },
+      { id: "rooms", className: "Room", container: true },
+    ]);
     expect(group(graph, "web").script.config.DurableObjectNamespaces).toEqual(
       [],
     );
