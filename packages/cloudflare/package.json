@@ -41,6 +41,7 @@
   "devDependencies": {
     "@aws-sdk/client-ecr": "^3.1168.0",
     "@notation/cli": "workspace:*",
-    "@notation/reconciler": "workspace:*"
+    "@notation/reconciler": "workspace:*",
+    "@notation/test-utils": "workspace:*"
   }
 }

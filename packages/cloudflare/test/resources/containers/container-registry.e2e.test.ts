@@ -5,8 +5,8 @@ import {
   ECRClient,
   RepositoryNotFoundException,
 } from "@aws-sdk/client-ecr";
+import { useAccountLock } from "@notation/test-utils";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { useAccountLock } from "../../account-lock";
 import { api, describeE2e, poll, runPrefix, useProject } from "../../e2e";
 import { copyDockerHubImageToEcr } from "./ecr-image";
 
@@ -221,7 +221,10 @@ const describeWithAws = hasAwsCredentials ? describeE2e : describe.skip;
 
 describeWithAws("ContainerRegistry", () => {
   // Every run uses the same registry domain, so the run holds the lock until
-  // the record is deleted. Registered first, so it is released last.
+  // the record is deleted. Registered first, so it is released last. The
+  // hooks and tests below must finish within the lock's stale age of 60
+  // minutes, or another run takes the lock over. Their timeouts add up to
+  // about 50 minutes.
   useAccountLock("container-registry");
 
   const ecr = new ECRClient({ region });

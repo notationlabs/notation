@@ -50,8 +50,9 @@ when its tests end.
   Delete one only if it is older than 60 minutes.
 - Private registries: the `ContainerRegistry` test pulls an image from AWS
   ECR, so it also needs the AWS credentials and permissions below, and is
-  skipped without them. It holds the `container-registry` lock while it
-  manages the account's registry record for
+  skipped without them. The token also needs the Secrets Store: Edit
+  permission, and the account needs a Secrets Store. The test holds the
+  `container-registry` lock while it manages the account's registry record for
   `<aws account id>.dkr.ecr.<AWS_REGION>.amazonaws.com`. A record for that
   domain while no run holds the lock is left over, and can be deleted. So
   can a Secrets Store secret named `ne2e-<6 hex characters>-ecr`, which holds

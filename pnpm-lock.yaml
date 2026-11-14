@@ -331,6 +331,9 @@ importers:
       '@notation/reconciler':
         specifier: workspace:*
         version: link:../reconciler
+      '@notation/test-utils':
+        specifier: workspace:*
+        version: link:../test-utils
 
   packages/core:
     dependencies:
