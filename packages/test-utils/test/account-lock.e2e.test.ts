@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import {
+  type LockRecord,
   hasCloudflareCredentials,
   lockName,
   secretsStoreLocks,
@@ -23,13 +24,16 @@ describe.skipIf(!hasCloudflareCredentials())("withAccountLock", () => {
       events.push(`end ${label}`);
     };
     const options = { retryMs: 1_000, waitMs: 120_000 };
+    // Read before the cleanup, so that the test fails when a run leaks the
+    // lock.
+    let left: LockRecord | undefined;
     try {
       await Promise.all([
         withAccountLock(name, work("a"), { ...options, holder: "a" }),
         withAccountLock(name, work("b"), { ...options, holder: "b" }),
       ]);
     } finally {
-      const left = await store.read(lockName(name));
+      left = await store.read(lockName(name));
       if (left) await store.delete(left.id);
     }
     const [first, second] = events[0] === "start a" ? ["a", "b"] : ["b", "a"];
@@ -40,6 +44,6 @@ describe.skipIf(!hasCloudflareCredentials())("withAccountLock", () => {
       `end ${second}`,
     ]);
     expect(holders).toEqual([first, second]);
-    expect(await store.read(lockName(name))).toBeUndefined();
+    expect(left).toBeUndefined();
   });
 });
