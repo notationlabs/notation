@@ -480,6 +480,8 @@ const integration = new LambdaIntegration("todo-api-get-todos-integration", {
 });
 ```
 
+Infra code can construct a resource like this at the top level of a module. It is deployed with no group; see [Resource groups](#resource-groups).
+
 The ID keys the resource in state, so keep it stable. The second argument can be left out when neither `config` nor `dependencies` has a required property.
 
 Dependencies also determine deployment order: a resource is not created until all its dependencies exist.
@@ -659,6 +661,8 @@ b.contribute({
 });
 ```
 
+Both Workers are part of the deployment, though no group adds them; see [Resource groups](#resource-groups).
+
 Deploy breaks the cycle at a placeholder. It creates the placeholder first, without the contributions that refer to the other members of the cycle. It creates the other members, and then updates the placeholder with its full params:
 
 ```
@@ -720,12 +724,14 @@ Each declared resource takes an `id` from the user. The group's ID is that `id`,
 
 A resource ID is a type prefix and the IDs that the resource belongs to, joined with `:`, as `resourceId()` in `@notation/aws` builds it. For example, a Lambda's role is `lambda:<lambda id>:role`, and a queue is `sqs-queue:<queue id>`. An `id` can't contain `:`, so two resources get the same ID only when they have the same type and the same IDs. Only the last part may contain `:`, such as the path in a route's ID. The mapping from a queue to a Lambda is a resource in the `QueueGroup`, with the ID `sqs-mapping:<queue id>:<lambda id>`. API integrations and permissions are resources in the `LambdaGroup`, with IDs such as `api-integration:<api id>:<lambda id>`.
 
-`add()` records the group on the resource as `resource.group`, a `{ type, id }` pair. A resource that is in no group has `group: null`. The reconciler persists the pair with each resource's state.
+`add()` records the group on the resource as `resource.group`, a `{ type, id }` pair. A resource that is in no group has `group: null`. The reconciler persists the pair with each resource's state. The group is not part of the resource's key, so a deployed resource that moves into a group, out of one, or to another group keeps its remote resource. The next deploy writes the new group to the record without calling `update`.
 
 Groups don't declare dependencies. Edges between groups follow from the dependencies of the resources they contain, since each resource records its group.
 
 `addOnce` adds a resource unless the group already has one with the same ID, and returns the one the group holds. Use it for resources that bind two others, such as an API integration, which several call sites may create. It throws if the existing resource has a different class.
 
-During graph construction, the group and each resource added via `add()` become part of the active graph automatically. This is how a construct like `export const external = lambda({ ... })` maps to the 4–6 actual AWS resources required to run it.
+A group is optional. Every resource that is constructed while infra is evaluated joins the graph, with `group: null`, and deploy and destroy include it. The graph lists resources in the order they were constructed. When a group adds a resource that is already in the graph, `add()` sets the resource's group and leaves it in place. Adding a resource to a second group, or to the same group twice, throws.
 
-Resource groups are collected during graph construction and used by the reconciler to determine the full set of resources to deploy or destroy.
+A resource that is constructed while no graph is being collected joins no graph. If a group adds it during collection, it joins the graph then. Code that calls the reconciler directly, such as `examples/reconciler`, passes such resources in `resources`.
+
+Groups are collected during graph construction too. This is how a construct like `export const external = lambda({ ... })` maps to the 4–6 actual AWS resources required to run it, under one group.

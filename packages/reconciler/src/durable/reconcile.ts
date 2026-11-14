@@ -329,10 +329,12 @@ async function* applyAction(
         yield* recoverOutputs(step, opts, session, shared);
         return;
       }
+      const recorded = toPersistedState(session.node, dependsOn);
       if (
         !opts.dryRun &&
         (!hasSameEdges(session.node, dependsOn) ||
-          session.node.provider !== resource.provider)
+          recorded.provider !== resource.provider ||
+          !sameGroup(recorded.group, resource.group))
       ) {
         yield* rewriteRecord(session, resource, dependsOn);
       }
@@ -449,6 +451,7 @@ async function* recoverOutputs(
   if (!opts.dryRun) {
     yield* session.persist({
       ...toPersistedState(session.node, shared.dependsOn),
+      ...declaredFields(resource),
       output: resource.toState(resource.output),
     });
   }
@@ -456,8 +459,8 @@ async function* recoverOutputs(
 }
 
 /**
- * Updates `dependsOn` and `provider` in the record, without calling the
- * resource's update operation.
+ * Updates `dependsOn`, `provider` and `group` in the record, without calling
+ * the resource's update operation.
  */
 async function* rewriteRecord(
   session: Extract<ResourceStateSession, { node: StateNode }>,
@@ -466,8 +469,23 @@ async function* rewriteRecord(
 ): AsyncGenerator<any, void, any> {
   yield* session.persist({
     ...toPersistedState(session.node, dependsOn),
-    provider: resource.provider,
+    ...declaredFields(resource),
   });
+}
+
+/**
+ * The fields of a record that a deploy takes from the resource as the infra
+ * declares it, and writes even when the resource itself is not changed.
+ */
+function declaredFields(resource: BaseResource) {
+  return { provider: resource.provider, group: resource.group };
+}
+
+function sameGroup(
+  a: ResourceGroupRef | null,
+  b: ResourceGroupRef | null,
+): boolean {
+  return a?.type === b?.type && a?.id === b?.id;
 }
 
 /**

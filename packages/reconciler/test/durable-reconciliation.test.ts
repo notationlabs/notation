@@ -19,6 +19,7 @@ import {
   ValueValidationError,
   mergeContributions,
   type BaseResource,
+  type ResourceGroupRef,
   type ResourceType,
 } from "@notation/resource";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -3350,6 +3351,53 @@ describe("state from before groups had stable IDs", () => {
     await runtime.destroy("destroy-1");
 
     expect(await runtime.state.values()).toHaveLength(0);
+    runtime.close();
+  });
+});
+
+describe("moving a resource between groups", () => {
+  const create = vi.fn(async () => undefined);
+  const update = vi.fn(async () => undefined);
+  const remove = vi.fn(async () => undefined);
+  const MovedResource = resource({
+    type: "test/durable/moved",
+    provider: "test",
+  })
+    // Cast: see LegacyResource.
+    .defineSchema({
+      name: { presence: "required", propertyType: "param", value: v.string() },
+    } as any)
+    .defineOperations({ create, update, delete: remove });
+
+  function moved(group: ResourceGroupRef | null) {
+    const instance = new MovedResource("moved", { config: { name: "same" } });
+    instance.group = group;
+    return instance;
+  }
+
+  it("rewrites the group in the record without replacing the resource", async () => {
+    const resources: BaseResource[] = [moved(null)];
+    const runtime = createRuntime(resources, "moved-group");
+
+    await runtime.run("deploy-1");
+    expect(await runtime.state.get("moved")).toMatchObject({ group: null });
+    create.mockClear();
+
+    const group = { type: "Moved", id: "moved-group" };
+    resources[0] = moved(group);
+    await runtime.run("deploy-2");
+    expect(await runtime.state.get("moved")).toMatchObject({
+      group,
+      lastOperation: "create",
+    });
+
+    resources[0] = moved(null);
+    await runtime.run("deploy-3");
+    expect(await runtime.state.get("moved")).toMatchObject({ group: null });
+
+    expect(create).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
     runtime.close();
   });
 });

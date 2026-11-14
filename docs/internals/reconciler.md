@@ -379,7 +379,7 @@ Before plan or deploy does anything else, `assertDependenciesPresent` (`packages
 A dependency must be part of the deployment, because the graph ignores an edge to a resource that is not in it. Without the check, nothing would deploy the dependency, and the dependent would wait on an output that never arrives. So the check fails with:
 
 ```
-policy depends on bucket, which is not part of this deployment. Add bucket to a resource group.
+policy depends on bucket, which is not part of this deployment. Declare bucket in the infra code, or include it in the resources passed to the reconciler.
 ```
 
 Two cases pass:
