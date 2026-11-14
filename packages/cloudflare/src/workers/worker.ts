@@ -13,7 +13,7 @@ import type { Bindings, DurableObjectDeclaration, Worker } from "./declaration";
 import { describeNamespace, registeredNamespace } from "./durable-object";
 import { isJsonBinding } from "./json";
 import type { SecretValueFrom } from "src/resources/secrets-store/secrets-store-secret";
-import { isWorkerSecret, type WorkerSecretGroup } from "./secret";
+import { isWorkerSecret } from "./secret";
 import { boundSecret } from "./secrets-store";
 
 // Always set: the build imports Node's built-in modules as `node:` modules,
@@ -43,6 +43,8 @@ export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
   url?: boolean;
 };
 
+type SecretBinding = { name: string; valueFrom: SecretValueFrom };
+
 export type WorkerGroupConfig = {
   id: string;
   /** The bundle to upload, relative to the project root. */
@@ -51,7 +53,7 @@ export type WorkerGroupConfig = {
   compatibilityFlags: string[];
   bindings: cloudflare.workers.WorkerBinding[];
   /** The `secret_text` bindings, each set by a `WorkerSecret`. */
-  secrets: { name: string; valueFrom: SecretValueFrom }[];
+  secrets: SecretBinding[];
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotectedNamespaces?: string[];
@@ -210,10 +212,7 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
           ...(config.compatibilityFlags ?? []),
         ]),
         bindings: resolved.bindings,
-        secrets: resolved.secrets.map(({ name, secret }) => ({
-          name,
-          valueFrom: secret.valueFrom,
-        })),
+        secrets: resolved.secrets,
         namespaces: resolved.namespaces,
         // Undefined when empty, so that the params of a Worker deployed
         // before this option existed don't change.
@@ -223,10 +222,6 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
         boundNamespaces: resolved.bound,
         url: config.url ?? true,
       });
-      const { nameBody } = workerNames(config.id);
-      for (const { name, secret } of resolved.secrets) {
-        secret.boundBy({ nameBody, name });
-      }
       // Each service binding is a contribution, so that deploy can create
       // one of two Workers that bind each other first, without its binding.
       // A binding of the Worker to itself refers to its own name, which is
@@ -301,7 +296,7 @@ function bindingCycleError(cycle: Entry[]): Error {
 
 type ResolvedBindings = {
   bindings: cloudflare.workers.WorkerBinding[];
-  secrets: { name: string; secret: WorkerSecretGroup }[];
+  secrets: SecretBinding[];
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotected: Set<string>;
@@ -386,7 +381,8 @@ function resolveBindings(
       continue;
     }
     if (isWorkerSecret(value)) {
-      resolved.secrets.push({ name, secret: value });
+      value.boundBy({ nameBody: workerNames(self.id).nameBody, name });
+      resolved.secrets.push({ name, valueFrom: value.valueFrom });
       continue;
     }
     if (hasResourceType(value, "cloudflare/r2/R2Bucket")) {

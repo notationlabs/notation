@@ -207,6 +207,29 @@ describe("workerSecret", () => {
       );
     });
 
+    it("refuses, and writes nothing, when two Workers match one that binds it", async () => {
+      deployed = [
+        "shop--dev--api-1a2b3c4d",
+        "shop--dev--api-99999999",
+        "shop--dev--jobs-0f0f0f0f",
+      ];
+
+      await expect((await declared()).set!("hunter2")).rejects.toThrow(
+        "More than one Worker matches the Worker that binds `admin` as ADMIN: shop--dev--api-1a2b3c4d, shop--dev--api-99999999.",
+      );
+      expect(calls.filter((call) => call.method === "PUT")).toEqual([]);
+    });
+
+    it("deletes nothing, and succeeds, when no Worker that binds it is deployed", async () => {
+      deployed = ["other"];
+
+      await (
+        await declared()
+      ).delete!();
+
+      expect(calls.filter((call) => call.method === "DELETE")).toEqual([]);
+    });
+
     it("deletes the secret from each Worker that binds it", async () => {
       deployed = ["shop--dev--api-1a2b3c4d", "shop--dev--jobs-0f0f0f0f"];
 

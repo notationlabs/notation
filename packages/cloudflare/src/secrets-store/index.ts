@@ -12,9 +12,8 @@ import {
 } from "src/api/secrets-store";
 import * as cloudflare from "src/resources";
 import type { BindableSecret } from "src/workers/declaration";
+import { addSecretValue, assertSecretId } from "src/secrets/value";
 import {
-  addSecretValue,
-  assertSecretId,
   claimSecretName,
   SECRET_NAME_MAX_LENGTH,
   secretsStoreGroup,
@@ -66,10 +65,11 @@ export class SecretGroup
       scopedPhysicalName(config.id, {
         maxLength: SECRET_NAME_MAX_LENGTH,
       });
-    claimSecretName(name, describe(config));
+    const declaration = describe(config);
+    claimSecretName(name, declaration);
     super("cloudflare/secret", config.id, config);
     const { id, source, key } = config;
-    const { value, valueFrom } = addSecretValue(this, describe(config), config);
+    const { value, valueFrom } = addSecretValue(this, declaration, config);
     this.value = value;
     this.secret = this.add(
       new cloudflare.secretsStore.SecretsStoreSecret(`secret:${id}`, {

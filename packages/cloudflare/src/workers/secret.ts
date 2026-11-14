@@ -10,7 +10,7 @@ import {
 } from "src/api/workers";
 import { matchesWorkerNames } from "src/id";
 import type { SecretValueFrom } from "src/resources/secrets-store/secrets-store-secret";
-import { addSecretValue, assertSecretId } from "src/secrets-store/store";
+import { addSecretValue, assertSecretId } from "src/secrets/value";
 import type { WorkerSecret } from "./declaration";
 
 export type WorkerSecretConfig = {
@@ -69,8 +69,24 @@ export class WorkerSecretGroup
       key,
       set: async (secret) => {
         const account = accountId();
-        for (const { script, name } of await this.#targets(account)) {
-          await putScriptSecret(account, script, name, secret);
+        const targets = await this.#targets(account);
+        if (targets.length === 0) {
+          throw new Error(
+            `No deployed Worker binds the Worker secret \`${id}\`. Run \`notation deploy\` first.`,
+          );
+        }
+        const written: string[] = [];
+        for (const { script, name } of targets) {
+          try {
+            await putScriptSecret(account, script, name, secret);
+          } catch (error) {
+            if (written.length === 0) throw error;
+            throw new Error(
+              `Wrote \`${id}\` to ${written.join(", ")}, then failed on ${script}.`,
+              { cause: error },
+            );
+          }
+          written.push(script);
         }
       },
       delete: async () => {
@@ -85,26 +101,31 @@ export class WorkerSecretGroup
   /**
    * The deployed Workers that bind the secret, with the binding's name. The
    * commands don't read state, so a Worker's name, which has a random
-   * instance, is matched against its name body. Throws if there are none.
+   * instance, is matched against its name body. Throws if more than one
+   * Worker matches one binding, as a write could then reach a Worker that
+   * doesn't bind the secret.
    */
   async #targets(account: string) {
     const names = await listScriptNames(account);
-    const targets = this.#boundBy.flatMap((bound) =>
-      names
-        .filter((script) => matchesWorkerNames(script, bound))
-        .map((script) => ({ script, name: bound.name })),
-    );
-    if (targets.length === 0) {
-      throw new Error(
-        `No deployed Worker binds the Worker secret \`${this.config.id}\`. Run \`notation deploy\` first.`,
+    return this.#boundBy.flatMap((bound) => {
+      const scripts = names.filter((script) =>
+        matchesWorkerNames(script, bound),
       );
-    }
-    return targets;
+      if (scripts.length > 1) {
+        throw new Error(
+          `More than one Worker matches the Worker that binds \`${this.config.id}\` as ${bound.name}: ${scripts.join(", ")}. Notation can't tell which one the stage deployed, so it wrote nothing. Delete the Workers that are left over, and run the command again.`,
+        );
+      }
+      return scripts.map((script) => ({ script, name: bound.name }));
+    });
   }
 
   /** Records that a Worker binds the secret, for `notation secret set`. */
   boundBy(bound: BoundBy): void {
-    this.#boundBy.push(bound);
+    const recorded = this.#boundBy.some(
+      (other) => other.nameBody === bound.nameBody && other.name === bound.name,
+    );
+    if (!recorded) this.#boundBy.push(bound);
   }
 }
 
