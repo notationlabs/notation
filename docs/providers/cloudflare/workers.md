@@ -254,7 +254,7 @@ export default {
 | `id`        | Keys the namespace. Use 1 to 64 letters, digits, hyphens or underscores. It can't change while the namespace exists: see [Renaming, moving and deleting](#renaming-moving-and-deleting).                                        |
 | `class`     | The namespace's class, by name, such as `class: Counter`. Cloudflare finds the class by its export name, so the hosting Worker exports the class under the name written here.                                                   |
 | `protect`   | Defaults to `true`. Plan fails for a change that would delete a protected namespace. Plan reads the value from state, so `protect: false` takes effect after it is deployed. See [Deleting a namespace](#deleting-a-namespace). |
-| `container` | Runs a container for each object. Deploy builds the image and creates a container application for the namespace. See [Containers](#containers). |
+| `container` | Runs a container for each object. Deploy builds the image and creates a container application for the namespace. See [Containers](#containers).                                                                                 |
 
 The infra build doesn't load the class, or its imports such as `cloudflare:workers`. It replaces the class with a function of the same name.
 
@@ -401,18 +401,18 @@ For a namespace with `container`, deploy:
 2. Uploads the hosting Worker, with the class in the upload's `containers` list.
 3. Creates a container application for the namespace, with the image pinned by its digest. A later change to the image or to the size starts a rollout.
 
-| Option                 | Description                                                                                                                                                                                 |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `image.context`        | Required. The build context directory, relative to the project root.                                                                                                                        |
-| `image.dockerfile`     | The Dockerfile, relative to the project root. Defaults to `Dockerfile` in the build context.                                                                                                |
-| `image.buildArgs`      | Values for `docker build --build-arg`, by name. Don't put secrets here: Docker keeps the values in the image's history.                                                                     |
+| Option                 | Description                                                                                                                                                                              |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `image.context`        | Required. The build context directory, relative to the project root.                                                                                                                     |
+| `image.dockerfile`     | The Dockerfile, relative to the project root. Defaults to `Dockerfile` in the build context.                                                                                             |
+| `image.buildArgs`      | Values for `docker build --build-arg`, by name. Don't put secrets here: Docker keeps the values in the image's history.                                                                  |
 | `image.repository`     | The repository in the registry. Defaults to `<app>--<stage>--<id>`, with the namespace id in lower case and each run of other characters than letters and digits replaced by one hyphen. |
-| `maxInstances`         | Required. The most containers that run at once.                                                                                                                                             |
-| `instanceType`         | Such as `lite`, `basic` or `standard-1`. Set either `instanceType`, or `vcpu` and `memoryMib`. Without any of them, Cloudflare uses `lite`.                                                |
-| `vcpu`, `memoryMib`    | A custom size.                                                                                                                                                                              |
-| `diskMb`               | The disk size in MB, with `vcpu` and `memoryMib` only.                                                                                                                                      |
-| `environmentVariables` | Variables for the container, by name. Don't put secrets here: the values are stored as plain text in state and shown in plan output.                                                       |
-| `network`              | `mode` (`private` or `public`), `assignIpv4` and `assignIpv6` (`none` or `predefined`). Cloudflare can't change the mode of an application, so plan fails for a change to it.              |
+| `maxInstances`         | Required. The most containers that run at once.                                                                                                                                          |
+| `instanceType`         | Such as `lite`, `basic` or `standard-1`. Set either `instanceType`, or `vcpu` and `memoryMib`. Without any of them, Cloudflare uses `lite`.                                              |
+| `vcpu`, `memoryMib`    | A custom size.                                                                                                                                                                           |
+| `diskMb`               | The disk size in MB, with `vcpu` and `memoryMib` only.                                                                                                                                   |
+| `environmentVariables` | Variables for the container, by name. Don't put secrets here: the values are stored as plain text in state and shown in plan output.                                                     |
+| `network`              | `mode` (`private` or `public`), `assignIpv4` and `assignIpv6` (`none` or `predefined`). Cloudflare can't change the mode of an application, so plan fails for a change to it.            |
 
 The application's name is `<app>-<stage>-<id>-<hash>`. The id is put in lower case, with each run of other characters than letters and digits replaced by one hyphen. The hash is 8 hex characters of a SHA-256 of the app, stage and id, so the name is unique for each of them. Cloudflare refuses a name that contains two consecutive hyphens, so the name can't use the `<app>--<stage>--` form of Worker names. Cloudflare also refuses a name that starts with a digit, so when the app name starts with a digit, the name starts with `c-`.
 
