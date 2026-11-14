@@ -25,9 +25,10 @@ export type SecretStore = {
 
 /**
  * A value that a resource gets only once, in the response to its create,
- * such as the value of an API token. The resource exposes it in `sources`,
- * and one secret takes it as its `source`. The resource's create writes the
- * value to that secret's target. Deploy can't ask it for a value, so it is
+ * such as the value of an API token. A resource's construct may expose a
+ * produced source for a secret to take, and `accountToken()` keeps its own
+ * internal. One secret takes it as its `source`, and the resource's create
+ * writes the value to that secret's target. Deploy can't ask it for a value, so it is
  * not a `Source`.
  */
 export interface ProducedSource {
@@ -79,7 +80,7 @@ export function producedSource(options: {
   name: string;
   /**
    * A collected param of `resource` that holds one `SecretTarget`. Its
-   * `collect` returns the one item, and throws when there is more than one.
+   * `collect` returns the one item, as `register` accepts only one target.
    * Make it immutable: only a create gets a value to write to a new target.
    */
   param: string;

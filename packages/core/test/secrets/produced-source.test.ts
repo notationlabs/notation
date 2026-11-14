@@ -82,10 +82,7 @@ const Holder = resource<HolderSchema>({
         provider: v.string(),
         params: v.record(v.string(), v.any()),
       }),
-      collect: (items: unknown[]) => {
-        if (items.length > 1) throw new Error("More than one target");
-        return items[0] as SecretTarget;
-      },
+      collect: (items: unknown[]) => items[0] as SecretTarget,
     },
   } as const)
   .defineOperations({

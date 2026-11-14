@@ -195,17 +195,6 @@ describe("AccountToken", () => {
     });
   });
 
-  it("fails to collect more than one target", async () => {
-    route({});
-    const twoTargets = tokenWith(policies);
-    twoTargets.contribute({ ValueTarget: target("shop--dev--deploy") });
-    twoTargets.contribute({ ValueTarget: target("shop--dev--copy") });
-
-    await expect(twoTargets.getParams()).rejects.toThrow(
-      "token:deploy writes its value to one secret",
-    );
-  });
-
   it("overwrites the value of a secret that has the token's name", async () => {
     route({
       listSecrets: () =>

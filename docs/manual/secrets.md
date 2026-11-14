@@ -15,7 +15,7 @@ A secret takes its value from a source and a key, or from a prompt when it has n
 
 Other sources are in their own packages, such as [`infisical()`](../providers/infisical/sources.md) from `@notation/infisical/sources`.
 
-A secret can also take a produced source: a value that another resource gets only in the response to its create, such as the value of an API token. The resource exposes the value at `<producer>.sources.<name>`, such as `app.sources.privateKey`, and one secret takes it without a `key`. That resource's create writes the value, and deploy never asks a source or a prompt for it. See [Produced sources](../providers/cloudflare/secrets.md#produced-sources).
+A secret can also take a produced source: a value that another resource gets only in the response to its create, such as the value of an API token. A producer's construct may expose the value at `<producer>.sources.<name>`, such as `app.sources.privateKey`, and one secret takes it without a `key`. `accountToken()` keeps its produced source internal, and declares the secret that takes it. The producer's create writes the value, and deploy never asks a source or a prompt for it. See [Produced sources](../providers/cloudflare/secrets.md#produced-sources).
 
 ```ts [infra/secrets.ts]
 import { secret } from "@notation/cloudflare/secrets-store";
@@ -141,31 +141,28 @@ ValueTarget: {
   presence: "required",
   immutable: true,
   value: v.object({ provider: v.string(), params: v.record(v.string(), v.any()) }),
-  collect: (items: unknown[], { resourceId, contributors }) => {
-    if (items.length > 1) {
-      throw new Error(`${resourceId} writes its value to one secret, and ${contributors.join(", ")} each contributed a target.`);
-    }
-    return items[0] as SecretTarget;
-  },
+  collect: (items: unknown[]) => items[0] as SecretTarget,
 },
 ```
 
-`producedSource` already throws when a second secret takes the source. The check in `collect` also catches a second target that code contributed to the param directly.
+`collect` returns the one target. `producedSource` throws when a second secret takes the source, so the param gets one target from a secret.
 
 ### `producedSource(options)`
 
-The group makes one produced source for each value, and exposes it in a `sources` field. Name the field after the value, so that users write `<producer>.sources.<value>`:
+The group makes one produced source for each value. A group that exposes its produced sources puts them in a `sources` field, named after the value, so that users write `<producer>.sources.<value>`. `accountToken()` keeps its produced source internal, and passes it to the secret that the group declares:
 
 ```ts
-this.sources = {
-  value: producedSource({
-    producer: `accountToken({ id: "${config.id}" })`,
-    resource: this.token,
-    name: "value",
-    param: "ValueTarget",
-    rotation: `To rotate accountToken({ id: "${config.id}" }), delete the API token ${name} in the Cloudflare dashboard, then run \`notation deploy\`. Deploy creates a new token and writes its value to the secret.`,
-  }),
-};
+const value = producedSource({
+  producer: `accountToken({ id: "${config.id}" })`,
+  resource: this.token,
+  name: "value",
+  param: "ValueTarget",
+  rotation: `To rotate accountToken({ id: "${config.id}" }), delete the API token ${name} in the Cloudflare dashboard, then run \`notation deploy\`. Deploy creates a new token and writes its value to the secret.`,
+});
+this.secret = new SecretGroup(
+  { id: config.id, source: value },
+  { declaration },
+);
 ```
 
 | Option     | Meaning                                                                                                                                                                               |

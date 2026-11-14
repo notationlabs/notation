@@ -61,10 +61,7 @@ export const FakeKeyPair = fakeKeyPair
       presence: "required",
       immutable: true,
       value: targetSchema,
-      collect: (items: unknown[]) => {
-        if (items.length > 1) throw new Error("More than one target");
-        return items[0] as SecretTarget;
-      },
+      collect: (items: unknown[]) => items[0] as SecretTarget,
     },
     KeyId: {
       propertyType: "computed",

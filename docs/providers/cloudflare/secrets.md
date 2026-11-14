@@ -62,7 +62,7 @@ export default {
 
 Some resources get a value only once, in the response to their create. For example, Cloudflare returns the value of an API token only when it creates the token. Deploy can't ask such a resource for the value later, so the value can't come from a source such as `env`.
 
-A resource like this is a producer. A producer exposes each such value as a produced source, at `<producer>.sources.<name>`. One `secret()` takes the produced source as its `source`, without a `key`, and the producer's create writes the value to that secret. `accountToken()` is a producer: it declares the token and the secret that takes the token's value, so a config doesn't declare that secret.
+A resource like this is a producer. Its construct may expose each such value as a produced source, at `<producer>.sources.<name>`. One `secret()` takes the produced source as its `source`, without a `key`, and the producer's create writes the value to that secret. `accountToken()` is a producer that keeps its produced source internal: it declares the token and the secret that takes the token's value, so a config doesn't declare that secret.
 
 Deploy creates the resources in this order: the store, the producer, the secret, and then a Worker that binds the secret. The secret's create writes nothing. It checks that the secret exists in the store, and records it.
 

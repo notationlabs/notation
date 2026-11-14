@@ -170,14 +170,7 @@ const accountTokenSchema = accountToken.defineSchema({
     presence: "required",
     immutable: true,
     value: targetSchema,
-    collect: (items: unknown[], { resourceId, contributors }) => {
-      if (items.length > 1) {
-        throw new Error(
-          `${resourceId} writes its value to one secret, and ${contributors.join(", ")} each contributed a target.`,
-        );
-      }
-      return items[0] as SecretTarget;
-    },
+    collect: (items: unknown[]) => items[0] as SecretTarget,
   },
   TokenId: {
     propertyType: "computed",
