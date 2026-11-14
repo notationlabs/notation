@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { recordSecretValue } from "@notation/core";
+import { writeSecretValues, type SecretTarget } from "@notation/core";
 import {
   containsOutputRef,
   planLookup,
@@ -9,11 +9,6 @@ import {
 } from "@notation/resource";
 import { sortedJson } from "@notation/utils";
 import { cloudflareCreate } from "src/api/client";
-import {
-  deleteSecret,
-  findSecretByName,
-  writeSecret,
-} from "src/api/secrets-store";
 import {
   createToken,
   deleteToken,
@@ -85,25 +80,30 @@ const timestampSchema = v.pipe(
   ),
 );
 
+const targetSchema = v.object({
+  provider: v.string(),
+  params: v.record(v.string(), v.any()),
+});
+
 type AccountTokenParams = {
   AccountId: string;
-  StoreId: string;
-  /** The token's name, and the name of the secret that holds its value. */
   Name: string;
   Policies: AccountTokenPolicy[];
   Condition?: AccountTokenCondition;
   ExpiresOn?: string;
   NotBefore?: string;
+  /** The secrets that create writes the token's value to. */
+  ValueTargets: SecretTarget[];
 };
 
 export type AccountTokenSchema = {
-  Key: { AccountId: string; TokenId: string; StoreId: string; Name: string };
+  Key: { AccountId: string; TokenId: string; Name: string };
   CreateParams: AccountTokenParams;
   UpdateParams: Pick<
     AccountTokenParams,
     "Policies" | "Condition" | "ExpiresOn" | "NotBefore"
   >;
-  ReadResult: { SecretId: string };
+  ReadResult: {};
 };
 
 export type AccountTokenDependencies = {
@@ -117,13 +117,6 @@ const accountToken = resource<AccountTokenSchema>({
 
 const accountTokenSchema = accountToken.defineSchema({
   AccountId: {
-    propertyType: "param",
-    presence: "required",
-    immutable: true,
-    secondaryKey: true,
-    value: v.string(),
-  },
-  StoreId: {
     propertyType: "param",
     presence: "required",
     immutable: true,
@@ -167,33 +160,39 @@ const accountTokenSchema = accountToken.defineSchema({
     presence: "optional",
     value: timestampSchema,
   },
+  /**
+   * The secrets that create writes the token's value to. Each secret whose
+   * source is the token's `sources.value` contributes its target. It is
+   * immutable, because only a create gets a value to write to a new target.
+   */
+  ValueTargets: {
+    propertyType: "param",
+    presence: "required",
+    immutable: true,
+    value: v.array(targetSchema),
+    collect: (items: unknown[]) => items.flat() as SecretTarget[],
+  },
   TokenId: {
     propertyType: "computed",
     presence: "required",
     primaryKey: true,
     value: v.string(),
   },
-  SecretId: {
-    propertyType: "computed",
-    presence: "required",
-    value: v.string(),
-  },
 } as const);
 
 /**
- * An account-owned API token, whose value is kept in a secret of the
- * account's Secrets Store. The secret has the token's name. Its record holds
- * where the secret is, and never the value.
+ * An account-owned API token. Cloudflare returns its value only in the
+ * create's response, so create writes the value to each secret in
+ * `ValueTargets` in the same step. The record holds where the secrets are,
+ * and never the value. When a write fails, create deletes the values it
+ * wrote and the new token.
  *
- * Create writes the new token's value into the secret in the same step,
- * because Cloudflare returns the value only in the create's response. A
- * create with an unknown outcome deletes the tokens with the name, and runs
- * again. A change to the policies, the condition or the times updates the
- * token in place, and the token keeps its value. Delete deletes the token
- * and its secret.
- *
- * Read fails when the secret is missing, as the value can't be fetched
- * again. The token has to be rotated.
+ * A create with an unknown outcome deletes the tokens with the name, and
+ * runs again. A change to the policies, the condition or the times updates
+ * the token in place, and the token keeps its value. A change to the name
+ * or the targets replaces the token, which writes a new value to every
+ * target. Delete deletes the token and leaves the secrets: each secret's
+ * resource deletes its own value.
  *
  * A change made in the dashboard to the policies or the IP ranges is seen
  * as drift, and the deploy updates the token back to the config. A removed
@@ -211,16 +210,12 @@ export const AccountToken = accountTokenSchema
         expires_on: params.ExpiresOn,
         not_before: params.NotBefore,
       });
-      recordSecretValue(token.value);
       try {
-        await writeSecret(
-          params.AccountId,
-          params.StoreId,
-          params.Name,
-          token.value,
+        await writeSecretValues(
+          params.ValueTargets.map((target) => [target, token.value]),
         );
       } catch (error) {
-        // The value is lost when the write fails, so the token is deleted,
+        // The value is lost when a write fails, so the token is deleted,
         // and the next deploy creates a new one.
         try {
           await deleteToken(params.AccountId, token.id);
@@ -253,19 +248,10 @@ export const AccountToken = accountTokenSchema
       if (!token) {
         throw new ResourceNotFoundError("API token was not found");
       }
-      const secret = await findSecretByName(
-        key.AccountId,
-        key.StoreId,
-        key.Name,
-      );
-      if (!secret) {
-        throw new Error(
-          `The secret ${key.Name}, which holds the value of the API token ${key.TokenId}, isn't in the Secrets Store ${key.StoreId}. Cloudflare returns a token's value only when it creates the token, so the secret can't be written again. Rotate the token: change the id of its accountToken() declaration, and deploy.`,
-        );
-      }
+      // A missing secret is left to the secret's read, which reports it as
+      // drift.
       return {
         ...key,
-        SecretId: secret.id,
         Policies: sortedPolicies(
           token.policies.map((policy) => ({
             effect: policy.effect,
@@ -293,14 +279,17 @@ export const AccountToken = accountTokenSchema
       });
     },
 
+    // Each secret's own resource deletes its value, so a replace or a removed
+    // token leaves the secrets in place. A delete of the secrets here would
+    // empty them until the new create writes them, and leave them empty if
+    // that create fails.
     delete: async (key) => {
       await deleteToken(key.AccountId, key.TokenId);
-      await deleteSecret(key.AccountId, key.StoreId, key.Name);
     },
   })
   .requireDependencies<AccountTokenDependencies>()
   .deriveParams(async ({ config, deps }) => {
-    const { AccountId, StoreId } = deps.store.output;
+    const { AccountId } = deps.store.output;
     const Policies = await resolvePolicies(AccountId, config.Policies);
     const derived: Partial<AccountTokenParams> = { Policies };
     // Config still holds output refs when this runs. `planLookup` replaces
@@ -317,7 +306,10 @@ export const AccountToken = accountTokenSchema
     }
     // The cast keeps the derived values out of the declared return type, so
     // that config keeps Policies with the groups' names.
-    return { AccountId, StoreId, ...derived } as typeof deps.store.output;
+    return { AccountId, ...derived } as Pick<
+      typeof deps.store.output,
+      "AccountId"
+    >;
   });
 
 export type AccountTokenInstance = InstanceType<typeof AccountToken>;

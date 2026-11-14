@@ -56,6 +56,22 @@ When deploy replaces a resource delete-first, and the provider can force its del
 
 If the deploy fails between the delete and those updates, the references stay broken until a later deploy succeeds. Of the classes in Notation's provider packages, only the Cloudflare Worker's delete can be forced, and a Worker is replaced create-first, so its plan has no such line. See [Deleting a Worker that other Workers bind](../providers/cloudflare/workers.md#deleting-a-worker-that-other-workers-bind).
 
+When deploy replaces or recreates a resource that writes the value of secrets, such as an API token from `accountToken()`, the new resource writes a new value to each of those secrets. The plan prints the ids of the secrets under the resource:
+
+```
+-/+ replace cloudflare/tokens/AccountToken token:deploy (delete, then create)
+    rotation: writes a new value to the secrets deploy, ci-token
+```
+
+With one secret, the line reads `rotation: writes a new value to the secret deploy`. A token that was deleted in the Cloudflare dashboard shows as `drift-recreate`, with the same line:
+
+```
+± drift-recreate cloudflare/tokens/AccountToken token:deploy
+    rotation: writes a new value to the secret deploy
+```
+
+See [Produced sources](../providers/cloudflare/secrets.md#produced-sources).
+
 When an earlier deploy started the create of a resource and did not finish it, state holds a `creating` record for the resource. The plan prints a line under the create:
 
 ```

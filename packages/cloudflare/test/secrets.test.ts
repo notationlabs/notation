@@ -33,6 +33,9 @@ import * as runtime from "src/workers/runtime";
 
 const compatibilityDate = "2026-10-12";
 
+const TOKEN_ROTATION =
+  'To rotate accountToken({ id: "deploy" }), delete the API token shop--dev--deploy in the Cloudflare dashboard, then run `notation deploy`. Deploy creates a new token and writes its value to each secret that takes it.';
+
 beforeEach(() => setConfigFile("/some/project/notation.config.ts"));
 afterEach(() => {
   setConfigFile(undefined);
@@ -199,10 +202,16 @@ describe("secret", () => {
     const declared = await declare(() => {
       secret({ id: "stripe-key", source: vault, key: "STRIPE_KEY" });
       secret({ id: "sentry", name: "SENTRY_DSN" });
-      accountToken({ id: "deploy", policies });
+      const token = accountToken({ id: "deploy", policies });
+      secret({ id: "copy", name: "DEPLOY_TOKEN", source: token.sources.value });
     });
 
-    expect([...declared.keys()]).toEqual(["stripe-key", "sentry", "deploy"]);
+    expect([...declared.keys()]).toEqual([
+      "stripe-key",
+      "sentry",
+      "deploy",
+      "copy",
+    ]);
     expect(declared.get("stripe-key")).toMatchObject({
       source: vault,
       key: "STRIPE_KEY",
@@ -211,14 +220,24 @@ describe("secret", () => {
     });
     expect(declared.get("sentry")!.delete).toBeUndefined();
     expect(declared.get("deploy")!.set).toBeUndefined();
-    expect(declared.get("deploy")!.delete).toBeUndefined();
+    expect(declared.get("deploy")!.source).toBeUndefined();
     expect(declared.get("sentry")).toMatchObject({
       set: expect.any(Function),
       refusal: expect.stringContaining("has the explicit name SENTRY_DSN"),
     });
-    expect(declared.get("deploy")).toMatchObject({
-      refusal: expect.stringContaining("is the secret of an API token"),
-    });
+    expect(declared.get("deploy")!.delete).toBeUndefined();
+    expect(declared.get("deploy")!.refusal).toBe(
+      `Only the create of accountToken({ id: "deploy" }) writes the value of \`deploy\`, so \`notation secret\` can't set or delete it. ${TOKEN_ROTATION}`,
+    );
+    // The refusal of a produced secret with an explicit name is only the
+    // produced text.
+    expect(declared.get("copy")!.set).toBeUndefined();
+    expect(declared.get("copy")!.delete).toBeUndefined();
+    expect(declared.get("copy")!.refusal).toBe(
+      declared
+        .get("deploy")!
+        .refusal!.replace("value of `deploy`", "value of `copy`"),
+    );
   });
 
   describe("set and delete", () => {
@@ -314,7 +333,9 @@ describe("secret", () => {
         secret({ id: "deploy" });
         accountToken({ id: "deploy", policies });
       }),
-    ).rejects.toThrow(`give two secrets the same name, "shop--dev--deploy"`);
+    ).rejects.toThrow(
+      `secret({ id: "deploy" }) and accountToken({ id: "deploy" }) give two secrets the same name, "shop--dev--deploy"`,
+    );
   });
 });
 
@@ -353,6 +374,87 @@ describe("accountToken", () => {
       ],
     });
   });
+
+  it("writes its value to a secret with the id of the token, which depends on the token", async () => {
+    const graph = await collect(() => {
+      accountToken({ id: "deploy", policies });
+    });
+    const group = groupOf<AccountTokenGroup>(
+      graph,
+      "cloudflare/accountToken",
+      "deploy",
+    );
+    const secretGroup = groupOf<SecretGroup>(
+      graph,
+      "cloudflare/secret",
+      "deploy",
+    );
+
+    expect(group.secret).toBe(secretGroup);
+    expect(secretGroup.secret.id).toBe("secret:deploy");
+    expect(secretGroup.secret.config).toEqual({
+      Name: "shop--dev--deploy",
+      StageScoped: true,
+      ValueFrom: {
+        Secret: "deploy",
+        Source: "produced",
+        Producer: "token:deploy",
+        Rotation: TOKEN_ROTATION,
+      },
+    });
+    expect(secretGroup.secret.getDependencies()).toContain(group.token);
+    expect(group["~secret"]()).toBe(secretGroup.secret);
+
+    group.token.dependencies.store.setOutput({
+      AccountId: "acc",
+      StoreId: "store",
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({
+        success: true,
+        errors: [],
+        result: [
+          {
+            id: "g1",
+            name: "Workers Scripts Write",
+            scopes: ["com.cloudflare.api.account"],
+          },
+        ],
+      }),
+    );
+    vi.stubEnv("CLOUDFLARE_API_TOKEN", "token");
+    try {
+      expect((await group.token.getParams()).ValueTargets).toEqual([
+        {
+          provider: "@notation/cloudflare/resources",
+          params: {
+            AccountId: "acc",
+            StoreId: "store",
+            Name: "shop--dev--deploy",
+          },
+        },
+      ]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("lets another secret take the token's value", async () => {
+    const graph = await collect(() => {
+      const token = accountToken({ id: "deploy", policies });
+      secret({ id: "deploy-copy", source: token.sources.value });
+    });
+    const copy = groupOf<SecretGroup>(
+      graph,
+      "cloudflare/secret",
+      "deploy-copy",
+    );
+
+    expect(copy.secret.config.ValueFrom).toMatchObject({
+      Source: "produced",
+      Producer: "token:deploy",
+    });
+  });
 });
 
 describe("secretsStore.bind", () => {
@@ -383,7 +485,7 @@ describe("secretsStore.bind", () => {
       graph,
       "cloudflare/accountToken",
       "deploy",
-    ).token;
+    ).secret.secret;
 
     expect(api.script.getDependencies()).toEqual(
       expect.arrayContaining([stripeKey, deployToken]),
@@ -407,8 +509,12 @@ describe("secretsStore.bind", () => {
       AccountId: "acc",
       StoreId: "store",
       Name: "shop--dev--deploy",
-      Policies: policies,
-      TokenId: "t1",
+      StageScoped: true,
+      ValueFrom: {
+        Secret: "deploy",
+        Source: "produced",
+        Producer: "token:deploy",
+      },
       SecretId: "s2",
     });
 

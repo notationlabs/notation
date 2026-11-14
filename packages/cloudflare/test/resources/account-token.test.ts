@@ -11,6 +11,8 @@ import {
   sortedCondition,
   sortedPolicies,
 } from "src/resources/tokens";
+// Registers the Secrets Store that the token's targets name.
+import "src/resources/secrets-store/secrets-store-secret";
 
 type Call = { method: string; url: URL; body: unknown };
 let calls: Call[];
@@ -55,16 +57,20 @@ const ZONES = {
 
 const policies = [policy(["Workers Scripts Write"])];
 
+const target = (Name: string) => ({
+  provider: "@notation/cloudflare/resources",
+  params: { AccountId: "acc", StoreId: "store", Name },
+});
+
 const params = {
   AccountId: "acc",
-  StoreId: "store",
   Name: "shop--dev--deploy",
   Policies: [policy(["g1"])],
+  ValueTargets: [target("shop--dev--deploy")],
 };
 
 const key = {
   AccountId: "acc",
-  StoreId: "store",
   Name: "shop--dev--deploy",
   TokenId: "t1",
 };
@@ -99,8 +105,9 @@ type Routes = {
   listTokens?: (page: string) => Response;
   deleteToken?: () => Response;
   listSecrets?: () => Response;
-  createSecret?: () => Response;
+  createSecret?: (name: string) => Response;
   patchSecret?: () => Response;
+  deleteSecret?: () => Response;
 };
 
 function route(routes: Routes) {
@@ -138,12 +145,14 @@ function route(routes: Routes) {
       return (routes.listSecrets ?? (() => ok([])))();
     }
     if (path === SECRETS && call.method === "POST") {
-      return (
-        routes.createSecret ?? (() => ok([{ id: "s1", name: params.Name }]))
-      )();
+      const [{ name }] = call.body as [{ name: string }];
+      return (routes.createSecret ?? (() => ok([{ id: "s1", name }])))(name);
     }
     if (path.startsWith(`${SECRETS}/`) && call.method === "PATCH") {
       return (routes.patchSecret ?? (() => ok()))();
+    }
+    if (path.startsWith(`${SECRETS}/`) && call.method === "DELETE") {
+      return (routes.deleteSecret ?? (() => ok()))();
     }
     return ok();
   });
@@ -161,7 +170,7 @@ afterEach(() => {
 });
 
 describe("AccountToken", () => {
-  it("creates the token with its permission groups by ID, and writes its value to a new secret", async () => {
+  it("creates the token with its permission groups by ID, and writes its value to the secret of each target", async () => {
     route({});
 
     await expect(token.create(params)).resolves.toEqual({ TokenId: "t1" });
@@ -184,6 +193,24 @@ describe("AccountToken", () => {
     ).toMatchObject({
       body: [{ name: "shop--dev--deploy", value: VALUE, scopes: ["workers"] }],
     });
+  });
+
+  it("writes the value to every target", async () => {
+    route({});
+
+    await token.create({
+      ...params,
+      ValueTargets: [target("shop--dev--deploy"), target("shop--dev--copy")],
+    });
+
+    expect(
+      calls
+        .filter((c) => c.url.pathname === SECRETS && c.method === "POST")
+        .map((c) => c.body),
+    ).toEqual([
+      [{ name: "shop--dev--deploy", value: VALUE, scopes: ["workers"] }],
+      [{ name: "shop--dev--copy", value: VALUE, scopes: ["workers"] }],
+    ]);
   });
 
   it("overwrites the value of a secret that has the token's name", async () => {
@@ -278,6 +305,33 @@ describe("AccountToken", () => {
     expect(calls.at(-1)!.url.pathname).toBe(`${TOKENS}/t1`);
   });
 
+  it("deletes the values it wrote and the new token when a later write fails", async () => {
+    const written: string[] = [];
+    route({
+      createSecret: (name) => {
+        if (name === "shop--dev--copy") {
+          return fail(400, 1001, "store_not_found");
+        }
+        written.push(name);
+        return ok([{ id: "s1", name }]);
+      },
+      listSecrets: () =>
+        ok(written.map((name) => ({ id: "s1", name, status: "active" }))),
+    });
+
+    await expect(
+      token.create({
+        ...params,
+        ValueTargets: [target("shop--dev--deploy"), target("shop--dev--copy")],
+      }),
+    ).rejects.toThrow(
+      "store_not_found (1001). The values written to the other secrets before it were deleted, so a secret that held an earlier value may now be empty.",
+    );
+    expect(
+      calls.filter((c) => c.method === "DELETE").map((c) => c.url.pathname),
+    ).toEqual([`${SECRETS}/s1`, `${TOKENS}/t1`]);
+  });
+
   it("records the value, so that it is scrubbed from an error that echoes it", async () => {
     route({ createSecret: () => fail(400, 1001, `bad value ${VALUE}`) });
 
@@ -330,7 +384,7 @@ describe("AccountToken", () => {
     ).toEqual([`${TOKENS}/lost-1`, `${TOKENS}/lost-2`]);
   });
 
-  it("reads the policies by group ID, and the ID of the secret", async () => {
+  it("reads the policies by group ID", async () => {
     route({
       getToken: () =>
         ok({
@@ -344,16 +398,14 @@ describe("AccountToken", () => {
             },
           ],
         }),
-      listSecrets: () =>
-        ok([{ id: "s1", name: params.Name, status: "active" }]),
     });
 
     await expect(token.read!(key)).resolves.toEqual({
       ...key,
-      SecretId: "s1",
       Policies: params.Policies,
       Condition: {},
     });
+    expect(calls.some((c) => c.url.pathname === SECRETS)).toBe(false);
   });
 
   it("reads a missing token as not found", async () => {
@@ -361,14 +413,6 @@ describe("AccountToken", () => {
 
     await expect(token.read!(key)).rejects.toBeInstanceOf(
       ResourceNotFoundError,
-    );
-  });
-
-  it("fails to read when the secret is missing, and says to rotate the token", async () => {
-    route({});
-
-    await expect(token.read!(key)).rejects.toThrow(
-      "Rotate the token: change the id of its accountToken() declaration, and deploy.",
     );
   });
 
@@ -387,15 +431,13 @@ describe("AccountToken", () => {
     expect(calls.at(-1)!.url.pathname).toBe(`${TOKENS}/t1`);
   });
 
-  it("deletes the token, and its secret by the ID that its name has now", async () => {
-    route({ listSecrets: () => ok([{ id: "s2", name: params.Name }]) });
+  it("deletes the token, and leaves its secrets", async () => {
+    route({});
 
-    await token.delete(key, { SecretId: "s1" } as any);
+    await token.delete(key, {} as any);
 
     expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([
       `DELETE ${TOKENS}/t1`,
-      `GET ${SECRETS}`,
-      `DELETE ${SECRETS}/s2`,
     ]);
   });
 
@@ -416,8 +458,6 @@ describe("AccountToken", () => {
               resources: policy.resources,
             })),
           }),
-        listSecrets: () =>
-          ok([{ id: "s1", name: params.Name, status: "active" }]),
       });
       return token.read!(key);
     };
@@ -486,8 +526,6 @@ describe("AccountToken", () => {
             ],
             ...fields,
           }),
-        listSecrets: () =>
-          ok([{ id: "s1", name: params.Name, status: "active" }]),
       });
       return token.read!(key);
     };
@@ -563,7 +601,6 @@ describe("AccountToken", () => {
         }),
       ).resolves.toEqual({
         ...key,
-        SecretId: "s1",
         Policies: params.Policies,
         Condition: { requestIp: { in: [...RANGES].sort() } },
         ExpiresOn: "2027-01-01T00:00:00Z",

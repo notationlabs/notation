@@ -1,5 +1,9 @@
 import * as v from "valibot";
-import { PROMPT_SOURCE } from "@notation/core";
+import {
+  PRODUCED_SOURCE,
+  PROMPT_SOURCE,
+  registerSecretStore,
+} from "@notation/core";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { getValue } from "@notation/std/sources";
 import {
@@ -7,6 +11,7 @@ import {
   deleteSecret,
   findSecretByName,
   setSecretValue,
+  writeSecret,
 } from "src/api/secrets-store";
 import { secretValueFromSchema, type SecretValueFrom } from "src/secrets/value";
 import type { SecretsStoreInstance } from "./secrets-store";
@@ -99,20 +104,47 @@ async function writeValue(params: SecretsStoreSecretParams): Promise<void> {
 }
 
 /**
+ * Checks that the producer wrote the value. The secret depends on the
+ * producer, so the producer's create has run. Cloudflare can't create a
+ * secret without a value, so the producer creates the secret, and this
+ * create only records it.
+ */
+async function claimProduced(params: SecretsStoreSecretParams): Promise<void> {
+  const { AccountId, StoreId, Name, ValueFrom } = params;
+  if (await findSecretByName(AccountId, StoreId, Name)) return;
+  throw new Error(
+    [
+      `The secret ${Name} of \`${ValueFrom.Secret}\` is missing. Only the create of its producer writes the value.`,
+      ValueFrom.Rotation,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
+const isProduced = (params: Pick<SecretsStoreSecretParams, "ValueFrom">) =>
+  params.ValueFrom.Source === PRODUCED_SOURCE;
+
+/**
  * A reference to a secret in a Cloudflare Secrets Store. Its record holds
  * where the secret is and where its value comes from, and never the value.
  *
  * Create and update write the value. A change to `ValueFrom`, such as a new
  * version from the source, updates the secret. A change to `StageScoped`
- * only changes the record. Read finds the secret by
- * name, so a secret recreated outside notation shows as a changed
- * `SecretId`, and a deleted one as drift, which the next deploy creates
- * again.
+ * only changes the record.
+ *
+ * When `ValueFrom.Source` is `produced`, the producer's create writes the
+ * value. Create then only checks that the secret exists, and update writes
+ * nothing. Delete deletes the secret as for any other source.
+ *
+ * Read finds the secret by name, so a secret recreated outside notation
+ * shows as a changed `SecretId`, and a deleted one as drift, which the next
+ * deploy creates again.
  */
 export const SecretsStoreSecret = secretsStoreSecretSchema
   .defineOperations({
     create: async (params) => {
-      await writeValue(params);
+      await (isProduced(params) ? claimProduced(params) : writeValue(params));
     },
 
     read: async (key) => {
@@ -128,7 +160,7 @@ export const SecretsStoreSecret = secretsStoreSecretSchema
     },
 
     update: async (_key, patch, params) => {
-      if (patch.ValueFrom) await writeValue(params);
+      if (patch.ValueFrom && !isProduced(params)) await writeValue(params);
     },
 
     delete: async (key, state) => {
@@ -141,6 +173,29 @@ export const SecretsStoreSecret = secretsStoreSecretSchema
     AccountId: deps.store.output.AccountId,
     StoreId: deps.store.output.StoreId,
   }));
+
+/** The provider of the targets that secrets with a produced source register. */
+export const SECRETS_STORE_PROVIDER = "@notation/cloudflare/resources";
+
+type TargetParams = { AccountId: string; StoreId: string; Name: string };
+
+// Registered when this module loads. The resource registry loads this
+// module for a secret's record that is no longer in code, so a producer
+// whose secrets were removed still finds the store.
+registerSecretStore(SECRETS_STORE_PROVIDER, {
+  write: async (params, value) => {
+    const { AccountId, StoreId, Name } = params as TargetParams;
+    await writeSecret(AccountId, StoreId, Name, value);
+  },
+  delete: async (params) => {
+    const { AccountId, StoreId, Name } = params as TargetParams;
+    await deleteSecret(AccountId, StoreId, Name);
+  },
+  has: async (params) => {
+    const { AccountId, StoreId, Name } = params as TargetParams;
+    return (await findSecretByName(AccountId, StoreId, Name)) !== undefined;
+  },
+});
 
 export type SecretsStoreSecretInstance = InstanceType<
   typeof SecretsStoreSecret

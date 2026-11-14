@@ -15,6 +15,7 @@ const { planApp } = vi.hoisted(() => ({
 vi.mock("@notation/core", () => ({
   createLoggerReconcilerSubscriber: () => () => undefined,
   planApp,
+  PRODUCED_SOURCE: "produced",
   PROMPT_SOURCE: "prompt",
   resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}`,
 }));
@@ -385,5 +386,164 @@ it("prints that deploy asks for the value of a new secret without a source", asy
     "+ create cloudflare/secrets-store/SecretsStoreSecret secret:admin",
     "    value not set: deploy asks for it if the secret doesn't exist, and fails without a terminal",
     "+ create cloudflare/secrets-store/SecretsStoreSecret secret:stripe-key",
+  ]);
+});
+
+it("labels the replacement of a resource that writes a produced secret as a rotation", async () => {
+  const secretNode = (id: string, decision: "noop" | "create") => ({
+    id: `secret:${id}`,
+    type: "cloudflare/secrets-store/SecretsStoreSecret",
+    decision,
+    params: {
+      ValueFrom: {
+        Secret: id,
+        Source: "produced",
+        Producer: "token:deploy",
+      },
+    },
+    dependsOn: ["secrets-store", "token:deploy"],
+  });
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "token:deploy",
+        type: "cloudflare/tokens/AccountToken",
+        decision: "replace",
+        replaceOrder: "delete-first",
+        replaceFields: [{ name: "ValueTargets", known: true }],
+        params: {},
+        dependsOn: ["secrets-store"],
+      },
+      secretNode("deploy", "noop"),
+      secretNode("copy", "create"),
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 4)).toEqual([
+    "-/+ replace cloudflare/tokens/AccountToken token:deploy (delete, then create)",
+    "    ValueTargets forces replacement",
+    "    rotation: writes a new value to the secrets deploy, copy",
+  ]);
+});
+
+it("lists only the secrets of the producer that aren't being deleted", async () => {
+  const secretNode = (
+    id: string,
+    decision: "noop" | "replace" | "delete-orphan",
+  ) => ({
+    id: `secret:${id}`,
+    type: "cloudflare/secrets-store/SecretsStoreSecret",
+    decision,
+    params: {
+      ValueFrom: { Secret: id, Source: "produced", Producer: "token:deploy" },
+    },
+    dependsOn: ["secrets-store", "token:deploy"],
+  });
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "secrets-store",
+        type: "cloudflare/secrets-store/SecretsStore",
+        decision: "replace",
+        replaceOrder: "delete-first",
+        replaceFields: [{ name: "Name", known: true }],
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "token:deploy",
+        type: "cloudflare/tokens/AccountToken",
+        decision: "replace",
+        replaceOrder: "delete-first",
+        replaceFields: [{ name: "ValueTargets", known: true }],
+        params: {},
+        dependsOn: ["secrets-store"],
+      },
+      secretNode("deploy", "replace"),
+      secretNode("old", "delete-orphan"),
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.filter((line) => line.includes("rotation"))).toEqual([
+    "    rotation: writes a new value to the secret deploy",
+  ]);
+  const token = lines.findIndex((line) => line.includes("token:deploy"));
+  expect(lines[token + 2]).toBe(
+    "    rotation: writes a new value to the secret deploy",
+  );
+});
+
+it("doesn't label the first create of a resource that writes a produced secret", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "token:deploy",
+        type: "cloudflare/tokens/AccountToken",
+        decision: "create",
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "secret:deploy",
+        type: "cloudflare/secrets-store/SecretsStoreSecret",
+        decision: "create",
+        params: { ValueFrom: { Secret: "deploy", Source: "produced" } },
+        dependsOn: ["token:deploy"],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.some((line) => line.includes("rotation"))).toBe(false);
+});
+
+it("labels the create of a producer that was deleted outside notation as a rotation", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "token:deploy",
+        type: "cloudflare/tokens/AccountToken",
+        decision: "drift-recreate",
+        params: {},
+        dependsOn: ["secrets-store"],
+      },
+      {
+        id: "secret:deploy",
+        type: "cloudflare/secrets-store/SecretsStoreSecret",
+        decision: "noop",
+        params: {
+          ValueFrom: {
+            Secret: "deploy",
+            Source: "produced",
+            Producer: "token:deploy",
+          },
+        },
+        dependsOn: ["secrets-store", "token:deploy"],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.slice(1, 3)).toEqual([
+    "± drift-recreate cloudflare/tokens/AccountToken token:deploy",
+    "    rotation: writes a new value to the secret deploy",
   ]);
 });
