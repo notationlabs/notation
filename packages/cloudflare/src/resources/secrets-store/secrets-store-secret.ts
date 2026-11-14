@@ -174,9 +174,8 @@ export const SECRETS_STORE_PROVIDER = "@notation/cloudflare/resources";
 
 type TargetParams = { AccountId: string; StoreId: string; Name: string };
 
-// Registered when this module loads. The resource registry loads this
-// module for a secret's record that is no longer in code, so a producer
-// whose secrets were removed still finds the store.
+// Registered when this module loads. A graph with a `secret()` loads this
+// module, so the store is registered before a producer's create runs.
 registerSecretStore(SECRETS_STORE_PROVIDER, {
   write: async (params, value) => {
     const { AccountId, StoreId, Name } = params as TargetParams;

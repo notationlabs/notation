@@ -124,7 +124,6 @@ A producer is a resource that gets a value only in the response to its create, a
 | Export                | Use                                                                          |
 | --------------------- | ---------------------------------------------------------------------------- |
 | `OneTimeSource`       | The type of `<producer>.sources.<name>`.                                     |
-| `SecretSource`        | `Source \| OneTimeSource`, what a secret's `source` can be.                  |
 | `oneTimeSource()`     | Makes a one-time source for a resource.                                      |
 | `SecretTarget`        | Where a value is written: `{ provider, params }`.                            |
 | `secretTargetParam`   | The schema definition of the producer's param that holds the target.         |
@@ -209,7 +208,7 @@ The other operations of a producer follow from the fact that the secret owns the
 
 ### The secret
 
-A secret's declaration accepts a `SecretSource`, and checks it with `isOneTimeSource`. For a one-time source, the Cloudflare `secret()` does this:
+A secret's declaration accepts a `Source` or a `OneTimeSource`, and checks which it is with `isOneTimeSource`. For a one-time source, the Cloudflare `secret()` does this:
 
 - It calls `register` with the target `{ provider: "@notation/cloudflare/resources", params: { AccountId, StoreId, Name } }`, where `AccountId` and `StoreId` are output refs of the store, and with its declaration.
 - It records `ValueFrom: { Secret: id, Source: "one-time", Producer }`. `"one-time"` is `ONE_TIME_SOURCE` from `@notation/core`. `Producer` is the id of the producer's resource, such as `token:deploy`. The error for a missing secret names it.
@@ -220,7 +219,7 @@ The secret's create writes nothing. It finds the secret by name and records it. 
 
 ### `registerSecretStore(provider, store)`
 
-A provider package registers the store that writes to its targets when the module of its secret resource loads. The resource registry loads that module for a secret's record that is no longer in code, so a producer whose secret was removed still finds the store.
+A provider package registers the store that writes to its targets when the module of its secret resource loads. A graph with a secret from that package loads the module, so the store is registered before a producer's create runs.
 
 ```ts
 registerSecretStore("@notation/cloudflare/resources", {

@@ -5,7 +5,6 @@ import {
   type BaseResource,
 } from "@notation/resource";
 import { recordSecretValue } from "@notation/utils";
-import type { Source } from "./context";
 
 /**
  * Where a producer writes a secret value. The producer holds its targets in
@@ -75,9 +74,6 @@ export interface OneTimeSource {
     ): void;
   };
 }
-
-/** What a secret's `source` can be. */
-export type SecretSource = Source | OneTimeSource;
 
 export function isOneTimeSource(source: unknown): source is OneTimeSource {
   return (
