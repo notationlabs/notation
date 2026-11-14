@@ -1,15 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type AccountLockOptions,
   type LockRecord,
   type LockStore,
   RetryableLockError,
   defaultHolder,
+  secretsStoreLocks,
   takeAccountLock,
   withAccountLock,
 } from "../src/account-lock";
 
 const MINUTE = 60_000;
+
+let warn: ReturnType<typeof vi.spyOn>;
+beforeEach(() => {
+  warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 // An in-memory store whose create fails when the name exists, and a clock
 // that `sleep` moves forward.
@@ -198,6 +207,49 @@ describe("takeAccountLock", () => {
     ).rejects.toThrow("Timed out");
   });
 
+  it("prints the holder once when it finds the lock held", async () => {
+    const { options, hold, now } = setup();
+    hold("ne2e-abc123", now() - MINUTE);
+    await expect(
+      takeAccountLock("registry", { ...options, waitMs: 5 * MINUTE }),
+    ).rejects.toThrow("Timed out");
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      "Waiting for the lock ne2e-lock-registry, which ne2e-abc123 took at " +
+        "2026-11-14T11:59:00.000Z. Deleting the secret ne2e-lock-registry ends the wait.",
+    );
+  });
+
+  it("holds a lock that a create which failed with a server error created", async () => {
+    const { log, options, now } = setup();
+    const start = now();
+    let failed = false;
+    const store: LockStore = {
+      ...options.store!,
+      create: async (name, holder) => {
+        const id = await options.store!.create(name, holder);
+        if (!failed) {
+          failed = true;
+          throw new RetryableLockError("POST failed with 502");
+        }
+        return id;
+      },
+    };
+    const lock = await takeAccountLock("registry", { ...options, store });
+    expect(now() - start).toBe(MINUTE);
+    expect(warn).not.toHaveBeenCalled();
+    await lock.release();
+    expect(log).toEqual(["create id-1", "delete id-1"]);
+  });
+
+  it("waits for a lock with its own holder when no create failed", async () => {
+    const { options, hold, now } = setup();
+    hold(defaultHolder, now());
+    await expect(
+      takeAccountLock("registry", { ...options, waitMs: 5 * MINUTE }),
+    ).rejects.toThrow("Timed out");
+  });
+
   it("gives a stale lock to only one of two runs that steal it at once", async () => {
     const { locks, log, options, hold, now } = setup();
     const stale = hold("ne2e-abc123", now() - 61 * MINUTE);
@@ -223,6 +275,34 @@ describe("release", () => {
     const lock = await takeAccountLock("registry", options);
     await lock.release();
     expect(locks.size).toBe(0);
+  });
+
+  it("tries a retryable error again", async () => {
+    const { locks, options, now } = setup();
+    const lock = await takeAccountLock("registry", options);
+    let failures = 2;
+    const del = options.store!.delete;
+    options.store!.delete = async (id) => {
+      if (failures-- > 0)
+        throw new RetryableLockError("DELETE failed with 429");
+      return del(id);
+    };
+    const start = now();
+    await lock.release();
+    expect(locks.size).toBe(0);
+    expect(now() - start).toBe(10_000);
+  });
+
+  it("throws after three retryable errors", async () => {
+    const { options } = setup();
+    const lock = await takeAccountLock("registry", options);
+    let attempts = 0;
+    options.store!.delete = async () => {
+      attempts++;
+      throw new RetryableLockError("DELETE failed with 503");
+    };
+    await expect(lock.release()).rejects.toThrow("DELETE failed with 503");
+    expect(attempts).toBe(3);
   });
 
   it("leaves a lock that another run took over", async () => {
@@ -258,5 +338,45 @@ describe("withAccountLock", () => {
       ),
     ).rejects.toThrow("deploy failed");
     expect(locks.size).toBe(0);
+  });
+});
+
+describe("secretsStoreLocks", () => {
+  beforeEach(() => {
+    vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "account");
+    vi.stubEnv("CLOUDFLARE_API_TOKEN", "token");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("turns a network error into a retryable error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("fetch failed");
+      }),
+    );
+    const error = await secretsStoreLocks()
+      .read("ne2e-lock-registry")
+      .catch((error) => error);
+    expect(error).toBeInstanceOf(RetryableLockError);
+    expect(error.message).toBe(
+      "Cloudflare API GET /secrets_store/stores failed: fetch failed",
+    );
+  });
+
+  it("gives each request a timeout", async () => {
+    const fetch = vi.fn(
+      async (_url: string, init: RequestInit) =>
+        new Response(JSON.stringify({ success: true, result: [{ id: "s" }] })),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await secretsStoreLocks().read("ne2e-lock-registry");
+    expect(fetch).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetch.mock.calls) {
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    }
   });
 });

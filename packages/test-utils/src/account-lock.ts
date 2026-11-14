@@ -41,7 +41,8 @@ export type HeldLock = {
   name: string;
   /**
    * Deletes the lock by its ID. If another run took the lock over, the ID is
-   * gone and this does nothing.
+   * gone and this does nothing. A `RetryableLockError` is tried again a few
+   * times.
    */
   release(): Promise<void>;
 };
@@ -53,6 +54,14 @@ export type HeldLock = {
 const DEFAULT_MAX_AGE_MS = 60 * 60_000;
 const DEFAULT_WAIT_MS = 70 * 60_000;
 const DEFAULT_RETRY_MS = 10_000;
+const RELEASE_ATTEMPTS = 3;
+const RELEASE_RETRY_MS = 5_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+// An attempt to take the lock sends up to four requests, each of which can
+// take `REQUEST_TIMEOUT_MS`, and the last attempt can start one `retryMs` after
+// the deadline. The `beforeAll` timeout leaves room for that, so that the hook
+// doesn't time out while a create that then succeeds is still in flight.
+const HOOK_MARGIN_MS = 3 * 60_000;
 
 /** The machine and the process ID of this test run. */
 export const defaultHolder = `${hostname()}:${process.pid}`;
@@ -60,8 +69,9 @@ export const defaultHolder = `${hostname()}:${process.pid}`;
 export const lockName = (name: string) => `ne2e-lock-${name}`;
 
 /**
- * A failed request that may succeed if it is sent again: a rate limit or a
- * server error. `takeAccountLock` tries again on the next attempt.
+ * A failed request that may succeed if it is sent again: a rate limit, a
+ * server error, a network error or a timeout. `takeAccountLock` tries again on
+ * the next attempt.
  */
 export class RetryableLockError extends Error {}
 
@@ -75,7 +85,9 @@ export class RetryableLockError extends Error {}
  * `maxAgeMs` (60 minutes) was left by a run that was killed, so this deletes
  * it and takes it. With the defaults, a run waits for a killed run's lock to
  * become stale and then takes it. A `RetryableLockError` from the store also
- * counts as a failed attempt.
+ * counts as a failed attempt. If a create failed that way and the lock
+ * then names this run's holder, the create did succeed, and this run holds the
+ * lock. The first time a run finds the lock held, it prints the holder.
  *
  * By default the lock is a secret named `ne2e-lock-<name>` in the Cloudflare
  * Secrets Store of `CLOUDFLARE_ACCOUNT_ID`. `CLOUDFLARE_API_TOKEN` needs the
@@ -96,23 +108,55 @@ export async function takeAccountLock(
   } = options;
   const fullName = lockName(name);
   const deadline = now() + waitMs;
+  const held = (id: string): HeldLock => ({
+    name: fullName,
+    release: async () => {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await store.delete(id);
+        } catch (error) {
+          if (
+            !(error instanceof RetryableLockError) ||
+            attempt >= RELEASE_ATTEMPTS
+          ) {
+            throw error;
+          }
+          await wait(RELEASE_RETRY_MS);
+        }
+      }
+    },
+  });
+  // A create that failed with a server error may still have created the lock.
+  let createFailed = false;
+  let warned = false;
   for (;;) {
     // The lock as this attempt last saw it, for the timeout error.
     let current: LockRecord | undefined;
     let retryable: RetryableLockError | undefined;
     try {
-      const id = await store.create(fullName, holder);
-      if (id) {
-        return { name: fullName, release: () => store.delete(id) };
+      let id: string | undefined;
+      try {
+        id = await store.create(fullName, holder);
+      } catch (error) {
+        if (error instanceof RetryableLockError) createFailed = true;
+        throw error;
       }
+      if (id) return held(id);
       // `undefined` if the holder released the lock after the create failed.
       current = await store.read(fullName);
+      if (createFailed && current?.holder === holder) return held(current.id);
       if (current && now() - current.created.getTime() > maxAgeMs) {
         // Deleting by ID means that of two runs that steal the same stale
         // lock, the slower one can't delete the lock that the faster one then
         // takes. Both then try the create, and only one of them gets the lock.
         await store.delete(current.id);
         current = undefined;
+      }
+      if (current && !warned) {
+        warned = true;
+        console.warn(
+          `Waiting for the lock ${fullName}, which ${current.holder} took at ${current.created.toISOString()}. Deleting the secret ${fullName} ends the wait.`,
+        );
       }
     } catch (error) {
       if (!(error instanceof RetryableLockError)) throw error;
@@ -181,7 +225,7 @@ export function useAccountLock(
       lock = await takeAccountLock(name, options);
     },
     // The wait for another run can be longer than the hook timeout.
-    (options.waitMs ?? DEFAULT_WAIT_MS) + 60_000,
+    (options.waitMs ?? DEFAULT_WAIT_MS) + HOOK_MARGIN_MS,
   );
   afterAll(async () => {
     await lock?.release();
@@ -313,8 +357,8 @@ type ApiResponse<T> = {
 };
 
 // Reads the credentials on each call, so that a test can set them after this
-// module is imported. Throws a `RetryableLockError` for a rate limit or a
-// server error.
+// module is imported. Throws a `RetryableLockError` for a rate limit, a server
+// error, a network error or a timeout.
 async function api<T = any>(
   method: "GET" | "POST" | "DELETE",
   // The path after `/accounts/<id>`.
@@ -328,19 +372,28 @@ async function api<T = any>(
       "The account locks need CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN.",
     );
   }
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}${path}`,
-    {
-      method,
-      headers: {
-        Authorization: `Bearer ${apiToken}`,
-        ...(body && { "Content-Type": "application/json" }),
-      },
-      body: body && JSON.stringify(body),
-    },
-  );
   const request = `Cloudflare API ${method} ${path}`;
-  const text = await response.text();
+  let response: Response;
+  let text: string;
+  try {
+    response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}${path}`,
+      {
+        method,
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          ...(body && { "Content-Type": "application/json" }),
+        },
+        body: body && JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      },
+    );
+    text = await response.text();
+  } catch (error) {
+    throw new RetryableLockError(
+      `${request} failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   let envelope: any;
   try {
     envelope = JSON.parse(text);
