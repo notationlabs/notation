@@ -119,6 +119,14 @@ describeE2e("$worker with a Worker secret, during deploy", () => {
       .map((version) => version.bindings.map((binding) => binding.name));
   }
 
+  const tagsOf = async (name: string) =>
+    (
+      await api<{ tags?: string[] | null }>(
+        "GET",
+        `/workers/scripts/${name}/settings`,
+      )
+    ).result.tags ?? [];
+
   // Deploys while watching the Worker, then waits until it serves `expected`.
   // workers.dev can serve an earlier version for a while after an upload,
   // and serves a new Worker only once deploy has turned on its workers.dev
@@ -149,6 +157,13 @@ describeE2e("$worker with a Worker secret, during deploy", () => {
 
     expect(seen.filter((fetched) => fetched.body === "v1:missing")).toEqual([]);
     expect(await bindingsOfLatestCode(name)).toEqual([["TOKEN"]]);
+    // The code upload removes the tag, so the placeholder's delete leaves
+    // the Worker when the Worker stops binding its last secret.
+    expect(await tagsOf(name)).not.toContain("notation-placeholder");
+
+    writeWorker("fresh", { version: "v2" });
+    const after = await deployWatching("fresh", "v2:missing");
+    expect(after.name).toBe(name);
   });
 
   it("sets a secret that a live Worker gains before its new code serves requests", async () => {
@@ -172,11 +187,7 @@ describeE2e("$worker with a Worker secret, during deploy", () => {
     await expect(project.notation("deploy")).rejects.toThrow();
     const name = await workerName("ci");
     expect(name).toBeDefined();
-    const settings = await api<{ tags?: string[] | null }>(
-      "GET",
-      `/workers/scripts/${name}/settings`,
-    );
-    expect(settings.result.tags).toContain("notation-placeholder");
+    expect(await tagsOf(name!)).toContain("notation-placeholder");
 
     await project.notation(["secret", "set", "ci-token"], {
       input: `${ciSecret}\n`,
@@ -188,5 +199,6 @@ describeE2e("$worker with a Worker secret, during deploy", () => {
     ).toEqual([]);
     expect(await bindingsOfLatestCode(name!)).toEqual([["TOKEN"]]);
     expect(deployed.name).toBe(name);
+    expect(await tagsOf(name!)).not.toContain("notation-placeholder");
   });
 });
