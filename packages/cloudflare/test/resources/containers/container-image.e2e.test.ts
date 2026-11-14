@@ -149,6 +149,8 @@ async function registryAuth(): Promise<string> {
   return `Basic ${Buffer.from(`v1:${response.result.password}`).toString("base64")}`;
 }
 
+// The registry also lists the digest of each manifest, such as
+// `sha256:...`, among the tags. They are left out.
 async function repositoryTags(): Promise<string[]> {
   const response = await fetch(
     `https://${REGISTRY}/v2/${await namespace()}/${repository}/tags/list`,
@@ -158,7 +160,9 @@ async function repositoryTags(): Promise<string[]> {
   if (!response.ok) {
     throw new Error(`Listing the tags failed with ${response.status}`);
   }
-  return ((await response.json()) as { tags?: string[] | null }).tags ?? [];
+  const tags =
+    ((await response.json()) as { tags?: string[] | null }).tags ?? [];
+  return tags.filter((tag) => !tag.startsWith("sha256:"));
 }
 
 // Deletes each tag of the repository, as `wrangler containers images delete`
