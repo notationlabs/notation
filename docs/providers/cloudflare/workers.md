@@ -139,18 +139,33 @@ Between steps 1 and 3, the first Worker's `env` has no service bindings, so a re
 
 ### `workerSecret(config)`
 
-`workerSecret` declares a secret that a Worker binds as secret text. In the Worker, the binding is a string. The value comes from a [source](../../manual/secrets.md#sources). Cloudflare stores the value with the Worker, not in a Secrets Store.
+`workerSecret` declares a secret that a Worker binds as secret text. In the Worker, the binding is a string. The value comes from a [source](../../manual/secrets.md#sources), or from the [prompt](../../manual/secrets.md#the-prompt) when there is no source. Cloudflare stores the value with the Worker, not in a Secrets Store.
 
-| Option   | Description                                                                                                 |
-| -------- | ----------------------------------------------------------------------------------------------------------- |
-| `id`     | Keys the secret in state. It must differ from the id of every other secret.                                 |
-| `source` | Required. Where the value comes from, such as `env` or `dotenv(".env.local")` from `@notation/std/sources`. |
-| `key`    | Required. The key that the source is asked for.                                                             |
+| Option   | Description                                                                                                                                                                      |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`     | Keys the secret in state, and is what `notation secret set <id>` takes. It must differ from the id of every other secret.                                                        |
+| `source` | Where the value comes from, such as `env` or `dotenv(".env.local")` from `@notation/std/sources`. Without a source, deploy asks for the value, or `notation secret set` sets it. |
+| `key`    | The key that the source is asked for. Required with `source`.                                                                                                                    |
 
-- Notation records the source, the key and the source's version of the key. It never records the value. Plan shows the binding's name, source, key and version.
-- Deploy reads the value from the source each time it uploads a Worker that binds the secret. A Worker is uploaded when one of its params changes, and the source's version of the key is one of them. For `env` and `dotenv`, the version is the deploy's execution ID, so deploy uploads the Worker on every deploy. A source with versions, such as `infisical()`, uploads it only when the version changes.
-- A secret without a source isn't supported, so deploy never asks for the value. `notation secret set` refuses a Worker secret. Change the value in the source.
-- A value changed in the dashboard or with wrangler stays until deploy next uploads the Worker.
+```ts [infra/main.ts]
+import { workerSecret } from "@notation/cloudflare/workers";
+
+// No source: deploy asks for the value, or `notation secret set admin-password` sets it.
+export const adminPassword = workerSecret({ id: "admin-password" });
+```
+
+Each Worker that binds the secret has its own copy of it. Deploy adds a `cloudflare/workers/WorkerSecret` resource, with the ID `worker:<worker id>:secret:<binding name>`, for each binding. The resource sets the secret with Cloudflare's secrets API for the Worker, after the Worker is uploaded.
+
+- Notation records the binding's name, the source, the key and the source's version of the key. It never records the value.
+- An upload of the Worker keeps its secrets, so an upload never needs a secret's value. A change to the Worker's code or bindings doesn't write its secrets.
+- A secret with a source is written when the source's version of the key changes. For `env` and `dotenv`, that is every deploy. Each write deploys a new version of the Worker.
+- A secret without a source is written only when the Worker doesn't have it. Deploy asks for the value then, or fails without a terminal. A value set with `notation secret set`, or given at an earlier prompt, is kept.
+- When a Worker stops binding the secret, deploy deletes the secret from the Worker. When the Worker is replaced, the new Worker has none of the old Worker's secrets, so deploy writes them again, and asks for each one that has no source.
+- On a Worker's first deploy, the Worker is uploaded before its secrets are set. For a short time, its secrets are missing from `env`.
+- An upload also keeps a secret that wasn't set by Notation, such as one set with `wrangler secret put`. A binding in `bindings` with the name of such a secret replaces it.
+- A value changed in the dashboard or with wrangler stays until deploy next writes the secret.
+
+`notation secret set <id>` writes the value to each Worker in the stage that binds the secret. It doesn't read state, so it finds each Worker in the account by the name that deploy gives it, `<app>--<stage>--<id>-` followed by 8 hex characters. It fails, and writes nothing, when one of those Workers isn't deployed yet: run `notation deploy` instead, which asks for the value. `notation secret delete <id>` deletes the secret from each of those Workers. The next deploy writes it again.
 
 ### Deleting a Worker that other Workers bind
 

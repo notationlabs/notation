@@ -2,7 +2,7 @@
 
 A secret is a reference to a value that lives in a secret store, such as Cloudflare's Secrets Store. Notation writes the value to the store when it creates or updates the secret. It never records the value, or anything derived from it, in state, the journal, plan output or events.
 
-A provider package declares secrets. See [Cloudflare secrets](../providers/cloudflare/secrets.md), and [`workerSecret`](../providers/cloudflare/workers.md#workersecretconfig) for a secret that a Worker binds as secret text. A Worker secret needs a source: it has no prompt, and `notation secret set` refuses it.
+A provider package declares secrets. See [Cloudflare secrets](../providers/cloudflare/secrets.md), and [`workerSecret`](../providers/cloudflare/workers.md#workersecretconfig) for a secret that a Worker binds as secret text.
 
 ## Sources
 
