@@ -312,7 +312,7 @@ describe("AccountToken", () => {
           : ok([{ id: "lost-2", name: params.Name }, ...page(2).slice(0, 3)]),
     });
 
-    await expect(token.find!(params, "token")).rejects.toBeInstanceOf(
+    await expect(token.find!(params)).rejects.toBeInstanceOf(
       ResourceNotFoundError,
     );
     expect(

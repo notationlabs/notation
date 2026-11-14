@@ -101,6 +101,7 @@ function deploy(executionId: string, prompt?: SecretPrompt) {
             executionId: id,
             resources,
             state: runtime.state,
+            nameScope: { app: "test", stage: "dev" },
             emit: (event) => {
               events.push(event);
             },
