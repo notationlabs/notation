@@ -37,7 +37,7 @@ export const isNotFound = (error: unknown): boolean =>
 export const isKeyNotFound = (error: unknown): boolean =>
   error instanceof CloudflareApiError && error.hasCode(KEY_NOT_FOUND);
 
-export const isTitleTaken =(error: unknown): boolean =>
+export const isTitleTaken = (error: unknown): boolean =>
   error instanceof CloudflareApiError && error.hasCode(TITLE_TAKEN);
 
 const namespacesPath = (account: string) =>
@@ -107,12 +107,7 @@ export async function deleteNamespace(
 }
 
 export type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue };
+  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 export type KVWriteOptions = {
   /** Stored with the key, as JSON. */
