@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as v from "valibot";
 import {
   oneTimeSource,
+  secretTargetParam,
   writeSecretValue,
   type OneTimeSource,
   type SecretTarget,
@@ -36,11 +37,6 @@ const fakeKeyPair = resource<FakeKeyPairSchema>({
   provider: "@notation/cloudflare/test/fake-producer",
 });
 
-const targetSchema = v.object({
-  provider: v.string(),
-  params: v.record(v.string(), v.any()),
-});
-
 /**
  * A key pair whose API returns the private key once, in the create's
  * response, like a GitHub App from the manifest flow.
@@ -54,15 +50,7 @@ export const FakeKeyPair = fakeKeyPair
       value: v.string(),
     },
     // The secret that takes `sources.privateKey` contributes its target.
-    // Immutable, because only a create gets a value to write to a new
-    // target.
-    PrivateKeyTarget: {
-      propertyType: "param",
-      presence: "required",
-      immutable: true,
-      value: targetSchema,
-      collect: (items: unknown[]) => items[0] as SecretTarget,
-    },
+    PrivateKeyTarget: secretTargetParam,
     KeyId: {
       propertyType: "computed",
       presence: "required",

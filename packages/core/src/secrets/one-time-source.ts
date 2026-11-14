@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import {
   getActiveResourceCollection,
   onEvaluationEnd,
@@ -16,6 +17,23 @@ export type SecretTarget = {
   provider: string;
   params: Record<string, unknown>;
 };
+
+/**
+ * The schema definition of the collected param in which a producer holds its
+ * target. It is immutable, because only a create gets a value to write to a
+ * new target. `collect` returns the one item, as `register` accepts only one
+ * target.
+ */
+export const secretTargetParam = {
+  propertyType: "param",
+  presence: "required",
+  immutable: true,
+  value: v.object({
+    provider: v.string(),
+    params: v.record(v.string(), v.any()),
+  }),
+  collect: (items: unknown[]) => items[0] as SecretTarget,
+} as const;
 
 /** Writes secret values in one kind of store. */
 export type SecretStore = {
@@ -82,9 +100,7 @@ export function oneTimeSource(options: {
   /** The name in `sources`, such as `value`. */
   name: string;
   /**
-   * A collected param of `resource` that holds one `SecretTarget`. Its
-   * `collect` returns the one item, as `register` accepts only one target.
-   * Make it immutable: only a create gets a value to write to a new target.
+   * The param of `resource` that is defined with `secretTargetParam`.
    */
   param: string;
   /**

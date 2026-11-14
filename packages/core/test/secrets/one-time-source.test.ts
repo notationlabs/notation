@@ -5,6 +5,7 @@ import {
   isOneTimeSource,
   oneTimeSource,
   registerSecretStore,
+  secretTargetParam,
   writeSecretValue,
   type SecretTarget,
 } from "src/secrets";
@@ -74,16 +75,7 @@ const Holder = resource<HolderSchema>({
       primaryKey: true,
       value: v.string(),
     },
-    Target: {
-      propertyType: "param",
-      presence: "required",
-      immutable: true,
-      value: v.object({
-        provider: v.string(),
-        params: v.record(v.string(), v.any()),
-      }),
-      collect: (items: unknown[]) => items[0] as SecretTarget,
-    },
+    Target: secretTargetParam,
   } as const)
   .defineOperations({
     create: async () => {},

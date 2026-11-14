@@ -1,5 +1,9 @@
 import * as v from "valibot";
-import { writeSecretValue, type SecretTarget } from "@notation/core";
+import {
+  secretTargetParam,
+  writeSecretValue,
+  type SecretTarget,
+} from "@notation/core";
 import {
   containsOutputRef,
   planLookup,
@@ -80,11 +84,6 @@ const timestampSchema = v.pipe(
   ),
 );
 
-const targetSchema = v.object({
-  provider: v.string(),
-  params: v.record(v.string(), v.any()),
-});
-
 type AccountTokenParams = {
   AccountId: string;
   Name: string;
@@ -162,16 +161,9 @@ const accountTokenSchema = accountToken.defineSchema({
   },
   /**
    * The secret that create writes the token's value to. The secret whose
-   * source is the token's one-time source contributes its target. It is
-   * immutable, because only a create gets a value to write to a new target.
+   * source is the token's one-time source contributes its target.
    */
-  ValueTarget: {
-    propertyType: "param",
-    presence: "required",
-    immutable: true,
-    value: targetSchema,
-    collect: (items: unknown[]) => items[0] as SecretTarget,
-  },
+  ValueTarget: secretTargetParam,
   TokenId: {
     propertyType: "computed",
     presence: "required",

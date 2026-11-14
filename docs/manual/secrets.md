@@ -127,25 +127,20 @@ A producer is a resource that gets a value only in the response to its create, a
 | `SecretSource`        | `Source \| OneTimeSource`, what a secret's `source` can be.                  |
 | `oneTimeSource()`     | Makes a one-time source for a resource.                                      |
 | `SecretTarget`        | Where a value is written: `{ provider, params }`.                            |
+| `secretTargetParam`   | The schema definition of the producer's param that holds the target.         |
 | `writeSecretValue()`  | Writes a value to a target, in the producer's create.                        |
 | `registerSecretStore` | Registers the store implementation that writes to targets of one `provider`. |
 | `isOneTimeSource()`   | Tells a one-time source from a `Source`, in a secret's declaration.          |
 
 ### The target param
 
-The producer holds the secret that it writes to in a collected param, as one `SecretTarget`. The secret's declaration contributes the target. The param must be `immutable`, because only a create gets a value to write to a new target. So a change to the target, such as a new secret name, replaces the producer, which is a rotation. The `AccountToken` resource calls the param `ValueTarget`:
+The producer holds the secret that it writes to in a collected param, as one `SecretTarget`. The secret's declaration contributes the target. Define the param with `secretTargetParam`. The `AccountToken` resource calls the param `ValueTarget`:
 
 ```ts
-ValueTarget: {
-  propertyType: "param",
-  presence: "required",
-  immutable: true,
-  value: v.object({ provider: v.string(), params: v.record(v.string(), v.any()) }),
-  collect: (items: unknown[]) => items[0] as SecretTarget,
-},
+ValueTarget: secretTargetParam,
 ```
 
-`collect` returns the one target. `oneTimeSource` throws when a second secret takes the source, so the param gets one target from a secret.
+The param is `immutable`, because only a create gets a value to write to a new target. So a change to the target, such as a new secret name, replaces the producer, which is a rotation. Its `collect` returns the one target. `oneTimeSource` throws when a second secret takes the source, so the param gets one target from a secret.
 
 ### `oneTimeSource(options)`
 
