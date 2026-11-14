@@ -165,7 +165,7 @@ Each Worker that binds the secret has its own copy of it. Deploy adds a `cloudfl
 - An upload also keeps a secret that wasn't set by Notation, such as one set with `wrangler secret put`. A binding in `bindings` with the name of such a secret replaces it.
 - A value changed in the dashboard or with wrangler stays until deploy next writes the secret.
 
-`notation secret set <id>` writes the value to each Worker in the stage that binds the secret. It doesn't read state, so it finds each Worker in the account by the name that deploy gives it, `<app>--<stage>--<id>-` followed by 8 hex characters. It fails, and writes nothing, when one of those Workers isn't deployed yet: run `notation deploy` instead, which asks for the value. `notation secret delete <id>` deletes the secret from each of those Workers. The next deploy writes it again.
+`notation secret set <id>` writes the value to each Worker in the stage that binds the secret. It doesn't read state, so it finds each Worker in the account by the name that deploy gives it, `<app>--<stage>--<id>-` followed by 8 hex characters. It skips a Worker that isn't deployed yet, whose first deploy asks for the value. It fails when none of those Workers is deployed. `notation secret delete <id>` deletes the secret from each of those Workers. The next deploy writes it again.
 
 ### Deleting a Worker that other Workers bind
 

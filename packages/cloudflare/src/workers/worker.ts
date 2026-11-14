@@ -212,7 +212,7 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
         bindings: resolved.bindings,
         secrets: resolved.secrets.map(({ name, secret }) => ({
           name,
-          valueFrom: secret.valueFrom(),
+          valueFrom: secret.valueFrom,
         })),
         namespaces: resolved.namespaces,
         // Undefined when empty, so that the params of a Worker deployed
@@ -223,14 +223,14 @@ export function $worker<const Id extends string, B extends Bindings = {}>(
         boundNamespaces: resolved.bound,
         url: config.url ?? true,
       });
+      const { nameBody } = workerNames(config.id);
+      for (const { name, secret } of resolved.secrets) {
+        secret.boundBy({ nameBody, name });
+      }
       // Each service binding is a contribution, so that deploy can create
       // one of two Workers that bind each other first, without its binding.
       // A binding of the Worker to itself refers to its own name, which is
       // no dependency.
-      const { nameBody } = workerNames(config.id);
-      for (const { name, secret } of resolved.secrets) {
-        secret.boundBy({ workerId: config.id, nameBody, name });
-      }
       const script = group.script;
       for (const { name, worker } of resolved.services) {
         worker.whenBuilt((bound) =>

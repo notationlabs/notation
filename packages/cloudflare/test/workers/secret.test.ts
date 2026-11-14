@@ -187,13 +187,24 @@ describe("workerSecret", () => {
       ]);
     });
 
-    it("writes nothing, and says to deploy, when a Worker that binds it isn't deployed", async () => {
+    it("writes to the deployed Workers when another Worker that binds it isn't deployed", async () => {
       deployed = ["shop--dev--api-1a2b3c4d"];
 
+      await (
+        await declared()
+      ).set!("hunter2");
+
+      expect(
+        calls.filter((call) => call.method === "PUT").map((call) => call.path),
+      ).toEqual([`${scripts}/shop--dev--api-1a2b3c4d/secrets`]);
+    });
+
+    it("says to deploy when no Worker that binds it is deployed", async () => {
+      deployed = ["other"];
+
       await expect((await declared()).set!("hunter2")).rejects.toThrow(
-        '`admin` is a Worker secret, and the Worker "jobs" that binds it isn\'t deployed. Run `notation deploy` instead',
+        "No deployed Worker binds the Worker secret `admin`. Run `notation deploy` first.",
       );
-      expect(calls.some((call) => call.method === "PUT")).toBe(false);
     });
 
     it("deletes the secret from each Worker that binds it", async () => {
@@ -223,7 +234,7 @@ describe("workerSecret", () => {
       );
 
       await expect(secret.set!("hunter2")).rejects.toThrow(
-        "No Worker binds the Worker secret `admin`",
+        "No deployed Worker binds the Worker secret `admin`",
       );
     });
   });
