@@ -332,7 +332,8 @@ async function* applyAction(
       if (
         !opts.dryRun &&
         (!hasSameEdges(session.node, dependsOn) ||
-          session.node.provider !== resource.provider)
+          session.node.provider !== resource.provider ||
+          !sameGroup(session.node.group, resource.group))
       ) {
         yield* rewriteRecord(session, resource, dependsOn);
       }
@@ -449,6 +450,7 @@ async function* recoverOutputs(
   if (!opts.dryRun) {
     yield* session.persist({
       ...toPersistedState(session.node, shared.dependsOn),
+      group: resource.group,
       output: resource.toState(resource.output),
     });
   }
@@ -456,8 +458,8 @@ async function* recoverOutputs(
 }
 
 /**
- * Updates `dependsOn` and `provider` in the record, without calling the
- * resource's update operation.
+ * Updates `dependsOn`, `provider` and `group` in the record, without calling
+ * the resource's update operation.
  */
 async function* rewriteRecord(
   session: Extract<ResourceStateSession, { node: StateNode }>,
@@ -467,7 +469,13 @@ async function* rewriteRecord(
   yield* session.persist({
     ...toPersistedState(session.node, dependsOn),
     provider: resource.provider,
+    group: resource.group,
   });
+}
+
+function sameGroup(recorded: unknown, group: ResourceGroupRef | null): boolean {
+  const ref = (recorded ?? null) as ResourceGroupRef | null;
+  return ref?.type === group?.type && ref?.id === group?.id;
 }
 
 /**

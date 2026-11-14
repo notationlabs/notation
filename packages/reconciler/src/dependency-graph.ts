@@ -18,7 +18,7 @@ export function assertDependenciesPresent(resources: BaseResource[]): void {
     for (const dependency of resource.getDependencies()) {
       if (present.has(dependency) || dependency.output != null) continue;
       throw new Error(
-        `${resource.id} depends on ${dependency.id}, which is not part of this deployment. Add ${dependency.id} to a resource group.`,
+        `${resource.id} depends on ${dependency.id}, which is not part of this deployment. Declare ${dependency.id} in the infra code, or include it in the resources passed to the reconciler.`,
       );
     }
   }

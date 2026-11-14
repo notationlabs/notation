@@ -85,7 +85,7 @@ describe("assertDependenciesPresent", () => {
     const policy = new Node("policy", { dependencies: { bucket } });
 
     expect(() => assertDependenciesPresent([policy])).toThrow(
-      "policy depends on bucket, which is not part of this deployment. Add bucket to a resource group.",
+      "policy depends on bucket, which is not part of this deployment. Declare bucket in the infra code, or include it in the resources passed to the reconciler.",
     );
   });
 
