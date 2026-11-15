@@ -12,6 +12,7 @@ import {
   holdCredential,
   holdsCredential,
   mintAction,
+  operationState,
   takesCredential,
   unheldCredentials,
 } from "../credentials";
@@ -188,7 +189,7 @@ async function* rotateStep(
       try {
         const value = await resource.rotate![name]!(
           resource.key,
-          resource.toState(resource.output),
+          operationState(resource),
         );
         await validateValues(resource, { [name]: value }, "rotate");
         return holdCredential(value);

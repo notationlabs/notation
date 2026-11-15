@@ -50,6 +50,7 @@ import {
   decideDriftAction,
   getDependencyIds,
   hasSameEdges,
+  keepsResource,
   recordedEdges,
   retiredEdges,
   type DriftRead,
@@ -65,10 +66,7 @@ import {
   replaceOrder,
   unknownNames,
 } from "../physical-names";
-import {
-  currentCredentialMarkers,
-  withCredentialMarkers,
-} from "../credentials";
+import { currentCredentialMarkers, setRecordedOutput } from "../credentials";
 import { mintNeededCredentials, obtainCredentials } from "./credentials";
 import { durableEmitter, scopeStep, type DurableStepRunner } from "./step";
 import {
@@ -147,7 +145,7 @@ export async function* reconcileResource(
   assertSameType(resource, session.node);
   const creating = isCreatingRecord(session.node);
   if (session.node && !creating) {
-    resource.setOutput(withCredentialMarkers(resource, session.node.output));
+    setRecordedOutput(resource, session.node.output);
   }
 
   // Resolved once and then carried: deriveParams is user code and need not be
@@ -227,11 +225,7 @@ export async function* reconcileResource(
     });
   }
 
-  if (
-    session.node &&
-    !creating &&
-    ["noop", "update", "drift-update"].includes(action.decision)
-  ) {
+  if (session.node && !creating && keepsResource(action.decision)) {
     const minted = yield* mintNeededCredentials(
       step,
       opts,
@@ -521,9 +515,7 @@ async function* recoverOutputs(
     emit: durableEmitter(readStep, opts.emit),
     maxOperationAttempts: shared.maxOperationAttempts,
   });
-  resource.setOutput(
-    withCredentialMarkers(resource, { ...session.node.output, ...readResult }),
-  );
+  setRecordedOutput(resource, { ...session.node.output, ...readResult });
 
   const missing = findMissingOutputs(resource, resource.output);
   if (!opts.dryRun) {

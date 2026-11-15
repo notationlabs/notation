@@ -40,8 +40,8 @@ import {
 import { firstDeferredError } from "./deferred-checks";
 import {
   holdCreated,
+  setRecordedOutput,
   revealCredentials,
-  withCredentialMarkers,
 } from "../credentials";
 
 /** How long @notation/durable waits before it looks up a create with an unknown outcome again. */
@@ -144,17 +144,15 @@ export async function* createResourceOperation(
 
     const computedPrimaryKey = created.key;
     const credentials = credentialNames(resource.schema);
-    resource.setOutput(
-      withCredentialMarkers(resource, {
-        ...resourceParams,
-        ...Object.fromEntries(
-          Object.entries(created.credentials ?? {}).map(([name, version]) => [
-            name,
-            credentialMarker(resource.id, name, version),
-          ]),
-        ),
-      }),
-    );
+    setRecordedOutput(resource, {
+      ...resourceParams,
+      ...Object.fromEntries(
+        Object.entries(created.credentials ?? {}).map(([name, version]) => [
+          name,
+          credentialMarker(resource.id, name, version),
+        ]),
+      ),
+    });
     if (computedPrimaryKey) {
       resource.setOutput({ ...computedPrimaryKey, ...resource.output });
     }
@@ -282,7 +280,7 @@ async function* takeOver(
 
   // A resource that exists has no credential that deploy can read, so each
   // gets a marker with no version.
-  resource.setOutput(withCredentialMarkers(resource, { ...key, ...output }));
+  setRecordedOutput(resource, { ...key, ...output });
   yield* params.persist(
     resourceRecord(params, {
       lastOperation: "create",

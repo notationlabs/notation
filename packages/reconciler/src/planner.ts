@@ -21,8 +21,8 @@ import {
   credentialConsumers,
   credentialsToMint,
   mintAction,
+  setRecordedOutput,
   takesCredential,
-  withCredentialMarkers,
 } from "./credentials";
 import { toEmitStep, type ReconcilerEventEmitter } from "./events";
 import { applyDriftDetection } from "./operations";
@@ -32,6 +32,7 @@ import {
   assertOrphanDeleteAllowed,
   decideAction,
   getDependencyIds,
+  keepsResource,
   recordedEdges,
   retiredEdges,
   type Plan,
@@ -145,7 +146,7 @@ export async function createPlan({
       resource,
       stateNode &&
         !isCreatingRecord(stateNode) &&
-        ["noop", "update", "drift-update"].includes(action.decision)
+        keepsResource(action.decision)
         ? credentialsToMint(
             resource,
             stateNode.output,
@@ -302,7 +303,7 @@ export async function createPlan({
   // new value earlier in the deploy. Plan holds no value, as deploy holds
   // none for a credential made in an earlier deploy.
   const planLateRotations = async (node: PlanNode, lists: PlanNode[][]) => {
-    if (["noop", "update", "drift-update"].includes(node.decision)) return;
+    if (keepsResource(node.decision)) return;
     const find = (id: string) => {
       for (const list of lists) {
         const index = list.findIndex(
@@ -331,20 +332,29 @@ export async function createPlan({
       // Deploy updates the resources before this one that take the
       // credential. The first plan of each read it for drift.
       for (const [siblingId, sibling] of planned) {
-        if (
-          siblingId === node.id ||
-          !takesCredential(sibling.resource, producer, name)
-        ) {
-          continue;
-        }
+        if (!takesCredential(sibling.resource, producer, name)) continue;
         const siblingAt = find(siblingId);
-        const decision = siblingAt?.list[siblingAt.index]!.decision;
-        if (decision !== "noop" && decision !== "update") continue;
-        siblingAt!.list[siblingAt!.index] = await planResource(
+        const first = siblingAt?.list[siblingAt.index];
+        if (!first || !keepsResource(first.decision)) continue;
+        const again = await planResource(
           sibling.resource,
           sibling.cycle,
           false,
         );
+        // A resource with drift keeps its node, and its diff gains the
+        // credential.
+        siblingAt!.list[siblingAt!.index] =
+          first.decision === "drift-update" && first.diff && again.diff
+            ? {
+                ...first,
+                params: again.params,
+                diff: {
+                  added: { ...first.diff.added, ...again.diff.added },
+                  deleted: { ...first.diff.deleted, ...again.diff.deleted },
+                  updated: { ...first.diff.updated, ...again.diff.updated },
+                },
+              }
+            : again;
       }
     }
   };
@@ -461,7 +471,7 @@ async function loadOutput(
   // A "creating" record holds no outputs, so dependents plan against unknown
   // outputs, as for a resource with no record.
   if (stateNode && !isCreatingRecord(stateNode)) {
-    resource.setOutput(withCredentialMarkers(resource, stateNode.output));
+    setRecordedOutput(resource, stateNode.output);
   }
   return stateNode;
 }

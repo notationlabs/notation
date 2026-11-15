@@ -221,8 +221,7 @@ export const deployLookup: OutputLookup = (token) => {
 export const planLookup: OutputLookup = (token) => {
   const output = token.resource.output as Record<string, unknown> | null;
   if (output == null) return { known: false };
-  const key = token.path[0]!;
-  if (isMissingRequiredOutput(token.resource.schema, output, key)) {
+  if (isMissingRequiredOutput(token.resource.schema, output, token.path[0])) {
     return { known: false };
   }
   return { known: true, value: readPath(output, token.path) };

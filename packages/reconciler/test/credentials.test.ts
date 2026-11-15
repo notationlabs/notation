@@ -34,6 +34,8 @@ type Provider = {
   tokens: Map<string, string>;
   secrets: Map<string, string>;
   calls: string[];
+  /** The state that the last rotate received. */
+  rotateState?: unknown;
   failSecret?: string;
 };
 
@@ -78,7 +80,8 @@ function defineResources(provider: Provider, { rotate }: { rotate: boolean }) {
       ...(rotate
         ? {
             rotate: {
-              Value: async (key) => {
+              Value: async (key, state) => {
+                provider.rotateState = state;
                 provider.calls.push(`rotate ${key.id}`);
                 return issue(key.id);
               },
@@ -250,6 +253,7 @@ describe("a resource that takes a credential in a later deploy", () => {
     );
 
     expect(provider.calls).toEqual(["rotate token-0", "update a", "create b"]);
+    expect(provider.rotateState).toEqual({ id: "token-0", scope: "read" });
     expect(provider.secrets.get("a")).toBe("token-value-2");
     expect(provider.secrets.get("b")).toBe("token-value-2");
     expect(provider.tokens.get("token-0")).toBe("token-value-2");
@@ -290,7 +294,7 @@ describe("a resource that takes a credential in a later deploy", () => {
         fixed,
         {
           decision: "replace",
-          replaceFields: [{ name: "Value", known: true }],
+          replaceFields: [{ name: "Value", known: true, credential: true }],
         },
       ],
     ] as const) {

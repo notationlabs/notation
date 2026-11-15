@@ -15,6 +15,7 @@ import { readResourceOperation } from "./operation.read";
 import { firstDeferredError } from "./deferred-checks";
 import {
   credentialOutputs,
+  operationState,
   revealCredentials,
   revealHeldCredentials,
 } from "../credentials";
@@ -45,7 +46,7 @@ export async function* updateResourceOperation(
           params.resource.key,
           revealCredentials(params.patch),
           revealHeldCredentials(params.resourceParams),
-          params.resource.toState(params.resource.output),
+          operationState(params.resource),
           context,
         ),
       params.maxOperationAttempts,

@@ -119,6 +119,12 @@ function printPlanSummary(result: Plan, logger: Logger) {
       );
     }
     for (const field of node.replaceFields ?? []) {
+      if (field.credential) {
+        logger.info(
+          `    ${field.name} needs a new value, as a resource that takes it needs one, and it has no rotate operation`,
+        );
+        continue;
+      }
       logger.info(
         field.known
           ? `    ${field.name} forces replacement`

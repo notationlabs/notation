@@ -31,6 +31,13 @@ export type PlanDecision =
   | "delete-retired"
   | "noop";
 
+/** Whether the decision leaves the resource in place, and so its credentials. */
+export function keepsResource(decision: PlanDecision): boolean {
+  return (
+    decision === "noop" || decision === "update" || decision === "drift-update"
+  );
+}
+
 export type PlanDiff = ParamsDiffDisplay;
 
 export type PlanNode = {

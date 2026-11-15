@@ -9,12 +9,15 @@ import {
   type BaseResource,
   type CredentialMarker,
 } from "@notation/resource";
-import type { ResourceAction } from "./plan";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import { recordSecretValue } from "@notation/utils";
+import type { ResourceAction } from "./plan";
 
 // The values of credentials, by version. They are kept here only, for the
-// life of the process, so a resumed deploy starts with none.
+// life of the process, so a resumed deploy starts with none. A process runs
+// one deploy: `credentialsToMint` reads records and not this map, so a
+// second deploy in the process would rotate a credential whose value is
+// still held.
 const held = new Map<string, unknown>();
 
 /**
@@ -53,6 +56,27 @@ export function withCredentialMarkers(
     }
   }
   return { ...output, ...markers };
+}
+
+/**
+ * Sets the resource's output from a record or a read, with a marker for each
+ * credential. See `withCredentialMarkers`.
+ */
+export function setRecordedOutput(
+  resource: BaseResource,
+  output: Record<string, unknown>,
+): void {
+  resource.setOutput(withCredentialMarkers(resource, output));
+}
+
+/**
+ * The resource's output as `update`, `delete` and `rotate` receive it in
+ * `state`: without the credential markers.
+ */
+export function operationState(resource: BaseResource): {} {
+  const output = { ...(resource.output as Record<string, unknown>) };
+  for (const name of credentialNames(resource.schema)) delete output[name];
+  return resource.toState(output);
 }
 
 /** The credential markers in the resource's output. */
@@ -247,7 +271,11 @@ export function mintAction(
       decision: "replace",
       patch: {},
       diff: { added: {}, deleted: {}, updated: {} },
-      replaceFields: unrotatable.map((name) => ({ name, known: true })),
+      replaceFields: unrotatable.map((name) => ({
+        name,
+        known: true,
+        credential: true,
+      })),
     },
   };
 }

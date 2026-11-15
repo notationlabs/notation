@@ -996,6 +996,12 @@ export type ResourceOperationsOptions<
     key: T["compoundKey"],
     context?: ResourceOperationContext,
   ) => Promise<T["result"]>;
+  /**
+   * A param that takes a credential of another resource holds the value in
+   * `params` only when `patch` holds it. Otherwise it is `undefined` in
+   * `params`, so an update that sends every param to the provider has to
+   * leave it out of the request.
+   */
   update?: (
     key: T["compoundKey"],
     patch: T["params"],
