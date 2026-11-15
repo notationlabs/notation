@@ -990,8 +990,10 @@ export type ResourceOperationsOptions<
   find?: (params: T["params"]) => Promise<T["primaryKey"] & {}>;
   /**
    * `params` lets a read choose what to observe, such as the declared parts
-   * of the resource that the key doesn't name. A read must never return a
-   * value from `params` as a remote value. A value in `params` can be
+   * of the resource that the key doesn't name. A read may return a value
+   * from `params` only for a part whose presence it has observed and whose
+   * value the provider never returns, such as a Worker secret's source. A
+   * value in `params` can be
    * unknown at plan. They are the desired params, except for the drift read
    * of a cycle's placeholder, which gets the params in its state record.
    */
