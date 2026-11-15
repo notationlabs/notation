@@ -26,19 +26,45 @@ describeE2e("accountToken()", () => {
   const name = `${project.scope}probe`;
   const accountResource = `com.cloudflare.api.account.${accountId}`;
 
-  function writeInfra(options: string) {
+  // `more` is code that follows the token's declaration.
+  function writeInfra(options: string, more = "") {
     project.write(
       "infra/tokens.ts",
       `
+      import { ResourceGroup } from "@notation/resource";
+      import * as cloudflare from "@notation/cloudflare/resources";
       import { accountToken } from "@notation/cloudflare/tokens";
 
       export const probeToken = accountToken({
         id: "probe",
         ${options}
       });
+      ${more}
       `,
     );
   }
+
+  // A second secret that takes the token's value. A deployment declares
+  // resources only through a group, so the secret sits in one.
+  const copySecret = `
+    class CopyGroup extends ResourceGroup {
+      constructor() {
+        super("e2e/tokenCopy", "copy");
+        this.add(
+          new cloudflare.secretsStore.SecretsStoreSecret("secret:copy", {
+            config: {
+              Name: "${name}-copy",
+              StageScoped: true,
+              Value: probeToken.token.credentials.Value,
+            },
+            dependencies: { store: probeToken.secret.dependencies.store },
+          }),
+        );
+      }
+    }
+
+    new CopyGroup();
+  `;
 
   // The Worker reads the token from its binding, verifies it, and reads the
   // account with it. It returns a hash of the value, so that the test can
@@ -194,7 +220,39 @@ describeE2e("accountToken()", () => {
     });
   });
 
-  it("deletes the token and its secret on destroy", async () => {
+  // Deploy no longer holds the token's value, so the new secret can only get
+  // one by a roll of the token.
+  it("rolls the token when a second secret takes its value, and updates the first secret", async () => {
+    writeInfra(`policies: [${policy(["Account Settings Read"])}],`, copySecret);
+    await project.notation("deploy");
+
+    const token = await theToken();
+    expect(token.id).toBe(tokenId);
+    expect(
+      (await secretsWithPrefix(name)).map((secret) => secret.name).sort(),
+    ).toEqual([name, `${name}-copy`]);
+
+    const result = await probe(
+      (probe) => works(probe) && probe.sha256 !== sha256,
+    );
+    expect(result).toMatchObject({
+      status: "active",
+      accountRead: true,
+      codes: [],
+    });
+    expect(result.sha256).not.toBe(sha256);
+    sha256 = result.sha256;
+  });
+
+  it("leaves the rolled value alone on a deploy with the same config", async () => {
+    await project.notation("deploy");
+
+    expect((await theToken()).id).toBe(tokenId);
+    const result = await probe(works);
+    expect(result).toMatchObject({ status: "active", sha256 });
+  });
+
+  it("deletes the token and its secrets on destroy", async () => {
     await project.notation("destroy");
 
     expect(await tokensWithPrefix(name)).toEqual([]);
