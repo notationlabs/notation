@@ -1,5 +1,4 @@
 import {
-  createLoggerReconcilerSubscriber,
   planApp,
   PROMPT_SOURCE,
   resolveDeploymentId,
@@ -9,10 +8,11 @@ import {
 } from "@notation/core";
 import { compile } from "./compile";
 import { defaultLogger, type Logger } from "./logger";
+import { createEventRenderer, type OutputMode } from "./output";
 import { redirectStdoutToStderr } from "./stdio";
 
 export type PlanCommandOptions = {
-  json?: boolean;
+  output?: OutputMode;
   logger?: Logger;
 };
 
@@ -41,8 +41,10 @@ export async function plan(
   opts: PlanCommandOptions = {},
 ) {
   const logger = opts.logger ?? defaultLogger;
-  const emit = createLoggerReconcilerSubscriber({ logger });
-  if (opts.json) {
+  // The events are progress, so they stay pretty. In JSON output they go to
+  // stderr, and stdout carries only the plan.
+  const emit = createEventRenderer("pretty", logger);
+  if (opts.output === "json") {
     let result: Plan;
     const { restore } = redirectStdoutToStderr();
     try {

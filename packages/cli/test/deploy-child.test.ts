@@ -59,8 +59,9 @@ describe("deployInChild", () => {
     const log = logger();
     const event = {
       level: "warn",
-      event: "reconciler.drift.detected",
-      resourceId: "docs",
+      event: "reconciler.provider.load-failed",
+      provider: "@notation/aws",
+      errorMessage: "not found",
     };
     const { spawn } = fakeSpawn([JSON.stringify({ version: 1, ...event })], 0);
 
@@ -71,7 +72,9 @@ describe("deployInChild", () => {
       spawn,
     });
 
-    expect(log.warn).toHaveBeenCalledWith("reconciler.drift.detected", event);
+    expect(log.warn).toHaveBeenCalledWith(
+      "! could not load provider @notation/aws: not found",
+    );
   });
 
   it("rejects when the child exits with an error", async () => {
