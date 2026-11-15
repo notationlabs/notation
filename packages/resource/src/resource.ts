@@ -112,9 +112,8 @@ export type InferResourceTypes<S extends ResolvedSchema> = {
 
 /**
  * The config a resource takes: its params less `Omitted` and less the params
- * with `physicalName` that deploy always generates. Collected params and
- * params with a suppliable `physicalName` are optional, because
- * contributions can supply the first and deploy can generate the second.
+ * with `physicalName`, which deploy generates. Collected params are
+ * optional, because contributions can supply them.
  */
 export type ConfigParams<
   T extends ResourceTypes,
@@ -123,17 +122,10 @@ export type ConfigParams<
   Partial<
     Pick<
       T["params"],
-      Exclude<
-        keyof T["collected"] | NamesOfKind<T["named"], "suppliable">,
-        Omitted | NamesOfKind<T["named"], "generated">
-      > &
+      Exclude<keyof T["collected"], Omitted | keyof T["named"]> &
         keyof T["params"]
     >
   >;
-
-type NamesOfKind<N, Kind> = {
-  [K in keyof N]: N[K] extends Kind ? K : never;
-}[keyof N];
 
 /**
  * Identifies the group a resource belongs to. A group's ID is unique among

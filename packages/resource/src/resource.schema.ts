@@ -61,11 +61,9 @@ export type SchemaItem<T = any> = {
        * Marks the param as the resource's physical name. Deploy fills it
        * with a name generated from the resource ID that fits the rule. The
        * name is kept in state, so later deploys use the same one. The
-       * params that an operation receives always hold the field. Unless the
-       * rule has `suppliable`, the config type leaves the param out, and
-       * neither config nor `deriveParams` can supply it. With `suppliable`,
-       * the param is optional in config, and a supplied value names the
-       * resource when deploy first creates it.
+       * params that an operation receives always hold the field. The config
+       * type leaves the param out, and neither config nor `deriveParams`
+       * can supply it.
        */
       physicalName?: PhysicalNameRule;
     }
@@ -179,16 +177,11 @@ export type Contributions<S extends ResolvedSchema> = {
     : never;
 };
 
-/**
- * The params that have `physicalName`: `"generated"` for one that deploy
- * always generates, and `"suppliable"` for one whose rule has `suppliable`.
- */
+/** The params that have `physicalName`, which deploy generates. */
 export type PhysicalNames<S extends ResolvedSchema> = {
   [
     K in keyof S as S[K] extends { physicalName: object } ? K : never
-  ]: S[K] extends { physicalName: { suppliable: true } }
-    ? "suppliable"
-    : "generated";
+  ]: "generated";
 };
 
 export type State<S extends ResolvedSchema> = MapSchema<
