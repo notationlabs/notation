@@ -20,11 +20,15 @@ vi.mock("@notation/core", () => ({
   createNdjsonEventEmitter: () => () => undefined,
   deployApp,
   destroyApp,
+  parseReplaceTarget: (value: string) => {
+    const [id, instanceHash] = value.split("@");
+    return { id, instanceHash };
+  },
   resolveDeploymentId: (d: Deployment) => `${d.app}:${d.stage}`,
 }));
 vi.mock("../src/compile", () => ({ compile: vi.fn(async () => undefined) }));
 
-const { deploy } = await import("../src/deploy");
+const { deploy, replaceRequest } = await import("../src/deploy");
 const { destroy } = await import("../src/destroy");
 
 describe.each([
@@ -115,5 +119,30 @@ describe("deploy options", () => {
     await deploy(deployment, { logger });
 
     expect(compile).toHaveBeenCalledOnce();
+  });
+});
+
+describe("replace flags", () => {
+  it("reads --replace and --override-loss-protection, and passes them to deploy", async () => {
+    deployApp.mockClear();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const requested = replaceRequest({
+      replace: ["bucket:uploads@3c1f9a02"],
+      overrideLossProtection: ["bucket:uploads"],
+    });
+
+    await deploy(deployment, { compile: false, logger, requested });
+
+    expect(requested).toEqual({
+      replace: [{ id: "bucket:uploads", instanceHash: "3c1f9a02" }],
+      overrideLossProtection: ["bucket:uploads"],
+    });
+    expect(deployApp).toHaveBeenCalledWith(
+      expect.objectContaining({ requested }),
+    );
+  });
+
+  it("gives no request without either flag", () => {
+    expect(replaceRequest({})).toBeUndefined();
   });
 });

@@ -472,3 +472,61 @@ it("prints a resource at which deploy fails for want of a credential", async () 
     "    deploy fails here, as it holds no value for Value of token. The deploy after it replaces token",
   );
 });
+
+it("prints a requested replace, and the deploy command with the instance hash", async () => {
+  planApp.mockResolvedValueOnce({
+    createdAt: "",
+    nodes: [
+      {
+        id: "lambda:orders:role",
+        type: "aws/lambda/LambdaIamRole",
+        decision: "replace",
+        replaceFields: [{ requested: true, known: true }],
+        replaceOrder: "create-first",
+        instanceHash: "3c1f9a02",
+        params: {},
+        dependsOn: [],
+      },
+      {
+        id: "lambda:orders",
+        type: "aws/lambda/LambdaFunction",
+        decision: "update",
+        instanceHash: "9e04b7d1",
+        params: {},
+        dependsOn: ["lambda:orders:role"],
+      },
+    ],
+  });
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+  const requested = {
+    replace: [{ id: "lambda:orders:role" }],
+    overrideLossProtection: ["lambda:orders:role"],
+  };
+
+  await plan(deployment, {
+    logger,
+    requested,
+    deployCommand: "notation deploy --stage prod",
+  });
+
+  expect(planApp).toHaveBeenLastCalledWith(
+    expect.objectContaining({ requested }),
+  );
+  expect(lines.slice(1, 3)).toEqual([
+    "+/- replace aws/lambda/LambdaIamRole lambda:orders:role (create, then delete)",
+    "    replaced by --replace",
+  ]);
+  expect(lines.at(-1)).toBe(
+    "\nTo deploy this plan:\n  notation deploy --stage prod --replace lambda:orders:role@3c1f9a02 --override-loss-protection lambda:orders:role",
+  );
+});
+
+it("prints no deploy command without a request", async () => {
+  const lines: string[] = [];
+  const logger = { ...console, info: (line: string) => lines.push(line) };
+
+  await plan(deployment, { logger });
+
+  expect(lines.join("\n")).not.toContain("To deploy this plan");
+});

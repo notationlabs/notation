@@ -110,6 +110,25 @@ describe("formatPrettyEvent", () => {
   });
 });
 
+describe("a requested replace", () => {
+  it("says that --replace asked for it", () => {
+    expect(
+      formatPrettyEvent({
+        level: "info",
+        event: "reconciler.deploy.decision",
+        decision: "replace",
+        replaceFields: [{ requested: true, known: true }],
+        replaceOrder: "delete-first",
+        resourceId: "bucket:uploads",
+        resourceType: "cloudflare/r2/bucket",
+      }),
+    ).toBe(
+      "→ replace bucket:uploads cloudflare/r2/bucket " +
+        "(requested by --replace; delete, then create)",
+    );
+  });
+});
+
 describe("createEventRenderer", () => {
   it("logs pretty lines at the event's level", async () => {
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };

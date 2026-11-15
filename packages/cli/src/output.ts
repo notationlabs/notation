@@ -104,6 +104,7 @@ export function formatPrettyEvent(
         details.push(
           event.replaceFields
             .map((field) => {
+              if (field.requested) return "requested by --replace";
               if (field.credential) return `${field.name} needs a new value`;
               return field.known ? field.name : `${field.name}?`;
             })

@@ -1,7 +1,9 @@
 import {
   deployApp,
+  parseReplaceTarget,
   resolveDeploymentId,
   type Deployment,
+  type ReplaceRequest,
   type SecretPrompt,
 } from "@notation/core";
 import { randomUUID } from "node:crypto";
@@ -28,6 +30,8 @@ export type DeployCommandOptions = {
   promptSecrets?: boolean;
   /** Defaults to the prompt that `secretPrompt` picks. */
   promptSecret?: SecretPrompt;
+  /** The replaces from `--replace` and `--override-loss-protection`. */
+  requested?: ReplaceRequest;
 };
 
 export async function deploy(
@@ -55,6 +59,7 @@ export async function deploy(
     emit,
     executionId,
     driftDetection: opts.driftDetection,
+    requested: opts.requested,
     promptSecret:
       opts.promptSecret ??
       secretPrompt({
@@ -77,4 +82,21 @@ export function secretPrompt(opts: {
   if (opts.json && !opts.promptSecrets) return undefined;
   if (!canPrompt()) return undefined;
   return terminalSecretPrompt();
+}
+
+/**
+ * Reads `--replace` and `--override-loss-protection`. Undefined when neither
+ * is given, so that a resume uses the request that the execution saved.
+ */
+export function replaceRequest(options: {
+  replace?: string[];
+  overrideLossProtection?: string[];
+}): ReplaceRequest | undefined {
+  if (!options.replace && !options.overrideLossProtection) return undefined;
+  return {
+    replace: (options.replace ?? []).map(parseReplaceTarget),
+    ...(options.overrideLossProtection
+      ? { overrideLossProtection: options.overrideLossProtection }
+      : {}),
+  };
 }
