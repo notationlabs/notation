@@ -27,7 +27,7 @@ import {
   isPlaceholderScript,
   isReferenced,
   listAccountNamespaces,
-  listScriptDeployments,
+  latestDeployment,
   patchScriptExports,
   putScript,
   type AccountNamespace,
@@ -140,7 +140,7 @@ const READABLE_RETRY_MS = 250;
 // Cloudflare sometimes reports a Worker as not found for about a second
 // after the upload that created it. The reconciler reads the Worker straight
 // after create, and fails on not found, so create waits until it can read it.
-export async function waitUntilReadable(account: string, scriptName: string) {
+async function waitUntilReadable(account: string, scriptName: string) {
   const deadline = Date.now() + READABLE_WITHIN_MS;
   while (!(await getScriptSettings(account, scriptName))) {
     if (Date.now() >= deadline) {
@@ -305,8 +305,7 @@ export const WorkerScript = workerScriptSchema
       if (found.transfers.length > 0) {
         throw new Error(newHostError(params, found.transfers));
       }
-      if (existing) await assertNoRollout(params);
-      const secrets = await secretBindings(params, existing !== undefined);
+      const secrets = await secretBindings(params);
       await cloudflareCreate(async () => {
         await upload(params, [], found, secrets, { tags: [] });
         await waitUntilReadable(params.AccountId, params.ScriptName);
@@ -331,16 +330,21 @@ export const WorkerScript = workerScriptSchema
     // An upload sets the whole Worker, so the patch is not used. The upload
     // compares the namespaces in state with the new ones, to rename, delete
     // or move those that changed. An upload keeps a secret that it leaves
-    // out, so a removed secret is deleted after it.
+    // out, so a removed secret is deleted after it. A name that the upload
+    // binds another way is not deleted, as the delete would remove that
+    // binding.
     update: async (_key, _patch, params, state) => {
+      await assertNoRollout(params);
       const previous = state.DurableObjectNamespaces ?? [];
       const found = await findTransfers(params, previous);
-      await assertNoRollout(params);
-      const secrets = await secretBindings(params, true);
+      const secrets = await secretBindings(params);
       await upload(params, previous, found, secrets);
-      const kept = params.Secrets ?? {};
+      const bound = new Set([
+        ...Object.keys(params.Secrets ?? {}),
+        ...(params.Bindings ?? []).map((binding) => binding.name),
+      ]);
       for (const name of Object.keys(state.Secrets ?? {})) {
-        if (name in kept) continue;
+        if (bound.has(name)) continue;
         await deleteScriptSecret(params.AccountId, params.ScriptName, name);
       }
     },
@@ -380,10 +384,7 @@ export function sortedFlags(flags: string[]): string[] {
  * upload to all traffic, which ends the rollout.
  */
 async function assertNoRollout(params: WorkerScriptParams): Promise<void> {
-  const [latest] = await listScriptDeployments(
-    params.AccountId,
-    params.ScriptName,
-  );
+  const latest = await latestDeployment(params.AccountId, params.ScriptName);
   if (!latest || latest.versions.length < 2) return;
   const split = latest.versions
     .map((version) => `${version.percentage}% on version ${version.version_id}`)
@@ -394,18 +395,16 @@ async function assertNoRollout(params: WorkerScriptParams): Promise<void> {
 }
 
 /**
- * Reads the value of each secret in `Secrets` from its source. When
- * `exists`, a secret whose value comes from the prompt is left out if the
- * Worker has it, so that a value set with `notation secret set` is kept.
+ * Reads the value of each secret in `Secrets` from its source. A secret
+ * whose value comes from the prompt is left out if the Worker has it, so
+ * that a value set with `notation secret set` is kept.
  */
 async function secretBindings(
   params: WorkerScriptParams,
-  exists: boolean,
 ): Promise<SecretTextBinding[]> {
   const bindings: SecretTextBinding[] = [];
   for (const [name, valueFrom] of Object.entries(params.Secrets ?? {})) {
     if (
-      exists &&
       valueFrom.Source === PROMPT_SOURCE &&
       (await hasScriptSecret(params.AccountId, params.ScriptName, name))
     ) {

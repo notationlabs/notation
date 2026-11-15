@@ -180,30 +180,19 @@ export async function putScript(
 
 /** A deployment of a Worker: the versions that serve its traffic. */
 export type ScriptDeployment = {
-  id: string;
-  created_on: string;
-  /** `percentage` for a deployment that splits traffic between versions. */
-  strategy: string;
   versions: { version_id: string; percentage: number }[];
 };
 
-/** The Worker's deployments, newest first. Empty if the Worker doesn't exist. */
-export async function listScriptDeployments(
+/** The Worker's latest deployment, which Cloudflare lists first. */
+export async function latestDeployment(
   account: string,
   scriptName: string,
-): Promise<ScriptDeployment[]> {
-  try {
-    const result = await cloudflare<{ deployments?: ScriptDeployment[] }>(
-      "GET",
-      `${scriptPath(account, scriptName)}/deployments`,
-    );
-    return [...(result?.deployments ?? [])].sort((a, b) =>
-      b.created_on.localeCompare(a.created_on),
-    );
-  } catch (error) {
-    if (isNotFound(error)) return [];
-    throw error;
-  }
+): Promise<ScriptDeployment | undefined> {
+  const result = await cloudflare<{ deployments?: ScriptDeployment[] }>(
+    "GET",
+    `${scriptPath(account, scriptName)}/deployments`,
+  );
+  return result?.deployments?.[0];
 }
 
 /** Cloudflare's error code for a binding that the Worker doesn't have. */

@@ -34,16 +34,14 @@ type FakeWorker = {
 };
 
 type FakeDeployment = {
-  created_on?: string;
   versions: { version_id: string; percentage: number }[];
 };
 
 let directory: string;
 let runtime: NodeDurableRuntime;
 let workers: Map<string, FakeWorker>;
-// The deployments that the fake API reports, by Worker name, newest first
-// unless they set `created_on`. A Worker with none listed has one
-// deployment of one version.
+// The deployments that the fake API reports, by Worker name, latest first.
+// A Worker with none listed has one deployment of one version.
 let deployments: Map<string, FakeDeployment[]>;
 // The writes that reached the fake API, in order.
 let log: string[];
@@ -108,8 +106,6 @@ function fakeCloudflare() {
       return ok({
         deployments: listed.map((deployment, index) => ({
           id: `d${index}`,
-          created_on: `2026-11-${19 - index}T00:00:00Z`,
-          strategy: "percentage",
           ...deployment,
         })),
       });
@@ -179,7 +175,8 @@ const declareWorker = () => {
 // The graph that `$worker` declared before `WorkerScript` took `Secrets`:
 // one `WorkerSecret` for each secret. The placeholder is left out, as its
 // name would differ from the script's. Each secret takes the script's name
-// from the script's output.
+// from the script's output. `WorkerSecret` can no longer create, so each
+// create sets the secret on the fake Worker, as the previous version did.
 const declareLegacyWorker = () => {
   workerSecret({ id: "api-key", source: vault, key: "API_KEY" });
   workerSecret({ id: "admin" });
@@ -203,10 +200,21 @@ const declareLegacyWorker = () => {
     ],
     ["ADMIN", { Secret: "admin", Source: "prompt" }],
   ] as const) {
-    new cloudflare.workers.WorkerSecret(`worker:api:secret:${name}`, {
-      config: { Name: name, ValueFrom: valueFrom },
-      dependencies: { placeholder: script as any },
-    });
+    const secret = new cloudflare.workers.WorkerSecret(
+      `worker:api:secret:${name}`,
+      {
+        config: {
+          AccountId: "acc",
+          ScriptName: script.outputRef("ScriptName"),
+          Name: name,
+          ValueFrom: valueFrom,
+        },
+      },
+    );
+    secret.create = async (params) => {
+      const value = valueFrom.Source === "prompt" ? "typed" : "sk_live";
+      workers.get(params.ScriptName)!.secrets.set(params.Name, value);
+    };
   }
 };
 
@@ -492,22 +500,17 @@ describe("a gradual rollout", () => {
     expect(log).toEqual([]);
   });
 
-  it("uploads when the newest deployment has one version", async () => {
+  it("uploads when the latest deployment has one version", async () => {
     await deploy("first", prompt);
     const name = onlyWorker();
     log = [];
-    // Listed oldest first, so deploy has to sort them.
     deployments.set(name, [
+      { versions: [{ version_id: "81fa", percentage: 100 }] },
       {
-        created_on: "2026-11-01T00:00:00Z",
         versions: [
           { version_id: "3c9e", percentage: 50 },
           { version_id: "81fa", percentage: 50 },
         ],
-      },
-      {
-        created_on: "2026-11-02T00:00:00Z",
-        versions: [{ version_id: "81fa", percentage: 100 }],
       },
     ]);
 

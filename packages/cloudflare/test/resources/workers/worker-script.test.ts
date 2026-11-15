@@ -1430,6 +1430,28 @@ describe("WorkerScript secrets", () => {
     ]);
   });
 
+  it("doesn't delete a secret whose name the upload binds as a plain binding", async () => {
+    mockFetch(() => ok({}));
+    const plain = {
+      ...params,
+      Bindings: [
+        ...params.Bindings,
+        { type: "plain_text" as const, name: "ADMIN", text: "visible" },
+      ],
+      Secrets: { API_KEY: secrets.API_KEY },
+    };
+
+    await deploying(() =>
+      script.update!(params as any, {} as any, plain, withSecrets),
+    );
+
+    expect(
+      requests()
+        .filter((call) => call.method !== "GET")
+        .map((call) => call.method),
+    ).toEqual(["PUT"]);
+  });
+
   it("uploads nothing when a value can't be read", async () => {
     mockFetch(untilUploaded());
 
@@ -1479,20 +1501,7 @@ describe("WorkerScript during a gradual rollout", () => {
     expect(puts()).toEqual([]);
   });
 
-  it("fails a create over a placeholder Worker", async () => {
-    mockFetch((call) =>
-      isDeploymentsRead(call)
-        ? ok(split)
-        : ok({ tags: ["notation-placeholder"] }),
-    );
-
-    await expect(script.create(params)).rejects.toThrow(
-      "is in a gradual rollout",
-    );
-    expect(puts()).toEqual([]);
-  });
-
-  it("doesn't read the deployments in a create of a new Worker", async () => {
+  it("doesn't read the deployments in a create", async () => {
     mockFetch(untilUploaded());
 
     await script.create(params);
@@ -1500,23 +1509,11 @@ describe("WorkerScript during a gradual rollout", () => {
     expect(calls.filter(isDeploymentsRead)).toEqual([]);
   });
 
-  it("uploads when the newest deployment has one version, in whatever order Cloudflare lists them", async () => {
-    const [older, newer] = [
-      { ...split.deployments[0]!, created_on: "2026-11-14T10:00:00Z" },
-      { ...split.deployments[1]!, created_on: "2026-11-15T10:00:00Z" },
-    ];
+  it("uploads when the latest deployment has one version", async () => {
     mockFetch((call) =>
-      isDeploymentsRead(call) ? ok({ deployments: [older, newer] }) : ok({}),
-    );
-
-    await script.update!(params as any, {} as any, params, params);
-
-    expect(puts()).toHaveLength(1);
-  });
-
-  it("uploads to a Worker whose deployments Cloudflare reports as not found", async () => {
-    mockFetch((call) =>
-      isDeploymentsRead(call) ? fail(404, 10007, "not found") : ok({}),
+      isDeploymentsRead(call)
+        ? ok({ deployments: [split.deployments[1], split.deployments[0]] })
+        : ok({}),
     );
 
     await script.update!(params as any, {} as any, params, params);

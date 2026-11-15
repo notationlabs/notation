@@ -54,8 +54,6 @@ export type WorkerDeclarationConfig<Id extends string, B extends Bindings> = {
   url?: boolean;
 };
 
-type SecretBinding = { name: string; valueFrom: SecretValueFrom };
-
 export type WorkerGroupConfig = {
   id: string;
   /** The bundle to upload, relative to the project root. */
@@ -63,8 +61,8 @@ export type WorkerGroupConfig = {
   compatibilityDate: string;
   compatibilityFlags: string[];
   bindings: cloudflare.workers.WorkerBinding[];
-  /** The `secret_text` bindings, which the upload of the code sends. */
-  secrets: SecretBinding[];
+  /** The `secret_text` bindings by name, which the upload of the code sends. */
+  secrets: Record<string, SecretValueFrom>;
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotectedNamespaces?: string[];
@@ -123,10 +121,8 @@ export class WorkerGroup extends ResourceGroup<WorkerGroupConfig> {
           Bindings: config.bindings,
           // Undefined when empty, so that the params of a Worker without
           // secrets don't change.
-          Secrets: config.secrets.length
-            ? Object.fromEntries(
-                config.secrets.map(({ name, valueFrom }) => [name, valueFrom]),
-              )
+          Secrets: Object.keys(config.secrets).length
+            ? config.secrets
             : undefined,
           DurableObjectNamespaces: config.namespaces,
           UnprotectedDurableObjects: config.unprotectedNamespaces,
@@ -365,7 +361,7 @@ function bindingCycleError(cycle: Entry[]): Error {
 
 type ResolvedBindings = {
   bindings: cloudflare.workers.WorkerBinding[];
-  secrets: SecretBinding[];
+  secrets: Record<string, SecretValueFrom>;
   namespaces: cloudflare.workers.HostedNamespace[];
   /** The ids of the hosted namespaces that set `protect: false`. */
   unprotected: Set<string>;
@@ -388,7 +384,7 @@ function resolveBindings(
 ): ResolvedBindings {
   const resolved: ResolvedBindings = {
     bindings: [],
-    secrets: [],
+    secrets: {},
     namespaces: [],
     unprotected: new Set(),
     bound: [],
@@ -457,7 +453,7 @@ function resolveBindings(
     }
     if (isWorkerSecret(value)) {
       value.boundBy({ nameBody: workerNames(self.id).nameBody, name });
-      resolved.secrets.push({ name, valueFrom: value.valueFrom });
+      resolved.secrets[name] = value.valueFrom;
       continue;
     }
     if (hasResourceType(value, "cloudflare/r2/R2Bucket")) {
