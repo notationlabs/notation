@@ -1,5 +1,12 @@
 # @notation/infisical
 
+## 0.22.0
+
+### Patch Changes
+
+- Updated dependencies [524adee]
+  - @notation/core@0.22.0
+
 ## 0.21.0
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # @notation/state
 
+## 0.22.0
+
+### Patch Changes
+
+- Updated dependencies [27ddfb5]
+  - @notation/resource@0.22.0
+
 ## 0.21.0
 
 ### Patch Changes

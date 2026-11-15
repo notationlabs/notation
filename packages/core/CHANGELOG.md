@@ -1,5 +1,17 @@
 # @notation/core
 
+## 0.22.0
+
+### Patch Changes
+
+- 524adee: `notation deploy`, `destroy` and `plan` print JSON when stdout is not a terminal, and pretty output on a terminal. `--json` and `--pretty` choose the format. Pretty output prints each reconciler event as one line with a status symbol, and leaves out noop decisions. A deploy without `--json` still asks for secret values when stdin is a terminal.
+- Updated dependencies [524adee]
+- Updated dependencies [27ddfb5]
+  - @notation/reconciler@0.22.0
+  - @notation/resource@0.22.0
+  - @notation/state@0.22.0
+  - @notation/utils@0.22.0
+
 ## 0.21.0
 
 ### Patch Changes
