@@ -1,10 +1,7 @@
 import * as v from "valibot";
-import {
-  containsUnknownAfterApply,
-  resource,
-  ResourceNotFoundError,
-} from "@notation/resource";
+import { resource, ResourceNotFoundError } from "@notation/resource";
 import { accountId, cloudflareCreate } from "src/api/client";
+import { refuseReplace } from "src/resources/refuse-replace";
 import {
   createNamespace,
   deleteNamespace,
@@ -141,14 +138,9 @@ export const KVNamespace = kvNamespaceSchema.defineOperations({
     }
   },
 
-  // As for the R2 bucket.
-  rejectChange: (_previous, desired, context) => {
-    if (!context.replace) return undefined;
-    if (!context.requested && containsUnknownAfterApply(desired)) {
-      return undefined;
-    }
-    return "Replacing this KV namespace would delete it and its keys.";
-  },
+  rejectChange: refuseReplace(
+    "Replacing this KV namespace would delete it and its keys.",
+  ),
 
   deriveParams: () => ({ AccountId: accountId() }),
 });

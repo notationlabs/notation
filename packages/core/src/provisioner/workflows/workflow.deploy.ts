@@ -1,7 +1,6 @@
 import * as durable from "@notation/reconciler/durable";
 import {
   createLoggerReconcilerSubscriber,
-  formatReplaceTarget,
   type ReconcilerEventEmitter,
   type ReplaceRequest,
   type ResourceRegistry,
@@ -136,7 +135,9 @@ export function assertSameRequest(
 export function formatRequest(request: ReplaceRequest | undefined): string {
   return [
     ...(request?.replace ?? [])
-      .map((target) => `--replace ${formatReplaceTarget(target)}`)
+      .map(({ id, instanceHash }) =>
+        instanceHash ? `--replace ${id}@${instanceHash}` : `--replace ${id}`,
+      )
       .sort(),
     ...(request?.overrideLossProtection ?? [])
       .map((id) => `--override-loss-protection ${id}`)

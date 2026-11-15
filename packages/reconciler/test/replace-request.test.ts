@@ -213,6 +213,7 @@ describe("createPlan with a requested replace", () => {
       resources,
       state,
       driftDetection: false,
+      deploymentId,
       requested: { replace: [{ id: "orders" }] },
     });
 
@@ -335,6 +336,7 @@ describe("createPlan with a requested replace", () => {
           resources: [bucket()],
           state: bucketState(),
           driftDetection: false,
+          deploymentId,
           requested: { replace: [{ id: "uploads" }] },
         }),
       ).rejects.toThrow(
@@ -347,6 +349,7 @@ describe("createPlan with a requested replace", () => {
         resources: [bucket()],
         state: bucketState(),
         driftDetection: false,
+        deploymentId,
         requested: {
           replace: [{ id: "uploads" }],
           overrideLossProtection: ["uploads"],
@@ -393,6 +396,7 @@ describe("createPlan with a requested replace", () => {
           ),
         }),
         driftDetection: false,
+        deploymentId,
         requested: {
           replace: [{ id: "uploads" }],
           overrideLossProtection: ["uploads"],

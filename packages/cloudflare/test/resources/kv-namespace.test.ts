@@ -252,6 +252,7 @@ describe("KVNamespace", () => {
           resources: [namespace],
           state: stateWith(namespace, { ...params, ...key }),
           driftDetection: false,
+          deploymentId: "app:prod",
           requested: { replace: [{ id: "kv:cache" }] },
         }),
       ).rejects.toThrow(
@@ -264,6 +265,7 @@ describe("KVNamespace", () => {
         resources: [namespace],
         state: stateWith(namespace, { ...params, ...key }),
         driftDetection: false,
+        deploymentId: "app:prod",
         requested: {
           replace: [{ id: "kv:cache" }],
           overrideLossProtection: ["kv:cache"],

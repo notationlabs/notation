@@ -36,10 +36,4 @@ export type DeployContext = DurableDeployOptions & {
   recordedOutputs: RecordedOutputs;
   /** The resources that the deploy has reconciled so far. */
   reconciled: Set<BaseResource>;
-  /**
-   * The IDs of the requested resources that the deploy has created again.
-   * A resource is reconciled more than once in a cycle, and each request
-   * replaces it once.
-   */
-  replacedOnRequest: Set<string>;
 };

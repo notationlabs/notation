@@ -198,7 +198,9 @@ export async function* reconcileResource(
       : undefined,
   );
 
-  const requested = opts.replacedOnRequest.has(resource.id)
+  // A cycle reconciles a resource more than once, and each request replaces
+  // it once.
+  const requested = opts.reconciled.has(resource)
     ? undefined
     : requestedReplace(opts.requested, resource.id);
   let action = decideAction({
@@ -288,9 +290,6 @@ export async function* reconcileResource(
     }
   }
 
-  if (requested && !keepsResource(action.decision)) {
-    opts.replacedOnRequest.add(resource.id);
-  }
   options.onDecision?.(action.decision);
   if (action.decision !== "noop" || !options.quietNoop) {
     yield* emitDecision(emit, resource, action, {

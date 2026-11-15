@@ -300,6 +300,7 @@ describe("R2Bucket", () => {
           resources: [bucket],
           state: stateWith(bucket, params),
           driftDetection: false,
+          deploymentId: "app:prod",
           requested: { replace: [{ id: "bucket:uploads" }] },
         }),
       ).rejects.toThrow(
@@ -312,6 +313,7 @@ describe("R2Bucket", () => {
         resources: [bucket],
         state: stateWith(bucket, params),
         driftDetection: false,
+        deploymentId: "app:prod",
         requested: {
           replace: [{ id: "bucket:uploads" }],
           overrideLossProtection: ["bucket:uploads"],

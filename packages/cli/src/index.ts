@@ -152,7 +152,7 @@ program
     await plan(deployment, {
       output: resolveOutputMode(options),
       requested: replaceRequest(options),
-      deployCommand: `${resumeCommand("deploy", options)} --stage ${deployment.stage}`,
+      config: options.config,
     });
   });
 
@@ -227,7 +227,7 @@ async function resolveResumableDeployment(
 }
 
 // The command to print for resuming a crash. It omits --stage, because the
-// stage comes from the execution. Plan adds --stage to it.
+// stage comes from the execution.
 function resumeCommand(command: string, options: { config?: string }) {
   const config =
     options.config === undefined ? "" : ` --config ${options.config}`;

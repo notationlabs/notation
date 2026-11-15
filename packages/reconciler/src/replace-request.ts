@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import type { BaseResource, Schema } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
-import type { ResourceAction } from "./plan";
 
 /** A resource that `--replace` names, as `<id>@<instance hash>`. */
 export type ReplaceTarget = {
@@ -40,13 +39,6 @@ export function parseReplaceTarget(value: string): ReplaceTarget {
     );
   }
   return { id, instanceHash };
-}
-
-/** Formats a target as `--replace` takes it. */
-export function formatReplaceTarget(target: ReplaceTarget): string {
-  return target.instanceHash
-    ? `${target.id}@${target.instanceHash}`
-    : target.id;
 }
 
 /**
@@ -93,7 +85,7 @@ export function assertReplaceRequest(
   opts: {
     resources: BaseResource[];
     records: StateNode[];
-    deploymentId: string | undefined;
+    deploymentId: string;
     point: "plan" | "deploy";
   },
 ): void {
@@ -132,48 +124,11 @@ export function assertReplaceRequest(
         `--replace ${id} needs the instance hash, as --replace ${id}@<instance hash>. Run notation plan --replace ${id} to print the deploy command with the hash.`,
       );
     }
-    if (opts.deploymentId === undefined) {
-      throw new Error(
-        `Cannot check the instance hash of ${id}: the deployment ID is not known.`,
-      );
-    }
     const actual = instanceHash(opts.deploymentId, resource, record);
     if (actual !== given) {
       throw new Error(
         `${id} has the instance hash ${actual} in this stage, not ${given}.`,
       );
     }
-  }
-}
-
-/**
- * Makes a decision a replace, with the replace field `{ requested: true }`.
- * A replace keeps its fields and gains that one. A create or a
- * `drift-recreate` creates the resource anyway, so it stays as it is.
- */
-export function requestReplace(action: ResourceAction): ResourceAction {
-  const requested = { requested: true, known: true } as const;
-  switch (action.decision) {
-    case "create":
-    case "drift-recreate":
-      return action;
-    case "replace":
-    case "drift-replace":
-      return { ...action, replaceFields: [...action.replaceFields, requested] };
-    case "noop":
-      return {
-        decision: "replace",
-        patch: {},
-        diff: { added: {}, deleted: {}, updated: {} },
-        replaceFields: [requested],
-      };
-    case "update":
-    case "drift-update":
-      return {
-        decision: "replace",
-        patch: action.patch,
-        diff: action.diff,
-        replaceFields: [requested],
-      };
   }
 }

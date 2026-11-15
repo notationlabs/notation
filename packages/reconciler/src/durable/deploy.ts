@@ -26,6 +26,17 @@ export async function* deploy(
     return null;
   });
   yield* withDeploymentHold(step, opts, async function* () {
+    // Inside the hold, so that a deploy that waited for another one checks
+    // the hashes against the records that the other one left.
+    yield* step.run("notation:replace-request", async () => {
+      assertReplaceRequest(opts.requested, {
+        resources: opts.resources,
+        records: await opts.state.values(),
+        deploymentId: opts.state.deploymentId,
+        point: "deploy",
+      });
+      return null;
+    });
     // Read once, inside the hold, so that every `~state` ref reads the
     // records as they were at the start of the deploy, and a resumed deploy
     // reads the same ones.
@@ -35,7 +46,6 @@ export async function* deploy(
         readRecordedOutputs(opts.resources, opts.state),
       ),
       reconciled: new Set(),
-      replacedOnRequest: new Set(),
     };
     // Reconcile in dependency order, so a resource only runs once its
     // dependencies have converged.
@@ -71,13 +81,6 @@ export async function* deploy(
  * still checks before any change.
  */
 async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
-  const records = await opts.state.values();
-  assertReplaceRequest(opts.requested, {
-    resources: opts.resources,
-    records,
-    deploymentId: opts.state.deploymentId,
-    point: "deploy",
-  });
   const recordedOutputs = await readRecordedOutputs(opts.resources, opts.state);
   for (const unit of orderDeployUnits(opts.resources)) {
     for (const resource of await loadUnit(unit, opts.state)) {
@@ -99,7 +102,7 @@ async function validateKnownParams(opts: DurableDeployOptions): Promise<void> {
   }
   const registry = workflowRegistry(opts);
   for (const stateNode of orphansDeployDeletes(
-    records,
+    await opts.state.values(),
     new Set(opts.resources.map((resource) => resource.id)),
     registry,
   )) {

@@ -10,7 +10,7 @@ import {
 } from "@notation/resource";
 import { isCreatingRecord, type StateNode } from "@notation/state";
 import type { ReplaceOrder } from "./events";
-import { requestReplace, type RequestedReplace } from "./replace-request";
+import type { RequestedReplace } from "./replace-request";
 import {
   resolveResourceClass,
   type ResourceRegistry,
@@ -157,8 +157,8 @@ export type ResourceAction =
     };
 
 /**
- * Decides what deploy does with the resource. With `requested`, a decision
- * that keeps the resource becomes a replace: see `requestReplace`.
+ * Decides what deploy does with the resource. With `requested`, a resource
+ * that has a record is replaced, with the replace field `{ requested: true }`.
  */
 export function decideAction(opts: {
   resource: BaseResource;
@@ -185,37 +185,29 @@ export function decideAction(opts: {
   if (replaceFields.length > 0) {
     assertReplaceAllowed(resource, stateNode.params, params, replaceFields);
   }
-  if (!requested) {
-    assertChangeAllowed(
-      resource.id,
-      resource.rejectChange,
-      stateNode.params,
-      params,
-      { replace: replaceFields.length > 0 },
-    );
-  } else if (!requested.overrideLossProtection) {
+  if (!requested?.overrideLossProtection) {
     const message = resource.rejectChange?.(stateNode.params, params, {
-      replace: true,
-      requested: true,
+      replace: Boolean(requested) || replaceFields.length > 0,
+      ...(requested ? { requested: true as const } : {}),
     });
     if (message !== undefined) {
       throw new Error(
-        `${resource.id}: ${message} To replace it, pass --override-loss-protection ${resource.id} with --replace.`,
+        requested
+          ? `${resource.id}: ${message} To replace it, pass --override-loss-protection ${resource.id} with --replace.`
+          : `${resource.id}: ${message}`,
       );
     }
   }
 
-  if (requested) {
-    return requestReplace(
-      replaceFields.length > 0
-        ? { decision: "replace", patch, diff, replaceFields }
-        : Object.keys(patch).length > 0
-          ? { decision: "update", patch, diff }
-          : { decision: "noop" },
-    );
-  }
-  if (replaceFields.length > 0) {
-    return { decision: "replace", patch, diff, replaceFields };
+  if (requested || replaceFields.length > 0) {
+    return {
+      decision: "replace",
+      patch,
+      diff,
+      replaceFields: requested
+        ? [...replaceFields, { requested: true, known: true }]
+        : replaceFields,
+    };
   }
   if (Object.keys(patch).length > 0) {
     return { decision: "update", patch, diff };

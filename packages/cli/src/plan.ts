@@ -1,4 +1,5 @@
 import {
+  formatRequest,
   planApp,
   PROMPT_SOURCE,
   resolveDeploymentId,
@@ -17,11 +18,8 @@ export type PlanCommandOptions = {
   logger?: Logger;
   /** The replaces to plan, from `--replace`. */
   requested?: ReplaceRequest;
-  /**
-   * The start of the deploy command that the plan prints with the
-   * request's flags, such as `notation deploy --stage prod`.
-   */
-  deployCommand?: string;
+  /** The `--config` path, for the deploy command that the plan prints. */
+  config?: string;
 };
 
 const decisionSymbols: Record<PlanNode["decision"], string> = {
@@ -74,9 +72,9 @@ export async function plan(
   });
   printPlanSummary(result, logger);
   if (opts.requested) {
-    const command = opts.deployCommand ?? `notation deploy`;
+    const config = opts.config === undefined ? "" : ` --config ${opts.config}`;
     logger.info(
-      `\nTo deploy this plan:\n  ${command} ${requestFlags(result, opts.requested)}`,
+      `\nTo deploy this plan:\n  notation deploy${config} --stage ${deployment.stage} ${requestFlags(result, opts.requested)}`,
     );
   }
 }
@@ -84,15 +82,13 @@ export async function plan(
 // The flags of the request, each `--replace` with the instance hash from the
 // plan.
 function requestFlags(result: Plan, requested: ReplaceRequest): string {
-  return [
-    ...requested.replace.map(({ id }) => {
-      const hash = findRecordNode(result, id)?.instanceHash;
-      return `--replace ${hash ? `${id}@${hash}` : id}`;
-    }),
-    ...(requested.overrideLossProtection ?? []).map(
-      (id) => `--override-loss-protection ${id}`,
-    ),
-  ].join(" ");
+  return formatRequest({
+    ...requested,
+    replace: requested.replace.map(({ id }) => ({
+      id,
+      instanceHash: findRecordNode(result, id)?.instanceHash,
+    })),
+  });
 }
 
 // A delete-first replace plans the record's retired instances before it, with

@@ -88,8 +88,8 @@ export type CreatePlanOptions = {
   requested?: ReplaceRequest;
   /**
    * The key of the deployment's state. With it, each node of a resource in
-   * code that has a record gets its instance hash, and the request's hashes
-   * are checked.
+   * code that has a record gets its instance hash. Required with
+   * `requested`, whose hashes are checked against it.
    */
   deploymentId?: string;
 };
@@ -112,12 +112,17 @@ export async function createPlan({
   assertDependenciesPresent(resources);
 
   const stateNodes = await state.values();
-  assertReplaceRequest(requested, {
-    resources,
-    records: stateNodes,
-    deploymentId,
-    point: "plan",
-  });
+  if (requested) {
+    if (deploymentId === undefined) {
+      throw new Error("createPlan needs deploymentId to plan --replace.");
+    }
+    assertReplaceRequest(requested, {
+      resources,
+      records: stateNodes,
+      deploymentId,
+      point: "plan",
+    });
+  }
   const recordedOutputs = await readRecordedOutputs(resources, state);
   // The edges in state as deploy finds them when it replaces a resource.
   // Deploy writes the edges in code for each resource it reaches, so a

@@ -8618,9 +8618,10 @@ describe("refs that add no dependency", () => {
 describe("requested replace", () => {
   /**
    * Queues whose names deploy generates, so a replace creates first, and a
-   * mirror that takes the name of its target.
+   * mirror that takes the name of its target. `beforeUpdate` runs at the
+   * start of each update.
    */
-  function defineQueues() {
+  function defineQueues(beforeUpdate?: () => Promise<void>) {
     const calls: string[] = [];
     const Queue = resource({ type: "test/durable/requested", provider: "test" })
       // Cast: a resource declared without API types constrains every schema
@@ -8644,6 +8645,7 @@ describe("requested replace", () => {
           calls.push(`create ${params.name.replace(/-[0-9a-f]{8}$/, "")}`);
         },
         update: async (_key: any, patch: any) => {
+          await beforeUpdate?.();
           calls.push(`update ${Object.keys(patch).join(",")}`);
         },
         delete: async (key: any) => {
@@ -8653,7 +8655,7 @@ describe("requested replace", () => {
     const orders = new Queue("orders", { config: {} as any });
     const mirror = new Queue("mirror", { config: {} as any });
     mirror.config.target = orders.outputRef("name");
-    return { calls, resources: [orders, mirror], orders };
+    return { calls, resources: [orders, mirror], orders, Queue };
   }
 
   async function deployed(deploymentId: string) {
@@ -8725,6 +8727,62 @@ describe("requested replace", () => {
       `orders has the instance hash ${hash} in this stage, not 00000000.`,
     );
     expect(calls).toEqual([]);
+    runtime.close();
+  });
+
+  it("checks the hash inside the hold, so a deploy that waited with the same request fails", async () => {
+    let block = false;
+    let unblock!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+    let started!: () => void;
+    const updateStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const { calls, resources, orders, Queue } = defineQueues(async () => {
+      if (!block) return;
+      block = false;
+      started();
+      await blocked;
+    });
+    // Deployed before orders, so that the first deploy holds the deployment
+    // while orders still has its first instance.
+    const early = new Queue("early", { config: {} as any });
+    const deploymentId = "requested-concurrent";
+    const options: { requested?: ReplaceRequest } = {};
+    const runtime = createRuntime([early, ...resources], deploymentId, options);
+    await runtime.run(`${deploymentId}-1`);
+    calls.length = 0;
+    const hash = instanceHash(
+      deploymentId,
+      orders,
+      (await runtime.state.get("orders"))!,
+    );
+    options.requested = { replace: [{ id: "orders", instanceHash: hash }] };
+    early.config.target = "elsewhere";
+
+    block = true;
+    const first = runtime.run(`${deploymentId}-a`);
+    await updateStarted;
+    await runtime.run(`${deploymentId}-b`);
+    unblock();
+    await first;
+
+    const replaced = instanceHash(
+      deploymentId,
+      orders,
+      (await runtime.state.get("orders"))!,
+    );
+    await expect(runtime.run(`${deploymentId}-b`)).rejects.toThrow(
+      `orders has the instance hash ${replaced} in this stage, not ${hash}.`,
+    );
+    expect(calls).toEqual([
+      "update target",
+      "create shop--prod--orders",
+      "update target",
+      "delete shop--prod--orders",
+    ]);
     runtime.close();
   });
 

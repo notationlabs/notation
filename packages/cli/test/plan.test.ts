@@ -12,7 +12,9 @@ const { planApp } = vi.hoisted(() => ({
   planApp: vi.fn(async (): Promise<Plan> => ({ createdAt: "", nodes: [] })),
 }));
 
-vi.mock("@notation/core", () => ({
+vi.mock("@notation/core", async (importOriginal) => ({
+  formatRequest: (await importOriginal<typeof import("@notation/core")>())
+    .formatRequest,
   createLoggerReconcilerSubscriber: () => () => undefined,
   planApp,
   PROMPT_SOURCE: "prompt",
@@ -507,7 +509,7 @@ it("prints a requested replace, and the deploy command with the instance hash", 
   await plan(deployment, {
     logger,
     requested,
-    deployCommand: "notation deploy --stage prod",
+    config: "jobs.config.ts",
   });
 
   expect(planApp).toHaveBeenLastCalledWith(
@@ -518,7 +520,7 @@ it("prints a requested replace, and the deploy command with the instance hash", 
     "    replaced by --replace",
   ]);
   expect(lines.at(-1)).toBe(
-    "\nTo deploy this plan:\n  notation deploy --stage prod --replace lambda:orders:role@3c1f9a02 --override-loss-protection lambda:orders:role",
+    "\nTo deploy this plan:\n  notation deploy --config jobs.config.ts --stage prod --replace lambda:orders:role@3c1f9a02 --override-loss-protection lambda:orders:role",
   );
 });
 
