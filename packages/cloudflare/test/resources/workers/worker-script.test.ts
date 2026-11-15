@@ -3,8 +3,16 @@ import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setConfigFile } from "@notation/core";
 import {
+  declareSecret,
+  PROMPT_SOURCE,
+  Redacted,
+  runWithSecretContext,
+  setConfigFile,
+  type Source,
+} from "@notation/core";
+import {
+  collectResourceGraph,
   ResourceAlreadyExistsError,
   ResourceCreationUnknownError,
   ResourceNotFoundError,
@@ -43,6 +51,13 @@ const script = new WorkerScript("worker:api", {
   },
   dependencies: {} as any,
 });
+
+const isDeploymentsRead = (call: Call) =>
+  call.method === "GET" && call.url.endsWith("/deployments");
+
+// The requests other than the read of the deployments before an upload,
+// which the tests under "gradual rollout" check.
+const requests = () => calls.filter((call) => !isDeploymentsRead(call));
 
 async function uploadedMetadata(call: Call) {
   const form = call.body as FormData;
@@ -90,7 +105,7 @@ describe("WorkerScript", () => {
 
     await script.create(params);
 
-    const put = calls[1]!;
+    const put = requests()[1]!;
     expect(put.method).toBe("PUT");
     expect(put.url).toBe(
       "https://api.cloudflare.com/client/v4/accounts/acc/workers/scripts/app--dev--api",
@@ -119,7 +134,7 @@ describe("WorkerScript", () => {
 
     await script.create({ ...params, Bindings: [binding] });
 
-    const { metadata } = await uploadedMetadata(calls[1]!);
+    const { metadata } = await uploadedMetadata(requests()[1]!);
     expect(metadata.bindings).toEqual([binding]);
   });
 
@@ -141,7 +156,7 @@ describe("WorkerScript", () => {
 
     await script.create({ ...params, Bindings: bindings });
 
-    const { metadata } = await uploadedMetadata(calls[1]!);
+    const { metadata } = await uploadedMetadata(requests()[1]!);
     expect(metadata.bindings).toEqual(bindings);
   });
 
@@ -150,7 +165,7 @@ describe("WorkerScript", () => {
 
     await script.create({ ...params, DurableObjectNamespaces: [] });
 
-    const { metadata } = await uploadedMetadata(calls[1]!);
+    const { metadata } = await uploadedMetadata(requests()[1]!);
     expect(metadata).not.toHaveProperty("exports");
     expect(metadata).not.toHaveProperty("containers");
   });
@@ -166,7 +181,7 @@ describe("WorkerScript", () => {
       ],
     });
 
-    const { metadata } = await uploadedMetadata(calls[1]!);
+    const { metadata } = await uploadedMetadata(requests()[1]!);
     expect(metadata.containers).toEqual([{ class_name: "Sandbox" }]);
     expect(metadata.exports).toEqual({
       Counter: { type: "durable-object", storage: "sqlite" },
@@ -182,7 +197,7 @@ describe("WorkerScript", () => {
       "A Worker named app--dev--api already exists in the Cloudflare account acc",
     );
     await expect(created).rejects.toSatisfy(ResourceAlreadyExistsError.is);
-    expect(calls).toHaveLength(1);
+    expect(requests()).toHaveLength(1);
   });
 
   it("uploads over a placeholder Worker, and removes its tag", async () => {
@@ -192,8 +207,12 @@ describe("WorkerScript", () => {
 
     await script.create(params);
 
-    expect(calls.map((call) => call.method)).toEqual(["GET", "PUT", "GET"]);
-    const { metadata, module } = await uploadedMetadata(calls[1]!);
+    expect(requests().map((call) => call.method)).toEqual([
+      "GET",
+      "PUT",
+      "GET",
+    ]);
+    const { metadata, module } = await uploadedMetadata(requests()[1]!);
     expect(metadata.tags).toEqual([]);
     expect(module.text).toBe(code);
   });
@@ -204,7 +223,7 @@ describe("WorkerScript", () => {
     await expect(script.create(params)).rejects.toSatisfy(
       ResourceAlreadyExistsError.is,
     );
-    expect(calls).toHaveLength(1);
+    expect(requests()).toHaveLength(1);
   });
 
   it("keeps the Worker's tags in an update", async () => {
@@ -212,7 +231,7 @@ describe("WorkerScript", () => {
 
     await script.update!(params as any, {} as any, params as any, {} as any);
 
-    const { metadata } = await uploadedMetadata(calls[0]!);
+    const { metadata } = await uploadedMetadata(requests()[0]!);
     expect(metadata).not.toHaveProperty("tags");
   });
 
@@ -240,7 +259,7 @@ describe("WorkerScript", () => {
     const error = await script.create(params).catch((e) => e);
     expect(error).not.toBeInstanceOf(ResourceCreationUnknownError);
     expect(error.message).toContain("failed with status 502");
-    expect(calls).toHaveLength(1);
+    expect(requests()).toHaveLength(1);
   });
 
   it("reports a create whose upload timed out as unknown", async () => {
@@ -335,7 +354,7 @@ describe("WorkerScript", () => {
       await expect(script.create(params)).rejects.toThrow(
         "A Worker named app--dev--api already exists",
       );
-      expect(calls).toHaveLength(1);
+      expect(requests()).toHaveLength(1);
     },
   );
 
@@ -371,8 +390,8 @@ describe("WorkerScript", () => {
       },
     );
 
-    expect(calls).toHaveLength(1);
-    const { metadata } = await uploadedMetadata(calls[0]!);
+    expect(requests()).toHaveLength(1);
+    const { metadata } = await uploadedMetadata(requests()[0]!);
     expect(metadata.exports).toEqual({
       Tally: { type: "durable-object", storage: "sqlite" },
       Counter: {
@@ -427,14 +446,14 @@ describe("WorkerScript", () => {
 
       await script.update!(key, {} as any, arriving, params);
 
-      expect(calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+      expect(requests().map(({ method, url }) => `${method} ${url}`)).toEqual([
         `GET ${namespacesUrl}`,
         `GET ${namespacesPage(2)}`,
         "PUT https://api.cloudflare.com/client/v4/accounts/acc/workers/scripts/app--dev--api",
         "PATCH https://api.cloudflare.com/client/v4/accounts/acc/workers/scripts/app--dev--web/settings",
         "PUT https://api.cloudflare.com/client/v4/accounts/acc/workers/scripts/app--dev--api",
       ]);
-      const expecting = (await uploadedMetadata(calls[2]!)).metadata;
+      const expecting = (await uploadedMetadata(requests()[2]!)).metadata;
       expect(expecting.bindings).toEqual(params.Bindings);
       expect(expecting.exports).toEqual({
         Counter: { type: "durable-object", storage: "sqlite" },
@@ -445,7 +464,9 @@ describe("WorkerScript", () => {
           transfer_from: "app--dev--web",
         },
       });
-      const settings = (calls[3]!.body as FormData).get("settings") as string;
+      const settings = (requests()[3]!.body as FormData).get(
+        "settings",
+      ) as string;
       expect(JSON.parse(settings)).toEqual({
         exports: {
           Room: {
@@ -456,7 +477,7 @@ describe("WorkerScript", () => {
           Lobby: { type: "durable-object", storage: "sqlite" },
         },
       });
-      const settled = (await uploadedMetadata(calls[4]!)).metadata;
+      const settled = (await uploadedMetadata(requests()[4]!)).metadata;
       expect(settled.bindings).toEqual(arriving.Bindings);
       expect(settled.exports).toEqual({
         Counter: { type: "durable-object", storage: "sqlite" },
@@ -476,7 +497,7 @@ describe("WorkerScript", () => {
       await expect(script.create(arriving)).rejects.toThrow(
         'Deploy would move the Durable Object namespaces "rooms" from the Worker app--dev--web to the Worker app--dev--api, which this deploy creates. Deploy can move a namespace only to a Worker that exists. Deploy app--dev--api first without the namespaces, and move them in a later deploy.',
       );
-      expect(calls.some(({ method }) => method === "PUT")).toBe(false);
+      expect(requests().some(({ method }) => method === "PUT")).toBe(false);
     });
 
     it("lists the account's namespaces once in a create, and uploads once", async () => {
@@ -484,8 +505,10 @@ describe("WorkerScript", () => {
 
       await script.create(arriving);
 
-      expect(calls.filter(isListing)).toHaveLength(1);
-      expect(calls.filter(({ method }) => method !== "GET")).toHaveLength(1);
+      expect(requests().filter(isListing)).toHaveLength(1);
+      expect(requests().filter(({ method }) => method !== "GET")).toHaveLength(
+        1,
+      );
     });
 
     it("fails when the list of the account's namespaces doesn't end", async () => {
@@ -502,7 +525,7 @@ describe("WorkerScript", () => {
       ).rejects.toThrow(
         "Cloudflare listed more than 100 pages of Durable Object namespaces in the account acc, so deploy stopped listing them.",
       );
-      expect(calls.filter(isListing)).toHaveLength(100);
+      expect(requests().filter(isListing)).toHaveLength(100);
     });
 
     it("creates the namespace when no Worker that binds it hosts its class", async () => {
@@ -514,8 +537,12 @@ describe("WorkerScript", () => {
 
       await script.update!(key, {} as any, arriving, params);
 
-      expect(calls.map(({ method }) => method)).toEqual(["GET", "GET", "PUT"]);
-      const { metadata } = await uploadedMetadata(calls[2]!);
+      expect(requests().map(({ method }) => method)).toEqual([
+        "GET",
+        "GET",
+        "PUT",
+      ]);
+      const { metadata } = await uploadedMetadata(requests()[2]!);
       expect(metadata.exports.Room).toEqual({
         type: "durable-object",
         storage: "sqlite",
@@ -540,12 +567,12 @@ describe("WorkerScript", () => {
 
       await script.update!(key, {} as any, arriving, params);
 
-      expect(calls.filter(isListing)).toHaveLength(3);
-      expect(calls.map(({ method }) => method).slice(3)).toEqual([
-        "PUT",
-        "PATCH",
-        "PUT",
-      ]);
+      expect(requests().filter(isListing)).toHaveLength(3);
+      expect(
+        requests()
+          .map(({ method }) => method)
+          .slice(3),
+      ).toEqual(["PUT", "PATCH", "PUT"]);
     });
 
     it("doesn't list the account's namespaces when no new namespace has a Worker that binds it", async () => {
@@ -562,7 +589,7 @@ describe("WorkerScript", () => {
         params,
       );
 
-      expect(calls.map(({ method }) => method)).toEqual(["PUT", "PUT"]);
+      expect(requests().map(({ method }) => method)).toEqual(["PUT", "PUT"]);
     });
 
     describe("from a Worker with no state record", () => {
@@ -587,7 +614,7 @@ describe("WorkerScript", () => {
         ).rejects.toThrow(
           `The Durable Object namespace "rooms" is new to the Worker app--dev--api. The Worker "web" binds it and has no state record, and the Worker ${found} in the Cloudflare account hosts a namespace with its class Room.`,
         );
-        expect(calls.some(({ method }) => method === "PUT")).toBe(false);
+        expect(requests().some(({ method }) => method === "PUT")).toBe(false);
       });
 
       it("fails a create too", async () => {
@@ -606,7 +633,7 @@ describe("WorkerScript", () => {
         await expect(script.create(lost)).rejects.toThrow(
           "the Worker app--dev--web-1a2b3c4d in the Cloudflare account hosts",
         );
-        expect(calls.some(({ method }) => method === "PUT")).toBe(false);
+        expect(requests().some(({ method }) => method === "PUT")).toBe(false);
       });
 
       it.each([
@@ -621,7 +648,7 @@ describe("WorkerScript", () => {
 
           await script.update!(key, {} as any, lost, params);
 
-          expect(calls.map(({ method }) => method)).toEqual([
+          expect(requests().map(({ method }) => method)).toEqual([
             "GET",
             "GET",
             "PUT",
@@ -658,11 +685,11 @@ describe("WorkerScript", () => {
           params,
         );
 
-        expect(calls.map(({ method }) => method).slice(2)).toEqual([
-          "PUT",
-          "PATCH",
-          "PUT",
-        ]);
+        expect(
+          requests()
+            .map(({ method }) => method)
+            .slice(2),
+        ).toEqual(["PUT", "PATCH", "PUT"]);
       });
 
       it("matches a name that was cut to fit the limit by its cut body", async () => {
@@ -705,7 +732,7 @@ describe("WorkerScript", () => {
         ).rejects.toThrow(
           /^Cannot move the Durable Object namespace "rooms" from the Worker app--dev--web: app--dev--web also hosts the namespace of the class Legacy, which Cloudflare's namespace list doesn't show as using SQLite storage\. Notation can move a namespace only from a Worker whose namespaces all use SQLite\.$/,
         );
-        expect(calls.map(({ method }) => method)).toEqual(["GET", "GET"]);
+        expect(requests().map(({ method }) => method)).toEqual(["GET", "GET"]);
       },
     );
 
@@ -732,7 +759,7 @@ describe("WorkerScript", () => {
         },
       );
 
-      const { metadata } = await uploadedMetadata(calls[0]!);
+      const { metadata } = await uploadedMetadata(requests()[0]!);
       expect(metadata.exports).toEqual({
         Counter: { type: "durable-object", state: "deleted" },
       });
@@ -756,7 +783,7 @@ describe("WorkerScript", () => {
       CompatibilityDate: "2026-10-12",
       CompatibilityFlags: ["global_fetch_strictly_public", "nodejs_compat"],
     });
-    expect(calls[0]!.url).toMatch(/\/scripts\/app--dev--api\/settings$/);
+    expect(requests()[0]!.url).toMatch(/\/scripts\/app--dev--api\/settings$/);
   });
 
   describe("read after the upload that creates a Worker", () => {
@@ -797,7 +824,7 @@ describe("WorkerScript", () => {
 
       expect(await elapsedUntilSettled(created)).toBeLessThan(1_000);
       await expect(created).resolves.toBeUndefined();
-      expect(calls.filter(isSettings)).toHaveLength(4);
+      expect(requests().filter(isSettings)).toHaveLength(4);
     });
 
     it("fails when Cloudflare still reports the new Worker as not found 15 seconds after the upload", async () => {
@@ -855,7 +882,9 @@ describe("WorkerScript", () => {
       });
     }
     const deletes = () =>
-      calls.filter(({ method }) => method === "DELETE").map(({ url }) => url);
+      requests()
+        .filter(({ method }) => method === "DELETE")
+        .map(({ url }) => url);
 
     it("forces the delete when every Worker that binds it as a service is a dependent", async () => {
       mockReferenced(byService, {
@@ -957,7 +986,7 @@ describe("WorkerScript", () => {
           dependents: [dependent("app--dev--reports")],
         }),
       ).rejects.toThrow("still referenced (100109)");
-      expect(calls).toHaveLength(1);
+      expect(requests()).toHaveLength(1);
     });
   });
 
@@ -1293,5 +1322,205 @@ describe("rejectChange", () => {
         /^worker:api: Deploy would delete the Durable Object namespaces "rooms"/,
       );
     });
+  });
+});
+
+describe("WorkerScript secrets", () => {
+  const vault: Source = {
+    name: "vault",
+    has: async () => true,
+    get: async () => new Redacted("sk_from_vault"),
+  };
+  const secrets = {
+    API_KEY: { Secret: "api-key", Source: "vault", Key: "API_KEY" },
+    ADMIN: { Secret: "admin", Source: PROMPT_SOURCE },
+  };
+  const withSecrets = { ...params, Secrets: secrets };
+  const secretUrl = (name: string) =>
+    `https://api.cloudflare.com/client/v4/accounts/acc/workers/scripts/app--dev--api/secrets/${name}`;
+
+  // Runs `fn` as deploy does, with both secrets declared.
+  const deploying = <T>(
+    fn: () => Promise<T>,
+    prompt: () => Promise<string> = async () => "typed",
+  ) =>
+    runWithSecretContext({ stage: "dev", runId: "run", prompt }, async () => {
+      await collectResourceGraph(() => {
+        declareSecret({ id: "api-key", source: vault, key: "API_KEY" });
+        declareSecret({ id: "admin" });
+      });
+      return fn();
+    });
+
+  const secretBindings = async (call: Call) =>
+    (await uploadedMetadata(call)).metadata.bindings.filter(
+      (binding: { type: string }) => binding.type === "secret_text",
+    );
+
+  const upload = () => requests().find((call) => call.method === "PUT")!;
+
+  it("sends each secret in the upload that creates the Worker", async () => {
+    mockFetch(untilUploaded());
+
+    await deploying(() => script.create(withSecrets));
+
+    expect(await secretBindings(upload())).toEqual([
+      { type: "secret_text", name: "API_KEY", text: "sk_from_vault" },
+      { type: "secret_text", name: "ADMIN", text: "typed" },
+    ]);
+    expect((await uploadedMetadata(upload())).metadata.keep_bindings).toEqual([
+      "secret_text",
+    ]);
+  });
+
+  it("leaves a secret without a source out of an update when the Worker has it, without asking", async () => {
+    mockFetch((call) =>
+      call.url === secretUrl("ADMIN")
+        ? ok({ name: "ADMIN", type: "secret_text" })
+        : ok({}),
+    );
+    const prompt = vi.fn(async () => "typed");
+
+    await deploying(
+      () => script.update!(params as any, {} as any, withSecrets, withSecrets),
+      prompt,
+    );
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(await secretBindings(upload())).toEqual([
+      { type: "secret_text", name: "API_KEY", text: "sk_from_vault" },
+    ]);
+  });
+
+  it("asks for a secret without a source that the Worker doesn't have", async () => {
+    mockFetch((call) =>
+      call.url === secretUrl("ADMIN") ? fail(404, 10056) : ok({}),
+    );
+
+    await deploying(() =>
+      script.update!(params as any, {} as any, withSecrets, params),
+    );
+
+    expect(
+      (await secretBindings(upload())).map(
+        (binding: { name: string }) => binding.name,
+      ),
+    ).toEqual(["API_KEY", "ADMIN"]);
+  });
+
+  it("deletes each secret that state has and the params don't, after the upload", async () => {
+    mockFetch(() => ok({}));
+
+    await deploying(() =>
+      script.update!(
+        params as any,
+        {} as any,
+        { ...params, Secrets: { API_KEY: secrets.API_KEY } },
+        withSecrets,
+      ),
+    );
+
+    expect(
+      requests()
+        .filter((call) => call.method !== "GET")
+        .map((call) => [call.method, call.url.replace(/.*\/scripts\//, "")]),
+    ).toEqual([
+      ["PUT", "app--dev--api"],
+      ["DELETE", "app--dev--api/secrets/ADMIN"],
+    ]);
+  });
+
+  it("uploads nothing when a value can't be read", async () => {
+    mockFetch(untilUploaded());
+
+    await expect(
+      deploying(
+        () => script.create(withSecrets),
+        async () => {
+          throw new Error("no terminal");
+        },
+      ),
+    ).rejects.toThrow();
+    expect(requests().some((call) => call.method === "PUT")).toBe(false);
+  });
+});
+
+describe("WorkerScript during a gradual rollout", () => {
+  const split = {
+    deployments: [
+      {
+        id: "d2",
+        created_on: "2026-11-15T10:00:00Z",
+        strategy: "percentage",
+        versions: [
+          { version_id: "3c9e", percentage: 50 },
+          { version_id: "81fa", percentage: 50 },
+        ],
+      },
+      {
+        id: "d1",
+        created_on: "2026-11-14T10:00:00Z",
+        strategy: "percentage",
+        versions: [{ version_id: "3c9e", percentage: 100 }],
+      },
+    ],
+  };
+  const puts = () => calls.filter((call) => call.method === "PUT");
+
+  it("fails an update, and uploads nothing", async () => {
+    mockFetch((call) => (isDeploymentsRead(call) ? ok(split) : ok({})));
+
+    await expect(
+      script.update!(params as any, {} as any, params, params),
+    ).rejects.toThrow(
+      "The Worker app--dev--api is in a gradual rollout: 50% on version 3c9e, 50% on version 81fa. An upload would end the rollout. Finish or cancel it in Cloudflare, then deploy again.",
+    );
+    expect(calls.filter(isDeploymentsRead)).toHaveLength(1);
+    expect(puts()).toEqual([]);
+  });
+
+  it("fails a create over a placeholder Worker", async () => {
+    mockFetch((call) =>
+      isDeploymentsRead(call)
+        ? ok(split)
+        : ok({ tags: ["notation-placeholder"] }),
+    );
+
+    await expect(script.create(params)).rejects.toThrow(
+      "is in a gradual rollout",
+    );
+    expect(puts()).toEqual([]);
+  });
+
+  it("doesn't read the deployments in a create of a new Worker", async () => {
+    mockFetch(untilUploaded());
+
+    await script.create(params);
+
+    expect(calls.filter(isDeploymentsRead)).toEqual([]);
+  });
+
+  it("uploads when the newest deployment has one version, in whatever order Cloudflare lists them", async () => {
+    const [older, newer] = [
+      { ...split.deployments[0]!, created_on: "2026-11-14T10:00:00Z" },
+      { ...split.deployments[1]!, created_on: "2026-11-15T10:00:00Z" },
+    ];
+    mockFetch((call) =>
+      isDeploymentsRead(call) ? ok({ deployments: [older, newer] }) : ok({}),
+    );
+
+    await script.update!(params as any, {} as any, params, params);
+
+    expect(puts()).toHaveLength(1);
+  });
+
+  it("uploads to a Worker whose deployments Cloudflare reports as not found", async () => {
+    mockFetch((call) =>
+      isDeploymentsRead(call) ? fail(404, 10007, "not found") : ok({}),
+    );
+
+    await script.update!(params as any, {} as any, params, params);
+
+    expect(puts()).toHaveLength(1);
   });
 });

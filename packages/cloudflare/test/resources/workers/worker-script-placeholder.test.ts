@@ -144,6 +144,5 @@ describe("WorkerScriptPlaceholder", () => {
     const rule = (placeholder as any).schema.ScriptName.physicalName;
 
     expect(rule.base("worker:api:placeholder")).toBe("api");
-    expect(rule.suppliable).toBe(true);
   });
 });

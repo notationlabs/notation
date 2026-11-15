@@ -2,11 +2,7 @@ import * as v from "valibot";
 import { PROMPT_SOURCE } from "@notation/core";
 import { resource, ResourceNotFoundError } from "@notation/resource";
 import { getValue } from "@notation/std/sources";
-import {
-  deleteScriptSecret,
-  hasScriptSecret,
-  putScriptSecret,
-} from "src/api/workers";
+import { hasScriptSecret, putScriptSecret } from "src/api/workers";
 import { secretValueFromSchema, type SecretValueFrom } from "src/secrets/value";
 import type { WorkerScriptPlaceholderInstance } from "./worker-script-placeholder";
 
@@ -106,15 +102,12 @@ async function waitUntilSecretReadable(
 /**
  * A `secret_text` binding of a Worker, set with Cloudflare's secrets API
  * for the Worker. Its record holds where the value comes from, and never
- * the value. An upload of the Worker keeps its secrets, so it never needs
- * their values.
+ * the value.
  *
- * It depends on the Worker's `WorkerScriptPlaceholder`, and the Worker's
- * script depends on it, so the secret is set before the code that reads
- * it is uploaded. Create and update write the value. Each write deploys a
- * new version of the Worker. A change to `ValueFrom`, such as a new version from the
- * source, updates the secret. A secret deleted from the Worker outside
- * notation shows as drift, which the next deploy creates again.
+ * @deprecated `$worker` sends its secrets in the upload, with the
+ * `Secrets` param of `WorkerScript`. This class stays for one release, so
+ * that deploy can delete the records of earlier deployments. Its delete
+ * leaves the secret on the Worker.
  */
 export const WorkerSecret = workerSecretSchema
   .defineOperations({
@@ -134,11 +127,11 @@ export const WorkerSecret = workerSecretSchema
       if (patch.ValueFrom) await writeValue(params);
     },
 
-    // The script is deleted first, and Cloudflare deletes its secrets with
-    // it, so a missing Worker or secret counts as deleted.
-    delete: async (key) => {
-      await deleteScriptSecret(key.AccountId, key.ScriptName, key.Name);
-    },
+    // Removes only the record. `$worker` no longer declares this class, so
+    // deploy deletes the records of earlier deployments, after the upload
+    // of the Worker has set the same secret through the script's `Secrets`.
+    // Deleting the secret would undo that.
+    delete: async () => {},
   })
   .requireDependencies<WorkerSecretDependencies>()
   .deriveParams(async ({ deps }) => ({

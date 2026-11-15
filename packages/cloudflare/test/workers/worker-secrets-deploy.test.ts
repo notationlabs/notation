@@ -27,15 +27,27 @@ import type { WorkerSecretGroup } from "src/workers/secret";
 const compatibilityDate = "2026-10-12";
 const scope = { app: "shop", stage: "dev" };
 
-type FakeWorker = { tags: string[]; code: string; secrets: Set<string> };
+type FakeWorker = {
+  tags: string[];
+  code: string;
+  secrets: Map<string, string>;
+};
+
+type FakeDeployment = {
+  created_on?: string;
+  versions: { version_id: string; percentage: number }[];
+};
 
 let directory: string;
 let runtime: NodeDurableRuntime;
 let workers: Map<string, FakeWorker>;
+// The deployments that the fake API reports, by Worker name, newest first
+// unless they set `created_on`. A Worker with none listed has one
+// deployment of one version.
+let deployments: Map<string, FakeDeployment[]>;
 // The writes that reached the fake API, in order.
 let log: string[];
 let events: ReconcilerEvent[];
-let refuseScriptDelete: boolean;
 
 const ok = (result: unknown) =>
   Response.json({ success: true, errors: [], result });
@@ -46,7 +58,8 @@ const fail = (status: number, code: number, message = "failed") =>
   );
 
 // The Workers API of one account, with only the routes that deploy and
-// destroy of a Worker with secrets use.
+// destroy of a Worker with secrets use. An upload keeps each secret that it
+// leaves out, as Cloudflare does.
 function fakeCloudflare() {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = new URL(String(input));
@@ -67,12 +80,17 @@ function fakeCloudflare() {
       const metadata = JSON.parse(String(form.get("metadata")));
       const code = await (form.get(metadata.main_module) as File).text();
       const tags: string[] = metadata.tags ?? worker?.tags ?? [];
-      log.push(`upload ${name}${tags.length ? ` [${tags.join(",")}]` : ""}`);
-      workers.set(name, {
-        tags,
-        code,
-        secrets: worker?.secrets ?? new Set(),
-      });
+      const secrets = new Map(worker?.secrets);
+      const sent: string[] = [];
+      for (const binding of metadata.bindings) {
+        if (binding.type !== "secret_text") continue;
+        secrets.set(binding.name, binding.text);
+        sent.push(binding.name);
+      }
+      log.push(
+        `upload ${name}${sent.length ? ` with ${sent.sort().join(",")}` : ""}`,
+      );
+      workers.set(name, { tags, code, secrets });
       return ok({});
     }
     if (!worker) return fail(404, 10007, "This Worker does not exist");
@@ -83,8 +101,20 @@ function fakeCloudflare() {
         tags: worker.tags,
       });
     }
+    if (method === "GET" && sub === "deployments") {
+      const listed = deployments.get(name) ?? [
+        { versions: [{ version_id: "v1", percentage: 100 }] },
+      ];
+      return ok({
+        deployments: listed.map((deployment, index) => ({
+          id: `d${index}`,
+          created_on: `2026-11-${19 - index}T00:00:00Z`,
+          strategy: "percentage",
+          ...deployment,
+        })),
+      });
+    }
     if (method === "DELETE" && sub === "") {
-      if (refuseScriptDelete) return fail(403, 10000, "refused");
       log.push(`delete ${name}`);
       workers.delete(name);
       return ok(null);
@@ -92,7 +122,7 @@ function fakeCloudflare() {
     if (method === "PUT" && sub === "secrets") {
       const body = JSON.parse(String(init!.body));
       log.push(`secret ${body.name} on ${name}`);
-      worker.secrets.add(body.name);
+      worker.secrets.set(body.name, body.text);
       return ok({ name: body.name, type: "secret_text" });
     }
     const secret = sub.match(/^secrets\/(.+)$/)?.[1];
@@ -121,7 +151,7 @@ const vault: Source = {
 let bindings: "none" | "both" | "sourced" | "prompted";
 let workerId: string;
 
-const infra = () => {
+const declareWorker = () => {
   const apiKey = workerSecret({ id: "api-key", source: vault, key: "API_KEY" });
   const admin = workerSecret({ id: "admin" });
   const all = { API_KEY: apiKey, ADMIN: admin };
@@ -145,6 +175,42 @@ const infra = () => {
     { exports: [], starExports: [] },
   );
 };
+
+// The graph that `$worker` declared before `WorkerScript` took `Secrets`:
+// one `WorkerSecret` for each secret. The placeholder is left out, as its
+// name would differ from the script's. Each secret takes the script's name
+// from the script's output.
+const declareLegacyWorker = () => {
+  workerSecret({ id: "api-key", source: vault, key: "API_KEY" });
+  workerSecret({ id: "admin" });
+  const code = new std.fs.File("worker:api:code", {
+    config: { filePath: "dist/runtime/api/index.mjs" },
+  });
+  const script = new cloudflare.workers.WorkerScript("worker:api", {
+    config: {
+      CompatibilityDate: compatibilityDate,
+      CompatibilityFlags: ["nodejs_compat"],
+      Bindings: [],
+      DurableObjectNamespaces: [],
+      BoundDurableObjects: [],
+    },
+    dependencies: { code },
+  });
+  for (const [name, valueFrom] of [
+    [
+      "API_KEY",
+      { Secret: "api-key", Source: "vault", Key: "API_KEY", Version: "1" },
+    ],
+    ["ADMIN", { Secret: "admin", Source: "prompt" }],
+  ] as const) {
+    new cloudflare.workers.WorkerSecret(`worker:api:secret:${name}`, {
+      config: { Name: name, ValueFrom: valueFrom },
+      dependencies: { placeholder: script as any },
+    });
+  }
+};
+
+let infra: () => void;
 
 const collect = () => collectResourceGraph(infra, { scope });
 
@@ -197,21 +263,18 @@ function destroy(executionId: string) {
   );
 }
 
-function plan() {
-  return runWithSecretContext({ stage: "dev", runId: "plan" }, async () => {
-    const { resources } = await collect();
-    return createPlan({ resources, state: runtime.state, registry });
-  });
-}
-
-const deletes = () =>
-  events.flatMap((event) =>
-    event.event === "reconciler.operation.lifecycle" &&
-    event.operation === "delete" &&
-    event.status === "start"
-      ? [event.resourceId]
-      : [],
+async function decisions() {
+  const planned = await runWithSecretContext(
+    { stage: "dev", runId: "plan" },
+    async () => {
+      const { resources } = await collect();
+      return createPlan({ resources, state: runtime.state, registry });
+    },
   );
+  return Object.fromEntries(
+    planned.nodes.map((node) => [node.id, node.decision]),
+  );
+}
 
 const prompt = async () => "typed";
 
@@ -235,11 +298,12 @@ beforeEach(async () => {
     databasePath: path.join(directory, "workflows.db"),
   });
   workers = new Map();
+  deployments = new Map();
   log = [];
   events = [];
-  refuseScriptDelete = false;
   bindings = "both";
   workerId = "api";
+  infra = declareWorker;
   vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "acc");
   vi.stubEnv("CLOUDFLARE_API_TOKEN", "token");
   fakeCloudflare();
@@ -254,62 +318,79 @@ afterEach(async () => {
 });
 
 describe("a Worker with secrets", () => {
-  it("creates a placeholder, then sets the secrets, then uploads the code", async () => {
+  it("uploads the code with its secrets in one request, and records where each value comes from", async () => {
     await deploy("first", prompt);
 
     const name = onlyWorker();
     expect(name).toMatch(/^shop--dev--api-[0-9a-f]{8}$/);
-    expect(log[0]).toBe(`upload ${name} [notation-placeholder]`);
-    expect(log.slice(1, 3).sort()).toEqual([
-      `secret ADMIN on ${name}`,
-      `secret API_KEY on ${name}`,
-    ]);
-    expect(log.slice(3)).toEqual([`upload ${name}`]);
-    expect(workers.get(name)).toMatchObject({
-      tags: [],
-      secrets: new Set(["ADMIN", "API_KEY"]),
+    expect(log).toEqual([`upload ${name} with ADMIN,API_KEY`]);
+    expect(workers.get(name)!.secrets).toEqual(
+      new Map([
+        ["API_KEY", "sk_live"],
+        ["ADMIN", "typed"],
+      ]),
+    );
+    const record = await runtime.state.get("worker:api");
+    expect(record?.params.Secrets).toEqual({
+      ADMIN: { Secret: "admin", Source: "prompt" },
+      API_KEY: {
+        Secret: "api-key",
+        Source: "vault",
+        Key: "API_KEY",
+        Version: expect.any(String),
+      },
     });
-    for (const id of [
-      "worker:api",
-      "worker:api:placeholder",
-      "worker:api:secret:ADMIN",
-    ]) {
-      expect((await runtime.state.get(id))?.params).toMatchObject({
-        ScriptName: name,
-      });
-    }
+    const values = await runtime.state.values();
+    expect(JSON.stringify(values)).not.toMatch(/sk_live|typed/);
+    expect(values.map((node) => node.type)).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/WorkerSecret|WorkerScriptPlaceholder/),
+      ]),
+    );
 
-    const planned = await plan();
-    expect(
-      planned.nodes.find((node) => node.id === "worker:api")?.decision,
-    ).toBe("noop");
+    expect((await decisions())["worker:api"]).toBe("noop");
   });
 
-  it("keeps the name of a live Worker that gains its first secret, and uploads no placeholder", async () => {
+  it("keeps the name of a live Worker that gains its first secret", async () => {
     bindings = "none";
     await deploy("first");
     const name = onlyWorker();
     log = [];
 
     bindings = "sourced";
-    const planned = await plan();
-    const decisions = Object.fromEntries(
-      planned.nodes.map((node) => [node.id, node.decision]),
-    );
-    // The secret isn't one of the script's params, so the upload is not
-    // needed: the write of the secret deploys a new version of the Worker.
-    expect(decisions).toMatchObject({
-      "worker:api": "noop",
-      "worker:api:placeholder": "create",
-      "worker:api:secret:API_KEY": "create",
-    });
+    expect((await decisions())["worker:api"]).toBe("update");
     await deploy("second");
 
     expect(onlyWorker()).toBe(name);
-    expect(log).toEqual([`secret API_KEY on ${name}`]);
-    expect(
-      (await runtime.state.get("worker:api:placeholder"))?.params,
-    ).toMatchObject({ ScriptName: name });
+    expect(log).toEqual([`upload ${name} with API_KEY`]);
+  });
+
+  it("sends a secret without a source only when the Worker doesn't have it", async () => {
+    await deploy("first", prompt);
+    const name = onlyWorker();
+    log = [];
+
+    await writeBundle("export default { fetch: () => new Response('v2') };\n");
+    const asked = vi.fn(prompt);
+    await deploy("second", asked);
+
+    expect(asked).not.toHaveBeenCalled();
+    expect(log).toEqual([`upload ${name} with API_KEY`]);
+    expect(workers.get(name)!.secrets.get("ADMIN")).toBe("typed");
+  });
+
+  it("keeps a value set with notation secret set", async () => {
+    await deploy("first", prompt);
+    const name = onlyWorker();
+    await runWithSecretContext({ stage: "dev", runId: "set" }, async () => {
+      await collect();
+      await secretContext()!.declared.get("admin")!.set!("rotated");
+    });
+
+    await writeBundle("export default { fetch: () => new Response('v2') };\n");
+    await deploy("second");
+
+    expect(workers.get(name)!.secrets.get("ADMIN")).toBe("rotated");
   });
 
   it("deletes a removed secret after the upload, and keeps the name when the last secret goes", async () => {
@@ -318,11 +399,9 @@ describe("a Worker with secrets", () => {
     log = [];
 
     bindings = "sourced";
-    await writeBundle("export default { fetch: () => new Response('v2') };\n");
     await deploy("second");
     expect(log).toEqual([
-      `secret API_KEY on ${name}`,
-      `upload ${name}`,
+      `upload ${name} with API_KEY`,
       `delete secret ADMIN on ${name}`,
     ]);
 
@@ -330,11 +409,11 @@ describe("a Worker with secrets", () => {
     bindings = "none";
     await deploy("third");
     expect(onlyWorker()).toBe(name);
-    expect(log).toEqual([`delete secret API_KEY on ${name}`]);
-    expect(await runtime.state.get("worker:api:placeholder")).toBeUndefined();
+    expect(log).toEqual([`upload ${name}`, `delete secret API_KEY on ${name}`]);
+    expect(workers.get(name)!.secrets.size).toBe(0);
   });
 
-  it("gives a Worker whose id changes a new name, and sweeps the old one", async () => {
+  it("gives a Worker whose id changes a new name with its secrets, and sweeps the old one", async () => {
     await deploy("first", prompt);
     const before = onlyWorker();
     log = [];
@@ -344,80 +423,134 @@ describe("a Worker with secrets", () => {
 
     const after = onlyWorker();
     expect(after).toMatch(/^shop--dev--web-[0-9a-f]{8}$/);
-    expect(log[0]).toBe(`upload ${after} [notation-placeholder]`);
-    expect(log).toContain(`upload ${after}`);
-    expect(log.at(-1)).toBe(`delete ${before}`);
-    expect(await runtime.state.get("worker:api:placeholder")).toBeUndefined();
+    expect(log).toEqual([
+      `upload ${after} with ADMIN,API_KEY`,
+      `delete ${before}`,
+    ]);
   });
 
-  it("leaves only the placeholder when a secret without a source has no value, and deploys after secret set", async () => {
+  it("creates no Worker when a secret without a source has no value", async () => {
     bindings = "prompted";
     await expect(deploy("first")).rejects.toThrow(
       "Secret `admin` isn't set for stage dev",
     );
-    const name = onlyWorker();
-    expect(log).toEqual([`upload ${name} [notation-placeholder]`]);
-    expect(await runtime.state.get("worker:api")).toBeUndefined();
-
-    await runWithSecretContext({ stage: "dev", runId: "set" }, async () => {
-      await collect();
-      await secretContext()!.declared.get("admin")!.set!("typed");
-    });
-    expect(workers.get(name)!.secrets).toEqual(new Set(["ADMIN"]));
-
-    log = [];
-    await deploy("second");
-    expect(log).toEqual([`upload ${name}`]);
-    expect(workers.get(name)!.tags).toEqual([]);
-  });
-
-  it("destroys the script first, then its secrets, then the placeholder", async () => {
-    await deploy("first", prompt);
-    const name = onlyWorker();
-    log = [];
-    events = [];
-
-    await destroy("destroy");
 
     expect(workers.size).toBe(0);
-    expect(log).toEqual([`delete ${name}`]);
-    const order = deletes();
-    const script = order.indexOf("worker:api");
-    const placeholder = order.indexOf("worker:api:placeholder");
-    expect(script).toBe(0);
-    for (const secret of [
-      "worker:api:secret:ADMIN",
-      "worker:api:secret:API_KEY",
-    ]) {
-      expect(order.indexOf(secret)).toBeGreaterThan(script);
-      expect(order.indexOf(secret)).toBeLessThan(placeholder);
-    }
-  });
-
-  it("leaves the secrets alone when the script's delete fails", async () => {
-    await deploy("first", prompt);
-    const name = onlyWorker();
-    log = [];
-    events = [];
-    refuseScriptDelete = true;
-
-    await expect(destroy("destroy")).rejects.toThrow("refused");
-
     expect(log).toEqual([]);
-    expect(workers.get(name)!.secrets).toEqual(new Set(["ADMIN", "API_KEY"]));
-    expect(deletes()).toEqual(["worker:api"]);
-    expect(await runtime.state.get("worker:api:secret:ADMIN")).toBeDefined();
+    expect(await runtime.state.get("worker:api")).toBeUndefined();
   });
 
-  it("deletes a placeholder that the script never replaced", async () => {
-    bindings = "prompted";
-    await expect(deploy("first")).rejects.toThrow();
+  it("destroys the Worker with its secrets in one delete", async () => {
+    await deploy("first", prompt);
     const name = onlyWorker();
     log = [];
 
     await destroy("destroy");
 
-    expect(log).toEqual([`delete ${name}`]);
     expect(workers.size).toBe(0);
+    expect(log).toEqual([`delete ${name}`]);
+  });
+});
+
+describe("a gradual rollout", () => {
+  it("fails a deploy that would upload the Worker during a rollout, and uploads nothing", async () => {
+    await deploy("first", prompt);
+    const name = onlyWorker();
+    log = [];
+    deployments.set(name, [
+      {
+        versions: [
+          { version_id: "3c9e", percentage: 50 },
+          { version_id: "81fa", percentage: 50 },
+        ],
+      },
+      { versions: [{ version_id: "3c9e", percentage: 100 }] },
+    ]);
+
+    await writeBundle("export default { fetch: () => new Response('v2') };\n");
+    await expect(deploy("second")).rejects.toThrow(
+      `The Worker ${name} is in a gradual rollout: 50% on version 3c9e, 50% on version 81fa. An upload would end the rollout. Finish or cancel it in Cloudflare, then deploy again.`,
+    );
+    expect(log).toEqual([]);
+  });
+
+  it("fails a change of a secret alone during a rollout", async () => {
+    await deploy("first", prompt);
+    const name = onlyWorker();
+    log = [];
+    deployments.set(name, [
+      {
+        versions: [
+          { version_id: "3c9e", percentage: 90 },
+          { version_id: "81fa", percentage: 10 },
+        ],
+      },
+    ]);
+
+    bindings = "sourced";
+    await expect(deploy("second")).rejects.toThrow("is in a gradual rollout");
+    expect(log).toEqual([]);
+  });
+
+  it("uploads when the newest deployment has one version", async () => {
+    await deploy("first", prompt);
+    const name = onlyWorker();
+    log = [];
+    // Listed oldest first, so deploy has to sort them.
+    deployments.set(name, [
+      {
+        created_on: "2026-11-01T00:00:00Z",
+        versions: [
+          { version_id: "3c9e", percentage: 50 },
+          { version_id: "81fa", percentage: 50 },
+        ],
+      },
+      {
+        created_on: "2026-11-02T00:00:00Z",
+        versions: [{ version_id: "81fa", percentage: 100 }],
+      },
+    ]);
+
+    await writeBundle("export default { fetch: () => new Response('v2') };\n");
+    await deploy("second");
+    expect(log).toEqual([`upload ${name} with API_KEY`]);
+  });
+});
+
+describe("a deployment made with WorkerSecret", () => {
+  it("moves the secrets to the script's Secrets, and deletes the WorkerSecret records without the secrets", async () => {
+    infra = declareLegacyWorker;
+    await deploy("first", prompt);
+    const name = onlyWorker();
+    expect(workers.get(name)!.secrets).toEqual(
+      new Map([
+        ["API_KEY", "sk_live"],
+        ["ADMIN", "typed"],
+      ]),
+    );
+    log = [];
+
+    infra = declareWorker;
+    expect(await decisions()).toMatchObject({
+      "worker:api": "update",
+      "worker:api:secret:API_KEY": "delete-orphan",
+      "worker:api:secret:ADMIN": "delete-orphan",
+    });
+    const asked = vi.fn(prompt);
+    await deploy("second", asked);
+
+    expect(onlyWorker()).toBe(name);
+    expect(asked).not.toHaveBeenCalled();
+    expect(log).toEqual([`upload ${name} with API_KEY`]);
+    expect(workers.get(name)!.secrets).toEqual(
+      new Map([
+        ["API_KEY", "sk_live"],
+        ["ADMIN", "typed"],
+      ]),
+    );
+    expect(await runtime.state.get("worker:api:secret:ADMIN")).toBeUndefined();
+    expect(
+      await runtime.state.get("worker:api:secret:API_KEY"),
+    ).toBeUndefined();
   });
 });

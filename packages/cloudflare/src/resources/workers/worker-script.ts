@@ -2,6 +2,7 @@ import * as v from "valibot";
 import crypto from "node:crypto";
 import * as nodeFs from "node:fs/promises";
 import path from "node:path";
+import { PROMPT_SOURCE } from "@notation/core";
 import { fromProjectRoot } from "@notation/core/paths";
 import {
   isUnknownAfterApply,
@@ -12,24 +13,30 @@ import {
   type ResourceDeletion,
 } from "@notation/resource";
 import type { fs } from "@notation/std/resources";
+import { getValue } from "@notation/std/sources";
 import { accountId, cloudflareCreate } from "src/api/client";
 import { matchesWorkerNames, workerNameRule } from "src/id";
 import {
   bindingSchema,
   deleteScript,
+  deleteScriptSecret,
   getScriptReferences,
   getScriptSettings,
+  hasScriptSecret,
   isNotFound,
   isPlaceholderScript,
   isReferenced,
   listAccountNamespaces,
+  listScriptDeployments,
   patchScriptExports,
   putScript,
   type AccountNamespace,
   type DurableObjectExport,
   type ScriptBinding,
   type ScriptUpload,
+  type SecretTextBinding,
 } from "src/api/workers";
+import { secretValueFromSchema, type SecretValueFrom } from "src/secrets/value";
 
 export type { DurableObjectExport };
 
@@ -84,11 +91,14 @@ type WorkerScriptParams = {
   CodeSha256: string;
   CompatibilityDate: string;
   CompatibilityFlags?: string[];
-  /**
-   * An upload keeps the Worker's secrets, which `WorkerSecret` sets. A
-   * binding here with the name of a secret replaces the secret.
-   */
   Bindings?: WorkerBinding[];
+  /**
+   * The `secret_text` bindings, by binding name, with where each value
+   * comes from. Each upload reads the values and sends them, except that a
+   * value from the prompt is sent only when the Worker doesn't have the
+   * secret. An update deletes a secret whose name is no longer here.
+   */
+  Secrets?: Record<string, SecretValueFrom>;
   DurableObjectNamespaces?: HostedNamespace[];
   /**
    * The ids of hosted namespaces that set `protect: false`. A later plan
@@ -205,17 +215,13 @@ const workerScriptSchema = workerScript.defineSchema({
       `CLOUDFLARE_ACCOUNT_ID is ${desired}, but this Worker was deployed to the account ${previous}. A Worker can't move to another account, and replacing it would delete the objects of the Durable Object namespaces that it hosts. Set CLOUDFLARE_ACCOUNT_ID back to ${previous}. To deploy to the other account, first run \`notation destroy\` with the old account, or deploy to another stage.`,
     value: v.string(),
   },
-  // A Worker that binds a Worker secret takes the name of its
-  // `WorkerScriptPlaceholder`. A replace that creates first would collide
-  // with that name, but only an AccountId change replaces the Worker, and
-  // rejectReplace refuses it.
   ScriptName: {
     propertyType: "param",
     presence: "required",
     immutable: true,
     primaryKey: true,
     value: v.string(),
-    physicalName: { ...workerNameRule, suppliable: true },
+    physicalName: workerNameRule,
   },
   MainModule: {
     propertyType: "param",
@@ -248,6 +254,11 @@ const workerScriptSchema = workerScript.defineSchema({
     presence: "optional",
     value: v.array(bindingSchema),
     collect: (items: unknown[]) => items.flat() as WorkerBinding[],
+  },
+  Secrets: {
+    propertyType: "param",
+    presence: "optional",
+    value: v.record(v.string(), secretValueFromSchema),
   },
   DurableObjectNamespaces: {
     propertyType: "param",
@@ -294,8 +305,10 @@ export const WorkerScript = workerScriptSchema
       if (found.transfers.length > 0) {
         throw new Error(newHostError(params, found.transfers));
       }
+      if (existing) await assertNoRollout(params);
+      const secrets = await secretBindings(params, existing !== undefined);
       await cloudflareCreate(async () => {
-        await upload(params, [], found, { tags: [] });
+        await upload(params, [], found, secrets, { tags: [] });
         await waitUntilReadable(params.AccountId, params.ScriptName);
       })();
     },
@@ -317,10 +330,19 @@ export const WorkerScript = workerScriptSchema
 
     // An upload sets the whole Worker, so the patch is not used. The upload
     // compares the namespaces in state with the new ones, to rename, delete
-    // or move those that changed.
+    // or move those that changed. An upload keeps a secret that it leaves
+    // out, so a removed secret is deleted after it.
     update: async (_key, _patch, params, state) => {
       const previous = state.DurableObjectNamespaces ?? [];
-      await upload(params, previous, await findTransfers(params, previous));
+      const found = await findTransfers(params, previous);
+      await assertNoRollout(params);
+      const secrets = await secretBindings(params, true);
+      await upload(params, previous, found, secrets);
+      const kept = params.Secrets ?? {};
+      for (const name of Object.keys(state.Secrets ?? {})) {
+        if (name in kept) continue;
+        await deleteScriptSecret(params.AccountId, params.ScriptName, name);
+      }
     },
 
     delete: async (key, _state, _context, deletion) => {
@@ -354,14 +376,58 @@ export function sortedFlags(flags: string[]): string[] {
 }
 
 /**
- * Uploads the Worker, and first moves the namespaces of `found` to it.
- * `rejectNamespaceLoss` fails a move in the deploy that renames or deletes
- * a namespace of the Worker, so the exports of a move have no such entries.
+ * Throws when the Worker is in a gradual rollout. Cloudflare deploys every
+ * upload to all traffic, which ends the rollout.
+ */
+async function assertNoRollout(params: WorkerScriptParams): Promise<void> {
+  const [latest] = await listScriptDeployments(
+    params.AccountId,
+    params.ScriptName,
+  );
+  if (!latest || latest.versions.length < 2) return;
+  const split = latest.versions
+    .map((version) => `${version.percentage}% on version ${version.version_id}`)
+    .join(", ");
+  throw new Error(
+    `The Worker ${params.ScriptName} is in a gradual rollout: ${split}. An upload would end the rollout. Finish or cancel it in Cloudflare, then deploy again.`,
+  );
+}
+
+/**
+ * Reads the value of each secret in `Secrets` from its source. When
+ * `exists`, a secret whose value comes from the prompt is left out if the
+ * Worker has it, so that a value set with `notation secret set` is kept.
+ */
+async function secretBindings(
+  params: WorkerScriptParams,
+  exists: boolean,
+): Promise<SecretTextBinding[]> {
+  const bindings: SecretTextBinding[] = [];
+  for (const [name, valueFrom] of Object.entries(params.Secrets ?? {})) {
+    if (
+      exists &&
+      valueFrom.Source === PROMPT_SOURCE &&
+      (await hasScriptSecret(params.AccountId, params.ScriptName, name))
+    ) {
+      continue;
+    }
+    const value = (await getValue(valueFrom.Secret)).unwrap();
+    bindings.push({ type: "secret_text", name, text: value });
+  }
+  return bindings;
+}
+
+/**
+ * Uploads the Worker with `secrets`, and first moves the namespaces of
+ * `found` to it. `rejectNamespaceLoss` fails a move in the deploy that
+ * renames or deletes a namespace of the Worker, so the exports of a move
+ * have no such entries.
  */
 async function upload(
   params: WorkerScriptParams,
   previous: HostedNamespace[],
   found: FoundTransfers,
+  secrets: SecretTextBinding[],
   options: Pick<ScriptUpload, "tags"> = {},
 ): Promise<void> {
   const code = await readCode(params.CodeFilePath, params.CodeSha256);
@@ -376,7 +442,7 @@ async function upload(
     code,
     compatibilityDate: params.CompatibilityDate,
     compatibilityFlags: params.CompatibilityFlags ?? [],
-    bindings: params.Bindings ?? [],
+    bindings: [...(params.Bindings ?? []), ...secrets],
     exports,
     containers: hosted
       .filter((namespace) => namespace.container)

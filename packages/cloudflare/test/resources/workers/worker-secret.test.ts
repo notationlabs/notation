@@ -193,19 +193,12 @@ describe("WorkerSecret", () => {
     await expect(resource.read!(key)).resolves.toEqual(key);
   });
 
-  it("deletes the secret, and succeeds when it or the Worker is gone", async () => {
+  // The upload of the Worker has set the same secret through `Secrets`.
+  it("deletes only the record, and leaves the secret on the Worker", async () => {
     mockFetch(() => ok(null));
-    await resource.delete!(key, sourced as any);
-    expect(calls.map((call) => [call.method, call.url])).toEqual([
-      ["DELETE", `${secretUrl}/API_KEY`],
-    ]);
 
-    for (const code of [10056, 10007]) {
-      vi.restoreAllMocks();
-      mockFetch(() => fail(404, code));
-      await expect(
-        resource.delete!(key, sourced as any),
-      ).resolves.toBeUndefined();
-    }
+    await resource.delete!(key, sourced as any);
+
+    expect(calls).toEqual([]);
   });
 });

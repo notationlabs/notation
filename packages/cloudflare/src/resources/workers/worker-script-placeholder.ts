@@ -49,10 +49,6 @@ const workerScriptPlaceholderSchema = workerScriptPlaceholder.defineSchema({
       `CLOUDFLARE_ACCOUNT_ID is ${desired}, but this Worker was deployed to the account ${previous}. A Worker can't move to another account. Set CLOUDFLARE_ACCOUNT_ID back to ${previous}. To deploy to the other account, first run \`notation destroy\` with the old account, or deploy to another stage.`,
     value: v.string(),
   },
-  // The name that the Worker's script takes. A contribution supplies the
-  // script's recorded name, so a live Worker keeps its name. A replace that
-  // creates first would collide with the supplied name, but only an
-  // AccountId change replaces the placeholder, and rejectReplace refuses it.
   ScriptName: {
     propertyType: "param",
     presence: "required",
@@ -64,9 +60,7 @@ const workerScriptPlaceholderSchema = workerScriptPlaceholder.defineSchema({
       // The base of `worker:<id>:placeholder` is `<id>`, as for the script.
       base: (resourceId: string) =>
         resourceId.replace(/^worker:/, "").replace(/:placeholder$/, ""),
-      suppliable: true,
     },
-    collect: (items: unknown[]) => items[0] as string,
   },
   // Hidden, so that the script's first record doesn't show as a change.
   AdoptedScriptName: {
@@ -94,9 +88,13 @@ const workerScriptPlaceholderSchema = workerScriptPlaceholder.defineSchema({
  *
  * Delete removes the Worker only while it still carries the tag. A Worker
  * without the tag belongs to the script, which deletes it.
+ *
+ * @deprecated `$worker` sends its secrets in the upload of its code, so it
+ * no longer needs a placeholder. This class stays for one release, so that
+ * deploy can delete the records of earlier deployments.
  */
-export const WorkerScriptPlaceholder = workerScriptPlaceholderSchema
-  .defineOperations({
+export const WorkerScriptPlaceholder =
+  workerScriptPlaceholderSchema.defineOperations({
     create: async (params) => {
       const { AccountId, ScriptName } = params;
       const settings = await getScriptSettings(AccountId, ScriptName);

@@ -97,13 +97,23 @@ export const PLACEHOLDER_TAG = "notation-placeholder";
 export const isPlaceholderScript = (settings: ScriptSettings): boolean =>
   settings.tags?.includes(PLACEHOLDER_TAG) ?? false;
 
+/**
+ * A secret's binding in an upload. It holds the value, so it is never kept
+ * in params or state.
+ */
+export type SecretTextBinding = {
+  type: "secret_text";
+  name: string;
+  text: string;
+};
+
 export type ScriptUpload = {
   /** The uploaded file name of the main module. */
   mainModule: string;
   code: Buffer;
   compatibilityDate: string;
   compatibilityFlags: string[];
-  bindings: ScriptBinding[];
+  bindings: (ScriptBinding | SecretTextBinding)[];
   exports: Record<string, DurableObjectExport>;
   /** The Durable Object classes whose namespaces run containers. */
   containers: { class_name: string }[];
@@ -147,9 +157,9 @@ export async function putScript(
     compatibility_date: upload.compatibilityDate,
     compatibility_flags: upload.compatibilityFlags,
     bindings: upload.bindings,
-    // The Worker's secrets are set one at a time, with `putScriptSecret`, so
-    // an upload doesn't need their values. A binding in `bindings` with the
-    // name of a kept secret replaces the secret.
+    // Cloudflare keeps a secret that the upload leaves out, such as one set
+    // with `notation secret set`. A `secret_text` binding in `bindings`
+    // replaces the secret with its name.
     keep_bindings: ["secret_text"],
     ...(Object.keys(upload.exports).length > 0
       ? { exports: upload.exports }
@@ -166,6 +176,34 @@ export async function putScript(
     }),
   );
   await cloudflare("PUT", scriptPath(account, scriptName), form);
+}
+
+/** A deployment of a Worker: the versions that serve its traffic. */
+export type ScriptDeployment = {
+  id: string;
+  created_on: string;
+  /** `percentage` for a deployment that splits traffic between versions. */
+  strategy: string;
+  versions: { version_id: string; percentage: number }[];
+};
+
+/** The Worker's deployments, newest first. Empty if the Worker doesn't exist. */
+export async function listScriptDeployments(
+  account: string,
+  scriptName: string,
+): Promise<ScriptDeployment[]> {
+  try {
+    const result = await cloudflare<{ deployments?: ScriptDeployment[] }>(
+      "GET",
+      `${scriptPath(account, scriptName)}/deployments`,
+    );
+    return [...(result?.deployments ?? [])].sort((a, b) =>
+      b.created_on.localeCompare(a.created_on),
+    );
+  } catch (error) {
+    if (isNotFound(error)) return [];
+    throw error;
+  }
 }
 
 /** Cloudflare's error code for a binding that the Worker doesn't have. */
